@@ -1,43 +1,67 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: #f2f2f7;
+  color: #1c1c1e;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
 }
+
+/* Inputs */
 input, select, textarea {
-  border-color: #9ca3af !important;
-  color: #111827 !important;
+  border-color: #c7c7cc !important;
+  color: #1c1c1e !important;
   font-size: 0.95rem !important;
   font-weight: 500 !important;
+  border-radius: 10px !important;
+  background-color: #ffffff !important;
+  transition: border-color 0.2s ease !important;
 }
 
 input:focus, select:focus, textarea:focus {
-  border-color: #2563eb !important;
-  ring-color: #2563eb !important;
-  outline: 2px solid #2563eb !important;
-  outline-offset: 1px !important;
+  border-color: #007aff !important;
+  outline: 2px solid rgba(0, 122, 255, 0.25) !important;
+  outline-offset: 0px !important;
 }
 
 input::placeholder {
-  color: #9ca3af !important;
+  color: #c7c7cc !important;
+  font-weight: 400 !important;
+}
+
+/* Cards */
+.card {
+  background: #ffffff;
+  border-radius: 16px;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+}
+
+/* Buttons */
+button {
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+  transition: opacity 0.15s ease, transform 0.1s ease !important;
+}
+
+button:active {
+  transform: scale(0.97) !important;
+  opacity: 0.85 !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #c7c7cc;
+  border-radius: 3px;
 }
