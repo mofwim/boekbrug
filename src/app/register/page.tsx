@@ -19,15 +19,27 @@ export default function RegisterPage() {
   const supabase = createClient()
 
   async function handleRegister() {
+    if (password.length < 6) {
+      setError('Wachtwoord moet minimaal 6 tekens zijn')
+      return
+    }
+
     setLoading(true)
     setError('')
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password
-    })
+    const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
 
-    if (signUpError || !data.user) {
+    if (signUpError) {
+      if (signUpError.status === 422) {
+        setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
+      } else {
+        setError('Registratie mislukt — probeer opnieuw')
+      }
+      setLoading(false)
+      return
+    }
+
+    if (!data.user) {
       setError('Registratie mislukt — probeer opnieuw')
       setLoading(false)
       return
@@ -51,7 +63,8 @@ export default function RegisterPage() {
       return
     }
 
-    router.push('/dashboard')
+    const redirectUrl = new URLSearchParams(window.location.search).get('redirect')
+    router.push(redirectUrl || '/dashboard')
   }
 
   return (
@@ -63,12 +76,9 @@ export default function RegisterPage() {
           <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
         </div>
 
-        {/* Stap 1 — Rol kiezen */}
         {step === 1 && (
           <div className="space-y-4">
-            <p className="text-sm font-medium text-gray-700 text-center">
-              Wie ben jij?
-            </p>
+            <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
             <button
               onClick={() => { setRole('zzper'); setStep(2) }}
               className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 transition-colors"
@@ -86,84 +96,54 @@ export default function RegisterPage() {
           </div>
         )}
 
-        {/* Stap 2 — Gegevens */}
         {step === 2 && (
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={e => setFullName(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Jan de Vries"
-              />
+              <input type="text" value={fullName} onChange={e => setFullName(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
+                placeholder="Jan de Vries" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Bedrijfsnaam</label>
-              <input
-                type="text"
-                value={companyName}
-                onChange={e => setCompanyName(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Jouw Bedrijf BV"
-              />
+              <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
+                placeholder="Jouw Bedrijf BV" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">KVK-nummer</label>
-              <input
-                type="text"
-                value={kvk}
-                onChange={e => setKvk(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="12345678"
-              />
+              <input type="text" value={kvk} onChange={e => setKvk(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
+                placeholder="12345678" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">BTW-nummer</label>
-              <input
-                type="text"
-                value={btw}
-                onChange={e => setBtw(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="NL123456789B01"
-              />
+              <input type="text" value={btw} onChange={e => setBtw(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
+                placeholder="NL123456789B01" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="jouw@email.nl"
-              />
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
+                placeholder="jouw@email.nl" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="••••••••"
-              />
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
+                placeholder="••••••••" />
             </div>
 
             {error && <p className="text-sm text-red-500">{error}</p>}
 
-            <button
-              onClick={handleRegister}
-              disabled={loading}
-              className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            >
+            <button onClick={handleRegister} disabled={loading}
+              className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
               {loading ? 'Bezig...' : 'Account aanmaken'}
             </button>
 
-            <button
-              onClick={() => setStep(1)}
-              className="w-full text-gray-500 text-sm hover:text-gray-700"
-            >
+            <button onClick={() => setStep(1)}
+              className="w-full text-gray-500 text-sm hover:text-gray-700">
               ← Terug
             </button>
           </div>

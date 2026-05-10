@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
 
     const zzperName = profile?.company_name || profile?.full_name || 'Onbekend'
 
+    // حفظ الدعوة
     const { data: invitation, error: invError } = await supabase
       .from('invitations')
       .insert({
@@ -32,6 +33,7 @@ export async function POST(request: NextRequest) {
 
     if (invError) return NextResponse.json({ error: 'Uitnodiging opslaan mislukt' }, { status: 500 })
 
+    // إرسال إيميل
     const acceptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/invite/accept?token=${invitation.token}`
 
     await sendAccountantInvite({

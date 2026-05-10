@@ -28,7 +28,7 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   // صفحات عامة — لا تحتاج تسجيل دخول
-  const publicPaths = ['/login', '/register']
+  const publicPaths = ['/login', '/register', '/invite/accept']
   const isPublicPath = publicPaths.includes(request.nextUrl.pathname)
 
   // مستخدم غير مسجل يحاول الوصول لصفحة محمية
