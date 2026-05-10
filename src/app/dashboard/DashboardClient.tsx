@@ -54,6 +54,12 @@ export default function DashboardClient({ profile }: { profile: any }) {
           <h1 className="text-lg font-bold text-gray-900">BoekBrug</h1>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500">{profile.company_name}</span>
+            <button
+                onClick={() => router.push('/dashboard/settings')}
+                className="text-xs text-gray-400 hover:text-gray-600"
+            >
+                ⚙️ Instellingen
+            </button>
             <span className={`text-xs px-2 py-1 rounded-full font-medium ${
               profile.role === 'accountant'
                 ? 'bg-purple-100 text-purple-700'
