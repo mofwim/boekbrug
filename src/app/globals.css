@@ -24,3 +24,20 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+input, select, textarea {
+  border-color: #9ca3af !important;
+  color: #111827 !important;
+  font-size: 0.95rem !important;
+  font-weight: 500 !important;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: #2563eb !important;
+  ring-color: #2563eb !important;
+  outline: 2px solid #2563eb !important;
+  outline-offset: 1px !important;
+}
+
+input::placeholder {
+  color: #9ca3af !important;
+}
