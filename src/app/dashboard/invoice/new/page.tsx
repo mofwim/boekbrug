@@ -36,8 +36,8 @@ export default function NewInvoicePage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const invoiceNumber = generateInvoiceNumber()
-
+  // const invoiceNumber = generateInvoiceNumber()
+  const [invoiceNumber] = useState(() => generateInvoiceNumber())
   // Klantgegevens
   const [clientName, setClientName] = useState('')
   const [clientAddress, setClientAddress] = useState('')
@@ -146,7 +146,18 @@ export default function NewInvoicePage() {
         line_total: l.quantity * l.unit_price
       }))
     )
-
+    // إرسال إيميل للعميل
+    await fetch('/api/invoice/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+        clientEmail,
+        clientName,
+        invoiceNumber,
+        totalInc,
+        dueDate
+    })
+})
     router.push('/dashboard')
   }
 
