@@ -1,10 +1,12 @@
 'use client'
 
+import { Suspense } from 'react'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function LoginPage() {
+// المكون الداخلي
+function LoginContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -26,15 +28,17 @@ export default function LoginPage() {
       return
     }
 
-    // توجيه المستخدم بعد تسجيل الدخول
     const redirectUrl = searchParams.get('redirect')
-    router.push(redirectUrl || '/dashboard')
+    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/dashboard')
   }
 
   // الذهاب لصفحة التسجيل مع الحفاظ على redirect
   function goToRegister() {
     const redirectUrl = searchParams.get('redirect')
-    router.push(redirectUrl ? `/register?redirect=${encodeURIComponent(redirectUrl)}` : '/register')
+    router.push(redirectUrl
+      ? `/register?redirect=${encodeURIComponent(redirectUrl)}`
+      : '/register'
+    )
   }
 
   return (
@@ -90,5 +94,18 @@ export default function LoginPage() {
 
       </div>
     </div>
+  )
+}
+
+// الصفحة الرئيسية مع Suspense
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-400 text-sm">Laden...</p>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   )
 }
