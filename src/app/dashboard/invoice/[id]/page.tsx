@@ -139,22 +139,38 @@ export default function InvoiceDetailPage() {
 
         {/* بيانات المرسل وتفاصيل الفاتورة */}
         <div className="bg-white rounded-2xl p-5 shadow-sm">
-          <div className="grid grid-cols-2 gap-6 text-sm">
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Van</p>
-              <p className="font-semibold text-gray-900">{profile?.company_name || profile?.full_name}</p>
-              <p className="text-gray-500">{profile?.address}</p>
-              <p className="text-gray-500">{profile?.postal_code} {profile?.city}</p>
-              <p className="text-gray-500 mt-1">KVK: {profile?.kvk_number || '—'}</p>
-              <p className="text-gray-500">BTW: {profile?.btw_number || '—'}</p>
+            <div className="grid grid-cols-3 gap-6 text-sm">
+                
+                {/* Van — بيانات المرسل */}
+                <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Van</p>
+                <p className="font-semibold text-gray-900">{profile?.company_name || profile?.full_name}</p>
+                <p className="text-gray-500">{profile?.address}</p>
+                <p className="text-gray-500">{profile?.postal_code} {profile?.city}</p>
+                <p className="text-gray-500 mt-1">KVK: {profile?.kvk_number || '—'}</p>
+                <p className="text-gray-500">BTW: {profile?.btw_number || '—'}</p>
+                </div>
+
+                {/* Aan — بيانات العميل */}
+                <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Aan</p>
+                <p className="font-semibold text-gray-900">{invoice?.client_name || '—'}</p>
+                <p className="text-gray-500">{invoice?.client_address}</p>
+                <p className="text-gray-500">{invoice?.client_postal_code} {invoice?.client_city}</p>
+                {invoice?.client_btw_number && (
+                    <p className="text-gray-500 mt-1">BTW: {invoice.client_btw_number}</p>
+                )}
+                <p className="text-gray-500">{invoice?.client_email}</p>
+                </div>
+
+                {/* تفاصيل الفاتورة */}
+                <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Factuurdetails</p>
+                <p className="text-gray-500"><span className="text-gray-400">Nummer:</span> {invoice.invoice_number}</p>
+                <p className="text-gray-500"><span className="text-gray-400">Datum:</span> {invoice.invoice_date}</p>
+                <p className="text-gray-500"><span className="text-gray-400">Vervaldatum:</span> {invoice.due_date}</p>
+                </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Factuurdetails</p>
-              <p className="text-gray-500"><span className="text-gray-400">Nummer:</span> {invoice.invoice_number}</p>
-              <p className="text-gray-500"><span className="text-gray-400">Datum:</span> {invoice.invoice_date}</p>
-              <p className="text-gray-500"><span className="text-gray-400">Vervaldatum:</span> {invoice.due_date}</p>
-            </div>
-          </div>
         </div>
 
         {/* بنود الفاتورة */}

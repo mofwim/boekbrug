@@ -190,21 +190,31 @@ export function InvoicePDF({
 
         {/* بيانات الطرفين */}
         <View style={styles.partiesRow}>
-          <View style={styles.partyBlock}>
-            <Text style={styles.partyLabel}>Van</Text>
-            <Text style={styles.partyName}>
-              {profile.company_name || profile.full_name}
-            </Text>
-            <Text style={styles.partyText}>{profile.address}</Text>
-            <Text style={styles.partyText}>
-              {profile.postal_code} {profile.city}
-            </Text>
-            <Text style={styles.partyText}>KVK: {profile.kvk_number || '—'}</Text>
-            <Text style={styles.partyText}>BTW: {profile.btw_number || '—'}</Text>
-            <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
-          </View>
-        </View>
+            {/* Van */}
+            <View style={styles.partyBlock}>
+                <Text style={styles.partyLabel}>Van</Text>
+                <Text style={styles.partyName}>{profile.company_name || profile.full_name}</Text>
+                <Text style={styles.partyText}>{profile.address}</Text>
+                <Text style={styles.partyText}>{profile.postal_code} {profile.city}</Text>
+                <Text style={styles.partyText}>KVK: {profile.kvk_number || '—'}</Text>
+                <Text style={styles.partyText}>BTW: {profile.btw_number || '—'}</Text>
+                <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
+            </View>
 
+            {/* Aan */}
+            <View style={styles.partyBlock}>
+                <Text style={styles.partyLabel}>Aan</Text>
+                <Text style={styles.partyName}>{invoice.client_name || '—'}</Text>
+                <Text style={styles.partyText}>{invoice.client_address || ''}</Text>
+                <Text style={styles.partyText}>
+                {invoice.client_postal_code || ''} {invoice.client_city || ''}
+                </Text>
+                {invoice.client_btw_number && (
+                <Text style={styles.partyText}>BTW: {invoice.client_btw_number}</Text>
+                )}
+                <Text style={styles.partyText}>{invoice.client_email || ''}</Text>
+            </View>
+        </View>
         {/* التواريخ */}
         <View style={styles.datesRow}>
           <View style={styles.dateBlock}>

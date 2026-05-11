@@ -128,12 +128,19 @@ export default function NewInvoicePage() {
         invoice_number: invoiceNumber,
         invoice_date: invoiceDate,
         due_date: dueDate,
-        status: 'draft',
+        status: 'sent',
         direction: 'outgoing',
         total_ex_btw: totalEx,
         btw_amount: btwAmount,
         total_inc_btw: totalInc,
-        sent_to_accountant: false
+        sent_to_accountant: false,
+        // بيانات العميل
+        client_name: clientName,
+        client_email: clientEmail,
+        client_address: clientAddress,
+        client_postal_code: clientPostal,
+        client_city: clientCity,
+        client_btw_number: clientBtw
       })
       .select()
       .single()
