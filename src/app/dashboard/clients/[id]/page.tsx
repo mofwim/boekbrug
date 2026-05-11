@@ -171,11 +171,11 @@ export default function ClientDetailPage() {
                     <p className="text-sm font-semibold text-gray-900">
                       €{invoice.total_inc_btw?.toFixed(2)}
                     </p>
-
                     {/* dropdown حالة الفاتورة */}
                     <select
                       value={invoice.status}
                       onChange={e => updateStatus(invoice.id, e.target.value)}
+                      onClick={e => e.stopPropagation()} // ← أضف هذا من اجل عدم التحويل الى صفحة الفاتورة
                       disabled={updatingId === invoice.id}
                       className={`text-xs px-2 py-1 rounded-full font-medium border-0 cursor-pointer ${getStatusStyle(invoice.status)}`}
                     >
@@ -186,11 +186,13 @@ export default function ClientDetailPage() {
                   </div>
                 </div>
               ))}
+              
             </div>
           )}
         </div>
 
       </div>
+      
     </div>
   )
 }
