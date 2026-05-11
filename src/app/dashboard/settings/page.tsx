@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 export default function SettingsPage() {
   const router = useRouter()
   const supabase = createClient()
-
+  const [accountant, setAccountant] = useState<any>(null)
   // حالة الملف الشخصي
   const [profile, setProfile] = useState<any>(null)
 
@@ -55,6 +55,25 @@ export default function SettingsPage() {
         setAddress(data.address || '')
         setPostalCode(data.postal_code || '')
         setCity(data.city || '')
+      }
+      // جلب محاسب الـ ZZP'er إذا كان مرتبطاً
+      
+      if (data?.role === 'zzper') {
+        const { data: links } = await supabase
+          .from('accountant_clients')
+          .select('accountant_id')
+          .eq('zzper_id', user.id)
+          .limit(1)  // ← بدل .single()
+
+        if (links && links.length > 0) {
+          const { data: accountantData } = await supabase
+            .from('profiles')
+            .select('full_name, company_name, email')
+            .eq('id', links[0].accountant_id)
+            .single()
+
+          if (accountantData) setAccountant(accountantData)
+        }
       }
     }
     load()
@@ -114,6 +133,23 @@ export default function SettingsPage() {
       setAccountantEmail('')
     }
     setLoadingInvite(false)
+  }
+  // إزالة ربط المحاسب مع تأكيد
+  async function unlinkAccountant() {
+    const confirmed = window.confirm(
+      'Weet je zeker dat je de koppeling met je boekhouder wilt verwijderen?'
+    )
+    if (!confirmed) return
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    await supabase
+      .from('accountant_clients')
+      .delete()
+      .eq('zzper_id', user.id)
+
+    setAccountant(null)
   }
 
   // انتظار تحميل البيانات
@@ -285,6 +321,28 @@ export default function SettingsPage() {
             </div>
             {successInvite && <p className="text-sm text-green-600">{successInvite}</p>}
             {errorInvite && <p className="text-sm text-red-500">{errorInvite}</p>}
+          </div>
+        )}
+        {/* محاسب ZZP'er الحالي */}
+        {profile.role === 'zzper' && accountant && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+              Jouw boekhouder
+            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-900">
+                  {accountant.company_name || accountant.full_name}
+                </p>
+                <p className="text-xs text-gray-400">{accountant.email}</p>
+              </div>
+              <button
+                onClick={unlinkAccountant}
+                className="text-xs text-red-400 hover:text-red-600 font-medium"
+              >
+                Ontkoppelen
+              </button>
+            </div>
           </div>
         )}
 

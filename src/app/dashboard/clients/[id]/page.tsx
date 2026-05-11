@@ -48,6 +48,25 @@ export default function ClientDetailPage() {
     load()
   }, [clientId])
 
+    // حذف العميل من قائمة المحاسب
+    async function removeClient() {
+    const confirmed = window.confirm(
+        `Weet je zeker dat je ${client?.company_name || client?.full_name} wilt verwijderen?`
+    )
+    if (!confirmed) return
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    await supabase
+        .from('accountant_clients')
+        .delete()
+        .eq('accountant_id', user.id)
+        .eq('zzper_id', clientId)
+
+    router.push('/dashboard')
+    }
+
   // تحديث حالة الفاتورة
     async function updateStatus(invoiceId: string, newStatus: string) {
         setUpdatingId(invoiceId)
@@ -105,6 +124,12 @@ export default function ClientDetailPage() {
             </h1>
             <p className="text-xs text-gray-400">{client?.email}</p>
           </div>
+            <button
+                onClick={removeClient}
+                className="text-xs text-red-400 hover:text-red-600 font-medium"
+                >
+                Klant verwijderen
+            </button>
         </div>
       </div>
 

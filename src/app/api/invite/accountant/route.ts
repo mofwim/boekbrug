@@ -8,13 +8,24 @@ export async function POST(request: NextRequest) {
     const supabase = await createServerSupabaseClient()
 
     // تحقق من المستخدم
+    //const { data: { user } } = await supabase.auth.getUser()
+   // if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    // جلب إيميل المحاسب من الطلب
+   // const { accountantEmail } = await request.json()
+    //if (!accountantEmail) return NextResponse.json({ error: 'Email verplicht' }, { status: 400 })
+      // منع ZZP'er من إضافة نفسه كمحاسب
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    // جلب إيميل المحاسب من الطلب
     const { accountantEmail } = await request.json()
-    if (!accountantEmail) return NextResponse.json({ error: 'Email verplicht' }, { status: 400 })
 
+    // تحقق أن الإيميل ليس نفس إيميل المستخدم
+    if (accountantEmail.toLowerCase() === user.email?.toLowerCase()) {
+      return NextResponse.json({ 
+        error: 'Je kunt jezelf niet als boekhouder toevoegen' 
+      }, { status: 400 })
+    }
     // جلب بيانات ZZP'er
     const { data: profile } = await supabase
       .from('profiles')
