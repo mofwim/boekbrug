@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-
+import { useSearchParams } from 'next/navigation'
 export default function RegisterPage() {
+  const searchParams = useSearchParams()
   const [step, setStep] = useState(1)
   const [role, setRole] = useState('')
   const [email, setEmail] = useState('')
@@ -63,8 +64,15 @@ export default function RegisterPage() {
       return
     }
 
-    const redirectUrl = new URLSearchParams(window.location.search).get('redirect')
-    router.push(redirectUrl || '/dashboard')
+    //const redirectUrl = new URLSearchParams(window.location.search).get('redirect')
+//router.push(redirectUrl || '/dashboard')
+const params = new URLSearchParams(window.location.search)
+//const redirectUrl = params.get('redirect')
+const redirectUrl = searchParams.get('redirect')
+//router.push(redirectUrl || '/dashboard')
+
+console.log('redirect:', redirectUrl) // مؤقت للتحقق
+router.push(redirectUrl || '/dashboard')
   }
 
   return (

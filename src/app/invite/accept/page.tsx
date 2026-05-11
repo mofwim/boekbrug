@@ -17,20 +17,30 @@ export default function AcceptInvitePage() {
 
   useEffect(() => {
     async function load() {
+      // تحقق من وجود token
       if (!token) { setStatus('error'); return }
 
-      // تحقق من الدعوة
+      // جلب الدعوة
       const { data: inv } = await supabase
         .from('invitations')
-        .select('*, profiles!zzper_id(full_name, company_name)')
+        .select('*')
         .eq('token', token)
         .eq('status', 'pending')
         .single()
 
+      // تحقق من صحة الدعوة
       if (!inv) { setStatus('error'); return }
 
       setInvitation(inv)
-      setZzperName(inv.profiles?.company_name || inv.profiles?.full_name || 'Onbekend')
+
+      // جلب اسم ZZP'er
+      const { data: zzperProfile } = await supabase
+        .from('profiles')
+        .select('full_name, company_name')
+        .eq('id', inv.zzper_id)
+        .single()
+
+      setZzperName(zzperProfile?.company_name || zzperProfile?.full_name || 'Onbekend')
 
       // تحقق من المستخدم الحالي
       const { data: { user } } = await supabase.auth.getUser()
@@ -71,8 +81,8 @@ export default function AcceptInvitePage() {
         <p className="font-semibold text-gray-900">Uitnodiging ongeldig</p>
         <p className="text-sm text-gray-500 mt-1">Deze uitnodiging is verlopen of al gebruikt.</p>
         <button
-          onClick={() => router.push('/login')}
-          className="mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl text-sm font-semibold"
+          onClick={() => router.push(`/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`)}
+          className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700"
         >
           Inloggen
         </button>
@@ -120,11 +130,11 @@ export default function AcceptInvitePage() {
           <div className="space-y-3">
             <p className="text-sm text-gray-500">Log in of maak een account aan om de uitnodiging te accepteren.</p>
             <button
-              onClick={() => router.push(`/login?redirect=/invite/accept?token=${token}`)}
+              onClick={() => router.push(`/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`)}
               className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700"
             >
               Inloggen
-            </button>
+          </button>
             <button
               onClick={() => router.push(`/register?redirect=/invite/accept?token=${token}`)}
               className="w-full border border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-medium"

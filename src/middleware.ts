@@ -36,8 +36,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // مستخدم مسجل يحاول الوصول لـ login أو register
-  if (user && isPublicPath) {
+  // مستخدم مسجل يحاول الوصول لـ login أو register فقط
+  if (user && (request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/register')) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 

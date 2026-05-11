@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 
+// قبول دعوة المحاسب
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()
 
+    // تحقق من المستخدم
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -30,13 +32,13 @@ export async function POST(request: NextRequest) {
 
     if (linkError) return NextResponse.json({ error: 'Koppelen mislukt' }, { status: 500 })
 
-    // تحديث حالة الدعوة
+    // تحديث حالة الدعوة إلى مقبولة
     await supabase
       .from('invitations')
       .update({ status: 'accepted' })
       .eq('id', invitation.id)
 
-    // تحديث دور المستخدم إذا لم يكن محاسباً
+    // تحديث دور المستخدم إلى محاسب إذا كان client
     await supabase
       .from('profiles')
       .update({ role: 'accountant' })

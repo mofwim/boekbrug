@@ -49,7 +49,8 @@ export async function sendInvoiceToClient({
 }) {
   await resend.emails.send({
     from: 'BoekBrug <onboarding@resend.dev>',
-    to: toEmail,
+   // to: toEmail,
+   to: 'mofwim@gmail.com', // مؤقت للاختبار
     subject: `Factuur ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
