@@ -143,7 +143,7 @@ export default function DashboardClient({ profile }: { profile: any }) {
               ) : (
                 <div className="divide-y divide-gray-50">
                   {invoices.map(invoice => (
-                    <div key={invoice.id} className="flex items-center justify-between px-5 py-4 hover:bg-gray-50">
+                    <div key={invoice.id} onClick={() => router.push(`/dashboard/invoice/${invoice.id}`)} className="flex items-center justify-between px-5 py-4 hover:bg-gray-50">
                       <div>
                         <p className="text-sm font-medium text-gray-900">{invoice.invoice_number}</p>
                         <p className="text-xs text-gray-400 mt-0.5">{invoice.invoice_date}</p>
