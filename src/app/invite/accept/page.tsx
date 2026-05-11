@@ -1,10 +1,12 @@
 'use client'
 
+import { Suspense } from 'react'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function AcceptInvitePage() {
+// المكون الداخلي الذي يستخدم useSearchParams
+function AcceptInviteContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
@@ -17,10 +19,8 @@ export default function AcceptInvitePage() {
 
   useEffect(() => {
     async function load() {
-      // تحقق من وجود token
       if (!token) { setStatus('error'); return }
 
-      // جلب الدعوة
       const { data: inv } = await supabase
         .from('invitations')
         .select('*')
@@ -28,12 +28,10 @@ export default function AcceptInvitePage() {
         .eq('status', 'pending')
         .single()
 
-      // تحقق من صحة الدعوة
       if (!inv) { setStatus('error'); return }
 
       setInvitation(inv)
 
-      // جلب اسم ZZP'er
       const { data: zzperProfile } = await supabase
         .from('profiles')
         .select('full_name, company_name')
@@ -42,7 +40,6 @@ export default function AcceptInvitePage() {
 
       setZzperName(zzperProfile?.company_name || zzperProfile?.full_name || 'Onbekend')
 
-      // تحقق من المستخدم الحالي
       const { data: { user } } = await supabase.auth.getUser()
       setUser(user)
       setStatus('ready')
@@ -80,10 +77,8 @@ export default function AcceptInvitePage() {
         <p className="text-2xl mb-3">❌</p>
         <p className="font-semibold text-gray-900">Uitnodiging ongeldig</p>
         <p className="text-sm text-gray-500 mt-1">Deze uitnodiging is verlopen of al gebruikt.</p>
-        <button
-          onClick={() => router.push(`/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`)}
-          className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700"
-        >
+        <button onClick={() => router.push('/login')}
+          className="mt-4 bg-blue-600 text-white px-6 py-2 rounded-xl text-sm font-semibold">
           Inloggen
         </button>
       </div>
@@ -103,7 +98,6 @@ export default function AcceptInvitePage() {
   return (
     <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
       <div className="bg-white rounded-2xl p-8 shadow-sm text-center max-w-sm w-full">
-
         <p className="text-3xl mb-4">🤝</p>
         <h1 className="text-lg font-bold text-gray-900 mb-1">Je bent uitgenodigd</h1>
         <p className="text-sm text-gray-500 mb-6">
@@ -113,38 +107,46 @@ export default function AcceptInvitePage() {
         {user ? (
           <div className="space-y-3">
             <p className="text-xs text-gray-400">Ingelogd als {user.email}</p>
-            <button
-              onClick={handleAccept}
-              className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700"
-            >
+            <button onClick={handleAccept}
+              className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700">
               Uitnodiging accepteren
             </button>
-            <button
-              onClick={() => router.push('/dashboard')}
-              className="w-full border border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-medium"
-            >
+            <button onClick={() => router.push('/dashboard')}
+              className="w-full border border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-medium">
               Weigeren
             </button>
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-sm text-gray-500">Log in of maak een account aan om de uitnodiging te accepteren.</p>
+            <p className="text-sm text-gray-500">
+              Log in of maak een account aan om de uitnodiging te accepteren.
+            </p>
             <button
               onClick={() => router.push(`/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`)}
-              className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700"
-            >
+              className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-semibold hover:bg-blue-700">
               Inloggen
-          </button>
+            </button>
             <button
-              onClick={() => router.push(`/register?redirect=/invite/accept?token=${token}`)}
-              className="w-full border border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-medium"
-            >
+              onClick={() => router.push(`/register?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`)}
+              className="w-full border border-gray-200 text-gray-600 py-3 rounded-xl text-sm font-medium">
               Nieuw account aanmaken
             </button>
           </div>
         )}
-
       </div>
     </div>
+  )
+}
+
+// الصفحة الرئيسية مع Suspense
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+        <p className="text-gray-400 text-sm">Laden...</p>
+      </div>
+    }>
+      <AcceptInviteContent />
+    </Suspense>
   )
 }
