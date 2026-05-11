@@ -43,6 +43,12 @@ export default function DashboardClient({ profile }: { profile: any }) {
     loadInvoices()
   }, [])
 
+    // تسجيل الخروج
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    router.push('/login')
+  } 
+
   const statusLabel: Record<string, string> = {
     draft: 'Concept',
     sent: 'Verzonden',
@@ -79,6 +85,12 @@ export default function DashboardClient({ profile }: { profile: any }) {
             }`}>
               {profile.role === 'accountant' ? 'Boekhouder' : "ZZP'er"}
             </span>
+            <button
+                onClick={handleLogout}
+                className="text-xs text-gray-400 hover:text-red-500"
+              >
+                Uitloggen
+            </button>
           </div>
         </div>
       </div>
