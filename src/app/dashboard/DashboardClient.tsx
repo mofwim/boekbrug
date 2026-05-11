@@ -17,9 +17,21 @@ export default function DashboardClient({ profile }: { profile: any }) {
   const router = useRouter()
   const supabase = createClient()
   const [invoices, setInvoices] = useState<Invoice[]>([])
-
+  const [clients, setClients] = useState<any[]>([]) // حالة العملاء
   useEffect(() => {
     async function loadInvoices() {
+      // جلب عملاء المحاسب
+    if (profile.role === 'accountant') {
+      const { data: clientLinks } = await supabase
+        .from('accountant_clients')
+        .select('zzper_id, profiles!zzper_id(id, full_name, company_name, email, kvk_number)')
+        .eq('accountant_id', profile.id)
+
+      if (clientLinks) {
+        const clientProfiles = clientLinks.map((c: any) => c.profiles)
+        setClients(clientProfiles)
+      }
+    }
       const { data } = await supabase
         .from('invoices')
         .select('*')
@@ -146,23 +158,46 @@ export default function DashboardClient({ profile }: { profile: any }) {
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Klanten</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">0</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{clients.length}</p>
               </div>
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Nieuwe facturen</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">0</p>
               </div>
             </div>
-            <div className="bg-white rounded-2xl shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
+
+            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <h2 className="font-semibold text-gray-900">Mijn klanten</h2>
                 <button className="bg-purple-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-purple-700 font-medium">
                   + Klant toevoegen
                 </button>
               </div>
-              <p className="text-sm text-gray-400 text-center py-8">
-                Nog geen klanten — voeg je eerste klant toe
-              </p>
+
+              {clients.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-10">
+                  Nog geen klanten — voeg je eerste klant toe
+                </p>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {clients.map((client: any) => ( // function onClick to direct to client page
+                    <div key={client.id} onClick={() => router.push(`/dashboard/clients/${client.id}`)} className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {client.company_name || client.full_name}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">{client.email}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {client.kvk_number && (
+                          <span className="text-xs text-gray-400">KVK: {client.kvk_number}</span>
+                        )}
+                        <span className="text-blue-600 text-xs font-medium">Bekijken →</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
