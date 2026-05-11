@@ -38,38 +38,40 @@ export default function InvoiceDetailPage() {
   }
 
   useEffect(() => {
-    async function load() {
-      // تحقق من المستخدم
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
+        async function load() {
+        // تحقق من المستخدم
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) { router.push('/login'); return }
 
-      // جلب الملف الشخصي
-      const { data: profileData } = await supabase
+        // جلب بيانات الفاتورة أولاً
+        const { data: invoiceData } = await supabase
+            .from('invoices')
+            .select('*')
+            .eq('id', invoiceId)
+            .single()
+
+        if (invoiceData) {
+            setInvoice(invoiceData)
+
+        // جلب profile صاحب الفاتورة (ZZP'er) وليس المستخدم الحالي
+        const { data: senderProfile } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', user.id)
+        .eq('id', invoiceData.sender_id)
         .single()
 
-      if (profileData) setProfile(profileData)
+            if (senderProfile) setProfile(senderProfile)
+        }
 
-      // جلب بيانات الفاتورة
-      const { data: invoiceData } = await supabase
-        .from('invoices')
-        .select('*')
-        .eq('id', invoiceId)
-        .single()
+        // جلب بنود الفاتورة
+        const { data: linesData } = await supabase
+            .from('invoice_lines')
+            .select('*')
+            .eq('invoice_id', invoiceId)
 
-      if (invoiceData) setInvoice(invoiceData)
+        if (linesData) setLines(linesData)
 
-      // جلب بنود الفاتورة
-      const { data: linesData } = await supabase
-        .from('invoice_lines')
-        .select('*')
-        .eq('invoice_id', invoiceId)
-
-      if (linesData) setLines(linesData)
-
-      setLoading(false)
+        setLoading(false)
     }
     load()
   }, [invoiceId])
