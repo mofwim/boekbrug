@@ -23,11 +23,6 @@ type InvoiceLine = {
   btw_rate: number
 }
 
-function generateInvoiceNumber(): string {
-  const year = new Date().getFullYear()
-  const random = Math.floor(Math.random() * 900) + 100
-  return `${year}-${random}`
-}
 
 export default function NewInvoicePage() {
   const router = useRouter()
@@ -37,7 +32,7 @@ export default function NewInvoicePage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   // const invoiceNumber = generateInvoiceNumber()
-  const [invoiceNumber] = useState(() => generateInvoiceNumber())
+  const [invoiceNumber, setInvoiceNumber] = useState('')
   // Klantgegevens
   const [clientName, setClientName] = useState('')
   const [clientAddress, setClientAddress] = useState('')
@@ -62,6 +57,7 @@ export default function NewInvoicePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
 
+      // جلب بيانات الملف الشخصي
       const { data } = await supabase
         .from('profiles')
         .select('*')
@@ -69,13 +65,20 @@ export default function NewInvoicePage() {
         .single()
 
       if (data) setProfile(data)
-    }
-    loadProfile()
 
-    // Standaard vervaldatum = 30 dagen
-    const due = new Date()
-    due.setDate(due.getDate() + 30)
-    setDueDate(due.toISOString().split('T')[0])
+      // جلب رقم الفاتورة المتسلسل
+      const { data: num } = await supabase
+        .rpc('generate_invoice_number', { user_id: user.id })
+
+      if (num) setInvoiceNumber(num)
+
+      // تعيين تاريخ الاستحقاق — 30 يوماً من اليوم
+      const due = new Date()
+      due.setDate(due.getDate() + 30)
+      setDueDate(due.toISOString().split('T')[0])
+    }
+
+    loadProfile()
   }, [])
 
   function addLine() {
@@ -112,7 +115,12 @@ export default function NewInvoicePage() {
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
+    // جلب رقم فاتورة متسلسل من Supabase
+    const { data: invoiceNumData } = await supabase
+      .rpc('generate_invoice_number', { user_id: user.id })
 
+    const invoiceNumber = invoiceNumData || `${new Date().getFullYear()}-001` 
+    
     const { data: invoice, error: invoiceError } = await supabase
       .from('invoices')
       .insert({
