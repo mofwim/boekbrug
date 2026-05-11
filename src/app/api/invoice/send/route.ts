@@ -21,18 +21,20 @@ export async function POST(request: NextRequest) {
       .single()
 
     const zzperName = profile?.company_name || profile?.full_name || 'Onbekend'
-
-    const { data: accountantLink } = await supabase
+    const { data: accountantLink, error: linkError } = await supabase
       .from('accountant_clients')
       .select('accountant_id')
       .eq('zzper_id', user.id)
-      .limit(1)  // بدل .single()
       .maybeSingle()
 
+    // مؤقت للتشخيص
+    console.log('user.id:', user.id)
+    console.log('accountantLink:', accountantLink)
+    console.log('linkError:', linkError)
+
+
     const accountantId = accountantLink?.accountant_id ?? null
-console.log('accountantLink:', accountantLink)
-console.log('accountantId:', accountantId)
-console.log('user.id:', user.id)
+    console.log('accountantId:', accountantId)
     await sendInvoiceToClient({
       toEmail: clientEmail,
       clientName,
@@ -67,7 +69,9 @@ console.log('user.id:', user.id)
         read: false,
         link: `/dashboard`
       })  
-
+console.log('accountantLink:', accountantLink)
+console.log('accountantId:', accountantId)
+console.log('user.id:', user.id)
     return NextResponse.json({ success: true })
 
   } catch (error) {
