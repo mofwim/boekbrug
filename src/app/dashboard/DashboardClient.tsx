@@ -17,28 +17,43 @@ export default function DashboardClient({ profile }: { profile: any }) {
   const router = useRouter()
   const supabase = createClient()
   const [invoices, setInvoices] = useState<Invoice[]>([])
-  const [clients, setClients] = useState<any[]>([]) // حالة العملاء
-  useEffect(() => {
+  const [clients, setClients] = useState<any[]>([])
+  const [notifications, setNotifications] = useState<any[]>([])
+  const [showNotifications, setShowNotifications] = useState(false)
+
+useEffect(() => {
+
+    
     async function loadInvoices() {
-      // جلب عملاء المحاسب
-    if (profile.role === 'accountant') {
-      const { data: clientLinks } = await supabase
-        .from('accountant_clients')
-        .select('zzper_id, profiles!zzper_id(id, full_name, company_name, email, kvk_number)')
-        .eq('accountant_id', profile.id)
 
-      if (clientLinks) {
-        const clientProfiles = clientLinks.map((c: any) => c.profiles)
-        setClients(clientProfiles)
+        // جلب عملاء المحاسب
+      if (profile.role === 'accountant') {
+        const { data: clientLinks } = await supabase
+          .from('accountant_clients')
+          .select('zzper_id, profiles!zzper_id(id, full_name, company_name, email, kvk_number)')
+          .eq('accountant_id', profile.id)
+
+        if (clientLinks) {
+          const clientProfiles = clientLinks.map((c: any) => c.profiles)
+          setClients(clientProfiles)
+        }
       }
-    }
-      const { data } = await supabase
-        .from('invoices')
-        .select('*')
-        .eq('sender_id', profile.id)
-        .order('created_at', { ascending: false })
+        const { data } = await supabase
+          .from('invoices')
+          .select('*')
+          .eq('sender_id', profile.id)
+          .order('created_at', { ascending: false })
 
-      if (data) setInvoices(data)
+        if (data) setInvoices(data)
+        //  جلب كل الإشعارات — مقروءة وغير مقروءة
+        const { data: notifData } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('user_id', profile.id)
+          .order('created_at', { ascending: false })
+          .limit(20)
+
+        if (notifData) setNotifications(notifData)
     }
     loadInvoices()
   }, [])
@@ -63,6 +78,21 @@ export default function DashboardClient({ profile }: { profile: any }) {
     overdue: 'bg-red-100 text-red-600'
   }
 
+
+
+
+      // تحديد جميع الإشعارات كمقروءة
+      async function markAllRead() {
+        await supabase
+          .from('notifications')
+          .update({ read: true })
+          .eq('user_id', profile.id)
+          .eq('read', false)
+
+        // تحديث محلياً بدون حذف
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+      }
+
   return (
     <div className="min-h-screen bg-[#f2f2f7]">
 
@@ -78,6 +108,59 @@ export default function DashboardClient({ profile }: { profile: any }) {
             >
                 ⚙️ Instellingen
             </button>
+            <div className="flex items-center gap-3 relative">
+
+                {/* زر الإشعارات */}
+                <button
+                  onClick={() => {
+                    setShowNotifications(!showNotifications)
+                    if (!showNotifications && notifications.filter(n => !n.read).length > 0) markAllRead()
+                  }}
+                  className="relative text-gray-400 hover:text-gray-600"
+                >
+                  🔔
+                  {notifications.filter(n => !n.read).length > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                      {notifications.filter(n => !n.read).length}
+                    </span>
+                  )}
+                </button>
+
+                {/* قائمة الإشعارات */}
+{showNotifications && (
+  <div className="absolute top-8 right-0 bg-white rounded-2xl shadow-lg border border-gray-100 w-80 z-50">
+    <div className="px-4 py-3 border-b border-gray-100">
+      <p className="text-sm font-semibold text-gray-900">Meldingen</p>
+    </div>
+    {notifications.length === 0 ? (
+      <p className="text-sm text-gray-400 text-center py-6">Geen meldingen</p>
+    ) : (
+      <div className="divide-y divide-gray-50 max-h-80 overflow-y-auto">
+        {notifications.map(n => (
+          <div
+            key={n.id}
+            onClick={() => {
+              if (n.link) router.push(n.link)
+              setShowNotifications(false)
+            }}
+            className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${
+              !n.read ? 'bg-blue-50' : ''
+            }`}
+          >
+            <p className={`text-sm font-medium ${!n.read ? 'text-blue-900' : 'text-gray-900'}`}>
+              {n.title}
+            </p>
+            <p className="text-xs text-gray-500 mt-0.5">{n.body}</p>
+            <p className="text-xs text-gray-300 mt-1">
+              {new Date(n.created_at).toLocaleDateString('nl-NL')}
+            </p>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+)}
+          </div>
             <span className={`text-xs px-2 py-1 rounded-full font-medium ${
               profile.role === 'accountant'
                 ? 'bg-purple-100 text-purple-700'

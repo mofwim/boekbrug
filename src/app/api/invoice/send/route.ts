@@ -22,6 +22,17 @@ export async function POST(request: NextRequest) {
 
     const zzperName = profile?.company_name || profile?.full_name || 'Onbekend'
 
+    const { data: accountantLink } = await supabase
+      .from('accountant_clients')
+      .select('accountant_id')
+      .eq('zzper_id', user.id)
+      .limit(1)  // بدل .single()
+      .maybeSingle()
+
+    const accountantId = accountantLink?.accountant_id ?? null
+console.log('accountantLink:', accountantLink)
+console.log('accountantId:', accountantId)
+console.log('user.id:', user.id)
     await sendInvoiceToClient({
       toEmail: clientEmail,
       clientName,
@@ -30,6 +41,32 @@ export async function POST(request: NextRequest) {
       totalInc,
       dueDate
     })
+
+        // إشعار للمحاسب
+    if (accountantId) {
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: accountantId,
+          title: 'Nieuwe factuur ontvangen',
+          body: `${zzperName} heeft factuur ${invoiceNumber} verzonden — €${totalInc.toFixed(2)}`,
+          type: 'invoice',
+          read: false,
+          link: `/dashboard/clients/${user.id}`
+        })
+    }
+
+    // إشعار للـ ZZP'er
+    await supabase
+      .from('notifications')
+      .insert({
+        user_id: user.id,
+        title: 'Factuur verzonden',
+        body: `Factuur ${invoiceNumber} is succesvol verzonden naar ${clientName}`,
+        type: 'invoice',
+        read: false,
+        link: `/dashboard`
+      })  
 
     return NextResponse.json({ success: true })
 
