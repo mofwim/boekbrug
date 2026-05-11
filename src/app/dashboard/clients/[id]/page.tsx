@@ -49,20 +49,27 @@ export default function ClientDetailPage() {
   }, [clientId])
 
   // تحديث حالة الفاتورة
-  async function updateStatus(invoiceId: string, newStatus: string) {
-    setUpdatingId(invoiceId)
+    async function updateStatus(invoiceId: string, newStatus: string) {
+        setUpdatingId(invoiceId)
 
-    await supabase
-      .from('invoices')
-      .update({ status: newStatus })
-      .eq('id', invoiceId)
+        const { error } = await supabase
+            .from('invoices')
+            .update({ status: newStatus })
+            .eq('id', invoiceId)
 
-    // تحديث الحالة محلياً
-    setInvoices(prev =>
-      prev.map(inv => inv.id === invoiceId ? { ...inv, status: newStatus } : inv)
-    )
-    setUpdatingId(null)
-  }
+        // أضف هذا للتحقق من الخطأ
+        if (error) {
+            console.error('Update status error:', error)
+            setUpdatingId(null)
+            return
+        }
+
+        // تحديث الحالة محلياً
+        setInvoices(prev =>
+            prev.map(inv => inv.id === invoiceId ? { ...inv, status: newStatus } : inv)
+        )
+        setUpdatingId(null)
+    }
 
   // جلب لون الحالة
   function getStatusStyle(status: string) {
