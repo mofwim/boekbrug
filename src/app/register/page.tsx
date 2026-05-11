@@ -136,9 +136,14 @@ function RegisterContent() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
-                placeholder="••••••••" />
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleRegister()}
+              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
+              placeholder="••••••••"
+            />
             </div>
 
             {error && <p className="text-sm text-red-500">{error}</p>}

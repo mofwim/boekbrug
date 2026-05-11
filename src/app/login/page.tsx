@@ -68,6 +68,7 @@ function LoginContent() {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
               className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm"
               placeholder="••••••••"
             />

@@ -30,7 +30,36 @@ export async function sendAccountantInvite({
     `
   })
 }
-
+// إيميل دعوة العميل من قبل المحاسب
+export async function sendClientInvite({
+  toEmail,
+  clientName,
+  accountantName,
+  acceptUrl
+}: {
+  toEmail: string
+  clientName: string
+  accountantName: string
+  acceptUrl: string
+}) {
+  await resend.emails.send({
+    from: 'BoekBrug <onboarding@resend.dev>',
+    to: 'mofwim@gmail.com', // مؤقت للاختبار
+    subject: `${accountantName} nodigt je uit op BoekBrug`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #1c1c1e;">Je bent uitgenodigd</h2>
+        <p style="color: #555;">Je boekhouder <strong>${accountantName}</strong> nodigt je uit om BoekBrug te gebruiken.</p>
+        <p style="color: #555;">Via BoekBrug kun je eenvoudig facturen delen met je boekhouder — geen WhatsApp meer, geen e-mail zoeken.</p>
+        <a href="${acceptUrl}" 
+           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
+          Uitnodiging accepteren
+        </a>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `
+  })
+}
 // إيميل للعميل عند استلام فاتورة
 export async function sendInvoiceToClient({
   toEmail,
