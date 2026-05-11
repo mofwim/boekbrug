@@ -1,11 +1,12 @@
 'use client'
 
+import { Suspense } from 'react'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
-import { useSearchParams } from 'next/navigation'
-export default function RegisterPage() {
-  const searchParams = useSearchParams()
+import { useRouter, useSearchParams } from 'next/navigation'
+
+// المكون الداخلي
+function RegisterContent() {
   const [step, setStep] = useState(1)
   const [role, setRole] = useState('')
   const [email, setEmail] = useState('')
@@ -17,8 +18,10 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
 
+  // تسجيل حساب جديد
   async function handleRegister() {
     if (password.length < 6) {
       setError('Wachtwoord moet minimaal 6 tekens zijn')
@@ -64,15 +67,8 @@ export default function RegisterPage() {
       return
     }
 
-    //const redirectUrl = new URLSearchParams(window.location.search).get('redirect')
-//router.push(redirectUrl || '/dashboard')
-const params = new URLSearchParams(window.location.search)
-//const redirectUrl = params.get('redirect')
-const redirectUrl = searchParams.get('redirect')
-//router.push(redirectUrl || '/dashboard')
-
-console.log('redirect:', redirectUrl) // مؤقت للتحقق
-router.push(redirectUrl || '/dashboard')
+    const redirectUrl = searchParams.get('redirect')
+    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/dashboard')
   }
 
   return (
@@ -84,6 +80,7 @@ router.push(redirectUrl || '/dashboard')
           <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
         </div>
 
+        {/* Stap 1 — Rol kiezen */}
         {step === 1 && (
           <div className="space-y-4">
             <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
@@ -104,6 +101,7 @@ router.push(redirectUrl || '/dashboard')
           </div>
         )}
 
+        {/* Stap 2 — Gegevens */}
         {step === 2 && (
           <div className="space-y-4">
             <div>
@@ -159,5 +157,18 @@ router.push(redirectUrl || '/dashboard')
 
       </div>
     </div>
+  )
+}
+
+// الصفحة الرئيسية مع Suspense
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-400 text-sm">Laden...</p>
+      </div>
+    }>
+      <RegisterContent />
+    </Suspense>
   )
 }
