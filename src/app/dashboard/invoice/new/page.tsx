@@ -162,7 +162,8 @@ export default function NewInvoicePage() {
       }))
     )
     // إرسال إيميل للعميل
-    await fetch('/api/invoice/send', {
+    //await fetch('/api/invoice/send', {
+    await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/invoice/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
