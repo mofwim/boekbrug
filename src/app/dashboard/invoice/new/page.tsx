@@ -169,8 +169,9 @@ export default function NewInvoicePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientEmail, clientName, invoiceNumber, totalInc, dueDate })
       })
-        router.push('/dashboard')
-      }
+      router.push('/dashboard')
+    }
+  }
 
   return (
     <div className="min-h-screen bg-[#f2f2f7]">
