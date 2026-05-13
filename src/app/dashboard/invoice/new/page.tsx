@@ -100,7 +100,7 @@ export default function NewInvoicePage() {
   const btwAmount = lines.reduce((sum, l) => sum + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
   const totalInc = totalEx + btwAmount
 
-  async function handleSubmit() {
+  async function handleSubmit(mode: 'sent' | 'draft') {
     if (!clientName || !clientEmail || !invoiceDate || !dueDate) {
       setError('Vul alle verplichte velden in (*)')
       return
@@ -128,7 +128,7 @@ export default function NewInvoicePage() {
         invoice_number: invoiceNumber,
         invoice_date: invoiceDate,
         due_date: dueDate,
-        status: 'sent',
+        status: mode === 'sent' ? 'sent' : 'draft',
         direction: 'outgoing',
         total_ex_btw: totalEx,
         btw_amount: btwAmount,
@@ -163,19 +163,14 @@ export default function NewInvoicePage() {
     )
     // إرسال إيميل للعميل
     //await fetch('/api/invoice/send', {
-    await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/invoice/send`, {
+    if (mode === 'sent') {
+      await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/invoice/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-        clientEmail,
-        clientName,
-        invoiceNumber,
-        totalInc,
-        dueDate
-    })
-})
-    router.push('/dashboard')
-  }
+        body: JSON.stringify({ clientEmail, clientName, invoiceNumber, totalInc, dueDate })
+      })
+        router.push('/dashboard')
+      }
 
   return (
     <div className="min-h-screen bg-[#f2f2f7]">
@@ -400,12 +395,24 @@ export default function NewInvoicePage() {
 
         {/* Acties */}
         <div className="flex gap-3 pb-8">
-          <button onClick={handleSubmit} disabled={loading}
-            className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
-            {loading ? 'Opslaan...' : 'Factuur opslaan'}
+          <button
+            onClick={() => handleSubmit('sent')}
+            disabled={loading}
+            className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? 'Bezig...' : 'Verzenden'}
           </button>
-          <button onClick={() => router.push('/dashboard')}
-            className="border border-gray-200 text-gray-600 px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-50">
+          <button
+            onClick={() => handleSubmit('draft')}
+            disabled={loading}
+            className="border border-gray-300 text-gray-700 px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            Opslaan als concept
+          </button>
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="text-gray-400 px-4 py-3 rounded-xl text-sm font-medium hover:text-gray-600"
+          >
             Annuleren
           </button>
         </div>
