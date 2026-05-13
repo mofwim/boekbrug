@@ -1,8 +1,11 @@
+// src/lib/email.ts
+// كل functions الإيميل في مكان واحد — Resend
+
 import { Resend } from 'resend'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-// إيميل دعوة المحاسب
+// ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
   toEmail,
   zzperName,
@@ -21,7 +24,7 @@ export async function sendAccountantInvite({
         <h2 style="color: #1c1c1e;">Je bent uitgenodigd</h2>
         <p style="color: #555;">${zzperName} wil je toevoegen als boekhouder via BoekBrug.</p>
         <p style="color: #555;">Als je accepteert, zie je automatisch alle facturen van ${zzperName} in jouw dashboard.</p>
-        <a href="${acceptUrl}" 
+        <a href="${acceptUrl}"
            style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
@@ -30,7 +33,8 @@ export async function sendAccountantInvite({
     `
   })
 }
-// إيميل دعوة العميل من قبل المحاسب
+
+// ── إيميل دعوة العميل من قبل المحاسب ─────────────────────────────────────────
 export async function sendClientInvite({
   toEmail,
   clientName,
@@ -51,7 +55,7 @@ export async function sendClientInvite({
         <h2 style="color: #1c1c1e;">Je bent uitgenodigd</h2>
         <p style="color: #555;">Je boekhouder <strong>${accountantName}</strong> nodigt je uit om BoekBrug te gebruiken.</p>
         <p style="color: #555;">Via BoekBrug kun je eenvoudig facturen delen met je boekhouder — geen WhatsApp meer, geen e-mail zoeken.</p>
-        <a href="${acceptUrl}" 
+        <a href="${acceptUrl}"
            style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
@@ -60,7 +64,8 @@ export async function sendClientInvite({
     `
   })
 }
-// إيميل للعميل عند استلام فاتورة
+
+// ── إيميل للعميل عند استلام فاتورة ───────────────────────────────────────────
 export async function sendInvoiceToClient({
   toEmail,
   clientName,
@@ -78,8 +83,7 @@ export async function sendInvoiceToClient({
 }) {
   await resend.emails.send({
     from: 'BoekBrug <onboarding@resend.dev>',
-   // to: toEmail,
-   to: 'mofwim@gmail.com', // مؤقت للاختبار
+    to: 'mofwim@gmail.com', // مؤقت للاختبار
     subject: `Factuur ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
@@ -91,6 +95,42 @@ export async function sendInvoiceToClient({
           <p style="margin:4px 0; color:#1c1c1e;"><strong>Bedrag:</strong> €${totalInc.toFixed(2)}</p>
           <p style="margin:4px 0; color:#1c1c1e;"><strong>Vervaldatum:</strong> ${dueDate}</p>
         </div>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `
+  })
+}
+
+// ── BOEK-007: إيميل إشعار رسالة جديدة ────────────────────────────────────────
+export async function sendMessageNotification({
+  toEmail,
+  receiverName,
+  senderName,
+  messagePreview,
+  conversationUrl
+}: {
+  toEmail: string
+  receiverName: string
+  senderName: string
+  messagePreview: string
+  conversationUrl: string
+}) {
+  await resend.emails.send({
+    from: 'BoekBrug <onboarding@resend.dev>',
+    to: 'mofwim@gmail.com', // مؤقت للاختبار
+    subject: `Nieuw bericht van ${senderName}`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #1c1c1e;">Nieuw bericht</h2>
+        <p style="color: #555;">Beste ${receiverName},</p>
+        <p style="color: #555;"><strong>${senderName}</strong> heeft je een bericht gestuurd via BoekBrug.</p>
+        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #007aff;">
+          <p style="margin:0; color:#1c1c1e; font-style: italic;">"${messagePreview}"</p>
+        </div>
+        <a href="${conversationUrl}"
+           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">
+          Bericht bekijken
+        </a>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
