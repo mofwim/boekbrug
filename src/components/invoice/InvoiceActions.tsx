@@ -20,29 +20,12 @@ export function InvoiceActions({ invoiceId, invoiceNumber, status }: Props) {
   const router = useRouter()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [loadingDelete, setLoadingDelete] = useState(false)
-  const [loadingDuplicate, setLoadingDuplicate] = useState(false)
   const [error, setError] = useState('')
 
   //const canDelete = DELETABLE_STATUSES.includes(status)
 const canEdit = status === 'draft'
 const canDelete = status === 'draft'
-  // ── BOEK-003: Duplicate ──────────────────────────────────────────────────
-  async function handleDuplicate() {
-    setLoadingDuplicate(true)
-    setError('')
 
-    const res = await fetch(`/api/invoice/${invoiceId}/duplicate`, { method: 'POST' })
-    const data = await res.json()
-
-    if (!res.ok) {
-      setError(data.error || 'Dupliceren mislukt')
-      setLoadingDuplicate(false)
-      return
-    }
-
-    // مباشرة للـ edit — المستخدم يريد يعدل التاريخ أو البيانات
-    router.push(`/dashboard/invoice/${data.invoiceId}/edit`)
-  }
 
   // ── BOEK-002: Delete ─────────────────────────────────────────────────────
   async function handleDelete() {
@@ -65,15 +48,6 @@ const canDelete = status === 'draft'
   return (
     <>
       <div className="flex items-center gap-1">
-
-        {/* BOEK-003: Dupliceren */}
-        <button
-          onClick={handleDuplicate}
-          disabled={loadingDuplicate}
-          className="text-sm text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-xl hover:bg-gray-100 transition-colors disabled:opacity-40"
-        >
-          {loadingDuplicate ? 'Bezig...' : '⎘ Dupliceren'}
-        </button>
 
         {/* BOEK-001: Bewerken */}
         {canEdit && (

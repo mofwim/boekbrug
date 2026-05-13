@@ -116,10 +116,10 @@ export default function NewInvoicePage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
     // جلب رقم فاتورة متسلسل من Supabase
-    const { data: invoiceNumData } = await supabase
-      .rpc('generate_invoice_number', { user_id: user.id })
-
-    const invoiceNumber = invoiceNumData || `${new Date().getFullYear()}-001` 
+    // بعد — الرقم فقط عند الإرسال
+    const invoiceNumber = mode === 'sent'
+      ? (await supabase.rpc('generate_invoice_number', { user_id: user.id })).data || `${new Date().getFullYear()}-001`
+      : null
     
     const { data: invoice, error: invoiceError } = await supabase
       .from('invoices')
@@ -169,8 +169,9 @@ export default function NewInvoicePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientEmail, clientName, invoiceNumber, totalInc, dueDate })
       })
-      router.push('/dashboard')
-    }
+}
+
+router.push('/dashboard')
   }
 
   return (
@@ -185,8 +186,10 @@ export default function NewInvoicePage() {
             </button>
             <h1 className="text-lg font-bold text-gray-900">Nieuwe factuur</h1>
           </div>
-          <span className="text-sm text-gray-400 font-mono">{invoiceNumber}</span>
-        </div>
+            <span className="text-sm text-gray-400 font-mono">
+              {invoiceNumber || 'Concept'}
+            </span>    
+          </div>
       </div>
 
       <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">

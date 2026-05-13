@@ -26,9 +26,6 @@ export async function POST(
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
-    const { data: newNumber } = await supabase
-      .rpc('generate_invoice_number', { user_id: user.id })
-
     const today = new Date().toISOString().split('T')[0]
     const dueDate = new Date()
     dueDate.setDate(dueDate.getDate() + 30)
@@ -37,7 +34,7 @@ export async function POST(
       .from('invoices')
       .insert({
         sender_id: user.id,
-        invoice_number: newNumber,
+        invoice_number: null,
         invoice_date: today,
         due_date: dueDate.toISOString().split('T')[0],
         status: 'draft',

@@ -1,11 +1,12 @@
 'use client'
 
 // src/app/dashboard/DashboardClient.tsx
-// BOEK-007: ZZP'er يذهب مباشرة لمحاسبه — لا قائمة فارغة
+// BOEK-005: skeleton loading
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { DashboardSkeleton, ClientRowSkeleton, StatCardSkeleton } from '@/components/ui/Skeletons'
 
 type Invoice = {
   id: string
@@ -14,6 +15,7 @@ type Invoice = {
   due_date: string
   total_inc_btw: number
   status: string
+  client_name: string
 }
 
 export default function DashboardClient({ profile }: { profile: any }) {
@@ -25,6 +27,7 @@ export default function DashboardClient({ profile }: { profile: any }) {
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [accountantId, setAccountantId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function loadData() {
@@ -35,12 +38,9 @@ export default function DashboardClient({ profile }: { profile: any }) {
           .select('zzper_id, profiles!zzper_id(id, full_name, company_name, email, kvk_number)')
           .eq('accountant_id', profile.id)
 
-        if (clientLinks) {
-          setClients(clientLinks.map((c: any) => c.profiles))
-        }
+        if (clientLinks) setClients(clientLinks.map((c: any) => c.profiles))
       }
 
-      // ZZP'er: جلب معرف المحاسب للتوجيه المباشر
       if (profile.role === 'zzper') {
         const { data: link } = await supabase
           .from('accountant_clients')
@@ -68,7 +68,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
 
       if (notifData) setNotifications(notifData)
 
-      // عدد الرسائل غير المقروءة
       const { count } = await supabase
         .from('messages')
         .select('id', { count: 'exact', head: true })
@@ -76,6 +75,7 @@ export default function DashboardClient({ profile }: { profile: any }) {
         .eq('read', false)
 
       setUnreadMessages(count || 0)
+      setLoading(false)
     }
     loadData()
   }, [])
@@ -95,7 +95,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
   }
 
-  // ZZP'er: مباشرة للمحاسب — أو لقائمة الرسائل إن لم يكن له محاسب بعد
   function handleMessagesClick() {
     if (profile.role === 'zzper') {
       accountantId
@@ -137,7 +136,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
               ⚙️ Instellingen
             </button>
 
-            {/* BOEK-007: Berichten — ZZP'er gaat direct naar zijn boekhouder */}
             <button
               onClick={handleMessagesClick}
               className="relative text-xs text-gray-400 hover:text-blue-600 font-medium transition-colors"
@@ -217,11 +215,13 @@ export default function DashboardClient({ profile }: { profile: any }) {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-6 space-y-4">
+      {/* ZZP'er Dashboard */}
+      {profile.role === 'zzper' && (
+        loading ? (
+          <DashboardSkeleton />
+        ) : (
+          <div className="max-w-4xl mx-auto px-6 py-6 space-y-4">
 
-        {/* ZZP'er Dashboard */}
-        {profile.role === 'zzper' && (
-          <div className="space-y-4">
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Verzonden</p>
@@ -244,7 +244,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
               </div>
             </div>
 
-            {/* بانر المحاسب للـ ZZP'er إذا لم يكن له محاسب */}
             {!accountantId && (
               <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-4 flex items-center justify-between">
                 <div>
@@ -284,8 +283,12 @@ export default function DashboardClient({ profile }: { profile: any }) {
                       className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer"
                     >
                       <div>
-                        <p className="text-sm font-medium text-gray-900">{invoice.invoice_number}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{invoice.invoice_date}</p>
+                        <p className="text-sm font-medium text-gray-900">
+                          {invoice.invoice_number || 'Concept'}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {invoice.client_name} — {invoice.invoice_date}
+                        </p>
                       </div>
                       <div className="flex items-center gap-3">
                         <p className="text-sm font-semibold text-gray-900">
@@ -301,11 +304,30 @@ export default function DashboardClient({ profile }: { profile: any }) {
               )}
             </div>
           </div>
-        )}
+        )
+      )}
 
-        {/* Accountant Dashboard */}
-        {profile.role === 'accountant' && (
-          <div className="space-y-4">
+      {/* Accountant Dashboard */}
+      {profile.role === 'accountant' && (
+        loading ? (
+          <div className="max-w-4xl mx-auto px-6 py-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <StatCardSkeleton />
+              <StatCardSkeleton />
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100">
+                <div className="h-3 w-24 bg-gray-100 rounded-full animate-pulse" />
+              </div>
+              <div className="divide-y divide-gray-50">
+                <ClientRowSkeleton />
+                <ClientRowSkeleton />
+                <ClientRowSkeleton />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-4xl mx-auto px-6 py-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Klanten</p>
@@ -358,9 +380,9 @@ export default function DashboardClient({ profile }: { profile: any }) {
               )}
             </div>
           </div>
-        )}
+        )
+      )}
 
-      </div>
     </div>
   )
 }
