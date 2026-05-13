@@ -23,8 +23,9 @@ export function InvoiceActions({ invoiceId, invoiceNumber, status }: Props) {
   const [loadingDuplicate, setLoadingDuplicate] = useState(false)
   const [error, setError] = useState('')
 
-  const canDelete = DELETABLE_STATUSES.includes(status)
-
+  //const canDelete = DELETABLE_STATUSES.includes(status)
+const canEdit = status === 'draft'
+const canDelete = status === 'draft'
   // ── BOEK-003: Duplicate ──────────────────────────────────────────────────
   async function handleDuplicate() {
     setLoadingDuplicate(true)
@@ -75,13 +76,14 @@ export function InvoiceActions({ invoiceId, invoiceNumber, status }: Props) {
         </button>
 
         {/* BOEK-001: Bewerken */}
+        {canEdit && (
         <button
           onClick={() => router.push(`/dashboard/invoice/${invoiceId}/edit`)}
           className="text-sm text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-xl hover:bg-gray-100 transition-colors"
         >
           ✎ Bewerken
         </button>
-
+        )}
         {/* BOEK-002: Verwijderen — alleen voor draft */}
         {canDelete && (
           <button

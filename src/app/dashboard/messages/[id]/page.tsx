@@ -68,16 +68,17 @@ export default function ConversationPage() {
 
     const channel = supabase
       .channel(`messages-${currentUserId}-${otherId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `receiver_id=eq.${currentUserId}`
-        },
-        () => fetchMessages()
-      )
+      .on('postgres_changes', {
+  event: 'INSERT',
+  schema: 'public',
+  table: 'messages'
+}, (payload) => {
+  const msg = payload.new as any
+  const isRelevant =
+    (msg.sender_id === currentUserId && msg.receiver_id === otherId) ||
+    (msg.sender_id === otherId && msg.receiver_id === currentUserId)
+  if (isRelevant) fetchMessages()
+})
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
