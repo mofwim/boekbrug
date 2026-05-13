@@ -4,7 +4,7 @@ import { Suspense } from 'react'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
-
+import { ErrorMessage, SuccessMessage } from '@/components/ui/Feedback'
 // المكون الداخلي
 function LoginContent() {
   const [email, setEmail] = useState('')
@@ -74,8 +74,7 @@ function LoginContent() {
             />
           </div>
 
-          {error && <p className="text-sm text-red-500">{error}</p>}
-
+          <ErrorMessage message={error} />
           <button
             onClick={handleLogin}
             disabled={loading}

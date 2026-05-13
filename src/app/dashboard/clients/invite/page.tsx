@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { ErrorMessage, SuccessMessage } from '@/components/ui/Feedback'
 
 export default function InviteClientPage() {
   const router = useRouter()
@@ -77,9 +78,12 @@ export default function InviteClientPage() {
             </button>
           </div>
           {success && <p className="text-sm text-green-600">{success}</p>}
-          {error && <p className="text-sm text-red-500">{error}</p>}
-        </div>
+          <ErrorMessage message={error} />        </div>
       </div>
     </div>
   )
 }
+
+
+
+

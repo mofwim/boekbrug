@@ -4,7 +4,7 @@ import { Suspense } from 'react'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
-
+import { ErrorMessage, SuccessMessage } from '@/components/ui/Feedback'
 // المكون الداخلي
 function RegisterContent() {
   const [step, setStep] = useState(1)
@@ -146,8 +146,7 @@ function RegisterContent() {
             />
             </div>
 
-            {error && <p className="text-sm text-red-500">{error}</p>}
-
+            <ErrorMessage message={error} />
             <button onClick={handleRegister} disabled={loading}
               className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
               {loading ? 'Bezig...' : 'Account aanmaken'}
