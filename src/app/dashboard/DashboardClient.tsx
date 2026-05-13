@@ -1,5 +1,8 @@
 'use client'
 
+// src/app/dashboard/DashboardClient.tsx
+// BOEK-007: ZZP'er يذهب مباشرة لمحاسبه — لا قائمة فارغة
+
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -20,13 +23,12 @@ export default function DashboardClient({ profile }: { profile: any }) {
   const [clients, setClients] = useState<any[]>([])
   const [notifications, setNotifications] = useState<any[]>([])
   const [showNotifications, setShowNotifications] = useState(false)
+  const [unreadMessages, setUnreadMessages] = useState(0)
+  const [accountantId, setAccountantId] = useState<string | null>(null)
 
-useEffect(() => {
+  useEffect(() => {
+    async function loadData() {
 
-    
-    async function loadInvoices() {
-
-        // جلب عملاء المحاسب
       if (profile.role === 'accountant') {
         const { data: clientLinks } = await supabase
           .from('accountant_clients')
@@ -34,35 +36,75 @@ useEffect(() => {
           .eq('accountant_id', profile.id)
 
         if (clientLinks) {
-          const clientProfiles = clientLinks.map((c: any) => c.profiles)
-          setClients(clientProfiles)
+          setClients(clientLinks.map((c: any) => c.profiles))
         }
       }
-        const { data } = await supabase
-          .from('invoices')
-          .select('*')
-          .eq('sender_id', profile.id)
-          .order('created_at', { ascending: false })
 
-        if (data) setInvoices(data)
-        //  جلب كل الإشعارات — مقروءة وغير مقروءة
-        const { data: notifData } = await supabase
-          .from('notifications')
-          .select('*')
-          .eq('user_id', profile.id)
-          .order('created_at', { ascending: false })
-          .limit(20)
+      // ZZP'er: جلب معرف المحاسب للتوجيه المباشر
+      if (profile.role === 'zzper') {
+        const { data: link } = await supabase
+          .from('accountant_clients')
+          .select('accountant_id')
+          .eq('zzper_id', profile.id)
+          .maybeSingle()
 
-        if (notifData) setNotifications(notifData)
+        if (link?.accountant_id) setAccountantId(link.accountant_id)
+      }
+
+      const { data } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('sender_id', profile.id)
+        .order('created_at', { ascending: false })
+
+      if (data) setInvoices(data)
+
+      const { data: notifData } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(20)
+
+      if (notifData) setNotifications(notifData)
+
+      // عدد الرسائل غير المقروءة
+      const { count } = await supabase
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('receiver_id', profile.id)
+        .eq('read', false)
+
+      setUnreadMessages(count || 0)
     }
-    loadInvoices()
+    loadData()
   }, [])
 
-    // تسجيل الخروج
   async function handleLogout() {
     await supabase.auth.signOut()
     router.push('/login')
-  } 
+  }
+
+  async function markAllRead() {
+    await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', profile.id)
+      .eq('read', false)
+
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+  }
+
+  // ZZP'er: مباشرة للمحاسب — أو لقائمة الرسائل إن لم يكن له محاسب بعد
+  function handleMessagesClick() {
+    if (profile.role === 'zzper') {
+      accountantId
+        ? router.push(`/dashboard/messages/${accountantId}`)
+        : router.push('/dashboard/messages')
+    } else {
+      router.push('/dashboard/messages')
+    }
+  }
 
   const statusLabel: Record<string, string> = {
     draft: 'Concept',
@@ -78,21 +120,6 @@ useEffect(() => {
     overdue: 'bg-red-100 text-red-600'
   }
 
-
-
-
-      // تحديد جميع الإشعارات كمقروءة
-      async function markAllRead() {
-        await supabase
-          .from('notifications')
-          .update({ read: true })
-          .eq('user_id', profile.id)
-          .eq('read', false)
-
-        // تحديث محلياً بدون حذف
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })))
-      }
-
   return (
     <div className="min-h-screen bg-[#f2f2f7]">
 
@@ -102,65 +129,76 @@ useEffect(() => {
           <h1 className="text-lg font-bold text-gray-900">BoekBrug</h1>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500">{profile.company_name}</span>
+
             <button
-                onClick={() => router.push('/dashboard/settings')}
-                className="text-xs text-gray-400 hover:text-gray-600"
+              onClick={() => router.push('/dashboard/settings')}
+              className="text-xs text-gray-400 hover:text-gray-600"
             >
-                ⚙️ Instellingen
+              ⚙️ Instellingen
             </button>
+
+            {/* BOEK-007: Berichten — ZZP'er gaat direct naar zijn boekhouder */}
+            <button
+              onClick={handleMessagesClick}
+              className="relative text-xs text-gray-400 hover:text-blue-600 font-medium transition-colors"
+            >
+              💬 Berichten
+              {unreadMessages > 0 && (
+                <span className="absolute -top-1 -right-2 bg-blue-600 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                  {unreadMessages}
+                </span>
+              )}
+            </button>
+
             <div className="flex items-center gap-3 relative">
+              <button
+                onClick={() => {
+                  setShowNotifications(!showNotifications)
+                  if (!showNotifications && notifications.filter(n => !n.read).length > 0) markAllRead()
+                }}
+                className="relative text-gray-400 hover:text-gray-600"
+              >
+                🔔
+                {notifications.filter(n => !n.read).length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                    {notifications.filter(n => !n.read).length}
+                  </span>
+                )}
+              </button>
 
-                {/* زر الإشعارات */}
-                <button
-                  onClick={() => {
-                    setShowNotifications(!showNotifications)
-                    if (!showNotifications && notifications.filter(n => !n.read).length > 0) markAllRead()
-                  }}
-                  className="relative text-gray-400 hover:text-gray-600"
-                >
-                  🔔
-                  {notifications.filter(n => !n.read).length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                      {notifications.filter(n => !n.read).length}
-                    </span>
+              {showNotifications && (
+                <div className="absolute top-8 right-0 bg-white rounded-2xl shadow-lg border border-gray-100 w-80 z-50">
+                  <div className="px-4 py-3 border-b border-gray-100">
+                    <p className="text-sm font-semibold text-gray-900">Meldingen</p>
+                  </div>
+                  {notifications.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-6">Geen meldingen</p>
+                  ) : (
+                    <div className="divide-y divide-gray-50 max-h-80 overflow-y-auto">
+                      {notifications.map(n => (
+                        <div
+                          key={n.id}
+                          onClick={() => {
+                            if (n.link) router.push(n.link)
+                            setShowNotifications(false)
+                          }}
+                          className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${!n.read ? 'bg-blue-50' : ''}`}
+                        >
+                          <p className={`text-sm font-medium ${!n.read ? 'text-blue-900' : 'text-gray-900'}`}>
+                            {n.title}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-0.5">{n.body}</p>
+                          <p className="text-xs text-gray-300 mt-1">
+                            {new Date(n.created_at).toLocaleDateString('nl-NL')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </button>
+                </div>
+              )}
+            </div>
 
-                {/* قائمة الإشعارات */}
-{showNotifications && (
-  <div className="absolute top-8 right-0 bg-white rounded-2xl shadow-lg border border-gray-100 w-80 z-50">
-    <div className="px-4 py-3 border-b border-gray-100">
-      <p className="text-sm font-semibold text-gray-900">Meldingen</p>
-    </div>
-    {notifications.length === 0 ? (
-      <p className="text-sm text-gray-400 text-center py-6">Geen meldingen</p>
-    ) : (
-      <div className="divide-y divide-gray-50 max-h-80 overflow-y-auto">
-        {notifications.map(n => (
-          <div
-            key={n.id}
-            onClick={() => {
-              if (n.link) router.push(n.link)
-              setShowNotifications(false)
-            }}
-            className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${
-              !n.read ? 'bg-blue-50' : ''
-            }`}
-          >
-            <p className={`text-sm font-medium ${!n.read ? 'text-blue-900' : 'text-gray-900'}`}>
-              {n.title}
-            </p>
-            <p className="text-xs text-gray-500 mt-0.5">{n.body}</p>
-            <p className="text-xs text-gray-300 mt-1">
-              {new Date(n.created_at).toLocaleDateString('nl-NL')}
-            </p>
-          </div>
-        ))}
-      </div>
-    )}
-  </div>
-)}
-          </div>
             <span className={`text-xs px-2 py-1 rounded-full font-medium ${
               profile.role === 'accountant'
                 ? 'bg-purple-100 text-purple-700'
@@ -168,11 +206,12 @@ useEffect(() => {
             }`}>
               {profile.role === 'accountant' ? 'Boekhouder' : "ZZP'er"}
             </span>
+
             <button
-                onClick={handleLogout}
-                className="text-xs text-gray-400 hover:text-red-500"
-              >
-                Uitloggen
+              onClick={handleLogout}
+              className="text-xs text-gray-400 hover:text-red-500"
+            >
+              Uitloggen
             </button>
           </div>
         </div>
@@ -183,8 +222,6 @@ useEffect(() => {
         {/* ZZP'er Dashboard */}
         {profile.role === 'zzper' && (
           <div className="space-y-4">
-
-            {/* Stats */}
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Verzonden</p>
@@ -207,7 +244,22 @@ useEffect(() => {
               </div>
             </div>
 
-            {/* Facturen lijst */}
+            {/* بانر المحاسب للـ ZZP'er إذا لم يكن له محاسب */}
+            {!accountantId && (
+              <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-blue-900">Nog geen boekhouder gekoppeld</p>
+                  <p className="text-xs text-blue-500 mt-0.5">Koppel een boekhouder om samen te werken</p>
+                </div>
+                <button
+                  onClick={() => router.push('/dashboard/settings')}
+                  className="text-xs text-blue-600 font-semibold hover:text-blue-700"
+                >
+                  Koppelen →
+                </button>
+              </div>
+            )}
+
             <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <h2 className="font-semibold text-gray-900">Facturen</h2>
@@ -226,7 +278,11 @@ useEffect(() => {
               ) : (
                 <div className="divide-y divide-gray-50">
                   {invoices.map(invoice => (
-                    <div key={invoice.id} onClick={() => router.push(`/dashboard/invoice/${invoice.id}`)} className="flex items-center justify-between px-5 py-4 hover:bg-gray-50">
+                    <div
+                      key={invoice.id}
+                      onClick={() => router.push(`/dashboard/invoice/${invoice.id}`)}
+                      className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer"
+                    >
                       <div>
                         <p className="text-sm font-medium text-gray-900">{invoice.invoice_number}</p>
                         <p className="text-xs text-gray-400 mt-0.5">{invoice.invoice_date}</p>
@@ -235,8 +291,8 @@ useEffect(() => {
                         <p className="text-sm font-semibold text-gray-900">
                           €{invoice.total_inc_btw?.toFixed(2)}
                         </p>
-                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor[invoice.status]}`}>
-                          {statusLabel[invoice.status]}
+                        <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor[invoice.status] || 'bg-gray-100 text-gray-600'}`}>
+                          {statusLabel[invoice.status] || invoice.status}
                         </span>
                       </div>
                     </div>
@@ -264,10 +320,11 @@ useEffect(() => {
             <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <h2 className="font-semibold text-gray-900">Mijn klanten</h2>
-                <button 
+                <button
                   onClick={() => router.push('/dashboard/clients/invite')}
-                  className="bg-purple-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-purple-700 font-medium">
-                    + Klant toevoegen
+                  className="bg-purple-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-purple-700 font-medium"
+                >
+                  + Klant toevoegen
                 </button>
               </div>
 
@@ -277,8 +334,12 @@ useEffect(() => {
                 </p>
               ) : (
                 <div className="divide-y divide-gray-50">
-                  {clients.map((client: any) => ( // function onClick to direct to client page
-                    <div key={client.id} onClick={() => router.push(`/dashboard/clients/${client.id}`)} className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer">
+                  {clients.map((client: any) => (
+                    <div
+                      key={client.id}
+                      onClick={() => router.push(`/dashboard/clients/${client.id}`)}
+                      className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer"
+                    >
                       <div>
                         <p className="text-sm font-medium text-gray-900">
                           {client.company_name || client.full_name}

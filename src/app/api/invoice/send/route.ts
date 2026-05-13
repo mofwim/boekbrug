@@ -62,17 +62,6 @@ if (accountantId) {
   console.log('notification sent to accountant:', accountantId)
 }
 
-    // إشعار للـ ZZP'er
- //   await supabase
-  //    .from('notifications')
-  //    .insert({
-  //      user_id: user.id,
-  //      title: 'Factuur verzonden',
-  //      body: `Factuur ${invoiceNumber} is succesvol verzonden naar ${clientName}`,
-   //     type: 'invoice',
-   //     read: false,
-   //     link: `/dashboard`
-    //  })  
 console.log('accountantLink:', accountantLink)
 console.log('accountantId:', accountantId)
 console.log('user.id:', user.id)
