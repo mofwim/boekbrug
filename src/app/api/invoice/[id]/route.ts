@@ -29,15 +29,16 @@ async function getAuthorizedInvoice(
 // ── PUT: Factuur bewerken (BOEK-001) ─────────────────────────────────────────
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+{ params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const supabase = await createServerSupabaseClient()
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { invoice, error, status } = await getAuthorizedInvoice(supabase, params.id, user.id)
+    const { invoice, error, status } = await getAuthorizedInvoice(supabase, id, user.id)
     if (error) return NextResponse.json({ error }, { status })
 
     // Human Control: betaalde of verwerkte facturen mogen niet bewerkt worden
@@ -78,14 +79,14 @@ export async function PUT(
         total_ex_btw, btw_amount, total_inc_btw,
         updated_at: new Date().toISOString()
       })
-      .eq('id', params.id)
+      .eq('id', id)
 
     if (updateError) return NextResponse.json({ error: 'Bijwerken mislukt' }, { status: 500 })
 
-    await supabase.from('invoice_lines').delete().eq('invoice_id', params.id)
+    await supabase.from('invoice_lines').delete().eq('invoice_id', id)
     await supabase.from('invoice_lines').insert(
       lines.map((l: any) => ({
-        invoice_id: params.id,
+        invoice_id: id,
         description: l.description,
         quantity: l.quantity,
         unit_price: l.unit_price,
@@ -98,7 +99,7 @@ export async function PUT(
       user_id: user.id,
       action: 'invoice.updated',
       entity_type: 'invoice',
-      entity_id: params.id
+      entity_id: id
     })
 
     return NextResponse.json({ success: true })
@@ -111,15 +112,17 @@ export async function PUT(
 // ── DELETE: Factuur verwijderen (BOEK-002) ────────────────────────────────────
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+{ params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
+
   try {
     const supabase = await createServerSupabaseClient()
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { invoice, error, status } = await getAuthorizedInvoice(supabase, params.id, user.id)
+    const { invoice, error, status } = await getAuthorizedInvoice(supabase, id, user.id)
     if (error) return NextResponse.json({ error }, { status })
 
     if (invoice!.status !== 'draft') {
@@ -129,10 +132,10 @@ export async function DELETE(
       )
     }
 
-    await supabase.from('invoice_lines').delete().eq('invoice_id', params.id)
+    await supabase.from('invoice_lines').delete().eq('invoice_id', id)
 
     const { error: deleteError } = await supabase
-      .from('invoices').delete().eq('id', params.id)
+      .from('invoices').delete().eq('id', id)
 
     if (deleteError) return NextResponse.json({ error: 'Verwijderen mislukt' }, { status: 500 })
 
@@ -140,7 +143,7 @@ export async function DELETE(
       user_id: user.id,
       action: 'invoice.deleted',
       entity_type: 'invoice',
-      entity_id: params.id,
+      entity_id: id,
       old_value: JSON.stringify({ invoice_number: invoice!.invoice_number })
     })
 

@@ -6,8 +6,9 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const supabase = await createServerSupabaseClient()
 
@@ -17,7 +18,7 @@ export async function POST(
     const { data: original, error: fetchError } = await supabase
       .from('invoices')
       .select('*')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('sender_id', user.id)
       .single()
 
@@ -62,7 +63,7 @@ export async function POST(
     const { data: originalLines } = await supabase
       .from('invoice_lines')
       .select('description, quantity, unit_price, btw_rate, line_total')
-      .eq('invoice_id', params.id)
+      .eq('invoice_id', id)
 
     if (originalLines && originalLines.length > 0) {
       await supabase.from('invoice_lines').insert(
@@ -75,7 +76,7 @@ export async function POST(
       action: 'invoice.duplicated',
       entity_type: 'invoice',
       entity_id: newInvoice.id,
-      old_value: JSON.stringify({ source_invoice_id: params.id })
+      old_value: JSON.stringify({ source_invoice_id: id })
     })
 
     return NextResponse.json({ success: true, invoiceId: newInvoice.id })
