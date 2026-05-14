@@ -1,69 +1,69 @@
 // app/api/files/route.ts
 // Document upload (POST) + list (GET) (BOEK-010)
-// src/app/api/files/route.ts
-// GET: lijst bestanden van user
-// POST: upload bestand → notificeer boekhouder
 
-import { NextRequest, NextResponse } from 'next/server'
-import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { createNotification } from '@/lib/notifications'
+import { NextRequest, NextResponse } from "next/server";
+import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { uploadDocument, listDocuments } from "@/lib/documents";
 
-export async function GET() {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+// GET /api/files?year=2026&quarter=1&doc_type=pdf&shared=true
+export async function GET(req: NextRequest) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
-  const { data, error } = await supabase
-    .from('documents')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
+  const p = req.nextUrl.searchParams;
+  const year    = p.get("year")     ? Number(p.get("year"))    : undefined;
+  const quarter = p.get("quarter")  ? Number(p.get("quarter")) : undefined;
+  const docType = p.get("doc_type") ?? undefined;
+  const limit   = Number(p.get("limit") ?? "30");
+  const cursor  = p.get("cursor")   ?? undefined;
+  const sharedOnly = p.get("shared") === "true";
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ documents: data })
+  try {
+    const result = await listDocuments(user.id, {
+      year,
+      quarter,
+      docType,
+      limit,
+      cursor,
+      sharedOnly,
+    });
+    return NextResponse.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Onbekende fout";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
+// POST /api/files — multipart/form-data
+// Fields: file, year, quarter, invoice_id?, notes?, shared?
 export async function POST(req: NextRequest) {
-  const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
-  const body = await req.json()
-  const { file_name, file_url, file_size, file_type, doc_type, period, year, invoice_id, notes } = body
+  const formData = await req.formData();
+  const file = formData.get("file") as File | null;
 
-  const { data, error } = await supabase
-    .from('documents')
-    .insert({ user_id: user.id, file_name, file_url, file_size, file_type, doc_type, period, year, invoice_id, notes })
-    .select()
-    .single()
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  // Notify accountant if user has one linked
-  const { data: link } = await supabase
-    .from('accountant_clients')
-    .select('accountant_id')
-    .eq('zzper_id', user.id)
-    .maybeSingle()
-
-  if (link?.accountant_id) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('company_name, full_name')
-      .eq('id', user.id)
-      .single()
-
-    const senderName = profile?.company_name || profile?.full_name || 'Een klant'
-
-    await createNotification({
-      supabase,
-      userId: link.accountant_id,
-      title: 'Nieuw document ontvangen',
-      body: `${senderName} heeft een bestand geüpload: ${file_name}`,
-      type: 'invoice',
-      link: `/dashboard/clients/${user.id}`,
-    })
+  if (!file) {
+    return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 });
   }
 
-  return NextResponse.json({ document: data })
+  const now = new Date();
+  const year    = Number(formData.get("year")    ?? now.getFullYear());
+  const quarter = Number(formData.get("quarter") ?? Math.ceil((now.getMonth() + 1) / 3));
+  const invoiceId = (formData.get("invoice_id") as string | null) ?? undefined;
+  const notes     = (formData.get("notes")     as string | null) ?? undefined;
+  const shared    = formData.get("shared") === "true";
+
+  const { id, error } = await uploadDocument(user.id, file, {
+    year,
+    quarter,
+    invoiceId,
+    notes,
+    shared,
+  });
+
+  if (error) return NextResponse.json({ error }, { status: 400 });
+  return NextResponse.json({ id }, { status: 201 });
 }

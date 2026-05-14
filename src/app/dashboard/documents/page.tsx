@@ -12,6 +12,12 @@ export default function DocumentsPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       <div className="mb-6">
+        <a
+          href="/dashboard"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
+        >
+          ← Terug naar dashboard
+        </a>
         <h1 className="text-xl font-semibold">Documenten</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Upload en beheer je facturen, bonnen en contracten
