@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { clientEmail, clientName, invoiceNumber, totalInc, dueDate } = body
+    const totalIncNum = typeof totalInc === 'number' ? totalInc : parseFloat(totalInc ?? '0')
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -52,7 +53,8 @@ if (accountantId) {
     .insert({
       user_id: accountantId,
       title: 'Nieuwe factuur ontvangen',
-      body: `${zzperName} heeft factuur ${invoiceNumber} verzonden — €${totalInc.toFixed(2)}`,
+      body: `${zzperName} heeft factuur ${invoiceNumber} verzonden — €${totalIncNum.toFixed(2)}`,
+     // body: `${zzperName} heeft factuur ${invoiceNumber} verzonden — €${totalInc.toFixed(2)}`,
       type: 'invoice',
       read: false,
       link: `/dashboard/clients/${user.id}`
