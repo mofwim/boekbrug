@@ -2,6 +2,7 @@
 // 5-step onboarding wizard (BOEK-015)
 // Shown once — on first login when onboarding_done = false
 // Changes v2: saves company data (Step 3), skip option, progress resume
+// Changes v3: KVK + BTW validation in Step 3
 
 "use client";
 
@@ -25,6 +26,32 @@ interface CompanyData {
   btw_number: string;
 }
 
+/** Validation errors for Step 3 fields */
+interface CompanyErrors {
+  kvk_number?: string;
+  btw_number?: string;
+}
+
+// ── Validation rules ────────────────────────────────────
+// KVK: exactly 8 digits
+const KVK_REGEX = /^\d{8}$/;
+// BTW: NL + 9 digits + B + 2 digits  e.g. NL123456789B01
+const BTW_REGEX = /^NL\d{9}B\d{2}$/i;
+
+function validateCompany(data: CompanyData): CompanyErrors {
+  const errors: CompanyErrors = {};
+  const kvk = data.kvk_number.trim();
+  const btw = data.btw_number.trim();
+
+  if (kvk && !KVK_REGEX.test(kvk)) {
+    errors.kvk_number = "KVK-nummer moet uit 8 cijfers bestaan";
+  }
+  if (btw && !BTW_REGEX.test(btw)) {
+    errors.btw_number = "Formaat: NL123456789B01";
+  }
+  return errors;
+}
+
 const STEPS = [
   { id: 1, title: "Welkom bij BoekBrug" },
   { id: 2, title: "Wie ben jij?" },
@@ -45,6 +72,7 @@ export function OnboardingWizard({
     kvk_number: "",
     btw_number: "",
   });
+  const [companyErrors, setCompanyErrors] = useState<CompanyErrors>({});
   const [saving, setSaving] = useState(false);
   const router = useRouter();
 
@@ -70,8 +98,14 @@ export function OnboardingWizard({
       return;
     }
 
-    // Step 3 — save company data alongside progress
+    // Step 3 — validate then save company data alongside progress
     if (step === 3) {
+      const errors = validateCompany(company);
+      if (Object.keys(errors).length > 0) {
+        setCompanyErrors(errors);
+        return; // stop — do not advance
+      }
+      setCompanyErrors({});
       const companyPayload = {
         company_name: company.company_name.trim() || null,
         kvk_number: company.kvk_number.trim() || null,
@@ -128,7 +162,11 @@ export function OnboardingWizard({
             {step === 1 && <StepWelcome userName={userName} />}
             {step === 2 && <StepRole role={role} setRole={setRole} />}
             {step === 3 && (
-              <StepCompany company={company} setCompany={setCompany} />
+              <StepCompany
+                company={company}
+                setCompany={setCompany}
+                errors={companyErrors}
+              />
             )}
             {step === 4 && <StepFirstInvoice role={role} />}
             {step === 5 && <StepDone role={role} />}
@@ -277,9 +315,11 @@ function RoleCard({
 function StepCompany({
   company,
   setCompany,
+  errors,
 }: {
   company: CompanyData;
   setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
+  errors: CompanyErrors;
 }) {
   /** Generic field updater */
   function handleChange(field: keyof CompanyData) {
@@ -314,8 +354,13 @@ function StepCompany({
             placeholder="12345678"
             maxLength={8}
             inputMode="numeric"
-            className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            className={`w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+              errors.kvk_number ? "border-red-500 focus:ring-red-500" : ""
+            }`}
           />
+          {errors.kvk_number && (
+            <p className="text-xs text-red-500 mt-1">{errors.kvk_number}</p>
+          )}
         </div>
         <div>
           <label className="text-sm font-medium block mb-1">BTW-nummer</label>
@@ -324,8 +369,13 @@ function StepCompany({
             value={company.btw_number}
             onChange={handleChange("btw_number")}
             placeholder="NL123456789B01"
-            className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            className={`w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+              errors.btw_number ? "border-red-500 focus:ring-red-500" : ""
+            }`}
           />
+          {errors.btw_number && (
+            <p className="text-xs text-red-500 mt-1">{errors.btw_number}</p>
+          )}
         </div>
       </div>
     </div>
