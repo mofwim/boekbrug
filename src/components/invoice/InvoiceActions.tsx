@@ -5,6 +5,7 @@
 // مكون مشترك — يُستخدم في صفحة تفاصيل الفاتورة
 
 import { useState } from 'react'
+//import { useInfiniteInvoices } from "@/hooks/useInfiniteInvoices";
 import { useRouter } from 'next/navigation'
 
 type Props = {

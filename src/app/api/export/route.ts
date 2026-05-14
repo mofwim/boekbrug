@@ -1,13 +1,24 @@
 // app/api/export/route.ts
 // CSV export for invoices (BOEK-014)
-// GET /api/export?year=2026&quarter=1&status=paid
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/lib/supabase-server";
+import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { invoicesToCsv, type InvoiceExportRow } from "@/lib/export";
 
+type InvRow = {
+  invoice_number: string | null;
+  client_name: string | null;
+  status: string | null;
+  total_ex_btw: number | null;
+  btw_amount: number | null;
+  total_inc_btw: number | null;
+  btw_rate: number | null;
+  invoice_date: string | null;
+  due_date: string | null;
+};
+
 export async function GET(req: NextRequest) {
-  const supabase = await createServerClient();
+  const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
@@ -26,7 +37,6 @@ export async function GET(req: NextRequest) {
   if (status) q = q.eq("status", status);
 
   if (year && quarter) {
-    // Filter by quarter date range
     const month = (Number(quarter) - 1) * 3;
     const start = new Date(Number(year), month, 1).toISOString().slice(0, 10);
     const end = new Date(Number(year), month + 3, 0).toISOString().slice(0, 10);
@@ -38,7 +48,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const rows = (data ?? []).map((inv): InvoiceExportRow => ({
+  const rows = ((data as InvRow[]) ?? []).map((inv): InvoiceExportRow => ({
     invoice_number: inv.invoice_number ?? "",
     client_name: inv.client_name ?? "",
     status: inv.status ?? "",
