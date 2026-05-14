@@ -12,7 +12,17 @@ const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
 
-export function QuarterlyOverview() {
+interface Client {
+  id: string;
+  full_name: string | null;
+  company_name: string | null;
+}
+
+interface Props {
+  isAccountant: boolean;
+}
+
+export function QuarterlyOverview({ isAccountant }: Props) {
   const [year, setYear] = useState(CURRENT_YEAR);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(
     Math.ceil((new Date().getMonth() + 1) / 3) as 1 | 2 | 3 | 4
@@ -21,18 +31,49 @@ export function QuarterlyOverview() {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // Accountant: client selector
+  const [clients, setClients] = useState<Client[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string>("");
+
+  // Load clients for accountant
   useEffect(() => {
+    if (!isAccountant) return;
+    fetch("/api/quarterly/clients")
+      .then((r) => r.json())
+      .then((d) => {
+        setClients(d ?? []);
+        if (d?.length > 0) setSelectedClientId(d[0].id);
+      });
+  }, [isAccountant]);
+
+  // Load quarterly data
+  useEffect(() => {
+    if (isAccountant && !selectedClientId) return;
+
     setLoading(true);
-    fetch(`/api/quarterly?year=${year}&quarter=${quarter}`)
+    setData(null);
+
+    const params = new URLSearchParams({
+      year: String(year),
+      quarter: String(quarter),
+      ...(isAccountant && selectedClientId ? { clientId: selectedClientId } : {}),
+    });
+
+    fetch(`/api/quarterly?${params}`)
       .then((r) => r.json())
       .then(setData)
       .finally(() => setLoading(false));
-  }, [year, quarter]);
+  }, [year, quarter, selectedClientId, isAccountant]);
 
   async function handleExport() {
     setExporting(true);
     try {
-      const res = await fetch(`/api/export?year=${year}&quarter=${quarter}`);
+      const params = new URLSearchParams({
+        year: String(year),
+        quarter: String(quarter),
+        ...(isAccountant && selectedClientId ? { clientId: selectedClientId } : {}),
+      });
+      const res = await fetch(`/api/export?${params}`);
       const csv = await res.text();
       downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`);
     } finally {
@@ -40,10 +81,38 @@ export function QuarterlyOverview() {
     }
   }
 
+  // Accountant: geen klant gekoppeld
+  if (isAccountant && clients.length === 0 && !loading) {
+    return (
+      <div className="text-center py-16 text-muted-foreground text-sm">
+        <p>Geen klanten gekoppeld.</p>
+        <a href="/dashboard/clients/invite" className="text-primary underline mt-2 inline-block">
+          Klant uitnodigen →
+        </a>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Period selector */}
+      {/* Period + client selector */}
       <div className="flex items-center gap-3 flex-wrap">
+
+        {/* Accountant: klant selector */}
+        {isAccountant && clients.length > 0 && (
+          <select
+            value={selectedClientId}
+            onChange={(e) => setSelectedClientId(e.target.value)}
+            className="text-sm border rounded-md px-3 py-1.5 bg-background font-medium"
+          >
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.company_name ?? c.full_name ?? "Onbekend"}
+              </option>
+            ))}
+          </select>
+        )}
+
         <div className="flex gap-1 bg-muted rounded-lg p-1">
           {QUARTERS.map((q) => (
             <button
@@ -59,15 +128,14 @@ export function QuarterlyOverview() {
             </button>
           ))}
         </div>
+
         <select
           value={year}
           onChange={(e) => setYear(Number(e.target.value))}
           className="text-sm border rounded-md px-3 py-1.5 bg-background"
         >
           {YEARS.map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
+            <option key={y} value={y}>{y}</option>
           ))}
         </select>
 
@@ -87,75 +155,53 @@ export function QuarterlyOverview() {
 
       {!loading && data && (
         <>
-          {/* Summary cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <SummaryCard
-              label="Totaal excl. BTW"
-              value={formatEur(data?.totalExcl ?? 0)}
-              accent="default"
-            />
-            <SummaryCard
-              label="Totaal BTW"
-              value={formatEur(data?.totalBtw ?? 0)}
-              accent="default"
-            />
-            <SummaryCard
-              label="Betaald"
-              value={formatEur(data?.paid ?? 0)}
-              accent="green"
-            />
+            <SummaryCard label="Totaal excl. BTW" value={formatEur(data.totalExcl)} accent="default" />
+            <SummaryCard label="Totaal BTW" value={formatEur(data.totalBtw)} accent="default" />
+            <SummaryCard label="Betaald" value={formatEur(data.paid)} accent="green" />
             <SummaryCard
               label="Openstaand"
-              value={formatEur((data?.outstanding ?? 0) + (data?.overdue ?? 0))}
-              accent={( data?.overdue ?? 0) > 0 ? "red" : "default"}
-              sub={( data?.overdue ?? 0) > 0 ? `${formatEur(data?.overdue ?? 0)} te laat` : undefined}
+              value={formatEur((data.outstanding ?? 0) + (data.overdue ?? 0))}
+              accent={(data.overdue ?? 0) > 0 ? "red" : "default"}
+              sub={(data.overdue ?? 0) > 0 ? `${formatEur(data.overdue)} te laat` : undefined}
             />
           </div>
 
-          {/* BTW breakdown */}
-          {(data?.btwBreakdown?.length ?? 0) > 0 && (
+          {(data.btwBreakdown?.length ?? 0) > 0 && (
             <div className="border rounded-lg overflow-hidden">
               <div className="px-4 py-3 border-b bg-muted/50">
                 <h3 className="text-sm font-medium">BTW overzicht</h3>
               </div>
               <div className="divide-y">
-                {(data?.btwBreakdown ?? []).map((b) => (
-                  <div
-                    key={b.rate}
-                    className="flex items-center justify-between px-4 py-3 text-sm"
-                  >
+                {data.btwBreakdown.map((b) => (
+                  <div key={b.rate} className="flex items-center justify-between px-4 py-3 text-sm">
                     <span className="text-muted-foreground">BTW {b.rate}%</span>
                     <div className="text-right">
                       <p className="font-medium">{formatEur(b.totalBtw)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        over {formatEur(b.totalExcl)}
-                      </p>
+                      <p className="text-xs text-muted-foreground">over {formatEur(b.totalExcl)}</p>
                     </div>
                   </div>
                 ))}
                 <div className="flex items-center justify-between px-4 py-3 text-sm font-medium bg-muted/30">
                   <span>Totaal BTW</span>
-                  <span>{formatEur(data?.totalBtw ?? 0)}</span>
+                  <span>{formatEur(data.totalBtw)}</span>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Invoice list */}
-          {(data?.invoices?.length ?? 0) === 0 ? (
+          {(data.invoices?.length ?? 0) === 0 ? (
             <p className="text-center text-muted-foreground py-12 text-sm">
               Geen facturen in Q{quarter} {year}
             </p>
           ) : (
             <div className="border rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b bg-muted/50 flex justify-between items-center">
-                <h3 className="text-sm font-medium">
-                  Facturen ({data?.invoiceCount ?? 0})
-                </h3>
+              <div className="px-4 py-3 border-b bg-muted/50">
+                <h3 className="text-sm font-medium">Facturen ({data.invoiceCount})</h3>
               </div>
               <div className="divide-y">
-                {(data?.invoices ?? []).map((inv) => (
-                  <a
+                {data.invoices.map((inv) => (
+                  
                     key={inv.id}
                     href={`/dashboard/invoice/${inv.id}`}
                     className="flex items-center justify-between px-4 py-3 text-sm hover:bg-muted/50 transition-colors"
@@ -179,24 +225,16 @@ export function QuarterlyOverview() {
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  accent,
-  sub,
-}: {
+function SummaryCard({ label, value, accent, sub }: {
   label: string;
   value: string;
   accent: "default" | "green" | "red";
   sub?: string;
 }) {
   const accentClass =
-    accent === "green"
-      ? "text-green-600"
-      : accent === "red"
-      ? "text-red-600"
-      : "text-foreground";
-
+    accent === "green" ? "text-green-600" :
+    accent === "red" ? "text-red-600" :
+    "text-foreground";
   return (
     <div className="border rounded-lg px-4 py-3">
       <p className="text-xs text-muted-foreground mb-1">{label}</p>

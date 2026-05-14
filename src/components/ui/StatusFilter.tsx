@@ -3,38 +3,40 @@
 
 "use client";
 
-import type { InvoiceStatusFilter } from "@/hooks/useInfiniteInvoices";
+// src/components/ui/StatusFilter.tsx
+// Filters: Alles | Verzonden | Betaald | Concept
+// Verlopen is NOT a filter — it's computed per-invoice in DashboardClient
 
-const FILTERS: { value: InvoiceStatusFilter; label: string }[] = [
-  { value: "all",     label: "Alle" },
-  { value: "draft",   label: "Concept" },
-  { value: "sent",    label: "Verzonden" },
-  { value: "paid",    label: "Betaald" },
-  { value: "overdue", label: "Verlopen" },
-];
+import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
 
-interface StatusFilterProps {
-  value: InvoiceStatusFilter;
-  onChange: (status: InvoiceStatusFilter) => void;
+interface Props {
+  value: InvoiceStatusFilter
+  onChange: (v: InvoiceStatusFilter) => void
 }
 
-/** Horizontaal scrollbare filter-pills boven de facturenlijst */
-export function StatusFilter({ value, onChange }: StatusFilterProps) {
+const FILTERS: { value: InvoiceStatusFilter; label: string }[] = [
+  { value: 'all',   label: 'Alles' },
+  { value: 'sent',  label: 'Verzonden' },
+  { value: 'paid',  label: 'Betaald' },
+  { value: 'draft', label: 'Concept' },
+]
+
+export function StatusFilter({ value, onChange }: Props) {
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1 px-5 pt-3">
-      {FILTERS.map((f) => (
+    <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 overflow-x-auto">
+      {FILTERS.map(f => (
         <button
           key={f.value}
           onClick={() => onChange(f.value)}
-          className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+          className={`text-xs px-3 py-1.5 rounded-full font-medium whitespace-nowrap transition-colors ${
             value === f.value
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              ? 'bg-gray-900 text-white'
+              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
           }`}
         >
           {f.label}
         </button>
       ))}
     </div>
-  );
+  )
 }
