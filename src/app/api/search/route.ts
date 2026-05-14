@@ -7,7 +7,9 @@ import { searchAll, type SearchTarget } from "@/lib/search";
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
@@ -20,6 +22,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ results: [] });
   }
 
-  const results = await searchAll(user.id, query, target);
+  // Get role from profiles
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const role = profile?.role === "accountant" ? "accountant" : "zzper";
+
+  const results = await searchAll(user.id, query, target, 8, role);
   return NextResponse.json({ results });
 }
