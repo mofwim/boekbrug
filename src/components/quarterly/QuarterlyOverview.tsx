@@ -73,7 +73,7 @@ export function QuarterlyOverview() {
 
         <button
           onClick={handleExport}
-          disabled={exporting || !data || data.invoiceCount === 0}
+          disabled={exporting || !data || (data?.invoiceCount ?? 0) === 0}
           className="ml-auto flex items-center gap-2 px-4 py-1.5 text-sm font-medium border rounded-md hover:bg-muted disabled:opacity-50 transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -91,35 +91,35 @@ export function QuarterlyOverview() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <SummaryCard
               label="Totaal excl. BTW"
-              value={formatEur(data.totalExcl)}
+              value={formatEur(data?.totalExcl ?? 0)}
               accent="default"
             />
             <SummaryCard
               label="Totaal BTW"
-              value={formatEur(data.totalBtw)}
+              value={formatEur(data?.totalBtw ?? 0)}
               accent="default"
             />
             <SummaryCard
               label="Betaald"
-              value={formatEur(data.paid)}
+              value={formatEur(data?.paid ?? 0)}
               accent="green"
             />
             <SummaryCard
               label="Openstaand"
-              value={formatEur(data.outstanding + data.overdue)}
-              accent={data.overdue > 0 ? "red" : "default"}
-              sub={data.overdue > 0 ? `${formatEur(data.overdue)} te laat` : undefined}
+              value={formatEur((data?.outstanding ?? 0) + (data?.overdue ?? 0))}
+              accent={( data?.overdue ?? 0) > 0 ? "red" : "default"}
+              sub={( data?.overdue ?? 0) > 0 ? `${formatEur(data?.overdue ?? 0)} te laat` : undefined}
             />
           </div>
 
           {/* BTW breakdown */}
-          {data.btwBreakdown.length > 0 && (
+          {(data?.btwBreakdown?.length ?? 0) > 0 && (
             <div className="border rounded-lg overflow-hidden">
               <div className="px-4 py-3 border-b bg-muted/50">
                 <h3 className="text-sm font-medium">BTW overzicht</h3>
               </div>
               <div className="divide-y">
-                {data.btwBreakdown.map((b) => (
+                {(data?.btwBreakdown ?? []).map((b) => (
                   <div
                     key={b.rate}
                     className="flex items-center justify-between px-4 py-3 text-sm"
@@ -135,14 +135,14 @@ export function QuarterlyOverview() {
                 ))}
                 <div className="flex items-center justify-between px-4 py-3 text-sm font-medium bg-muted/30">
                   <span>Totaal BTW</span>
-                  <span>{formatEur(data.totalBtw)}</span>
+                  <span>{formatEur(data?.totalBtw ?? 0)}</span>
                 </div>
               </div>
             </div>
           )}
 
           {/* Invoice list */}
-          {data.invoices.length === 0 ? (
+          {(data?.invoices?.length ?? 0) === 0 ? (
             <p className="text-center text-muted-foreground py-12 text-sm">
               Geen facturen in Q{quarter} {year}
             </p>
@@ -150,11 +150,11 @@ export function QuarterlyOverview() {
             <div className="border rounded-lg overflow-hidden">
               <div className="px-4 py-3 border-b bg-muted/50 flex justify-between items-center">
                 <h3 className="text-sm font-medium">
-                  Facturen ({data.invoiceCount})
+                  Facturen ({data?.invoiceCount ?? 0})
                 </h3>
               </div>
               <div className="divide-y">
-                {data.invoices.map((inv) => (
+                {(data?.invoices ?? []).map((inv) => (
                   <a
                     key={inv.id}
                     href={`/dashboard/invoice/${inv.id}`}

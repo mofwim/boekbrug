@@ -1,32 +1,39 @@
 // app/onboarding/page.tsx
-// First-login onboarding flow (BOEK-015)
-// Middleware redirects here when onboarding_done = false
+// Entry point for onboarding (BOEK-015)
+// Reads onboarding_step + role from profiles → resumes where user stopped
 
-import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
+import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
-
-export const metadata = {
-  title: "Welkom — BoekBrug",
-};
 
 export default async function OnboardingPage() {
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Not logged in — middleware should catch this, but guard anyway
   if (!user) redirect("/login");
 
-  // If already onboarded, skip
   const { data: profile } = await supabase
     .from("profiles")
-    .select("onboarding_done, full_name")
+    .select("full_name, onboarding_done, onboarding_step, role")
     .eq("id", user.id)
     .single();
 
+  // Already finished onboarding — send to dashboard
   if (profile?.onboarding_done) redirect("/dashboard");
+
+  const userName = profile?.full_name ?? user.email ?? "daar";
+  const initialStep = profile?.onboarding_step ?? 1;
+  const initialRole = profile?.role === "accountant" ? "accountant" : "zzp";
 
   return (
     <OnboardingWizard
-      userName={profile?.full_name ?? user.email ?? "daar"}
+      userName={userName}
+      initialStep={initialStep}
+      initialRole={initialRole}
     />
   );
 }

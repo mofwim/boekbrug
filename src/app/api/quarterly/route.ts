@@ -9,6 +9,7 @@ import {
   quarterStartDate,
   quarterEndDate,
 } from "@/lib/quarterly";
+import type { InvoiceForQuarterly } from "@/lib/quarterly";
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -21,13 +22,18 @@ export async function GET(req: NextRequest) {
     req.nextUrl.searchParams.get("quarter") ?? Math.ceil((now.getMonth() + 1) / 3)
   ) as 1 | 2 | 3 | 4;
 
+  if (quarter < 1 || quarter > 4 || isNaN(year)) {
+    return NextResponse.json({ error: "Ongeldige parameters" }, { status: 400 });
+  }
+
   const start = quarterStartDate(year, quarter);
   const end = quarterEndDate(year, quarter);
 
+  // btw_rate bestaat niet in DB — wordt berekend uit btw_amount / total_ex_btw
   const { data, error } = await supabase
     .from("invoices")
     .select(
-      "id, invoice_number, client_name, status, total_ex_btw, btw_amount, total_inc_btw, btw_rate, invoice_date, due_date"
+      "id, invoice_number, client_name, status, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date"
     )
     .eq("sender_id", user.id)
     .gte("invoice_date", start)
@@ -36,6 +42,16 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const summary = buildQuarterlySummary(data ?? [], year, quarter);
+  // Bereken btw_rate per factuur
+  const invoices: InvoiceForQuarterly[] = (data ?? []).map((inv) => ({
+    ...inv,
+    due_date: inv.due_date ?? undefined,
+    btw_rate:
+      inv.total_ex_btw > 0
+        ? Math.round((inv.btw_amount / inv.total_ex_btw) * 100)
+        : 0,
+  }));
+
+  const summary = buildQuarterlySummary(invoices, year, quarter);
   return NextResponse.json(summary);
 }

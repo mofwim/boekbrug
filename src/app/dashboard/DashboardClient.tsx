@@ -7,7 +7,9 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { SearchBar } from '@/components/search/SearchBar'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
+import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
 import { InfiniteList } from '@/components/ui/InfiniteList'
+import { StatusFilter } from '@/components/ui/StatusFilter'
 
 export default function DashboardClient({ profile }: { profile: any }) {
   const router = useRouter()
@@ -17,16 +19,19 @@ export default function DashboardClient({ profile }: { profile: any }) {
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [accountantId, setAccountantId] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<InvoiceStatusFilter>('all')
 
   // ─── Infinite scroll invoices (BOEK-009) ───────────────
   const {
     invoices,
     loading: invoicesLoading,
     hasMore,
+    refreshing,
     loadMore,
+    refresh,
     updateOptimistic,
     removeOptimistic,
-  } = useInfiniteInvoices({ userId: profile.id })
+  } = useInfiniteInvoices({ userId: profile.id, status: statusFilter })
 
   useEffect(() => {
     async function loadData() {
@@ -278,19 +283,36 @@ export default function DashboardClient({ profile }: { profile: any }) {
 
             {/* ── Facturen met Infinite Scroll (BOEK-009) ── */}
             <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+
+              {/* Header: titel + refresh + nieuwe factuur */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <h2 className="font-semibold text-gray-900">Facturen</h2>
-                <button
-                  onClick={() => router.push('/dashboard/invoice/new')}
-                  className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 font-medium"
-                >
-                  + Nieuwe factuur
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={refresh}
+                    disabled={refreshing}
+                    className="text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-opacity"
+                    title="Vernieuwen"
+                  >
+                    <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
+                  </button>
+                  <button
+                    onClick={() => router.push('/dashboard/invoice/new')}
+                    className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 font-medium"
+                  >
+                    + Nieuwe factuur
+                  </button>
+                </div>
               </div>
+
+              {/* Status filter pills */}
+              <StatusFilter value={statusFilter} onChange={setStatusFilter} />
 
               {invoices.length === 0 && !invoicesLoading ? (
                 <p className="text-sm text-gray-400 text-center py-10">
-                  Nog geen facturen — maak je eerste factuur aan
+                  {statusFilter === 'all'
+                    ? 'Nog geen facturen — maak je eerste factuur aan'
+                    : `Geen ${statusLabel[statusFilter]?.toLowerCase()} facturen`}
                 </p>
               ) : (
                 <div className="divide-y divide-gray-50">
@@ -298,6 +320,8 @@ export default function DashboardClient({ profile }: { profile: any }) {
                     onLoadMore={loadMore}
                     hasMore={hasMore}
                     loading={invoicesLoading}
+                    onRefresh={refresh}
+                    refreshing={refreshing}
                   >
                     {invoices.map(invoice => (
                       <div

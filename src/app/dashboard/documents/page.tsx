@@ -1,28 +1,23 @@
 // app/dashboard/documents/page.tsx
-// File system page (BOEK-010)
+export const dynamic = 'force-dynamic';
 
-import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { redirect } from "next/navigation";
+import { Metadata } from "next";
 import { DocumentsClient } from "./DocumentsClient";
 
-export const metadata = {
-  title: "Documenten — BoekBrug",
+export const metadata: Metadata = {
+  title: "Documenten | BoekBrug",
 };
 
-export default async function DocumentsPage() {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
+export default function DocumentsPage() {
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-3xl mx-auto px-4 py-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Documenten</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Facturen, bonnen, contracten en bankafschriften op één plek
+        <h1 className="text-xl font-semibold">Documenten</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Upload en beheer je facturen, bonnen en contracten
         </p>
       </div>
-      <DocumentsClient userId={user.id} />
+      <DocumentsClient />
     </div>
   );
 }

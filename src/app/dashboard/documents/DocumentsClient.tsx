@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { InfiniteList } from "@/components/ui/InfiniteList";
 
 interface Doc {
@@ -16,13 +16,9 @@ interface Doc {
   created_at: string;
 }
 
-interface DocumentsClientProps {
-  userId: string;
-}
-
 const PAGE_SIZE = 30;
 
-export function DocumentsClient({ userId }: DocumentsClientProps) {
+export function DocumentsClient() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -52,7 +48,7 @@ export function DocumentsClient({ userId }: DocumentsClientProps) {
   }, [loading, hasMore]);
 
   // Load on mount
-  useState(() => { loadMore(); });
+  useEffect(() => { loadMore(); }, []);
 
   async function uploadFiles(files: File[]) {
     setUploading(true);

@@ -2,7 +2,7 @@
 // Quarterly overview logic (BOEK-013)
 // Pure functions — no DB calls — easy to test
 
-export type BtwRate = 0 | 9 | 21;
+export type BtwRate = number;
 
 export interface InvoiceForQuarterly {
   id: string;
@@ -12,7 +12,7 @@ export interface InvoiceForQuarterly {
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
-  btw_rate: BtwRate;
+  btw_rate: number;
   invoice_date: string;
   due_date?: string;
 }

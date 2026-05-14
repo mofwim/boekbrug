@@ -1,6 +1,7 @@
 // components/onboarding/OnboardingWizard.tsx
 // 5-step onboarding wizard (BOEK-015)
 // Shown once — on first login when onboarding_done = false
+// Changes v2: saves company data (Step 3), skip option, progress resume
 
 "use client";
 
@@ -9,9 +10,20 @@ import { useRouter } from "next/navigation";
 
 interface OnboardingWizardProps {
   userName: string;
+  /** Resume from a saved step (onboarding_step from profiles) */
+  initialStep?: number;
+  /** Pre-saved role if user already passed Step 2 */
+  initialRole?: Role;
 }
 
 type Role = "zzp" | "accountant";
+
+/** Company data collected in Step 3 */
+interface CompanyData {
+  company_name: string;
+  kvk_number: string;
+  btw_number: string;
+}
 
 const STEPS = [
   { id: 1, title: "Welkom bij BoekBrug" },
@@ -21,21 +33,32 @@ const STEPS = [
   { id: 5, title: "Alles klaar!" },
 ] as const;
 
-export function OnboardingWizard({ userName }: OnboardingWizardProps) {
-  const [step, setStep] = useState(1);
-  const [role, setRole] = useState<Role>("zzp");
+export function OnboardingWizard({
+  userName,
+  initialStep = 1,
+  initialRole = "zzp",
+}: OnboardingWizardProps) {
+  const [step, setStep] = useState(Math.min(Math.max(initialStep, 1), STEPS.length));
+  const [role, setRole] = useState<Role>(initialRole);
+  const [company, setCompany] = useState<CompanyData>({
+    company_name: "",
+    kvk_number: "",
+    btw_number: "",
+  });
   const [saving, setSaving] = useState(false);
   const router = useRouter();
 
-  async function saveStep(nextStep: number) {
+  /** Save current step + data to profiles */
+  async function persistStep(nextStep: number, extraData?: Record<string, unknown>) {
     await fetch("/api/onboarding", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ step: nextStep, role }),
+      body: JSON.stringify({ step: nextStep, role, ...extraData }),
     });
   }
 
   async function handleNext() {
+    // Last step — mark done and go to dashboard
     if (step === STEPS.length) {
       setSaving(true);
       await fetch("/api/onboarding", {
@@ -46,7 +69,25 @@ export function OnboardingWizard({ userName }: OnboardingWizardProps) {
       router.push("/dashboard");
       return;
     }
-    await saveStep(step + 1);
+
+    // Step 3 — save company data alongside progress
+    if (step === 3) {
+      const companyPayload = {
+        company_name: company.company_name.trim() || null,
+        kvk_number: company.kvk_number.trim() || null,
+        btw_number: company.btw_number.trim() || null,
+      };
+      await persistStep(step + 1, companyPayload);
+    } else {
+      await persistStep(step + 1);
+    }
+
+    setStep((s) => s + 1);
+  }
+
+  /** Skip Step 3 — save progress without company data */
+  async function handleSkip() {
+    await persistStep(step + 1);
     setStep((s) => s + 1);
   }
 
@@ -54,10 +95,13 @@ export function OnboardingWizard({ userName }: OnboardingWizardProps) {
     setStep((s) => Math.max(1, s - 1));
   }
 
+  const isLastStep = step === STEPS.length;
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
       <div className="w-full max-w-lg bg-background border rounded-2xl shadow-sm overflow-hidden">
-        {/* Progress bar */}
+
+        {/* Top progress bar */}
         <div className="h-1 bg-muted">
           <div
             className="h-1 bg-foreground transition-all duration-500"
@@ -66,58 +110,80 @@ export function OnboardingWizard({ userName }: OnboardingWizardProps) {
         </div>
 
         <div className="px-8 py-8">
-          {/* Step indicators */}
+
+          {/* Step dot indicators */}
           <div className="flex items-center gap-2 mb-8">
             {STEPS.map((s) => (
               <div
                 key={s.id}
-                className={`h-1.5 flex-1 rounded-full transition-colors ${
+                className={`h-1.5 flex-1 rounded-full transition-colors duration-300 ${
                   s.id <= step ? "bg-foreground" : "bg-muted"
                 }`}
               />
             ))}
           </div>
 
-          {/* Content */}
+          {/* Step content */}
           <div className="min-h-[280px]">
             {step === 1 && <StepWelcome userName={userName} />}
             {step === 2 && <StepRole role={role} setRole={setRole} />}
-            {step === 3 && <StepCompany />}
+            {step === 3 && (
+              <StepCompany company={company} setCompany={setCompany} />
+            )}
             {step === 4 && <StepFirstInvoice role={role} />}
             {step === 5 && <StepDone role={role} />}
           </div>
 
           {/* Navigation */}
           <div className="flex items-center justify-between mt-8">
+
+            {/* Back button (hidden on Step 1) */}
             {step > 1 ? (
               <button
                 onClick={handleBack}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                disabled={saving}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
               >
                 ← Terug
               </button>
             ) : (
               <div />
             )}
-            <button
-              onClick={handleNext}
-              disabled={saving}
-              className="px-6 py-2.5 text-sm font-medium bg-foreground text-background rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
-            >
-              {step === STEPS.length
-                ? saving
-                  ? "Bezig…"
-                  : "Naar dashboard →"
-                : "Volgende →"}
-            </button>
+
+            <div className="flex items-center gap-3">
+              {/* Skip — only on Step 3 (Bedrijfsgegevens is optional) */}
+              {step === 3 && (
+                <button
+                  onClick={handleSkip}
+                  disabled={saving}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                >
+                  Overslaan
+                </button>
+              )}
+
+              {/* Primary next / finish button */}
+              <button
+                onClick={handleNext}
+                disabled={saving}
+                className="px-6 py-2.5 text-sm font-medium bg-foreground text-background rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
+              >
+                {isLastStep
+                  ? saving
+                    ? "Bezig…"
+                    : "Naar dashboard →"
+                  : "Volgende →"}
+              </button>
+            </div>
           </div>
+
         </div>
       </div>
     </div>
   );
 }
 
-// ── Steps ───────────────────────────────────────────────
+// ── Step components ──────────────────────────────────────
 
 function StepWelcome({ userName }: { userName: string }) {
   return (
@@ -207,18 +273,34 @@ function RoleCard({
   );
 }
 
-function StepCompany() {
+/** Step 3 — company details (all optional, can be skipped) */
+function StepCompany({
+  company,
+  setCompany,
+}: {
+  company: CompanyData;
+  setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
+}) {
+  /** Generic field updater */
+  function handleChange(field: keyof CompanyData) {
+    return (e: React.ChangeEvent<HTMLInputElement>) =>
+      setCompany((prev) => ({ ...prev, [field]: e.target.value }));
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Bedrijfsgegevens</h2>
       <p className="text-sm text-muted-foreground">
-        Je kunt dit nu invullen of later via Instellingen aanpassen.
+        Je kunt dit nu invullen of later via{" "}
+        <span className="font-medium text-foreground">Instellingen</span> aanpassen.
       </p>
       <div className="space-y-3 pt-2">
         <div>
           <label className="text-sm font-medium block mb-1">Bedrijfsnaam</label>
           <input
             type="text"
+            value={company.company_name}
+            onChange={handleChange("company_name")}
             placeholder="Mijn Bedrijf BV"
             className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           />
@@ -227,8 +309,11 @@ function StepCompany() {
           <label className="text-sm font-medium block mb-1">KVK-nummer</label>
           <input
             type="text"
+            value={company.kvk_number}
+            onChange={handleChange("kvk_number")}
             placeholder="12345678"
             maxLength={8}
+            inputMode="numeric"
             className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
@@ -236,6 +321,8 @@ function StepCompany() {
           <label className="text-sm font-medium block mb-1">BTW-nummer</label>
           <input
             type="text"
+            value={company.btw_number}
+            onChange={handleChange("btw_number")}
             placeholder="NL123456789B01"
             className="w-full border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           />
