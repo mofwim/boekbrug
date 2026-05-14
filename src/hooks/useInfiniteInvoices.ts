@@ -27,6 +27,12 @@ interface UseInfiniteInvoicesOptions {
   userId: string;
   /** Filtert de lijst — reset automatisch bij wijziging */
   status?: InvoiceStatusFilter;
+  /**
+   * Accountant mode: geef de IDs van gekoppelde klanten mee.
+   * Hook zoekt dan op sender_id IN (clientIds) i.p.v. sender_id = userId.
+   * Lege array [] = geen klanten geladen → lijst blijft leeg.
+   */
+  clientIds?: string[];
 }
 
 const SELECT =
@@ -42,9 +48,18 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
   const cursorRef = useRef<string | null>(null);
   const supabase = createClient();
 
-  // ─── Fetch one page ───────────────────────────────────────
+  const isAccountantMode = opts.clientIds !== undefined;
+
+  // ─── Fetch one page ───────────────────────────────────────────────────────
   const fetchPage = useCallback(
     async (replace = false) => {
+      // Accountant zonder klanten → niets laden
+      if (isAccountantMode && opts.clientIds!.length === 0) {
+        setInvoices([]);
+        setHasMore(false);
+        return;
+      }
+
       if (loading) return;
       setLoading(true);
       setError(null);
@@ -53,10 +68,16 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
         let q = supabase
           .from("invoices")
           .select(SELECT)
-          .eq("sender_id", opts.userId)
           .order("created_at", { ascending: false })
           .order("id", { ascending: false })
           .limit(PAGE_SIZE);
+
+        // Accountant: zoek op klant-IDs; ZZP'er: zoek op eigen ID
+        if (isAccountantMode) {
+          q = q.in("sender_id", opts.clientIds!);
+        } else {
+          q = q.eq("sender_id", opts.userId);
+        }
 
         if (opts.status && opts.status !== "all") {
           q = q.eq("status", opts.status);
@@ -88,39 +109,39 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
         setLoading(false);
       }
     },
-    // loading weggelaten uit deps — anders infinite loop
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [opts.userId, opts.status]
+    [opts.userId, opts.status, JSON.stringify(opts.clientIds)]
   );
 
-  // ─── Reset + herlaad bij filter-wijziging ─────────────────
+  // ─── Reset + herlaad bij filter- of clientIds-wijziging ──────────────────
   useEffect(() => {
     cursorRef.current = null;
     setInvoices([]);
     setHasMore(true);
     fetchPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opts.userId, opts.status]);
+  }, [opts.userId, opts.status, JSON.stringify(opts.clientIds)]);
 
-  // ─── Real-time: nieuwe facturen bovenaan prependen ────────
+  // ─── Real-time: nieuwe facturen bovenaan prependen ───────────────────────
   useEffect(() => {
+    // Welke sender_ids bewaken we?
+    const watchIds = isAccountantMode ? (opts.clientIds ?? []) : [opts.userId];
+    if (watchIds.length === 0) return;
+
+    // Supabase realtime filter ondersteunt geen IN — luister globaal en filter client-side
     const channel = supabase
       .channel(`invoices-rt-${opts.userId}`)
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "invoices",
-          filter: `sender_id=eq.${opts.userId}`,
-        },
+        { event: "INSERT", schema: "public", table: "invoices" },
         (payload) => {
-          const row = payload.new as InvoiceRow;
+          const row = payload.new as InvoiceRow & { sender_id: string };
+          if (!watchIds.includes(row.sender_id)) return;
           const matchesFilter =
             !opts.status || opts.status === "all" || row.status === opts.status;
           if (!matchesFilter) return;
           setInvoices((prev) => {
-            if (prev.some((r) => r.id === row.id)) return prev; // geen duplicaat
+            if (prev.some((r) => r.id === row.id)) return prev;
             return [row, ...prev];
           });
         }
@@ -128,9 +149,9 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [opts.userId, opts.status, supabase]);
+  }, [opts.userId, opts.status, JSON.stringify(opts.clientIds), supabase]);
 
-  // ─── Pull-to-refresh ──────────────────────────────────────
+  // ─── Pull-to-refresh ─────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
     setRefreshing(true);
     cursorRef.current = null;
@@ -138,7 +159,7 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
     setRefreshing(false);
   }, [fetchPage]);
 
-  // ─── Optimistic helpers (ongewijzigd) ─────────────────────
+  // ─── Optimistic helpers ───────────────────────────────────────────────────
   const addOptimistic = useCallback((invoice: InvoiceRow) => {
     setInvoices((prev) => [invoice, ...prev]);
   }, []);

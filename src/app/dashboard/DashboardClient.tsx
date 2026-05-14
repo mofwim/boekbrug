@@ -50,6 +50,13 @@ export default function DashboardClient({ profile }: { profile: any }) {
   const [statusFilter, setStatusFilter] = useState<InvoiceStatusFilter>('all')
   const [resendingId, setResendingId] = useState<string | null>(null)
 
+  // Accountant mode: IDs van gekoppelde klanten
+  // undefined = ZZP-modus, [] = laden bezig, [...] = klanten geladen
+  const clientIds =
+    profile.role === 'accountant'
+      ? clients.map((c: any) => c.id)
+      : undefined
+
   // ── Infinite scroll invoices (BOEK-009) ──────────────────────────────────
   const {
     invoices,
@@ -60,7 +67,11 @@ export default function DashboardClient({ profile }: { profile: any }) {
     refresh,
     updateOptimistic,
     removeOptimistic,
-  } = useInfiniteInvoices({ userId: profile.id, status: statusFilter })
+  } = useInfiniteInvoices({
+    userId: profile.id,
+    status: statusFilter,
+    clientIds, // undefined voor ZZP, string[] voor accountant
+  })
 
   useEffect(() => {
     async function loadData() {
@@ -114,7 +125,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
       .eq('id', invoiceId)
 
     if (!error && newStatus === 'paid') {
-      // Notify ZZP'er that their invoice is marked paid
       await supabase.from('notifications').insert({
         user_id: profile.id,
         title: 'Factuur betaald',
@@ -133,7 +143,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
     await supabase.from('invoices').delete().eq('id', invoiceId)
   }
 
-  // Re-send an already sent invoice (BOEK — status=sent)
   async function resendInvoice(e: React.MouseEvent, invoiceId: string) {
     e.stopPropagation()
     setResendingId(invoiceId)
@@ -186,7 +195,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500">{profile.company_name}</span>
 
-            {/* BOEK-012: Full-text search */}
             <SearchBar />
 
             <button
@@ -210,7 +218,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
               ⚙️ Instellingen
             </button>
 
-            {/* BOEK-007: Berichten */}
             <button
               onClick={handleMessagesClick}
               className="relative text-xs text-gray-400 hover:text-blue-600 font-medium transition-colors"
@@ -223,7 +230,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
               )}
             </button>
 
-            {/* Notificaties */}
             <div className="relative">
               <button
                 onClick={() => {
@@ -307,7 +313,6 @@ export default function DashboardClient({ profile }: { profile: any }) {
                     .toFixed(0)}
                 </p>
               </div>
-              {/* FIX: Openstaand = sent + overdue only */}
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Openstaand</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
@@ -331,118 +336,24 @@ export default function DashboardClient({ profile }: { profile: any }) {
               </div>
             )}
 
-            {/* ── Facturen met Infinite Scroll (BOEK-009) ── */}
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-
-              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-                <h2 className="font-semibold text-gray-900">Facturen</h2>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={refresh}
-                    disabled={refreshing}
-                    className="text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-opacity"
-                    title="Vernieuwen"
-                  >
-                    <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
-                  </button>
-                  <button
-                    onClick={() => router.push('/dashboard/invoice/new')}
-                    className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 font-medium"
-                  >
-                    + Nieuwe factuur
-                  </button>
-                </div>
-              </div>
-
-              {/* FIX: Filters — Alles | Verzonden | Betaald | Concept (no Verlopen) */}
-              <StatusFilter value={statusFilter} onChange={setStatusFilter} />
-
-              {invoices.length === 0 && !invoicesLoading ? (
-                <p className="text-sm text-gray-400 text-center py-10">
-                  {statusFilter === 'all'
-                    ? 'Nog geen facturen — maak je eerste factuur aan'
-                    : `Geen ${STATUS_LABEL[statusFilter]?.toLowerCase() ?? statusFilter} facturen`}
-                </p>
-              ) : (
-                <div className="divide-y divide-gray-50">
-                  <InfiniteList
-                    onLoadMore={loadMore}
-                    hasMore={hasMore}
-                    loading={invoicesLoading}
-                    onRefresh={refresh}
-                    refreshing={refreshing}
-                  >
-                    {invoices.map(invoice => {
-                      const displayStatus = getDisplayStatus(invoice)
-                      return (
-                        <div
-                          key={invoice.id}
-                          onClick={() => router.push(`/dashboard/invoice/${invoice.id}`)}
-                          className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer"
-                        >
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">
-                              {invoice.invoice_number || 'Concept'}
-                            </p>
-                            <p className="text-xs text-gray-400 mt-0.5">
-                              {invoice.client_name} — {invoice.invoice_date}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <p className="text-sm font-semibold text-gray-900">
-                              €{invoice.total_inc_btw?.toFixed(2)}
-                            </p>
-
-                            {/* Status badge — uses computed displayStatus */}
-                            <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLOR[displayStatus] ?? 'bg-gray-100 text-gray-600'}`}>
-                              {STATUS_LABEL[displayStatus] ?? displayStatus}
-                            </span>
-
-                            {/* Toggle betaald */}
-                            {(invoice.status === 'sent' || invoice.status === 'paid') && (
-                              <button
-                                onClick={e => {
-                                  e.stopPropagation()
-                                  markAsPaid(invoice.id, invoice.status === 'paid' ? 'sent' : 'paid')
-                                }}
-                                className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-                                  invoice.status === 'paid'
-                                    ? 'bg-green-50 border-green-200 text-green-600 hover:bg-green-100'
-                                    : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
-                                }`}
-                              >
-                                {invoice.status === 'paid' ? '✓ Betaald' : 'Betaald?'}
-                              </button>
-                            )}
-
-                            {/* Resend — only for sent invoices */}
-                            {invoice.status === 'sent' && (
-                              <button
-                                onClick={e => resendInvoice(e, invoice.id)}
-                                disabled={resendingId === invoice.id}
-                                className="text-xs font-medium px-3 py-1.5 rounded-lg border bg-blue-50 border-blue-200 text-blue-500 hover:bg-blue-100 transition-colors disabled:opacity-40"
-                              >
-                                {resendingId === invoice.id ? '...' : '↺ Opnieuw'}
-                              </button>
-                            )}
-
-                            {/* Delete — only for drafts */}
-                            {invoice.status === 'draft' && (
-                              <button
-                                onClick={e => { e.stopPropagation(); deleteInvoice(invoice.id) }}
-                                className="text-xs font-medium px-3 py-1.5 rounded-lg border bg-red-50 border-red-200 text-red-400 hover:bg-red-100 transition-colors"
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </InfiniteList>
-                </div>
-              )}
-            </div>
+            {/* ── Facturen ZZP (Infinite Scroll) ── */}
+            <InvoiceTable
+              invoices={invoices}
+              loading={invoicesLoading}
+              hasMore={hasMore}
+              refreshing={refreshing}
+              statusFilter={statusFilter}
+              onFilterChange={setStatusFilter}
+              onLoadMore={loadMore}
+              onRefresh={refresh}
+              onMarkPaid={markAsPaid}
+              onResend={resendInvoice}
+              onDelete={deleteInvoice}
+              resendingId={resendingId}
+              onNavigate={(id) => router.push(`/dashboard/invoice/${id}`)}
+              onNewInvoice={() => router.push('/dashboard/invoice/new')}
+              showNewButton
+            />
           </div>
         )}
 
@@ -455,11 +366,12 @@ export default function DashboardClient({ profile }: { profile: any }) {
                 <p className="text-2xl font-bold text-gray-900 mt-1">{clients.length}</p>
               </div>
               <div className="bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Nieuwe facturen</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">0</p>
+                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Facturen klanten</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{invoices.length}</p>
               </div>
             </div>
 
+            {/* ── Klanten lijst ── */}
             <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <h2 className="font-semibold text-gray-900">Mijn klanten</h2>
@@ -500,10 +412,172 @@ export default function DashboardClient({ profile }: { profile: any }) {
                 </div>
               )}
             </div>
+
+            {/* ── Facturen van alle klanten (Infinite Scroll) ── */}
+            {clients.length > 0 && (
+              <InvoiceTable
+                invoices={invoices}
+                loading={invoicesLoading}
+                hasMore={hasMore}
+                refreshing={refreshing}
+                statusFilter={statusFilter}
+                onFilterChange={setStatusFilter}
+                onLoadMore={loadMore}
+                onRefresh={refresh}
+                onMarkPaid={markAsPaid}
+                onResend={resendInvoice}
+                onDelete={deleteInvoice}
+                resendingId={resendingId}
+                onNavigate={(id) => router.push(`/dashboard/invoice/${id}`)}
+                title="Facturen klanten"
+              />
+            )}
           </div>
         )}
 
       </div>
+    </div>
+  )
+}
+
+// ─── InvoiceTable — gedeelde factuurlijst voor ZZP + accountant ───────────────
+
+interface InvoiceTableProps {
+  invoices: any[]
+  loading: boolean
+  hasMore: boolean
+  refreshing: boolean
+  statusFilter: InvoiceStatusFilter
+  onFilterChange: (s: InvoiceStatusFilter) => void
+  onLoadMore: () => void
+  onRefresh: () => void
+  onMarkPaid: (id: string, status: 'paid' | 'sent') => void
+  onResend: (e: React.MouseEvent, id: string) => void
+  onDelete: (id: string) => void
+  onNavigate: (id: string) => void
+  resendingId: string | null
+  title?: string
+  showNewButton?: boolean
+  onNewInvoice?: () => void
+}
+
+function InvoiceTable({
+  invoices, loading, hasMore, refreshing,
+  statusFilter, onFilterChange,
+  onLoadMore, onRefresh,
+  onMarkPaid, onResend, onDelete, onNavigate,
+  resendingId,
+  title = 'Facturen',
+  showNewButton = false,
+  onNewInvoice,
+}: InvoiceTableProps) {
+  return (
+    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <h2 className="font-semibold text-gray-900">{title}</h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-opacity"
+            title="Vernieuwen"
+          >
+            <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
+          </button>
+          {showNewButton && onNewInvoice && (
+            <button
+              onClick={onNewInvoice}
+              className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 font-medium"
+            >
+              + Nieuwe factuur
+            </button>
+          )}
+        </div>
+      </div>
+
+      <StatusFilter value={statusFilter} onChange={onFilterChange} />
+
+      {invoices.length === 0 && !loading ? (
+        <p className="text-sm text-gray-400 text-center py-10">
+          {statusFilter === 'all'
+            ? 'Nog geen facturen'
+            : `Geen ${STATUS_LABEL[statusFilter]?.toLowerCase() ?? statusFilter} facturen`}
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-50">
+          <InfiniteList
+            onLoadMore={onLoadMore}
+            hasMore={hasMore}
+            loading={loading}
+            onRefresh={onRefresh}
+            refreshing={refreshing}
+          >
+            {invoices.map(invoice => {
+              const displayStatus = getDisplayStatus(invoice)
+              return (
+                <div
+                  key={invoice.id}
+                  onClick={() => onNavigate(invoice.id)}
+                  className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      {invoice.invoice_number || 'Concept'}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {invoice.client_name} — {invoice.invoice_date}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm font-semibold text-gray-900">
+                      €{invoice.total_inc_btw?.toFixed(2)}
+                    </p>
+
+                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLOR[displayStatus] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {STATUS_LABEL[displayStatus] ?? displayStatus}
+                    </span>
+
+                    {(invoice.status === 'sent' || invoice.status === 'paid') && (
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          onMarkPaid(invoice.id, invoice.status === 'paid' ? 'sent' : 'paid')
+                        }}
+                        className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                          invoice.status === 'paid'
+                            ? 'bg-green-50 border-green-200 text-green-600 hover:bg-green-100'
+                            : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                        }`}
+                      >
+                        {invoice.status === 'paid' ? '✓ Betaald' : 'Betaald?'}
+                      </button>
+                    )}
+
+                    {invoice.status === 'sent' && (
+                      <button
+                        onClick={e => onResend(e, invoice.id)}
+                        disabled={resendingId === invoice.id}
+                        className="text-xs font-medium px-3 py-1.5 rounded-lg border bg-blue-50 border-blue-200 text-blue-500 hover:bg-blue-100 transition-colors disabled:opacity-40"
+                      >
+                        {resendingId === invoice.id ? '...' : '↺ Opnieuw'}
+                      </button>
+                    )}
+
+                    {invoice.status === 'draft' && (
+                      <button
+                        onClick={e => { e.stopPropagation(); onDelete(invoice.id) }}
+                        className="text-xs font-medium px-3 py-1.5 rounded-lg border bg-red-50 border-red-200 text-red-400 hover:bg-red-100 transition-colors"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </InfiniteList>
+        </div>
+      )}
     </div>
   )
 }
