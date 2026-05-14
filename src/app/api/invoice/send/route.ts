@@ -13,7 +13,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { clientEmail, clientName, invoiceNumber, totalInc, dueDate } = body
-    const totalIncNum = typeof totalInc === 'number' ? totalInc : parseFloat(totalInc ?? '0')
+// أضف هذا السطر:
+const totalIncNum = typeof totalInc === 'number' ? totalInc : parseFloat(totalInc ?? '0')
 
     const { data: profile } = await supabase
       .from('profiles')
