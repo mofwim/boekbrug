@@ -1,8 +1,12 @@
 // lib/documents.ts
 // Document management helpers (BOEK-010)
 // Upload → Supabase Storage, metadata → documents table
+// Server-only — nooit importeren in Client Components
 
 import { createServerSupabaseClient } from "./supabase-server";
+import { inferDocType } from "./documents-utils";
+
+export { inferDocType } from "./documents-utils";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,19 +31,6 @@ export const ALLOWED_TYPES = new Set([
 export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Derive a doc_type from MIME type */
-export function inferDocType(mimeType: string): string {
-  if (mimeType === "application/pdf") return "pdf";
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) return "spreadsheet";
-  if (mimeType.includes("word") || mimeType.includes("document")) return "document";
-  if (mimeType === "text/csv") return "csv";
-  if (mimeType.includes("xml")) return "xml";
-  if (mimeType === "message/rfc822") return "email";
-  if (mimeType === "application/zip") return "archive";
-  return "other";
-}
 
 /**
  * Build storage path.

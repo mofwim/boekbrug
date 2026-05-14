@@ -6,7 +6,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { InfiniteList } from "@/components/ui/InfiniteList";
-import { inferDocType } from "@/lib/documents";
+import { inferDocType } from "@/lib/documents-utils";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
