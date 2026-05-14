@@ -201,7 +201,7 @@ export function QuarterlyOverview({ isAccountant }: Props) {
               </div>
               <div className="divide-y">
                 {data.invoices.map((inv) => (
-                  
+                  <a
                     key={inv.id}
                     href={`/dashboard/invoice/${inv.id}`}
                     className="flex items-center justify-between px-4 py-3 text-sm hover:bg-muted/50 transition-colors"
