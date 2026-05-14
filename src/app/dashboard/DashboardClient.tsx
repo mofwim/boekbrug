@@ -6,6 +6,7 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { SearchBar } from "@/components/search/SearchBar";
 
 type Invoice = {
   id: string
@@ -149,7 +150,7 @@ async function deleteInvoice(invoiceId: string) {
           <h1 className="text-lg font-bold text-gray-900">BoekBrug</h1>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500">{profile.company_name}</span>
-
+            <SearchBar />
             <button
               onClick={() => router.push('/dashboard/settings')}
               className="text-xs text-gray-400 hover:text-gray-600"
