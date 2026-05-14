@@ -18,7 +18,7 @@ export interface InvoiceRow {
   btw_rate: number;
   invoice_date: string;
   due_date: string | null;
-  direction: string;
+  
   created_at: string;
 }
 
@@ -46,7 +46,7 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
       let q = supabase
         .from("invoices")
         .select(
-          "id, invoice_number, client_name, status, total_inc_btw, btw_rate, invoice_date, due_date, direction, created_at"
+          "id, invoice_number, client_name, status, total_inc_btw, btw_rate, invoice_date, due_date, created_at"
         )
         .eq("sender_id", opts.userId)
         .order("created_at", { ascending: false })
