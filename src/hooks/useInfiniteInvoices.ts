@@ -1,6 +1,5 @@
 // hooks/useInfiniteInvoices.ts
 // Infinite scroll for invoices (BOEK-009)
-// Uses cursor-based pagination (created_at + id) — no OFFSET
 
 "use client";
 
@@ -14,11 +13,10 @@ export interface InvoiceRow {
   invoice_number: string;
   client_name: string;
   status: string;
+  direction: string;
   total_inc_btw: number;
-  btw_rate: number;
   invoice_date: string;
   due_date: string | null;
-  
   created_at: string;
 }
 
@@ -33,7 +31,6 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Cursor: id of last loaded invoice
   const cursorRef = useRef<string | null>(null);
   const supabase = createClient();
 
@@ -46,7 +43,7 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
       let q = supabase
         .from("invoices")
         .select(
-          "id, invoice_number, client_name, status, total_inc_btw, btw_rate, invoice_date, due_date, created_at"
+          "id, invoice_number, client_name, status, direction, total_inc_btw, invoice_date, due_date, created_at"
         )
         .eq("sender_id", opts.userId)
         .order("created_at", { ascending: false })
@@ -55,7 +52,6 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
 
       if (opts.status) q = q.eq("status", opts.status);
 
-      // Cursor pagination: use created_at stored in cursorRef
       if (cursorRef.current) {
         q = q.lt("created_at", cursorRef.current);
       }
@@ -73,7 +69,6 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
         return [...prev, ...rows.filter((r) => !ids.has(r.id))];
       });
 
-      // Store created_at of last row as cursor (not id)
       if (rows.length > 0) {
         cursorRef.current = rows[rows.length - 1].created_at;
       }
@@ -84,23 +79,19 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
     }
   }, [loading, hasMore, opts.userId, opts.status, supabase]);
 
-  // Initial load
   useEffect(() => {
     fetchPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Add an invoice optimistically (BOEK-009 — Optimistic UI) */
   const addOptimistic = useCallback((invoice: InvoiceRow) => {
     setInvoices((prev) => [invoice, ...prev]);
   }, []);
 
-  /** Remove an invoice optimistically */
   const removeOptimistic = useCallback((id: string) => {
     setInvoices((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
-  /** Update an invoice optimistically */
   const updateOptimistic = useCallback(
     (id: string, patch: Partial<InvoiceRow>) => {
       setInvoices((prev) =>
