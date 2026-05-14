@@ -10,32 +10,7 @@ import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
-
-// ── Status labels & colors (single source of truth) ──────────────────────────
-const STATUS_LABEL: Record<string, string> = {
-  draft: 'Concept',
-  sent: 'Verzonden',
-  paid: 'Betaald',
-  overdue: 'Verlopen',
-}
-
-const STATUS_COLOR: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600',
-  sent: 'bg-blue-100 text-blue-600',
-  paid: 'bg-green-100 text-green-600',
-  overdue: 'bg-red-100 text-red-600',
-}
-
-// Verlopen = due_date is in the past and invoice is not paid (frontend-only check)
-function isOverdue(invoice: { status: string; due_date: string | null }): boolean {
-  if (invoice.status === 'paid' || invoice.status === 'draft') return false
-  if (!invoice.due_date) return false
-  return new Date(invoice.due_date) < new Date()
-}
-
-function getDisplayStatus(invoice: { status: string; due_date: string | null }): string {
-  return isOverdue(invoice) ? 'overdue' : invoice.status
-}
+import { InvoiceRowItem, STATUS_LABEL, isOverdue } from '@/components/invoice/InvoiceRow'
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -50,14 +25,11 @@ export default function DashboardClient({ profile }: { profile: any }) {
   const [statusFilter, setStatusFilter] = useState<InvoiceStatusFilter>('all')
   const [resendingId, setResendingId] = useState<string | null>(null)
 
-  // Accountant mode: IDs van gekoppelde klanten
-  // undefined = ZZP-modus, [] = laden bezig, [...] = klanten geladen
   const clientIds =
     profile.role === 'accountant'
       ? clients.map((c: any) => c.id)
       : undefined
 
-  // ── Infinite scroll invoices (BOEK-009) ──────────────────────────────────
   const {
     invoices,
     loading: invoicesLoading,
@@ -70,7 +42,7 @@ export default function DashboardClient({ profile }: { profile: any }) {
   } = useInfiniteInvoices({
     userId: profile.id,
     status: statusFilter,
-    clientIds, // undefined voor ZZP, string[] voor accountant
+    clientIds,
   })
 
   useEffect(() => {
@@ -176,7 +148,7 @@ export default function DashboardClient({ profile }: { profile: any }) {
     }
   }
 
-  // FIX: Openstaand = sent + overdue only — draft excluded
+  // Openstaand = sent + overdue only — draft excluded
   const openstaandTotal = invoices
     .filter(i => i.status === 'sent' || i.status === 'overdue' || isOverdue(i))
     .reduce((sum, i) => sum + (i.total_inc_btw || 0), 0)
@@ -185,85 +157,73 @@ export default function DashboardClient({ profile }: { profile: any }) {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
 
       {/* ── Header ── */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-900">BoekBrug</h1>
+      <header className="bg-white border-b sticky top-0 z-20" style={{ borderColor: 'var(--color-separator)' }}>
+        <div className="max-w-4xl mx-auto px-6 py-3.5 flex items-center justify-between gap-4">
 
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-500">{profile.company_name}</span>
+          {/* Logo */}
+          <h1 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>
+            BoekBrug
+          </h1>
+
+          {/* Nav */}
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-sm mr-2" style={{ color: 'var(--color-text-secondary)' }}>
+              {profile.company_name}
+            </span>
 
             <SearchBar />
 
-            <button
-              onClick={() => router.push('/dashboard/quarterly')}
-              className="text-xs text-gray-400 hover:text-gray-600"
-              title="Kwartaaloverzicht"
-            >
-              📊 Kwartaal
-            </button>
-            <button
-              onClick={() => router.push('/dashboard/documents')}
-              className="text-xs text-gray-400 hover:text-gray-600"
-              title="Documenten"
-            >
-              📂 Documenten
-            </button>
-            <button
-              onClick={() => router.push('/dashboard/settings')}
-              className="text-xs text-gray-400 hover:text-gray-600"
-            >
-              ⚙️ Instellingen
-            </button>
+            <NavButton onClick={() => router.push('/dashboard/quarterly')} label="📊 Kwartaal" />
+            <NavButton onClick={() => router.push('/dashboard/documents')} label="📂 Documenten" />
+            <NavButton onClick={() => router.push('/dashboard/settings')} label="⚙️" />
 
-            <button
-              onClick={handleMessagesClick}
-              className="relative text-xs text-gray-400 hover:text-blue-600 font-medium transition-colors"
-            >
-              💬 Berichten
+            {/* Messages */}
+            <div className="relative">
+              <NavButton onClick={handleMessagesClick} label="💬" />
               {unreadMessages > 0 && (
-                <span className="absolute -top-1 -right-2 bg-blue-600 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                <span className="absolute -top-1 -right-1 bg-[#007aff] text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold leading-none">
                   {unreadMessages}
                 </span>
               )}
-            </button>
+            </div>
 
+            {/* Notifications */}
             <div className="relative">
-              <button
+              <NavButton
                 onClick={() => {
                   setShowNotifications(prev => !prev)
                   if (!showNotifications && unreadNotifCount > 0) markAllRead()
                 }}
-                className="relative text-gray-400 hover:text-gray-600"
-              >
-                🔔
-                {unreadNotifCount > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                    {unreadNotifCount}
-                  </span>
-                )}
-              </button>
+                label="🔔"
+              />
+              {unreadNotifCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-[#ff3b30] text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold leading-none">
+                  {unreadNotifCount}
+                </span>
+              )}
 
               {showNotifications && (
-                <div className="absolute top-8 right-0 bg-white rounded-2xl shadow-lg border border-gray-100 w-80 z-50">
-                  <div className="px-4 py-3 border-b border-gray-100">
-                    <p className="text-sm font-semibold text-gray-900">Meldingen</p>
+                <div className="absolute top-9 right-0 bg-white rounded-2xl shadow-xl border w-80 z-50 animate-fade-in overflow-hidden"
+                  style={{ borderColor: 'var(--color-separator)', boxShadow: 'var(--shadow-modal)' }}>
+                  <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-separator)' }}>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>Meldingen</p>
                   </div>
                   {notifications.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-6">Geen meldingen</p>
+                    <p className="text-sm text-center py-8" style={{ color: 'var(--color-text-tertiary)' }}>Geen meldingen</p>
                   ) : (
-                    <div className="divide-y divide-gray-50 max-h-80 overflow-y-auto">
+                    <div className="divide-y max-h-80 overflow-y-auto" style={{ borderColor: 'var(--color-separator)' }}>
                       {notifications.map(n => (
                         <div
                           key={n.id}
                           onClick={() => n.link && router.push(n.link)}
-                          className={`px-4 py-3 ${!n.read ? 'bg-blue-50' : ''} ${n.link ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+                          className={`px-4 py-3 transition-colors ${!n.read ? 'bg-[#e8f1ff]' : ''} ${n.link ? 'cursor-pointer hover:bg-gray-50' : ''}`}
                         >
-                          <p className="text-sm font-medium text-gray-800">{n.title}</p>
-                          {n.body && <p className="text-xs text-gray-500 mt-0.5">{n.body}</p>}
-                          <p className="text-xs text-gray-400 mt-1">
+                          <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{n.title}</p>
+                          {n.body && <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>{n.body}</p>}
+                          <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
                             {new Date(n.created_at).toLocaleDateString('nl-NL')}
                           </p>
                         </div>
@@ -274,69 +234,72 @@ export default function DashboardClient({ profile }: { profile: any }) {
               )}
             </div>
 
-            <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+            {/* Role badge */}
+            <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
               profile.role === 'accountant'
-                ? 'bg-purple-100 text-purple-700'
-                : 'bg-blue-100 text-blue-700'
+                ? 'bg-[#f5f0ff] text-[#7c3aed]'
+                : 'bg-[#e8f1ff] text-[#1d4ed8]'
             }`}>
               {profile.role === 'accountant' ? 'Boekhouder' : "ZZP'er"}
             </span>
 
             <button
               onClick={handleLogout}
-              className="text-xs text-gray-400 hover:text-red-500"
+              className="text-xs px-2 py-1 hover:text-[#ff3b30] transition-colors"
+              style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}
             >
               Uitloggen
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="max-w-4xl mx-auto px-6 py-6 space-y-4">
+      {/* ── Main ── */}
+      <main className="max-w-4xl mx-auto px-6 py-6 space-y-4">
 
-        {/* ── ZZP'er Dashboard ── */}
+        {/* ZZP'er Dashboard */}
         {profile.role === 'zzper' && (
           <div className="space-y-4">
+
+            {/* Stats */}
             <div className="grid grid-cols-3 gap-4">
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Verzonden</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {invoices.filter(i => i.status === 'sent').length}
-                </p>
+              <div className="stat-card">
+                <p className="stat-label">Verzonden</p>
+                <p className="stat-value">{invoices.filter(i => i.status === 'sent').length}</p>
               </div>
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Ontvangen</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
+              <div className="stat-card">
+                <p className="stat-label">Ontvangen</p>
+                <p className="stat-value">
                   €{invoices
                     .filter(i => i.status === 'paid')
                     .reduce((sum, i) => sum + (i.total_inc_btw || 0), 0)
                     .toFixed(0)}
                 </p>
               </div>
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Openstaand</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  €{openstaandTotal.toFixed(0)}
-                </p>
+              <div className="stat-card">
+                <p className="stat-label">Openstaand</p>
+                <p className="stat-value text-[#ff9500]">€{openstaandTotal.toFixed(0)}</p>
               </div>
             </div>
 
+            {/* No accountant banner */}
             {!accountantId && (
-              <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-4 flex items-center justify-between">
+              <div className="bg-[#e8f1ff] border border-[#bfdbfe] rounded-2xl px-5 py-4 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-blue-900">Nog geen boekhouder gekoppeld</p>
-                  <p className="text-xs text-blue-500 mt-0.5">Koppel een boekhouder om samen te werken</p>
+                  <p className="text-sm font-semibold text-[#1e40af]">Nog geen boekhouder gekoppeld</p>
+                  <p className="text-xs text-[#3b82f6] mt-0.5">Koppel een boekhouder om samen te werken</p>
                 </div>
                 <button
                   onClick={() => router.push('/dashboard/settings')}
-                  className="text-xs text-blue-600 font-semibold hover:text-blue-700"
+                  className="text-xs text-[#1d4ed8] font-bold hover:text-[#1e40af]"
+                  style={{ background: 'none', border: 'none' }}
                 >
                   Koppelen →
                 </button>
               </div>
             )}
 
-            {/* ── Facturen ZZP (Infinite Scroll) ── */}
+            {/* Invoice table */}
             <InvoiceTable
               invoices={invoices}
               loading={invoicesLoading}
@@ -350,62 +313,66 @@ export default function DashboardClient({ profile }: { profile: any }) {
               onResend={resendInvoice}
               onDelete={deleteInvoice}
               resendingId={resendingId}
-              onNavigate={(id) => router.push(`/dashboard/invoice/${id}`)}
+              onNavigate={id => router.push(`/dashboard/invoice/${id}`)}
               onNewInvoice={() => router.push('/dashboard/invoice/new')}
               showNewButton
             />
           </div>
         )}
 
-        {/* ── Accountant Dashboard ── */}
+        {/* Accountant Dashboard */}
         {profile.role === 'accountant' && (
           <div className="space-y-4">
+
+            {/* Stats */}
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Klanten</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{clients.length}</p>
+              <div className="stat-card">
+                <p className="stat-label">Klanten</p>
+                <p className="stat-value">{clients.length}</p>
               </div>
-              <div className="bg-white rounded-2xl p-5 shadow-sm">
-                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Facturen klanten</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{invoices.length}</p>
+              <div className="stat-card">
+                <p className="stat-label">Facturen klanten</p>
+                <p className="stat-value">{invoices.length}</p>
               </div>
             </div>
 
-            {/* ── Klanten lijst ── */}
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-                <h2 className="font-semibold text-gray-900">Mijn klanten</h2>
+            {/* Clients list */}
+            <div className="card overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--color-separator)' }}>
+                <h2 className="text-h3">Mijn klanten</h2>
                 <button
                   onClick={() => router.push('/dashboard/clients/invite')}
-                  className="bg-purple-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-purple-700 font-medium"
+                  className="bg-[#af52de] text-white text-sm px-4 py-2 hover:opacity-90"
                 >
                   + Klant toevoegen
                 </button>
               </div>
 
               {clients.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-10">
+                <p className="text-sm text-center py-10" style={{ color: 'var(--color-text-tertiary)' }}>
                   Nog geen klanten — voeg je eerste klant toe
                 </p>
               ) : (
-                <div className="divide-y divide-gray-50">
+                <div className="divide-y" style={{ borderColor: 'var(--color-separator)' }}>
                   {clients.map((client: any) => (
                     <div
                       key={client.id}
                       onClick={() => router.push(`/dashboard/clients/${client.id}`)}
-                      className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer"
+                      className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer transition-colors"
                     >
                       <div>
-                        <p className="text-sm font-medium text-gray-900">
+                        <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
                           {client.company_name || client.full_name}
                         </p>
-                        <p className="text-xs text-gray-400 mt-0.5">{client.email}</p>
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>{client.email}</p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
                         {client.kvk_number && (
-                          <span className="text-xs text-gray-400">KVK: {client.kvk_number}</span>
+                          <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                            KVK: {client.kvk_number}
+                          </span>
                         )}
-                        <span className="text-blue-600 text-xs font-medium">Bekijken →</span>
+                        <span className="text-xs font-semibold text-[#007aff]">Bekijken →</span>
                       </div>
                     </div>
                   ))}
@@ -413,7 +380,7 @@ export default function DashboardClient({ profile }: { profile: any }) {
               )}
             </div>
 
-            {/* ── Facturen van alle klanten (Infinite Scroll) ── */}
+            {/* Client invoices */}
             {clients.length > 0 && (
               <InvoiceTable
                 invoices={invoices}
@@ -428,19 +395,33 @@ export default function DashboardClient({ profile }: { profile: any }) {
                 onResend={resendInvoice}
                 onDelete={deleteInvoice}
                 resendingId={resendingId}
-                onNavigate={(id) => router.push(`/dashboard/invoice/${id}`)}
+                onNavigate={id => router.push(`/dashboard/invoice/${id}`)}
                 title="Facturen klanten"
               />
             )}
           </div>
         )}
 
-      </div>
+      </main>
     </div>
   )
 }
 
-// ─── InvoiceTable — gedeelde factuurlijst voor ZZP + accountant ───────────────
+// ── Tiny nav button ────────────────────────────────────────────────────────────
+
+function NavButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-xs px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+      style={{ color: 'var(--color-text-secondary)', fontWeight: 500, background: 'none', border: 'none' }}
+    >
+      {label}
+    </button>
+  )
+}
+
+// ── InvoiceTable ───────────────────────────────────────────────────────────────
 
 interface InvoiceTableProps {
   invoices: any[]
@@ -472,22 +453,24 @@ function InvoiceTable({
   onNewInvoice,
 }: InvoiceTableProps) {
   return (
-    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-        <h2 className="font-semibold text-gray-900">{title}</h2>
+    <div className="card overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--color-separator)' }}>
+        <h2 className="text-h3">{title}</h2>
         <div className="flex items-center gap-2">
           <button
             onClick={onRefresh}
             disabled={refreshing}
-            className="text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-opacity"
             title="Vernieuwen"
+            style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)' }}
+            className="hover:text-gray-500 transition-colors disabled:opacity-40"
           >
             <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
           </button>
           {showNewButton && onNewInvoice && (
             <button
               onClick={onNewInvoice}
-              className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 font-medium"
+              className="bg-[#007aff] text-white text-sm px-4 py-2 hover:opacity-90"
             >
               + Nieuwe factuur
             </button>
@@ -495,16 +478,18 @@ function InvoiceTable({
         </div>
       </div>
 
+      {/* Filter */}
       <StatusFilter value={statusFilter} onChange={onFilterChange} />
 
+      {/* Empty state */}
       {invoices.length === 0 && !loading ? (
-        <p className="text-sm text-gray-400 text-center py-10">
+        <p className="text-sm text-center py-12" style={{ color: 'var(--color-text-tertiary)' }}>
           {statusFilter === 'all'
             ? 'Nog geen facturen'
             : `Geen ${STATUS_LABEL[statusFilter]?.toLowerCase() ?? statusFilter} facturen`}
         </p>
       ) : (
-        <div className="divide-y divide-gray-50">
+        <div className="divide-y" style={{ borderColor: 'var(--color-separator)' }}>
           <InfiniteList
             onLoadMore={onLoadMore}
             hasMore={hasMore}
@@ -512,69 +497,17 @@ function InvoiceTable({
             onRefresh={onRefresh}
             refreshing={refreshing}
           >
-            {invoices.map(invoice => {
-              const displayStatus = getDisplayStatus(invoice)
-              return (
-                <div
-                  key={invoice.id}
-                  onClick={() => onNavigate(invoice.id)}
-                  className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">
-                      {invoice.invoice_number || 'Concept'}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {invoice.client_name} — {invoice.invoice_date}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <p className="text-sm font-semibold text-gray-900">
-                      €{invoice.total_inc_btw?.toFixed(2)}
-                    </p>
-
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLOR[displayStatus] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {STATUS_LABEL[displayStatus] ?? displayStatus}
-                    </span>
-
-                    {(invoice.status === 'sent' || invoice.status === 'paid') && (
-                      <button
-                        onClick={e => {
-                          e.stopPropagation()
-                          onMarkPaid(invoice.id, invoice.status === 'paid' ? 'sent' : 'paid')
-                        }}
-                        className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-                          invoice.status === 'paid'
-                            ? 'bg-green-50 border-green-200 text-green-600 hover:bg-green-100'
-                            : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
-                        }`}
-                      >
-                        {invoice.status === 'paid' ? '✓ Betaald' : 'Betaald?'}
-                      </button>
-                    )}
-
-                    {invoice.status === 'sent' && (
-                      <button
-                        onClick={e => onResend(e, invoice.id)}
-                        disabled={resendingId === invoice.id}
-                        className="text-xs font-medium px-3 py-1.5 rounded-lg border bg-blue-50 border-blue-200 text-blue-500 hover:bg-blue-100 transition-colors disabled:opacity-40"
-                      >
-                        {resendingId === invoice.id ? '...' : '↺ Opnieuw'}
-                      </button>
-                    )}
-
-                    {invoice.status === 'draft' && (
-                      <button
-                        onClick={e => { e.stopPropagation(); onDelete(invoice.id) }}
-                        className="text-xs font-medium px-3 py-1.5 rounded-lg border bg-red-50 border-red-200 text-red-400 hover:bg-red-100 transition-colors"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+            {invoices.map(invoice => (
+              <InvoiceRowItem
+                key={invoice.id}
+                invoice={invoice}
+                onClick={() => onNavigate(invoice.id)}
+                onMarkPaid={onMarkPaid}
+                onResend={onResend}
+                onDelete={onDelete}
+                resendingId={resendingId}
+              />
+            ))}
           </InfiniteList>
         </div>
       )}

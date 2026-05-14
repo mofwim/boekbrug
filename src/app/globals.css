@@ -1,67 +1,240 @@
 @import "tailwindcss";
 
-* {
+/* ── BoekBrug Design System ───────────────────────────────────────────────── */
+/* iOS-based Fluent Design · Clean · Accessible · Fast                        */
+
+@theme {
+  /* Colors */
+  --color-bg:            #f2f2f7;
+  --color-surface:       #ffffff;
+  --color-surface-2:     #f9f9fb;
+
+  --color-text-primary:  #1c1c1e;
+  --color-text-secondary:#6b6b6e;
+  --color-text-tertiary: #aeaeb2;
+  --color-separator:     #e5e5ea;
+
+  --color-blue:          #007aff;
+  --color-blue-light:    #e8f1ff;
+  --color-green:         #34c759;
+  --color-green-light:   #f0fdf4;
+  --color-red:           #ff3b30;
+  --color-red-light:     #fff5f5;
+  --color-orange:        #ff9500;
+  --color-orange-light:  #fff8ee;
+  --color-purple:        #af52de;
+  --color-purple-light:  #f5f0ff;
+
+  /* Invoice status colors */
+  --color-status-paid-bg:    #f0fdf4;
+  --color-status-paid-bar:   #34c759;
+  --color-status-sent-bg:    #ffffff;
+  --color-status-sent-bar:   #007aff;
+  --color-status-draft-bg:   #ffffff;
+  --color-status-draft-bar:  #c7c7cc;
+  --color-status-overdue-bg: #fff5f5;
+  --color-status-overdue-bar:#ff3b30;
+
+  /* Radius */
+  --radius-card:   16px;
+  --radius-button: 12px;
+  --radius-input:  10px;
+  --radius-badge:  20px;
+  --radius-sm:     8px;
+
+  /* Shadows */
+  --shadow-card:  0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-modal: 0 8px 32px rgba(0,0,0,0.12);
+
+  /* Font */
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   box-sizing: border-box;
 }
 
+html { height: 100%; }
+
 body {
-  background-color: #f2f2f7;
-  color: #1c1c1e;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+  height: 100%;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
 }
 
-/* Inputs */
-input, select, textarea {
-  border-color: #c7c7cc !important;
-  color: #1c1c1e !important;
-  font-size: 0.95rem !important;
-  font-weight: 500 !important;
-  border-radius: 10px !important;
-  background-color: #ffffff !important;
-  transition: border-color 0.2s ease !important;
-}
+/* ── Typography ────────────────────────────────────────────────────────────── */
 
-input:focus, select:focus, textarea:focus {
-  border-color: #007aff !important;
-  outline: 2px solid rgba(0, 122, 255, 0.25) !important;
-  outline-offset: 0px !important;
-}
+.text-h1 { font-size: 24px; font-weight: 700; color: var(--color-text-primary); }
+.text-h2 { font-size: 20px; font-weight: 600; color: var(--color-text-primary); }
+.text-h3 { font-size: 17px; font-weight: 600; color: var(--color-text-primary); }
+.text-body{ font-size: 15px; font-weight: 400; color: var(--color-text-primary); }
+.text-sub { font-size: 13px; font-weight: 400; color: var(--color-text-secondary); }
+.text-cap { font-size: 11px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
 
-input::placeholder {
-  color: #c7c7cc !important;
-  font-weight: 400 !important;
-}
+/* ── Card ───────────────────────────────────────────────────────────────────── */
 
-/* Cards */
 .card {
-  background: #ffffff;
-  border-radius: 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
   border: none;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
 }
 
-/* Buttons */
+/* ── Buttons ────────────────────────────────────────────────────────────────── */
+
 button {
-  border-radius: 12px !important;
+  border-radius: var(--radius-button) !important;
   font-weight: 600 !important;
   transition: opacity 0.15s ease, transform 0.1s ease !important;
+  cursor: pointer;
 }
 
-button:active {
+button:active:not(:disabled) {
   transform: scale(0.97) !important;
   opacity: 0.85 !important;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
+button:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+
+/* ── Inputs ─────────────────────────────────────────────────────────────────── */
+
+input, select, textarea {
+  border: 1.5px solid var(--color-separator) !important;
+  color: var(--color-text-primary) !important;
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  border-radius: var(--radius-input) !important;
+  background-color: var(--color-surface) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+  font-family: var(--font-sans) !important;
 }
-::-webkit-scrollbar-thumb {
-  background: #c7c7cc;
-  border-radius: 3px;
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-blue) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.18) !important;
 }
+
+input::placeholder, textarea::placeholder {
+  color: var(--color-text-tertiary) !important;
+  font-weight: 400 !important;
+}
+
+/* ── Invoice Row Colors ─────────────────────────────────────────────────────── */
+
+/* Applied per-row based on status — use border-left for visual hierarchy */
+
+.invoice-row {
+  position: relative;
+  transition: background-color 0.15s ease;
+}
+
+.invoice-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+}
+
+.invoice-row-paid {
+  background-color: var(--color-status-paid-bg);
+}
+.invoice-row-paid::before { background-color: var(--color-status-paid-bar); }
+
+.invoice-row-sent {
+  background-color: var(--color-status-sent-bg);
+}
+.invoice-row-sent::before { background-color: var(--color-status-sent-bar); }
+
+.invoice-row-draft {
+  background-color: var(--color-status-draft-bg);
+}
+.invoice-row-draft::before { background-color: var(--color-status-draft-bar); }
+
+.invoice-row-overdue {
+  background-color: var(--color-status-overdue-bg);
+}
+.invoice-row-overdue::before { background-color: var(--color-status-overdue-bar); }
+
+/* Accountant: worked-on = same as paid */
+.invoice-row-worked {
+  background-color: var(--color-status-paid-bg);
+}
+.invoice-row-worked::before { background-color: var(--color-status-paid-bar); }
+
+/* Hover keeps a slight tint */
+.invoice-row:hover { filter: brightness(0.98); }
+
+/* ── Status Badges ───────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--radius-badge);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-paid    { background: #dcfce7; color: #166534; }
+.badge-sent    { background: var(--color-blue-light); color: #1d4ed8; }
+.badge-draft   { background: #f4f4f5; color: #52525b; }
+.badge-overdue { background: var(--color-red-light); color: #dc2626; }
+
+/* ── Stats Card ──────────────────────────────────────────────────────────────── */
+
+.stat-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+}
+
+.stat-card .stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.stat-card .stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-separator); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }
+
+/* ── Animations ──────────────────────────────────────────────────────────────── */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in { animation: fade-in 0.2s ease both; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.animate-spin { animation: spin 0.7s linear infinite; }
