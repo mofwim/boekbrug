@@ -12,9 +12,23 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { clientEmail, clientName, invoiceNumber, totalInc, dueDate } = body
-// أضف هذا السطر:
-const totalIncNum = typeof totalInc === 'number' ? totalInc : parseFloat(totalInc ?? '0')
+    const { invoiceId } = body
+
+    if (!invoiceId) {
+      return NextResponse.json({ error: 'invoiceId verplicht' }, { status: 400 })
+    }
+
+    // Haal factuurdata op uit DB — vertrouw nooit op de client voor financiële data
+    const { data: invoice, error: invoiceError } = await supabase
+      .from('invoices')
+      .select('invoice_number, client_name, client_email, total_inc_btw, due_date, sender_id')
+      .eq('id', invoiceId)
+      .eq('sender_id', user.id) // security: alleen eigen facturen
+      .single()
+
+    if (invoiceError || !invoice) {
+      return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+    }
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -23,51 +37,43 @@ const totalIncNum = typeof totalInc === 'number' ? totalInc : parseFloat(totalIn
       .single()
 
     const zzperName = profile?.company_name || profile?.full_name || 'Onbekend'
-    const { data: accountantLink, error: linkError } = await supabase
+
+    const { data: accountantLink } = await supabase
       .from('accountant_clients')
       .select('accountant_id')
       .eq('zzper_id', user.id)
       .maybeSingle()
 
-    // مؤقت للتشخيص
-    console.log('user.id:', user.id)
-    console.log('accountantLink:', accountantLink)
-    console.log('linkError:', linkError)
-
-
     const accountantId = accountantLink?.accountant_id ?? null
-    console.log('accountantId:', accountantId)
+
+    // Stuur factuur e-mail
     await sendInvoiceToClient({
-      toEmail: clientEmail,
-      clientName,
+      toEmail: invoice.client_email,
+      clientName: invoice.client_name,
       zzperName,
-      invoiceNumber,
-      totalInc,
-      dueDate
+      invoiceNumber: invoice.invoice_number,
+      totalInc: invoice.total_inc_btw,
+      dueDate: invoice.due_date ?? '',
     })
 
-        // إشعار للمحاسب
-// إشعار للمحاسب عند استلام فاتورة جديدة
-if (accountantId) {
-  const { error: notifError } = await supabase
-    .from('notifications')
-    .insert({
-      user_id: accountantId,
-      title: 'Nieuwe factuur ontvangen',
-      body: `${zzperName} heeft factuur ${invoiceNumber} verzonden — €${totalIncNum.toFixed(2)}`,
-     // body: `${zzperName} heeft factuur ${invoiceNumber} verzonden — €${totalInc.toFixed(2)}`,
-      type: 'invoice',
-      read: false,
-      link: `/dashboard/clients/${user.id}`
-    })
+    // Update status naar 'sent'
+    await supabase
+      .from('invoices')
+      .update({ status: 'sent' })
+      .eq('id', invoiceId)
 
-  console.log('notifError:', notifError)
-  console.log('notification sent to accountant:', accountantId)
-}
+    // Notificatie voor boekhouder
+    if (accountantId) {
+      await supabase.from('notifications').insert({
+        user_id: accountantId,
+        title: 'Nieuwe factuur verzonden',
+        body: `${zzperName} heeft factuur ${invoice.invoice_number} verzonden — €${invoice.total_inc_btw.toFixed(2)}`,
+        type: 'invoice',
+        read: false,
+        link: `/dashboard/clients/${user.id}`,
+      })
+    }
 
-console.log('accountantLink:', accountantLink)
-console.log('accountantId:', accountantId)
-console.log('user.id:', user.id)
     return NextResponse.json({ success: true })
 
   } catch (error) {
