@@ -819,7 +819,7 @@ function NewInvoicePageContent() {
                 ))}
                 <div className="flex justify-between font-bold text-gray-900 text-base pt-2 border-t border-gray-100">
                   <span>Totaal incl. BTW</span>
-                  <span style={{ color: invoiceType === 'creditnota' ? '#ef4444' : '#1c1c1e' }}>
+                  <span style={{ color: sign === -1 ? '#ef4444' : '#1c1c1e' }}>
                     {NL_NUMBER.format(sign * totalInc)}
                   </span>
                 </div>
@@ -827,7 +827,7 @@ function NewInvoicePageContent() {
             </div>
 
             {/* ── Betalingsinformatie ── */}
-            {profile?.iban && invoiceType !== 'creditnota' && (
+            {profile?.iban && invoiceType !== ('creditnota' as InvoiceType) && (
               <div className="bg-white rounded-2xl p-4 shadow-sm">
                 <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Betalingsinformatie</p>
                 <div className="space-y-1 text-sm text-gray-600">
