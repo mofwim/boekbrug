@@ -1,5 +1,5 @@
-// lib/quarterly.ts
-// Quarterly overview logic (BOEK-013)
+// src/lib/quarterly.ts
+// [BOEK-013] Quarterly overview logic — May 2026
 // Pure functions — no DB calls — easy to test
 
 export type BtwRate = number;
@@ -9,6 +9,7 @@ export interface InvoiceForQuarterly {
   invoice_number: string;
   client_name: string;
   status: string;
+  direction: string; // 'outgoing' | 'incoming'
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
@@ -23,10 +24,11 @@ export interface QuarterlyBtwBreakdown {
   totalBtw: number;
 }
 
+// [BOEK-013] Full summary — used by accountant mode (unchanged)
 export interface QuarterlySummary {
   year: number;
   quarter: 1 | 2 | 3 | 4;
-  label: string; // "Q1 2026"
+  label: string;
   totalExcl: number;
   totalBtw: number;
   totalIncl: number;
@@ -38,10 +40,15 @@ export interface QuarterlySummary {
   invoices: InvoiceForQuarterly[];
 }
 
-/** Get the quarter (1-4) for a given date string */
-export function getQuarter(date: string): 1 | 2 | 3 | 4 {
-  const month = new Date(date).getMonth(); // 0-11
-  return (Math.floor(month / 3) + 1) as 1 | 2 | 3 | 4;
+// [BOEK-013] Simplified ZZP summary — 4 numbers only, in + out
+export interface ZzpQuarterlySummary {
+  year: number;
+  quarter: 1 | 2 | 3 | 4;
+  mode: 'paid' | 'all';
+  totalIn: number;       // paid outgoing (money received by ZZP)
+  totalOut: number;      // paid incoming (money paid by ZZP)
+  totalBtwIn: number;    // BTW on outgoing invoices
+  totalBtwOut: number;   // BTW on incoming invoices
 }
 
 /** Get quarter start date string for filtering */
@@ -57,7 +64,59 @@ export function quarterEndDate(year: number, q: 1 | 2 | 3 | 4): string {
   return `${year}-${String(month).padStart(2, "0")}-${lastDay}`;
 }
 
-/** Build a QuarterlySummary from a list of invoices */
+/** Get the quarter (1-4) for a given date string */
+export function getQuarter(date: string): 1 | 2 | 3 | 4 {
+  const month = new Date(date).getMonth();
+  return (Math.floor(month / 3) + 1) as 1 | 2 | 3 | 4;
+}
+
+// [BOEK-013] Build simplified ZZP summary — 4 numbers only
+// mode='paid'  → outgoing:paid only + incoming:paid only
+// mode='all'   → outgoing:paid+sent+overdue + incoming:paid+received+processing
+export function buildZzpSummary(
+  invoices: InvoiceForQuarterly[],
+  year: number,
+  quarter: 1 | 2 | 3 | 4,
+  mode: 'paid' | 'all'
+): ZzpQuarterlySummary {
+  const OUTGOING_STATUSES_ALL = ['paid', 'sent', 'overdue'];
+  const INCOMING_STATUSES_ALL = ['paid', 'received', 'processing'];
+
+  let totalIn = 0;
+  let totalOut = 0;
+  let totalBtwIn = 0;
+  let totalBtwOut = 0;
+
+  for (const inv of invoices) {
+    const isOutgoing = inv.direction === 'outgoing';
+    const isIncoming = inv.direction === 'incoming';
+
+    if (mode === 'paid') {
+      if (isOutgoing && inv.status === 'paid') {
+        totalIn += inv.total_inc_btw;
+        totalBtwIn += inv.btw_amount;
+      }
+      if (isIncoming && inv.status === 'paid') {
+        totalOut += inv.total_inc_btw;
+        totalBtwOut += inv.btw_amount;
+      }
+    } else {
+      // mode === 'all'
+      if (isOutgoing && OUTGOING_STATUSES_ALL.includes(inv.status)) {
+        totalIn += inv.total_inc_btw;
+        totalBtwIn += inv.btw_amount;
+      }
+      if (isIncoming && INCOMING_STATUSES_ALL.includes(inv.status)) {
+        totalOut += inv.total_inc_btw;
+        totalBtwOut += inv.btw_amount;
+      }
+    }
+  }
+
+  return { year, quarter, mode, totalIn, totalOut, totalBtwIn, totalBtwOut };
+}
+
+/** Build a full QuarterlySummary — used by accountant mode (unchanged) */
 export function buildQuarterlySummary(
   invoices: InvoiceForQuarterly[],
   year: number,
@@ -79,7 +138,7 @@ export function buildQuarterlySummary(
     totalBtw += inv.btw_amount;
     totalIncl += inv.total_inc_btw;
 
-    if (inv.status === "paid") {
+    if (inv.status === 'paid') {
       paid += inv.total_inc_btw;
     } else if (inv.due_date && new Date(inv.due_date) < now) {
       overdue += inv.total_inc_btw;
@@ -116,8 +175,8 @@ export function buildQuarterlySummary(
 
 /** Format euros: 1234.5 → "€ 1.234,50" (Dutch locale) */
 export function formatEur(amount: number): string {
-  return new Intl.NumberFormat("nl-NL", {
-    style: "currency",
-    currency: "EUR",
+  return new Intl.NumberFormat('nl-NL', {
+    style: 'currency',
+    currency: 'EUR',
   }).format(amount);
 }

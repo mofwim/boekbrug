@@ -1,44 +1,80 @@
-// hooks/useInfiniteInvoices.ts
-// Infinite scroll for invoices (BOEK-009)
+// src/hooks/useInfiniteInvoices.ts
+// [BoekBrug v1.2] — BOEK-009 — Infinite Scroll + Filter
+// Owns: cursor-based pagination, filter by status, accountant mode
+// Do not modify without reading SHARED_FILES_PROTOCOL.md
 
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const PAGE_SIZE = 20;
+
+const SELECT =
+  // [BOEK-009] added invoice_type — May 2026
+  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, invoice_date, due_date, created_at, invoice_type, replaced_by_number";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface InvoiceRow {
   id: string;
   invoice_number: string;
   client_name: string;
   status: string;
+  accountant_status?: string | null;
   direction: string;
   total_inc_btw: number;
   invoice_date: string;
   due_date: string | null;
   created_at: string;
+  // [BOEK-031] invoice type — 'factuur' | 'creditnota' | 'pro_forma' — May 2026
+  invoice_type?: string | null;
+  // [BOEK-031] Replace Flow — ingevuld als deze factuur vervangen is — May 2026
+  replaced_by_number?: string | null;
 }
 
-/** "all" = geen filter, anders exact match op status */
+/** ZZP filter — on invoice status */
 export type InvoiceStatusFilter = "all" | "draft" | "sent" | "paid" | "overdue";
 
-interface UseInfiniteInvoicesOptions {
+/** Accountant filter — on accountant_status (always pre-filtered to paid invoices) */
+export type AccountantStatusFilter = "all" | "verwerkt" | "in_behandeling" | "vraag";
+
+export interface UseInfiniteInvoicesOptions {
   userId: string;
-  /** Filtert de lijst — reset automatisch bij wijziging */
+  /** ZZP mode: filter by invoice status */
   status?: InvoiceStatusFilter;
+  /** Accountant mode: filter by accountant_status */
+  accountantStatus?: AccountantStatusFilter;
   /**
-   * Accountant mode: geef de IDs van gekoppelde klanten mee.
-   * Hook zoekt dan op sender_id IN (clientIds) i.p.v. sender_id = userId.
-   * Lege array [] = geen klanten geladen → lijst blijft leeg.
+   * Accountant mode: pass sender_id list from accountant_clients.
+   * When defined (even empty array), activates accountant mode.
    */
   clientIds?: string[];
 }
 
-const SELECT =
-  "id, invoice_number, client_name, status, direction, total_inc_btw, invoice_date, due_date, created_at";
+export interface UseInfiniteInvoicesReturn {
+  invoices: InvoiceRow[];
+  loading: boolean;
+  hasMore: boolean;
+  error: string | null;
+  refreshing: boolean;
+  loadMore: () => void;
+  refresh: () => Promise<void>;
+  /** Optimistic add — call before API create */
+  addOptimistic: (invoice: InvoiceRow) => void;
+  /** Optimistic remove — call on API error after addOptimistic */
+  removeOptimistic: (id: string) => void;
+  /** Optimistic patch — call before API update */
+  updateOptimistic: (id: string, patch: Partial<InvoiceRow>) => void;
+}
 
-export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
+export function useInfiniteInvoices(
+  opts: UseInfiniteInvoicesOptions
+): UseInfiniteInvoicesReturn {
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -46,21 +82,28 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
   const [refreshing, setRefreshing] = useState(false);
 
   const cursorRef = useRef<string | null>(null);
+  // [BOEK-009] track in-flight fetch to prevent race conditions — May 2026
+  const fetchingRef = useRef(false);
   const supabase = createClient();
 
   const isAccountantMode = opts.clientIds !== undefined;
 
-  // ─── Fetch one page ───────────────────────────────────────────────────────
+  // Stable serialisation of clientIds for dependency tracking
+  const clientIdsKey = JSON.stringify(opts.clientIds ?? []);
+
+  // ── Core fetch ──────────────────────────────────────────────────────────────
+
   const fetchPage = useCallback(
     async (replace = false) => {
-      // Accountant zonder klanten → niets laden
+      // [BOEK-009] accountant with no clients → empty list immediately — May 2026
       if (isAccountantMode && opts.clientIds!.length === 0) {
         setInvoices([]);
         setHasMore(false);
         return;
       }
 
-      if (loading) return;
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
       setLoading(true);
       setError(null);
 
@@ -68,21 +111,34 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
         let q = supabase
           .from("invoices")
           .select(SELECT)
+          // [BOEK-009] newest first — verified sort order — May 2026
           .order("created_at", { ascending: false })
           .order("id", { ascending: false })
           .limit(PAGE_SIZE);
 
-        // Accountant: zoek op klant-IDs; ZZP'er: zoek op eigen ID
         if (isAccountantMode) {
-          q = q.in("sender_id", opts.clientIds!);
+          // [BOEK-009] accountant sees ONLY paid invoices of his clients — May 2026
+          q = q.in("sender_id", opts.clientIds!).eq("status", "paid");
+
+          if (opts.accountantStatus && opts.accountantStatus !== "all") {
+            q = q.eq("accountant_status", opts.accountantStatus);
+          }
         } else {
+          // ZZP sees own invoices
           q = q.eq("sender_id", opts.userId);
+
+          if (opts.status && opts.status !== "all") {
+            if (opts.status === "overdue") {
+              // [BOEK-009] overdue = sent + due_date < today — May 2026
+              const today = new Date().toISOString().split("T")[0];
+              q = q.eq("status", "sent").lt("due_date", today);
+            } else {
+              q = q.eq("status", opts.status);
+            }
+          }
         }
 
-        if (opts.status && opts.status !== "all") {
-          q = q.eq("status", opts.status);
-        }
-
+        // [BOEK-009] cursor-based pagination — no OFFSET — May 2026
         if (!replace && cursorRef.current) {
           q = q.lt("created_at", cursorRef.current);
         }
@@ -90,56 +146,92 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
         const { data, error: fetchError } = await q;
         if (fetchError) throw new Error(fetchError.message);
 
-        const rows = data as InvoiceRow[];
-        setHasMore(rows.length === PAGE_SIZE);
+        const rows = (data ?? []) as InvoiceRow[];
+        const newHasMore = rows.length === PAGE_SIZE;
+        setHasMore(newHasMore);
+
+        // [BOEK-031] Fetch archived invoices — alleen in ZZP mode, alleen op eerste pagina — May 2026
+        let archivedRows: InvoiceRow[] = [];
+        if (!isAccountantMode && replace) {
+          const { data: archivedData } = await supabase
+            .from("invoices")
+            .select(SELECT)
+            .eq("sender_id", opts.userId)
+            .eq("status", "archived")
+            .order("created_at", { ascending: false });
+          archivedRows = (archivedData ?? []) as InvoiceRow[];
+        }
 
         if (replace) {
-          setInvoices(rows);
+          // [BOEK-031] archived altijd aan het einde — May 2026
+          setInvoices([...rows, ...archivedRows]);
           cursorRef.current = rows.at(-1)?.created_at ?? null;
         } else {
           setInvoices((prev) => {
-            const ids = new Set(prev.map((r) => r.id));
-            return [...prev, ...rows.filter((r) => !ids.has(r.id))];
+            const seen = new Set(prev.map((r) => r.id));
+            // archived zitten al in de lijst van replace — niet opnieuw toevoegen
+            const newRows = rows.filter((r) => !seen.has(r.id) && r.status !== "archived");
+            // archived altijd aan het einde houden
+            const archived = prev.filter((r) => r.status === "archived");
+            const normal   = prev.filter((r) => r.status !== "archived");
+            return [...normal, ...newRows, ...archived];
           });
-          if (rows.length > 0) cursorRef.current = rows.at(-1)!.created_at;
+          if (rows.length > 0) {
+            cursorRef.current = rows.at(-1)!.created_at;
+          }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Fout bij laden");
       } finally {
         setLoading(false);
+        fetchingRef.current = false;
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [opts.userId, opts.status, JSON.stringify(opts.clientIds)]
+    [opts.userId, opts.status, opts.accountantStatus, clientIdsKey, isAccountantMode]
   );
 
-  // ─── Reset + herlaad bij filter- of clientIds-wijziging ──────────────────
+  // ── Reset on filter change ───────────────────────────────────────────────────
+
+  // [BOEK-009] reset list + cursor whenever any filter param changes — May 2026
   useEffect(() => {
     cursorRef.current = null;
     setInvoices([]);
     setHasMore(true);
+    setError(null);
+    fetchingRef.current = false;
     fetchPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opts.userId, opts.status, JSON.stringify(opts.clientIds)]);
+  }, [opts.userId, opts.status, opts.accountantStatus, clientIdsKey]);
 
-  // ─── Real-time: nieuwe facturen bovenaan prependen ───────────────────────
+  // ── Real-time: new invoices prepended ────────────────────────────────────────
+
   useEffect(() => {
-    // Welke sender_ids bewaken we?
-    const watchIds = isAccountantMode ? (opts.clientIds ?? []) : [opts.userId];
+    const watchIds = isAccountantMode
+      ? (opts.clientIds ?? [])
+      : [opts.userId];
+
     if (watchIds.length === 0) return;
 
-    // Supabase realtime filter ondersteunt geen IN — luister globaal en filter client-side
     const channel = supabase
-      .channel(`invoices-rt-${opts.userId}`)
+      .channel(`invoices-rt-${opts.userId}-${opts.status ?? "all"}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "invoices" },
         (payload) => {
           const row = payload.new as InvoiceRow & { sender_id: string };
+
+          // [BOEK-009] guard: only rows relevant to current user / client list — May 2026
           if (!watchIds.includes(row.sender_id)) return;
-          const matchesFilter =
-            !opts.status || opts.status === "all" || row.status === opts.status;
-          if (!matchesFilter) return;
+          if (isAccountantMode && row.status !== "paid") return;
+          if (
+            !isAccountantMode &&
+            opts.status &&
+            opts.status !== "all" &&
+            opts.status !== "overdue" &&
+            row.status !== opts.status
+          ) return;
+
           setInvoices((prev) => {
             if (prev.some((r) => r.id === row.id)) return prev;
             return [row, ...prev];
@@ -148,18 +240,23 @@ export function useInfiniteInvoices(opts: UseInfiniteInvoicesOptions) {
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, [opts.userId, opts.status, JSON.stringify(opts.clientIds), supabase]);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts.userId, opts.status, clientIdsKey, isAccountantMode]);
 
-  // ─── Pull-to-refresh ─────────────────────────────────────────────────────
+  // ── Public API ───────────────────────────────────────────────────────────────
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     cursorRef.current = null;
+    fetchingRef.current = false;
     await fetchPage(true);
     setRefreshing(false);
   }, [fetchPage]);
 
-  // ─── Optimistic helpers ───────────────────────────────────────────────────
+  // [BOEK-009] optimistic helpers — used by BOEK-029 ZZP Dashboard — May 2026
   const addOptimistic = useCallback((invoice: InvoiceRow) => {
     setInvoices((prev) => [invoice, ...prev]);
   }, []);

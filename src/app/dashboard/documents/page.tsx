@@ -1,29 +1,38 @@
 // app/dashboard/documents/page.tsx
-export const dynamic = 'force-dynamic';
+// [BOEK-010] Documents page — supports ?clientId= for accountant mode
 
-import { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { DocumentsClient } from "./DocumentsClient";
 
-export const metadata: Metadata = {
-  title: "Documenten | BoekBrug",
-};
+interface Props {
+  searchParams: Promise<{ clientId?: string }>;
+}
 
-export default function DocumentsPage() {
+export default async function DocumentsPage({ searchParams }: Props) {
+  const { clientId } = await searchParams;
+
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  // [BOEK-010] If clientId → resolve client name for the header
+  let clientName: string | undefined;
+  if (clientId) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name, company_name")
+      .eq("id", clientId)
+      .single();
+
+    if (profile) {
+      clientName = profile.company_name || profile.full_name || undefined;
+    }
+  }
+
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
-      <div className="mb-6">
-        <a
-          href="/dashboard"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
-        >
-          ← Terug naar dashboard
-        </a>
-        <h1 className="text-xl font-semibold">Documenten</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Upload en beheer je facturen, bonnen en contracten
-        </p>
-      </div>
-      <DocumentsClient />
-    </div>
+    <main>
+      <DocumentsClient clientName={clientName} />
+    </main>
   );
 }

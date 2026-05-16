@@ -3,8 +3,7 @@
 
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
-import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";
-import Link from "next/link";
+import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";import Link from "next/link";
 
 export const metadata = {
   title: "Kwartaaloverzicht — BoekBrug",

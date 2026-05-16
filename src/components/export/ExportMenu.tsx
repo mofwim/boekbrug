@@ -1,15 +1,15 @@
 "use client";
 
 // components/export/ExportMenu.tsx
-// Unified export dropdown (BOEK-014)
-// Handles: CSV (quarter/year), PDF BTW aangifte, PDF factuuroverzicht, bank file parse
-// Usage: <ExportMenu year={2026} quarter={1} />
+// [BOEK-014] Export dropdown — May 2026
+// Handles: CSV (quarter/year/all-clients), PDF BTW aangifte, PDF factuuroverzicht, bank file parse
+// Usage: <ExportMenu year={2026} quarter={1} isAccountant={false} />
 
 import { useRef, useState } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ExportFormat = "csv-quarter" | "csv-year" | "pdf-btw" | "pdf-list";
+type ExportFormat = "csv-quarter" | "csv-year" | "csv-all-clients" | "pdf-btw" | "pdf-list";
 type UploadState = "idle" | "uploading" | "done" | "error";
 type ExportState = "idle" | "loading" | "done" | "error";
 
@@ -18,20 +18,22 @@ interface ExportMenuProps {
   quarter: 1 | 2 | 3 | 4;
   /** Optional: filter by status before export */
   statusFilter?: string;
+  // [BOEK-014] new props for accountant mode
+  isAccountant?: boolean;
+  selectedClientId?: string;
+  disabled?: boolean;
 }
-
-// ─── Label maps ──────────────────────────────────────────────────────────────
-
-const FORMAT_LABELS: Record<ExportFormat, string> = {
-  "csv-quarter": "CSV — dit kwartaal",
-  "csv-year": "CSV — heel jaar",
-  "pdf-btw": "PDF — BTW aangifte",
-  "pdf-list": "PDF — factuuroverzicht",
-};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function ExportMenu({ year, quarter, statusFilter }: ExportMenuProps) {
+export function ExportMenu({
+  year,
+  quarter,
+  statusFilter,
+  isAccountant = false,
+  selectedClientId,
+  disabled = false,
+}: ExportMenuProps) {
   const [open, setOpen] = useState(false);
   const [exportState, setExportState] = useState<ExportState>("idle");
   const [uploadState, setUploadState] = useState<UploadState>("idle");
@@ -53,27 +55,37 @@ export function ExportMenu({ year, quarter, statusFilter }: ExportMenuProps) {
       let filename: string;
 
       if (format === "csv-quarter") {
-        params.set("format", "csv");
-        params.set("scope", "quarter");
         params.set("quarter", String(quarter));
+        if (isAccountant && selectedClientId) params.set("clientId", selectedClientId);
         filename = `boekbrug-facturen-Q${quarter}-${year}.csv`;
         url = `/api/export?${params}`;
+
       } else if (format === "csv-year") {
-        params.set("format", "csv");
-        params.set("scope", "year");
+        if (isAccountant && selectedClientId) params.set("clientId", selectedClientId);
         filename = `boekbrug-facturen-${year}.csv`;
         url = `/api/export?${params}`;
+
+      } else if (format === "csv-all-clients") {
+        // [BOEK-014] accountant: all linked clients in one CSV
+        params.set("quarter", String(quarter));
+        params.set("accountant", "true");
+        filename = `boekbrug-klanten-Q${quarter}-${year}.csv`;
+        url = `/api/export?${params}`;
+
       } else if (format === "pdf-btw") {
         params.set("format", "pdf-btw");
         params.set("scope", "quarter");
         params.set("quarter", String(quarter));
+        if (isAccountant && selectedClientId) params.set("clientId", selectedClientId);
         filename = `boekbrug-btw-aangifte-Q${quarter}-${year}.pdf`;
         url = `/api/export?${params}`;
+
       } else {
         // pdf-list
         params.set("format", "pdf-list");
         params.set("scope", "quarter");
         params.set("quarter", String(quarter));
+        if (isAccountant && selectedClientId) params.set("clientId", selectedClientId);
         filename = `boekbrug-factuuroverzicht-Q${quarter}-${year}.pdf`;
         url = `/api/export?${params}`;
       }
@@ -88,7 +100,7 @@ export function ExportMenu({ year, quarter, statusFilter }: ExportMenuProps) {
       triggerDownload(blob, filename);
       setExportState("done");
     } catch (err) {
-      console.error(err);
+      console.error("[BOEK-014] Export error:", err);
       setExportState("error");
     } finally {
       setTimeout(() => setExportState("idle"), 3000);
@@ -121,7 +133,6 @@ export function ExportMenu({ year, quarter, statusFilter }: ExportMenuProps) {
       setUploadError(err instanceof Error ? err.message : "Onbekende fout");
       setUploadState("error");
     } finally {
-      // Reset file input so same file can be re-uploaded
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -143,8 +154,8 @@ export function ExportMenu({ year, quarter, statusFilter }: ExportMenuProps) {
     <div className="relative">
       {/* Trigger button */}
       <button
-        onClick={() => setOpen((o) => !o)}
-        disabled={exportState === "loading"}
+        onClick={() => !disabled && setOpen((o) => !o)}
+        disabled={exportState === "loading" || disabled}
         className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
       >
         {exportState === "loading" ? (
@@ -159,10 +170,7 @@ export function ExportMenu({ year, quarter, statusFilter }: ExportMenuProps) {
       {open && (
         <>
           {/* Backdrop */}
-          <div
-            className="fixed inset-0 z-10"
-            onClick={() => setOpen(false)}
-          />
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
 
           <div className="absolute right-0 z-20 mt-2 w-60 rounded-xl border border-gray-100 bg-white shadow-xl">
             <div className="p-1.5">
@@ -175,6 +183,13 @@ export function ExportMenu({ year, quarter, statusFilter }: ExportMenuProps) {
               <MenuItem onClick={() => handleExport("csv-year")}>
                 Heel jaar — {year}
               </MenuItem>
+
+              {/* [BOEK-014] Accountant only: all clients */}
+              {isAccountant && (
+                <MenuItem onClick={() => handleExport("csv-all-clients")}>
+                  Alle klanten — Q{quarter} {year}
+                </MenuItem>
+              )}
 
               <Divider />
 
@@ -317,7 +332,6 @@ function BankResultPanel({
   return (
     <div className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-gray-100 bg-white shadow-xl">
       <div className="p-4">
-        {/* Header */}
         <div className="mb-3 flex items-center justify-between">
           <div>
             <p className="text-sm font-semibold text-gray-900">
@@ -327,15 +341,11 @@ function BankResultPanel({
               <p className="text-xs text-gray-400">{result.accountIban}</p>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
-          >
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             ✕
           </button>
         </div>
 
-        {/* Stats */}
         <div className="grid grid-cols-2 gap-2">
           <Stat label="Transacties" value={String(result.transactionCount)} />
           <Stat
@@ -358,21 +368,17 @@ function BankResultPanel({
           />
         </div>
 
-        {/* Parse warnings */}
         {result.parseErrors.length > 0 && (
           <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2">
             <p className="text-xs font-medium text-amber-700">
               {result.parseErrors.length} waarschuwing(en)
             </p>
             {result.parseErrors.slice(0, 3).map((e, i) => (
-              <p key={i} className="mt-0.5 text-xs text-amber-600">
-                {e}
-              </p>
+              <p key={i} className="mt-0.5 text-xs text-amber-600">{e}</p>
             ))}
           </div>
         )}
 
-        {/* BOEK-016 notice */}
         <p className="mt-3 text-xs text-gray-400">
           Koppeling met facturen komt in de volgende update.
         </p>
@@ -397,11 +403,7 @@ function Stat({
       <p className="text-xs text-gray-400">{label}</p>
       <p
         className={`mt-0.5 text-sm font-semibold ${
-          positive
-            ? "text-green-600"
-            : negative
-            ? "text-red-500"
-            : "text-gray-900"
+          positive ? "text-green-600" : negative ? "text-red-500" : "text-gray-900"
         }`}
       >
         {value}

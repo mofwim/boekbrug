@@ -1,64 +1,50 @@
 'use client'
 
 // src/app/dashboard/clients/[id]/page.tsx
-// BOEK-007: + زر Berichten + feedback تحديث الحالة
+// [BOEK-028] Client detail — Section 1: klantgegevens, Section 2: Working Place Q1–Q4 — May 2026
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
-const INVOICE_STATUSES = [
-  { value: 'received',   label: 'Ontvangen',      color: 'bg-blue-100 text-blue-700' },
-  { value: 'processing', label: 'In behandeling', color: 'bg-yellow-100 text-yellow-700' },
-  { value: 'processed',  label: 'Verwerkt',       color: 'bg-green-100 text-green-700' },
-  { value: 'unclear',    label: 'Onduidelijk',    color: 'bg-red-100 text-red-700' },
-  { value: 'archived',   label: 'Gearchiveerd',   color: 'bg-gray-100 text-gray-600' },
-]
 
-function getStatusStyle(status: string) {
-  return INVOICE_STATUSES.find(s => s.value === status)?.color || 'bg-gray-100 text-gray-600'
-}
+const LAST_CLIENT_KEY = 'last_client_id'
 
 export default function ClientDetailPage() {
   const router = useRouter()
   const params = useParams()
-  const clientId = params.id as string
+  const clientId = params?.id as string
   const supabase = createClient()
 
   const [client, setClient] = useState<any>(null)
-  const [invoices, setInvoices] = useState<any[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [updatingId, setUpdatingId] = useState<string | null>(null)
-  const [updatedId, setUpdatedId] = useState<string | null>(null) // feedback بصري
+
+  const year = new Date().getFullYear()
+  const currentQ = Math.ceil((new Date().getMonth() + 1) / 3)
+
+  if (!clientId) notFound()
 
   useEffect(() => {
+    // [BOEK-028] Persist last visited client — May 2026
+    localStorage.setItem(LAST_CLIENT_KEY, clientId)
+
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
 
       const { data: clientData } = await supabase
         .from('profiles').select('*').eq('id', clientId).single()
-
       if (clientData) setClient(clientData)
 
-      const { data: invoiceData } = await supabase
-        .from('invoices')
-        .select('*, invoice_lines(*)')
-        .eq('sender_id', clientId)
-        .order('invoice_date', { ascending: false })
-
-      if (invoiceData) setInvoices(invoiceData)
-
-      // عدد الرسائل غير المقروءة من هذا العميل
       const { count } = await supabase
         .from('messages')
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId)
         .eq('receiver_id', user.id)
         .eq('read', false)
-
       setUnreadCount(count || 0)
+
       setLoading(false)
     }
     load()
@@ -66,191 +52,170 @@ export default function ClientDetailPage() {
 
   async function removeClient() {
     const confirmed = window.confirm(
-      `Weet je zeker dat je ${client?.company_name || client?.full_name} wilt verwijderen?`
+      `Weet je zeker dat je ${client?.company_name || client?.full_name} wilt ontkoppelen?`
     )
     if (!confirmed) return
-
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-
     await supabase
       .from('accountant_clients')
       .delete()
       .eq('accountant_id', user.id)
       .eq('zzper_id', clientId)
-
     router.push('/dashboard')
   }
 
-  async function updateStatus(invoiceId: string, newStatus: string) {
-    setUpdatingId(invoiceId)
-
-    const { error } = await supabase
-      .from('invoices')
-      .update({ status: newStatus })
-      .eq('id', invoiceId)
-
-    if (error) {
-      setUpdatingId(null)
-      return
-    }
-
-    setInvoices(prev =>
-      prev.map(inv => inv.id === invoiceId ? { ...inv, status: newStatus } : inv)
-    )
-
-    // feedback بصري لثانية واحدة
-    setUpdatedId(invoiceId)
-    setTimeout(() => setUpdatedId(null), 1000)
-    setUpdatingId(null)
-  }
-  if (!clientId) notFound()  
-
   if (loading) return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
-      <p className="text-gray-400 text-sm">Laden...</p>
+    <div className="min-h-screen flex items-center justify-center"
+      style={{ backgroundColor: 'var(--color-bg, #f2f2f7)' }}>
+      <p className="text-sm" style={{ color: '#8e8e93' }}>Laden...</p>
     </div>
   )
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg, #f2f2f7)' }}>
 
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push('/dashboard')}
-              className="text-gray-400 hover:text-gray-600 text-sm"
-            >
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 px-4 py-3 border-b"
+        style={{ backgroundColor: 'var(--color-card, #fff)', borderColor: 'var(--color-separator, #e5e5ea)' }}>
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <button onClick={() => router.push('/dashboard')}
+              className="text-sm font-medium flex-shrink-0" style={{ color: '#007aff' }}>
               ← Terug
             </button>
-            <div>
-              <h1 className="text-lg font-bold text-gray-900">
+            <div className="min-w-0">
+              <h1 className="text-base font-bold truncate"
+                style={{ color: 'var(--color-text-primary, #1c1c1e)' }}>
                 {client?.company_name || client?.full_name}
               </h1>
-              <p className="text-xs text-gray-400">{client?.email}</p>
+              <p className="text-xs truncate" style={{ color: '#636366' }}>
+                {client?.email}
+              </p>
+            </div>
+          </div>
+          <button onClick={removeClient}
+            className="text-xs font-medium px-2.5 py-1.5 rounded-xl flex-shrink-0"
+            style={{ backgroundColor: '#fee2e2', color: '#991b1b' }}>
+            Ontkoppelen
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+
+        {/* ── Sectie 1: Klantgegevens ─────────────────────── */}
+        {/* [BOEK-028] client info + email/message buttons — May 2026 */}
+        <div className="rounded-2xl overflow-hidden"
+          style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+
+          <div className="px-4 pt-4 pb-3 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide"
+              style={{ color: '#8e8e93' }}>Klantgegevens</p>
+
+            {/* Naam */}
+            <div>
+              <p className="text-xs mb-0.5" style={{ color: '#8e8e93' }}>Naam</p>
+              <p className="text-sm font-semibold" style={{ color: '#1c1c1e' }}>
+                {client?.company_name
+                  ? `${client.company_name}${client?.full_name ? ` · ${client.full_name}` : ''}`
+                  : client?.full_name || '—'}
+              </p>
+            </div>
+
+            {/* Grid: KVK / BTW / IBAN / Email */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              {[
+                { label: 'KVK',    value: client?.kvk_number },
+                { label: 'BTW',    value: client?.btw_number },
+                { label: 'IBAN',   value: client?.iban },
+                { label: 'E-mail', value: client?.email },
+              ].map(f => (
+                <div key={f.label}>
+                  <p className="text-xs mb-0.5" style={{ color: '#8e8e93' }}>{f.label}</p>
+                  <p className="text-xs font-semibold break-all" style={{ color: '#1c1c1e' }}>
+                    {f.value || '—'}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* BOEK-007: Berichten */}
+          {/* Action row — Stuur e-mail + Stuur bericht */}
+          <div className="flex border-t" style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}>
+            <a href={`mailto:${client?.email || ''}`}
+              className="flex-1 flex items-center justify-center gap-1.5 py-3.5 text-sm font-semibold border-r active:opacity-70 transition-opacity"
+              style={{ color: '#007aff', borderColor: 'var(--color-separator, #e5e5ea)', textDecoration: 'none' }}>
+              ✉ Stuur e-mail
+            </a>
             <button
               onClick={() => router.push(`/dashboard/messages/${clientId}`)}
-              className="relative flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium px-3 py-1.5 rounded-xl hover:bg-blue-50 transition-colors"
-            >
-              💬 Berichten
+              className="flex-1 relative flex items-center justify-center gap-1.5 py-3.5 text-sm font-semibold active:opacity-70 transition-opacity"
+              style={{ color: '#34c759' }}>
+              💬 Stuur bericht
               {unreadCount > 0 && (
-                <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                <span className="absolute top-2 right-3 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold leading-none">
                   {unreadCount}
                 </span>
               )}
             </button>
-
-            <button
-              onClick={removeClient}
-              className="text-xs text-red-400 hover:text-red-600 font-medium"
-            >
-              Klant verwijderen
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-4xl mx-auto px-6 py-6 space-y-4">
-
-        {/* Klantgegevens */}
-        <div className="bg-white rounded-2xl p-5 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
-            Klantgegevens
-          </p>
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div>
-              <p className="text-gray-400 text-xs">KVK</p>
-              <p className="font-medium text-gray-900">{client?.kvk_number || '—'}</p>
-            </div>
-            <div>
-              <p className="text-gray-400 text-xs">BTW</p>
-              <p className="font-medium text-gray-900">{client?.btw_number || '—'}</p>
-            </div>
-            <div>
-              <p className="text-gray-400 text-xs">IBAN</p>
-              <p className="font-medium text-gray-900">{client?.iban || '—'}</p>
-            </div>
           </div>
         </div>
 
-        {/* إحصائيات */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-white rounded-2xl p-5 shadow-sm">
-            <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Facturen</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{invoices.length}</p>
-          </div>
-          <div className="bg-white rounded-2xl p-5 shadow-sm">
-            <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Verwerkt</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">
-              {invoices.filter(i => i.status === 'processed').length}
-            </p>
-          </div>
-          <div className="bg-white rounded-2xl p-5 shadow-sm">
-            <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">Totaal</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">
-              €{invoices.reduce((sum, i) => sum + (i.total_inc_btw || 0), 0).toFixed(0)}
-            </p>
-          </div>
-        </div>
+        {/* ── Sectie 2: Working Place ──────────────────────── */}
+        {/* [BOEK-028] Q1–Q4 buttons scoped to client + year — May 2026 */}
+        <div className="rounded-2xl overflow-hidden"
+          style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
 
-        {/* قائمة الفواتير */}
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-900">Facturen</h2>
+          <div className="px-4 py-4 border-b"
+            style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}>
+            <h2 className="text-base font-semibold" style={{ color: '#1c1c1e' }}>
+              Working Place
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color: '#8e8e93' }}>
+              Selecteer een kwartaal
+            </p>
           </div>
 
-          {invoices.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-10">
-              Nog geen facturen ontvangen
-            </p>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {invoices.map(invoice => (
-                <div
-                  key={invoice.id}
-                  onClick={() => router.push(`/dashboard/invoice/${invoice.id}`)}
-                  className={`flex items-center justify-between px-5 py-4 cursor-pointer transition-colors ${
-                    updatedId === invoice.id ? 'bg-green-50' : 'hover:bg-gray-50'
-                  }`}
+          <div className="grid grid-cols-4 gap-3 p-4">
+            {[1, 2, 3, 4].map(q => {
+              const isCurrent = q === currentQ
+              return (
+                <button
+                  key={q}
+                  onClick={() =>
+                    router.push(`/dashboard/clients/${clientId}/kwartaal?q=${q}&year=${year}`)
+                  }
+                  className="flex flex-col items-center gap-1 py-4 rounded-2xl transition-all active:scale-95"
+                  style={{
+                    backgroundColor: isCurrent ? '#1c1c1e' : '#f2f2f7',
+                    color: isCurrent ? '#fff' : '#1c1c1e',
+                    boxShadow: isCurrent ? '0 2px 8px rgba(0,0,0,0.18)' : 'none',
+                  }}
                 >
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">
-                      {invoice.invoice_number}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {invoice.invoice_date} — vervalt {invoice.due_date}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <p className="text-sm font-semibold text-gray-900">
-                      €{invoice.total_inc_btw?.toFixed(2)}
-                    </p>
-                    <select
-                      value={invoice.status}
-                      onChange={e => updateStatus(invoice.id, e.target.value)}
-                      onClick={e => e.stopPropagation()}
-                      disabled={updatingId === invoice.id}
-                      className={`text-xs px-2 py-1 rounded-full font-medium border-0 cursor-pointer transition-opacity ${
-                        updatingId === invoice.id ? 'opacity-40' : 'opacity-100'
-                      } ${getStatusStyle(invoice.status)}`}
-                    >
-                      {INVOICE_STATUSES.map(s => (
-                        <option key={s.value} value={s.value}>{s.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                  <span className="text-xs font-semibold"
+                    style={{ color: isCurrent ? 'rgba(255,255,255,0.5)' : '#8e8e93' }}>
+                    {year}
+                  </span>
+                  <span className="text-xl font-black">Q{q}</span>
+                  {isCurrent && (
+                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      huidig
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
         </div>
+
+        {/* Factuur opstellen */}
+        <button
+          onClick={() => router.push(`/dashboard/invoice/new?clientId=${clientId}`)}
+          className="w-full py-3 rounded-2xl text-sm font-semibold"
+          style={{ backgroundColor: '#af52de', color: '#fff' }}>
+          + Factuur opstellen voor deze klant
+        </button>
 
       </div>
     </div>

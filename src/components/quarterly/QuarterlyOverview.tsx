@@ -1,16 +1,17 @@
-// components/quarterly/QuarterlyOverview.tsx
-// Quarterly financial overview (BOEK-013 + BOEK-014 export trigger)
+// src/components/quarterly/QuarterlyOverview.tsx
+// [BOEK-013] Quarterly Overview — simplified ZZP view — May 2026
 
 "use client";
 
 import { useEffect, useState } from "react";
-import type { QuarterlySummary } from "@/lib/quarterly";
+import type { QuarterlySummary, ZzpQuarterlySummary } from "@/lib/quarterly";
 import { formatEur } from "@/lib/quarterly";
 import { downloadCsv } from "@/lib/export";
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
+const CURRENT_QUARTER = Math.ceil((new Date().getMonth() + 1) / 3) as 1 | 2 | 3 | 4;
 
 interface Client {
   id: string;
@@ -23,47 +24,276 @@ interface Props {
 }
 
 export function QuarterlyOverview({ isAccountant }: Props) {
+  return isAccountant ? <AccountantView /> : <ZzpView />;
+}
+
+// ─────────────────────────────────────────────────────────
+// ZZP View
+// ─────────────────────────────────────────────────────────
+function ZzpView() {
+  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
   const [year, setYear] = useState(CURRENT_YEAR);
-  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(
-    Math.ceil((new Date().getMonth() + 1) / 3) as 1 | 2 | 3 | 4
-  );
-  const [data, setData] = useState<QuarterlySummary | null>(null);
+  const [mode, setMode] = useState<"paid" | "all">("paid");
+  const [data, setData] = useState<ZzpQuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // Accountant: client selector
+  useEffect(() => {
+    setLoading(true);
+    setData(null);
+    const params = new URLSearchParams({
+      year: String(year),
+      quarter: String(quarter),
+      mode,
+    });
+    fetch(`/api/quarterly?${params}`)
+      .then((r) => r.json())
+      .then(setData)
+      .finally(() => setLoading(false));
+  }, [quarter, year, mode]);
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ year: String(year), quarter: String(quarter) });
+      const res = await fetch(`/api/export?${params}`);
+      const csv = await res.text();
+      downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const quarterLabel = ["", "Januari – Maart", "April – Juni", "Juli – September", "Oktober – December"][quarter];
+
+  return (
+    <div className="space-y-4 pb-8">
+
+      {/* Back button */}
+      <div className="px-1">
+        <a href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-primary font-medium">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Dashboard
+        </a>
+      </div>
+
+      {/* Quarter + year selector */}
+      <div className="bg-background border rounded-2xl p-4 shadow-sm space-y-3">
+        <div className="flex bg-muted rounded-xl p-1 gap-1">
+          {QUARTERS.map((q) => (
+            <button
+              key={q}
+              onClick={() => setQuarter(q)}
+              className={`flex-1 py-2 text-sm rounded-lg font-medium transition-all ${
+                quarter === q
+                  ? "bg-background shadow-sm text-foreground"
+                  : "text-muted-foreground"
+              }`}
+            >
+              Q{q}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <select
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className="flex-1 text-sm border rounded-xl px-3 py-2 bg-background font-medium focus:outline-none"
+          >
+            {YEARS.map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+
+          <button
+            onClick={handleExport}
+            disabled={exporting || !data}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border hover:bg-muted disabled:opacity-40 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            {exporting ? "…" : "CSV"}
+          </button>
+        </div>
+      </div>
+
+      {/* [BOEK-013] Mode buttons — duidelijk actief/inactief onderscheid */}
+      <div className="grid grid-cols-2 gap-3">
+
+        {/* Betaald button */}
+        <button
+          onClick={() => setMode("paid")}
+          className={`py-4 rounded-2xl text-sm font-bold border-2 transition-all ${
+            mode === "paid"
+              ? "bg-emerald-500 border-emerald-500 text-white shadow-md"
+              : "bg-background border-muted text-muted-foreground"
+          }`}
+        >
+          <span className="flex items-center justify-center gap-1.5">
+            {mode === "paid" && (
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            Betaald
+          </span>
+          <span className={`block text-xs font-normal mt-1 ${mode === "paid" ? "text-emerald-100" : "text-muted-foreground"}`}>
+            Ontvangen & betaald
+          </span>
+        </button>
+
+        {/* Alles button */}
+        <button
+          onClick={() => setMode("all")}
+          className={`py-4 rounded-2xl text-sm font-bold border-2 transition-all ${
+            mode === "all"
+              ? "bg-blue-500 border-blue-500 text-white shadow-md"
+              : "bg-background border-muted text-muted-foreground"
+          }`}
+        >
+          <span className="flex items-center justify-center gap-1.5">
+            {mode === "all" && (
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            Alles
+          </span>
+          <span className={`block text-xs font-normal mt-1 ${mode === "all" ? "text-blue-100" : "text-muted-foreground"}`}>
+            Incl. uitstaand
+          </span>
+        </button>
+
+      </div>
+
+      {loading && <ZzpSkeleton />}
+
+      {!loading && data && (
+        <>
+          {/* Period title */}
+          <div className="px-1">
+            <p className="text-2xl font-bold tracking-tight">Q{quarter} {year}</p>
+            <p className="text-sm text-muted-foreground mt-0.5">{quarterLabel}</p>
+          </div>
+
+          {/* [BOEK-013] Inkomsten — label boven tabel beschrijft wat de cijfers zijn */}
+          <div>
+            <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
+              {mode === "paid"
+                ? "Inkomsten — alleen betaalde facturen"
+                : "Inkomsten — betaald én uitstaand"}
+            </p>
+            <div className="bg-background border-2 border-emerald-400 rounded-2xl overflow-hidden shadow-sm">
+              <div className="grid grid-cols-2 divide-x divide-emerald-100 border-b border-emerald-100 bg-emerald-50">
+                <div className="px-4 py-2.5">
+                  <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">
+                    Inkomsten incl. BTW
+                  </p>
+                </div>
+                <div className="px-4 py-2.5">
+                  <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">
+                    BTW
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 divide-x divide-emerald-100">
+                <div className="px-4 py-5">
+                  <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none">
+                    {formatEur(data.totalIn)}
+                  </p>
+                </div>
+                <div className="px-4 py-5">
+                  <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none">
+                    {formatEur(data.totalBtwIn)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* [BOEK-013] Uitgaven — label boven tabel beschrijft wat de cijfers zijn */}
+          <div>
+            <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
+              {mode === "paid"
+                ? "Uitgaven — alleen betaalde facturen"
+                : "Uitgaven — betaald én uitstaand"}
+            </p>
+            <div className="bg-background border-2 border-red-400 rounded-2xl overflow-hidden shadow-sm">
+              <div className="grid grid-cols-2 divide-x divide-red-100 border-b border-red-100 bg-red-50">
+                <div className="px-4 py-2.5">
+                  <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
+                    Uitgaven incl. BTW
+                  </p>
+                </div>
+                <div className="px-4 py-2.5">
+                  <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
+                    BTW
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 divide-x divide-red-100">
+                <div className="px-4 py-5">
+                  <p className="text-2xl font-bold tabular-nums text-red-700 leading-none">
+                    {formatEur(data.totalOut)}
+                  </p>
+                </div>
+                <div className="px-4 py-5">
+                  <p className="text-2xl font-bold tabular-nums text-red-700 leading-none">
+                    {formatEur(data.totalBtwOut)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
+// Accountant View — unchanged
+// ─────────────────────────────────────────────────────────
+function AccountantView() {
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
+  const [data, setData] = useState<QuarterlySummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>("");
+  const [clientsLoading, setClientsLoading] = useState(false);
 
-  // Load clients for accountant
   useEffect(() => {
-    if (!isAccountant) return;
+    setClientsLoading(true);
     fetch("/api/quarterly/clients")
       .then((r) => r.json())
       .then((d) => {
         setClients(d ?? []);
         if (d?.length > 0) setSelectedClientId(d[0].id);
-      });
-  }, [isAccountant]);
+      })
+      .finally(() => setClientsLoading(false));
+  }, []);
 
-  // Load quarterly data
   useEffect(() => {
-    if (isAccountant && !selectedClientId) return;
-
+    if (!selectedClientId) return;
     setLoading(true);
     setData(null);
-
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
-      ...(isAccountant && selectedClientId ? { clientId: selectedClientId } : {}),
+      clientId: selectedClientId,
     });
-
     fetch(`/api/quarterly?${params}`)
       .then((r) => r.json())
       .then(setData)
       .finally(() => setLoading(false));
-  }, [year, quarter, selectedClientId, isAccountant]);
+  }, [year, quarter, selectedClientId]);
 
   async function handleExport() {
     setExporting(true);
@@ -71,7 +301,7 @@ export function QuarterlyOverview({ isAccountant }: Props) {
       const params = new URLSearchParams({
         year: String(year),
         quarter: String(quarter),
-        ...(isAccountant && selectedClientId ? { clientId: selectedClientId } : {}),
+        clientId: selectedClientId,
       });
       const res = await fetch(`/api/export?${params}`);
       const csv = await res.text();
@@ -81,29 +311,46 @@ export function QuarterlyOverview({ isAccountant }: Props) {
     }
   }
 
-  // Accountant: geen klant gekoppeld
-  if (isAccountant && clients.length === 0 && !loading) {
+  if (!clientsLoading && clients.length === 0) {
     return (
-      <div className="text-center py-16 text-muted-foreground text-sm">
-        <p>Geen klanten gekoppeld.</p>
-        <a href="/dashboard/clients/invite" className="text-primary underline mt-2 inline-block">
-          Klant uitnodigen →
+      <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+          <svg className="w-7 h-7 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </div>
+        <p className="text-sm font-medium mb-1">Geen klanten gekoppeld</p>
+        <p className="text-xs text-muted-foreground mb-5">Nodig een klant uit om kwartaaloverzichten te bekijken</p>
+        <a href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
+          Klant uitnodigen
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
         </a>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Period + client selector */}
-      <div className="flex items-center gap-3 flex-wrap">
+    <div className="space-y-4 pb-8">
+      <div className="px-1">
+        <a href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-primary font-medium">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Dashboard
+        </a>
+      </div>
 
-        {/* Accountant: klant selector */}
-        {isAccountant && clients.length > 0 && (
+      {clients.length > 0 && (
+        <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
+          <div className="px-4 py-3 border-b bg-muted/30">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Klant</p>
+          </div>
           <select
             value={selectedClientId}
             onChange={(e) => setSelectedClientId(e.target.value)}
-            className="text-sm border rounded-md px-3 py-1.5 bg-background font-medium"
+            className="w-full px-4 py-3.5 text-sm font-medium bg-background appearance-none focus:outline-none"
           >
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
@@ -111,52 +358,50 @@ export function QuarterlyOverview({ isAccountant }: Props) {
               </option>
             ))}
           </select>
-        )}
+        </div>
+      )}
 
-        <div className="flex gap-1 bg-muted rounded-lg p-1">
+      <div className="bg-background border rounded-2xl p-4 shadow-sm space-y-3">
+        <div className="flex bg-muted rounded-xl p-1 gap-1">
           {QUARTERS.map((q) => (
             <button
               key={q}
               onClick={() => setQuarter(q)}
-              className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
-                quarter === q
-                  ? "bg-background shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+              className={`flex-1 py-2 text-sm rounded-lg font-medium transition-all ${
+                quarter === q ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"
               }`}
             >
               Q{q}
             </button>
           ))}
         </div>
-
-        <select
-          value={year}
-          onChange={(e) => setYear(Number(e.target.value))}
-          className="text-sm border rounded-md px-3 py-1.5 bg-background"
-        >
-          {YEARS.map((y) => (
-            <option key={y} value={y}>{y}</option>
-          ))}
-        </select>
-
-        <button
-          onClick={handleExport}
-          disabled={exporting || !data || (data?.invoiceCount ?? 0) === 0}
-          className="ml-auto flex items-center gap-2 px-4 py-1.5 text-sm font-medium border rounded-md hover:bg-muted disabled:opacity-50 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-          {exporting ? "Exporteren…" : "Exporteer CSV"}
-        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className="flex-1 text-sm border rounded-xl px-3 py-2 bg-background font-medium focus:outline-none"
+          >
+            {YEARS.map((y) => (<option key={y} value={y}>{y}</option>))}
+          </select>
+          <button
+            onClick={handleExport}
+            disabled={exporting || !data || (data?.invoiceCount ?? 0) === 0}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border hover:bg-muted disabled:opacity-40 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            {exporting ? "…" : "CSV"}
+          </button>
+        </div>
       </div>
 
-      {loading && <OverviewSkeleton />}
+      {loading && <AccountantSkeleton />}
 
       {!loading && data && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <SummaryCard label="Totaal excl. BTW" value={formatEur(data.totalExcl)} accent="default" />
+          <div className="grid grid-cols-2 gap-3">
+            <SummaryCard label="Excl. BTW" value={formatEur(data.totalExcl)} accent="default" />
             <SummaryCard label="Totaal BTW" value={formatEur(data.totalBtw)} accent="default" />
             <SummaryCard label="Betaald" value={formatEur(data.paid)} accent="green" />
             <SummaryCard
@@ -168,62 +413,69 @@ export function QuarterlyOverview({ isAccountant }: Props) {
           </div>
 
           {(data.btwBreakdown?.length ?? 0) > 0 && (
-            <div className="border rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b bg-muted/50">
-                <h3 className="text-sm font-medium">BTW overzicht</h3>
+            <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-4 py-3 border-b">
+                <h3 className="text-sm font-semibold">BTW aangifte Q{quarter} {year}</h3>
               </div>
               <div className="divide-y">
                 {data.btwBreakdown.map((b) => (
-                  <div key={b.rate} className="flex items-center justify-between px-4 py-3 text-sm">
-                    <span className="text-muted-foreground">BTW {b.rate}%</span>
-                    <div className="text-right">
-                      <p className="font-medium">{formatEur(b.totalBtw)}</p>
-                      <p className="text-xs text-muted-foreground">over {formatEur(b.totalExcl)}</p>
+                  <div key={b.rate} className="flex items-center justify-between px-4 py-3.5">
+                    <div>
+                      <p className="text-sm font-medium">BTW {b.rate}%</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.totalExcl)}</p>
                     </div>
+                    <p className="text-sm font-semibold tabular-nums">{formatEur(b.totalBtw)}</p>
                   </div>
                 ))}
-                <div className="flex items-center justify-between px-4 py-3 text-sm font-medium bg-muted/30">
-                  <span>Totaal BTW</span>
-                  <span>{formatEur(data.totalBtw)}</span>
+                <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
+                  <p className="text-sm font-semibold">Totaal BTW</p>
+                  <p className="text-sm font-bold tabular-nums">{formatEur(data.totalBtw)}</p>
                 </div>
               </div>
             </div>
           )}
 
-          {(data.invoices?.length ?? 0) === 0 ? (
-            <p className="text-center text-muted-foreground py-12 text-sm">
-              Geen facturen in Q{quarter} {year}
-            </p>
-          ) : (
-            <div className="border rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b bg-muted/50">
-                <h3 className="text-sm font-medium">Facturen ({data.invoiceCount})</h3>
+          <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <h3 className="text-sm font-semibold">
+                Facturen <span className="text-muted-foreground font-normal">({data.invoiceCount})</span>
+              </h3>
+              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Betaald</span>
+            </div>
+            {(data.invoices?.length ?? 0) === 0 ? (
+              <div className="py-12 text-center">
+                <p className="text-sm text-muted-foreground">Geen facturen in Q{quarter} {year}</p>
               </div>
+            ) : (
               <div className="divide-y">
                 {data.invoices.map((inv) => (
                   <a
                     key={inv.id}
                     href={`/dashboard/invoice/${inv.id}`}
-                    className="flex items-center justify-between px-4 py-3 text-sm hover:bg-muted/50 transition-colors"
+                    className="flex items-center justify-between px-4 py-3.5 active:bg-muted/60 transition-colors"
                   >
-                    <div>
-                      <p className="font-medium">{inv.invoice_number}</p>
-                      <p className="text-muted-foreground text-xs">{inv.client_name}</p>
+                    <div className="min-w-0 flex-1 mr-3">
+                      <p className="text-sm font-medium truncate">{inv.invoice_number}</p>
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">{inv.client_name}</p>
                     </div>
-                    <div className="text-right">
-                      <p className="font-medium">{formatEur(inv.total_inc_btw)}</p>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <p className="text-sm font-semibold tabular-nums">{formatEur(inv.total_inc_btw)}</p>
                       <StatusBadge status={inv.status} />
                     </div>
                   </a>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </>
       )}
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────
+// Shared sub-components
+// ─────────────────────────────────────────────────────────
 
 function SummaryCard({ label, value, accent, sub }: {
   label: string;
@@ -231,25 +483,22 @@ function SummaryCard({ label, value, accent, sub }: {
   accent: "default" | "green" | "red";
   sub?: string;
 }) {
-  const accentClass =
-    accent === "green" ? "text-green-600" :
-    accent === "red" ? "text-red-600" :
-    "text-foreground";
+  const accentClass = accent === "green" ? "text-green-600" : accent === "red" ? "text-red-600" : "text-foreground";
   return (
-    <div className="border rounded-lg px-4 py-3">
-      <p className="text-xs text-muted-foreground mb-1">{label}</p>
-      <p className={`text-lg font-semibold ${accentClass}`}>{value}</p>
-      {sub && <p className="text-xs text-red-500 mt-0.5">{sub}</p>}
+    <div className="bg-background border rounded-2xl px-4 py-3.5 shadow-sm">
+      <p className="text-xs text-muted-foreground mb-1.5">{label}</p>
+      <p className={`text-lg font-bold tabular-nums leading-tight ${accentClass}`}>{value}</p>
+      {sub && <p className="text-xs text-red-500 mt-1">{sub}</p>}
     </div>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
-    paid: "text-green-600",
-    sent: "text-blue-600",
-    draft: "text-muted-foreground",
-    overdue: "text-red-600",
+    paid: "bg-green-100 text-green-700",
+    sent: "bg-blue-100 text-blue-700",
+    draft: "bg-muted text-muted-foreground",
+    overdue: "bg-red-100 text-red-700",
   };
   const labels: Record<string, string> = {
     paid: "Betaald",
@@ -258,21 +507,31 @@ function StatusBadge({ status }: { status: string }) {
     overdue: "Te laat",
   };
   return (
-    <span className={`text-xs font-medium ${map[status] ?? "text-muted-foreground"}`}>
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${map[status] ?? "bg-muted text-muted-foreground"}`}>
       {labels[status] ?? status}
     </span>
   );
 }
 
-function OverviewSkeleton() {
+function ZzpSkeleton() {
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="space-y-3">
+      <div className="h-8 w-32 rounded-lg animate-pulse bg-muted" />
+      <div className="h-[110px] rounded-2xl border animate-pulse bg-muted" />
+      <div className="h-[110px] rounded-2xl border animate-pulse bg-muted" />
+    </div>
+  );
+}
+
+function AccountantSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="border rounded-lg px-4 py-3 h-20 animate-pulse bg-muted" />
+          <div key={i} className="border rounded-2xl h-[72px] animate-pulse bg-muted" />
         ))}
       </div>
-      <div className="h-40 rounded-lg border animate-pulse bg-muted" />
+      <div className="h-40 rounded-2xl border animate-pulse bg-muted" />
     </div>
   );
 }

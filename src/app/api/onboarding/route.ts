@@ -1,15 +1,11 @@
 // app/api/onboarding/route.ts
-// Save onboarding progress + company data (BOEK-015)
-// Accepts: step, done, role, company_name, kvk_number, btw_number
+// [BOEK-015] Save onboarding progress + company data + language preference
+// Body: step, done, role, company_name, kvk_number, btw_number, preferred_language
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 // PATCH /api/onboarding
-// Body options:
-//   { step: 2, role: "zzp" }                    — progress only
-//   { step: 4, role: "zzp", company_name: "...", kvk_number: "...", btw_number: "..." } — Step 3
-//   { done: true, role: "zzp" }                  — finish
 export async function PATCH(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
 
@@ -33,13 +29,18 @@ export async function PATCH(req: NextRequest) {
     patch.role = body.role;
   }
 
-  // Company fields (Step 3) — null is valid (clears the field)
-  if ("company_name" in body)
-    patch.company_name = body.company_name ?? null;
-  if ("kvk_number" in body)
-    patch.kvk_number = body.kvk_number ?? null;
-  if ("btw_number" in body)
-    patch.btw_number = body.btw_number ?? null;
+  // [BOEK-015] Language preference — saved in Step 1
+  if (
+    typeof body.preferred_language === "string" &&
+    ["nl", "en", "ar", "tr"].includes(body.preferred_language)
+  ) {
+    patch.preferred_language = body.preferred_language;
+  }
+
+  // Company fields (Step 3) — null clears the field
+  if ("company_name" in body) patch.company_name = body.company_name ?? null;
+  if ("kvk_number" in body) patch.kvk_number = body.kvk_number ?? null;
+  if ("btw_number" in body) patch.btw_number = body.btw_number ?? null;
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "Geen geldige velden" }, { status: 400 });

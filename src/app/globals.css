@@ -238,3 +238,29 @@ input::placeholder, textarea::placeholder {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 0.7s linear infinite; }
+
+/* [BOEK-015] iOS-style input class — add to globals.css */
+
+.ios-input {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 0.5px solid var(--color-border-secondary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-size: 15px;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.ios-input:focus {
+  border-color: var(--color-border-primary);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+}
+
+.ios-input::placeholder {
+  color: var(--color-text-tertiary);
+}

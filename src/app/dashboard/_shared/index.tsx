@@ -2,14 +2,14 @@
 
 // src/app/dashboard/_shared/index.tsx
 // مكونات مشتركة بين ZzpDashboard و AccountantDashboard
-// لا تُستخدم مباشرة — تُستورد من الملفين فقط
+// من لوحة تحكم العميل ، BoekBrug 1.2 all tasks seperated
+// من لوحة تحكم المحاسب ، BoekBrug 1.2 all tasks seperated
 
 import { useRouter } from 'next/navigation'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
 import { InvoiceRowItem, STATUS_LABEL } from '@/components/invoice/InvoiceRow'
-import { SearchBar } from '@/components/search/SearchBar'
-import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
+import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 
 // ── NavButton ─────────────────────────────────────────────────────────────────
 
@@ -25,9 +25,10 @@ export function NavButton({ onClick, label }: { onClick: () => void; label: stri
   )
 }
 
-// ── InvoiceTable ──────────────────────────────────────────────────────────────
+// ── InvoiceTable — ZZP ────────────────────────────────────────────────────────
 
-export interface InvoiceTableProps {
+export interface ZzpInvoiceTableProps {
+  mode: 'zzp'
   invoices: any[]
   loading: boolean
   hasMore: boolean
@@ -36,30 +37,64 @@ export interface InvoiceTableProps {
   onFilterChange: (s: InvoiceStatusFilter) => void
   onLoadMore: () => void
   onRefresh: () => void
-  onMarkPaid: (id: string, status: 'paid' | 'sent') => void
-  onResend: (e: React.MouseEvent, id: string) => void
-  onDelete: (id: string) => void
   onNavigate: (id: string) => void
-  resendingId: string | null
   title?: string
+  onMarkPaid?: (id: string, status: 'paid' | 'sent') => void
+  onResend?: (e: React.MouseEvent, id: string) => void
+  onDelete?: (id: string) => void
+  onEdit?: (id: string) => void
+  resendingId?: string | null
   showNewButton?: boolean
   onNewInvoice?: () => void
 }
 
-export function InvoiceTable({
-  invoices, loading, hasMore, refreshing,
-  statusFilter, onFilterChange,
-  onLoadMore, onRefresh,
-  onMarkPaid, onResend, onDelete, onNavigate,
-  resendingId,
-  title = 'Facturen',
-  showNewButton = false,
-  onNewInvoice,
-}: InvoiceTableProps) {
+// ── InvoiceTable — Accountant ─────────────────────────────────────────────────
+
+export interface AccountantInvoiceTableProps {
+  mode: 'accountant'
+  invoices: any[]
+  loading: boolean
+  hasMore: boolean
+  refreshing: boolean
+  statusFilter: AccountantStatusFilter
+  onFilterChange: (s: AccountantStatusFilter) => void
+  onLoadMore: () => void
+  onRefresh: () => void
+  onNavigate: (id: string) => void
+  title?: string
+  onAccountantAction: (id: string, action: 'verwerkt' | 'in_behandeling' | 'vraag' | null) => void
+}
+
+export type InvoiceTableProps = ZzpInvoiceTableProps | AccountantInvoiceTableProps
+
+// ── InvoiceTable ──────────────────────────────────────────────────────────────
+
+export function InvoiceTable(props: InvoiceTableProps) {
+  const {
+    invoices, loading, hasMore, refreshing,
+    statusFilter, onFilterChange,
+    onLoadMore, onRefresh, onNavigate,
+    title = 'Facturen',
+  } = props
+
+  const isAccountant = props.mode === 'accountant'
+
+  const emptyLabel = isAccountant
+    ? statusFilter === 'all'
+      ? 'Geen betaalde facturen'
+      : `Geen facturen met status "${statusFilter}"`
+    : statusFilter === 'all'
+      ? 'Nog geen facturen'
+      : `Geen ${STATUS_LABEL[statusFilter as string]?.toLowerCase() ?? statusFilter} facturen`
+
   return (
     <div className="card overflow-hidden">
+
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--color-separator)' }}>
+      <div
+        className="flex items-center justify-between px-5 py-4 border-b"
+        style={{ borderColor: 'var(--color-separator)' }}
+      >
         <h2 className="text-h3">{title}</h2>
         <div className="flex items-center gap-2">
           <button
@@ -71,26 +106,42 @@ export function InvoiceTable({
           >
             <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
           </button>
-          {showNewButton && onNewInvoice && (
-            <button
-              onClick={onNewInvoice}
-              className="bg-[#007aff] text-white text-sm px-4 py-2 hover:opacity-90"
-            >
-              + Nieuwe factuur
-            </button>
-          )}
+
+          {!isAccountant &&
+            (props as ZzpInvoiceTableProps).showNewButton &&
+            (props as ZzpInvoiceTableProps).onNewInvoice && (
+              <button
+                onClick={(props as ZzpInvoiceTableProps).onNewInvoice}
+                className="bg-[#007aff] text-white text-sm px-4 py-2 rounded-xl hover:opacity-90 transition-opacity font-semibold"
+              >
+                + Nieuwe factuur
+              </button>
+            )}
         </div>
       </div>
 
       {/* Filter */}
-      <StatusFilter value={statusFilter} onChange={onFilterChange} />
+      {isAccountant ? (
+        <StatusFilter
+          mode="accountant"
+          value={statusFilter as AccountantStatusFilter}
+          onChange={onFilterChange as (v: AccountantStatusFilter) => void}
+        />
+      ) : (
+        <StatusFilter
+          mode="zzp"
+          value={statusFilter as InvoiceStatusFilter}
+          onChange={onFilterChange as (v: InvoiceStatusFilter) => void}
+        />
+      )}
 
-      {/* Empty state */}
+      {/* Lege staat */}
       {invoices.length === 0 && !loading ? (
-        <p className="text-sm text-center py-12" style={{ color: 'var(--color-text-tertiary)' }}>
-          {statusFilter === 'all'
-            ? 'Nog geen facturen'
-            : `Geen ${STATUS_LABEL[statusFilter]?.toLowerCase() ?? statusFilter} facturen`}
+        <p
+          className="text-sm text-center py-12"
+          style={{ color: 'var(--color-text-tertiary)' }}
+        >
+          {emptyLabel}
         </p>
       ) : (
         <div className="divide-y" style={{ borderColor: 'var(--color-separator)' }}>
@@ -106,10 +157,38 @@ export function InvoiceTable({
                 key={invoice.id}
                 invoice={invoice}
                 onClick={() => onNavigate(invoice.id)}
-                onMarkPaid={onMarkPaid}
-                onResend={onResend}
-                onDelete={onDelete}
-                resendingId={resendingId}
+                // Accountant props
+                onAccountantAction={
+                  isAccountant
+                    ? (props as AccountantInvoiceTableProps).onAccountantAction
+                    : undefined
+                }
+                // ZZP props
+                onMarkPaid={
+                  !isAccountant
+                    ? (props as ZzpInvoiceTableProps).onMarkPaid
+                    : undefined
+                }
+                onResend={
+                  !isAccountant
+                    ? (props as ZzpInvoiceTableProps).onResend
+                    : undefined
+                }
+                onDelete={
+                  !isAccountant
+                    ? (props as ZzpInvoiceTableProps).onDelete
+                    : undefined
+                }
+                onEdit={
+                  !isAccountant
+                    ? (props as ZzpInvoiceTableProps).onEdit
+                    : undefined
+                }
+                resendingId={
+                  !isAccountant
+                    ? ((props as ZzpInvoiceTableProps).resendingId ?? null)
+                    : null
+                }
               />
             ))}
           </InfiniteList>
@@ -120,7 +199,6 @@ export function InvoiceTable({
 }
 
 // ── DashboardHeader ───────────────────────────────────────────────────────────
-// مشترك بين الـ ZZP والمحاسب — يُمرَّر كل شيء كـ props
 
 interface DashboardHeaderProps {
   profile: any
@@ -131,7 +209,6 @@ interface DashboardHeaderProps {
   onToggleNotifications: () => void
   onMessagesClick: () => void
   onLogout: () => void
-  onQuarterly?: () => void
 }
 
 export function DashboardHeader({
@@ -143,35 +220,55 @@ export function DashboardHeader({
   onToggleNotifications,
   onMessagesClick,
   onLogout,
-  onQuarterly,
 }: DashboardHeaderProps) {
   const router = useRouter()
 
   return (
-    <header className="bg-white border-b sticky top-0 z-20" style={{ borderColor: 'var(--color-separator)' }}>
+    <header
+      className="bg-white border-b sticky top-0 z-20"
+      style={{ borderColor: 'var(--color-separator)' }}
+    >
       <div className="max-w-4xl mx-auto px-6 py-3.5 flex items-center justify-between gap-4">
 
-        {/* Logo */}
-        <h1 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>
+        {/* [BOEK-028] BoekBrug → link to landing page — May 2026 */}
+        <a
+          href="/"
+          className="text-base font-bold hover:opacity-70 transition-opacity"
+          style={{ color: 'var(--color-text-primary)', textDecoration: 'none' }}
+        >
           BoekBrug
-        </h1>
+        </a>
 
-        {/* Nav */}
         <div className="flex items-center gap-1 flex-wrap">
-          <span className="text-sm mr-2" style={{ color: 'var(--color-text-secondary)' }}>
+          <span
+            className="text-sm mr-2"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
             {profile.company_name}
           </span>
 
-          <SearchBar />
-
-          <NavButton
-            onClick={() => onQuarterly ? onQuarterly() : router.push('/dashboard/quarterly')}
-            label="📊 Kwartaal"
+          {/* [BOEK-028] Replaced SearchBar with inline input — fixes ⌘K duplicate visual — May 2026 */}
+          <input
+            type="search"
+            placeholder="Zoeken..."
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                const q = (e.target as HTMLInputElement).value.trim()
+                if (q) router.push(`/dashboard/search?q=${encodeURIComponent(q)}`)
+              }
+            }}
+            className="text-sm px-3 py-1.5 rounded-xl border outline-none"
+            style={{
+              borderColor: 'var(--color-separator)',
+              backgroundColor: 'var(--color-bg)',
+              color: 'var(--color-text-primary)',
+              width: 180,
+            }}
           />
-          <NavButton onClick={() => router.push('/dashboard/documents')} label="📂 Documenten" />
+
           <NavButton onClick={() => router.push('/dashboard/settings')} label="⚙️" />
 
-          {/* Messages */}
+          {/* Berichten */}
           <div className="relative">
             <NavButton onClick={onMessagesClick} label="💬" />
             {unreadMessages > 0 && (
@@ -181,7 +278,7 @@ export function DashboardHeader({
             )}
           </div>
 
-          {/* Notifications */}
+          {/* Meldingen */}
           <div className="relative">
             <NavButton onClick={onToggleNotifications} label="🔔" />
             {unreadNotifCount > 0 && (
@@ -195,26 +292,54 @@ export function DashboardHeader({
                 className="absolute top-9 right-0 bg-white rounded-2xl shadow-xl border w-80 z-50 animate-fade-in overflow-hidden"
                 style={{ borderColor: 'var(--color-separator)', boxShadow: 'var(--shadow-modal)' }}
               >
-                <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-separator)' }}>
-                  <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>Meldingen</p>
+                <div
+                  className="px-4 py-3 border-b"
+                  style={{ borderColor: 'var(--color-separator)' }}
+                >
+                  <p
+                    className="text-sm font-semibold"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    Meldingen
+                  </p>
                 </div>
+
                 {notifications.length === 0 ? (
-                  <p className="text-sm text-center py-8" style={{ color: 'var(--color-text-tertiary)' }}>
+                  <p
+                    className="text-sm text-center py-8"
+                    style={{ color: 'var(--color-text-tertiary)' }}
+                  >
                     Geen meldingen
                   </p>
                 ) : (
-                  <div className="divide-y max-h-80 overflow-y-auto" style={{ borderColor: 'var(--color-separator)' }}>
+                  <div
+                    className="divide-y max-h-80 overflow-y-auto"
+                    style={{ borderColor: 'var(--color-separator)' }}
+                  >
                     {notifications.map(n => (
                       <div
                         key={n.id}
                         onClick={() => n.link && router.push(n.link)}
                         className={`px-4 py-3 transition-colors ${!n.read ? 'bg-[#e8f1ff]' : ''} ${n.link ? 'cursor-pointer hover:bg-gray-50' : ''}`}
                       >
-                        <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{n.title}</p>
+                        <p
+                          className="text-sm font-medium"
+                          style={{ color: 'var(--color-text-primary)' }}
+                        >
+                          {n.title}
+                        </p>
                         {n.body && (
-                          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>{n.body}</p>
+                          <p
+                            className="text-xs mt-0.5"
+                            style={{ color: 'var(--color-text-secondary)' }}
+                          >
+                            {n.body}
+                          </p>
                         )}
-                        <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                        <p
+                          className="text-xs mt-1"
+                          style={{ color: 'var(--color-text-tertiary)' }}
+                        >
                           {new Date(n.created_at).toLocaleDateString('nl-NL')}
                         </p>
                       </div>

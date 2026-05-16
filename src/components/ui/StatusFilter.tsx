@@ -1,42 +1,111 @@
-// components/ui/StatusFilter.tsx
-// Filter tabs voor factuurstatus (BOEK-009)
+// src/components/ui/StatusFilter.tsx
+// [BoekBrug v1.2] — BOEK-009 — Filter tabs (ZZP + Accountant)
+// [BOEK-009] added overdue tab + optional count badges — May 2026
 
 "use client";
 
-// src/components/ui/StatusFilter.tsx
-// Filters: Alles | Verzonden | Betaald | Concept
-// Verlopen is NOT a filter — it's computed per-invoice in DashboardClient
+import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 
-import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
+// ── ZZP filters ───────────────────────────────────────────────────────────────
 
-interface Props {
+interface ZzpProps {
+  mode: 'zzp'
   value: InvoiceStatusFilter
   onChange: (v: InvoiceStatusFilter) => void
+  /** Optional counts — shown as badges next to label */
+  counts?: Partial<Record<InvoiceStatusFilter, number>>
 }
 
-const FILTERS: { value: InvoiceStatusFilter; label: string }[] = [
-  { value: 'all',   label: 'Alles' },
-  { value: 'sent',  label: 'Verzonden' },
-  { value: 'paid',  label: 'Betaald' },
-  { value: 'draft', label: 'Concept' },
+// [BOEK-009] overdue tab added — May 2026
+const ZZP_FILTERS: { value: InvoiceStatusFilter; label: string }[] = [
+  { value: 'all',     label: 'Alles' },
+  { value: 'sent',    label: 'Verzonden' },
+  { value: 'paid',    label: 'Betaald' },
+  { value: 'draft',   label: 'Concept' },
+  { value: 'overdue', label: 'Verlopen' },
 ]
 
-export function StatusFilter({ value, onChange }: Props) {
+// ── Accountant filters ────────────────────────────────────────────────────────
+
+interface AccountantProps {
+  mode: 'accountant'
+  value: AccountantStatusFilter
+  onChange: (v: AccountantStatusFilter) => void
+  counts?: Partial<Record<AccountantStatusFilter, number>>
+}
+
+const ACCOUNTANT_FILTERS: {
+  value: AccountantStatusFilter
+  label: string
+  activeClass: string
+}[] = [
+  { value: 'all',            label: 'Alle',             activeClass: 'bg-gray-900 text-white' },
+  { value: 'verwerkt',       label: '✓ Verwerkt',        activeClass: 'bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]' },
+  { value: 'in_behandeling', label: '⏳ In behandeling', activeClass: 'bg-[#dbeafe] text-[#1e40af] border border-[#bfdbfe]' },
+  { value: 'vraag',          label: '? Vraag',           activeClass: 'bg-[#ffedd5] text-[#9a3412] border border-[#fed7aa]' },
+]
+
+// ── Shared badge ──────────────────────────────────────────────────────────────
+
+function Badge({ count, active }: { count: number; active: boolean }) {
+  if (count === 0) return null
   return (
-    <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 overflow-x-auto">
-      {FILTERS.map(f => (
-        <button
-          key={f.value}
-          onClick={() => onChange(f.value)}
-          className={`text-xs px-3 py-1.5 rounded-full font-medium whitespace-nowrap transition-colors ${
-            value === f.value
-              ? 'bg-gray-900 text-white'
-              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-          }`}
-        >
-          {f.label}
-        </button>
-      ))}
+    <span
+      className={`ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-bold leading-none ${
+        active ? 'bg-white/25 text-white' : 'bg-gray-300 text-gray-600'
+      }`}
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  )
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+type Props = ZzpProps | AccountantProps
+
+export function StatusFilter(props: Props) {
+  if (props.mode === 'accountant') {
+    return (
+      <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 overflow-x-auto scrollbar-none">
+        {ACCOUNTANT_FILTERS.map(f => {
+          const isActive = props.value === f.value
+          const count = props.counts?.[f.value] ?? 0
+          return (
+            <button
+              key={f.value}
+              onClick={() => props.onChange(f.value)}
+              className={`text-xs px-3 py-1.5 rounded-full font-medium whitespace-nowrap transition-colors ${
+                isActive ? f.activeClass : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              {f.label}
+              {count > 0 && <Badge count={count} active={isActive} />}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 overflow-x-auto scrollbar-none">
+      {ZZP_FILTERS.map(f => {
+        const isActive = props.value === f.value
+        const count = props.counts?.[f.value] ?? 0
+        return (
+          <button
+            key={f.value}
+            onClick={() => props.onChange(f.value)}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium whitespace-nowrap transition-colors ${
+              isActive ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            {f.label}
+            {count > 0 && <Badge count={count} active={isActive} />}
+          </button>
+        )
+      })}
     </div>
   )
 }

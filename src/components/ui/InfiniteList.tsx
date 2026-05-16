@@ -1,43 +1,52 @@
-// components/ui/InfiniteList.tsx
-// Reusable infinite scroll wrapper (BOEK-009)
-// Uses IntersectionObserver — no library needed
+// src/components/ui/InfiniteList.tsx
+// [BoekBrug v1.2] — BOEK-009 — Infinite Scroll container
+// iOS-first, mobile-responsive, no external library
+// IntersectionObserver triggers loadMore at bottom sentinel
 
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, ReactNode } from "react";
 
 interface InfiniteListProps {
-  children: React.ReactNode;
+  /** The list items to render */
+  children: ReactNode;
+  /** Called when sentinel comes into view — fetch next page */
   onLoadMore: () => void;
-  hasMore: boolean;
+  /** True while a page is being fetched */
   loading: boolean;
-  /** Pull-to-refresh callback — alleen op mobile */
-  onRefresh?: () => void;
+  /** False when all pages have been loaded */
+  hasMore: boolean;
+  /** Optional error string — shown inline */
+  error?: string | null;
+  /** Empty state — shown when children is empty and not loading */
+  emptyState?: ReactNode;
+  /** Pull-to-refresh on mobile */
+  onRefresh?: () => Promise<void>;
   refreshing?: boolean;
-  /** Optional: custom loading skeleton */
-  skeleton?: React.ReactNode;
+  className?: string;
 }
 
-/**
- * Wraps any list and triggers onLoadMore when the sentinel
- * element scrolls into view. Pull-to-refresh via touch events.
- */
+// ─── Pull-to-refresh threshold (px) ──────────────────────────────────────────
+const PTR_THRESHOLD = 72;
+
 export function InfiniteList({
   children,
   onLoadMore,
-  hasMore,
   loading,
+  hasMore,
+  error,
+  emptyState,
   onRefresh,
-  refreshing = false,
-  skeleton,
+  refreshing,
+  className = "",
 }: InfiniteListProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const startYRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // ─── IntersectionObserver ──────────────────────────────
+  // ── IntersectionObserver — triggers next page ──────────────────────────────
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
+    const el = sentinelRef.current;
+    if (!el) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -45,66 +54,276 @@ export function InfiniteList({
           onLoadMore();
         }
       },
-      { rootMargin: "200px" }
+      {
+        // [BOEK-009] 200px rootMargin so load starts before user hits bottom — May 2026
+        rootMargin: "0px 0px 200px 0px",
+        threshold: 0,
+      }
     );
 
-    observer.observe(sentinel);
+    observer.observe(el);
     return () => observer.disconnect();
   }, [hasMore, loading, onLoadMore]);
 
-  // ─── Pull-to-refresh (touch only) ─────────────────────
-  function handleTouchStart(e: React.TouchEvent) {
-    // Alleen triggeren als je al helemaal bovenaan bent
-    if (window.scrollY === 0) {
-      startYRef.current = e.touches[0].clientY;
-    }
-  }
+  // ── Pull-to-refresh (touch only) ──────────────────────────────────────────
+  useEffect(() => {
+    if (!onRefresh) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-  function handleTouchEnd(e: React.TouchEvent) {
-    if (startYRef.current === null) return;
-    const delta = e.changedTouches[0].clientY - startYRef.current;
-    startYRef.current = null;
-    if (delta > 60 && onRefresh && !refreshing) {
-      onRefresh();
-    }
-  }
+    let startY = 0;
+    let pulling = false;
+    let pullIndicator: HTMLDivElement | null = null;
+
+    const onTouchStart = (e: TouchEvent) => {
+      // Only trigger when scrolled to top
+      if (container.scrollTop > 0) return;
+      startY = e.touches[0].clientY;
+      pulling = true;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pulling) return;
+      const dy = e.touches[0].clientY - startY;
+      if (dy <= 0) { pulling = false; return; }
+
+      if (!pullIndicator) {
+        pullIndicator = document.createElement("div");
+        pullIndicator.className = "bb-ptr-indicator";
+        pullIndicator.innerHTML = `
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+          </svg>`;
+        container.prepend(pullIndicator);
+      }
+
+      const progress = Math.min(dy / PTR_THRESHOLD, 1);
+      pullIndicator.style.opacity = String(progress);
+      pullIndicator.style.transform = `translateY(${Math.min(dy * 0.4, PTR_THRESHOLD * 0.4)}px) rotate(${progress * 360}deg)`;
+    };
+
+    const onTouchEnd = async (e: TouchEvent) => {
+      if (!pulling) return;
+      const dy = e.changedTouches[0].clientY - startY;
+      pulling = false;
+
+      if (dy >= PTR_THRESHOLD && onRefresh) {
+        await onRefresh();
+      }
+
+      if (pullIndicator) {
+        pullIndicator.remove();
+        pullIndicator = null;
+      }
+    };
+
+    container.addEventListener("touchstart", onTouchStart, { passive: true });
+    container.addEventListener("touchmove", onTouchMove, { passive: true });
+    container.addEventListener("touchend", onTouchEnd, { passive: true });
+
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+      container.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [onRefresh]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  const isEmpty =
+    !loading &&
+    !error &&
+    Array.isArray(children)
+      ? (children as ReactNode[]).length === 0
+      : children == null;
 
   return (
-    <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-      {/* Vernieuwen indicator */}
+    <>
+      {/* Pull-to-refresh spinner (controlled state) */}
       {refreshing && (
-        <div className="flex justify-center items-center gap-2 py-3 text-sm text-gray-400">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-500" />
-          Vernieuwen…
+        <div className="bb-ptr-bar" aria-live="polite" aria-label="Vernieuwen…">
+          <svg
+            className="bb-ptr-spin"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M23 4v6h-6M1 20v-6h6" />
+            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+          </svg>
+          <span className="sr-only">Vernieuwen…</span>
         </div>
       )}
 
-      {children}
+      <div ref={containerRef} className={`bb-infinite-list ${className}`}>
+        {/* Content */}
+        {isEmpty && !loading ? (
+          emptyState ?? (
+            <div className="bb-empty-state">
+              <span>Geen facturen gevonden</span>
+            </div>
+          )
+        ) : (
+          children
+        )}
 
-      {loading && (skeleton ?? <DefaultSkeleton />)}
+        {/* Error */}
+        {error && (
+          <div className="bb-error-row" role="alert">
+            <span>{error}</span>
+            <button
+              onClick={onLoadMore}
+              className="bb-retry-btn"
+              aria-label="Opnieuw proberen"
+            >
+              Opnieuw
+            </button>
+          </div>
+        )}
 
-      {/* Invisible sentinel — triggers loadMore */}
-      {hasMore && <div ref={sentinelRef} aria-hidden="true" />}
+        {/* Loading skeleton rows */}
+        {loading && (
+          <div aria-busy="true" aria-label="Laden…">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="bb-skeleton-row">
+                <div className="bb-skeleton bb-skeleton-title" />
+                <div className="bb-skeleton bb-skeleton-sub" />
+              </div>
+            ))}
+          </div>
+        )}
 
-      {!hasMore && !loading && (
-        <p className="text-center text-sm text-muted-foreground py-6">
-          Alle facturen geladen
-        </p>
-      )}
-    </div>
-  );
-}
+        {/* End-of-list message */}
+        {!hasMore && !loading && !isEmpty && (
+          <p className="bb-end-label">Alle facturen geladen</p>
+        )}
 
-function DefaultSkeleton() {
-  return (
-    <div className="space-y-2 mt-2" aria-label="Laden…">
-      {[1, 2, 3].map((i) => (
-        <div
-          key={i}
-          className="h-16 rounded-lg bg-muted animate-pulse"
-          style={{ opacity: 1 - i * 0.2 }}
-        />
-      ))}
-    </div>
+        {/* Intersection sentinel — invisible, triggers loadMore */}
+        <div ref={sentinelRef} aria-hidden="true" style={{ height: 1 }} />
+      </div>
+
+      {/* Scoped styles — no Tailwind dependency for this component */}
+      <style>{`
+        .bb-infinite-list {
+          position: relative;
+          overflow-anchor: none; /* prevent scroll jump on prepend */
+        }
+
+        /* Pull-to-refresh bar */
+        .bb-ptr-bar {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 36px;
+          color: #6b7280;
+          background: transparent;
+        }
+        .bb-ptr-spin {
+          animation: bb-spin 0.8s linear infinite;
+        }
+        @keyframes bb-spin {
+          to { transform: rotate(360deg); }
+        }
+
+        /* Pull indicator (injected via JS) */
+        .bb-ptr-indicator {
+          position: absolute;
+          top: 0;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 36px;
+          height: 36px;
+          color: #6b7280;
+          pointer-events: none;
+          transition: opacity 0.1s;
+          z-index: 10;
+        }
+
+        /* Empty state */
+        .bb-empty-state {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 48px 24px;
+          color: #9ca3af;
+          font-size: 0.9rem;
+          text-align: center;
+        }
+
+        /* Error row */
+        .bb-error-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          color: #ef4444;
+          font-size: 0.875rem;
+          background: #fef2f2;
+          border-radius: 10px;
+          margin: 8px 0;
+        }
+        .bb-retry-btn {
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: #ef4444;
+          background: none;
+          border: none;
+          cursor: pointer;
+          padding: 4px 8px;
+          border-radius: 6px;
+        }
+        .bb-retry-btn:active {
+          background: #fee2e2;
+        }
+
+        /* Skeleton rows */
+        .bb-skeleton-row {
+          padding: 14px 16px;
+          border-bottom: 1px solid #f3f4f6;
+        }
+        .bb-skeleton {
+          background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+          background-size: 200% 100%;
+          border-radius: 6px;
+          animation: bb-shimmer 1.4s ease-in-out infinite;
+        }
+        @keyframes bb-shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+        .bb-skeleton-title {
+          height: 14px;
+          width: 55%;
+          margin-bottom: 8px;
+        }
+        .bb-skeleton-sub {
+          height: 11px;
+          width: 35%;
+        }
+
+        /* End-of-list */
+        .bb-end-label {
+          text-align: center;
+          font-size: 0.78rem;
+          color: #d1d5db;
+          padding: 20px 0 8px;
+          letter-spacing: 0.02em;
+        }
+
+        /* iOS safe area — bottom padding for notch devices */
+        @supports (padding-bottom: env(safe-area-inset-bottom)) {
+          .bb-infinite-list {
+            padding-bottom: env(safe-area-inset-bottom);
+          }
+        }
+      `}</style>
+    </>
   );
 }

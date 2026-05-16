@@ -1,15 +1,8 @@
-// lib/search.ts
-// Search for invoices and documents (BOEK-012)
-// Uses ilike — works perfectly for invoice numbers like "2026-004"
-// Parallel queries via Promise.all for speed
 // src/lib/search.ts
-// ilike search — werkt voor factuurnum, naam, email
-// Voor accountant: zoekt ook in facturen van al zijn klanten
-
-// lib/search.ts
-// Search for invoices and documents (BOEK-012)
-// Uses ilike — works perfectly for invoice numbers like "2026-004"
-// Parallel queries via Promise.all for speed
+// [BOEK-012] Full-text search — ilike for invoice numbers + accountant mode — May 2026
+// Uses ilike (not FTS) — FTS breaks "2026-004" into "2026" and "004" separately.
+// ilike searches exact substring — correct for invoice numbers, names, and descriptions.
+// invoice_lines descriptions included via subquery join.
 
 import { createServerSupabaseClient } from "./supabase-server";
 
@@ -38,32 +31,48 @@ export async function searchAll(
   if (q.length < 2) return [];
 
   const fmt = (n: number) =>
-    new Intl.NumberFormat("nl-NL", {
-      style: "currency",
-      currency: "EUR",
-    }).format(n);
+    new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(n);
 
-  // Accountant: collect all client IDs first, then search their invoices
+  // [BOEK-012] Accountant: collect all client IDs, then search their invoices too
   let senderIds: string[] = [userId];
   if (role === "accountant") {
     const { data: links } = await supabase
       .from("accountant_clients")
       .select("zzper_id")
       .eq("accountant_id", userId);
-    const clientIds = (links ?? []).map((l) => l.zzper_id);
+    const clientIds = (links ?? []).map((l: { zzper_id: string }) => l.zzper_id);
     senderIds = [userId, ...clientIds];
+  }
+
+  // [BOEK-012] Find invoice IDs that match on invoice_lines.description
+  // Used to expand results beyond header fields
+  let invoiceIdsFromLines: string[] = [];
+  if (target !== "documents") {
+    const { data: lineMatches } = await supabase
+      .from("invoice_lines")
+      .select("invoice_id")
+      .ilike("description", `%${q}%`)
+      .limit(20);
+    invoiceIdsFromLines = [...new Set((lineMatches ?? []).map((l: { invoice_id: string }) => l.invoice_id))];
   }
 
   const [invoicesRes, docsRes] = await Promise.all([
     target !== "documents"
       ? supabase
           .from("invoices")
-          .select(
-            "id, invoice_number, client_name, status, total_inc_btw, created_at"
-          )
+          .select("id, invoice_number, client_name, status, total_inc_btw, created_at")
           .in("sender_id", senderIds)
           .or(
-            `invoice_number.ilike.%${q}%,client_name.ilike.%${q}%,client_email.ilike.%${q}%`
+            [
+              `invoice_number.ilike.%${q}%`,
+              `client_name.ilike.%${q}%`,
+              `client_email.ilike.%${q}%`,
+              invoiceIdsFromLines.length > 0
+                ? `id.in.(${invoiceIdsFromLines.join(",")})`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(",")
           )
           .order("created_at", { ascending: false })
           .limit(limit)
@@ -80,7 +89,7 @@ export async function searchAll(
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
-  const invoices: SearchResult[] = (invoicesRes.data ?? []).map((inv) => ({
+  const invoices: SearchResult[] = (invoicesRes.data ?? []).map((inv: any) => ({
     type: "invoice" as const,
     id: inv.id,
     title: inv.invoice_number ?? "—",
@@ -91,7 +100,7 @@ export async function searchAll(
     createdAt: inv.created_at,
   }));
 
-  const docs: SearchResult[] = (docsRes.data ?? []).map((doc) => ({
+  const docs: SearchResult[] = (docsRes.data ?? []).map((doc: any) => ({
     type: "document" as const,
     id: doc.id,
     title: doc.file_name,
@@ -101,5 +110,9 @@ export async function searchAll(
     createdAt: doc.created_at,
   }));
 
-  return [...invoices, ...docs];
+  // Merge, deduplicate by id, sort by createdAt desc
+  const seen = new Set<string>();
+  return [...invoices, ...docs]
+    .filter((r) => { if (seen.has(r.id)) return false; seen.add(r.id); return true; })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }

@@ -1,217 +1,165 @@
 'use client'
 
 // src/app/dashboard/zzp/ZzpDashboard.tsx
-// كل ما يخص الـ ZZP'er — state + logic + UI
+// [BOEK-029] Complete rebuild — Home screen: 3 buttons only — May 2026
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
-import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
-import { isOverdue } from '@/components/invoice/InvoiceRow'
-import { DashboardHeader, InvoiceTable } from '../_shared'
+import { DashboardHeader } from '../_shared'
+import { createNotification } from '@/lib/notifications'
+import { generateInvoiceFromPrompt } from '@/lib/ai'
+
+const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 export function ZzpDashboard({ profile }: { profile: any }) {
-  const router = useRouter()
+  const router   = useRouter()
   const supabase = createClient()
 
-  // ── State ──────────────────────────────────────────────────────────────────
-  const [accountantId, setAccountantId] = useState<string | null>(null)
-  const [notifications, setNotifications] = useState<any[]>([])
+  const [notifications, setNotifications]         = useState<any[]>([])
   const [showNotifications, setShowNotifications] = useState(false)
-  const [unreadMessages, setUnreadMessages] = useState(0)
-  const [statusFilter, setStatusFilter] = useState<InvoiceStatusFilter>('all')
-  const [resendingId, setResendingId] = useState<string | null>(null)
+  const [unreadMessages, setUnreadMessages]       = useState(0)
+  const [accountantId, setAccountantId]           = useState<string | null>(null)
+  const [showAiPanel, setShowAiPanel]             = useState(false)
+  const [aiPrompt, setAiPrompt]                   = useState('')
+  const [aiLoading, setAiLoading]                 = useState(false)
+  const [aiError, setAiError]                     = useState<string | null>(null)
+  const [stats, setStats]                         = useState({ open: 0, openAmount: 0, paid: 0 })
 
-  const {
-    invoices,
-    loading: invoicesLoading,
-    hasMore,
-    refreshing,
-    loadMore,
-    refresh,
-    updateOptimistic,
-    removeOptimistic,
-  } = useInfiniteInvoices({ userId: profile.id, status: statusFilter })
+  useEffect(() => { loadGlobal() }, [])
 
-  // ── Load data ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    async function loadData() {
-      // Accountant link
-      const { data: link } = await supabase
-        .from('accountant_clients')
-        .select('accountant_id')
-        .eq('zzper_id', profile.id)
-        .maybeSingle()
-      if (link?.accountant_id) setAccountantId(link.accountant_id)
-
-      // Notifications
-      const { data: notifData } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', profile.id)
-        .order('created_at', { ascending: false })
-        .limit(20)
-      if (notifData) setNotifications(notifData)
-
-      // Unread messages
-      const { count } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('receiver_id', profile.id)
-        .eq('read', false)
-      setUnreadMessages(count || 0)
-    }
-    loadData()
-  }, [])
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  async function handleLogout() {
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
-
-  async function markAsPaid(invoiceId: string, newStatus: 'paid' | 'sent') {
-    updateOptimistic(invoiceId, { status: newStatus })
-    const { error } = await supabase
-      .from('invoices')
-      .update({ status: newStatus })
-      .eq('id', invoiceId)
-
-    if (!error && newStatus === 'paid') {
-      await supabase.from('notifications').insert({
-        user_id: profile.id,
-        title: 'Factuur betaald',
-        body: 'Een factuur is gemarkeerd als betaald.',
-        type: 'payment',
-        read: false,
-      })
-    }
-  }
-
-  async function deleteInvoice(invoiceId: string) {
-    const confirmed = window.confirm('Weet je zeker dat je deze factuur wilt verwijderen?')
-    if (!confirmed) return
-    removeOptimistic(invoiceId)
-    await supabase.from('invoice_lines').delete().eq('invoice_id', invoiceId)
-    await supabase.from('invoices').delete().eq('id', invoiceId)
-  }
-
-  async function resendInvoice(e: React.MouseEvent, invoiceId: string) {
-    e.stopPropagation()
-    setResendingId(invoiceId)
-    try {
-      await fetch('/api/invoice/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoiceId }),
-      })
-    } finally {
-      setResendingId(null)
+  async function loadGlobal() {
+    const [{ data: link }, { data: notifData }, { count }, { data: invData }] = await Promise.all([
+      supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
+      supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
+      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
+      supabase.from('invoices').select('status, total_inc_btw').eq('sender_id', profile.id),
+    ])
+    if (link?.accountant_id) setAccountantId(link.accountant_id)
+    if (notifData) setNotifications(notifData)
+    setUnreadMessages(count || 0)
+    if (invData) {
+      let open = 0, openAmount = 0, paid = 0
+      for (const inv of invData) {
+        if (inv.status === 'sent' || inv.status === 'overdue') { open++; openAmount += inv.total_inc_btw ?? 0 }
+        if (inv.status === 'paid') paid++
+      }
+      setStats({ open, openAmount, paid })
     }
   }
 
   async function markAllRead() {
-    await supabase
-      .from('notifications')
-      .update({ read: true })
-      .eq('user_id', profile.id)
-      .eq('read', false)
+    await supabase.from('notifications').update({ read: true }).eq('user_id', profile.id).eq('read', false)
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
   }
 
-  function handleMessagesClick() {
-    accountantId
-      ? router.push(`/dashboard/messages/${accountantId}`)
-      : router.push('/dashboard/messages')
+  async function handleAiGenerate() {
+    if (!aiPrompt.trim()) return
+    setAiLoading(true); setAiError(null)
+    try {
+      const result = await generateInvoiceFromPrompt(aiPrompt)
+      const params = new URLSearchParams()
+      if (result.client_name) params.set('client_name', result.client_name)
+      if (result.description)  params.set('description', result.description)
+      if (result.amount)       params.set('amount', String(result.amount))
+      if (result.btw_rate)     params.set('btw_rate', String(result.btw_rate))
+      router.push(`/dashboard/invoice/new?${params.toString()}`)
+    } catch { setAiError('Er ging iets mis. Probeer het opnieuw.') }
+    finally { setAiLoading(false) }
   }
 
-  // Openstaand = sent + overdue only — draft excluded
-  const openstaandTotal = invoices
-    .filter(i => i.status === 'sent' || i.status === 'overdue' || isOverdue(i))
-    .reduce((sum, i) => sum + (i.total_inc_btw || 0), 0)
-
   const unreadNotifCount = notifications.filter(n => !n.read).length
+  const firstName = profile.full_name?.split(' ')[0] ?? 'daar'
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
-
+    <div style={{
+      minHeight: '100vh', backgroundColor: 'var(--color-bg, #f2f2f7)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
+      WebkitFontSmoothing: 'antialiased',
+    }}>
       <DashboardHeader
-        profile={profile}
-        notifications={notifications}
-        showNotifications={showNotifications}
-        unreadNotifCount={unreadNotifCount}
+        profile={profile} notifications={notifications}
+        showNotifications={showNotifications} unreadNotifCount={unreadNotifCount}
         unreadMessages={unreadMessages}
-        onToggleNotifications={() => {
-          setShowNotifications(prev => !prev)
-          if (!showNotifications && unreadNotifCount > 0) markAllRead()
-        }}
-        onMessagesClick={handleMessagesClick}
-        onLogout={handleLogout}
+        onToggleNotifications={() => { setShowNotifications(p => !p); if (!showNotifications && unreadNotifCount > 0) markAllRead() }}
+        onMessagesClick={() => accountantId ? router.push(`/dashboard/messages/${accountantId}`) : router.push('/dashboard/messages')}
+        onLogout={async () => { await supabase.auth.signOut(); router.push('/login') }}
       />
 
-      <main className="max-w-4xl mx-auto px-6 py-6 space-y-4">
+      <main style={{ maxWidth: 480, margin: '0 auto', padding: '32px 20px 60px' }}>
+        <p style={{ fontSize: 13, color: '#8e8e93', marginBottom: 4 }}>Goedendag,</p>
+        <h1 style={{ fontSize: 26, fontWeight: 700, color: '#1c1c1e', marginBottom: 32, letterSpacing: -0.5 }}>
+          {firstName} 👋
+        </h1>
 
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="stat-card">
-            <p className="stat-label">Verzonden</p>
-            <p className="stat-value">{invoices.filter(i => i.status === 'sent').length}</p>
-          </div>
-          <div className="stat-card">
-            <p className="stat-label">Ontvangen</p>
-            <p className="stat-value">
-              €{invoices
-                .filter(i => i.status === 'paid')
-                .reduce((sum, i) => sum + (i.total_inc_btw || 0), 0)
-                .toFixed(0)}
-            </p>
-          </div>
-          <div className="stat-card">
-            <p className="stat-label">Openstaand</p>
-            <p className="stat-value text-[#ff9500]">€{openstaandTotal.toFixed(0)}</p>
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* [BOEK-029] Button 1: Nieuwe factuur */}
+          <HomeButton icon="+" iconBg="#007aff" label="Nieuwe factuur" sub="Maak en verstuur direct"
+            onClick={() => router.push('/dashboard/invoice/new')} />
+
+          {/* [BOEK-029] Button 2: Werken met AI */}
+          <HomeButton icon="🤝" iconBg="#5856d6" label="Werken met AI" sub="Beschrijf je factuur, AI regelt de rest"
+            onClick={() => setShowAiPanel(p => !p)} active={showAiPanel} />
+
+          {showAiPanel && (
+            <div style={{ background: '#fff', borderRadius: 16, padding: '18px 16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginTop: -6 }}>
+              <p style={{ fontSize: 12, color: '#8e8e93', marginBottom: 10 }}>Schrijf in jouw taal — AI vertaalt en vult in</p>
+              <textarea
+                value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} rows={3}
+                placeholder='"factuur voor Mohammed voor dakdekken, 3 uur à 85 euro"'
+                style={{ width: '100%', borderRadius: 10, border: '1px solid #e5e5ea', padding: '10px 12px', fontSize: 14, resize: 'none', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
+              />
+              {aiError && <p style={{ fontSize: 12, color: '#ff3b30', marginTop: 6 }}>{aiError}</p>}
+              <button onClick={handleAiGenerate} disabled={aiLoading || !aiPrompt.trim()}
+                style={{ marginTop: 10, width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: aiLoading ? 'default' : 'pointer', background: aiLoading || !aiPrompt.trim() ? '#e5e5ea' : '#5856d6', color: aiLoading || !aiPrompt.trim() ? '#8e8e93' : '#fff', fontSize: 15, fontWeight: 700 }}>
+                {aiLoading ? 'AI denkt na...' : 'Factuur aanmaken →'}
+              </button>
+            </div>
+          )}
+
+          {/* [BOEK-029] Button 3: Mijn werkplek */}
+          <HomeButton icon="→" iconBg="#34c759" label="Mijn werkplek" sub="Facturen, klanten en bestanden"
+            onClick={() => router.push('/dashboard/werkplek')} />
         </div>
 
-        {/* No accountant banner */}
-        {!accountantId && (
-          <div className="bg-[#e8f1ff] border border-[#bfdbfe] rounded-2xl px-5 py-4 flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-[#1e40af]">Nog geen boekhouder gekoppeld</p>
-              <p className="text-xs text-[#3b82f6] mt-0.5">Koppel een boekhouder om samen te werken</p>
+        {/* Quick stats strip */}
+        {(stats.open > 0 || stats.paid > 0) && (
+          <div style={{ marginTop: 32, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ background: '#fff', borderRadius: 14, padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+              <p style={{ fontSize: 11, color: '#8e8e93', fontWeight: 500, marginBottom: 4 }}>Openstaand</p>
+              <p style={{ fontSize: 17, fontWeight: 700, color: '#ff9500', letterSpacing: -0.3 }}>{NL_EUR.format(stats.openAmount)}</p>
+              <p style={{ fontSize: 10, color: '#c7c7cc', marginTop: 2 }}>{stats.open} factuur{stats.open !== 1 ? 'en' : ''}</p>
             </div>
-            <button
-              onClick={() => router.push('/dashboard/settings')}
-              className="text-xs text-[#1d4ed8] font-bold hover:text-[#1e40af]"
-              style={{ background: 'none', border: 'none' }}
-            >
-              Koppelen →
-            </button>
+            <div style={{ background: '#fff', borderRadius: 14, padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+              <p style={{ fontSize: 11, color: '#8e8e93', fontWeight: 500, marginBottom: 4 }}>Betaald</p>
+              <p style={{ fontSize: 17, fontWeight: 700, color: '#34c759', letterSpacing: -0.3 }}>{stats.paid}</p>
+              <p style={{ fontSize: 10, color: '#c7c7cc', marginTop: 2 }}>factuur{stats.paid !== 1 ? 'en' : ''}</p>
+            </div>
           </div>
         )}
-
-        {/* Invoice table */}
-        <InvoiceTable
-          invoices={invoices}
-          loading={invoicesLoading}
-          hasMore={hasMore}
-          refreshing={refreshing}
-          statusFilter={statusFilter}
-          onFilterChange={setStatusFilter}
-          onLoadMore={loadMore}
-          onRefresh={refresh}
-          onMarkPaid={markAsPaid}
-          onResend={resendInvoice}
-          onDelete={deleteInvoice}
-          resendingId={resendingId}
-          onNavigate={id => router.push(`/dashboard/invoice/${id}`)}
-          onNewInvoice={() => router.push('/dashboard/invoice/new')}
-          showNewButton
-        />
-
       </main>
     </div>
+  )
+}
+
+function HomeButton({ icon, iconBg, label, sub, onClick, active }: {
+  icon: string; iconBg: string; label: string; sub: string; onClick: () => void; active?: boolean
+}) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 16, background: '#fff', borderRadius: 18, padding: '18px 20px',
+      border: `2px solid ${active ? iconBg : 'transparent'}`,
+      boxShadow: '0 2px 10px rgba(0,0,0,0.07)', cursor: 'pointer', textAlign: 'left', width: '100%',
+      transition: 'all 0.15s', WebkitTapHighlightColor: 'transparent',
+    }}>
+      <div style={{ width: 46, height: 46, borderRadius: 14, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, color: '#fff', fontWeight: 700, flexShrink: 0 }}>
+        {icon}
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 16, fontWeight: 700, color: '#1c1c1e', marginBottom: 2 }}>{label}</p>
+        <p style={{ fontSize: 12, color: '#8e8e93' }}>{sub}</p>
+      </div>
+      <span style={{ fontSize: 18, color: '#c7c7cc' }}>›</span>
+    </button>
   )
 }
