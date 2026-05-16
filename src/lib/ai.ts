@@ -95,11 +95,15 @@ export interface GenerateInvoiceLineResult {
   btw_rate: 0 | 9 | 21;
 }
 
+// [BOEK-018] fix: add description, amount, btw_rate top-level fields — May 2026
 export interface GenerateInvoiceFromPromptResult {
   client_name: string;
-  client_email?: string;
+  client_email?: string | null;
+  description?: string;        // top-level summary of the work (optional)
+  amount?: number;             // total amount incl. BTW if mentioned in prompt
+  btw_rate?: 0 | 9 | 21;      // top-level btw_rate if a single rate applies to all lines
   lines: GenerateInvoiceLineResult[];
-  notes?: string;
+  notes?: string | null;
 }
 
 interface TransactionInput {
@@ -653,6 +657,9 @@ Return only a JSON object with these exact keys:
 {
   "client_name": "name of the client (string, required)",
   "client_email": "email address of the client or null",
+  "description": "short professional Dutch summary of the work (optional, single sentence)",
+  "amount": number or null (total amount incl. BTW if clearly stated in the prompt),
+  "btw_rate": 0 | 9 | 21 or null (top-level rate if all lines share the same rate),
   "lines": [
     {
       "description": "professional Dutch description of the work or product",
@@ -667,10 +674,13 @@ Return only a JSON object with these exact keys:
 Rules:
 - client_name is required — extract from the prompt or use empty string if not found
 - lines must have at least one item if any work is described
-- description must always be professional Dutch — translate if needed
+- description (top-level): short Dutch summary, e.g. "Ontwikkeling website" — optional
+- amount (top-level): only if the user mentioned a total price — numeric, incl. BTW
+- btw_rate (top-level): set if all lines share the same rate, else null
+- line description must always be professional Dutch — translate if needed
 - quantity defaults to 1 if not mentioned
 - unit_price must be excluding BTW (excl. BTW)
-- btw_rate defaults to 21 if not mentioned
+- line btw_rate defaults to 21 if not mentioned
 - btw_rate 9 applies to: food, books, medicine, public transport, some services
 - btw_rate 0 applies to: exports outside EU, certain exempt services
 - notes: add only if the user mentioned special payment terms or remarks
@@ -688,7 +698,34 @@ Return JSON only.`;
     const parsed = safeParseJSON<GenerateInvoiceFromPromptResult>(result);
     if (!parsed) return FALLBACK;
 
-    // Sanitize lines
+    // [BOEK-018] sanitize all fields — May 2026
+
+    // client_name must be a string
+    if (typeof parsed.client_name !== 'string') {
+      parsed.client_name = '';
+    }
+
+    // description: optional string
+    if (parsed.description !== undefined && typeof parsed.description !== 'string') {
+      parsed.description = undefined;
+    }
+
+    // amount: optional positive number
+    if (parsed.amount !== undefined) {
+      if (typeof parsed.amount !== 'number' || parsed.amount <= 0) {
+        parsed.amount = undefined;
+      }
+    }
+
+    // btw_rate (top-level): enforce 0 | 9 | 21 or undefined
+    if (parsed.btw_rate !== undefined) {
+      const validRates = [0, 9, 21] as const;
+      if (!validRates.includes(parsed.btw_rate as 0 | 9 | 21)) {
+        parsed.btw_rate = undefined;
+      }
+    }
+
+    // lines: must be an array
     if (!Array.isArray(parsed.lines)) {
       parsed.lines = [];
     }
@@ -697,16 +734,11 @@ Return JSON only.`;
       description: typeof line.description === 'string' ? line.description : '',
       quantity: typeof line.quantity === 'number' && line.quantity > 0 ? line.quantity : 1,
       unit_price: typeof line.unit_price === 'number' ? line.unit_price : 0,
-      // Enforce btw_rate is only 0, 9, or 21 — default to 21
+      // Enforce btw_rate per line — default to 21
       btw_rate: ([0, 9, 21] as const).includes(line.btw_rate as 0 | 9 | 21)
         ? (line.btw_rate as 0 | 9 | 21)
         : 21,
     }));
-
-    // client_name must be a string
-    if (typeof parsed.client_name !== 'string') {
-      parsed.client_name = '';
-    }
 
     return parsed;
   } catch (error) {

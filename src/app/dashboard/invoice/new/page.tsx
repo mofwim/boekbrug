@@ -5,7 +5,7 @@
 // Mobile-first, iOS-style design
 // Supports: autocomplete clients, AI translation, offerte→factuur conversion
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { translateToNL } from '@/lib/ai'
@@ -15,7 +15,8 @@ const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type InvoiceType = 'factuur' | 'offerte' | 'credit'
+// [BOEK-031] fix type — creditnota replaces credit — May 2026
+type InvoiceType = 'factuur' | 'offerte' | 'creditnota'
 
 type Profile = {
   id: string
@@ -71,7 +72,8 @@ const TYPE_CONFIG: Record<InvoiceType, {
     label: 'Offerte', icon: '📋',
     color: '#fffbeb', borderColor: '#f59e0b', textColor: '#92400e',
   },
-  credit: {
+  // [BOEK-031] key = creditnota — matches InvoiceType
+  creditnota: {
     label: 'Credit', icon: '↩',
     color: '#fef2f2', borderColor: '#ef4444', textColor: '#b91c1c',
   },
@@ -79,10 +81,22 @@ const TYPE_CONFIG: Record<InvoiceType, {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
-export default function NewInvoicePage() {
+function NewInvoicePageContent() {
   const router       = useRouter()
   const searchParams = useSearchParams()
   const supabase     = createClient()
+
+  // Read query params at component level so useEffect doesn't depend on searchParams
+  const typeParam           = searchParams.get('type') as InvoiceType | null
+  const originalParam       = searchParams.get('original') ?? ''
+  const offerteParam        = searchParams.get('from_offerte') ?? ''
+  const replacesParam       = searchParams.get('replaces') ?? ''
+  const replacesNumberParam = searchParams.get('replacesNumber') ?? ''
+  // AI-generated params from ZzpDashboard
+  const aiClientName    = searchParams.get('client_name') ?? ''
+  const aiDescription   = searchParams.get('description') ?? ''
+  const aiAmount        = parseFloat(searchParams.get('amount') ?? '0') || 0
+  const aiBtwRate       = parseFloat(searchParams.get('btw_rate') ?? '21') || 21
 
   // ── Core state ──────────────────────────────────────────────────────────────
   const [profile, setProfile]         = useState<Profile | null>(null)
@@ -90,18 +104,20 @@ export default function NewInvoicePage() {
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState('')
 
-  // [BOEK-031] Invoice type — factuur / offerte / credit
-  const [invoiceType, setInvoiceType] = useState<InvoiceType>('factuur')
+  // [BOEK-031] Invoice type — factuur / offerte / credit — initialised from URL
+  const [invoiceType, setInvoiceType] = useState<InvoiceType>(
+    typeParam && ['factuur', 'offerte', 'creditnota'].includes(typeParam) ? typeParam : 'factuur'
+  )
 
   // ── Client autocomplete ──────────────────────────────────────────────────────
   const [clients, setClients]               = useState<Client[]>([])
-  const [clientSearch, setClientSearch]     = useState('')
+  const [clientSearch, setClientSearch]     = useState(aiClientName)
   const [showDropdown, setShowDropdown]     = useState(false)
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
   const autocompleteRef                     = useRef<HTMLDivElement>(null)
 
   // ── Client fields ────────────────────────────────────────────────────────────
-  const [clientName, setClientName]     = useState('')
+  const [clientName, setClientName]     = useState(aiClientName)
   const [clientEmail, setClientEmail]   = useState('')
   const [clientAddress, setClientAddress] = useState('')
   const [clientPostal, setClientPostal] = useState('')
@@ -113,26 +129,28 @@ export default function NewInvoicePage() {
   const [invoiceDate, setInvoiceDate] = useState(today)
   const [dueDate, setDueDate]         = useState('')
 
-  // ── Lines ────────────────────────────────────────────────────────────────────
-  const [lines, setLines] = useState<InvoiceLine[]>([
-    { description: '', quantity: 1, unit_price: 0, btw_rate: 21 }
-  ])
+  // ── Lines — pre-filled from replace flow or AI generation ────────────────────
+  const [lines, setLines] = useState<InvoiceLine[]>(
+    replacesNumberParam
+      ? [{ description: `Vervangt factuur ${replacesNumberParam}`, quantity: 1, unit_price: 0, btw_rate: 21 }]
+      : [{ description: aiDescription, quantity: 1, unit_price: aiAmount, btw_rate: aiBtwRate }]
+  )
 
   // ── Credit flow ──────────────────────────────────────────────────────────────
   const [sentInvoices, setSentInvoices]       = useState<SentInvoice[]>([])
-  const [originalInvoiceId, setOriginalInvoiceId] = useState('')
+  const [originalInvoiceId, setOriginalInvoiceId] = useState(originalParam)
   const [creditReason, setCreditReason]       = useState('')
   const [loadingCredit, setLoadingCredit]     = useState(false)
 
-  // ── Replace flow ─────────────────────────────────────────────────────────────
-  const [replacesId, setReplacesId]         = useState('')
-  const [replacesNumber, setReplacesNumber] = useState('')
+  // ── Replace flow — read-only from URL, never mutated ─────────────────────────
+  const replacesId     = replacesParam
+  const replacesNumber = replacesNumberParam
 
   // ── Offerte convert confirm ───────────────────────────────────────────────────
   const [showConvertDialog, setShowConvertDialog] = useState(false)
   const [convertingOfferte, setConvertingOfferte] = useState(false)
-  // offerte_id if we're converting an existing offerte
-  const [offerteId, setOfferteId] = useState('')
+  // offerte_id if we're converting an existing offerte — read-only from URL
+  const offerteId = offerteParam
 
   // ─── Load ──────────────────────────────────────────────────────────────────
 
@@ -170,26 +188,7 @@ export default function NewInvoicePage() {
       if (sent) setSentInvoices(sent)
     }
     load()
-
-    // Query params
-    const typeParam = searchParams.get('type') as InvoiceType | null
-    if (typeParam && ['factuur', 'offerte', 'credit'].includes(typeParam)) setInvoiceType(typeParam)
-
-    const originalParam = searchParams.get('original')
-    if (originalParam) setOriginalInvoiceId(originalParam)
-
-    const offerteParam = searchParams.get('offerte')
-    if (offerteParam) setOfferteId(offerteParam)
-
-    // Replace flow
-    const replacesParam       = searchParams.get('replaces')
-    const replacesNumberParam = searchParams.get('replacesNumber')
-    if (replacesParam) setReplacesId(replacesParam)
-    if (replacesNumberParam) {
-      setReplacesNumber(replacesNumberParam)
-      setLines([{ description: `Vervangt factuur ${replacesNumberParam}`, quantity: 1, unit_price: 0, btw_rate: 21 }])
-    }
-  }, [])
+  }, [router, supabase])
 
   // Close autocomplete on outside click
   useEffect(() => {
@@ -268,7 +267,7 @@ export default function NewInvoicePage() {
   // ─── Totals ────────────────────────────────────────────────────────────────
 
   // [BOEK-031] Credit: user enters positive — system saves negative
-  const sign      = invoiceType === 'credit' ? -1 : 1
+  const sign      = invoiceType === 'creditnota' ? -1 : 1
   const totalEx   = lines.reduce((s, l) => s + l.quantity * l.unit_price, 0)
   const btwAmount = lines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
   const totalInc  = totalEx + btwAmount
@@ -376,7 +375,7 @@ export default function NewInvoicePage() {
     }
 
     // DB invoice_type mapping
-    const dbType = invoiceType === 'credit' ? 'creditnota'
+    const dbType = invoiceType === 'creditnota' ? 'creditnota'
                  : invoiceType === 'offerte' ? 'pro_forma'
                  : 'factuur'
 
@@ -443,11 +442,11 @@ export default function NewInvoicePage() {
   const cfg = TYPE_CONFIG[invoiceType]
   const pageTitle =
     invoiceType === 'offerte' ? 'Nieuwe offerte' :
-    invoiceType === 'credit'  ? 'Creditnota'     : 'Nieuwe factuur'
+    invoiceType === 'creditnota'  ? 'Creditnota'     : 'Nieuwe factuur'
 
   const displayNumber =
     invoiceType === 'offerte' ? '—' :
-    invoiceType === 'credit'  ? `CR-${invoiceNumber}` :
+    invoiceType === 'creditnota'  ? `CR-${invoiceNumber}` :
     invoiceNumber || 'Concept'
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -511,7 +510,7 @@ export default function NewInvoicePage() {
         </div>
 
         {/* ── Credit flow ── */}
-        {invoiceType === 'credit' && (
+        {invoiceType === 'creditnota' && (
           <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3"
             style={{ borderLeft: '3px solid #ef4444' }}>
             <div className="flex gap-2 items-start">
@@ -565,7 +564,7 @@ export default function NewInvoicePage() {
         )}
 
         {/* ── Factuur / Offerte flow ── */}
-        {invoiceType !== 'credit' && (
+        {invoiceType !== 'creditnota' && (
           <>
             {/* Replace flow banner */}
             {replacesNumber && (
@@ -820,7 +819,7 @@ export default function NewInvoicePage() {
                 ))}
                 <div className="flex justify-between font-bold text-gray-900 text-base pt-2 border-t border-gray-100">
                   <span>Totaal incl. BTW</span>
-                  <span style={{ color: invoiceType === 'credit' ? '#ef4444' : '#1c1c1e' }}>
+                  <span style={{ color: invoiceType === 'creditnota' ? '#ef4444' : '#1c1c1e' }}>
                     {NL_NUMBER.format(sign * totalInc)}
                   </span>
                 </div>
@@ -828,7 +827,7 @@ export default function NewInvoicePage() {
             </div>
 
             {/* ── Betalingsinformatie ── */}
-            {profile?.iban && invoiceType !== 'credit' && (
+            {profile?.iban && invoiceType !== 'creditnota' && (
               <div className="bg-white rounded-2xl p-4 shadow-sm">
                 <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Betalingsinformatie</p>
                 <div className="space-y-1 text-sm text-gray-600">
@@ -927,5 +926,13 @@ export default function NewInvoicePage() {
       )}
 
     </div>
+  )
+}
+
+export default function NewInvoicePage() {
+  return (
+    <Suspense>
+      <NewInvoicePageContent />
+    </Suspense>
   )
 }

@@ -2,6 +2,7 @@
 // [BOEK-013] Quarterly CSV export — May 2026
 // [BOEK-014] Year / status / accountant mode — May 2026
 // [BOEK-014] Minor fix: exclude archived, add invoice_type to SELECT — May 2026
+// [BOEK-014] TS fix: GenericStringError resolved — separate SELECT constants — May 2026
 //
 // GET /api/export?year=2026&quarter=1           ← quarter export (existing)
 // GET /api/export?year=2026                     ← full year export
@@ -20,9 +21,15 @@ import {
   invoicesToCsvAccountant,
 } from "@/lib/export";
 
-// [BOEK-014] All queries select invoice_type — excluded from previous version
+// [BOEK-014] Separate SELECT constants — concatenation causes GenericStringError
 const INVOICE_SELECT =
-  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, sent_to_accountant, invoice_type";
+  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, sent_to_accountant, invoice_type" as const;
+
+const INVOICE_SELECT_WITH_SENDER =
+  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, sent_to_accountant, invoice_type, sender_id" as const;
+
+// Local type for accountant query rows — includes sender_id
+type InvRowWithSender = InvRow & { sender_id: string | null };
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -89,28 +96,37 @@ export async function GET(req: NextRequest) {
     const clientIds: string[] = [];
 
     for (const link of clientLinks) {
-      const p = link.profiles as { id: string; full_name: string | null; company_name: string | null } | null;
+      // profiles join returns array — take first element
+      const profilesArr = link.profiles as { id: string; full_name: string | null; company_name: string | null }[] | null;
+      const p = Array.isArray(profilesArr) ? profilesArr[0] ?? null : profilesArr;
       if (!p) continue;
       clientIds.push(p.id);
       clientNames[p.id] = p.company_name ?? p.full_name ?? "Onbekend";
     }
 
-    // [BOEK-014] Exclude archived + select invoice_type
-    const { data, error } = await supabase
+    if (clientIds.length === 0) {
+      return new NextResponse("Geen klanten gevonden", { status: 404 });
+    }
+
+    // [BOEK-014] Use dedicated constant with sender_id — avoids GenericStringError
+    const { data: rawData, error } = await supabase
       .from("invoices")
-      .select(INVOICE_SELECT + ", sender_id")
+      .select(INVOICE_SELECT_WITH_SENDER)
       .in("sender_id", clientIds)
       .eq("status", "paid")
-      .neq("status", "archived") // [BOEK-014]
+      .neq("status", "archived")
       .gte("invoice_date", start)
       .lte("invoice_date", end)
       .order("sender_id", { ascending: true })
       .order("invoice_date", { ascending: true });
 
-    if (error) return new NextResponse(error.message, { status: 500 });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const rows = (data ?? []).map((inv) => {
-      const base = toExportRowFull(inv as InvRow, periodLabel);
+    // Safe cast via unknown — select constant guarantees the shape
+    const data = (rawData as unknown) as InvRowWithSender[];
+
+    const rows = data.map((inv) => {
+      const base = toExportRowFull(inv, periodLabel);
       return { ...base, klant_id: inv.sender_id ?? "" } as InvoiceExportRowAccountant;
     });
 
@@ -143,12 +159,11 @@ export async function GET(req: NextRequest) {
   const targetId =
     profile?.role === "accountant" && clientId ? clientId : user.id;
 
-  // [BOEK-014] Exclude archived + select invoice_type
   let query = supabase
     .from("invoices")
     .select(INVOICE_SELECT)
     .eq("sender_id", targetId)
-    .neq("status", "archived") // [BOEK-014]
+    .neq("status", "archived")
     .gte("invoice_date", start)
     .lte("invoice_date", end)
     .order("invoice_date", { ascending: true });
@@ -159,13 +174,13 @@ export async function GET(req: NextRequest) {
     query = query.eq("status", statusFilter);
   }
 
-  const { data, error } = await query;
-  if (error) return new NextResponse(error.message, { status: 500 });
+  const { data: rawData, error } = await query;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const rows = (data ?? []).map((inv) =>
-    toExportRowFull(inv as InvRow, periodLabel)
-  );
+  // Safe cast via unknown — select constant guarantees the shape
+  const data = (rawData as unknown) as InvRow[];
 
+  const rows = data.map((inv) => toExportRowFull(inv, periodLabel));
   const csv = invoicesToCsv(rows);
 
   const filename = rawQuarter

@@ -36,7 +36,7 @@ export interface ZzpInvoiceTableProps {
   statusFilter: InvoiceStatusFilter
   onFilterChange: (s: InvoiceStatusFilter) => void
   onLoadMore: () => void
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>  // [BOEK-009] fix: InfiniteList expects Promise<void>
   onNavigate: (id: string) => void
   title?: string
   onMarkPaid?: (id: string, status: 'paid' | 'sent') => void
@@ -59,7 +59,7 @@ export interface AccountantInvoiceTableProps {
   statusFilter: AccountantStatusFilter
   onFilterChange: (s: AccountantStatusFilter) => void
   onLoadMore: () => void
-  onRefresh: () => void
+  onRefresh: () => void | Promise<void>  // [BOEK-009] fix: InfiniteList expects Promise<void>
   onNavigate: (id: string) => void
   title?: string
   onAccountantAction: (id: string, action: 'verwerkt' | 'in_behandeling' | 'vraag' | null) => void
@@ -149,7 +149,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
             onLoadMore={onLoadMore}
             hasMore={hasMore}
             loading={loading}
-            onRefresh={onRefresh}
+            onRefresh={async () => { await onRefresh() }} // [BOEK-009] wrap: InfiniteList expects Promise<void>
             refreshing={refreshing}
           >
             {invoices.map(invoice => (

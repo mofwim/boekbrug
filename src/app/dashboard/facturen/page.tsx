@@ -38,30 +38,59 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 ]
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function FacturenPage({ profile }: { profile: any }) {
+export default function FacturenPage() {
   const router   = useRouter()
   const supabase = createClient()
+
+  // Fix #1: fetch profile from auth instead of receiving it as a page prop
+  const [profile, setProfile] = useState<{ id: string } | null>(null)
 
   const [filter, setFilter]         = useState<FilterTab>('all')
   const [sort, setSort]             = useState<SortOrder>('desc')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [expandedDetails, setExpandedDetails] = useState<Record<string, {
+    client_btw_number: string | null
+    total_ex_btw: number | null
+    btw_amount: number | null
+  }>>({})
+
+  useEffect(() => {
+    if (!expandedId || expandedDetails[expandedId]) return
+    supabase
+      .from('invoices')
+      .select('id, client_btw_number, total_ex_btw, btw_amount')
+      .eq('id', expandedId)
+      .single()
+      .then(({ data }) => {
+        if (data) setExpandedDetails(prev => ({ ...prev, [expandedId]: data as any }))
+      })
+  }, [expandedId, supabase])
   const [toast, setToast]           = useState<string | null>(null)
   const [deleteCtx, setDeleteCtx]   = useState<DeleteCtx | null>(null)
   const [payCtx, setPayCtx]         = useState<ConfirmPayCtx | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
 
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) setProfile({ id: user.id })
+    })
+  }, [supabase])
+
   // [BOEK-029] Archived invoices — fetched separately, shown at end of "Alle" only
   const [archivedInvoices, setArchivedInvoices] = useState<any[]>([])
 
+  // Fix #2: use profileId as stable dep to avoid object reference churn
+  const profileId = profile?.id
   useEffect(() => {
+    if (!profileId) return
     supabase
       .from('invoices')
       .select('id, invoice_number, total_inc_btw, replaced_by_number, invoice_date, invoice_type')
-      .eq('sender_id', profile.id)
+      .eq('sender_id', profileId)
       .eq('status', 'archived')
       .order('created_at', { ascending: false })
       .then(({ data }) => setArchivedInvoices(data ?? []))
-  }, [])
+  }, [supabase, profileId])
 
   // Map FilterTab → InvoiceStatusFilter (hook expects different type)
   const statusMap: Record<FilterTab, InvoiceStatusFilter> = {
@@ -71,7 +100,7 @@ export default function FacturenPage({ profile }: { profile: any }) {
 
   const {
     invoices, loading, hasMore, refreshing, loadMore, refresh, updateOptimistic, removeOptimistic,
-  } = useInfiniteInvoices({ userId: profile.id, status: statusMap[filter] })
+  } = useInfiniteInvoices({ userId: profileId ?? '', status: statusMap[filter] })
 
   // Client-side filter — exclude archived from hook results (hook may return them)
   // offerte / credit filtered by invoice_type
@@ -103,7 +132,8 @@ export default function FacturenPage({ profile }: { profile: any }) {
     const { error } = await supabase.from('invoices').update(patch).eq('id', ctx.id)
     if (error) {
       updateOptimistic(ctx.id, { status: ctx.newStatus === 'paid' ? 'sent' : 'paid' })
-    } else if (ctx.newStatus === 'paid') {
+    } else if (ctx.newStatus === 'paid' && profile) {
+      // Fix #4: guard profile before using profile.id
       await createNotification({ supabase, userId: profile.id, title: 'Factuur betaald', body: `Factuur ${ctx.number} is gemarkeerd als betaald.`, type: 'payment' })
       showToast(`Factuur ${ctx.number} gemarkeerd als betaald`)
     }
@@ -136,7 +166,7 @@ export default function FacturenPage({ profile }: { profile: any }) {
     const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting && hasMore && !loading) loadMore() }, { threshold: 0.1 })
     obs.observe(el)
     return () => obs.disconnect()
-  }, [hasMore, loading])
+  }, [hasMore, loading, loadMore]) // Fix #5: added loadMore to deps
 
   // ─── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -201,16 +231,14 @@ export default function FacturenPage({ profile }: { profile: any }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {sorted.map(inv => {
-              const isArchived = inv.status === 'archived'
+              // Fix #6: removed isArchived — displayed already filters archived out, so it was always false
+              const det        = expandedDetails[inv.id]
               const isCredit   = inv.invoice_type === 'creditnota'
               const isOfferte  = inv.invoice_type === 'pro_forma'
               const isPaid     = inv.status === 'paid'
-              const isSent     = inv.status === 'sent'
               const expanded   = expandedId === inv.id
 
-              // Row background tint
-              const rowBg = isArchived ? '#f9f9fb'
-                : isCredit  ? '#fff9f0'
+              const rowBg = isCredit  ? '#fff9f0'
                 : isOfferte ? '#f9f9fb'
                 : '#fff'
 
@@ -218,12 +246,11 @@ export default function FacturenPage({ profile }: { profile: any }) {
                 <div key={inv.id} style={{ borderRadius: 14, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
                   {/* ── Main row ── */}
                   <div
-                    onClick={() => !isArchived && setExpandedId(expanded ? null : inv.id)}
+                    onClick={() => setExpandedId(expanded ? null : inv.id)}
                     style={{
                       background: rowBg, padding: '14px 16px',
                       display: 'flex', alignItems: 'center', gap: 12,
-                      opacity: isArchived ? 0.45 : 1,
-                      cursor: isArchived ? 'default' : 'pointer',
+                      cursor: 'pointer',
                       transition: 'opacity 0.15s',
                     }}
                   >
@@ -231,10 +258,7 @@ export default function FacturenPage({ profile }: { profile: any }) {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                         <p style={{ fontSize: 13, fontWeight: 700, color: '#1c1c1e' }}>{inv.invoice_number ?? '—'}</p>
-                        <InvoiceTypeBadge type={inv.invoice_type} />
-                        {isArchived && inv.replaced_by_number && (
-                          <span style={{ fontSize: 10, color: '#8e8e93' }}>Vervangen door {inv.replaced_by_number}</span>
-                        )}
+                        <InvoiceTypeBadge type={(inv.invoice_type ?? 'factuur') as 'factuur' | 'creditnota' | 'pro_forma'} />
                       </div>
                       <p style={{ fontSize: 12, color: '#8e8e93', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {inv.client_name ?? '—'} · {fmtDate(inv.invoice_date)}
@@ -248,7 +272,7 @@ export default function FacturenPage({ profile }: { profile: any }) {
                       </p>
 
                       {/* [BOEK-029] Single toggle button per invoice type */}
-                      {!isArchived && !isOfferte && !isCredit && (
+                      {!isOfferte && !isCredit && (
                         <button
                           onClick={e => {
                             e.stopPropagation()
@@ -271,7 +295,7 @@ export default function FacturenPage({ profile }: { profile: any }) {
                       )}
 
                       {/* Credit → Voldaan button */}
-                      {isCredit && !isArchived && (
+                      {isCredit && (
                         <button onClick={e => { e.stopPropagation(); setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid' }) }}
                           style={{ fontSize: 12, fontWeight: 600, borderRadius: 20, border: 'none', cursor: 'pointer', padding: '5px 12px', background: isPaid ? '#e8f9ed' : '#fff3e0', color: isPaid ? '#34c759' : '#ff9500' }}>
                           {isPaid ? '✓ Voldaan' : 'Voldaan!'}
@@ -289,13 +313,13 @@ export default function FacturenPage({ profile }: { profile: any }) {
                   </div>
 
                   {/* ── Inline expand ── */}
-                  {expanded && !isArchived && (
+                  {expanded && (
                     <div style={{ background: '#f9f9fb', borderTop: '0.5px solid #e5e5ea', padding: '14px 16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', marginBottom: 12 }}>
                         <InfoLine label="Aan" value={inv.client_name} />
-                        {inv.client_btw_number && <InfoLine label="BTW" value={inv.client_btw_number} />}
-                        <InfoLine label="Excl. BTW" value={fmtEur(inv.total_ex_btw)} />
-                        <InfoLine label={`BTW (${calcBtw(inv.btw_amount, inv.total_ex_btw)}%)`} value={fmtEur(inv.btw_amount)} />
+                        {det?.client_btw_number && <InfoLine label="BTW nr." value={det.client_btw_number} />}
+                        <InfoLine label="Excl. BTW" value={fmtEur(det?.total_ex_btw ?? null)} />
+                        <InfoLine label={`BTW (${calcBtw(det?.btw_amount ?? null, det?.total_ex_btw ?? null)}%)`} value={fmtEur(det?.btw_amount ?? null)} />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} />
                         {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDate(inv.due_date)} />}
                       </div>
@@ -419,13 +443,7 @@ export default function FacturenPage({ profile }: { profile: any }) {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function Badge({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{ fontSize: 10, fontWeight: 700, color, background: color + '20', borderRadius: 6, padding: '2px 6px' }}>
-      {label}
-    </span>
-  )
-}
+// Fix #7: removed unused Badge component
 
 function InfoLine({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null

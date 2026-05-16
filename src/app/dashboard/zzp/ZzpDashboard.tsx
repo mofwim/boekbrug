@@ -7,7 +7,6 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '../_shared'
-import { createNotification } from '@/lib/notifications'
 import { generateInvoiceFromPrompt } from '@/lib/ai'
 
 const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -26,27 +25,28 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiError, setAiError]                     = useState<string | null>(null)
   const [stats, setStats]                         = useState({ open: 0, openAmount: 0, paid: 0 })
 
-  useEffect(() => { loadGlobal() }, [])
-
-  async function loadGlobal() {
-    const [{ data: link }, { data: notifData }, { count }, { data: invData }] = await Promise.all([
-      supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
-      supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
-      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
-      supabase.from('invoices').select('status, total_inc_btw').eq('sender_id', profile.id),
-    ])
-    if (link?.accountant_id) setAccountantId(link.accountant_id)
-    if (notifData) setNotifications(notifData)
-    setUnreadMessages(count || 0)
-    if (invData) {
-      let open = 0, openAmount = 0, paid = 0
-      for (const inv of invData) {
-        if (inv.status === 'sent' || inv.status === 'overdue') { open++; openAmount += inv.total_inc_btw ?? 0 }
-        if (inv.status === 'paid') paid++
+  useEffect(() => {
+    async function loadGlobal() {
+      const [{ data: link }, { data: notifData }, { count }, { data: invData }] = await Promise.all([
+        supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
+        supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
+        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
+        supabase.from('invoices').select('status, total_inc_btw').eq('sender_id', profile.id),
+      ])
+      if (link?.accountant_id) setAccountantId(link.accountant_id)
+      if (notifData) setNotifications(notifData)
+      setUnreadMessages(count || 0)
+      if (invData) {
+        let open = 0, openAmount = 0, paid = 0
+        for (const inv of invData) {
+          if (inv.status === 'sent' || inv.status === 'overdue') { open++; openAmount += inv.total_inc_btw ?? 0 }
+          if (inv.status === 'paid') paid++
+        }
+        setStats({ open, openAmount, paid })
       }
-      setStats({ open, openAmount, paid })
     }
-  }
+    loadGlobal()
+  }, [supabase, profile])
 
   async function markAllRead() {
     await supabase.from('notifications').update({ read: true }).eq('user_id', profile.id).eq('read', false)
