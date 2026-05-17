@@ -62,10 +62,20 @@ export async function POST(req: NextRequest) {
       : now.getMonth() + 1;
     const quarter = monthToQuarter(month);
 
+    // [BOEK-033] Map AI result to folder type
+    // 'bank' is not in classifyDocument union — detect via filename instead
+    const lowerName = (doc.file_name ?? body.fileName ?? "").toLowerCase();
+    const isBankFile =
+      lowerName.includes("bank") ||
+      lowerName.includes("camt") ||
+      lowerName.includes("afschrift") ||
+      lowerName.includes("statement") ||
+      (classification.type === "unknown" && lowerName.includes("mt940"));
+
     let folderType: "facturen" | "kosten" | "bank" | undefined;
-    if (classification.type === "invoice")  folderType = "facturen";
-    if (classification.type === "receipt")  folderType = "kosten";
-    if (classification.type === "bank")     folderType = "bank";
+    if (isBankFile)                              folderType = "bank";
+    else if (classification.type === "invoice") folderType = "facturen";
+    else if (classification.type === "receipt") folderType = "kosten";
 
     if (!folderType || classification.type === "unknown") {
       // Update document ai fields
