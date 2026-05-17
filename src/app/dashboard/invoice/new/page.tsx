@@ -5,13 +5,48 @@
 // Mobile-first, iOS-style design
 // Supports: autocomplete clients, AI translation, offerte→factuur conversion
 
-import { useState, useEffect, useRef, Suspense } from 'react'
+import React, { useState, useEffect, useRef, Suspense } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { translateToNL } from '@/lib/ai'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
+
+// ─── [BOEK-031] Invoice number generator — new format: 001-2026 — May 2026 ───
+// Queries DB directly to get next sequence for this user + year
+// factuur:    001-2026
+// creditnota: CR-001-2026
+// pro_forma:  PF-001-2026
+async function generateNumber(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  type: 'factuur' | 'creditnota' | 'pro_forma'
+): Promise<string> {
+  const year = new Date().getFullYear()
+  const prefix = type === 'creditnota' ? 'CR-' : type === 'pro_forma' ? 'PF-' : ''
+
+  // Find highest existing sequence for this user + year + type
+  const { data } = await supabase
+    .from('invoices')
+    .select('invoice_number')
+    .eq('sender_id', userId)
+    .eq('invoice_type', type)
+    .ilike('invoice_number', `${prefix}%-${year}`)
+    .order('created_at', { ascending: false })
+    .limit(50)
+
+  let maxSeq = 0
+  for (const inv of data ?? []) {
+    const num = inv.invoice_number ?? ''
+    // Extract sequence: "CR-016-2026" → 16, "001-2026" → 1
+    const parts = num.replace(/^(CR-|PF-)/, '').split('-')
+    const seq = parseInt(parts[0], 10)
+    if (!isNaN(seq) && seq > maxSeq) maxSeq = seq
+  }
+
+  const nextSeq = String(maxSeq + 1).padStart(3, '0')
+  return `${prefix}${nextSeq}-${year}`
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -61,22 +96,199 @@ type SentInvoice = {
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 
+// [DS] Design System v1.0 — Type config with DS tokens
 const TYPE_CONFIG: Record<InvoiceType, {
-  label: string; icon: string; color: string; borderColor: string; textColor: string
+  label: string
+  activeBg: string      // active chip background
+  activeColor: string   // active chip text
+  activeBorder: string  // active chip border
+  primaryBtn: string    // primary button color
+  focusColor: string    // input focus border color
 }> = {
   factuur: {
-    label: 'Factuur', icon: '📄',
-    color: '#eff6ff', borderColor: '#3b82f6', textColor: '#1d4ed8',
+    label: 'Factuur',
+    activeBg: '#D3E3FD', activeColor: '#1967D2', activeBorder: '#1A73E8',
+    primaryBtn: '#1A73E8', focusColor: '#1A73E8',
   },
   offerte: {
-    label: 'Offerte', icon: '📋',
-    color: '#fffbeb', borderColor: '#f59e0b', textColor: '#92400e',
+    label: 'Offerte',
+    activeBg: '#FEF7E0', activeColor: '#EA8600', activeBorder: '#FBBC04',
+    primaryBtn: '#FBBC04', focusColor: '#FBBC04',
   },
-  // [BOEK-031] key = creditnota — matches InvoiceType
   creditnota: {
-    label: 'Credit', icon: '↩',
-    color: '#fef2f2', borderColor: '#ef4444', textColor: '#b91c1c',
+    label: 'Credit',
+    activeBg: '#F9DEDC', activeColor: '#B3261E', activeBorder: '#EA4335',
+    primaryBtn: '#EA4335', focusColor: '#EA4335',
   },
+}
+
+// ─── [DS] LineInput — number input for Factuurregels ─────────────────────────
+// Fixes: no leading zero, comma/dot both work, step=1, Enter→next input
+function LineInput({
+  label, value, onChange, min = 0, focusColor, hasError = false,
+}: {
+  label: string
+  value: number
+  onChange: (v: number) => void
+  min?: number
+  focusColor: string
+  hasError?: boolean
+}) {
+  const [focused, setFocused] = useState(false)
+  // Raw string while typing — allows "0." mid-entry
+  const [raw, setRaw] = useState(value === 0 ? '' : String(value))
+
+  // Sync raw when value changes from outside (e.g. reset)
+  useEffect(() => {
+    if (!focused) setRaw(value === 0 ? '' : String(value))
+  }, [value, focused])
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    let v = e.target.value
+    // [BOEK-031] comma → dot for decimal — May 2026
+    v = v.replace(',', '.')
+    // Only allow valid number characters: digits, one dot, optional minus
+    if (!/^-?\d*\.?\d*$/.test(v)) return
+    setRaw(v)
+    const parsed = parseFloat(v)
+    if (!isNaN(parsed)) onChange(Math.max(min, parsed))
+  }
+
+  function handleBlur() {
+    setFocused(false)
+    // [BOEK-031] clean up on blur — remove leading zeros — May 2026
+    const parsed = parseFloat(raw)
+    if (isNaN(parsed) || parsed < min) {
+      setRaw(min === 0 ? '' : String(min))
+      onChange(min)
+    } else {
+      setRaw(String(parsed))
+      onChange(parsed)
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // [BOEK-031] comma key → insert dot — May 2026
+    if (e.key === ',') {
+      e.preventDefault()
+      if (!raw.includes('.')) {
+        const next = raw ? raw + '.' : '0.'
+        setRaw(next)
+      }
+      return
+    }
+    // [BOEK-031] Enter → focus next input — May 2026
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const form = e.currentTarget.closest('[data-form]') ?? document
+      const focusable = Array.from(
+        form.querySelectorAll<HTMLElement>('input, select')
+      ).filter(el => !el.hasAttribute('disabled'))
+      const idx = focusable.indexOf(e.currentTarget)
+      if (idx >= 0 && idx < focusable.length - 1) focusable[idx + 1].focus()
+      return
+    }
+    // [BOEK-031] ArrowUp/Down step by 1 whole number — May 2026
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      const delta = e.key === 'ArrowUp' ? 1 : -1
+      const current = parseFloat(raw) || 0
+      const next = Math.max(min, Math.round(current) + delta)
+      setRaw(String(next))
+      onChange(next)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={{ fontSize: 12, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>{label}</label>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={focused ? raw : (value === 0 ? '' : String(value))}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)) }}
+        onBlur={handleBlur}
+        placeholder="0"
+        style={{
+          width: '100%', minHeight: 44,
+          border: `${hasError || focused ? '2px' : '1px'} solid ${hasError ? '#EA4335' : focused ? focusColor : '#E0E0E0'}`,
+          borderRadius: 8, padding: '0 12px',
+          fontSize: 16, color: '#202124',
+          backgroundColor: hasError ? '#FFF8F7' : 'white', outline: 'none',
+          boxSizing: 'border-box', transition: 'border 0.1s ease',
+          fontFamily: 'Roboto Mono, monospace',
+        }}
+      />
+    </div>
+  )
+}
+
+// ─── [DS] OutlinedInput — Material You Outlined Text Field ─────────────────────
+// font-size: 16px mandatory to prevent iOS auto-zoom
+// Enter key moves focus to next input
+function OutlinedInput({
+  value, onChange, onFocus, placeholder, label, type = 'text', required = false, focusColor, hasError = false,
+}: {
+  value: string | number
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  onFocus?: () => void
+  placeholder?: string
+  label: string
+  type?: string
+  required?: boolean
+  focusColor: string
+  hasError?: boolean
+}) {
+  const [focused, setFocused] = useState(false)
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const form = e.currentTarget.closest('[data-form]') ?? document
+      const focusable = Array.from(
+        form.querySelectorAll<HTMLElement>('input, select, button, textarea')
+      ).filter(el => !el.hasAttribute('disabled') && el.tabIndex !== -1)
+      const idx = focusable.indexOf(e.currentTarget)
+      if (idx >= 0 && idx < focusable.length - 1) focusable[idx + 1].focus()
+    }
+  }
+
+  // [BOEK-031] border color priority: error > focused > default
+  const borderColor = hasError ? '#EA4335' : focused ? focusColor : '#E0E0E0'
+  const borderWidth = hasError || focused ? '2px' : '1px'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
+        {label}{required && <span style={{ color: '#EA4335', marginLeft: 2 }}>*</span>}
+      </label>
+      <input
+        type={type}
+        value={value}
+        onChange={onChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => { setFocused(true); onFocus?.() }}
+        onBlur={() => setFocused(false)}
+        placeholder={placeholder}
+        style={{
+          width: '100%',
+          minHeight: 48,
+          border: `${borderWidth} solid ${borderColor}`,
+          borderRadius: 8,
+          padding: '0 16px',
+          fontSize: 16,
+          color: '#202124',
+          backgroundColor: hasError ? '#FFF8F7' : 'white',
+          outline: 'none',
+          boxSizing: 'border-box',
+          transition: 'border 0.1s ease',
+          fontFamily: 'inherit',
+        }}
+      />
+    </div>
+  )
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────────
@@ -94,6 +306,12 @@ function NewInvoicePageContent() {
   const replacesNumberParam = searchParams.get('replacesNumber') ?? ''
   // AI-generated params from ZzpDashboard
   const aiClientName    = searchParams.get('client_name') ?? ''
+  const aiClientEmail   = searchParams.get('client_email') ?? ''
+  // [BOEK-029] offerte→factuur params — all client fields
+  const aiClientAddress = searchParams.get('client_address') ?? ''
+  const aiClientPostal  = searchParams.get('client_postal_code') ?? ''
+  const aiClientCity    = searchParams.get('client_city') ?? ''
+  const aiClientBtw     = searchParams.get('client_btw_number') ?? ''
   const aiDescription   = searchParams.get('description') ?? ''
   const aiAmount        = parseFloat(searchParams.get('amount') ?? '0') || 0
   const aiBtwRate       = parseFloat(searchParams.get('btw_rate') ?? '21') || 21
@@ -102,11 +320,29 @@ function NewInvoicePageContent() {
   const [profile, setProfile]         = useState<Profile | null>(null)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [loading, setLoading]         = useState(false)
+  // [BOEK-031] linesLoading — wait for DB lines before allowing submit — May 2026
+  const [linesLoading, setLinesLoading] = useState(!!offerteParam)
   const [error, setError]             = useState('')
+  // [BOEK-031] Field-level errors — shows red borders on specific fields — May 2026
+  const [fieldErrors, setFieldErrors] = useState<{
+    clientName?: boolean
+    clientEmail?: boolean
+    invoiceDate?: boolean
+    dueDate?: boolean
+    lines?: { description?: boolean; unit_price?: boolean; quantity?: boolean }[]
+  }>({})
 
-  // [BOEK-031] Invoice type — factuur / offerte / credit — initialised from URL
+  function clearFieldError(field: string) {
+    setFieldErrors(prev => ({ ...prev, [field]: false }))
+  }
+
+  // [BOEK-031] Invoice type — from_offerte always forces factuur — May 2026
   const [invoiceType, setInvoiceType] = useState<InvoiceType>(
-    typeParam && ['factuur', 'offerte', 'creditnota'].includes(typeParam) ? typeParam : 'factuur'
+    offerteParam
+      ? 'factuur'  // coming from offerte → always factuur
+      : typeParam && ['factuur', 'offerte', 'creditnota'].includes(typeParam)
+        ? typeParam
+        : 'factuur'
   )
 
   // ── Client autocomplete ──────────────────────────────────────────────────────
@@ -117,23 +353,31 @@ function NewInvoicePageContent() {
   const autocompleteRef                     = useRef<HTMLDivElement>(null)
 
   // ── Client fields ────────────────────────────────────────────────────────────
-  const [clientName, setClientName]     = useState(aiClientName)
-  const [clientEmail, setClientEmail]   = useState('')
-  const [clientAddress, setClientAddress] = useState('')
-  const [clientPostal, setClientPostal] = useState('')
-  const [clientCity, setClientCity]     = useState('')
-  const [clientBtw, setClientBtw]       = useState('')
+  const [clientName, setClientName]       = useState(aiClientName)
+  const [clientEmail, setClientEmail]     = useState(aiClientEmail)
+  // [BOEK-029] pre-fill from offerte params — May 2026
+  const [clientAddress, setClientAddress] = useState(aiClientAddress)
+  const [clientPostal, setClientPostal]   = useState(aiClientPostal)
+  const [clientCity, setClientCity]       = useState(aiClientCity)
+  const [clientBtw, setClientBtw]         = useState(aiClientBtw)
 
   // ── Dates ────────────────────────────────────────────────────────────────────
   const today = new Date().toISOString().split('T')[0]
   const [invoiceDate, setInvoiceDate] = useState(today)
   const [dueDate, setDueDate]         = useState('')
 
-  // ── Lines — pre-filled from replace flow or AI generation ────────────────────
+  // ── Lines — pre-filled from replace flow, offerte, or AI generation ──────────
+  // [BOEK-029] from offerte: use total_ex_btw as unit_price so BTW calculates correctly
+  const aiTotalExBtw = parseFloat(searchParams.get('total_ex_btw') ?? '0') || 0
+  const aiTotalIncBtw = parseFloat(searchParams.get('total_inc_btw') ?? '0') || 0
+  const offerteUnitPrice = aiTotalExBtw > 0 ? aiTotalExBtw : aiTotalIncBtw || aiAmount
+
   const [lines, setLines] = useState<InvoiceLine[]>(
     replacesNumberParam
       ? [{ description: `Vervangt factuur ${replacesNumberParam}`, quantity: 1, unit_price: 0, btw_rate: 21 }]
-      : [{ description: aiDescription, quantity: 1, unit_price: aiAmount, btw_rate: aiBtwRate }]
+      : offerteParam
+        ? [{ description: aiDescription || '', quantity: 1, unit_price: offerteUnitPrice, btw_rate: aiBtwRate }]
+        : [{ description: aiDescription, quantity: 1, unit_price: aiAmount, btw_rate: aiBtwRate }]
   )
 
   // ── Credit flow ──────────────────────────────────────────────────────────────
@@ -167,9 +411,14 @@ function NewInvoicePageContent() {
       const due = new Date(); due.setDate(due.getDate() + 30)
       setDueDate(due.toISOString().split('T')[0])
 
-      // Invoice number — only for factuur/credit
-      const { data: num } = await supabase.rpc('generate_invoice_number', { user_id: user.id })
-      if (num) setInvoiceNumber(num)
+      // [BOEK-031] Invoice number — new format 001-2026 — May 2026
+      // type determined by current invoiceType at load time (factuur default)
+      const initType = offerteParam ? 'factuur'
+        : typeParam === 'creditnota' ? 'creditnota'
+        : typeParam === 'offerte' ? 'pro_forma'
+        : 'factuur'
+      const num = await generateNumber(supabase, user.id, initType)
+      setInvoiceNumber(num)
 
       // Clients autocomplete
       const { data: cl } = await supabase
@@ -186,6 +435,24 @@ function NewInvoicePageContent() {
         .order('created_at', { ascending: false })
         .limit(50)
       if (sent) setSentInvoices(sent)
+
+      // [BOEK-029] from_offerte: load original invoice_lines for accurate amounts
+      if (offerteParam) {
+        const { data: offLines } = await supabase
+          .from('invoice_lines')
+          .select('description, quantity, unit_price, btw_rate')
+          .eq('invoice_id', offerteParam)
+        if (offLines && offLines.length > 0) {
+          setLines(offLines.map(l => ({
+            description: l.description ?? '',
+            quantity:    l.quantity    ?? 1,
+            unit_price:  l.unit_price  ?? 0,
+            btw_rate:    l.btw_rate    ?? 21,
+          })))
+        }
+        // [BOEK-031] lines loaded from DB — allow submit — May 2026
+        setLinesLoading(false)
+      }
     }
     load()
   }, [router, supabase])
@@ -249,16 +516,24 @@ function NewInvoicePageContent() {
     setLines(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
   }
 
-  // [BOEK-031] AI translation per line
+  // [BOEK-031] AI translation per line — via API route (client-safe) — May 2026
   async function translateLine(i: number) {
     const line = lines[i]
     if (!line.description.trim()) return
     updateLine(i, 'translating', true)
     try {
-      const result = await translateToNL(line.description, 'auto')
-      updateLine(i, 'description', result.translation)
+      const res = await fetch('/api/ai/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: line.description, sourceLanguage: 'auto' }),
+      })
+      if (res.ok) {
+        const result = await res.json()
+        if (result.translation) updateLine(i, 'description', result.translation)
+      }
+      // safe fallback — if fails, keep original
     } catch {
-      // safe fallback — keep original
+      // keep original
     } finally {
       updateLine(i, 'translating', false)
     }
@@ -271,6 +546,18 @@ function NewInvoicePageContent() {
   const totalEx   = lines.reduce((s, l) => s + l.quantity * l.unit_price, 0)
   const btwAmount = lines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
   const totalInc  = totalEx + btwAmount
+
+  // [BOEK-031] computeTotals — always fresh from current lines state — May 2026
+  // Used inside submit functions to avoid stale closure values
+  function computeTotals(currentLines: InvoiceLine[], currentSign = 1) {
+    const ex  = currentLines.reduce((s, l) => s + l.quantity * l.unit_price, 0)
+    const btw = currentLines.reduce((s, l) => s + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
+    return {
+      total_ex_btw:  currentSign * ex,
+      btw_amount:    currentSign * btw,
+      total_inc_btw: currentSign * (ex + btw),
+    }
+  }
 
   // BTW breakdown per rate
   const btwByRate: Record<number, number> = {}
@@ -304,7 +591,11 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const { data: newNum } = await supabase.rpc('generate_invoice_number', { user_id: user.id })
+    // [BOEK-031] New format: 001-2026 — May 2026
+    const newNum = await generateNumber(supabase, user.id, 'factuur')
+
+    // [BOEK-031] Always compute fresh from current lines — May 2026
+    const totals = computeTotals(lines)
 
     const { data: factuur, error: err } = await supabase.from('invoices').insert({
       sender_id: user.id,
@@ -314,9 +605,7 @@ function NewInvoicePageContent() {
       status: 'sent',
       invoice_type: 'factuur',
       direction: 'outgoing',
-      total_ex_btw: totalEx,
-      btw_amount: btwAmount,
-      total_inc_btw: totalInc,
+      ...totals,
       sent_to_accountant: false,
       source: 'created',
       client_name: clientName,
@@ -343,7 +632,7 @@ function NewInvoicePageContent() {
     // Mark offerte as converted
     if (offerteId) {
       await supabase.from('invoices')
-        .update({ status: 'archived', offerte_converted_to: factuur.id })
+        .update({ status: 'archived' })
         .eq('id', offerteId)
     }
 
@@ -354,11 +643,38 @@ function NewInvoicePageContent() {
   // ─── Main submit ───────────────────────────────────────────────────────────
 
   async function handleSubmit(mode: 'draft' | 'sent') {
-    if (!clientName || !clientEmail) { setError('Vul naam en e-mail van de klant in'); return }
-    if (!invoiceDate || !dueDate) { setError('Vul de datums in'); return }
-    if (lines.some(l => !l.description.trim() || l.unit_price <= 0)) {
-      setError('Vul alle factuurregels correct in'); return
+    // [BOEK-031] wait for lines to load from DB before submitting — May 2026
+    if (linesLoading) return
+    // [BOEK-031] Validate all fields at once — show red borders — May 2026
+    const errs: typeof fieldErrors = {}
+    let hasAnyError = false
+
+    if (!clientName) { errs.clientName = true; hasAnyError = true }
+    if (!clientEmail) { errs.clientEmail = true; hasAnyError = true }
+    if (!invoiceDate) { errs.invoiceDate = true; hasAnyError = true }
+    if (!dueDate) { errs.dueDate = true; hasAnyError = true }
+
+    const lineErrs = lines.map(l => ({
+      description: !l.description.trim(),
+      unit_price: l.unit_price <= 0,
+      quantity: l.quantity <= 0,
+    }))
+    const hasLineError = lineErrs.some(l => l.description || l.unit_price || l.quantity)
+    if (hasLineError) hasAnyError = true
+
+    if (hasAnyError) {
+      setFieldErrors({ ...errs, lines: lineErrs })
+      setError('Vul de rood gemarkeerde velden in')
+      // Scroll to first error
+      setTimeout(() => {
+        const firstRed = document.querySelector('[data-form] input[style*="#EA4335"], [data-form] input[style*="FFF8F7"]') as HTMLElement
+        firstRed?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 50)
+      return
     }
+
+    setFieldErrors({})
+    setError('')
 
     setLoading(true); setError('')
     const { data: { user } } = await supabase.auth.getUser()
@@ -366,12 +682,22 @@ function NewInvoicePageContent() {
 
     await saveNewClient(user.id)
 
-    // [BOEK-031] offerte has no number
+    // [BOEK-031] Always compute fresh totals — avoid stale closure — May 2026
+    const currentSign = invoiceType === 'creditnota' ? -1 : 1
+    const freshTotals = computeTotals(lines, currentSign)
+
+    // [BOEK-031] New numbering format: 001-2026 / CR-001-2026 / PF-001-2026 — May 2026
     let finalNumber = invoiceNumber
-    if (invoiceType === 'offerte') finalNumber = ''
-    if (mode === 'sent' && invoiceType !== 'offerte') {
-      const { data: n } = await supabase.rpc('generate_invoice_number', { user_id: user.id })
-      if (n) finalNumber = n
+    if (invoiceType === 'offerte') {
+      // Pro forma gets PF- number in DB but not shown in UI
+      finalNumber = await generateNumber(supabase, user.id, 'pro_forma')
+    } else if (mode === 'sent') {
+      finalNumber = await generateNumber(supabase, user.id,
+        invoiceType === 'creditnota' ? 'creditnota' : 'factuur'
+      )
+    } else {
+      // draft — keep preview number (will be replaced on send)
+      finalNumber = invoiceNumber
     }
 
     // DB invoice_type mapping
@@ -387,10 +713,8 @@ function NewInvoicePageContent() {
       status: mode === 'sent' ? 'sent' : 'draft',
       invoice_type: dbType,
       direction: 'outgoing',
-      // [BOEK-031] credit: bedragen zijn negatief
-      total_ex_btw: sign * totalEx,
-      btw_amount: sign * btwAmount,
-      total_inc_btw: sign * totalInc,
+      // [BOEK-031] credit: bedragen zijn negatief — gebruik freshTotals
+      ...freshTotals,
       sent_to_accountant: false,
       source: 'created',
       client_name: clientName,
@@ -426,12 +750,28 @@ function NewInvoicePageContent() {
         .eq('id', replacesId)
     }
 
-    if (mode === 'sent') {
-      await fetch('/api/invoice/send', {
+    // [BOEK-031] from_offerte flow — archiveer de originele offerte — May 2026
+    // Note: offerte_converted_to FK update via server only to avoid RLS 400
+    if (offerteId) {
+      await supabase.from('invoices')
+        .update({ status: 'archived' })
+        .eq('id', offerteId)
+    }
+
+    // [BOEK-031] Email verzenden — non-blocking, nooit crash bij fout — May 2026
+    if (mode === 'sent' && clientEmail) {
+      fetch('/api/invoice/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientEmail, clientName, invoiceNumber: finalNumber, totalInc: sign * totalInc, dueDate }),
-      }).catch(() => {}) // non-blocking
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          clientEmail,
+          clientName,
+          invoiceNumber: finalNumber,
+          totalInc: freshTotals.total_inc_btw,
+          dueDate,
+        }),
+      }).catch(() => {}) // volledig non-blocking
     }
 
     router.push('/dashboard')
@@ -444,453 +784,290 @@ function NewInvoicePageContent() {
     invoiceType === 'offerte' ? 'Nieuwe offerte' :
     invoiceType === 'creditnota'  ? 'Creditnota'     : 'Nieuwe factuur'
 
+  // [BOEK-031] Number already in correct format: 001-2026 / CR-001-2026 / PF-001-2026
   const displayNumber =
-    invoiceType === 'offerte' ? '—' :
-    invoiceType === 'creditnota'
-      // [BOEK-031] format: CR-001-2026 — jaar volgt uit het gegenereerde nummer — May 2026
-      ? `CR-${invoiceNumber.split('-').reverse().join('-')}` :
+    invoiceType === 'offerte' ? '—' :   // Pro forma: geen nummer in UI
     invoiceNumber || 'Concept'
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#f2f2f7' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', position: 'relative' }}>
+      {/* [DS] Top color band behind sticky header */}
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 64, backgroundColor: 'rgba(255,255,255,0.92)', zIndex: 9 }} />
 
-      {/* ── Sticky header ── */}
-      <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3">
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push('/dashboard')}
-              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 active:bg-gray-200 transition-colors text-lg"
+      {/* [DS] Sticky header — frosted glass Material You */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px' }}>
+        <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* [DS] Back — Material You circular */}
+            <button onClick={() => router.back()}
+              style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s' }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >←</button>
             <div>
-              <h1 className="text-base font-bold text-gray-900 leading-tight">{pageTitle}</h1>
+              {/* [DS] Title — 16px/700 */}
+              <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0, lineHeight: 1.2 }}>{pageTitle}</h1>
               {invoiceType !== 'offerte' && (
-                <p className="text-[11px] text-gray-400 font-mono leading-none mt-0.5">{displayNumber}</p>
+                <p style={{ fontSize: 11, color: '#9AA0A6', fontFamily: 'Roboto Mono, monospace', margin: '2px 0 0' }}>{displayNumber}</p>
               )}
             </div>
           </div>
-
-          {/* Offerte convert button */}
           {invoiceType === 'offerte' && offerteId && (
-            <button
-              onClick={() => setShowConvertDialog(true)}
-              className="text-xs font-semibold px-3 py-2 rounded-xl text-white"
-              style={{ backgroundColor: '#3b82f6' }}
-            >
+            <button onClick={() => setShowConvertDialog(true)}
+              style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
               Omzetten naar factuur →
             </button>
           )}
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-12">
+      <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + env(safe-area-inset-bottom))' }}>
 
-        {/* ── [BOEK-031] Type selector ── */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Type</p>
-          <div className="grid grid-cols-3 gap-2">
-            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).map(t => {
+        {/* [DS] Segmented Button — Material You, één geheel */}
+        <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+          <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>Type document</p>
+          <div style={{ display: 'flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden', backgroundColor: '#F1F3F4' }}>
+            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).map((t, idx, arr) => {
               const c = TYPE_CONFIG[t]
               const active = invoiceType === t
               return (
                 <button key={t} onClick={() => setInvoiceType(t)}
-                  className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border-2 transition-all"
                   style={{
-                    backgroundColor: active ? c.color : '#f9f9f9',
-                    borderColor: active ? c.borderColor : '#e5e5ea',
-                    color: active ? c.textColor : '#8e8e93',
+                    flex: 1,
+                    padding: '10px 8px',
+                    border: 'none',
+                    borderLeft: idx > 0 ? '1px solid #E0E0E0' : 'none',
+                    backgroundColor: active ? c.activeBg : 'transparent',
+                    color: active ? c.activeColor : '#5F6368',
+                    fontWeight: active ? 600 : 400,
+                    fontSize: 14,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)',
+                    // [DS] pill radius alleen op uiteinden
+                    borderRadius: idx === 0 ? '9999px 0 0 9999px' : idx === arr.length - 1 ? '0 9999px 9999px 0' : 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   }}
                 >
-                  <span className="text-xl leading-none">{c.icon}</span>
-                  <span className="text-xs font-semibold">{c.label}</span>
+                  {active && <span style={{ fontSize: 14 }}>✓</span>}
+                  {c.label}
                 </button>
               )
             })}
           </div>
         </div>
 
-        {/* ── [BOEK-031] Credit banner — alleen informatief — May 2026 ── */}
+
+        {/* [DS] Credit banner — border-left 4px style */}
         {invoiceType === 'creditnota' && (
-          <div className="rounded-xl px-4 py-3 flex gap-2 items-center"
-            style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca' }}>
-            <span className="text-red-400 shrink-0">↩</span>
-            <p className="text-xs text-red-700">
-              <strong>Creditnota</strong> — bedragen worden automatisch negatief weergegeven.
-              Vul het formulier in zoals een gewone factuur.
+          <div style={{ backgroundColor: '#F9DEDC', borderLeft: '4px solid #EA4335', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <span style={{ fontSize: 16, color: '#B3261E', flexShrink: 0 }}>↩</span>
+            <p style={{ fontSize: 13, color: '#B3261E', margin: 0, lineHeight: 1.5 }}>
+              <strong>Creditnota</strong> — bedragen worden automatisch negatief. Vul het formulier in zoals een gewone factuur.
             </p>
           </div>
         )}
 
-        {/* ── Factuur / Offerte / Creditnota form — نفس الفورم للأنواع الثلاثة ── */}
         <>
-            {/* Replace flow banner */}
             {replacesNumber && (
-              <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex gap-2 items-center">
-                <span className="text-blue-500 shrink-0">🔄</span>
-                <p className="text-xs text-blue-700">
-                  <strong>Vervangende factuur</strong> voor{' '}
-                  <span className="font-mono font-semibold">{replacesNumber}</span>.
-                  De oude factuur wordt automatisch gearchiveerd na opslaan.
+              <div style={{ backgroundColor: '#E8F0FE', borderLeft: '4px solid #1A73E8', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ color: '#1967D2', flexShrink: 0 }}>🔄</span>
+                <p style={{ fontSize: 13, color: '#1967D2', margin: 0 }}>
+                  <strong>Vervangende factuur</strong> voor <span style={{ fontFamily: 'Roboto Mono, monospace', fontWeight: 600 }}>{replacesNumber}</span>. De oude factuur wordt automatisch gearchiveerd.
                 </p>
               </div>
             )}
 
-            {/* Offerte banner */}
+            {/* [BOEK-031] from_offerte banner — May 2026 */}
+            {offerteId && !replacesNumber && (
+              <div style={{ backgroundColor: '#E6F4EA', borderLeft: '4px solid #34A853', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ color: '#137333', flexShrink: 0 }}>📄</span>
+                <p style={{ fontSize: 13, color: '#137333', margin: 0 }}>
+                  <strong>Factuur op basis van offerte</strong> — gegevens zijn vooringevuld. De offerte wordt gearchiveerd na opslaan.
+                </p>
+              </div>
+            )}
+
             {invoiceType === 'offerte' && (
-              <div className="rounded-xl px-4 py-3 flex gap-2 items-center"
-                style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a' }}>
-                <span className="text-amber-500 shrink-0">📋</span>
-                <p className="text-xs text-amber-700">
-                  <strong>Offerte</strong> — geen factuurnummer, geen boekhoudkundige waarde.
-                  Gebruik "Omzetten naar factuur" als de klant akkoord gaat.
+              <div style={{ backgroundColor: '#FEF7E0', borderLeft: '4px solid #FBBC04', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ color: '#EA8600', flexShrink: 0 }}>📋</span>
+                <p style={{ fontSize: 13, color: '#EA8600', margin: 0 }}>
+                  <strong>Offerte</strong> — geen factuurnummer. Gebruik "Omzetten naar factuur" als de klant akkoord gaat.
                 </p>
               </div>
             )}
 
-            {/* ── Jouw gegevens ── */}
+            {/* [DS] Van card */}
             {profile && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm">
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Van</p>
-                <p className="text-sm font-semibold text-gray-900">{profile.company_name || profile.full_name}</p>
-                {profile.address && <p className="text-xs text-gray-500">{profile.address}</p>}
-                {(profile.postal_code || profile.city) && (
-                  <p className="text-xs text-gray-500">{[profile.postal_code, profile.city].filter(Boolean).join(' ')}</p>
-                )}
-                <div className="flex gap-4 mt-1">
-                  {profile.kvk_number && <p className="text-xs text-gray-400">KVK: {profile.kvk_number}</p>}
-                  {profile.btw_number && <p className="text-xs text-gray-400">BTW: {profile.btw_number}</p>}
+              <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+                <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 8px' }}>Van</p>
+                <div style={{ borderTop: '0.5px solid #E0E0E0', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{profile.company_name || profile.full_name}</p>
+                  {profile.address && <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>{profile.address}</p>}
+                  {(profile.postal_code || profile.city) && <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>{[profile.postal_code, profile.city].filter(Boolean).join(' ')}</p>}
+                  <div style={{ display: 'flex', gap: 16, marginTop: 2 }}>
+                    {profile.kvk_number && <p style={{ fontSize: 12, color: '#9AA0A6', margin: 0 }}>KVK: {profile.kvk_number}</p>}
+                    {profile.btw_number && <p style={{ fontSize: 12, color: '#9AA0A6', margin: 0 }}>BTW: {profile.btw_number}</p>}
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* ── Klant autocomplete ── */}
-            <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Aan</p>
-
-              {/* Autocomplete input */}
-              <div ref={autocompleteRef} className="relative">
-                <input
-                  type="text"
-                  value={clientSearch}
-                  onChange={e => {
-                    setClientSearch(e.target.value)
-                    setClientName(e.target.value)
-                    setSelectedClientId(null)
-                    setShowDropdown(true)
-                  }}
-                  onFocus={() => setShowDropdown(true)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  placeholder="Zoek of typ klantnaam..."
-                />
+            {/* [DS] Aan card */}
+            <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>Aan</p>
+              <div ref={autocompleteRef} style={{ position: 'relative' }}>
+                <OutlinedInput value={clientSearch} onChange={e => { setClientSearch(e.target.value); setClientName(e.target.value); setSelectedClientId(null); setShowDropdown(true); clearFieldError('clientName') }} onFocus={() => setShowDropdown(true)} placeholder="Zoek of typ klantnaam..." focusColor={cfg.focusColor} label="Bedrijfsnaam" required hasError={!!fieldErrors.clientName} />
                 {showDropdown && filteredClients.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 overflow-hidden">
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, backgroundColor: 'white', border: '1px solid #E0E0E0', borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 20, overflow: 'hidden' }}>
                     {filteredClients.map(c => (
-                      <button key={c.id} onClick={() => selectClient(c)}
-                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 active:bg-gray-100 transition-colors border-b border-gray-50 last:border-0">
-                        <p className="text-sm font-medium text-gray-900">{c.name}</p>
-                        {c.email && <p className="text-xs text-gray-400">{c.email}</p>}
+                      <button key={c.id} onClick={() => selectClient(c)} style={{ width: '100%', textAlign: 'left', padding: '10px 16px', border: 'none', borderBottom: '1px solid #F1F3F4', backgroundColor: 'white', cursor: 'pointer', display: 'block' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'white')}>
+                        <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{c.name}</p>
+                        {c.email && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{c.email}</p>}
                       </button>
                     ))}
                   </div>
                 )}
               </div>
+              <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label="E-mailadres" type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
+              <OutlinedInput value={clientAddress} onChange={e => setClientAddress(e.target.value)} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label="Postcode" focusColor={cfg.focusColor} />
+                <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />
+              </div>
+              <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} />
+            </div>
 
-              {/* Client fields */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">E-mailadres <span className="text-red-400">*</span></label>
-                  <input type="email" value={clientEmail} onChange={e => setClientEmail(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    placeholder="klant@bedrijf.nl" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Adres</label>
-                  <input type="text" value={clientAddress} onChange={e => setClientAddress(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    placeholder="Straatnaam 1" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Postcode</label>
-                  <input type="text" value={clientPostal} onChange={e => setClientPostal(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    placeholder="1234 AB" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Stad</label>
-                  <input type="text" value={clientCity} onChange={e => setClientCity(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    placeholder="Amsterdam" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">BTW-nummer klant</label>
-                  <input type="text" value={clientBtw} onChange={e => setClientBtw(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    placeholder="NL123456789B01" />
-                </div>
+            {/* [DS] Datums card */}
+            <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>Datums</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <OutlinedInput value={invoiceDate} onChange={e => { setInvoiceDate(e.target.value); clearFieldError('invoiceDate') }} label={invoiceType === 'offerte' ? 'Offertedatum *' : 'Factuurdatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.invoiceDate} />
+                <OutlinedInput value={dueDate} onChange={e => { setDueDate(e.target.value); clearFieldError('dueDate') }} label={invoiceType === 'offerte' ? 'Geldig tot *' : 'Vervaldatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.dueDate} />
               </div>
             </div>
 
-            {/* ── Datums ── */}
-            <div className="bg-white rounded-2xl p-4 shadow-sm">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Datums</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">
-                    {invoiceType === 'offerte' ? 'Offertedatum' : 'Factuurdatum'} <span className="text-red-400">*</span>
-                  </label>
-                  <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">
-                    {invoiceType === 'offerte' ? 'Geldig tot' : 'Vervaldatum'} <span className="text-red-400">*</span>
-                  </label>
-                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
-                </div>
-              </div>
-            </div>
-
-            {/* ── Factuurregels ── */}
-            <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                {invoiceType === 'offerte' ? 'Offerteregels' : 'Factuurregels'}
-              </p>
-
-              {/* [BOEK-031] AI translation hint */}
-              <p className="text-[11px] text-gray-400">
-                Schrijf in uw eigen taal — druk op <strong>Vertaal</strong> voor professioneel Nederlands
-              </p>
+            {/* [DS] Factuurregels card */}
+            <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{invoiceType === 'offerte' ? 'Offerteregels' : 'Factuurregels'}</p>
+              <p style={{ fontSize: 12, color: '#9AA0A6', margin: '-4px 0 0' }}>Schrijf in uw eigen taal — druk op <strong>Vertaal</strong> voor professioneel Nederlands</p>
 
               {lines.map((line, i) => (
-                <div key={i} className="space-y-2">
-                  {/* Mobile */}
-                  <div className="sm:hidden bg-gray-50 rounded-xl p-3 space-y-2 relative">
-                    <button onClick={() => removeLine(i)}
-                      className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center text-gray-300 hover:text-red-400 text-lg">×</button>
-
-                    <div className="flex gap-2">
-                      <input type="text" value={line.description}
-                        onChange={e => updateLine(i, 'description', e.target.value)}
-                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                        placeholder="Omschrijving dienst" />
-                      <button onClick={() => translateLine(i)} disabled={line.translating}
-                        className="shrink-0 text-xs font-semibold px-2.5 py-2 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 disabled:opacity-40">
-                        {line.translating ? '...' : 'Vertaal'}
-                      </button>
+                <div key={i} style={{ backgroundColor: '#F8F9FA', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }}>
+                  {lines.length > 1 && (
+                    <button onClick={() => removeLine(i)} style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#9AA0A6', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseEnter={e => (e.currentTarget.style.color = '#EA4335')} onMouseLeave={e => (e.currentTarget.style.color = '#9AA0A6')}>×</button>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                    <div style={{ flex: 1 }}>
+                      <OutlinedInput value={line.description} onChange={e => { updateLine(i, 'description', e.target.value); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], description: false }; return { ...prev, lines: l } }) }} placeholder="Omschrijving dienst" label="Omschrijving" focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.description} />
                     </div>
-
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <label className="block text-[10px] text-gray-400 mb-1">Aantal</label>
-                        <input type="number" value={line.quantity} min="0.01" step="0.01"
-                          onChange={e => updateLine(i, 'quantity', parseFloat(e.target.value) || 0)}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-400 mb-1">Prijs (€)</label>
-                        <input type="number" value={line.unit_price} min="0" step="0.01"
-                          onChange={e => updateLine(i, 'unit_price', parseFloat(e.target.value) || 0)}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-400 mb-1">BTW %</label>
-                        <select value={line.btw_rate}
-                          onChange={e => updateLine(i, 'btw_rate', parseFloat(e.target.value))}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white">
-                          <option value={21}>21%</option>
-                          <option value={9}>9%</option>
-                          <option value={0}>0%</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center text-xs text-gray-400 pt-1">
-                      <span>Totaal</span>
-                      <span className="font-semibold text-gray-700">
-                        {NL_NUMBER.format(line.quantity * line.unit_price)}
-                      </span>
-                    </div>
+                    <button onClick={() => translateLine(i)} disabled={line.translating} style={{ flexShrink: 0, fontSize: 12, fontWeight: 500, padding: '10px 12px', borderRadius: 9999, border: 'none', backgroundColor: line.translating ? '#F1F3F4' : cfg.activeBg, color: line.translating ? '#9AA0A6' : cfg.activeColor, cursor: line.translating ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', marginBottom: 1 }}>
+                      {line.translating ? '...' : 'Vertaal'}
+                    </button>
                   </div>
-
-                  {/* Desktop */}
-                  <div className="hidden sm:grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-5 flex gap-1.5">
-                      <input type="text" value={line.description}
-                        onChange={e => updateLine(i, 'description', e.target.value)}
-                        className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        placeholder="Omschrijving" />
-                      <button onClick={() => translateLine(i)} disabled={line.translating}
-                        className="shrink-0 text-xs font-semibold px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 disabled:opacity-40">
-                        {line.translating ? '…' : 'NL'}
-                      </button>
-                    </div>
-                    <div className="col-span-2">
-                      <input type="number" value={line.quantity} min="0.01" step="0.01"
-                        onChange={e => updateLine(i, 'quantity', parseFloat(e.target.value) || 0)}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
-                    </div>
-                    <div className="col-span-2">
-                      <input type="number" value={line.unit_price} min="0" step="0.01"
-                        onChange={e => updateLine(i, 'unit_price', parseFloat(e.target.value) || 0)}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        placeholder="0.00" />
-                    </div>
-                    <div className="col-span-2">
-                      <select value={line.btw_rate}
-                        onChange={e => updateLine(i, 'btw_rate', parseFloat(e.target.value))}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                    {/* [BOEK-031] LineInput: no leading zero, comma=dot, step=1, Enter→next — May 2026 */}
+                    <LineInput label="Aantal" value={line.quantity} min={0.01} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.quantity} onChange={v => { updateLine(i, 'quantity', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], quantity: false }; return { ...prev, lines: l } }) }} />
+                    <LineInput label="Prijs (€)" value={line.unit_price} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLine(i, 'unit_price', v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 500, color: '#5F6368', display: 'block', marginBottom: 4 }}>BTW %</label>
+                      <select value={line.btw_rate} onChange={e => updateLine(i, 'btw_rate', parseFloat(e.target.value))} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
                         <option value={21}>21%</option>
                         <option value={9}>9%</option>
                         <option value={0}>0%</option>
                       </select>
                     </div>
-                    <div className="col-span-1 flex justify-center">
-                      {lines.length > 1 && (
-                        <button onClick={() => removeLine(i)} className="text-gray-300 hover:text-red-400 text-xl">×</button>
-                      )}
-                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9AA0A6' }}>
+                    <span>Totaal</span>
+                    <span style={{ fontWeight: 600, color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.quantity * line.unit_price)}</span>
                   </div>
                 </div>
               ))}
 
-              <button onClick={addLine}
-                className="text-sm font-medium transition-colors"
-                style={{ color: '#3b82f6' }}>
+              <button onClick={addLine} style={{ alignSelf: 'flex-start', fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0' }}>
                 + Regel toevoegen
               </button>
             </div>
 
-            {/* ── Totalen ── */}
-            <div className="bg-white rounded-2xl p-4 shadow-sm">
-              <div className="space-y-2 text-sm max-w-xs ml-auto">
-                <div className="flex justify-between text-gray-500">
+            {/* [DS] Totalen */}
+            <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+              <div style={{ maxWidth: 280, marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                   <span>Subtotaal excl. BTW</span>
-                  <span>{NL_NUMBER.format(sign * totalEx)}</span>
+                  <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * totalEx)}</span>
                 </div>
                 {Object.entries(btwByRate).filter(([, v]) => v > 0).map(([rate, val]) => (
-                  <div key={rate} className="flex justify-between text-gray-500">
+                  <div key={rate} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                     <span>BTW {rate}%</span>
-                    <span>{NL_NUMBER.format(sign * val)}</span>
+                    <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * val)}</span>
                   </div>
                 ))}
-                <div className="flex justify-between font-bold text-gray-900 text-base pt-2 border-t border-gray-100">
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: sign === -1 ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
                   <span>Totaal incl. BTW</span>
-                  <span style={{ color: sign === -1 ? '#ef4444' : '#1c1c1e' }}>
-                    {NL_NUMBER.format(sign * totalInc)}
-                  </span>
+                  <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(sign * totalInc)}</span>
                 </div>
               </div>
             </div>
 
-            {/* ── Betalingsinformatie ── */}
+            {/* [DS] Betalingsinformatie */}
             {profile?.iban && invoiceType !== ('creditnota' as InvoiceType) && (
-              <div className="bg-white rounded-2xl p-4 shadow-sm">
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Betalingsinformatie</p>
-                <div className="space-y-1 text-sm text-gray-600">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Op naam van</span>
-                    <span className="font-medium text-gray-900">{profile.company_name || profile.full_name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">IBAN</span>
-                    <span className="font-medium text-gray-900 font-mono text-xs">{profile.iban}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Vervaldatum</span>
-                    <span className="font-medium text-gray-900">{new Intl.DateTimeFormat('nl-NL').format(new Date(dueDate || today))}</span>
-                  </div>
-                  {invoiceNumber && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Betalingskenmerk</span>
-                      <span className="font-medium text-gray-900">{invoiceNumber}</span>
+              <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+                <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>Betalingsinformatie</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {([['Op naam van', profile.company_name || profile.full_name], ['IBAN', profile.iban], ['Vervaldatum', new Intl.DateTimeFormat('nl-NL').format(new Date(dueDate || today))], ...(invoiceNumber ? [['Betalingskenmerk', invoiceNumber]] : [])] as [string,string][]).map(([label, value]) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.8 }}>{label}</span>
+                      <span style={{ fontSize: label === 'IBAN' ? 13 : 14, fontWeight: 500, color: '#202124', fontFamily: label === 'IBAN' ? 'Roboto Mono, monospace' : 'inherit', maxWidth: '55%', textAlign: 'right' }}>{value}</span>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
             )}
 
             {error && (
-              <p className="text-sm text-red-500 bg-red-50 rounded-xl px-4 py-2.5">{error}</p>
+              <div style={{ backgroundColor: '#F9DEDC', borderLeft: '4px solid #EA4335', borderRadius: '0 12px 12px 0', padding: '12px 16px' }}>
+                <p style={{ fontSize: 14, color: '#B3261E', margin: 0 }}>{error}</p>
+              </div>
             )}
 
-            {/* ── Actieknoppen ── */}
-            <div className="flex gap-2 pb-8 pt-1">
-              {/* Factuur */}
-              {invoiceType === 'factuur' && (
-                <>
-                  <button onClick={() => handleSubmit('sent')} disabled={loading}
-                    className="flex-1 py-3.5 rounded-xl text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50 shadow-sm"
-                    style={{ backgroundColor: '#3b82f6' }}>
-                    {loading ? 'Bezig...' : '✉ Opslaan en versturen'}
+            {/* [DS] Fixed bottom bar — safe area — full-width pill — 48px min */}
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))', zIndex: 10 }}>
+              <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button onClick={() => handleSubmit('sent')} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
+                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Versturen naar klant' : '↩ Versturen'}
+                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => handleSubmit('draft')} disabled={loading} style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: cfg.activeBg, color: cfg.activeColor, fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
+                    {invoiceType === 'factuur' ? 'Opslaan als concept' : 'Opslaan'}
                   </button>
-                  <button onClick={() => handleSubmit('draft')} disabled={loading}
-                    className="flex-1 py-3.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 transition-all active:scale-[0.98] disabled:opacity-50">
-                    Opslaan als concept
+                  {/* [DS] Annuleren text button — × verwijderd */}
+                  <button onClick={() => router.push('/dashboard')} style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
+                    Annuleren
                   </button>
-                </>
-              )}
-
-              {/* Offerte */}
-              {invoiceType === 'offerte' && (
-                <>
-                  <button onClick={() => handleSubmit('sent')} disabled={loading}
-                    className="flex-1 py-3.5 rounded-xl text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50"
-                    style={{ backgroundColor: '#f59e0b' }}>
-                    {loading ? 'Bezig...' : '📋 Versturen naar klant'}
-                  </button>
-                  <button onClick={() => handleSubmit('draft')} disabled={loading}
-                    className="flex-1 py-3.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 transition-all active:scale-[0.98] disabled:opacity-50">
-                    Opslaan
-                  </button>
-                </>
-              )}
-
-              {/* [BOEK-031] Creditnota — Opslaan + Versturen — geen Betaald knop — May 2026 */}
-              {invoiceType === 'creditnota' && (
-                <>
-                  <button onClick={() => handleSubmit('sent')} disabled={loading}
-                    className="flex-1 py-3.5 rounded-xl text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50"
-                    style={{ backgroundColor: '#ef4444' }}>
-                    {loading ? 'Bezig...' : '↩ Versturen'}
-                  </button>
-                  <button onClick={() => handleSubmit('draft')} disabled={loading}
-                    className="flex-1 py-3.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 transition-all active:scale-[0.98] disabled:opacity-50">
-                    Opslaan
-                  </button>
-                </>
-              )}
-
-              <button onClick={() => router.push('/dashboard')}
-                className="px-4 py-3.5 rounded-xl text-sm font-medium text-gray-400 hover:bg-gray-100 transition-colors">
-                ✕
-              </button>
+                </div>
+              </div>
             </div>
           </>
       </div>
 
-      {/* ── [BOEK-031] Offerte → Factuur convert dialog ── */}
+      {/* [DS] Offerte → Factuur convert dialog */}
       {showConvertDialog && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-6 sm:pb-0"
-          style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-4">
-            <h2 className="text-base font-bold text-gray-900">Omzetten naar factuur</h2>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              Controleer de gegevens voor het aanmaken van de factuur.
-              Een nieuw factuurnummer wordt automatisch toegewezen.
-              De offerte wordt gearchiveerd.
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 24px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 480, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Omzetten naar factuur</h2>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
+              Controleer de gegevens voor het aanmaken van de factuur. Een nieuw factuurnummer wordt automatisch toegewezen. De offerte wordt gearchiveerd.
             </p>
-            <p className="text-sm font-semibold text-gray-900">Weet u het zeker?</p>
-            <div className="flex gap-2">
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Weet u het zeker?</p>
+            <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={handleConvertOfferte} disabled={convertingOfferte}
-                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50"
-                style={{ backgroundColor: '#3b82f6' }}>
+                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', fontSize: 16, fontWeight: 600, cursor: convertingOfferte ? 'not-allowed' : 'pointer' }}>
                 {convertingOfferte ? 'Bezig...' : 'Ja, maak factuur aan'}
               </button>
               <button onClick={() => setShowConvertDialog(false)}
-                className="flex-1 py-3 rounded-xl text-sm font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors">
+                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#F1F3F4', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
                 Annuleren
               </button>
             </div>

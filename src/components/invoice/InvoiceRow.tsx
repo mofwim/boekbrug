@@ -50,6 +50,8 @@ export interface InvoiceRow {
   due_date: string | null
   created_at: string
   replaced_by_number?: string | null
+  // [BOEK-031] invoice_type for badge logic — May 2026
+  invoice_type?: string | null
 }
 
 export interface InvoiceRowProps {
@@ -293,8 +295,19 @@ export function InvoiceRowItem({
         {/* ════ ZZP MODE — Material You ════ */}
         {!isAccountantMode && (
           <>
-            {/* [DS] Status chip — pill */}
-            <StatusChip status={displayStatus} mode="zzp" />
+            {/* [BOEK-031] Creditnota: geen status badge — alleen type badge — May 2026 */}
+            {invoice.invoice_type === 'creditnota' ? (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center',
+                backgroundColor: '#F9DEDC', color: '#B3261E',
+                borderRadius: 9999, padding: '4px 12px',
+                fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap',
+              }}>
+                Creditnota
+              </span>
+            ) : (
+              <StatusChip status={displayStatus} mode="zzp" />
+            )}
 
             {/* DRAFT */}
             {effectiveStatus === 'draft' && (

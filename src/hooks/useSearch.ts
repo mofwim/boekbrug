@@ -1,16 +1,18 @@
-// hooks/useSearch.ts
-// Self-contained search hook (BOEK-012)
-// Holds query state internally — parent doesn't re-render on every keystroke
+// src/hooks/useSearch.ts
+// [BOEK-012] Search hook — fetch /api/search only — May 2026
+// ⚠️  Imports ONLY from @/lib/search (types + pure helpers).
+//     Zero server-side imports. Safe for any Client Component.
 
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SearchResult, SearchTarget } from "@/lib/search";
+import { EMPTY_GROUP, type SearchResultGroup, type SearchTarget } from "@/lib/search";
 
 interface UseSearchReturn {
   query: string;
   setQuery: (q: string) => void;
-  results: SearchResult[];
+  groups: SearchResultGroup;
+  totalCount: number;
   loading: boolean;
   error: string | null;
   clear: () => void;
@@ -26,22 +28,20 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
   const { minLength = 2, debounceMs = 200, target = "all" } = opts;
 
   const [query, setQueryState] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [groups, setGroups] = useState<SearchResultGroup>(EMPTY_GROUP);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const setQuery = useCallback((q: string) => {
-    setQueryState(q);
-  }, []);
+  const setQuery = useCallback((q: string) => setQueryState(q), []);
 
   const clear = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     abortRef.current?.abort();
     setQueryState("");
-    setResults([]);
+    setGroups(EMPTY_GROUP);
     setLoading(false);
     setError(null);
   }, []);
@@ -50,7 +50,7 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
     if (timerRef.current) clearTimeout(timerRef.current);
 
     if (query.length < minLength) {
-      setResults([]);
+      setGroups(EMPTY_GROUP);
       setError(null);
       setLoading(false);
       return;
@@ -64,26 +64,28 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
 
       try {
         const params = new URLSearchParams({ q: query, target });
+        // [BOEK-012] fetch API only — never import supabase-server directly
         const res = await fetch(`/api/search?${params}`, {
           signal: abortRef.current.signal,
         });
         if (!res.ok) throw new Error("Zoekopdracht mislukt");
-        const data = await res.json();
-        setResults(data.results ?? []);
+        const data: SearchResultGroup = await res.json();
+        setGroups(data);
         setError(null);
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         setError((e as Error).message);
-        setResults([]);
+        setGroups(EMPTY_GROUP);
       } finally {
         setLoading(false);
       }
     }, debounceMs);
 
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [query, minLength, debounceMs, target]);
 
-  return { query, setQuery, results, loading, error, clear };
+  const totalCount =
+    groups.invoices.length + groups.documents.length + groups.clients.length;
+
+  return { query, setQuery, groups, totalCount, loading, error, clear };
 }

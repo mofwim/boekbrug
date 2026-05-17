@@ -13,8 +13,7 @@ import { createClient } from "@/lib/supabase";
 const PAGE_SIZE = 20;
 
 const SELECT =
-  // [BOEK-009] added invoice_type — May 2026
-  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, invoice_date, due_date, created_at, invoice_type, replaced_by_number";
+  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,13 +25,16 @@ export interface InvoiceRow {
   accountant_status?: string | null;
   direction: string;
   total_inc_btw: number;
+  // [BOEK-031] add ex_btw and btw for pro_forma display — May 2026
+  total_ex_btw?: number | null;
+  btw_amount?: number | null;
   invoice_date: string;
   due_date: string | null;
   created_at: string;
-  // [BOEK-031] invoice type — 'factuur' | 'creditnota' | 'pro_forma' — May 2026
-  invoice_type?: string | null;
   // [BOEK-031] Replace Flow — ingevuld als deze factuur vervangen is — May 2026
   replaced_by_number?: string | null;
+  // [BOEK-031] invoice_type for badge display — May 2026
+  invoice_type?: string | null;
 }
 
 /** ZZP filter — on invoice status */

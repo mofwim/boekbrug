@@ -32,9 +32,9 @@ export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Build storage path.
- * Private: userId/2026/Q1/20260514_filename.pdf
- * Shared:  userId/shared/2026/Q1/20260514_filename.pdf
+ * Build storage path — always unique via millisecond timestamp.
+ * Private: userId/2026/Q1/20260514_143022456_filename.pdf
+ * Shared:  userId/shared/2026/Q1/20260514_143022456_filename.pdf
  */
 export function buildStoragePath(
   userId: string,
@@ -44,9 +44,11 @@ export function buildStoragePath(
   shared = false
 ): string {
   const safe = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const today = new Date();
-  const datePrefix = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
-  const namedFile = `${datePrefix}_${safe}`;
+  const now = new Date();
+  // Date + millisecond timestamp = guaranteed unique, no collisions
+  const datePrefix = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const msPrefix = String(now.getTime()); // 13-digit ms timestamp
+  const namedFile = `${datePrefix}_${msPrefix}_${safe}`; // [BOEK-033] unique path
 
   if (shared) {
     return `${userId}/shared/${year}/Q${quarter}/${namedFile}`;

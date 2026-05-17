@@ -1,6 +1,7 @@
 // src/app/api/invoice/[id]/route.ts
 // BOEK-001: Invoice Edit (PUT)
 // BOEK-002: Invoice Delete (DELETE)
+// [BOEK-031] Invoice numbering format: {seq}-{year} e.g. 001-2026, CR-001-2026, PF-001-2026
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
