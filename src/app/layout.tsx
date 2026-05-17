@@ -1,11 +1,12 @@
+// [Design System] Roboto via next/font/google + Material Symbols CDN
 import type { Metadata } from "next";
-import { DM_Sans } from "next/font/google";
+import { Roboto } from "next/font/google";
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
+const roboto = Roboto({
+  variable: "--font-sans",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "700"],
   display: "swap",
 });
 
@@ -25,8 +26,17 @@ export default function RootLayout({
   return (
     <html
       lang="nl"
-      className={`${dmSans.variable} h-full antialiased`}
+      className={`${roboto.variable} h-full antialiased`}
     >
+      <head>
+        {/* [Design System] Material Symbols — icon font only, CDN is acceptable */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
+          rel="stylesheet"
+        />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

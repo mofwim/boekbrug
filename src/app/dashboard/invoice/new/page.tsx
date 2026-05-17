@@ -399,8 +399,8 @@ function NewInvoicePageContent() {
       client_postal_code: clientPostal,
       client_city: clientCity,
       client_btw_number: clientBtw,
-      // Replace flow
-      original_invoice_id: replacesId || null,
+      // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
+      original_invoice_id: invoiceType === 'creditnota' ? null : (replacesId || null),
     }).select().single()
 
     if (insertErr || !invoice) {
@@ -446,7 +446,9 @@ function NewInvoicePageContent() {
 
   const displayNumber =
     invoiceType === 'offerte' ? '—' :
-    invoiceType === 'creditnota'  ? `CR-${invoiceNumber}` :
+    invoiceType === 'creditnota'
+      // [BOEK-031] format: CR-001-2026 — jaar volgt uit het gegenereerde nummer — May 2026
+      ? `CR-${invoiceNumber.split('-').reverse().join('-')}` :
     invoiceNumber || 'Concept'
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -509,63 +511,20 @@ function NewInvoicePageContent() {
           </div>
         </div>
 
-        {/* ── Credit flow ── */}
+        {/* ── [BOEK-031] Credit banner — alleen informatief — May 2026 ── */}
         {invoiceType === 'creditnota' && (
-          <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3"
-            style={{ borderLeft: '3px solid #ef4444' }}>
-            <div className="flex gap-2 items-start">
-              <span className="text-red-400 text-base shrink-0 mt-0.5">↩</span>
-              <p className="text-xs text-red-700">
-                <strong>Creditnota</strong> — een verzonden factuur mag nooit worden verwijderd.
-                Kies de factuur die je wilt crediteren. De bedragen worden automatisch negatief.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                Originele factuur <span className="text-red-400">*</span>
-              </label>
-              {sentInvoices.length === 0 ? (
-                <p className="text-xs text-gray-400 italic">Geen verzonden facturen gevonden.</p>
-              ) : (
-                <select value={originalInvoiceId} onChange={e => setOriginalInvoiceId(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-200">
-                  <option value="">— Selecteer factuur —</option>
-                  {sentInvoices.map(inv => (
-                    <option key={inv.id} value={inv.id}>
-                      {inv.invoice_number} — {inv.client_name} — {NL_NUMBER.format(inv.total_inc_btw)}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1.5">Reden <span className="text-gray-400 font-normal">(optioneel)</span></label>
-              <input type="text" value={creditReason} onChange={e => setCreditReason(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
-                placeholder="bijv. foutief bedrag..." />
-            </div>
-
-            {error && <p className="text-xs text-red-600 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
-
-            <div className="flex gap-2 pt-1">
-              <button onClick={handleCredit} disabled={loadingCredit || !originalInvoiceId}
-                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-40"
-                style={{ backgroundColor: '#ef4444' }}>
-                {loadingCredit ? 'Bezig...' : '↩ Creditnota aanmaken'}
-              </button>
-              <button onClick={() => router.push('/dashboard')}
-                className="px-4 py-3 rounded-xl text-sm font-medium text-gray-500 hover:bg-gray-100 transition-colors">
-                Annuleren
-              </button>
-            </div>
+          <div className="rounded-xl px-4 py-3 flex gap-2 items-center"
+            style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca' }}>
+            <span className="text-red-400 shrink-0">↩</span>
+            <p className="text-xs text-red-700">
+              <strong>Creditnota</strong> — bedragen worden automatisch negatief weergegeven.
+              Vul het formulier in zoals een gewone factuur.
+            </p>
           </div>
         )}
 
-        {/* ── Factuur / Offerte flow ── */}
-        {invoiceType !== 'creditnota' && (
-          <>
+        {/* ── Factuur / Offerte / Creditnota form — نفس الفورم للأنواع الثلاثة ── */}
+        <>
             {/* Replace flow banner */}
             {replacesNumber && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex gap-2 items-center">
@@ -889,13 +848,27 @@ function NewInvoicePageContent() {
                 </>
               )}
 
+              {/* [BOEK-031] Creditnota — Opslaan + Versturen — geen Betaald knop — May 2026 */}
+              {invoiceType === 'creditnota' && (
+                <>
+                  <button onClick={() => handleSubmit('sent')} disabled={loading}
+                    className="flex-1 py-3.5 rounded-xl text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50"
+                    style={{ backgroundColor: '#ef4444' }}>
+                    {loading ? 'Bezig...' : '↩ Versturen'}
+                  </button>
+                  <button onClick={() => handleSubmit('draft')} disabled={loading}
+                    className="flex-1 py-3.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 transition-all active:scale-[0.98] disabled:opacity-50">
+                    Opslaan
+                  </button>
+                </>
+              )}
+
               <button onClick={() => router.push('/dashboard')}
                 className="px-4 py-3.5 rounded-xl text-sm font-medium text-gray-400 hover:bg-gray-100 transition-colors">
                 ✕
               </button>
             </div>
           </>
-        )}
       </div>
 
       {/* ── [BOEK-031] Offerte → Factuur convert dialog ── */}

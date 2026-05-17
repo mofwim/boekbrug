@@ -17,9 +17,9 @@ import { useRouter, useParams, useSearchParams } from 'next/navigation'
 
 // [BOEK-028] Not Found removed — 3 actions only
 const ACCOUNTANT_ACTIONS = [
-  { value: 'verwerkt',       label: 'Verwerkt',        bg: '#d1fae5', color: '#065f46', rowBg: '#f0fdf4' },
-  { value: 'in_behandeling', label: 'In behandeling',  bg: '#fef3c7', color: '#92400e', rowBg: '#fffbeb' },
-  { value: 'vraag',          label: 'Vraag',           bg: '#dbeafe', color: '#1e40af', rowBg: '#eff6ff' },
+  { value: 'verwerkt',       label: 'Verwerkt',        bg: '#E6F4EA', color: '#137333', rowBg: '#F2FAF4' },
+  { value: 'in_behandeling', label: 'In behandeling',  bg: '#FEF7E0', color: '#EA8600', rowBg: '#FEFCF0' },
+  { value: 'vraag',          label: 'Vraag',           bg: '#E8F0FE', color: '#1967D2', rowBg: '#F0F4FF' },
 ] as const
 
 type ActionValue = 'verwerkt' | 'in_behandeling' | 'vraag'
@@ -59,12 +59,10 @@ function getBtwRate(inv: any): number {
 function ActionBadge({ value }: { value: string | null }) {
   const a = ACCOUNTANT_ACTIONS.find(x => x.value === value)
   if (!a) return (
-    <span className="text-xs px-2 py-0.5 rounded-full"
-      style={{ backgroundColor: '#f2f2f7', color: '#8e8e93' }}>—</span>
+    <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, backgroundColor: "#F1F3F4", color: "#5F6368" }}>—</span>
   )
   return (
-    <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-      style={{ backgroundColor: a.bg, color: a.color }}>
+    <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, fontWeight: 500, backgroundColor: a.bg, color: a.color }}>
       {a.label}
     </span>
   )
@@ -172,48 +170,46 @@ export default function KwartaalPage() {
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center"
-      style={{ backgroundColor: 'var(--color-bg, #f2f2f7)' }}>
-      <p className="text-sm" style={{ color: '#8e8e93' }}>Laden...</p>
+      style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <p style={{ fontSize: 14, color: '#5F6368' }}>Laden...</p>
     </div>
   )
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg, #f2f2f7)' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
 
       {/* Sticky header */}
-      <div className="sticky top-0 z-20 px-4 py-3 border-b"
-        style={{ backgroundColor: 'var(--color-card, #fff)', borderColor: 'var(--color-separator, #e5e5ea)' }}>
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
+      <div style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '12px 24px' }}>
+        <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => router.push(`/dashboard/clients/${clientId}`)}
-              className="text-sm font-medium flex-shrink-0" style={{ color: '#007aff' }}>
+              style={{ fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               ← Terug
             </button>
             <div className="min-w-0">
-              <h1 className="text-base font-bold truncate" style={{ color: '#1c1c1e' }}>
+              <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Q{q} {year} — {client?.company_name || client?.full_name}
               </h1>
-              <p className="text-xs" style={{ color: '#8e8e93' }}>{range.label}</p>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>{range.label}</p>
             </div>
           </div>
           <button
             onClick={() => setSortAsc(p => !p)}
-            className="text-xs font-semibold px-3 py-1.5 rounded-xl flex-shrink-0"
-            style={{ backgroundColor: '#f2f2f7', color: '#007aff' }}>
+            style={{ fontSize: 13, fontWeight: 500, color: '#1A73E8', backgroundColor: '#E8F0FE', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
             {sortAsc ? 'Oudste ↑' : 'Nieuwste ↓'}
           </button>
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* [BOEK-028] Top action buttons: PDF Bank | CAMT | KW | Documenten */}
-        <div className="grid grid-cols-4 gap-2">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
           {[
-            { key: 'pdf_bank',   label: 'PDF Bank',   icon: '📄', color: '#007aff' },
-            { key: 'camt',       label: 'CAMT',       icon: '🏦', color: '#34c759' },
-            { key: 'kw',         label: 'KW',         icon: '📊', color: '#af52de' },
+            { key: 'pdf_bank',   label: 'PDF Bank',   icon: '📄', color: '#1A73E8' },
+            { key: 'camt',       label: 'CAMT',       icon: '🏦', color: '#34A853' },
+            { key: 'kw',         label: 'KW',         icon: '📊', color: '#9334E6' },
             { key: 'documenten', label: 'Documenten', icon: '📂', color: '#ff6b00' },
           ].map(btn => (
             <button
@@ -224,8 +220,7 @@ export default function KwartaalPage() {
                 else
                   alert(`${btn.label} — koppeling volgt in BOEK-016`)
               }}
-              className="flex flex-col items-center gap-1.5 py-3 rounded-2xl active:opacity-70 transition-opacity"
-              style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '12px 8px', backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, cursor: 'pointer', transition: 'background 0.1s ease' }}
             >
               <span className="text-xl">{btn.icon}</span>
               <span className="text-xs font-semibold" style={{ color: btn.color }}>{btn.label}</span>
@@ -234,40 +229,37 @@ export default function KwartaalPage() {
         </div>
 
         {/* Quarter summary */}
-        <div className="grid grid-cols-3 gap-3">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
           {[
-            { label: 'Inkomsten',  value: NL_NUMBER.format(totalIn),  color: '#34c759' },
-            { label: 'Uitgaven',   value: NL_NUMBER.format(totalOut), color: '#ff3b30' },
-            { label: 'BTW totaal', value: NL_NUMBER.format(totalBtw), color: '#af52de' },
+            { label: 'Inkomsten',  value: NL_NUMBER.format(totalIn),  color: '#34A853' },
+            { label: 'Uitgaven',   value: NL_NUMBER.format(totalOut), color: '#EA4335' },
+            { label: 'BTW totaal', value: NL_NUMBER.format(totalBtw), color: '#9334E6' },
           ].map(s => (
-            <div key={s.label} className="rounded-2xl p-3 text-center"
-              style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-              <p className="text-xs mb-0.5" style={{ color: '#8e8e93' }}>{s.label}</p>
-              <p className="text-sm font-bold" style={{ color: s.color }}>{s.value}</p>
+            <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+              <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: s.color, margin: 0 }}>{s.value}</p>
             </div>
           ))}
         </div>
 
         {/* [BOEK-028] Invoice table — outgoing + incoming merged */}
-        <div className="rounded-2xl overflow-hidden"
-          style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
 
-          <div className="px-4 py-4 border-b"
-            style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}>
-            <h2 className="text-base font-semibold" style={{ color: '#1c1c1e' }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>
               Facturen
-              <span className="text-sm font-normal ml-1.5" style={{ color: '#8e8e93' }}>
+              <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 6, color: '#5F6368' }}>
                 ({invoices.length})
               </span>
             </h2>
           </div>
 
           {sorted.length === 0 ? (
-            <p className="text-sm text-center py-12" style={{ color: '#8e8e93' }}>
+            <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '48px 0' }}>
               Geen betaalde facturen in Q{q} {year}
             </p>
           ) : (
-            <div className="divide-y" style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}>
+            <div style={{ borderTop: '1px solid #E0E0E0' }}>
               {sorted.map(invoice => {
                 const amount      = getAmount(invoice)
                 const isExpanded  = expandedId === invoice.id
@@ -291,25 +283,25 @@ export default function KwartaalPage() {
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold truncate" style={{ color: '#1c1c1e' }}>
+                            <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {invoice.invoice_number}
                             </p>
                             {/* direction badge */}
                             <span className="text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0"
                               style={{
-                                backgroundColor: isOutgoing ? '#d1fae5' : '#fee2e2',
-                                color: isOutgoing ? '#065f46' : '#991b1b',
+                                backgroundColor: isOutgoing ? '#E6F4EA' : '#FCE8E6',
+                                color: isOutgoing ? '#137333' : '#C5221F',
                               }}>
                               {isOutgoing ? 'Uitg.' : 'Ink.'}
                             </span>
                             {invoice.invoice_type === 'creditnota' && (
                               <span className="text-xs px-1.5 py-0.5 rounded font-medium"
-                                style={{ backgroundColor: '#fee2e2', color: '#991b1b' }}>
+                                style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#FCE8E6', color: '#C5221F', fontWeight: 500 }}>
                                 Creditnota
                               </span>
                             )}
                           </div>
-                          <p className="text-xs mt-0.5" style={{ color: '#8e8e93' }}>
+                          <p style={{ fontSize: 12, color: '#5F6368', marginTop: 2 }}>
                             {fmt(invoice.invoice_date)}
                             {invoice.marked_paid_at && (
                               <span> · betaald {fmt(invoice.marked_paid_at)}</span>
@@ -318,8 +310,7 @@ export default function KwartaalPage() {
                         </div>
 
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <p className="text-sm font-bold"
-                            style={{ color: amount >= 0 ? '#34c759' : '#ff3b30' }}>
+                          <p style={{ fontSize: 14, fontWeight: 600, color: amount >= 0 ? '#34A853' : '#EA4335', fontFamily: "'Roboto Mono', monospace" }}>
                             {NL_NUMBER.format(amount)}
                           </p>
                           {/* ••• dropdown trigger */}
@@ -329,8 +320,7 @@ export default function KwartaalPage() {
                               setOpenDropdownId(isDropdown ? null : invoice.id)
                               setExpandedId(null)
                             }}
-                            className="text-sm px-1.5 py-0.5 rounded-lg"
-                            style={{ backgroundColor: '#f2f2f7', color: '#8e8e93' }}
+                            style={{ fontSize: 13, padding: '2px 6px', borderRadius: 4, backgroundColor: '#F1F3F4', color: '#5F6368', border: 'none', cursor: 'pointer' }}
                           >
                             •••
                           </button>
@@ -344,8 +334,7 @@ export default function KwartaalPage() {
                           {ACCOUNTANT_ACTIONS.map(a => (
                             <button key={a.value}
                               onClick={() => handleAction(invoice.id, a.value)}
-                              className="py-2 rounded-xl text-xs font-semibold active:opacity-70"
-                              style={{ backgroundColor: a.bg, color: a.color }}>
+                              style={{ padding: '8px', borderRadius: 4, fontSize: 12, fontWeight: 500, backgroundColor: a.bg, color: a.color, border: 'none', cursor: 'pointer' }}>
                               {a.label}
                             </button>
                           ))}
@@ -363,30 +352,29 @@ export default function KwartaalPage() {
                     {/* [BOEK-028] Inline expand — no page navigation */}
                     {isExpanded && (
                       <div className="px-4 pb-4 pt-1" onClick={e => e.stopPropagation()}>
-                        <div className="rounded-2xl p-4 space-y-2"
-                          style={{ backgroundColor: '#f2f2f7' }}>
+                        <div style={{ backgroundColor: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
 
                           {/* Client info */}
-                          <div className="space-y-1 pb-2 border-b" style={{ borderColor: '#e5e5ea' }}>
-                            <div className="flex justify-between text-xs">
-                              <span style={{ color: '#8e8e93' }}>Aan</span>
-                              <span className="font-semibold text-right" style={{ color: '#1c1c1e' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 10, borderBottom: '1px solid #E0E0E0' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                              <span style={{ color: '#5F6368' }}>Aan</span>
+                              <span style={{ fontWeight: 500, textAlign: 'right', color: '#202124' }}>
                                 {invoice.client_name || '—'}
                               </span>
                             </div>
                             {invoice.client_btw_number && (
-                              <div className="flex justify-between text-xs">
-                                <span style={{ color: '#8e8e93' }}>BTW</span>
-                                <span className="font-medium" style={{ color: '#1c1c1e' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                <span style={{ color: '#5F6368' }}>BTW</span>
+                                <span className="font-medium" style={{ fontWeight: 500, color: '#202124' }}>
                                   {invoice.client_btw_number}
                                 </span>
                               </div>
                             )}
                             {/* [BOEK-028] replaced_by_number — shown on creditnota — May 2026 */}
                             {invoice.invoice_type === 'creditnota' && invoice.replaced_by_number && (
-                              <div className="flex justify-between text-xs">
-                                <span style={{ color: '#8e8e93' }}>Vervangt</span>
-                                <span className="font-medium" style={{ color: '#ff3b30' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                <span style={{ color: '#5F6368' }}>Vervangt</span>
+                                <span className="font-medium" style={{ color: '#EA4335' }}>
                                   {invoice.replaced_by_number}
                                 </span>
                               </div>
@@ -408,10 +396,10 @@ export default function KwartaalPage() {
                               value: amount,
                             },
                           ].map(row => (
-                            <div key={row.label} className="flex justify-between text-xs">
-                              <span style={{ color: '#8e8e93' }}>{row.label}</span>
+                            <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                              <span style={{ color: '#5F6368' }}>{row.label}</span>
                               <span className="font-semibold"
-                                style={{ color: (row.value ?? 0) >= 0 ? '#1c1c1e' : '#ff3b30' }}>
+                                style={{ fontWeight: 500, color: (row.value ?? 0) >= 0 ? '#202124' : '#EA4335', fontFamily: "'Roboto Mono', monospace" }}>
                                 {NL_NUMBER.format(row.value ?? 0)}
                               </span>
                             </div>
@@ -421,8 +409,7 @@ export default function KwartaalPage() {
                           <div className="pt-2">
                             <button
                               onClick={() => router.push(`/dashboard/invoice/${invoice.id}`)}
-                              className="w-full text-xs font-semibold py-2 rounded-xl"
-                              style={{ backgroundColor: '#007aff', color: '#fff' }}>
+                              style={{ width: '100%', padding: '8px 16px', borderRadius: 8, backgroundColor: '#1A73E8', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
                               Openen →
                             </button>
                           </div>

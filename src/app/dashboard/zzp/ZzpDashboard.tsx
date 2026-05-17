@@ -1,7 +1,7 @@
 'use client'
 
 // src/app/dashboard/zzp/ZzpDashboard.tsx
-// [BOEK-029] Complete rebuild — Home screen: 3 buttons only — May 2026
+// [BOEK-029] Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
@@ -9,8 +9,29 @@ import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '../_shared'
 import { generateInvoiceFromPrompt } from '@/lib/ai'
 
+// ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
+const M3 = {
+  primary:           '#1A73E8',
+  onPrimary:         '#FFFFFF',
+  primaryContainer:  '#D3E3FD',
+  onPrimaryContainer:'#041E49',
+  tertiary:          '#7B1FA2',
+  tertiaryContainer: '#E1BEE7',
+  surface:           '#FFFBFE',
+  onSurface:         '#1C1B1F',
+  success:           '#34A853',
+  successContainer:  '#CEEAD6',
+  warning:           '#E37400',
+  warningContainer:  '#FEE8C4',
+  outline:           '#79747E',
+}
+const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
+const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
+
 const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export function ZzpDashboard({ profile }: { profile: any }) {
   const router   = useRouter()
   const supabase = createClient()
@@ -25,28 +46,27 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiError, setAiError]                     = useState<string | null>(null)
   const [stats, setStats]                         = useState({ open: 0, openAmount: 0, paid: 0 })
 
-  useEffect(() => {
-    async function loadGlobal() {
-      const [{ data: link }, { data: notifData }, { count }, { data: invData }] = await Promise.all([
-        supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
-        supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
-        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
-        supabase.from('invoices').select('status, total_inc_btw').eq('sender_id', profile.id),
-      ])
-      if (link?.accountant_id) setAccountantId(link.accountant_id)
-      if (notifData) setNotifications(notifData)
-      setUnreadMessages(count || 0)
-      if (invData) {
-        let open = 0, openAmount = 0, paid = 0
-        for (const inv of invData) {
-          if (inv.status === 'sent' || inv.status === 'overdue') { open++; openAmount += inv.total_inc_btw ?? 0 }
-          if (inv.status === 'paid') paid++
-        }
-        setStats({ open, openAmount, paid })
+  useEffect(() => { loadGlobal() }, [])
+
+  async function loadGlobal() {
+    const [{ data: link }, { data: notifData }, { count }, { data: invData }] = await Promise.all([
+      supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
+      supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
+      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
+      supabase.from('invoices').select('status, total_inc_btw').eq('sender_id', profile.id),
+    ])
+    if (link?.accountant_id) setAccountantId(link.accountant_id)
+    if (notifData) setNotifications(notifData)
+    setUnreadMessages(count || 0)
+    if (invData) {
+      let open = 0, openAmount = 0, paid = 0
+      for (const inv of invData) {
+        if (inv.status === 'sent' || inv.status === 'overdue') { open++; openAmount += inv.total_inc_btw ?? 0 }
+        if (inv.status === 'paid') paid++
       }
+      setStats({ open, openAmount, paid })
     }
-    loadGlobal()
-  }, [supabase, profile])
+  }
 
   async function markAllRead() {
     await supabase.from('notifications').update({ read: true }).eq('user_id', profile.id).eq('read', false)
@@ -64,19 +84,16 @@ export function ZzpDashboard({ profile }: { profile: any }) {
       if (result.amount)       params.set('amount', String(result.amount))
       if (result.btw_rate)     params.set('btw_rate', String(result.btw_rate))
       router.push(`/dashboard/invoice/new?${params.toString()}`)
-    } catch { setAiError('Er ging iets mis. Probeer het opnieuw.') }
-    finally { setAiLoading(false) }
+    } catch {
+      setAiError('Er ging iets mis. Probeer het opnieuw.')
+    } finally { setAiLoading(false) }
   }
 
   const unreadNotifCount = notifications.filter(n => !n.read).length
   const firstName = profile.full_name?.split(' ')[0] ?? 'daar'
 
   return (
-    <div style={{
-      minHeight: '100vh', backgroundColor: 'var(--color-bg, #f2f2f7)',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
-      WebkitFontSmoothing: 'antialiased',
-    }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
       <DashboardHeader
         profile={profile} notifications={notifications}
         showNotifications={showNotifications} unreadNotifCount={unreadNotifCount}
@@ -86,55 +103,100 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         onLogout={async () => { await supabase.auth.signOut(); router.push('/login') }}
       />
 
-      <main style={{ maxWidth: 480, margin: '0 auto', padding: '32px 20px 60px' }}>
-        <p style={{ fontSize: 13, color: '#8e8e93', marginBottom: 4 }}>Goedendag,</p>
-        <h1 style={{ fontSize: 26, fontWeight: 700, color: '#1c1c1e', marginBottom: 32, letterSpacing: -0.5 }}>
+      <main style={{ maxWidth: 480, margin: '0 auto', padding: '32px 16px 100px' }}>
+
+        {/* Greeting */}
+        <p style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, fontWeight: 500, letterSpacing: 0.2 }}>GOEDENDAG</p>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: M3.onSurface, marginBottom: 28, letterSpacing: -0.5 }}>
           {firstName} 👋
         </h1>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* [BOEK-029] Button 1: Nieuwe factuur */}
-          <HomeButton icon="+" iconBg="#007aff" label="Nieuwe factuur" sub="Maak en verstuur direct"
-            onClick={() => router.push('/dashboard/invoice/new')} />
+        {/* ── 3 action cards ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-          {/* [BOEK-029] Button 2: Werken met AI */}
-          <HomeButton icon="🤝" iconBg="#5856d6" label="Werken met AI" sub="Beschrijf je factuur, AI regelt de rest"
-            onClick={() => setShowAiPanel(p => !p)} active={showAiPanel} />
+          {/* Nieuwe factuur */}
+          <ActionCard
+            icon="receipt_long" iconBg={M3.primary} iconColor={M3.onPrimary}
+            label="Nieuwe factuur" sub="Maak en verstuur direct"
+            onClick={() => router.push('/dashboard/invoice/new')}
+          />
 
+          {/* Werken met AI */}
+          <ActionCard
+            icon="star" iconBg={M3.tertiary} iconColor="#fff"
+            label="Werken met AI" sub="Beschrijf je factuur, AI regelt de rest"
+            onClick={() => setShowAiPanel(p => !p)}
+            active={showAiPanel}
+            activeColor={M3.tertiary}
+            activeBg={M3.tertiaryContainer}
+          />
+
+          {/* AI Panel — Material You tonal surface */}
           {showAiPanel && (
-            <div style={{ background: '#fff', borderRadius: 16, padding: '18px 16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginTop: -6 }}>
-              <p style={{ fontSize: 12, color: '#8e8e93', marginBottom: 10 }}>Schrijf in jouw taal — AI vertaalt en vult in</p>
+            <div style={{
+              background: '#fff', borderRadius: R.lg, padding: '20px 16px',
+              boxShadow: EL1, marginTop: -4,
+              border: `1px solid ${M3.tertiaryContainer}`,
+            }}>
+              <p style={{ fontSize: 12, color: M3.tertiary, fontWeight: 600, marginBottom: 10, letterSpacing: 0.3 }}>
+                SCHRIJF IN JOUW TAAL
+              </p>
               <textarea
                 value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} rows={3}
                 placeholder='"factuur voor Mohammed voor dakdekken, 3 uur à 85 euro"'
-                style={{ width: '100%', borderRadius: 10, border: '1px solid #e5e5ea', padding: '10px 12px', fontSize: 14, resize: 'none', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
+                style={{
+                  width: '100%', borderRadius: R.md,
+                  border: `2px solid ${aiPrompt ? M3.tertiary : '#79747E'}`,
+                  padding: '14px 16px', fontSize: 16, resize: 'none',
+                  fontFamily: FONT, outline: 'none', boxSizing: 'border-box',
+                  background: M3.surface, color: M3.onSurface,
+                  transition: 'border-color 0.15s',
+                }}
               />
-              {aiError && <p style={{ fontSize: 12, color: '#ff3b30', marginTop: 6 }}>{aiError}</p>}
-              <button onClick={handleAiGenerate} disabled={aiLoading || !aiPrompt.trim()}
-                style={{ marginTop: 10, width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: aiLoading ? 'default' : 'pointer', background: aiLoading || !aiPrompt.trim() ? '#e5e5ea' : '#5856d6', color: aiLoading || !aiPrompt.trim() ? '#8e8e93' : '#fff', fontSize: 15, fontWeight: 700 }}>
+              {aiError && <p style={{ fontSize: 12, color: error, marginTop: 6 }}>{aiError}</p>}
+              <button
+                onClick={handleAiGenerate} disabled={aiLoading || !aiPrompt.trim()}
+                style={{
+                  marginTop: 12, width: '100%', padding: '14px',
+                  borderRadius: R.full, border: 'none',
+                  cursor: aiLoading || !aiPrompt.trim() ? 'default' : 'pointer',
+                  background: aiLoading || !aiPrompt.trim() ? '#E7E0EC' : M3.tertiary,
+                  color: aiLoading || !aiPrompt.trim() ? '#79747E' : '#fff',
+                  fontSize: 15, fontWeight: 600,
+                  transition: 'all 0.15s',
+                  transform: 'scale(1)',
+                }}
+                onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
+                onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+              >
                 {aiLoading ? 'AI denkt na...' : 'Factuur aanmaken →'}
               </button>
             </div>
           )}
 
-          {/* [BOEK-029] Button 3: Mijn werkplek */}
-          <HomeButton icon="→" iconBg="#34c759" label="Mijn werkplek" sub="Facturen, klanten en bestanden"
-            onClick={() => router.push('/dashboard/werkplek')} />
+          {/* Mijn werkplek */}
+          <ActionCard
+            icon="work" iconBg={M3.success} iconColor="#fff"
+            label="Mijn werkplek" sub="Facturen, klanten en bestanden"
+            onClick={() => router.push('/dashboard/werkplek')}
+          />
         </div>
 
-        {/* Quick stats strip */}
+        {/* Quick stats — Material You tonal cards */}
         {(stats.open > 0 || stats.paid > 0) && (
-          <div style={{ marginTop: 32, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div style={{ background: '#fff', borderRadius: 14, padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-              <p style={{ fontSize: 11, color: '#8e8e93', fontWeight: 500, marginBottom: 4 }}>Openstaand</p>
-              <p style={{ fontSize: 17, fontWeight: 700, color: '#ff9500', letterSpacing: -0.3 }}>{NL_EUR.format(stats.openAmount)}</p>
-              <p style={{ fontSize: 10, color: '#c7c7cc', marginTop: 2 }}>{stats.open} factuur{stats.open !== 1 ? 'en' : ''}</p>
-            </div>
-            <div style={{ background: '#fff', borderRadius: 14, padding: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-              <p style={{ fontSize: 11, color: '#8e8e93', fontWeight: 500, marginBottom: 4 }}>Betaald</p>
-              <p style={{ fontSize: 17, fontWeight: 700, color: '#34c759', letterSpacing: -0.3 }}>{stats.paid}</p>
-              <p style={{ fontSize: 10, color: '#c7c7cc', marginTop: 2 }}>factuur{stats.paid !== 1 ? 'en' : ''}</p>
-            </div>
+          <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <StatCard
+              label="Openstaand" value={NL_EUR.format(stats.openAmount)}
+              sub={`${stats.open} factuur${stats.open !== 1 ? 'en' : ''}`}
+              bg={M3.warningContainer} color={M3.warning}
+              onClick={() => router.push('/dashboard/facturen?filter=sent')}
+            />
+            <StatCard
+              label="Betaald" value={String(stats.paid)}
+              sub={`factuur${stats.paid !== 1 ? 'en' : ''}`}
+              bg={M3.successContainer} color={M3.success}
+              onClick={() => router.push('/dashboard/facturen?filter=paid')}
+            />
           </div>
         )}
       </main>
@@ -142,24 +204,61 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   )
 }
 
-function HomeButton({ icon, iconBg, label, sub, onClick, active }: {
-  icon: string; iconBg: string; label: string; sub: string; onClick: () => void; active?: boolean
+// ─── Design system constants ──────────────────────────────────────────────────
+const R = { sm: 8, md: 12, lg: 16, xl: 24, full: 9999 }
+const error = '#B3261E'
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, activeColor, activeBg }: {
+  icon: string; iconBg: string; iconColor: string
+  label: string; sub: string; onClick: () => void
+  active?: boolean; activeColor?: string; activeBg?: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 16,
+        background: active && activeBg ? activeBg : '#fff',
+        borderRadius: R.lg, padding: '18px 16px',
+        border: active && activeColor ? `2px solid ${activeColor}` : '2px solid transparent',
+        boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
+        transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
+      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+    >
+      <div style={{
+        width: 48, height: 48, borderRadius: R.md,
+        background: iconBg, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', flexShrink: 0,
+      }}>
+        <span className="material-symbols-outlined" style={{ color: iconColor, fontSize: 24 }}>{icon}</span>
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 2 }}>{label}</p>
+        <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
+      </div>
+      <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+    </button>
+  )
+}
+
+function StatCard({ label, value, sub, bg, color, onClick }: {
+  label: string; value: string; sub: string; bg: string; color: string; onClick: () => void
 }) {
   return (
     <button onClick={onClick} style={{
-      display: 'flex', alignItems: 'center', gap: 16, background: '#fff', borderRadius: 18, padding: '18px 20px',
-      border: `2px solid ${active ? iconBg : 'transparent'}`,
-      boxShadow: '0 2px 10px rgba(0,0,0,0.07)', cursor: 'pointer', textAlign: 'left', width: '100%',
-      transition: 'all 0.15s', WebkitTapHighlightColor: 'transparent',
+      background: bg, borderRadius: R.lg, padding: '16px 14px',
+      border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
+      transition: 'all 0.15s',
+      WebkitTapHighlightColor: 'transparent',
     }}>
-      <div style={{ width: 46, height: 46, borderRadius: 14, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, color: '#fff', fontWeight: 700, flexShrink: 0 }}>
-        {icon}
-      </div>
-      <div style={{ flex: 1 }}>
-        <p style={{ fontSize: 16, fontWeight: 700, color: '#1c1c1e', marginBottom: 2 }}>{label}</p>
-        <p style={{ fontSize: 12, color: '#8e8e93' }}>{sub}</p>
-      </div>
-      <span style={{ fontSize: 18, color: '#c7c7cc' }}>›</span>
+      <p style={{ fontSize: 11, color, fontWeight: 600, marginBottom: 6, letterSpacing: 0.3 }}>{label.toUpperCase()}</p>
+      <p style={{ fontSize: 20, fontWeight: 700, color, letterSpacing: -0.5, marginBottom: 2 }}>{value}</p>
+      <p style={{ fontSize: 11, color, opacity: 0.7 }}>{sub}</p>
     </button>
   )
 }

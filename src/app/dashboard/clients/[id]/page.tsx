@@ -26,97 +26,83 @@ export default function ClientDetailPage() {
   if (!clientId) notFound()
 
   useEffect(() => {
-    // [BOEK-028] Persist last visited client — May 2026
     localStorage.setItem(LAST_CLIENT_KEY, clientId)
-
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
-
-      const { data: clientData } = await supabase
-        .from('profiles').select('*').eq('id', clientId).single()
+      const { data: clientData } = await supabase.from('profiles').select('*').eq('id', clientId).single()
       if (clientData) setClient(clientData)
-
-      const { count } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('sender_id', clientId)
-        .eq('receiver_id', user.id)
-        .eq('read', false)
+      const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true })
+        .eq('sender_id', clientId).eq('receiver_id', user.id).eq('read', false)
       setUnreadCount(count || 0)
-
       setLoading(false)
     }
     load()
   }, [clientId])
 
   async function removeClient() {
-    const confirmed = window.confirm(
-      `Weet je zeker dat je ${client?.company_name || client?.full_name} wilt ontkoppelen?`
-    )
+    const confirmed = window.confirm(`Weet je zeker dat je ${client?.company_name || client?.full_name} wilt ontkoppelen?`)
     if (!confirmed) return
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    await supabase
-      .from('accountant_clients')
-      .delete()
-      .eq('accountant_id', user.id)
-      .eq('zzper_id', clientId)
+    await supabase.from('accountant_clients').delete().eq('accountant_id', user.id).eq('zzper_id', clientId)
     router.push('/dashboard')
   }
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center"
-      style={{ backgroundColor: 'var(--color-bg, #f2f2f7)' }}>
-      <p className="text-sm" style={{ color: '#8e8e93' }}>Laden...</p>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8F9FA' }}>
+      <p style={{ fontSize: 14, color: '#5F6368' }}>Laden...</p>
     </div>
   )
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg, #f2f2f7)' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
 
-      {/* Sticky header */}
-      <div className="sticky top-0 z-20 px-4 py-3 border-b"
-        style={{ backgroundColor: 'var(--color-card, #fff)', borderColor: 'var(--color-separator, #e5e5ea)' }}>
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
-            <button onClick={() => router.push('/dashboard')}
-              className="text-sm font-medium flex-shrink-0" style={{ color: '#007aff' }}>
+      {/* [BOEK-028] Workspace header — sticky */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 20,
+        backgroundColor: '#FFFFFF',
+        borderBottom: '1px solid #E0E0E0',
+        padding: '12px 24px',
+      }}>
+        <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+            <button
+              onClick={() => router.push('/dashboard')}
+              style={{ fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               ← Terug
             </button>
-            <div className="min-w-0">
-              <h1 className="text-base font-bold truncate"
-                style={{ color: 'var(--color-text-primary, #1c1c1e)' }}>
+            <div style={{ minWidth: 0 }}>
+              <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {client?.company_name || client?.full_name}
               </h1>
-              <p className="text-xs truncate" style={{ color: '#636366' }}>
-                {client?.email}
-              </p>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>{client?.email}</p>
             </div>
           </div>
-          <button onClick={removeClient}
-            className="text-xs font-medium px-2.5 py-1.5 rounded-xl flex-shrink-0"
-            style={{ backgroundColor: '#fee2e2', color: '#991b1b' }}>
+          <button
+            onClick={removeClient}
+            style={{ fontSize: 13, fontWeight: 500, color: '#EA4335', background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
             Ontkoppelen
           </button>
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* ── Sectie 1: Klantgegevens ─────────────────────── */}
-        {/* [BOEK-028] client info + email/message buttons — May 2026 */}
-        <div className="rounded-2xl overflow-hidden"
-          style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+        {/* ── Sectie 1: Klantgegevens ── */}
+        {/* [BOEK-028] Design System — Workspace card — May 2026 */}
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: '#5F6368', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+              Klantgegevens
+            </p>
+          </div>
 
-          <div className="px-4 pt-4 pb-3 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wide"
-              style={{ color: '#8e8e93' }}>Klantgegevens</p>
-
+          <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             {/* Naam */}
             <div>
-              <p className="text-xs mb-0.5" style={{ color: '#8e8e93' }}>Naam</p>
-              <p className="text-sm font-semibold" style={{ color: '#1c1c1e' }}>
+              <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>Naam</p>
+              <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>
                 {client?.company_name
                   ? `${client.company_name}${client?.full_name ? ` · ${client.full_name}` : ''}`
                   : client?.full_name || '—'}
@@ -124,7 +110,7 @@ export default function ClientDetailPage() {
             </div>
 
             {/* Grid: KVK / BTW / IBAN / Email */}
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
               {[
                 { label: 'KVK',    value: client?.kvk_number },
                 { label: 'BTW',    value: client?.btw_number },
@@ -132,8 +118,8 @@ export default function ClientDetailPage() {
                 { label: 'E-mail', value: client?.email },
               ].map(f => (
                 <div key={f.label}>
-                  <p className="text-xs mb-0.5" style={{ color: '#8e8e93' }}>{f.label}</p>
-                  <p className="text-xs font-semibold break-all" style={{ color: '#1c1c1e' }}>
+                  <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{f.label}</p>
+                  <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0, wordBreak: 'break-all' }}>
                     {f.value || '—'}
                   </p>
                 </div>
@@ -141,20 +127,40 @@ export default function ClientDetailPage() {
             </div>
           </div>
 
-          {/* Action row — Stuur e-mail + Stuur bericht */}
-          <div className="flex border-t" style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}>
-            <a href={`mailto:${client?.email || ''}`}
-              className="flex-1 flex items-center justify-center gap-1.5 py-3.5 text-sm font-semibold border-r active:opacity-70 transition-opacity"
-              style={{ color: '#007aff', borderColor: 'var(--color-separator, #e5e5ea)', textDecoration: 'none' }}>
+          {/* Action row */}
+          <div style={{ borderTop: '1px solid #E0E0E0', display: 'flex' }}>
+            <a
+              href={`mailto:${client?.email || ''}`}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '12px', fontSize: 14, fontWeight: 500, color: '#1A73E8',
+                borderRight: '1px solid #E0E0E0', textDecoration: 'none',
+                transition: 'background 0.1s ease',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+            >
               ✉ Stuur e-mail
             </a>
             <button
               onClick={() => router.push(`/dashboard/messages/${clientId}`)}
-              className="flex-1 relative flex items-center justify-center gap-1.5 py-3.5 text-sm font-semibold active:opacity-70 transition-opacity"
-              style={{ color: '#34c759' }}>
+              style={{
+                flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '12px', fontSize: 14, fontWeight: 500, color: '#34A853',
+                background: 'none', border: 'none', cursor: 'pointer',
+                transition: 'background 0.1s ease',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+            >
               💬 Stuur bericht
               {unreadCount > 0 && (
-                <span className="absolute top-2 right-3 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold leading-none">
+                <span style={{
+                  position: 'absolute', top: 8, right: 12,
+                  backgroundColor: '#EA4335', color: '#fff',
+                  fontSize: 10, borderRadius: 9999, width: 16, height: 16,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
+                }}>
                   {unreadCount}
                 </span>
               )}
@@ -162,46 +168,37 @@ export default function ClientDetailPage() {
           </div>
         </div>
 
-        {/* ── Sectie 2: Working Place ──────────────────────── */}
-        {/* [BOEK-028] Q1–Q4 buttons scoped to client + year — May 2026 */}
-        <div className="rounded-2xl overflow-hidden"
-          style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-
-          <div className="px-4 py-4 border-b"
-            style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}>
-            <h2 className="text-base font-semibold" style={{ color: '#1c1c1e' }}>
-              Working Place
-            </h2>
-            <p className="text-xs mt-0.5" style={{ color: '#8e8e93' }}>
-              Selecteer een kwartaal
-            </p>
+        {/* ── Sectie 2: Working Place ── */}
+        {/* [BOEK-028] Design System — Workspace card + Q buttons — May 2026 */}
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>Working Place</h2>
+            <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>Selecteer een kwartaal</p>
           </div>
 
-          <div className="grid grid-cols-4 gap-3 p-4">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, padding: 16 }}>
             {[1, 2, 3, 4].map(q => {
               const isCurrent = q === currentQ
               return (
                 <button
                   key={q}
-                  onClick={() =>
-                    router.push(`/dashboard/clients/${clientId}/kwartaal?q=${q}&year=${year}`)
-                  }
-                  className="flex flex-col items-center gap-1 py-4 rounded-2xl transition-all active:scale-95"
+                  onClick={() => router.push(`/dashboard/clients/${clientId}/kwartaal?q=${q}&year=${year}`)}
                   style={{
-                    backgroundColor: isCurrent ? '#1c1c1e' : '#f2f2f7',
-                    color: isCurrent ? '#fff' : '#1c1c1e',
-                    boxShadow: isCurrent ? '0 2px 8px rgba(0,0,0,0.18)' : 'none',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                    padding: '16px 8px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                    backgroundColor: isCurrent ? '#1A73E8' : '#F8F9FA',
+                    color: isCurrent ? '#FFFFFF' : '#202124',
+                    transition: 'background 0.1s ease',
                   }}
+                  onMouseEnter={e => { if (!isCurrent) (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#E8F0FE' }}
+                  onMouseLeave={e => { if (!isCurrent) (e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F8F9FA' }}
                 >
-                  <span className="text-xs font-semibold"
-                    style={{ color: isCurrent ? 'rgba(255,255,255,0.5)' : '#8e8e93' }}>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: isCurrent ? 'rgba(255,255,255,0.7)' : '#5F6368' }}>
                     {year}
                   </span>
-                  <span className="text-xl font-black">Q{q}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700 }}>Q{q}</span>
                   {isCurrent && (
-                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                      huidig
-                    </span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>huidig</span>
                   )}
                 </button>
               )
@@ -212,8 +209,14 @@ export default function ClientDetailPage() {
         {/* Factuur opstellen */}
         <button
           onClick={() => router.push(`/dashboard/invoice/new?clientId=${clientId}`)}
-          className="w-full py-3 rounded-2xl text-sm font-semibold"
-          style={{ backgroundColor: '#af52de', color: '#fff' }}>
+          style={{
+            width: '100%', padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+            backgroundColor: '#1A73E8', color: '#FFFFFF', fontSize: 14, fontWeight: 500,
+            transition: 'background 0.1s ease',
+          }}
+          onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#1557B0')}
+          onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#1A73E8')}
+        >
           + Factuur opstellen voor deze klant
         </button>
 

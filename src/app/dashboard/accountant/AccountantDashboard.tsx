@@ -260,7 +260,7 @@ export function AccountantDashboard({ profile }: { profile: any }) {
   // ─────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
+    <div className="min-h-screen" style={{ backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
 
       <DashboardHeader
         profile={profile}
@@ -276,40 +276,44 @@ export function AccountantDashboard({ profile }: { profile: any }) {
         onLogout={handleLogout}
       />
 
-      <main className="max-w-2xl mx-auto px-4 py-5 space-y-4 pb-32">
+      <main style={{ maxWidth: 720, margin: "0 auto", padding: "24px", display: "flex", flexDirection: "column", gap: 16, paddingBottom: 128 }}>
 
         {/* [BOEK-028] Ga verder — last visited client shortcut, hidden if none */}
         {lastClientId && lastClientName && (
           <button
             onClick={() => openClient(lastClientId)}
-            className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl text-left active:opacity-80 transition-opacity"
             style={{
-              backgroundColor: 'var(--color-card, #fff)',
-              boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '14px 16px', textAlign: 'left', cursor: 'pointer',
+              backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
+              background: 'none',
             }}
           >
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide mb-0.5"
-                style={{ color: '#8e8e93' }}>
+                style={{ fontSize: 11, fontWeight: 600, color: '#5F6368', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
                 Ga verder waar je gebleven bent
               </p>
               <p className="text-sm font-bold" style={{ color: 'var(--color-text-primary, #1c1c1e)' }}>
                 {lastClientName}
               </p>
             </div>
-            <span className="text-lg" style={{ color: '#007aff' }}>→</span>
+            <span style={{ fontSize: 16, color: '#1A73E8' }}>→</span>
           </button>
         )}
 
         {/* [BOEK-028] Samen werken met AI button */}
         <button
           onClick={() => { setShowAiPanel(p => !p); setAiResult(null); setAiPrompt('') }}
-          className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl text-left active:opacity-80 transition-opacity"
-          style={{ backgroundColor: '#1c1c1e', color: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.12)' }}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '14px 16px', textAlign: 'left', cursor: 'pointer',
+            backgroundColor: '#202124', color: '#FFFFFF', border: 'none', borderRadius: 8,
+          }}
         >
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide mb-0.5"
-              style={{ color: 'rgba(255,255,255,0.45)' }}>
+              style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>
               AI Assistent
             </p>
             <p className="text-sm font-bold">Samen werken met AI ✨</p>
@@ -323,7 +327,7 @@ export function AccountantDashboard({ profile }: { profile: any }) {
         {showAiPanel && (
           <div
             className="rounded-2xl overflow-hidden"
-            style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 2px 12px rgba(0,0,0,0.1)' }}
+            style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}
           >
             <div className="p-4 space-y-3">
               <p className="text-xs" style={{ color: '#8e8e93' }}>
@@ -335,34 +339,34 @@ export function AccountantDashboard({ profile }: { profile: any }) {
                 rows={3}
                 placeholder="bijv. bereid BTW aangifte voor klant Jansen BV..."
                 className="w-full text-sm rounded-xl px-3 py-2.5 border resize-none"
-                style={{ borderColor: '#e5e5ea', backgroundColor: '#f2f2f7', color: '#1c1c1e' }}
+                style={{ borderColor: '#BDBDBD', backgroundColor: '#F8F9FA', color: '#202124', fontSize: 14 }}
               />
               <button
                 onClick={handleAiPrompt}
                 disabled={aiLoading || !aiPrompt.trim()}
                 className="w-full text-sm font-semibold py-2.5 rounded-xl disabled:opacity-40"
-                style={{ backgroundColor: '#1c1c1e', color: '#fff' }}
+                style={{ backgroundColor: '#202124', color: '#FFFFFF', borderRadius: 8, padding: '8px 16px', fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', width: '100%' }}
               >
                 {aiLoading ? 'AI werkt...' : 'Genereer ✨'}
               </button>
 
               {aiResult && (
                 <div className="rounded-xl p-3 text-xs space-y-2"
-                  style={{ backgroundColor: '#f2f2f7', color: '#3a3a3c' }}>
+                  style={{ backgroundColor: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8, color: '#202124' }}>
                   <p className="font-semibold">Onderwerp: {aiResult.subject}</p>
                   <p className="whitespace-pre-wrap leading-relaxed">{aiResult.body}</p>
                   <div className="flex gap-2 pt-1">
                     <button
                       onClick={() => navigator.clipboard?.writeText(aiResult.body)}
                       className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-                      style={{ backgroundColor: '#007aff', color: '#fff' }}
+                      style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', borderRadius: 8, padding: '6px 12px', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}
                     >
                       Kopiëren
                     </button>
                     <button
                       onClick={() => { setAiResult(null); setAiPrompt('') }}
                       className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-                      style={{ backgroundColor: '#e5e5ea', color: '#3a3a3c' }}
+                      style={{ backgroundColor: '#F8F9FA', color: '#202124', border: '1px solid #BDBDBD', borderRadius: 8, padding: '6px 12px', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
                     >
                       Opnieuw
                     </button>
@@ -376,19 +380,19 @@ export function AccountantDashboard({ profile }: { profile: any }) {
         {/* [BOEK-028] Mijn klanten list */}
         <div
           className="rounded-2xl overflow-hidden"
-          style={{ backgroundColor: 'var(--color-card, #fff)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+          style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}
         >
           <div
             className="flex items-center justify-between px-4 py-4 border-b"
-            style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}
+            style={{ borderBottom: '1px solid #E0E0E0', padding: '12px 16px' }}
           >
-            <h2 className="text-base font-semibold" style={{ color: 'var(--color-text-primary, #1c1c1e)' }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>
               Mijn klanten
             </h2>
             <button
               onClick={() => router.push('/dashboard/clients/invite')}
               className="text-sm font-semibold px-3 py-1.5 rounded-xl"
-              style={{ backgroundColor: '#af52de', color: '#fff' }}
+              style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', borderRadius: 8, padding: '8px 14px', fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer' }}
             >
               + Klant
             </button>
@@ -396,18 +400,18 @@ export function AccountantDashboard({ profile }: { profile: any }) {
 
           {clients.length === 0 ? (
             <p className="text-sm text-center py-10"
-              style={{ color: 'var(--color-text-tertiary, #8e8e93)' }}>
+              style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '32px' }}>
               Nog geen klanten — voeg je eerste klant toe
             </p>
           ) : (
-            <div className="divide-y" style={{ borderColor: 'var(--color-separator, #e5e5ea)' }}>
+            <div className="divide-y" style={{ borderTop: '1px solid #E0E0E0' }}>
               {clients.map(client => {
                 const status = deriveClientStatus(clientInvoiceCounts[client.id] ?? 0)
                 return (
                   <div
                     key={client.id}
                     onClick={() => openClient(client.id)}
-                    className="flex items-center gap-3 px-4 py-4 active:bg-gray-50 cursor-pointer transition-colors"
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", transition: "background 0.1s ease" }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#F8F9FA")} onMouseLeave={e => (e.currentTarget.style.backgroundColor = "transparent")}
                   >
                     <div
                       className="w-2.5 h-2.5 rounded-full flex-shrink-0"
@@ -415,11 +419,11 @@ export function AccountantDashboard({ profile }: { profile: any }) {
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold truncate"
-                        style={{ color: 'var(--color-text-primary, #1c1c1e)' }}>
+                        style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {client.company_name || client.full_name}
                       </p>
                       <p className="text-xs truncate mt-0.5"
-                        style={{ color: 'var(--color-text-secondary, #636366)' }}>
+                        style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {client.email}
                       </p>
                     </div>
@@ -431,7 +435,7 @@ export function AccountantDashboard({ profile }: { profile: any }) {
                         }}>
                         {status === 'complete' ? 'Klaar' : status === 'partial' ? 'Gedeeltelijk' : 'Ontbreekt'}
                       </span>
-                      <span className="text-xs font-semibold" style={{ color: '#007aff' }}>→</span>
+                      <span className="text-xs font-semibold" style={{ fontSize: 12, color: '#1A73E8', fontWeight: 600 }}>→</span>
                     </div>
                   </div>
                 )
@@ -449,7 +453,7 @@ export function AccountantDashboard({ profile }: { profile: any }) {
           <div className="rounded-2xl shadow-xl overflow-hidden"
             style={{ backgroundColor: '#fff', width: 340 }}>
             <div className="flex items-center justify-between px-4 py-3"
-              style={{ backgroundColor: '#1c1c1e' }}>
+              style={{ backgroundColor: '#202124' }}>
               <div className="flex items-center gap-2">
                 <span className="text-base">📋</span>
                 <span className="text-sm font-semibold text-white">Draft Queue</span>
@@ -466,7 +470,7 @@ export function AccountantDashboard({ profile }: { profile: any }) {
             <div className="px-4 pt-3 pb-2">
               <select value={draftQueueClientId} onChange={e => setDraftQueueClientId(e.target.value)}
                 className="w-full text-sm rounded-xl px-3 py-2 border"
-                style={{ borderColor: '#e5e5ea', backgroundColor: '#f2f2f7', color: '#1c1c1e' }}>
+                style={{ borderColor: '#BDBDBD', backgroundColor: '#F8F9FA', color: '#202124', fontSize: 14 }}>
                 <option value="">Selecteer klant</option>
                 {clients.map(c => (
                   <option key={c.id} value={c.id}>{c.company_name || c.full_name}</option>
@@ -493,15 +497,15 @@ export function AccountantDashboard({ profile }: { profile: any }) {
                 onKeyDown={e => e.key === 'Enter' && addManualItem()}
                 placeholder="Item toevoegen..."
                 className="flex-1 text-xs rounded-xl px-3 py-2 border"
-                style={{ borderColor: '#e5e5ea', backgroundColor: '#f2f2f7' }} />
+                style={{ borderColor: '#BDBDBD', backgroundColor: '#F8F9FA', color: '#202124' }} />
               <button onClick={addManualItem} disabled={!draftInput.trim() || !draftQueueClientId}
                 className="text-xs font-semibold px-3 py-2 rounded-xl disabled:opacity-40"
-                style={{ backgroundColor: '#007aff', color: '#fff' }}>+</button>
+                style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', borderRadius: 6, padding: '6px 10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>+</button>
             </div>
 
             {composedEmail && (
               <div className="mx-4 mb-3 p-3 rounded-xl text-xs"
-                style={{ backgroundColor: '#f2f2f7', color: '#3a3a3c' }}>
+                style={{ backgroundColor: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8, color: '#202124' }}>
                 <p className="font-semibold mb-1">Onderwerp: {composedEmail.subject}</p>
                 <p className="whitespace-pre-wrap leading-relaxed">{composedEmail.body}</p>
               </div>
@@ -510,7 +514,7 @@ export function AccountantDashboard({ profile }: { profile: any }) {
             <div className="px-4 pb-4 flex gap-2">
               <button onClick={composeEmail} disabled={composing || draftQueue.length === 0}
                 className="flex-1 text-xs font-semibold py-2.5 rounded-xl disabled:opacity-40"
-                style={{ backgroundColor: '#34c759', color: '#fff' }}>
+                style={{ backgroundColor: '#34A853', color: '#FFFFFF', borderRadius: 6, padding: '8px 12px', border: 'none', cursor: 'pointer', fontWeight: 500, fontSize: 12 }}>
                 {composing ? 'AI stelt op...' : 'AI opstellen'}
               </button>
               {composedEmail && (
@@ -521,17 +525,17 @@ export function AccountantDashboard({ profile }: { profile: any }) {
                       window.location.href = `mailto:${client.email}?subject=${encodeURIComponent(composedEmail.subject)}&body=${encodeURIComponent(composedEmail.body)}`
                   }}
                   className="text-xs font-semibold px-3 py-2.5 rounded-xl"
-                  style={{ backgroundColor: '#007aff', color: '#fff' }}>Versturen</button>
+                  style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', borderRadius: 6, padding: '8px 10px', border: 'none', cursor: 'pointer', fontWeight: 500, fontSize: 12 }}>Versturen</button>
               )}
               <button onClick={clearDraftQueue}
                 className="text-xs font-semibold px-3 py-2.5 rounded-xl"
-                style={{ backgroundColor: '#ff3b30', color: '#fff' }}>Wissen</button>
+                style={{ backgroundColor: '#EA4335', color: '#FFFFFF', borderRadius: 6, padding: '8px 10px', border: 'none', cursor: 'pointer', fontWeight: 500, fontSize: 12 }}>Wissen</button>
             </div>
           </div>
         ) : (
           <button onClick={() => setShowDraftQueue(true)}
             className="relative flex items-center gap-2 px-4 py-3 rounded-2xl shadow-lg text-sm font-semibold"
-            style={{ backgroundColor: '#1c1c1e', color: '#fff' }}>
+            style={{ backgroundColor: '#202124', color: '#FFFFFF', borderRadius: 8, padding: '10px 16px', border: 'none', cursor: 'pointer', fontWeight: 500, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
             📋 Draft Queue
             {draftQueue.length > 0 && (
               <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">

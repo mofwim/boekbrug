@@ -3,6 +3,7 @@
 // src/app/dashboard/invoice/[id]/page.tsx
 // BOEK-005: skeleton loading
 // [BOEK-031] add creditnota button for sent invoices — May 2026
+// [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -11,7 +12,6 @@ import dynamic from 'next/dynamic'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
-// [BOEK-031] badge voor creditnota / pro forma
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 
 const PDFDownloadLink = dynamic(
@@ -19,19 +19,23 @@ const PDFDownloadLink = dynamic(
   { ssr: false }
 )
 
-const statusConfig: Record<string, { label: string; color: string }> = {
-  draft:      { label: 'Concept',         color: 'bg-gray-100 text-gray-600' },
-  sent:       { label: 'Verzonden',       color: 'bg-blue-100 text-blue-600' },
-  paid:       { label: 'Betaald',         color: 'bg-green-100 text-green-600' },
-  overdue:    { label: 'Verlopen',        color: 'bg-red-100 text-red-600' },
-  received:   { label: 'Ontvangen',       color: 'bg-blue-100 text-blue-700' },
-  processing: { label: 'In behandeling',  color: 'bg-yellow-100 text-yellow-700' },
-  processed:  { label: 'Verwerkt',        color: 'bg-green-100 text-green-700' },
-  unclear:    { label: 'Onduidelijk',     color: 'bg-red-100 text-red-700' },
-  archived:   { label: 'Gearchiveerd',    color: 'bg-gray-100 text-gray-500' },
+// [DS] Design System v1.0 — Status chip colors (ZZP = pill, same values)
+const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
+  draft:      { label: 'Concept',        bg: '#E7E0EC', color: '#49454F' },
+  sent:       { label: 'Verzonden',      bg: '#D3E3FD', color: '#1967D2' },
+  paid:       { label: 'Betaald',        bg: '#CEEAD6', color: '#137333' },
+  overdue:    { label: 'Verlopen',       bg: '#F9DEDC', color: '#B3261E' },
+  received:   { label: 'Ontvangen',      bg: '#D3E3FD', color: '#1967D2' },
+  processing: { label: 'In behandeling', bg: '#FEF7E0', color: '#EA8600' },
+  processed:  { label: 'Verwerkt',       bg: '#CEEAD6', color: '#137333' },
+  unclear:    { label: 'Onduidelijk',    bg: '#F9DEDC', color: '#B3261E' },
+  archived:   { label: 'Gearchiveerd',   bg: '#F1F3F4', color: '#5F6368' },
 }
 
-// [BOEK-031] Statussen waarvoor een creditnota mogelijk is
+// [DS] NL formatting — fixed, never changes
+const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
+const NL_DATE   = new Intl.DateTimeFormat('nl-NL')
+
 const CREDITABLE_STATUSES = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
 
 export default function InvoiceDetailPage() {
@@ -96,11 +100,11 @@ export default function InvoiceDetailPage() {
 
   if (notFoundState) notFound()
 
-  const status = invoice
-    ? statusConfig[invoice.status] || { label: invoice.status, color: 'bg-gray-100 text-gray-600' }
+  // [DS] STATUS_CONFIG — Material You chip tokens
+  const statusCfg = invoice
+    ? STATUS_CONFIG[invoice.status] || { label: invoice.status, bg: '#F1F3F4', color: '#5F6368' }
     : null
 
-  // [BOEK-031] Mag er een creditnota aangemaakt worden?
   const canCreateCreditnota =
     invoice &&
     invoice.invoice_type !== 'creditnota' &&
@@ -108,26 +112,42 @@ export default function InvoiceDetailPage() {
     !linkedCreditnota
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA' }}>
 
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-4 sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      {/* [DS] Header — Material You sticky, frosted glass */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 10,
+        backgroundColor: 'rgba(255,255,255,0.9)',
+        backdropFilter: 'blur(20px)',
+        borderBottom: '1px solid rgba(0,0,0,0.06)',
+        padding: '12px 16px',
+      }}>
+        <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* [DS] Back button — Material You circular tonal */}
             <button
               onClick={() => router.push('/dashboard')}
-              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 active:bg-gray-200 transition-colors"
-            >
-              ←
-            </button>
+              style={{
+                width: 36, height: 36,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                borderRadius: 9999,
+                border: 'none',
+                backgroundColor: 'transparent',
+                color: '#5F6368',
+                cursor: 'pointer',
+                fontSize: 18,
+                transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+            >←</button>
             {loading ? (
-              <div className="h-4 w-36 bg-gray-100 rounded-full animate-pulse" />
+              <div style={{ height: 16, width: 144, backgroundColor: '#E7E0EC', borderRadius: 9999 }} />
             ) : (
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-gray-900">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>
                   {invoice.invoice_number || 'Concept'}
                 </h1>
-                {/* [BOEK-031] Badge voor creditnota of pro forma */}
                 {invoice.invoice_type && invoice.invoice_type !== 'factuur' && (
                   <InvoiceTypeBadge type={invoice.invoice_type} size="xs" />
                 )}
@@ -135,11 +155,19 @@ export default function InvoiceDetailPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            {!loading && status && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {!loading && statusCfg && (
               <>
-                <span className={`text-xs px-3 py-1 rounded-full font-medium ${status.color}`}>
-                  {status.label}
+                {/* [DS] Status chip — Material You pill */}
+                <span style={{
+                  fontSize: 12, fontWeight: 500,
+                  padding: '4px 12px',
+                  borderRadius: 9999,
+                  backgroundColor: statusCfg.bg,
+                  color: statusCfg.color,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {statusCfg.label}
                 </span>
                 <InvoiceActions
                   invoiceId={invoiceId}
@@ -150,11 +178,22 @@ export default function InvoiceDetailPage() {
                   <PDFDownloadLink
                     document={<InvoicePDF invoice={invoice} lines={lines} profile={profile} />}
                     fileName={`${invoice.invoice_number || 'concept'}.pdf`}
-                    className="bg-blue-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-blue-700 active:scale-95 font-medium transition-all"
                   >
-                    {({ loading: pdfLoading }: { loading: boolean }) =>
-                      pdfLoading ? 'Laden...' : '↓ PDF'
-                    }
+                    {({ loading: pdfLoading }: { loading: boolean }) => (
+                      <button style={{
+                        backgroundColor: '#1A73E8',
+                        color: 'white',
+                        fontSize: 13,
+                        fontWeight: 500,
+                        padding: '8px 16px',
+                        borderRadius: 9999, // [DS] Material You pill
+                        border: 'none',
+                        cursor: 'pointer',
+                        transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
+                      }}>
+                        {pdfLoading ? 'Laden...' : '↓ PDF'}
+                      </button>
+                    )}
                   </PDFDownloadLink>
                 )}
               </>
@@ -167,203 +206,143 @@ export default function InvoiceDetailPage() {
       {loading ? (
         <InvoiceDetailSkeleton />
       ) : (
-        <div className="max-w-3xl mx-auto px-4 py-5 space-y-3">
+        <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 80 }}>
 
-          {/* [BOEK-031] Creditnota banner — als er al een bestaat */}
+          {/* [DS] Creditnota banner — al een creditnota gekoppeld */}
           {linkedCreditnota && (
-            <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-red-400">↩</span>
+            <div style={{ backgroundColor: '#F9DEDC', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#B3261E' }}>↩</span>
                 <div>
-                  <p className="text-xs font-semibold text-red-700">
-                    Gecrediteerd via {linkedCreditnota.invoice_number}
-                  </p>
-                  <p className="text-[11px] text-red-500">
-                    Deze factuur is geannuleerd door een creditnota
-                  </p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#B3261E', margin: 0 }}>Gecrediteerd via {linkedCreditnota.invoice_number}</p>
+                  <p style={{ fontSize: 11, color: '#B3261E', margin: '2px 0 0', opacity: 0.8 }}>Deze factuur is geannuleerd door een creditnota</p>
                 </div>
               </div>
-              <button
-                onClick={() => router.push(`/dashboard/invoice/${linkedCreditnota.id}`)}
-                className="text-xs font-medium text-red-600 hover:text-red-700 underline underline-offset-2"
-              >
+              <button onClick={() => router.push(`/dashboard/invoice/${linkedCreditnota.id}`)}
+                style={{ fontSize: 12, fontWeight: 500, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
                 Bekijken →
               </button>
             </div>
           )}
 
-          {/* [BOEK-031] Creditnota aanmaken — knop voor verzonden facturen */}
+          {/* [DS] Creditnota aanmaken banner — warning tonal */}
           {canCreateCreditnota && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-amber-500">⚠️</span>
-                <p className="text-xs text-amber-700">
+            <div style={{ backgroundColor: '#FEF7E0', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>⚠️</span>
+                <p style={{ fontSize: 12, color: '#EA8600', margin: 0 }}>
                   <strong>Fout in deze factuur?</strong> Verzonden facturen mogen nooit worden verwijderd.
                 </p>
               </div>
               <button
-                onClick={() =>
-                  router.push(`/dashboard/invoice/new?type=creditnota&original=${invoiceId}`)
-                }
-                className="shrink-0 ml-3 bg-red-600 text-white text-xs font-semibold px-3 py-2 rounded-xl hover:bg-red-700 active:scale-95 transition-all whitespace-nowrap"
-              >
-                ↩ Creditnota
-              </button>
+                onClick={() => router.push(`/dashboard/invoice/new?type=creditnota&original=${invoiceId}`)}
+                style={{ flexShrink: 0, marginLeft: 12, backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
+              >↩ Creditnota</button>
             </div>
           )}
 
-          {/* Van / Aan / Factuurdetails */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm">
-            {/* Desktop: 3 kolommen */}
-            <div className="hidden sm:grid grid-cols-3 gap-6 text-sm">
-              <div>
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Van</p>
-                <p className="font-semibold text-gray-900">{profile?.company_name || profile?.full_name}</p>
-                <p className="text-gray-500">{profile?.address}</p>
-                <p className="text-gray-500">{profile?.postal_code} {profile?.city}</p>
-                <p className="text-gray-500 mt-1">KVK: {profile?.kvk_number || '—'}</p>
-                <p className="text-gray-500">BTW: {profile?.btw_number || '—'}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Aan</p>
-                <p className="font-semibold text-gray-900">{invoice?.client_name || '—'}</p>
-                <p className="text-gray-500">{invoice?.client_address}</p>
-                <p className="text-gray-500">{invoice?.client_postal_code} {invoice?.client_city}</p>
-                {invoice?.client_btw_number && (
-                  <p className="text-gray-500 mt-1">BTW: {invoice.client_btw_number}</p>
-                )}
-                <p className="text-gray-500">{invoice?.client_email}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Factuurdetails</p>
-                <p className="text-gray-500"><span className="text-gray-400">Nummer:</span> {invoice.invoice_number || '—'}</p>
-                <p className="text-gray-500"><span className="text-gray-400">Datum:</span> {invoice.invoice_date}</p>
-                <p className="text-gray-500"><span className="text-gray-400">Vervaldatum:</span> {invoice.due_date}</p>
-              </div>
-            </div>
-
-            {/* Mobile: gestapeld */}
-            <div className="sm:hidden space-y-4 text-sm">
-              <div>
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Van</p>
-                <p className="font-semibold text-gray-900">{profile?.company_name || profile?.full_name}</p>
-                {profile?.address && <p className="text-gray-500 text-xs">{profile.address}</p>}
-                {(profile?.postal_code || profile?.city) && (
-                  <p className="text-gray-500 text-xs">{profile.postal_code} {profile.city}</p>
-                )}
-              </div>
-              <div className="border-t border-gray-50 pt-3">
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Aan</p>
-                <p className="font-semibold text-gray-900">{invoice?.client_name || '—'}</p>
-                {invoice?.client_address && <p className="text-gray-500 text-xs">{invoice.client_address}</p>}
-                {invoice?.client_email && <p className="text-gray-500 text-xs">{invoice.client_email}</p>}
-              </div>
-              <div className="border-t border-gray-50 pt-3">
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Details</p>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-500">
-                  <span className="text-gray-400">Nummer</span>
-                  <span>{invoice.invoice_number || '—'}</span>
-                  <span className="text-gray-400">Datum</span>
-                  <span>{invoice.invoice_date}</span>
-                  <span className="text-gray-400">Vervaldatum</span>
-                  <span>{invoice.due_date}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Factuurregels */}
-          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-900 text-sm">Factuurregels</h2>
-            </div>
-
-            {/* Desktop headers */}
-            <div className="hidden sm:grid grid-cols-12 gap-2 px-5 py-2 text-xs font-medium text-gray-400">
-              <div className="col-span-5">Omschrijving</div>
-              <div className="col-span-2 text-center">Aantal</div>
-              <div className="col-span-2 text-right">Prijs</div>
-              <div className="col-span-1 text-center">BTW</div>
-              <div className="col-span-2 text-right">Totaal</div>
-            </div>
-
-            <div className="divide-y divide-gray-50">
-              {lines.map((line, index) => (
-                <div key={index}>
-                  {/* Desktop */}
-                  <div className="hidden sm:grid grid-cols-12 gap-2 px-5 py-3 text-sm">
-                    <div className="col-span-5 text-gray-900">{line.description}</div>
-                    <div className="col-span-2 text-center text-gray-500">{line.quantity}</div>
-                    <div className="col-span-2 text-right text-gray-500">
-                      €{line.unit_price?.toLocaleString('nl-NL', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="col-span-1 text-center text-gray-500">{line.btw_rate}%</div>
-                    <div className="col-span-2 text-right font-medium text-gray-900">
-                      €{line.line_total?.toLocaleString('nl-NL', { minimumFractionDigits: 2 })}
-                    </div>
-                  </div>
-
-                  {/* Mobile: gestapeld */}
-                  <div className="sm:hidden px-4 py-3 space-y-1">
-                    <p className="text-sm text-gray-900">{line.description}</p>
-                    <div className="flex justify-between text-xs text-gray-400">
-                      <span>{line.quantity} × €{line.unit_price?.toLocaleString('nl-NL', { minimumFractionDigits: 2 })} ({line.btw_rate}% BTW)</span>
-                      <span className="font-medium text-gray-700">
-                        €{line.line_total?.toLocaleString('nl-NL', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </div>
+          {/* [DS] Van / Aan / Details — Material You card */}
+          <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 24 }}>
+              {[
+                {
+                  title: 'Van',
+                  lines: [
+                    profile?.company_name || profile?.full_name,
+                    profile?.address,
+                    [profile?.postal_code, profile?.city].filter(Boolean).join(' '),
+                    profile?.kvk_number ? `KVK: ${profile.kvk_number}` : null,
+                    profile?.btw_number ? `BTW: ${profile.btw_number}` : null,
+                  ]
+                },
+                {
+                  title: 'Aan',
+                  lines: [
+                    invoice?.client_name || '—',
+                    invoice?.client_address,
+                    [invoice?.client_postal_code, invoice?.client_city].filter(Boolean).join(' '),
+                    invoice?.client_btw_number ? `BTW: ${invoice.client_btw_number}` : null,
+                    invoice?.client_email,
+                  ]
+                },
+                {
+                  title: 'Details',
+                  lines: [
+                    `Nummer: ${invoice.invoice_number || '—'}`,
+                    `Datum: ${invoice.invoice_date ? NL_DATE.format(new Date(invoice.invoice_date)) : '—'}`,
+                    `Vervaldatum: ${invoice.due_date ? NL_DATE.format(new Date(invoice.due_date)) : '—'}`,
+                  ]
+                },
+              ].map(section => (
+                <div key={section.title}>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{section.title}</p>
+                  {section.lines.filter(Boolean).map((line, i) => (
+                    <p key={i} style={{ fontSize: 13, color: i === 0 ? '#202124' : '#5F6368', fontWeight: i === 0 ? 600 : 400, margin: '2px 0' }}>{line}</p>
+                  ))}
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Totalen */}
-          <div className="bg-white rounded-2xl p-5 shadow-sm">
-            <div className="space-y-2 text-sm max-w-xs ml-auto">
-              <div className="flex justify-between text-gray-500">
+          {/* [DS] Factuurregels — Material You card */}
+          <div style={{ backgroundColor: 'white', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #F1F3F4' }}>
+              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Factuurregels</h2>
+            </div>
+            {/* Header row */}
+            <div style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '8px 20px', backgroundColor: '#F8F9FA' }}>
+              {['Omschrijving','Aantal','Prijs','BTW','Totaal'].map((h, i) => (
+                <p key={h} style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, textAlign: i > 0 ? 'right' : 'left' }}>{h}</p>
+              ))}
+            </div>
+            {lines.map((line, index) => (
+              <div key={index} style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '12px 20px', borderTop: '1px solid #F1F3F4' }}>
+                <p style={{ fontSize: 14, color: '#202124', margin: 0 }}>{line.description}</p>
+                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.quantity}</p>
+                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.unit_price)}</p>
+                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.btw_rate}%</p>
+                <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total)}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* [DS] Totalen */}
+          <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
+            <div style={{ maxWidth: 280, marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                 <span>Subtotaal excl. BTW</span>
-                <span>€{invoice.total_ex_btw?.toLocaleString('nl-NL', { minimumFractionDigits: 2 })}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.total_ex_btw)}</span>
               </div>
-              <div className="flex justify-between text-gray-500">
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                 <span>BTW</span>
-                <span>€{invoice.btw_amount?.toLocaleString('nl-NL', { minimumFractionDigits: 2 })}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.btw_amount)}</span>
               </div>
-              <div className="flex justify-between font-bold text-gray-900 text-base pt-2 border-t border-gray-100">
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: invoice.invoice_type === 'creditnota' ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
                 <span>Totaal incl. BTW</span>
-                {/* [BOEK-031] creditnota heeft negatieve bedragen — toon in rood */}
-                <span className={invoice.invoice_type === 'creditnota' ? 'text-red-600' : ''}>
-                  €{invoice.total_inc_btw?.toLocaleString('nl-NL', { minimumFractionDigits: 2 })}
-                </span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.total_inc_btw)}</span>
               </div>
             </div>
           </div>
 
-          {/* Betalingsinformatie */}
+          {/* [DS] Betalingsinformatie */}
           {profile?.iban && invoice.invoice_type !== 'creditnota' && (
-            <div className="bg-white rounded-2xl p-5 shadow-sm">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                Betalingsinformatie
-              </p>
-              <p className="text-sm text-gray-600 leading-relaxed">
+            <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Betalingsinformatie</p>
+              <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
                 Gelieve te betalen op{' '}
-                <span className="font-medium text-gray-900">{profile.iban}</span>{' '}
-                o.v.v.{' '}
-                <span className="font-medium text-gray-900">{invoice.invoice_number}</span>
+                <strong style={{ color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{profile.iban}</strong>{' '}
+                o.v.v. <strong style={{ color: '#202124' }}>{invoice.invoice_number}</strong>
               </p>
             </div>
           )}
 
-          {/* [BOEK-031] Creditnota — terugbetaling info */}
+          {/* [DS] Creditnota terugbetaling */}
           {invoice.invoice_type === 'creditnota' && profile?.iban && (
-            <div className="bg-red-50 border border-red-100 rounded-2xl p-5 shadow-sm">
-              <p className="text-[11px] font-semibold text-red-400 uppercase tracking-wider mb-2">
-                Terugbetaling
-              </p>
-              <p className="text-sm text-red-700 leading-relaxed">
+            <div style={{ backgroundColor: '#F9DEDC', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Terugbetaling</p>
+              <p style={{ fontSize: 14, color: '#B3261E', lineHeight: 1.6, margin: 0 }}>
                 Het gecrediteerde bedrag wordt teruggestort op het rekeningnummer van de klant.
-                O.v.v. creditnota{' '}
-                <span className="font-medium">{invoice.invoice_number}</span>.
+                O.v.v. creditnota <strong>{invoice.invoice_number}</strong>.
               </p>
             </div>
           )}

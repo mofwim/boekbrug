@@ -1,54 +1,67 @@
 'use client'
 
 // src/app/dashboard/klanten/page.tsx
-// [BOEK-029] Mijn klanten — client list + inline expand + add form — May 2026
+// [BOEK-029] Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
+// ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
+const M3 = {
+  primary:           '#1A73E8',
+  onPrimary:         '#FFFFFF',
+  primaryContainer:  '#D3E3FD',
+  onPrimaryContainer:'#041E49',
+  surface:           '#FFFBFE',
+  onSurface:         '#1C1B1F',
+  surfaceVariant:    '#E7E0EC',
+  outline:           '#79747E',
+  error:             '#B3261E',
+  errorContainer:    '#F9DEDC',
+}
+const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const R = { sm: 8, md: 12, lg: 16, full: 9999 }
+const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
+
 interface Client {
-  id: string
-  name: string
-  email: string | null
-  kvk_number: string | null
-  btw_number: string | null
-  iban: string | null
-  address: string | null
-  postal_code: string | null
-  city: string | null
+  id: string; name: string; email: string | null
+  kvk_number: string | null; btw_number: string | null; iban: string | null
+  address: string | null; postal_code: string | null; city: string | null
   created_at: string
 }
 
-const EMPTY_FORM = { name: '', email: '', kvk_number: '', btw_number: '', iban: '', address: '', postal_code: '', city: '' }
+const EMPTY = { name: '', email: '', kvk_number: '', btw_number: '', iban: '', address: '', postal_code: '', city: '' }
+
+// Avatar color from name
+function avatarColor(name: string) {
+  const colors = ['#1A73E8','#00897B','#7B1FA2','#E37400','#E53935','#039BE5']
+  return colors[name.charCodeAt(0) % colors.length]
+}
 
 export default function KlantenPage({ profile }: { profile: any }) {
   const router   = useRouter()
   const supabase = createClient()
 
-  const [clients, setClients]     = useState<Client[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [search, setSearch]       = useState('')
+  const [clients, setClients]       = useState<Client[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [search, setSearch]         = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [showForm, setShowForm]   = useState(false)
-  const [form, setForm]           = useState(EMPTY_FORM)
-  const [saving, setSaving]       = useState(false)
-  const [error, setError]         = useState<string | null>(null)
-  const [toast, setToast]         = useState<string | null>(null)
+  const [showForm, setShowForm]     = useState(false)
+  const [form, setForm]             = useState(EMPTY)
+  const [saving, setSaving]         = useState(false)
+  const [error, setError]           = useState<string | null>(null)
+  const [toast, setToast]           = useState<string | null>(null)
 
   useEffect(() => { loadClients() }, [])
 
   async function loadClients() {
     setLoading(true)
-    const { data } = await supabase
-      .from('clients').select('*')
-      .eq('user_id', profile.id)
-      .order('name', { ascending: true })
+    const { data } = await supabase.from('clients').select('*').eq('user_id', profile.id).order('name')
     setClients(data ?? [])
     setLoading(false)
   }
 
-  // [BOEK-029] filtered by search
   const filtered = clients.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase()) ||
     (c.email ?? '').toLowerCase().includes(search.toLowerCase())
@@ -58,18 +71,13 @@ export default function KlantenPage({ profile }: { profile: any }) {
     if (!form.name.trim()) { setError('Naam is verplicht'); return }
     setSaving(true); setError(null)
     const { error: err } = await supabase.from('clients').insert({
-      user_id: profile.id,
-      name: form.name.trim(),
-      email: form.email || null,
-      kvk_number: form.kvk_number || null,
-      btw_number: form.btw_number || null,
-      iban: form.iban || null,
-      address: form.address || null,
-      postal_code: form.postal_code || null,
-      city: form.city || null,
+      user_id: profile.id, name: form.name.trim(),
+      email: form.email || null, kvk_number: form.kvk_number || null,
+      btw_number: form.btw_number || null, iban: form.iban || null,
+      address: form.address || null, postal_code: form.postal_code || null, city: form.city || null,
     })
     if (err) { setError('Opslaan mislukt'); setSaving(false); return }
-    setForm(EMPTY_FORM); setShowForm(false)
+    setForm(EMPTY); setShowForm(false)
     showToast('Klant toegevoegd')
     await loadClients()
     setSaving(false)
@@ -84,85 +92,91 @@ export default function KlantenPage({ profile }: { profile: any }) {
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
+  const FIELDS = [
+    { key: 'name',        label: 'Naam *',      placeholder: 'Bedrijfsnaam of naam', required: true },
+    { key: 'email',       label: 'E-mail',       placeholder: 'info@bedrijf.nl' },
+    { key: 'kvk_number',  label: 'KVK nummer',  placeholder: '12345678' },
+    { key: 'btw_number',  label: 'BTW nummer',  placeholder: 'NL123456789B01' },
+    { key: 'iban',        label: 'IBAN',         placeholder: 'NL91ABNA0417164300' },
+    { key: 'address',     label: 'Adres',        placeholder: 'Straatnaam 1' },
+    { key: 'postal_code', label: 'Postcode',     placeholder: '1234 AB' },
+    { key: 'city',        label: 'Stad',         placeholder: 'Amsterdam' },
+  ]
+
   return (
-    <div style={{
-      minHeight: '100vh', backgroundColor: 'var(--color-bg, #f2f2f7)',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
-      WebkitFontSmoothing: 'antialiased',
-    }}>
-      {/* ── Header ── */}
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
+
+      {/* ── Top App Bar ── */}
       <div style={{
-        background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)',
-        borderBottom: '0.5px solid rgba(0,0,0,0.1)',
+        background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
+        borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px 10px', position: 'sticky', top: 0, zIndex: 50,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <button onClick={() => router.back()} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#007aff', fontWeight: 600, padding: 0 }}>← Terug</button>
-          <h1 style={{ fontSize: 17, fontWeight: 700, color: '#1c1c1e', flex: 1, textAlign: 'center' }}>Mijn klanten</h1>
-          <button onClick={() => { setShowForm(p => !p); setError(null) }}
-            style={{ background: '#007aff', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13, color: '#fff', fontWeight: 700 }}>
-            + Nieuw
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <button onClick={() => router.back()} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
+          </button>
+          <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center' }}>Mijn klanten</h1>
+          <button
+            onClick={() => { setShowForm(p => !p); setError(null) }}
+            style={{ background: M3.primaryContainer, color: M3.onPrimaryContainer, border: 'none', borderRadius: R.full, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_add</span>
+            Nieuw
           </button>
         </div>
-        {/* Search */}
-        <input
-          value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Zoek op naam of e-mail..."
-          style={{ width: '100%', borderRadius: 10, border: '1px solid #e5e5ea', padding: '9px 12px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
-        />
+
+        {/* Material You search bar */}
+        <div style={{ position: 'relative' }}>
+          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Zoek op naam of e-mail..."
+            style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 16px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
+          />
+        </div>
       </div>
 
       <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 80px' }}>
 
-        {/* ── Add form ── */}
+        {/* Add form — Material You card */}
         {showForm && (
-          <div style={{ background: '#fff', borderRadius: 16, padding: '18px 16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginBottom: 14 }}>
-            <p style={{ fontSize: 15, fontWeight: 700, color: '#1c1c1e', marginBottom: 14 }}>Nieuwe klant</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[
-                { key: 'name',       label: 'Naam *',      placeholder: 'Bedrijfsnaam of naam' },
-                { key: 'email',      label: 'E-mail',       placeholder: 'info@bedrijf.nl' },
-                { key: 'kvk_number', label: 'KVK nummer',  placeholder: '12345678' },
-                { key: 'btw_number', label: 'BTW nummer',  placeholder: 'NL123456789B01' },
-                { key: 'iban',       label: 'IBAN',         placeholder: 'NL91ABNA0417164300' },
-                { key: 'address',    label: 'Adres',        placeholder: 'Straatnaam 1' },
-                { key: 'postal_code',label: 'Postcode',     placeholder: '1234 AB' },
-                { key: 'city',       label: 'Stad',         placeholder: 'Amsterdam' },
-              ].map(f => (
+          <div style={{ background: '#fff', borderRadius: R.lg, padding: '20px 16px', boxShadow: EL1, marginBottom: 14, border: `1px solid ${M3.primaryContainer}` }}>
+            <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 16, fontFamily: FONT }}>Nieuwe klant</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {FIELDS.map(f => (
                 <div key={f.key}>
-                  <p style={{ fontSize: 11, color: '#8e8e93', marginBottom: 3, fontWeight: 500 }}>{f.label}</p>
+                  <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 4, fontWeight: 500 }}>{f.label}</p>
                   <input
-                    value={(form as any)[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                    value={(form as any)[f.key]}
+                    onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
                     placeholder={f.placeholder}
-                    style={{ width: '100%', borderRadius: 10, border: '1px solid #e5e5ea', padding: '9px 12px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                    style={{ width: '100%', borderRadius: R.md, border: `2px solid ${(form as any)[f.key] ? M3.primary : M3.outline}`, padding: '12px 14px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface, transition: 'border-color 0.15s' }}
                   />
                 </div>
               ))}
             </div>
-            {error && <p style={{ fontSize: 12, color: '#ff3b30', marginTop: 8 }}>{error}</p>}
-            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-              <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM) }}
-                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#f2f2f7', color: '#1c1c1e', fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>
+            {error && <p style={{ fontSize: 12, color: M3.error, marginTop: 8 }}>{error}</p>}
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button onClick={() => { setShowForm(false); setForm(EMPTY) }}
+                style={{ flex: 1, padding: '12px', borderRadius: R.full, border: 'none', background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
                 Annuleren
               </button>
               <button onClick={handleSave} disabled={saving}
-                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: saving ? '#e5e5ea' : '#007aff', color: saving ? '#8e8e93' : '#fff', fontSize: 15, fontWeight: 700, cursor: saving ? 'default' : 'pointer' }}>
+                style={{ flex: 1, padding: '12px', borderRadius: R.full, border: 'none', background: saving ? M3.surfaceVariant : M3.primary, color: saving ? '#79747E' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
                 {saving ? 'Opslaan...' : 'Opslaan'}
               </button>
             </div>
           </div>
         )}
 
-        {/* ── Client list ── */}
-        {loading ? (
-          <SkeletonList />
-        ) : filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: 16, boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}>
-            <p style={{ fontSize: 40, marginBottom: 10 }}>👥</p>
-            <p style={{ fontSize: 15, fontWeight: 600, color: '#1c1c1e', marginBottom: 4 }}>
+        {/* Client list */}
+        {loading ? <SkeletonList /> : filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>people</span>
+            <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 4, fontFamily: FONT }}>
               {search ? 'Geen resultaten' : 'Nog geen klanten'}
             </p>
-            <p style={{ fontSize: 13, color: '#8e8e93' }}>
+            <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>
               {search ? `Geen klant gevonden voor "${search}"` : 'Voeg je eerste klant toe'}
             </p>
           </div>
@@ -170,42 +184,42 @@ export default function KlantenPage({ profile }: { profile: any }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {filtered.map(client => {
               const expanded = expandedId === client.id
+              const bg = avatarColor(client.name)
               return (
-                <div key={client.id} style={{ borderRadius: 14, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+                <div key={client.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1 }}>
                   {/* Main row */}
-                  <div
-                    onClick={() => setExpandedId(expanded ? null : client.id)}
-                    style={{ background: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
-                  >
-                    <div style={{ width: 38, height: 38, borderRadius: 12, background: '#e8f1ff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#007aff', flexShrink: 0 }}>
+                  <div onClick={() => setExpandedId(expanded ? null : client.id)}
+                    style={{ background: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
+                    {/* Avatar */}
+                    <div style={{ width: 42, height: 42, borderRadius: R.full, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
                       {client.name.charAt(0).toUpperCase()}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontSize: 14, fontWeight: 700, color: '#1c1c1e', marginBottom: 2 }}>{client.name}</p>
-                      <p style={{ fontSize: 12, color: '#8e8e93', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? 'Geen e-mail'}</p>
+                      <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{client.name}</p>
+                      <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? 'Geen e-mail'}</p>
                     </div>
-                    <span style={{ fontSize: 16, color: '#c7c7cc', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>›</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#79747E', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
                   </div>
 
                   {/* Inline expand */}
                   {expanded && (
-                    <div style={{ background: '#f9f9fb', borderTop: '0.5px solid #e5e5ea', padding: '14px 16px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 12 }}>
-                        {client.kvk_number  && <InfoLine label="KVK"      value={client.kvk_number} />}
-                        {client.btw_number  && <InfoLine label="BTW"      value={client.btw_number} />}
-                        {client.iban        && <InfoLine label="IBAN"     value={client.iban} />}
-                        {client.address     && <InfoLine label="Adres"    value={`${client.address}, ${client.postal_code ?? ''} ${client.city ?? ''}`} />}
+                    <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '14px 16px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 14 }}>
+                        {client.kvk_number  && <InfoLine label="KVK"  value={client.kvk_number} />}
+                        {client.btw_number  && <InfoLine label="BTW"  value={client.btw_number} />}
+                        {client.iban        && <InfoLine label="IBAN" value={client.iban} />}
+                        {client.address     && <InfoLine label="Adres" value={[client.address, client.postal_code, client.city].filter(Boolean).join(', ')} />}
                       </div>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button
-                          onClick={e => { e.stopPropagation(); handleDelete(client.id) }}
-                          style={{ fontSize: 12, color: '#ff3b30', background: '#fff0ef', border: 'none', borderRadius: 10, padding: '7px 12px', cursor: 'pointer', fontWeight: 600 }}>
+                        <button onClick={e => { e.stopPropagation(); handleDelete(client.id) }}
+                          style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
                           Verwijderen
                         </button>
-                        <button
-                          onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/new?client_id=${client.id}&client_name=${encodeURIComponent(client.name)}`) }}
-                          style={{ fontSize: 13, color: '#fff', background: '#007aff', border: 'none', borderRadius: 10, padding: '7px 14px', cursor: 'pointer', fontWeight: 700 }}>
-                          + Factuur
+                        <button onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/new?client_id=${client.id}&client_name=${encodeURIComponent(client.name)}`) }}
+                          style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+                          Factuur
                         </button>
                       </div>
                     </div>
@@ -219,13 +233,13 @@ export default function KlantenPage({ profile }: { profile: any }) {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)', background: 'rgba(28,28,30,0.88)', color: '#fff', fontSize: 13, fontWeight: 600, padding: '10px 20px', borderRadius: 20, zIndex: 300, backdropFilter: 'blur(10px)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease' }}>
+        <div style={{ position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
           {toast}
         </div>
       )}
       <style>{`
         @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
-        @keyframes shimmer { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }
+        @keyframes shimmer  { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }
         ::-webkit-scrollbar { display: none }
       `}</style>
     </div>
@@ -236,8 +250,8 @@ function InfoLine({ label, value }: { label: string; value: string | null | unde
   if (!value) return null
   return (
     <div>
-      <p style={{ fontSize: 10, color: '#8e8e93', marginBottom: 1 }}>{label}</p>
-      <p style={{ fontSize: 13, fontWeight: 600, color: '#1c1c1e' }}>{value}</p>
+      <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2, fontWeight: 500 }}>{label}</p>
+      <p style={{ fontSize: 13, fontWeight: 600, color: '#1C1B1F', fontFamily: FONT }}>{value}</p>
     </div>
   )
 }
@@ -245,7 +259,7 @@ function InfoLine({ label, value }: { label: string; value: string | null | unde
 function SkeletonList() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {[1,2,3].map(i => <div key={i} style={{ height: 66, borderRadius: 14, background: 'linear-gradient(90deg,#f2f2f7 25%,#e5e5ea 50%,#f2f2f7 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite' }} />)}
+      {[1,2,3].map(i => <div key={i} style={{ height: 70, borderRadius: R.lg, background: 'linear-gradient(90deg,#F8F9FA 25%,#E8EAED 50%,#F8F9FA 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite' }} />)}
     </div>
   )
 }
