@@ -76,6 +76,29 @@ export default function WerkplekPage() {
           ))}
         </div>
       </main>
+
+      {/* [BOEK-029] FAB — + Nieuwe factuur — Material You */}
+      <button
+        onClick={() => router.push('/dashboard/invoice/new')}
+        style={{
+          position: 'fixed',
+          bottom: 'calc(24px + env(safe-area-inset-bottom))',
+          right: 20,
+          background: '#D3E3FD', color: '#041E49',
+          borderRadius: 16, padding: '16px 20px',
+          fontSize: 15, fontWeight: 600,
+          border: 'none', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontFamily: "'Google Sans', 'Roboto', sans-serif", zIndex: 50,
+          transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
+        }}
+        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
+        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+        Nieuwe factuur
+      </button>
     </div>
   )
 }

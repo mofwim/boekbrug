@@ -3,6 +3,8 @@
 // src/app/dashboard/klanten/page.tsx
 // [BOEK-029] Material You design — BoekBrug Design System v1.0 — May 2026
 
+export const dynamic = 'force-dynamic'
+
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -237,6 +239,31 @@ export default function KlantenPage({ profile }: { profile: any }) {
           {toast}
         </div>
       )}
+
+      {/* [BOEK-029] FAB — + Nieuwe factuur — Material You */}
+      <button
+        onClick={() => router.push('/dashboard/invoice/new')}
+        style={{
+          position: 'fixed',
+          bottom: `calc(24px + env(safe-area-inset-bottom))`,
+          right: 20,
+          background: '#D3E3FD',
+          color: '#041E49',
+          borderRadius: R.lg,
+          padding: '16px 20px',
+          fontSize: 15, fontWeight: 600,
+          border: 'none', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontFamily: FONT, zIndex: 50,
+          transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
+        }}
+        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
+        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+        Nieuwe factuur
+      </button>
       <style>{`
         @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
         @keyframes shimmer  { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }

@@ -24,6 +24,7 @@ const M3 = {
   warning:           '#E37400',
   warningContainer:  '#FEE8C4',
   outline:           '#79747E',
+  error:             '#B3261E',
 }
 const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
@@ -153,7 +154,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                   transition: 'border-color 0.15s',
                 }}
               />
-              {aiError && <p style={{ fontSize: 12, color: error, marginTop: 6 }}>{aiError}</p>}
+              {aiError && <p style={{ fontSize: 12, color: M3.error, marginTop: 6 }}>{aiError}</p>}
               <button
                 onClick={handleAiGenerate} disabled={aiLoading || !aiPrompt.trim()}
                 style={{
@@ -200,13 +201,15 @@ export function ZzpDashboard({ profile }: { profile: any }) {
           </div>
         )}
       </main>
+
+      {/* [BOEK-029] FAB — + Nieuwe factuur — Material You */}
+      <Fab onClick={() => router.push('/dashboard/invoice/new')} />
     </div>
   )
 }
 
 // ─── Design system constants ──────────────────────────────────────────────────
 const R = { sm: 8, md: 12, lg: 16, xl: 24, full: 9999 }
-const error = '#B3261E'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -259,6 +262,36 @@ function StatCard({ label, value, sub, bg, color, onClick }: {
       <p style={{ fontSize: 11, color, fontWeight: 600, marginBottom: 6, letterSpacing: 0.3 }}>{label.toUpperCase()}</p>
       <p style={{ fontSize: 20, fontWeight: 700, color, letterSpacing: -0.5, marginBottom: 2 }}>{value}</p>
       <p style={{ fontSize: 11, color, opacity: 0.7 }}>{sub}</p>
+    </button>
+  )
+}
+
+// [BOEK-029] Shared FAB — + Nieuwe factuur — all ZZP pages
+function Fab({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        position: 'fixed',
+        bottom: 'calc(24px + env(safe-area-inset-bottom))',
+        right: 20,
+        background: '#D3E3FD',
+        color: '#041E49',
+        borderRadius: 16,
+        padding: '16px 20px',
+        fontSize: 15, fontWeight: 600,
+        border: 'none', cursor: 'pointer',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontFamily: "'Google Sans', 'Roboto', sans-serif",
+        zIndex: 50,
+        transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
+      }}
+      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
+      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+      Nieuwe factuur
     </button>
   )
 }
