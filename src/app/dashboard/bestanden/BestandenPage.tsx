@@ -26,6 +26,7 @@ import { PreviewModal } from "./components/modals/PreviewModal";
 import { RenameModal } from "./components/modals/RenameModal";
 import { MoveModal } from "./components/modals/MoveModal";
 import { SharePopup } from "./components/modals/SharePopup";
+import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
 
 // ─── Breadcrumb ────────────────────────────────────────────────────────────────
 
@@ -80,6 +81,9 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
   const [dragOver, setDragOver] = useState(false);
   const isActive = activeFolderId === node.id;
   const isShared = node.name === "Gedeeld met boekhouder";
+  // [BOEK-033] System folders: blue icon, no edit/delete
+  const isSystem = node.is_system;
+  const iconColor = isSystem ? T.primary : folderColor(node.color);
 
   return (
     <div>
@@ -104,10 +108,27 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
           style={{ width: 20, height: 20, border: "none", background: "none", cursor: node.children.length ? "pointer" : "default", opacity: node.children.length ? 0.6 : 0, display: "flex", alignItems: "center", justifyContent: "center", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
           <Icon name="expand_more" size={16} />
         </button>
-        <Icon name="folder" size={18} color={folderColor(node.color)} style={{ flexShrink: 0 }} />
-        <span style={{ flex: 1, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.name}</span>
-        {isShared && <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 5px", background: T.primaryContainer, color: T.primary, borderRadius: T.full, flexShrink: 0 }}>Gedeeld</span>}
-        {!isShared && hovered && (
+
+        {/* [BOEK-033] System folders use folder_open icon in blue */}
+        <Icon
+          name={isSystem ? "folder_special" : "folder"}
+          size={18}
+          color={iconColor}
+          style={{ flexShrink: 0 }}
+        />
+
+        <span style={{ flex: 1, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {node.name}
+        </span>
+
+        {isShared && (
+          <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 5px", background: T.primaryContainer, color: T.primary, borderRadius: T.full, flexShrink: 0 }}>
+            Gedeeld
+          </span>
+        )}
+
+        {/* [BOEK-033] Only show edit/delete for non-system folders */}
+        {!isSystem && hovered && (
           <div style={{ display: "flex", gap: 1, flexShrink: 0 }}>
             <button onClick={e => { e.stopPropagation(); onRename(node.id, node.name); }}
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -156,6 +177,11 @@ export function BestandenPage() {
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: "file" | "folder" } | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ id: string; type: "file" | "folder"; excludeId?: string } | null>(null);
   const [sharePopup, setSharePopup] = useState<{ doc: BestandRow } | null>(null);
+  const [aiSuggestion, setAiSuggestion] = useState<{
+    doc: BestandRow;
+    suggestedFolderId: string;
+    suggestedPath: string;
+  } | null>(null);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: import("./types").ContextMenuItem[] } | null>(null);
 
@@ -390,11 +416,15 @@ export function BestandenPage() {
   };
 
   const handleDeleteFolder = async (id: string) => {
+    // [BOEK-033] Guard: never delete system folders
+    const folder = subFolders.find(f => f.id === id) ?? allFolders.find(f => f.id === id);
+    if (folder?.is_system) return;
     if (!confirm("Map verwijderen? Bestanden worden naar hoofdmap verplaatst.")) return;
-    // [BOEK-033] Fix 2 — optimistic: remove immediately, no wait for re-fetch
+    // Optimistic update
     setSubFolders(p => p.filter(f => f.id !== id));
     setAllFolders(p => p.filter(f => f.id !== id));
     setFolderTree(p => p.filter(n => n.id !== id));
+    setDocs(p => p.map(d => d.folder_id === id ? { ...d, folder_id: null } : d));
     await fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" });
   };
 
@@ -453,10 +483,38 @@ export function BestandenPage() {
     setSharePopup(null);
   };
 
-  const handleUploaded = useCallback((doc: BestandRow) => {
+  const handleUploaded = useCallback(async (doc: BestandRow) => {
     setDocs(p => [doc, ...p]);
+
+    // [BOEK-033] AI Classification — call classifyDocument then suggest folder
+    try {
+      const res = await fetch("/api/bestanden/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id, fileName: doc.file_name }),
+      });
+      if (res.ok) {
+        const result = await res.json() as {
+          folderId: string | null;
+          folderPath: string;
+          type: "invoice" | "bank" | "receipt" | "unknown";
+        };
+        if (result.folderId && result.type !== "unknown") {
+          setAiSuggestion({
+            doc,
+            suggestedFolderId: result.folderId,
+            suggestedPath: result.folderPath,
+          });
+          return; // Don't show share popup yet — wait for AI modal decision
+        }
+      }
+    } catch {
+      // AI classification failed — fall through to share popup
+    }
+
+    // No AI suggestion → show share popup directly
     setSharePopup({ doc });
-  }, []);
+  }, []); // eslint-disable-line
 
   // ── Download ──
   const downloadFile = async (docId: string, fileName: string) => {
@@ -613,6 +671,32 @@ export function BestandenPage() {
       {bulkMoveOpen && <MoveModal folders={allFolders} onMove={handleBulkMove} onClose={() => setBulkMoveOpen(false)} />}
       {sharePopup && <SharePopup fileName={sharePopup.doc.file_name} accountantName="uw boekhouder" onShare={() => handleShare(sharePopup.doc)} onKeepPrivate={() => setSharePopup(null)} />}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
+
+      {/* [BOEK-033] AI Suggestion Modal */}
+      {aiSuggestion && (
+        <AiSuggestionModal
+          fileName={aiSuggestion.doc.file_name}
+          suggestedPath={aiSuggestion.suggestedPath}
+          onAccept={async () => {
+            // Move file to suggested folder
+            await fetch(`/api/bestanden?id=${aiSuggestion.doc.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ folder_id: aiSuggestion.suggestedFolderId }),
+            });
+            setDocs(p => p.map(d => d.id === aiSuggestion.doc.id
+              ? { ...d, folder_id: aiSuggestion.suggestedFolderId }
+              : d
+            ));
+            setAiSuggestion(null);
+            setSharePopup({ doc: aiSuggestion.doc });
+          }}
+          onChooseManually={() => {
+            setAiSuggestion(null);
+            setMoveTarget({ id: aiSuggestion.doc.id, type: "file" });
+          }}
+        />
+      )}
 
       {/* ── Clipboard indicator ── */}
       {clipboardDisplay && (

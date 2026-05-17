@@ -1,5 +1,11 @@
 // src/app/dashboard/bestanden/types.ts
 // [BOEK-033] Shared types for Bestanden feature
+// [BOEK-033] Added is_system, folder_type for smart folder structure
+
+export type FolderType =
+  | "year" | "quarter" | "month"
+  | "bank" | "facturen" | "kosten"
+  | "shared" | "custom";
 
 export interface FolderRow {
   id: string;
@@ -8,6 +14,8 @@ export interface FolderRow {
   color: string | null;
   created_at: string;
   starred?: boolean;
+  is_system: boolean;
+  folder_type: FolderType | null;
 }
 
 export interface FolderNode extends FolderRow {
