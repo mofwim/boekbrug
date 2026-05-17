@@ -6,9 +6,11 @@
 // من لوحة تحكم المحاسب ، BoekBrug 1.2 all tasks seperated
 
 import { useRouter } from 'next/navigation'
+import { useRef, useEffect } from 'react'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
 import { InvoiceRowItem, STATUS_LABEL } from '@/components/invoice/InvoiceRow'
+import { SearchBar } from '@/components/search/SearchBar'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 
 // ── NavButton ─────────────────────────────────────────────────────────────────
@@ -222,6 +224,18 @@ export function DashboardHeader({
   onLogout,
 }: DashboardHeaderProps) {
   const router = useRouter()
+  // [BOEK-028] close notifications on outside click — May 2026
+  const bellRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!showNotifications) return
+    const handler = (e: MouseEvent) => {
+      if (!bellRef.current?.contains(e.target as Node)) {
+        onToggleNotifications()
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showNotifications])
 
   return (
     <header
@@ -232,7 +246,7 @@ export function DashboardHeader({
 
         {/* [BOEK-028] BoekBrug → link to landing page — May 2026 */}
         <a
-          href="/"
+          href="/dashboard"  // [BOEK-028] fix: was "/" — May 2026
           className="text-base font-bold hover:opacity-70 transition-opacity"
           style={{ color: 'var(--color-text-primary)', textDecoration: 'none' }}
         >
@@ -247,24 +261,8 @@ export function DashboardHeader({
             {profile.company_name}
           </span>
 
-          {/* [BOEK-028] Replaced SearchBar with inline input — fixes ⌘K duplicate visual — May 2026 */}
-          <input
-            type="search"
-            placeholder="Zoeken..."
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                const q = (e.target as HTMLInputElement).value.trim()
-                if (q) router.push(`/dashboard/search?q=${encodeURIComponent(q)}`)
-              }
-            }}
-            className="text-sm px-3 py-1.5 rounded-xl border outline-none"
-            style={{
-              borderColor: 'var(--color-separator)',
-              backgroundColor: 'var(--color-bg)',
-              color: 'var(--color-text-primary)',
-              width: 180,
-            }}
-          />
+          {/* [BOEK-028] SearchBar restored — handles dropdown + navigate internally — May 2026 */}
+          <SearchBar />
 
           <NavButton onClick={() => router.push('/dashboard/settings')} label="⚙️" />
 
@@ -279,7 +277,7 @@ export function DashboardHeader({
           </div>
 
           {/* Meldingen */}
-          <div className="relative">
+          <div className="relative" ref={bellRef}>
             <NavButton onClick={onToggleNotifications} label="🔔" />
             {unreadNotifCount > 0 && (
               <span className="absolute -top-1 -right-1 bg-[#ff3b30] text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold leading-none">
@@ -319,8 +317,9 @@ export function DashboardHeader({
                     {notifications.map(n => (
                       <div
                         key={n.id}
-                        onClick={() => n.link && router.push(n.link)}
-                        className={`px-4 py-3 transition-colors ${!n.read ? 'bg-[#e8f1ff]' : ''} ${n.link ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+                        className={`px-4 py-3 transition-colors ${!n.read ? 'bg-[#e8f1ff]' : ''} ${n.link ? 'hover:bg-gray-50' : ''}`}
+                        style={{ cursor: n.link ? 'pointer' : 'default' }}
+                        onClick={() => { if (n.link) router.push(n.link) }}
                       >
                         <p
                           className="text-sm font-medium"
