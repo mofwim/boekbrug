@@ -34,7 +34,21 @@ export async function PATCH(req: NextRequest) {
   }
 
   const { error } = await supabase.from("profiles").update(patch).eq("id", user.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // [BOEK-015] Detailed logging — shows exact DB error cause in Vercel logs
+  if (error) {
+    console.error("[onboarding] profiles update failed:", {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+      patch, // what we tried to save
+    });
+    return NextResponse.json(
+      { error: error.message, details: error.details, hint: error.hint },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({ ok: true });
 }
