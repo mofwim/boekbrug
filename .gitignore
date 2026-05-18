@@ -53,3 +53,5 @@ node_modules/
 "client_secret*.json" 
 "client_secret*.json" 
 "client_secret*.json" 
+"client_secret*.json" 
+"*.apps.googleusercontent.com.json" 
