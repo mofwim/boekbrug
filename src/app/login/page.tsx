@@ -19,19 +19,16 @@ function LoginContent() {
   const supabase = createClient()
 
   // [Google-OAuth] Reset loading state when user returns via browser back button
-  // The browser does not fire any event on back — pageshow catches it
+  // pageshow + focus + visibilitychange covers all browsers
   useEffect(() => {
-    function handlePageShow(e: PageTransitionEvent) {
-      if (e.persisted) setGoogleLoading(false)
-    }
-    function handleFocus() {
-      setGoogleLoading(false)
-    }
-    window.addEventListener('pageshow', handlePageShow)
-    window.addEventListener('focus', handleFocus)
+    const reset = () => setGoogleLoading(false)
+    window.addEventListener('pageshow', reset)
+    document.addEventListener('visibilitychange', reset)
+    window.addEventListener('focus', reset)
     return () => {
-      window.removeEventListener('pageshow', handlePageShow)
-      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('pageshow', reset)
+      document.removeEventListener('visibilitychange', reset)
+      window.removeEventListener('focus', reset)
     }
   }, [])
 
@@ -40,11 +37,13 @@ function LoginContent() {
     setGoogleLoading(true)
     setError('')
 
+    // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
+    const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
         scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly',
-        // [Google-OAuth] Plain URL — no query params — must match Supabase Redirect URLs exactly
         redirectTo: `${window.location.origin}/api/auth/callback`,
         queryParams: {
           prompt: 'consent',
@@ -53,9 +52,11 @@ function LoginContent() {
       },
     })
 
+    clearTimeout(resetTimer)
+
     if (error) {
-      setError('Google login mislukt — probeer opnieuw')
       setGoogleLoading(false)
+      setError('Google login mislukt — probeer opnieuw')
     }
   }
 
