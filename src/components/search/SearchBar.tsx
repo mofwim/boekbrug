@@ -527,7 +527,15 @@ export function SearchBar() {
         break;
       case "Enter":
         e.preventDefault();
-        if (selectedIdx < 0) break;
+        // [BOEK-028] Enter with no selection → search facturen — May 2026
+        if (selectedIdx < 0) {
+          if (query.trim()) {
+            saveRecent(query.trim());
+            closeSearch();
+            router.push(`/dashboard/facturen?search=${encodeURIComponent(query.trim())}`);
+          }
+          break;
+        }
         const item = navItems[selectedIdx];
         if (!item) break;
         if (item.kind === "recent") { applyRecent(item.value); break; }

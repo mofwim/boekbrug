@@ -288,6 +288,8 @@ function NotificationsBell({
 }) {
   const router = useRouter()
   const bellRef = useRef<HTMLDivElement>(null)
+  // [BOEK-028] local read-override map — optimistic UI for markAsRead — May 2026
+  const [readOverride, setReadOverride] = React.useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (!showNotifications) return
@@ -298,14 +300,16 @@ function NotificationsBell({
     return () => document.removeEventListener('mousedown', handler)
   }, [showNotifications])
 
+  // [BOEK-028] markAsRead — optimistic local + API — May 2026
   async function markAsRead(id: string) {
+    setReadOverride(prev => ({ ...prev, [id]: true }))
     try {
       await fetch(`/api/notifications/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ read: true }),
       })
-    } catch { /* silent */ }
+    } catch { /* silent — optimistic already applied */ }
   }
 
   return (
@@ -322,18 +326,22 @@ function NotificationsBell({
         onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
       >
         🔔
-        {unreadCount > 0 && (
-          <span style={{
-            position: 'absolute', top: 4, right: 4,
-            backgroundColor: '#EA4335', color: '#fff',
-            fontSize: 9, fontWeight: 700, borderRadius: 9999,
-            minWidth: 16, height: 16, padding: '0 3px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            lineHeight: 1, pointerEvents: 'none',
-          }}>
-            {unreadCount > 9 ? '9+' : unreadCount}
-          </span>
-        )}
+        {(() => {
+          // [BOEK-028] compute effective unread count with local overrides — May 2026
+          const effectiveUnread = notifications.filter(n => !(readOverride[n.id] ?? n.read)).length
+          return effectiveUnread > 0 ? (
+            <span style={{
+              position: 'absolute', top: 4, right: 4,
+              backgroundColor: '#EA4335', color: '#fff',
+              fontSize: 9, fontWeight: 700, borderRadius: 9999,
+              minWidth: 16, height: 16, padding: '0 3px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              lineHeight: 1, pointerEvents: 'none',
+            }}>
+              {effectiveUnread > 9 ? '9+' : effectiveUnread}
+            </span>
+          ) : null
+        })()}
       </button>
 
       {showNotifications && (
@@ -361,11 +369,12 @@ function NotificationsBell({
                   style={{
                     padding: '12px 16px', borderBottom: '1px solid #F1F3F4',
                     cursor: n.link ? 'pointer' : 'default',
-                    backgroundColor: !n.read ? '#E8F0FE' : 'transparent',
+                    // [BOEK-028] readOverride for optimistic markAsRead — May 2026
+                    backgroundColor: !(readOverride[n.id] ?? n.read) ? '#E8F0FE' : 'transparent',
                     transition: 'background 0.1s',
                   }}
-                  onMouseEnter={e => { if (n.link) (e.currentTarget as HTMLDivElement).style.backgroundColor = !n.read ? '#D2E3FC' : '#F8F9FA' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = !n.read ? '#E8F0FE' : 'transparent' }}
+                  onMouseEnter={e => { if (n.link) (e.currentTarget as HTMLDivElement).style.backgroundColor = !(readOverride[n.id] ?? n.read) ? '#D2E3FC' : '#F8F9FA' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = !(readOverride[n.id] ?? n.read) ? '#E8F0FE' : 'transparent' }}
                 >
                   <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0 }}>{n.title}</p>
                   {n.body && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{n.body}</p>}
@@ -406,6 +415,8 @@ export function DashboardHeader({
   onMessagesClick,
   onLogout,
 }: DashboardHeaderProps) {
+  // [BOEK-028] router for logo navigation — May 2026
+  const router = useRouter()
 
   return (
     <header style={{
@@ -424,17 +435,18 @@ export function DashboardHeader({
     }}>
 
       {/* LEFT: Logo — never shrinks */}
-      <a href="/dashboard" style={{
-        fontWeight: 700,
-        fontSize: 17,
-        color: '#1A73E8',
-        textDecoration: 'none',
-        flexShrink: 0,
-        letterSpacing: '-0.3px',
-        lineHeight: 1,
-      }}>
+      {/* [BOEK-028] router.push instead of <a> — avoids full page reload — May 2026 */}
+      <button
+        onClick={() => router.push('/dashboard')}
+        style={{
+          fontWeight: 700, fontSize: 17, color: '#1A73E8',
+          background: 'none', border: 'none', cursor: 'pointer',
+          flexShrink: 0, letterSpacing: '-0.3px', lineHeight: 1,
+          padding: 0, fontFamily: "'Google Sans', 'Roboto', sans-serif",
+        }}
+      >
         BoekBrug
-      </a>
+      </button>
 
       {/* CENTER: Search — takes all remaining space, never overflows */}
       <div style={{ flex: 1, minWidth: 0, maxWidth: 480, margin: '0 4px' }}>
