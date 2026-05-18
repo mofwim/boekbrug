@@ -452,9 +452,9 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
   async function handleFile(file: File) {
     setState("uploading");
     try {
-      // [BOEK-015] fix: convert file to base64 and send to /api/ai/classify
+      // [BOEK-015] fix: convert file to base64 and send from /api/ai/classify  to fetch('/api/bestanden/classify', ...)
       const base64 = await fileToBase64(file);
-      const res = await fetch("/api/ai/classify", {
+      const res = await fetch("/api/bestanden/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
