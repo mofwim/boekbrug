@@ -225,6 +225,49 @@ async function fetchMessageAttachments(
   return resolved.filter(Boolean) as GmailAttachment[]
 }
 
+// ─── Outlook token exchange ──────────────────────────────────────────────────
+
+// [BOEK-011] exchangeOutlookCode — May 2026
+export async function exchangeOutlookCode(
+  code: string
+): Promise<{ access_token: string; refresh_token: string }> {
+  const tokenUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+  const params = new URLSearchParams({
+    client_id: process.env.MICROSOFT_CLIENT_ID!,
+    client_secret: process.env.MICROSOFT_CLIENT_SECRET!,
+    code,
+    redirect_uri: `${process.env.NEXT_PUBLIC_BASE_URL}/api/email/callback/outlook`,
+    grant_type: 'authorization_code',
+  })
+
+  const res = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params,
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Outlook token exchange mislukt: ${body}`)
+  }
+
+  const data = await res.json()
+  return {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+  }
+}
+
+// [BOEK-011] getOutlookUserEmail — May 2026
+export async function getOutlookUserEmail(accessToken: string): Promise<string> {
+  const res = await fetch('https://graph.microsoft.com/v1.0/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) return ''
+  const data = await res.json()
+  return data.mail || data.userPrincipalName || ''
+}
+
 // ─── AI Classification ────────────────────────────────────────────────────────
 
 export interface AttachmentClassification {
