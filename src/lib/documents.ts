@@ -4,7 +4,18 @@
 // Server-only — nooit importeren in Client Components
 
 import { createServerSupabaseClient } from "./supabase-server";
+import { createClient } from "@supabase/supabase-js";
 import { inferDocType } from "./documents-utils";
+
+// [BOEK-015] fix: service role client bypasses RLS for server-side operations
+// anon key client loses session context in nested calls → FK constraint fails
+function createServiceRoleClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } }
+  );
+}
 
 export { inferDocType } from "./documents-utils";
 
@@ -61,7 +72,9 @@ export async function uploadDocument(
     return { id: "", error: "Bestand te groot (max 50MB)" };
   }
 
-  const supabase = await createServerSupabaseClient();
+  // [BOEK-015] fix: use service role client — anon client loses session in nested calls
+  // This causes "documents_user_id_fkey" FK violation because auth.uid() = null
+  const supabase = createServiceRoleClient();
   const shared = opts.shared ?? false;
   const path = buildStoragePath(userId, file.name, opts.year, opts.quarter, shared);
 
