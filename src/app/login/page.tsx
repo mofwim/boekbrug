@@ -3,8 +3,7 @@
 // src/app/login/page.tsx
 // [Google-OAuth] Add Google OAuth login — May 2026
 
-import { Suspense } from 'react'
-import { useState } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
@@ -18,6 +17,23 @@ function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
+
+  // [Google-OAuth] Reset loading state when user returns via browser back button
+  // The browser does not fire any event on back — pageshow catches it
+  useEffect(() => {
+    function handlePageShow(e: PageTransitionEvent) {
+      if (e.persisted) setGoogleLoading(false)
+    }
+    function handleFocus() {
+      setGoogleLoading(false)
+    }
+    window.addEventListener('pageshow', handlePageShow)
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      window.removeEventListener('pageshow', handlePageShow)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [])
 
   // [Google-OAuth] Google login via Supabase OAuth
   async function handleGoogleLogin() {
