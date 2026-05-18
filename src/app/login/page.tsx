@@ -24,18 +24,14 @@ function LoginContent() {
     setGoogleLoading(true)
     setError('')
 
-    const redirectUrl = searchParams.get('redirect')
-    // State encodes where to go after OAuth — decoded in /api/auth/callback
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        // Request Gmail read scope for BOEK-011 email integration
         scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly',
-        redirectTo: `${window.location.origin}/api/auth/callback?next=${encodeURIComponent(redirectUrl || '/dashboard')}`,
+        // [Google-OAuth] Plain URL — no query params — must match Supabase Redirect URLs exactly
+        redirectTo: `${window.location.origin}/api/auth/callback`,
         queryParams: {
-          // Always prompt so user can choose account
           prompt: 'consent',
-          // Required to get refresh_token
           access_type: 'offline',
         },
       },
@@ -45,7 +41,6 @@ function LoginContent() {
       setError('Google login mislukt — probeer opnieuw')
       setGoogleLoading(false)
     }
-    // On success, browser redirects to Google — no further action needed here
   }
 
   async function handleLogin() {
