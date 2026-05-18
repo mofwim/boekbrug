@@ -510,14 +510,25 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
       const uploadRes = await fetch("/api/files", {
         method: "POST",
         body: formData,
+        // [BOEK-015] No Content-Type header — browser sets multipart/form-data boundary automatically
       });
 
-      if (!uploadRes.ok) { setState("error"); return; }
+      // [BOEK-015] log real error from /api/files for debugging
+      if (!uploadRes.ok) {
+        const errBody = await uploadRes.text().catch(() => uploadRes.statusText);
+        console.error("[BOEK-015] /api/files →", uploadRes.status, errBody);
+        setState("error");
+        return;
+      }
 
       const uploadData = await uploadRes.json();
       const documentId: string = uploadData.id ?? uploadData.document?.id;
 
-      if (!documentId) { setState("error"); return; }
+      if (!documentId) {
+        console.error("[BOEK-015] documentId missing:", uploadData);
+        setState("error");
+        return;
+      }
 
       // [BOEK-015] Step 2: extract company details via /api/onboarding/extract
       // This endpoint uses extractCompanyDetails from @/lib/ai

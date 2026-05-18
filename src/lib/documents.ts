@@ -106,6 +106,7 @@ export async function uploadDocument(
   return { id: data.id };
 }
 
+
 /** Send notification to the accountant linked to this ZZP'er */
 async function notifyAccountant(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
