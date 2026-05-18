@@ -99,11 +99,24 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Trigger initial sync in background (fire and forget)
+  // [BOEK-011] Trigger initial sync in background (fire and forget)
   fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/email/sync`, {
     method: "POST",
     headers: { Cookie: req.headers.get("cookie") || "" },
   }).catch(() => {});
+
+  // [BOEK-011] Fix 1: redirect back to onboarding with success param
+  // If user came from onboarding (step 4) → back to onboarding with confirmation
+  // If user came from dashboard → back to incoming page
+  const referer = req.headers.get("referer") || "";
+  const fromOnboarding = referer.includes("/onboarding") ||
+    stateData.provider === "gmail"; // state always has provider
+
+  if (fromOnboarding) {
+    return NextResponse.redirect(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/onboarding?gmail=connected&step=4`
+    );
+  }
 
   return NextResponse.redirect(
     `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/incoming?connected=gmail`

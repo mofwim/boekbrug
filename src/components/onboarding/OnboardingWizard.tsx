@@ -13,8 +13,8 @@
 
 "use client";
 
-import { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 // ── Types ────────────────────────────────────────────────
 
@@ -70,6 +70,10 @@ export function OnboardingWizard({
   const [accountantEmail, setAccountantEmail] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // [BOEK-011] Fix 2: detect gmail=connected from OAuth callback
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const searchParams = useSearchParams();
   const router = useRouter();
 
   const progress = stepToProgress(step, role);
@@ -81,6 +85,29 @@ export function OnboardingWizard({
       body: JSON.stringify({ step: nextStep, role, ...extra }),
     });
   }
+
+  // [BOEK-011] Fix 2: detect gmail=connected after OAuth callback redirect
+  useEffect(() => {
+    const gmail = searchParams.get("gmail");
+    const stepParam = searchParams.get("step");
+
+    if (gmail === "connected") {
+      setGmailConnected(true);
+      if (stepParam === "4") setStep(4);
+
+      // Auto-advance to step 5 after 2 seconds — user sees the success state
+      const timer = setTimeout(async () => {
+        await persistStep(5);
+        setStep(5);
+      }, 2000);
+
+      // Clean URL without reload
+      window.history.replaceState({}, "", "/onboarding");
+
+      return () => clearTimeout(timer);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function finish() {
     setSaving(true);
@@ -174,6 +201,14 @@ export function OnboardingWizard({
     !(role === "zzp" && step === 6) &&
     !(role === "accountant" && step === 5);
 
+  // [BOEK-015] Fix 3: disable Volgende until company_name is filled
+  const isCompanyStep = step === "3B" || (role === "accountant" && step === 3);
+  const kvkVal = company.kvk_number.trim();
+  const isNextDisabled = isCompanyStep && (
+    !company.company_name.trim() ||
+    (kvkVal.length > 0 && !/^\d{8}$/.test(kvkVal))
+  );
+
   return (
     <div
       className="flex flex-col bg-white"
@@ -226,7 +261,7 @@ export function OnboardingWizard({
           {role === "zzp" && step === "3B" && (
             <StepManual company={company} setCompany={setCompany} kvkError={kvkError} setKvkError={setKvkError} />
           )}
-          {role === "zzp" && step === 4 && <StepGmail />}
+          {role === "zzp" && step === 4 && <StepGmail gmailConnected={gmailConnected} />}
           {role === "zzp" && step === 5 && (
             <StepAccountant accountantEmail={accountantEmail} setAccountantEmail={setAccountantEmail} />
           )}
@@ -247,7 +282,7 @@ export function OnboardingWizard({
           {isDone ? (
             <Btn onClick={finish} loading={saving}>Ga naar mijn dashboard →</Btn>
           ) : (
-            !hideNextButton && <Btn onClick={handleNext} loading={saving}>Volgende</Btn>
+            !hideNextButton && <Btn onClick={handleNext} loading={saving} disabled={isNextDisabled}>Volgende</Btn>
           )}
           {showSkip && (
             <button
@@ -265,24 +300,27 @@ export function OnboardingWizard({
 
 // ── Shared button ────────────────────────────────────────
 
-function Btn({ onClick, loading, children, secondary }: {
-  onClick: () => void; loading?: boolean; children: React.ReactNode; secondary?: boolean;
+function Btn({ onClick, loading, children, secondary, disabled }: {
+  onClick: () => void; loading?: boolean; children: React.ReactNode; secondary?: boolean; disabled?: boolean;
 }) {
+  // [BOEK-015] Fix 3: disabled state for validation
+  const isOff = !!loading || !!disabled;
   return (
     <button
       onClick={onClick}
-      disabled={!!loading}
+      disabled={isOff}
       style={{
         width: "100%",
         padding: "16px",
         borderRadius: "16px",
         fontSize: "16px",
         fontWeight: 600,
-        background: loading ? "#c7c7cc" : secondary ? "#f2f2f7" : "#007aff",
+        background: isOff ? "#c7c7cc" : secondary ? "#f2f2f7" : "#007aff",
         color: secondary ? "#007aff" : "#fff",
         border: "none",
-        cursor: loading ? "not-allowed" : "pointer",
-        transition: "transform 0.1s",
+        cursor: isOff ? "not-allowed" : "pointer",
+        transition: "transform 0.1s, background 0.15s",
+        opacity: isOff ? 0.6 : 1,
       }}
     >
       {loading ? "Bezig…" : children}
@@ -452,46 +490,42 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
   async function handleFile(file: File) {
     setState("uploading");
     try {
-      // [BOEK-015] fix: convert file to base64 and send from /api/ai/classify  to fetch('/api/bestanden/classify', ...)
-      const base64 = await fileToBase64(file);
-      const res = await fetch("/api/bestanden/classify", {
+      // [BOEK-015] Fix 1: Step 1 — upload file via /api/files, get documentId back
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("doc_type", "onboarding");
+
+      const uploadRes = await fetch("/api/files", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!uploadRes.ok) { setState("error"); return; }
+
+      const uploadData = await uploadRes.json();
+      const documentId: string = uploadData.id ?? uploadData.document?.id;
+
+      if (!documentId) { setState("error"); return; }
+
+      // [BOEK-015] Fix 1: Step 2 — classify with documentId (not raw base64)
+      const classifyRes = await fetch("/api/bestanden/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileContent: base64,
-          fileName: file.name,
-          mimeType: file.type,
-        }),
+        body: JSON.stringify({ documentId, fileName: file.name }),
       });
-      const data = await res.json();
-      // classifyDocument returns: { type, confidence, vendor, amount, date }
-      // We use vendor as company_name — KVK/BTW require the dedicated extract endpoint
-      if (data.type === "invoice" && data.confidence >= 0.5 && data.vendor) {
+
+      const classifyData = await classifyRes.json();
+      const vendorName = classifyData.vendor ?? classifyData.company_name;
+
+      if (vendorName || classifyData.kvk_number) {
         setCompany((p) => ({
           ...p,
-          company_name: data.vendor ?? p.company_name,
+          company_name: classifyData.company_name ?? vendorName ?? p.company_name,
+          kvk_number: classifyData.kvk_number ?? p.kvk_number,
+          btw_number: classifyData.btw_number ?? p.btw_number,
+          iban: classifyData.iban ?? p.iban,
+          address: classifyData.address ?? p.address,
         }));
-        // [BOEK-015] Also try dedicated extraction for KVK/BTW/IBAN
-        try {
-          const extractRes = await fetch("/api/onboarding/extract", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ base64, mimeType: file.type, filename: file.name }),
-          });
-          const extractData = await extractRes.json();
-          if (extractData.found) {
-            setCompany((p) => ({
-              ...p,
-              company_name: extractData.company_name ?? data.vendor ?? p.company_name,
-              kvk_number: extractData.kvk_number ?? p.kvk_number,
-              btw_number: extractData.btw_number ?? p.btw_number,
-              iban: extractData.iban ?? p.iban,
-              address: extractData.address ?? p.address,
-            }));
-          }
-        } catch {
-          // extract failed — we still have vendor from classify, show success
-        }
         setState("success");
       } else {
         onFallback();
@@ -623,7 +657,28 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
   );
 }
 
-function StepGmail() {
+function StepGmail({ gmailConnected }: { gmailConnected: boolean }) {
+  // [BOEK-011] Fix 3: loading state while waiting for OAuth callback
+  const [loading, setLoading] = useState(false);
+
+  // [BOEK-011] Fix 2: show success state when gmail=connected in URL
+  if (gmailConnected) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "16px" }}>
+        <span style={{ fontSize: "52px" }}>✅</span>
+        <div>
+          <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+            Gmail succesvol gekoppeld!
+          </h2>
+          <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+            We importeren je facturen automatisch op de achtergrond.
+          </p>
+        </div>
+        <p style={{ fontSize: "14px", color: "#8e8e93" }}>Je gaat automatisch verder…</p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
@@ -632,20 +687,38 @@ function StepGmail() {
           We importeren automatisch je facturen. Jij hoeft niets te doen.
         </p>
       </div>
-      <button
-        onClick={() => { window.location.href = "/api/email/connect?provider=gmail&redirect=/onboarding"; }}
-        style={{
-          textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
-          border: "none", cursor: "pointer", width: "100%", display: "flex", alignItems: "flex-start", gap: "16px",
-        }}
-      >
-        <span style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#EA4335", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "16px", flexShrink: 0 }}>G</span>
-        <div>
-          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Ja, koppel mijn Gmail</p>
-          <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>We importeren automatisch je facturen.</p>
-          <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#8e8e93" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
+
+      {/* [BOEK-011] Fix 3: loading spinner while waiting for OAuth */}
+      {loading ? (
+        <div style={{
+          padding: "20px", borderRadius: "18px", background: "#f2f2f7",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: "12px",
+        }}>
+          <span style={{ fontSize: "20px" }}>⏳</span>
+          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>
+            Gmail openen…
+          </p>
         </div>
-      </button>
+      ) : (
+        <button
+          onClick={() => {
+            setLoading(true);
+            window.location.href = "/api/email/connect?provider=gmail&redirect=/onboarding";
+          }}
+          style={{
+            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
+            border: "none", cursor: "pointer", width: "100%", display: "flex", alignItems: "flex-start", gap: "16px",
+          }}
+        >
+          <span style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#EA4335", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "16px", flexShrink: 0 }}>G</span>
+          <div>
+            <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Ja, koppel mijn Gmail</p>
+            <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>We importeren automatisch je facturen.</p>
+            <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#8e8e93" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
+          </div>
+        </button>
+      )}
+
       <p style={{ textAlign: "center", fontSize: "14px", color: "#8e8e93" }}>
         Tik op &ldquo;Sla over&rdquo; om dit later in te stellen
       </p>
