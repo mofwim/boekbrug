@@ -104,7 +104,7 @@ function LoginContent() {
           ) : (
             <GoogleIcon />
           )}
-          {googleLoading ? 'Verbinden...' : 'Inloggen met Google'}
+          {googleLoading ? 'Bezig met verbinden...' : 'Inloggen met Google'}
         </button>
 
         {/* Divider */}

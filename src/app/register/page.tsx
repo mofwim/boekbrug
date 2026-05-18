@@ -3,8 +3,7 @@
 // src/app/register/page.tsx
 // [Google-OAuth] Add Google OAuth registration — May 2026
 
-import { Suspense } from 'react'
-import { useState } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
@@ -25,6 +24,19 @@ function RegisterContent() {
   const searchParams = useSearchParams()
   const supabase = createClient()
 
+  // [Google-OAuth] Reset loading when user returns via browser back button
+  useEffect(() => {
+    const reset = () => setGoogleLoading(false)
+    window.addEventListener('pageshow', reset)
+    document.addEventListener('visibilitychange', reset)
+    window.addEventListener('focus', reset)
+    return () => {
+      window.removeEventListener('pageshow', reset)
+      document.removeEventListener('visibilitychange', reset)
+      window.removeEventListener('focus', reset)
+    }
+  }, [])
+
   // [Google-OAuth] Google register/login via Supabase OAuth
   // Role is stored in step 1 — passed as state through OAuth so callback can save it
   async function handleGoogleRegister() {
@@ -37,22 +49,25 @@ function RegisterContent() {
     setGoogleLoading(true)
     setError('')
 
+    // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
+    const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
+
     const redirectUrl = searchParams.get('redirect')
-    // Pass role in state so /api/auth/callback can create profile with correct role
     const state = encodeURIComponent(JSON.stringify({ role, redirect: redirectUrl || '/dashboard' }))
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        // Request Gmail read scope for BOEK-011 email integration
         scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly',
-        redirectTo: `${window.location.origin}/api/auth/callback?state=${state}`,
+        redirectTo: `${window.location.origin}/api/auth/callback`,
         queryParams: {
           prompt: 'consent',
           access_type: 'offline',
         },
       },
     })
+
+    clearTimeout(resetTimer)
 
     if (error) {
       setError('Google registratie mislukt — probeer opnieuw')
@@ -154,7 +169,7 @@ function RegisterContent() {
               ) : (
                 <GoogleIcon />
               )}
-              {googleLoading ? 'Verbinden...' : 'Registreren met Google'}
+              {googleLoading ? 'Bezig met verbinden...' : 'Registreren met Google'}
             </button>
 
             {/* Divider */}
