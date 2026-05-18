@@ -1,13 +1,16 @@
 // src/app/api/email/sync/route.ts
-// [BOEK-011] Sync Gmail inbox — fetch PDF attachments, AI-classify as invoice or not
-// POST /api/email/sync
-// Called: after OAuth callback (background) + manually from incoming page
+// [BOEK-011] Email sync — fetch attachments from Gmail/Outlook, verify with AI, save invoices
+// POST /api/email/sync  → run sync, return summary
+// GET  /api/email/sync  → return connection status + pending count
+// DELETE /api/email/sync → disconnect email
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { fetchGmailAttachments, classifyAttachment } from '@/lib/email-integration'
+import { syncUserEmails } from '@/lib/email-integration'
 
-export async function POST(req: NextRequest) {
+// ── POST — run sync ───────────────────────────────────────────────────────────
+
+export async function POST(_req: NextRequest) {
   const supabase = await createServerSupabaseClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -15,150 +18,74 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
   }
 
-  // [BOEK-011] Get stored Gmail token
-  const { data: connection } = await supabase
-    .from('email_connections')
-    .select('access_token, refresh_token, email')
-    .eq('user_id', user.id)
-    .eq('provider', 'gmail')
-    .single()
+  // syncUserEmails handles everything:
+  // 1. get connection + refresh token
+  // 2. fetch emails after profile.created_at
+  // 3. Claude reads each PDF/image — real invoice or not
+  // 4. save verified invoices to DB
+  const result = await syncUserEmails(user.id)
 
-  if (!connection?.access_token) {
-    return NextResponse.json({ error: 'Gmail niet verbonden' }, { status: 400 })
-  }
-
-  // [BOEK-011] Get sync boundary — only fetch emails after profile.created_at
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('created_at')
-    .eq('id', user.id)
-    .single()
-
-  const syncAfter = profile?.created_at
-    ? new Date(profile.created_at).getTime()
-    : Date.now() - 30 * 24 * 60 * 60 * 1000 // fallback: 30 days
-
-  // [BOEK-011] Fetch Gmail messages with PDF attachments
-  let attachments: Array<{
-    messageId: string
-    filename: string
-    mimeType: string
-    data: string // base64
-    subject: string
-    from: string
-    date: string
-    size: number
-  }>
-
-  try {
-    attachments = await fetchGmailAttachments(connection.access_token, syncAfter)
-  } catch (err: unknown) {
-    // Token might be expired — return error, frontend can prompt reconnect
-    const message = err instanceof Error ? err.message : 'Onbekende fout'
+  if (!result) {
     return NextResponse.json(
-      { error: 'Gmail ophalen mislukt', detail: message },
-      { status: 502 }
+      { error: 'Geen e-mailverbinding gevonden. Verbind eerst Gmail of Outlook.' },
+      { status: 404 }
     )
   }
 
-  if (attachments.length === 0) {
-    return NextResponse.json({ synced: 0, queued: 0 })
+  return NextResponse.json(result)
+}
+
+// ── GET — connection status ───────────────────────────────────────────────────
+
+export async function GET(_req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
   }
 
-  // [BOEK-011] Check which messageIds already exist to avoid duplicates
-  const { data: existingInvoices } = await supabase
+  const { data: connection } = await supabase
+    .from('email_connections')
+    .select('provider, email, connected_at')
+    .eq('user_id', user.id)
+    .limit(1)
+    .single()
+
+  const { count: pendingCount } = await supabase
     .from('invoices')
-    .select('source')
+    .select('id', { count: 'exact', head: true })
     .eq('sender_id', user.id)
     .eq('direction', 'incoming')
-    .eq('source', 'email')
-
-  // We store Gmail message IDs in a separate dedup check
-  // Use email subject + from + date as dedup key (simpler than storing messageId)
-  const existingKeys = new Set(
-    (existingInvoices || []).map((inv) => inv.source)
-  )
-
-  let queued = 0
-  const errors: string[] = []
-
-  for (const attachment of attachments) {
-    // Skip if already processed (dedup by messageId)
-    const dedupKey = `gmail:${attachment.messageId}:${attachment.filename}`
-    if (existingKeys.has(dedupKey)) continue
-
-    // [BOEK-011] AI classification — only PDFs and images
-    if (
-      attachment.mimeType !== 'application/pdf' &&
-      !attachment.mimeType.startsWith('image/')
-    ) {
-      continue
-    }
-
-    let classification: {
-      isInvoice: boolean
-      confidence: number
-      vendor?: string
-      amount?: number
-      invoiceDate?: string
-      invoiceNumber?: string
-      currency?: string
-    }
-
-    try {
-      classification = await classifyAttachment(attachment.data, attachment.mimeType, attachment.filename)
-    } catch {
-      errors.push(`Classificatie mislukt: ${attachment.filename}`)
-      continue
-    }
-
-    // [BOEK-011] Only process if confidence >= 0.6 AND is a real invoice
-    if (!classification.isInvoice || classification.confidence < 0.6) continue
-
-    // [BOEK-011] Upload PDF to Supabase Storage
-    const fileBuffer = Buffer.from(attachment.data, 'base64')
-    const storagePath = `${user.id}/${new Date().getFullYear()}/incoming/${Date.now()}_${attachment.filename}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('documents')
-      .upload(storagePath, fileBuffer, {
-        contentType: attachment.mimeType,
-        upsert: false,
-      })
-
-    if (uploadError) {
-      errors.push(`Upload mislukt: ${attachment.filename}`)
-      continue
-    }
-
-    const { data: { publicUrl } } = supabase.storage
-      .from('documents')
-      .getPublicUrl(storagePath)
-
-    // [BOEK-011] Insert invoice as incoming, pending client confirmation
-    const { error: invoiceError } = await supabase.from('invoices').insert({
-      sender_id: user.id,
-      direction: 'incoming',
-      status: 'received', // awaiting client confirmation
-      source: dedupKey, // use as dedup key
-      client_name: attachment.from,
-      invoice_number: classification.invoiceNumber || '',
-      invoice_date: classification.invoiceDate || attachment.date,
-      total_inc_btw: classification.amount || 0,
-      total_ex_btw: classification.amount ? classification.amount / 1.21 : 0,
-      btw_amount: classification.amount ? classification.amount - classification.amount / 1.21 : 0,
-      pdf_url: publicUrl,
-      invoice_type: 'factuur',
-    })
-
-    if (!invoiceError) {
-      queued++
-    }
-  }
+    .eq('status', 'received')
 
   return NextResponse.json({
-    synced: attachments.length,
-    queued,
-    errors: errors.length > 0 ? errors : undefined,
+    connected: !!connection,
+    provider: connection?.provider ?? null,
+    email: connection?.email ?? null,
+    connected_at: connection?.connected_at ?? null,
+    pending_count: pendingCount ?? 0,
   })
+}
+
+// ── DELETE — disconnect email ─────────────────────────────────────────────────
+
+export async function DELETE(_req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+  }
+
+  const { error } = await supabase
+    .from('email_connections')
+    .delete()
+    .eq('user_id', user.id)
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true })
 }

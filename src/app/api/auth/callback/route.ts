@@ -1,51 +1,38 @@
 // src/app/api/auth/callback/route.ts
-// [Google-OAuth] OAuth callback — exchange code, create profile for new users
-// This is where Supabase redirects after Google login/register
+// [Google-OAuth] OAuth callback — exchange code for session, route user correctly
+//
+// IMPORTANT: Supabase Redirect URL must be set to:
+//   https://boekbrug.nl/api/auth/callback
+// NOT https://boekbrug.nl/ — that causes the code to land on the homepage unused.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 
 export async function GET(req: NextRequest) {
-  const { searchParams, origin } = req.nextUrl
+  const { searchParams } = req.nextUrl
   const code = searchParams.get('code')
-  const stateRaw = searchParams.get('state')
+  // `next` param — fallback destination after login
+  const next = searchParams.get('next') ?? '/dashboard'
 
-  // Parse state — passed from register page with role + redirect
-  // From login: state is absent, redirect is a direct param
-  // From register: state = JSON { role, redirect }
-  let role: string | null = null
-  let redirectTarget = '/dashboard'
-
-  if (stateRaw) {
-    try {
-      const decoded = JSON.parse(decodeURIComponent(stateRaw))
-      role = decoded.role || null
-      redirectTarget = decoded.redirect || '/dashboard'
-    } catch {
-      // Malformed state — ignore, continue without role
-    }
-  } else {
-    // From login page — redirect is a direct query param
-    const redirectParam = searchParams.get('redirect')
-    if (redirectParam) redirectTarget = decodeURIComponent(redirectParam)
-  }
-
+  // [Google-OAuth] No code = something went wrong upstream
   if (!code) {
-    return NextResponse.redirect(`${origin}/login?error=no_code`)
+    return NextResponse.redirect(new URL('/login?error=no_code', req.url))
   }
 
   const supabase = await createServerSupabaseClient()
 
-  // Exchange code for session
+  // [Google-OAuth] Exchange code for session — this is the critical step
   const { data, error } = await supabase.auth.exchangeCodeForSession(code)
 
-  if (error || !data.user) {
-    return NextResponse.redirect(`${origin}/login?error=auth_failed`)
+  // [Google-OAuth] Fallback: getUser if data.user came back null
+  const user = data?.user ?? (await supabase.auth.getUser()).data.user
+
+  if (error || !user) {
+    console.error('[Google-OAuth] exchangeCodeForSession failed:', error?.message)
+    return NextResponse.redirect(new URL('/login?error=auth_failed', req.url))
   }
 
-  const user = data.user
-
-  // [Google-OAuth] Check if profile already exists
+  // [Google-OAuth] Check if this user already has a profile
   const { data: existingProfile } = await supabase
     .from('profiles')
     .select('id, onboarding_done')
@@ -53,7 +40,7 @@ export async function GET(req: NextRequest) {
     .single()
 
   if (!existingProfile) {
-    // [Google-OAuth] New user — create profile from Google data
+    // [Google-OAuth] New user — create profile from Google metadata
     const googleName = user.user_metadata?.full_name || user.user_metadata?.name || ''
     const googleEmail = user.email || ''
 
@@ -61,27 +48,25 @@ export async function GET(req: NextRequest) {
       id: user.id,
       full_name: googleName,
       email: googleEmail,
-      role: role || 'zzper', // default role if login (not register) flow
+      role: 'zzper', // default — user picks role during onboarding
       onboarding_done: false,
       onboarding_step: 0,
     })
 
-    // New user always goes to onboarding
-    return NextResponse.redirect(`${origin}/onboarding`)
+    // Always send new users to onboarding
+    return NextResponse.redirect(new URL('/onboarding', req.url))
   }
 
-  // [Google-OAuth] Existing user — check onboarding status
+  // [Google-OAuth] Existing user — check onboarding
   if (!existingProfile.onboarding_done) {
-    return NextResponse.redirect(`${origin}/onboarding`)
+    return NextResponse.redirect(new URL('/onboarding', req.url))
   }
 
-  // [Google-OAuth] Store Google access_token in email_connections for BOEK-011
-  // The token from signInWithOAuth is in data.session
+  // [Google-OAuth] Store Google provider_token in email_connections for BOEK-011
+  // provider_token = Google access token with gmail.readonly scope
+  // This means: one Google login = Gmail automatically connected, no extra step
   const session = data.session
   if (session?.provider_token) {
-    // Upsert Gmail connection — same token flow as manual Gmail connect
-    // This enables BOEK-011 without requiring a separate Gmail OAuth step
-    const gmailEmail = user.email || ''
     await supabase
       .from('email_connections')
       .upsert(
@@ -90,12 +75,13 @@ export async function GET(req: NextRequest) {
           provider: 'gmail',
           access_token: session.provider_token,
           refresh_token: session.provider_refresh_token || '',
-          email: gmailEmail,
+          email: user.email || '',
           connected_at: new Date().toISOString(),
         },
         { onConflict: 'user_id,provider' }
       )
   }
 
-  return NextResponse.redirect(`${origin}${redirectTarget}`)
+  // [Google-OAuth] Existing user, onboarding done → go to dashboard (or `next` param)
+  return NextResponse.redirect(new URL(next, req.url))
 }

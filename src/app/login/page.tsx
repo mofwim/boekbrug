@@ -31,7 +31,7 @@ function LoginContent() {
       options: {
         // Request Gmail read scope for BOEK-011 email integration
         scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly',
-        redirectTo: `${window.location.origin}/api/auth/callback?redirect=${encodeURIComponent(redirectUrl || '/dashboard')}`,
+        redirectTo: `${window.location.origin}/api/auth/callback?next=${encodeURIComponent(redirectUrl || '/dashboard')}`,
         queryParams: {
           // Always prompt so user can choose account
           prompt: 'consent',

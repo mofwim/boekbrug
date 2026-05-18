@@ -315,3 +315,137 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   }
   return chunks
 }
+// ─── Main sync entry point ────────────────────────────────────────────────────
+
+export type EmailProvider = 'gmail' | 'outlook'
+
+/**
+ * [BOEK-011] syncUserEmails — called by /api/email/sync
+ *
+ * Flow:
+ * 1. Get email connection from DB
+ * 2. Get profile.created_at as sync boundary — never fetch before registration
+ * 3. Fetch attachments after that date
+ * 4. Claude reads each PDF/image — real invoice or not
+ * 5. Save verified invoices with status='received'
+ */
+export async function syncUserEmails(userId: string): Promise<{
+  provider: EmailProvider
+  fetched: number
+  verified: number
+  saved: number
+  errors: number
+} | null> {
+  const { createServerSupabaseClient } = await import('@/lib/supabase-server')
+  const supabase = await createServerSupabaseClient()
+
+  // Get email connection
+  const { data: connection } = await supabase
+    .from('email_connections')
+    .select('*')
+    .eq('user_id', userId)
+    .limit(1)
+    .single()
+
+  if (!connection) return null
+
+  // [BOEK-011] Sync boundary = registration date
+  // Emails before this date = user's responsibility to upload manually
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('created_at')
+    .eq('id', userId)
+    .single()
+
+  const syncAfterMs = profile?.created_at
+    ? new Date(profile.created_at).getTime()
+    : Date.now() // fallback: now — fetches nothing from the past
+
+  // Fetch attachments after registration date
+  let attachments: GmailAttachment[] = []
+  try {
+    if (connection.provider === 'gmail') {
+      attachments = await fetchGmailAttachments(connection.access_token, syncAfterMs)
+    }
+    // Outlook: same pattern — add fetchOutlookAttachments when needed
+  } catch (error) {
+    console.error('[BOEK-011] Fetch failed:', error)
+    return { provider: connection.provider, fetched: 0, verified: 0, saved: 0, errors: 1 }
+  }
+
+  let verified = 0
+  let saved = 0
+  let errors = 0
+
+  for (const attachment of attachments) {
+    try {
+      // Claude reads the actual file — not metadata
+      const classification = await classifyAttachment(
+        attachment.data,
+        attachment.mimeType,
+        attachment.filename
+      )
+
+      // Not an invoice → discard, no trace in DB
+      if (!classification.isInvoice) continue
+      verified++
+
+      // Deduplication — already processed this message?
+      const { data: existing } = await supabase
+        .from('invoices')
+        .select('id')
+        .eq('sender_id', userId)
+        .eq('source', 'email')
+        .ilike('client_btw_number', `msg:${attachment.messageId}`)
+        .limit(1)
+
+      if (existing && existing.length > 0) continue
+
+      // Save as incoming invoice — awaiting client confirmation
+      const invoiceDate = classification.invoiceDate
+        ? new Date(classification.invoiceDate).toISOString().split('T')[0]
+        : new Date(attachment.date).toISOString().split('T')[0]
+
+      const { error: dbError } = await supabase.from('invoices').insert({
+        sender_id: userId,
+        direction: 'incoming',
+        status: 'received',
+        source: 'email',
+        client_name: classification.vendor || attachment.from,
+        client_email: extractEmail(attachment.from),
+        invoice_date: invoiceDate,
+        invoice_number: classification.invoiceNumber || `EMAIL-${Date.now()}`,
+        total_inc_btw: classification.amount || 0,
+        total_ex_btw: 0,
+        btw_amount: 0,
+        // messageId stored for deduplication
+        client_btw_number: `msg:${attachment.messageId}`,
+      })
+
+      if (dbError) {
+        console.error('[BOEK-011] Save error:', dbError.message)
+        errors++
+      } else {
+        saved++
+      }
+    } catch (error) {
+      console.error('[BOEK-011] Processing error:', error)
+      errors++
+    }
+  }
+
+  return {
+    provider: connection.provider,
+    fetched: attachments.length,
+    verified,
+    saved,
+    errors,
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function extractEmail(from: string): string {
+  const match = from.match(/<(.+?)>/)
+  return match ? match[1] : from.trim()
+}
