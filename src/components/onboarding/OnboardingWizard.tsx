@@ -490,32 +490,41 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
   async function handleFile(file: File) {
     setState("uploading");
     try {
-      // [BOEK-015] Step 1: upload file via /api/files to get a documentId
+      // [BOEK-015] Step 1: upload via /api/files
+      // No Content-Type header — browser sets multipart boundary automatically
       const now = new Date();
-      const year = String(now.getFullYear());
-      const quarter = String(Math.ceil((now.getMonth() + 1) / 3));
-
       const formData = new FormData();
-      formData.append("file", file);
-      formData.append("doc_type", "onboarding");
-      formData.append("year", year);
-      formData.append("quarter", quarter);
+      formData.append("file", file);                                                        // File object — NOT base64
+      formData.append("year", String(now.getFullYear()));
+      formData.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
+      // doc_type is optional in the route — omit to avoid any constraint issues
 
       const uploadRes = await fetch("/api/files", {
         method: "POST",
         body: formData,
+        // [BOEK-015] No headers — letting browser set Content-Type: multipart/form-data with boundary
       });
 
-      if (!uploadRes.ok) { setState("error"); return; }
+      if (!uploadRes.ok) {
+        // [BOEK-015] Log the real error for debugging
+        const errData = await uploadRes.json().catch(() => ({ error: uploadRes.statusText }));
+        console.error("[BOEK-015] /api/files upload failed:", errData);
+        setState("error");
+        return;
+      }
 
       const uploadData = await uploadRes.json();
+      // route returns: { id } — status 201
       const documentId: string = uploadData.id ?? uploadData.document?.id;
 
-      if (!documentId) { setState("error"); return; }
+      if (!documentId) {
+        console.error("[BOEK-015] documentId missing in upload response:", uploadData);
+        setState("error");
+        return;
+      }
 
-      // [BOEK-015] Step 2: extract company details via /api/onboarding/extract
-      // This endpoint uses extractCompanyDetails from @/lib/ai
-      // It reads the actual PDF/image content and returns: company_name, kvk, btw, iban
+      // [BOEK-015] Step 2: extract company details from uploaded file
+      // /api/onboarding/extract downloads the file from storage + calls extractCompanyDetails from @/lib/ai
       const extractRes = await fetch("/api/onboarding/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -535,10 +544,11 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
         }));
         setState("success");
       } else {
-        // AI found nothing useful → guide user to manual form
+        // AI found nothing → fallback to manual form (Step 3B)
         onFallback();
       }
-    } catch {
+    } catch (err) {
+      console.error("[BOEK-015] handleFile exception:", err);
       setState("error");
     }
   }
@@ -582,7 +592,12 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
 
   if (state === "error") return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <p style={{ color: "#ff3b30", fontSize: "15px" }}>Er ging iets mis. Probeer opnieuw of vul handmatig in.</p>
+      <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#ff3b30" }}>
+        Uploaden mislukt
+      </p>
+      <p style={{ margin: 0, fontSize: "14px", color: "#6b6b6e" }}>
+        Probeer opnieuw of vul je gegevens handmatig in.
+      </p>
       <Btn onClick={() => setState("idle")}>Opnieuw proberen</Btn>
       <Btn onClick={onFallback} secondary>Handmatig invullen</Btn>
     </div>
