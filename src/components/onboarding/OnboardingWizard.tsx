@@ -58,8 +58,10 @@ export function OnboardingWizard({
   initialStep = 1,
   initialRole = "zzp",
 }: OnboardingWizardProps) {
-  const firstName = userName.split(" ")[0];
-  const [step, setStep] = useState<StepId>(initialStep as StepId);
+  const firstName = userName.split(" ")[0] || "daar";
+  // [BOEK-015] fix: DB default is 0 — clamp to 1 so Step 1 always renders
+  const safeStep = Math.max(1, initialStep) as StepId;
+  const [step, setStep] = useState<StepId>(safeStep);
   const [role, setRole] = useState<Role>(initialRole);
   const [company, setCompany] = useState<CompanyData>({
     company_name: "", kvk_number: "", btw_number: "", iban: "", address: "",
@@ -174,8 +176,9 @@ export function OnboardingWizard({
 
   return (
     <div
-      className="min-h-screen flex flex-col bg-white"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      className="flex flex-col bg-white"
+      // [BOEK-015] fix: explicit minHeight prevents blank screen if Tailwind min-h-screen fails
+      style={{ minHeight: "100vh", paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {/* Progress bar */}
       <div style={{ height: "3px", background: "#e5e5ea" }}>
