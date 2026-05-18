@@ -87,6 +87,16 @@ export interface ClassifyExpenseResult {
   confidence: number;
 }
 
+// [BOEK-015] Company details extracted from an invoice during onboarding
+export interface ExtractCompanyDetailsResult {
+  company_name: string | null;
+  kvk_number: string | null;   // 8 digits, Dutch KVK
+  btw_number: string | null;   // NL + 9 digits + B + 2 digits
+  iban: string | null;
+  address: string | null;
+  found: boolean;              // true if at least company_name or kvk was found
+}
+
 // [BOEK-018] GenerateInvoiceFromPromptResult type — May 2026
 export interface GenerateInvoiceLineResult {
   description: string;
@@ -743,6 +753,121 @@ Return JSON only.`;
     return parsed;
   } catch (error) {
     console.error('[BOEK-018] generateInvoiceFromPrompt failed:', error);
+    return FALLBACK;
+  }
+}
+// ─────────────────────────────────────────────────────────
+// 8. Extract company registration details from invoice
+// [BOEK-015] extractCompanyDetails — May 2026
+//
+// Used by: BOEK-015 Onboarding — Step 3A (AI upload flow)
+// Reads actual PDF or image content and extracts the SENDER's
+// business registration data: bedrijfsnaam, KVK, BTW, IBAN
+//
+// Safe fallback: { found: false, all fields null }
+// Never throws — onboarding continues even if AI fails
+// ─────────────────────────────────────────────────────────
+export async function extractCompanyDetails(
+  fileBase64: string,
+  mimeType: string,
+  filename: string
+): Promise<ExtractCompanyDetailsResult> {
+  const FALLBACK: ExtractCompanyDetailsResult = {
+    company_name: null,
+    kvk_number: null,
+    btw_number: null,
+    iban: null,
+    address: null,
+    found: false,
+  };
+
+  const systemPrompt = `${SYSTEM_BASE}
+
+You extract Dutch business registration data from invoices and receipts.
+Extract the SENDER's data (the company that issued the invoice), not the receiver.
+
+Return only a JSON object with these exact keys:
+{
+  "company_name": string or null,
+  "kvk_number": string or null,
+  "btw_number": string or null,
+  "iban": string or null,
+  "address": string or null,
+  "found": boolean
+}
+
+Rules:
+- kvk_number: 8 digits only, remove spaces and dashes (e.g. "12345678")
+- btw_number: Dutch format NL + 9 digits + B + 2 digits (e.g. "NL123456789B01")
+- iban: keep full IBAN including country code, remove spaces
+- address: street + house number only — no city, no postal code
+- found: true if at least company_name or kvk_number was extracted
+- If a field is not present in the document, set it to null
+- Return only JSON, no markdown, no explanation`;
+
+  const prompt = `Extract the sender company's registration details from this invoice.
+Filename: ${filename}
+
+Look for:
+- Company name (bedrijfsnaam)
+- KVK number (Kvk-nummer, Chamber of Commerce)
+- BTW number (BTW-nummer, VAT number, starts with NL)
+- IBAN bank account number
+- Street address of the sender
+
+Return JSON only.`;
+
+  try {
+    let raw: string;
+
+    if (mimeType === 'application/pdf') {
+      raw = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+    } else if (
+      mimeType === 'image/jpeg' ||
+      mimeType === 'image/png' ||
+      mimeType === 'image/webp' ||
+      mimeType === 'image/gif'
+    ) {
+      raw = await callClaudeWithImage(
+        fileBase64,
+        mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+        prompt,
+        systemPrompt
+      );
+    } else {
+      // Unsupported type — treat as text extraction best-effort
+      raw = await callClaude(
+        `Filename: ${filename}\n${prompt}`,
+        systemPrompt
+      );
+    }
+
+    const parsed = safeParseJSON<ExtractCompanyDetailsResult>(raw);
+    if (!parsed) return FALLBACK;
+
+    // Sanitize KVK — digits only, exactly 8
+    if (parsed.kvk_number) {
+      const kvkClean = parsed.kvk_number.replace(/\D/g, '');
+      parsed.kvk_number = kvkClean.length === 8 ? kvkClean : null;
+    }
+
+    // Sanitize BTW — NL + 9 digits + B + 2 digits
+    if (parsed.btw_number) {
+      const btwClean = parsed.btw_number.replace(/\s/g, '').toUpperCase();
+      parsed.btw_number = /^NL\d{9}B\d{2}$/.test(btwClean) ? btwClean : null;
+    }
+
+    // Sanitize IBAN — remove spaces
+    if (parsed.iban) {
+      parsed.iban = parsed.iban.replace(/\s/g, '').toUpperCase();
+    }
+
+    // Recompute found after sanitization
+    parsed.found = !!(parsed.company_name || parsed.kvk_number);
+
+    return parsed;
+  } catch (error) {
+    console.error('[BOEK-015] extractCompanyDetails failed:', error);
     return FALLBACK;
   }
 }

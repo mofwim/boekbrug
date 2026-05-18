@@ -490,10 +490,16 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
   async function handleFile(file: File) {
     setState("uploading");
     try {
-      // [BOEK-015] Fix 1: Step 1 — upload file via /api/files, get documentId back
+      // [BOEK-015] Step 1: upload file via /api/files to get a documentId
+      const now = new Date();
+      const year = String(now.getFullYear());
+      const quarter = String(Math.ceil((now.getMonth() + 1) / 3));
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("doc_type", "onboarding");
+      formData.append("year", year);
+      formData.append("quarter", quarter);
 
       const uploadRes = await fetch("/api/files", {
         method: "POST",
@@ -507,27 +513,29 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
 
       if (!documentId) { setState("error"); return; }
 
-      // [BOEK-015] Fix 1: Step 2 — classify with documentId (not raw base64)
-      const classifyRes = await fetch("/api/bestanden/classify", {
+      // [BOEK-015] Step 2: extract company details via /api/onboarding/extract
+      // This endpoint uses extractCompanyDetails from @/lib/ai
+      // It reads the actual PDF/image content and returns: company_name, kvk, btw, iban
+      const extractRes = await fetch("/api/onboarding/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documentId, fileName: file.name }),
+        body: JSON.stringify({ documentId, fileName: file.name, mimeType: file.type }),
       });
 
-      const classifyData = await classifyRes.json();
-      const vendorName = classifyData.vendor ?? classifyData.company_name;
+      const extractData = await extractRes.json();
 
-      if (vendorName || classifyData.kvk_number) {
+      if (extractData.found) {
         setCompany((p) => ({
           ...p,
-          company_name: classifyData.company_name ?? vendorName ?? p.company_name,
-          kvk_number: classifyData.kvk_number ?? p.kvk_number,
-          btw_number: classifyData.btw_number ?? p.btw_number,
-          iban: classifyData.iban ?? p.iban,
-          address: classifyData.address ?? p.address,
+          company_name: extractData.company_name ?? p.company_name,
+          kvk_number: extractData.kvk_number ?? p.kvk_number,
+          btw_number: extractData.btw_number ?? p.btw_number,
+          iban: extractData.iban ?? p.iban,
+          address: extractData.address ?? p.address,
         }));
         setState("success");
       } else {
+        // AI found nothing useful → guide user to manual form
         onFallback();
       }
     } catch {
