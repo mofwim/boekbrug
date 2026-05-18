@@ -50,3 +50,4 @@ node_modules/
 "< client_secret_488301990904-3gfj2ndofav1dj5gtmhamp8h1is3fpme.apps.googleusercontent.com>" 
 "client_secret*.json" 
 "*.apps.googleusercontent.com.json" 
+"client_secret*.json" 
