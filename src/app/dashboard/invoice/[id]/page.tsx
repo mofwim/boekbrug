@@ -126,7 +126,7 @@ export default function InvoiceDetailPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {/* [DS] Back button — Material You circular tonal */}
             <button
-              onClick={() => router.push('/dashboard')}
+              onClick={() => router.back()}
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',

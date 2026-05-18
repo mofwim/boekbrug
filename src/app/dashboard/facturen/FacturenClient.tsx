@@ -403,14 +403,20 @@ export default function FacturenClient({ profile }: { profile: any }) {
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        {!isPaid && (
-                          <button
-                            onClick={e => { e.stopPropagation(); handleDeleteRequest(inv.id, inv.invoice_number ?? '', inv.status) }}
-                            style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                            Verwijderen
-                          </button>
-                        )}
+                        {/* [BOEK-029] Delete rules: draft (not creditnota) + pro_forma only */}
+                        {(() => {
+                          const canDelete =
+                            (inv.status === 'draft' && inv.invoice_type !== 'creditnota') ||
+                            inv.invoice_type === 'pro_forma'
+                          return canDelete ? (
+                            <button
+                              onClick={e => { e.stopPropagation(); handleDeleteRequest(inv.id, inv.invoice_number ?? '', inv.status) }}
+                              style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                              Verwijderen
+                            </button>
+                          ) : null
+                        })()}
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>

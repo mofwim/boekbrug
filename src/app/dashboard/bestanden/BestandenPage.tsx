@@ -26,7 +26,6 @@ import { PreviewModal } from "./components/modals/PreviewModal";
 import { RenameModal } from "./components/modals/RenameModal";
 import { MoveModal } from "./components/modals/MoveModal";
 import { SharePopup } from "./components/modals/SharePopup";
-import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
 
 // ─── Breadcrumb ────────────────────────────────────────────────────────────────
 
@@ -177,11 +176,6 @@ export function BestandenPage() {
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: "file" | "folder" } | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ id: string; type: "file" | "folder"; excludeId?: string } | null>(null);
   const [sharePopup, setSharePopup] = useState<{ doc: BestandRow } | null>(null);
-  const [aiSuggestion, setAiSuggestion] = useState<{
-    doc: BestandRow;
-    suggestedFolderId: string;
-    suggestedPath: string;
-  } | null>(null);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: import("./types").ContextMenuItem[] } | null>(null);
 
@@ -483,38 +477,12 @@ export function BestandenPage() {
     setSharePopup(null);
   };
 
-  const handleUploaded = useCallback(async (doc: BestandRow) => {
+  // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
+  const handleUploaded = useCallback((doc: BestandRow) => {
     setDocs(p => [doc, ...p]);
-
-    // [BOEK-033] AI Classification — call classifyDocument then suggest folder
-    try {
-      const res = await fetch("/api/bestanden/classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documentId: doc.id, fileName: doc.file_name }),
-      });
-      if (res.ok) {
-        const result = await res.json() as {
-          folderId: string | null;
-          folderPath: string;
-          type: "invoice" | "bank" | "receipt" | "unknown";
-        };
-        if (result.folderId && result.type !== "unknown") {
-          setAiSuggestion({
-            doc,
-            suggestedFolderId: result.folderId,
-            suggestedPath: result.folderPath,
-          });
-          return; // Don't show share popup yet — wait for AI modal decision
-        }
-      }
-    } catch {
-      // AI classification failed — fall through to share popup
-    }
-
-    // No AI suggestion → show share popup directly
-    setSharePopup({ doc });
-  }, []); // eslint-disable-line
+    // No share popup — sharing is manual via right-click → "Delen"
+    // No AI suggestion popup — AI places silently in UploadArea
+  }, []);
 
   // ── Download ──
   const downloadFile = async (docId: string, fileName: string) => {
@@ -672,32 +640,6 @@ export function BestandenPage() {
       {sharePopup && <SharePopup fileName={sharePopup.doc.file_name} accountantName="uw boekhouder" onShare={() => handleShare(sharePopup.doc)} onKeepPrivate={() => setSharePopup(null)} />}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
 
-      {/* [BOEK-033] AI Suggestion Modal */}
-      {aiSuggestion && (
-        <AiSuggestionModal
-          fileName={aiSuggestion.doc.file_name}
-          suggestedPath={aiSuggestion.suggestedPath}
-          onAccept={async () => {
-            // Move file to suggested folder
-            await fetch(`/api/bestanden?id=${aiSuggestion.doc.id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ folder_id: aiSuggestion.suggestedFolderId }),
-            });
-            setDocs(p => p.map(d => d.id === aiSuggestion.doc.id
-              ? { ...d, folder_id: aiSuggestion.suggestedFolderId }
-              : d
-            ));
-            setAiSuggestion(null);
-            setSharePopup({ doc: aiSuggestion.doc });
-          }}
-          onChooseManually={() => {
-            setAiSuggestion(null);
-            setMoveTarget({ id: aiSuggestion.doc.id, type: "file" });
-          }}
-        />
-      )}
-
       {/* ── Clipboard indicator ── */}
       {clipboardDisplay && (
         <div style={{
@@ -812,23 +754,47 @@ export function BestandenPage() {
             <input ref={fileInputRef} type="file" style={{ display: "none" }}
               onChange={async e => {
                 setShowNewMenu(false);
-                const file = e.target.files?.[0]; if (!file) return;
-                const now = new Date(); const fd = new FormData();
-                fd.append("file", file);
-                fd.append("year", String(now.getFullYear()));
-                fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
-                if (currentFolderId) fd.append("folder_id", currentFolderId);
-                const r = await fetch("/api/files", { method: "POST", body: fd });
-                const j = await r.json() as { id?: string };
-                if (j.id) handleUploaded({
-                  id: j.id, file_name: file.name, file_url: "", file_size: file.size,
-                  file_type: file.type, doc_type: null, period: null, year: now.getFullYear(),
-                  notes: null, invoice_id: null, created_at: now.toISOString(),
-                  folder_id: currentFolderId, ai_processed: false,
-                  ai_doc_type: null, ai_suggested_folder: null, source: "upload",
-                });
+                // [BOEK-033] Delegate to UploadArea's handleFiles by triggering it
+                // The FAB input now supports multiple files
+                const files = e.target.files;
+                if (!files?.length) return;
+                for (const file of Array.from(files)) {
+                  const now = new Date(); const fd = new FormData();
+                  fd.append("file", file);
+                  fd.append("year", String(now.getFullYear()));
+                  fd.append("quarter", String(Math.ceil((now.getMonth() + 1) / 3)));
+                  if (currentFolderId) fd.append("folder_id", currentFolderId);
+                  const r = await fetch("/api/files", { method: "POST", body: fd });
+                  const j = await r.json() as { id?: string };
+                  if (j.id) {
+                    // Silent AI classification
+                    try {
+                      const cr = await fetch("/api/bestanden/classify", {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ documentId: j.id, fileName: file.name }),
+                      });
+                      if (cr.ok) {
+                        const result = await cr.json() as { folderId: string | null; confidence?: number; type: string };
+                        if (result.folderId && result.type !== "unknown" && (result.confidence ?? 1) >= 0.7) {
+                          await fetch(`/api/bestanden?id=${j.id}`, {
+                            method: "PATCH", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ folder_id: result.folderId }),
+                          });
+                        }
+                      }
+                    } catch { /* silent */ }
+                    handleUploaded({
+                      id: j.id, file_name: file.name, file_url: "", file_size: file.size,
+                      file_type: file.type, doc_type: null, period: null, year: now.getFullYear(),
+                      notes: null, invoice_id: null, created_at: now.toISOString(),
+                      folder_id: currentFolderId, ai_processed: false,
+                      ai_doc_type: null, ai_suggested_folder: null, source: "upload",
+                    });
+                  }
+                }
                 e.target.value = "";
               }}
+              multiple
               accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.tiff,.doc,.docx,.xls,.xlsx,.csv,.xml,.zip,.eml"
             />
             <button

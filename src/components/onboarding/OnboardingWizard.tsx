@@ -1,76 +1,55 @@
-// components/onboarding/OnboardingWizard.tsx
-// [BOEK-015] Onboarding Wizard — iOS mobile-first redesign
-// Changes v4:
-//   - Language selection in Step 1 (nl/en/ar/tr) saved to profiles.preferred_language
-//   - Email connection (Gmail/Outlook) in Step 4
-//   - iOS-style responsive design (safe areas, native feel)
-//   - Accountant Step 4 → "Nodig klant uit" + email invite option
-//   - All previous: KVK/BTW validation, skip, resume, company save ✅
+// src/components/onboarding/OnboardingWizard.tsx
+// [BOEK-015] Smart Onboarding — Complete Redesign — May 2026
+//
+// ZZP'er flow:  1=Welcome → 2=Role → 3=HowToStart → 3A=AIUpload | 3B=Manual → 4=Gmail → 5=Accountant → 6=Done
+// Accountant:   1=Welcome → 2=Role → 3=OfficeDetails → 4=InviteClient → 5=Done
+//
+// Rules:
+// - Eén vraag per scherm
+// - Geen technische termen
+// - Minimale invoer — AI doet het werk
+// - font-size 16px op inputs (iOS zoom prevention)
+// - env(safe-area-inset-bottom) op bottom
 
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 // ── Types ────────────────────────────────────────────────
 
-interface OnboardingWizardProps {
-  userName: string;
-  /** Resume from saved step (onboarding_step from profiles) */
-  initialStep?: number;
-  /** Pre-saved role if user already passed Step 2 */
-  initialRole?: Role;
-  /** Pre-saved language if user already passed Step 1 */
-  initialLanguage?: Language;
-}
-
 type Role = "zzp" | "accountant";
-type Language = "nl" | "en" | "ar" | "tr";
+type StepId = 1 | 2 | 3 | "3A" | "3B" | 4 | 5 | 6;
 
 interface CompanyData {
   company_name: string;
   kvk_number: string;
   btw_number: string;
+  iban: string;
+  address: string;
 }
 
-interface CompanyErrors {
-  kvk_number?: string;
-  btw_number?: string;
+interface OnboardingWizardProps {
+  userName: string;
+  userEmail?: string;
+  initialStep?: number;
+  initialRole?: Role;
 }
 
-// ── i18n labels (minimal, for onboarding only) ──────────
-const LANG_LABELS: Record<Language, { label: string; flag: string; dir: "ltr" | "rtl" }> = {
-  nl: { label: "Nederlands", flag: "🇳🇱", dir: "ltr" },
-  en: { label: "English", flag: "🇬🇧", dir: "ltr" },
-  ar: { label: "العربية", flag: "🇸🇦", dir: "rtl" },
-  tr: { label: "Türkçe", flag: "🇹🇷", dir: "ltr" },
-};
+// ── Progress mapping ─────────────────────────────────────
 
-// ── Validation ──────────────────────────────────────────
+function stepToProgress(step: StepId, role: Role): number {
+  if (role === "accountant") {
+    const map: Record<string, number> = { "1": 10, "2": 30, "3": 55, "4": 80, "5": 100 };
+    return map[String(step)] ?? 10;
+  }
+  const map: Record<string, number> = {
+    "1": 5, "2": 20, "3": 35, "3A": 52, "3B": 52, "4": 70, "5": 85, "6": 100,
+  };
+  return map[String(step)] ?? 5;
+}
+
 const KVK_REGEX = /^\d{8}$/;
-const BTW_REGEX = /^NL\d{9}B\d{2}$/i;
-
-function validateCompany(data: CompanyData): CompanyErrors {
-  const errors: CompanyErrors = {};
-  const kvk = data.kvk_number.trim();
-  const btw = data.btw_number.trim();
-  if (kvk && !KVK_REGEX.test(kvk)) {
-    errors.kvk_number = "KVK-nummer moet uit 8 cijfers bestaan";
-  }
-  if (btw && !BTW_REGEX.test(btw)) {
-    errors.btw_number = "Formaat: NL123456789B01";
-  }
-  return errors;
-}
-
-// ── Step definitions ────────────────────────────────────
-const STEPS = [
-  { id: 1, title: "Welkom" },
-  { id: 2, title: "Wie ben jij?" },
-  { id: 3, title: "Bedrijf" },
-  { id: 4, title: "E-mail" },
-  { id: 5, title: "Klaar!" },
-] as const;
 
 // ── Main component ──────────────────────────────────────
 
@@ -78,634 +57,634 @@ export function OnboardingWizard({
   userName,
   initialStep = 1,
   initialRole = "zzp",
-  initialLanguage = "nl",
 }: OnboardingWizardProps) {
-  const [step, setStep] = useState(Math.min(Math.max(initialStep, 1), STEPS.length));
+  const firstName = userName.split(" ")[0];
+  const [step, setStep] = useState<StepId>(initialStep as StepId);
   const [role, setRole] = useState<Role>(initialRole);
-  const [language, setLanguage] = useState<Language>(initialLanguage);
-  const [emailConnected, setEmailConnected] = useState<"gmail" | "outlook" | null>(null);
   const [company, setCompany] = useState<CompanyData>({
-    company_name: "",
-    kvk_number: "",
-    btw_number: "",
+    company_name: "", kvk_number: "", btw_number: "", iban: "", address: "",
   });
-  const [companyErrors, setCompanyErrors] = useState<CompanyErrors>({});
+  const [kvkError, setKvkError] = useState("");
+  const [accountantEmail, setAccountantEmail] = useState("");
+  const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
   const router = useRouter();
 
-  const dir = LANG_LABELS[language].dir;
+  const progress = stepToProgress(step, role);
 
-  /** Save current step + optional extra fields */
-  async function persistStep(nextStep: number, extraData?: Record<string, unknown>) {
+  async function persistStep(nextStep: number, extra?: Record<string, unknown>) {
     await fetch("/api/onboarding", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ step: nextStep, role, ...extraData }),
+      body: JSON.stringify({ step: nextStep, role, ...extra }),
     });
   }
 
+  async function finish() {
+    setSaving(true);
+    await fetch("/api/onboarding", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ done: true, role }),
+    });
+    router.push("/dashboard");
+  }
+
+  // ── "Volgende" logic per step ──
   async function handleNext() {
-    if (step === STEPS.length) {
-      setSaving(true);
-      await fetch("/api/onboarding", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ done: true, role }),
-      });
-      router.push("/dashboard");
-      return;
-    }
-
-    // Step 1 — save language choice
-    if (step === 1) {
-      await persistStep(2, { preferred_language: language });
-      setStep(2);
-      return;
-    }
-
-    // Step 3 — validate + save company data
-    if (step === 3) {
-      const errors = validateCompany(company);
-      if (Object.keys(errors).length > 0) {
-        setCompanyErrors(errors);
+    if (role === "zzp") {
+      if (step === 1) { await persistStep(2); setStep(2); return; }
+      if (step === 2) { await persistStep(3); setStep(3); return; }
+      if (step === "3B") {
+        const kvk = company.kvk_number.trim();
+        if (kvk && !KVK_REGEX.test(kvk)) { setKvkError("KVK-nummer moet uit 8 cijfers bestaan"); return; }
+        setKvkError("");
+        await persistStep(4, {
+          company_name: company.company_name.trim() || null,
+          kvk_number: kvk || null,
+        });
+        setStep(4);
         return;
       }
-      setCompanyErrors({});
-      const companyPayload = {
-        company_name: company.company_name.trim() || null,
-        kvk_number: company.kvk_number.trim() || null,
-        btw_number: company.btw_number.trim() || null,
-      };
-      await persistStep(4, companyPayload);
-      setStep(4);
-      return;
+      if (step === 4) { await persistStep(5); setStep(5); return; }
+      if (step === 5) {
+        if (accountantEmail.trim()) {
+          await fetch("/api/invite/accountant", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accountant_email: accountantEmail.trim() }),
+          }).catch(() => {}); // non-blocking
+        }
+        await persistStep(6);
+        setStep(6);
+        return;
+      }
+      if (step === 6) { await finish(); return; }
     }
 
-    await persistStep(step + 1);
-    setStep((s) => s + 1);
+    if (role === "accountant") {
+      if (step === 1) { await persistStep(2); setStep(2); return; }
+      if (step === 2) { await persistStep(3); setStep(3); return; }
+      if (step === 3) {
+        const kvk = company.kvk_number.trim();
+        if (kvk && !KVK_REGEX.test(kvk)) { setKvkError("KVK-nummer moet uit 8 cijfers bestaan"); return; }
+        setKvkError("");
+        await persistStep(4, {
+          company_name: company.company_name.trim() || null,
+          kvk_number: kvk || null,
+        });
+        setStep(4);
+        return;
+      }
+      if (step === 4) {
+        if (clientEmail.trim()) {
+          await fetch("/api/invite/client", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ client_email: clientEmail.trim() }),
+          }).catch(() => {});
+        }
+        await persistStep(5);
+        setStep(5);
+        return;
+      }
+      if (step === 5) { await finish(); return; }
+    }
   }
 
   async function handleSkip() {
-    await persistStep(step + 1);
-    setStep((s) => s + 1);
+    if (role === "zzp") {
+      if (step === 3) { setStep("3B"); return; }
+      if (step === "3A" || step === "3B") { await persistStep(4); setStep(4); return; }
+      if (step === 4) { await persistStep(5); setStep(5); return; }
+      if (step === 5) { await finish(); return; }
+    }
+    if (role === "accountant") {
+      if (step === 3) { await persistStep(4); setStep(4); return; }
+      if (step === 4) { await finish(); return; }
+    }
   }
 
-  function handleBack() {
-    setStep((s) => Math.max(1, s - 1));
-  }
-
-  const isLastStep = step === STEPS.length;
-  const showSkip = step === 3 || step === 4;
+  const isDone = (role === "zzp" && step === 6) || (role === "accountant" && step === 5);
+  const hideNextButton = step === 3 || step === "3A" || step === 4;
+  const showSkip =
+    !isDone && step !== 1 && step !== 2 &&
+    !(role === "zzp" && step === 6) &&
+    !(role === "accountant" && step === 5);
 
   return (
-    // [BOEK-015] iOS mobile-first layout — safe area + full height
     <div
-      className="min-h-screen flex flex-col bg-background"
-      dir={dir}
-      style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
+      className="min-h-screen flex flex-col bg-white"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      {/* ── Top progress strip ── */}
-      <div className="flex gap-1 px-5 pt-5 pb-2">
-        {STEPS.map((s) => (
-          <div
-            key={s.id}
-            className="flex-1 h-[3px] rounded-full transition-all duration-500"
-            style={{
-              background: s.id <= step ? "var(--color-text-primary)" : "var(--color-border-tertiary)",
-            }}
-          />
-        ))}
+      {/* Progress bar */}
+      <div style={{ height: "3px", background: "#e5e5ea" }}>
+        <div
+          style={{
+            height: "3px",
+            width: `${progress}%`,
+            background: "#007aff",
+            transition: "width 0.4s ease",
+          }}
+        />
       </div>
 
-      {/* ── Step label ── */}
-      <div className="px-6 pt-3 pb-1">
-        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-          Stap {step} van {STEPS.length}
-        </p>
-      </div>
-
-      {/* ── Content area ── */}
-      <div className="flex-1 flex flex-col px-6 pt-4 pb-6 overflow-y-auto">
+      {/* Content */}
+      <div className="flex-1 flex flex-col px-6 pt-10 pb-8 w-full" style={{ maxWidth: "480px", margin: "0 auto" }}>
         <div className="flex-1">
-          {step === 1 && (
-            <StepWelcome
-              userName={userName}
-              language={language}
-              setLanguage={setLanguage}
+
+          {step === 1 && <StepWelcome firstName={firstName} />}
+          {step === 2 && <StepRole role={role} setRole={setRole} />}
+
+          {/* ZZP */}
+          {role === "zzp" && step === 3 && (
+            <StepHowToStart
+              onUpload={() => setStep("3A")}
+              onManual={() => setStep("3B")}
             />
           )}
-          {step === 2 && <StepRole role={role} setRole={setRole} />}
-          {step === 3 && (
-            <StepCompany
+          {role === "zzp" && step === "3A" && (
+            <StepAIUpload
               company={company}
               setCompany={setCompany}
-              errors={companyErrors}
+              onSuccess={async () => {
+                await persistStep(4, {
+                  company_name: company.company_name || null,
+                  kvk_number: company.kvk_number || null,
+                  btw_number: company.btw_number || null,
+                  iban: company.iban || null,
+                  address: company.address || null,
+                });
+                setStep(4);
+              }}
+              onFallback={() => setStep("3B")}
             />
           )}
-          {step === 4 && (
-            <StepEmailConnect
-              role={role}
-              connected={emailConnected}
-              setConnected={setEmailConnected}
-            />
+          {role === "zzp" && step === "3B" && (
+            <StepManual company={company} setCompany={setCompany} kvkError={kvkError} setKvkError={setKvkError} />
           )}
-          {step === 5 && <StepDone role={role} />}
+          {role === "zzp" && step === 4 && <StepGmail />}
+          {role === "zzp" && step === 5 && (
+            <StepAccountant accountantEmail={accountantEmail} setAccountantEmail={setAccountantEmail} />
+          )}
+          {role === "zzp" && step === 6 && <StepDone firstName={firstName} role="zzp" />}
+
+          {/* Accountant */}
+          {role === "accountant" && step === 3 && (
+            <StepOfficeDetails company={company} setCompany={setCompany} kvkError={kvkError} setKvkError={setKvkError} />
+          )}
+          {role === "accountant" && step === 4 && (
+            <StepInviteClient clientEmail={clientEmail} setClientEmail={setClientEmail} />
+          )}
+          {role === "accountant" && step === 5 && <StepDone firstName={firstName} role="accountant" />}
         </div>
 
-        {/* ── Navigation ── */}
+        {/* Buttons */}
         <div className="mt-8 space-y-3">
-          {/* Primary button */}
-          <button
-            onClick={handleNext}
-            disabled={saving}
-            className="w-full py-4 rounded-2xl text-sm font-medium transition-all active:scale-[0.98] disabled:opacity-50"
-            style={{
-              background: "var(--color-text-primary)",
-              color: "var(--color-background-primary)",
-            }}
-          >
-            {isLastStep
-              ? saving
-                ? "Bezig…"
-                : "Naar dashboard"
-              : "Volgende"}
-          </button>
-
-          {/* Secondary row: Back + Skip */}
-          <div className="flex items-center justify-between">
-            {step > 1 ? (
-              <button
-                onClick={handleBack}
-                disabled={saving}
-                className="py-2 px-1 text-sm transition-colors disabled:opacity-40"
-                style={{ color: "var(--color-text-secondary)" }}
-              >
-                ← Terug
-              </button>
-            ) : (
-              <div />
-            )}
-
-            {showSkip && (
-              <button
-                onClick={handleSkip}
-                disabled={saving}
-                className="py-2 px-1 text-sm transition-colors disabled:opacity-40"
-                style={{ color: "var(--color-text-secondary)" }}
-              >
-                Overslaan →
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Step 1 — Welcome + Language selection ────────────────
-
-function StepWelcome({
-  userName,
-  language,
-  setLanguage,
-}: {
-  userName: string;
-  language: Language;
-  setLanguage: (l: Language) => void;
-}) {
-  return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-4xl mb-4">👋</p>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Welkom, {userName.split(" ")[0]}
-        </h1>
-        <p className="mt-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-          BoekBrug is jouw financiële ruggengraat. Klaar in 5 minuten.
-        </p>
-      </div>
-
-      {/* Language selector */}
-      <div>
-        <p className="text-sm font-medium mb-3">Kies je taal</p>
-        <div className="grid grid-cols-2 gap-2">
-          {(Object.entries(LANG_LABELS) as [Language, typeof LANG_LABELS[Language]][]).map(
-            ([code, meta]) => (
-              <button
-                key={code}
-                onClick={() => setLanguage(code)}
-                className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm text-left transition-all active:scale-[0.97]"
-                style={{
-                  background:
-                    language === code
-                      ? "var(--color-text-primary)"
-                      : "var(--color-background-secondary)",
-                  color:
-                    language === code
-                      ? "var(--color-background-primary)"
-                      : "var(--color-text-primary)",
-                  border: "0.5px solid var(--color-border-tertiary)",
-                }}
-              >
-                <span className="text-lg">{meta.flag}</span>
-                <span className="font-medium">{meta.label}</span>
-              </button>
-            )
+          {isDone ? (
+            <Btn onClick={finish} loading={saving}>Ga naar mijn dashboard →</Btn>
+          ) : (
+            !hideNextButton && <Btn onClick={handleNext} loading={saving}>Volgende</Btn>
+          )}
+          {showSkip && (
+            <button
+              onClick={handleSkip}
+              style={{ width: "100%", padding: "12px", fontSize: "15px", color: "#8e8e93", background: "none", border: "none", cursor: "pointer" }}
+            >
+              Sla over
+            </button>
           )}
         </div>
       </div>
-
-      <div className="space-y-2 pt-2">
-        {[
-          "Alle facturen op één plek",
-          "AI leest en ordent je documenten",
-          "Nooit meer een factuur kwijt",
-        ].map((item) => (
-          <div key={item} className="flex items-center gap-3 text-sm">
-            <span style={{ color: "var(--color-text-success)" }}>✓</span>
-            <span style={{ color: "var(--color-text-secondary)" }}>{item}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
 
-// ── Step 2 — Role selection ──────────────────────────────
+// ── Shared button ────────────────────────────────────────
 
-function StepRole({
-  role,
-  setRole,
-}: {
-  role: Role;
-  setRole: (r: Role) => void;
-}) {
-  return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Wie ben jij?</h2>
-        <p className="mt-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-          We passen BoekBrug aan op jouw situatie.
-        </p>
-      </div>
-
-      <div className="space-y-3 pt-2">
-        <RoleCard
-          active={role === "zzp"}
-          onClick={() => setRole("zzp")}
-          icon="🧑‍💼"
-          title="ZZP'er / ondernemer"
-          desc="Ik stuur en ontvang facturen zelf"
-        />
-        <RoleCard
-          active={role === "accountant"}
-          onClick={() => setRole("accountant")}
-          icon="📊"
-          title="Boekhouder"
-          desc="Ik beheer meerdere klanten"
-        />
-      </div>
-    </div>
-  );
-}
-
-function RoleCard({
-  active,
-  onClick,
-  icon,
-  title,
-  desc,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: string;
-  title: string;
-  desc: string;
+function Btn({ onClick, loading, children, secondary }: {
+  onClick: () => void; loading?: boolean; children: React.ReactNode; secondary?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left px-5 py-4 rounded-2xl transition-all active:scale-[0.98]"
+      disabled={!!loading}
       style={{
-        background: active
-          ? "var(--color-text-primary)"
-          : "var(--color-background-secondary)",
-        border: active
-          ? "none"
-          : "0.5px solid var(--color-border-tertiary)",
-        color: active
-          ? "var(--color-background-primary)"
-          : "var(--color-text-primary)",
+        width: "100%",
+        padding: "16px",
+        borderRadius: "16px",
+        fontSize: "16px",
+        fontWeight: 600,
+        background: loading ? "#c7c7cc" : secondary ? "#f2f2f7" : "#007aff",
+        color: secondary ? "#007aff" : "#fff",
+        border: "none",
+        cursor: loading ? "not-allowed" : "pointer",
+        transition: "transform 0.1s",
       }}
     >
-      <div className="flex items-center gap-4">
-        <span className="text-2xl">{icon}</span>
-        <div>
-          <p className="text-sm font-medium">{title}</p>
-          <p
-            className="text-xs mt-0.5"
-            style={{
-              color: active
-                ? "rgba(255,255,255,0.7)"
-                : "var(--color-text-secondary)",
-            }}
-          >
-            {desc}
-          </p>
-        </div>
-        {active && (
-          <span className="ml-auto text-xs opacity-70">✓</span>
-        )}
-      </div>
+      {loading ? "Bezig…" : children}
     </button>
   );
 }
 
-// ── Step 3 — Company data ────────────────────────────────
+// ── Input ────────────────────────────────────────────────
 
-function StepCompany({
-  company,
-  setCompany,
-  errors,
-}: {
-  company: CompanyData;
-  setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
-  errors: CompanyErrors;
-}) {
-  function handleChange(field: keyof CompanyData) {
-    return (e: React.ChangeEvent<HTMLInputElement>) =>
-      setCompany((prev) => ({ ...prev, [field]: e.target.value }));
-  }
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Bedrijfsgegevens</h2>
-        <p className="mt-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-          Optioneel — je kunt dit later aanpassen via Instellingen.
-        </p>
-      </div>
-
-      <div className="space-y-4 pt-1">
-        <Field label="Bedrijfsnaam">
-          <input
-            type="text"
-            value={company.company_name}
-            onChange={handleChange("company_name")}
-            placeholder="Mijn Bedrijf BV"
-            className="ios-input"
-          />
-        </Field>
-
-        <Field label="KVK-nummer" error={errors.kvk_number}>
-          <input
-            type="text"
-            value={company.kvk_number}
-            onChange={handleChange("kvk_number")}
-            placeholder="12345678"
-            maxLength={8}
-            inputMode="numeric"
-            className="ios-input"
-            style={
-              errors.kvk_number
-                ? { borderColor: "var(--color-border-danger)" }
-                : undefined
-            }
-          />
-        </Field>
-
-        <Field label="BTW-nummer" error={errors.btw_number}>
-          <input
-            type="text"
-            value={company.btw_number}
-            onChange={handleChange("btw_number")}
-            placeholder="NL123456789B01"
-            autoCapitalize="characters"
-            className="ios-input"
-            style={
-              errors.btw_number
-                ? { borderColor: "var(--color-border-danger)" }
-                : undefined
-            }
-          />
-        </Field>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
+function Input({ label, placeholder, value, onChange, inputMode, maxLength, error, type }: {
+  label: string; placeholder: string; value: string; onChange: (v: string) => void;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  maxLength?: number; error?: string; type?: string;
 }) {
   return (
     <div>
-      <label
-        className="block text-sm font-medium mb-1.5"
-        style={{ color: "var(--color-text-primary)" }}
-      >
+      <label style={{ display: "block", fontSize: "14px", fontWeight: 500, color: "#1c1c1e", marginBottom: "8px" }}>
         {label}
       </label>
-      {children}
-      {error && (
-        <p className="text-xs mt-1" style={{ color: "var(--color-text-danger)" }}>
-          {error}
-        </p>
-      )}
+      <input
+        type={type ?? (inputMode === "email" ? "email" : "text")}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        inputMode={inputMode}
+        maxLength={maxLength}
+        style={{
+          width: "100%",
+          padding: "14px 16px",
+          fontSize: "16px", // iOS zoom prevention
+          borderRadius: "14px",
+          border: `1.5px solid ${error ? "#ff3b30" : "#e5e5ea"}`,
+          background: "#fff",
+          color: "#1c1c1e",
+          fontFamily: "inherit",
+          outline: "none",
+          boxSizing: "border-box",
+        }}
+      />
+      {error && <p style={{ fontSize: "13px", color: "#ff3b30", marginTop: "6px" }}>{error}</p>}
     </div>
   );
 }
 
-// ── Step 4 — Email connection ────────────────────────────
-// [BOEK-015] OAuth flow — redirect to /api/email/connect?provider=gmail|outlook
-// On return, the callback sets email_connections row and redirects back to /onboarding
+// ── Choice card ───────────────────────────────────────────
 
-function StepEmailConnect({
-  role,
-  connected,
-  setConnected,
-}: {
-  role: Role;
-  connected: "gmail" | "outlook" | null;
-  setConnected: (p: "gmail" | "outlook" | null) => void;
-}) {
-  function handleConnect(provider: "gmail" | "outlook") {
-    // [BOEK-015] Redirect to OAuth initiation endpoint
-    // After OAuth completes, provider redirects back to /onboarding?step=4&connected=gmail
-    window.location.href = `/api/email/connect?provider=${provider}&redirect=/onboarding`;
-  }
-
-  // Accountant sees a different Step 4: invite first client
-  if (role === "accountant") {
-    return (
-      <div className="space-y-5">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Nodig klant uit</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-            Stuur je eerste klant een uitnodiging om BoekBrug te gebruiken.
-          </p>
-        </div>
-
-        <a
-          href="/dashboard/clients/invite"
-          className="flex items-center justify-between w-full px-5 py-4 rounded-2xl text-sm font-medium transition-all active:scale-[0.98]"
-          style={{
-            background: "var(--color-background-secondary)",
-            border: "0.5px solid var(--color-border-tertiary)",
-            color: "var(--color-text-primary)",
-            textDecoration: "none",
-          }}
-        >
-          <div className="flex items-center gap-3">
-            <span className="text-xl">📧</span>
-            <div>
-              <p className="font-medium">Klant uitnodigen</p>
-              <p className="text-xs mt-0.5" style={{ color: "var(--color-text-secondary)" }}>
-                Via e-mail uitnodiging
-              </p>
-            </div>
-          </div>
-          <span style={{ color: "var(--color-text-tertiary)" }}>→</span>
-        </a>
-
-        <p className="text-xs text-center" style={{ color: "var(--color-text-tertiary)" }}>
-          Of klik op &ldquo;Overslaan&rdquo; en doe dit later vanuit het dashboard
-        </p>
-      </div>
-    );
-  }
-
-  // ZZP'er — connect Gmail or Outlook
-  return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Koppel je e-mail</h2>
-        <p className="mt-2 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-          Facturen komen automatisch binnen — je hoeft ze nooit meer zelf te uploaden.
-        </p>
-      </div>
-
-      {connected ? (
-        // ── Connected state ──
-        <div
-          className="flex items-center gap-3 px-5 py-4 rounded-2xl"
-          style={{
-            background: "var(--color-background-success)",
-            border: "0.5px solid var(--color-border-success)",
-          }}
-        >
-          <span className="text-xl">✅</span>
-          <div>
-            <p className="text-sm font-medium" style={{ color: "var(--color-text-success)" }}>
-              {connected === "gmail" ? "Gmail" : "Outlook"} gekoppeld
-            </p>
-            <button
-              onClick={() => setConnected(null)}
-              className="text-xs mt-0.5"
-              style={{ color: "var(--color-text-secondary)" }}
-            >
-              Verwijderen
-            </button>
-          </div>
-        </div>
-      ) : (
-        // ── Connect buttons ──
-        <div className="space-y-3 pt-1">
-          <EmailProviderButton
-            provider="gmail"
-            label="Gmail koppelen"
-            icon="G"
-            iconColor="#EA4335"
-            onClick={() => handleConnect("gmail")}
-          />
-          <EmailProviderButton
-            provider="outlook"
-            label="Outlook koppelen"
-            icon="O"
-            iconColor="#0078D4"
-            onClick={() => handleConnect("outlook")}
-          />
-        </div>
-      )}
-
-      <div
-        className="flex items-start gap-3 px-4 py-3 rounded-xl"
-        style={{ background: "var(--color-background-secondary)" }}
-      >
-        <span className="text-base mt-0.5">🔒</span>
-        <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-          BoekBrug leest alleen factuur-bijlagen. Persoonlijke e-mails worden nooit opgeslagen.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function EmailProviderButton({
-  label,
-  icon,
-  iconColor,
-  onClick,
-}: {
-  provider: "gmail" | "outlook";
-  label: string;
-  icon: string;
-  iconColor: string;
-  onClick: () => void;
+function ChoiceCard({ active, onClick, icon, title, desc }: {
+  active: boolean; onClick: () => void; icon: string; title: string; desc: string;
 }) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-sm font-medium text-left transition-all active:scale-[0.98]"
       style={{
-        background: "var(--color-background-secondary)",
-        border: "0.5px solid var(--color-border-tertiary)",
-        color: "var(--color-text-primary)",
+        width: "100%",
+        textAlign: "left",
+        padding: "18px 20px",
+        borderRadius: "18px",
+        border: "none",
+        background: active ? "#007aff" : "#f2f2f7",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: "16px",
+        transition: "transform 0.1s",
       }}
     >
-      {/* Provider icon circle */}
-      <span
-        className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white"
-        style={{ background: iconColor }}
-        aria-hidden="true"
-      >
-        {icon}
-      </span>
-      <span>{label}</span>
-      <span className="ml-auto" style={{ color: "var(--color-text-tertiary)" }}>→</span>
+      <span style={{ fontSize: "26px" }}>{icon}</span>
+      <div style={{ flex: 1 }}>
+        <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: active ? "#fff" : "#1c1c1e" }}>{title}</p>
+        <p style={{ margin: "2px 0 0", fontSize: "14px", color: active ? "rgba(255,255,255,0.75)" : "#6b6b6e" }}>{desc}</p>
+      </div>
+      {active && <span style={{ color: "#fff", fontSize: "16px" }}>✓</span>}
     </button>
   );
 }
 
-// ── Step 5 — Done ────────────────────────────────────────
+// ── Steps ─────────────────────────────────────────────────
 
-function StepDone({ role }: { role: Role }) {
+function StepWelcome({ firstName }: { firstName: string }) {
   return (
-    <div className="flex flex-col items-center text-center space-y-4 pt-8">
-      <span className="text-6xl">🎉</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      <span style={{ fontSize: "52px" }}>👋</span>
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Klaar om te starten!</h2>
-        <p className="mt-3 text-sm" style={{ color: "var(--color-text-secondary)" }}>
-          {role === "accountant"
-            ? "Jouw dashboard is klaar. Nodig klanten uit en beheer alles op één plek."
-            : "Jouw BoekBrug is klaar. Laat geen factuur meer verloren gaan."}
+        <h1 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+          Welkom bij BoekBrug, {firstName}!
+        </h1>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          Laten we je account in 3 minuten instellen.
         </p>
       </div>
-      <div
-        className="w-full px-5 py-4 rounded-2xl text-sm mt-4"
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        {["Alle facturen op één plek", "AI leest je documenten automatisch", "Nooit meer een factuur kwijt"].map((t) => (
+          <div key={t} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ color: "#34c759", fontSize: "16px" }}>✓</span>
+            <span style={{ fontSize: "15px", color: "#6b6b6e" }}>{t}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StepRole({ role, setRole }: { role: Role; setRole: (r: Role) => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Wie ben jij?</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>We passen BoekBrug aan op jouw situatie.</p>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <ChoiceCard active={role === "zzp"} onClick={() => setRole("zzp")} icon="💼" title="Ik ben ZZP'er" desc="Ik stuur en ontvang facturen" />
+        <ChoiceCard active={role === "accountant"} onClick={() => setRole("accountant")} icon="📊" title="Ik ben boekhouder" desc="Ik beheer facturen voor klanten" />
+      </div>
+    </div>
+  );
+}
+
+function StepHowToStart({ onUpload, onManual }: { onUpload: () => void; onManual: () => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Hoe wil je beginnen?</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Kies de makkelijkste manier voor jou.</p>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <button
+          onClick={onUpload}
+          style={{
+            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
+            border: "none", cursor: "pointer", width: "100%",
+          }}
+        >
+          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>📄 Upload een factuur</p>
+          <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e", lineHeight: 1.5 }}>
+            We lezen je bedrijfsgegevens automatisch uit — je hoeft niets zelf in te typen.
+          </p>
+          <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#8e8e93" }}>🔒 Jouw gegevens blijven privé.</p>
+        </button>
+        <button
+          onClick={onManual}
+          style={{
+            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
+            border: "none", cursor: "pointer", width: "100%",
+          }}
+        >
+          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>✏️ Zelf invullen</p>
+          <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>
+            Vul je gegevens stap voor stap handmatig in.
+          </p>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type UploadState = "idle" | "uploading" | "success" | "editing" | "error";
+
+function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
+  company: CompanyData;
+  setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
+  onSuccess: () => void;
+  onFallback: () => void;
+}) {
+  const [state, setState] = useState<UploadState>("idle");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(file: File) {
+    setState("uploading");
+    try {
+      const base64 = await fileToBase64(file);
+      const res = await fetch("/api/onboarding/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64, mimeType: file.type, filename: file.name }),
+      });
+      const data = await res.json();
+      if (data.found && (data.company_name || data.kvk_number)) {
+        setCompany((p) => ({
+          ...p,
+          company_name: data.company_name ?? p.company_name,
+          kvk_number: data.kvk_number ?? p.kvk_number,
+          btw_number: data.btw_number ?? p.btw_number,
+          iban: data.iban ?? p.iban,
+          address: data.address ?? p.address,
+        }));
+        setState("success");
+      } else {
+        onFallback();
+      }
+    } catch {
+      setState("error");
+    }
+  }
+
+  if (state === "uploading") return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: "60px", gap: "16px" }}>
+      <span style={{ fontSize: "40px" }}>✨</span>
+      <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>We lezen je factuur uit…</p>
+      <p style={{ margin: 0, fontSize: "14px", color: "#8e8e93" }}>Dit duurt maar even</p>
+    </div>
+  );
+
+  if (state === "success") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#34c759" }}>✓ We hebben je gegevens gevonden!</p>
+      <div style={{ background: "#f2f2f7", borderRadius: "16px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
+        {([["Bedrijfsnaam", company.company_name], ["KVK", company.kvk_number], ["BTW", company.btw_number], ["IBAN", company.iban]] as [string, string][])
+          .filter(([, v]) => v)
+          .map(([label, value]) => (
+            <div key={label} style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "14px", color: "#8e8e93" }}>{label}</span>
+              <span style={{ fontSize: "14px", fontWeight: 500, color: "#1c1c1e" }}>{value}</span>
+            </div>
+          ))}
+      </div>
+      <Btn onClick={onSuccess}>✓ Ja, ga verder</Btn>
+      <Btn onClick={() => setState("editing")} secondary>Aanpassen</Btn>
+    </div>
+  );
+
+  if (state === "editing") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 700, color: "#1c1c1e" }}>Gegevens aanpassen</h3>
+      {(["company_name", "kvk_number", "btw_number", "iban"] as (keyof CompanyData)[]).map((f) => (
+        <Input key={f} label={f === "company_name" ? "Bedrijfsnaam" : f === "kvk_number" ? "KVK-nummer" : f === "btw_number" ? "BTW-nummer" : "IBAN"}
+          placeholder="" value={company[f]} onChange={(v) => setCompany((p) => ({ ...p, [f]: v }))} />
+      ))}
+      <Btn onClick={onSuccess}>Opslaan en verder</Btn>
+    </div>
+  );
+
+  if (state === "error") return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <p style={{ color: "#ff3b30", fontSize: "15px" }}>Er ging iets mis. Probeer opnieuw of vul handmatig in.</p>
+      <Btn onClick={() => setState("idle")}>Opnieuw proberen</Btn>
+      <Btn onClick={onFallback} secondary>Handmatig invullen</Btn>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Upload een factuur</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          We lezen je bedrijfsgegevens automatisch uit.
+        </p>
+      </div>
+      <button
+        onClick={() => fileRef.current?.click()}
         style={{
-          background: "var(--color-background-secondary)",
-          color: "var(--color-text-secondary)",
+          padding: "40px 20px", borderRadius: "18px", border: "2px dashed #c7c7cc",
+          background: "#f9f9fb", cursor: "pointer", display: "flex", flexDirection: "column",
+          alignItems: "center", gap: "12px", width: "100%",
         }}
       >
+        <span style={{ fontSize: "40px" }}>📄</span>
+        <span style={{ fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Tik om te uploaden</span>
+        <span style={{ fontSize: "14px", color: "#8e8e93" }}>PDF, JPG of PNG — max 25 MB</span>
+      </button>
+      <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+      <div style={{ background: "#f2f2f7", borderRadius: "14px", padding: "14px 16px", display: "flex", gap: "10px" }}>
+        <span>🔒</span>
+        <p style={{ margin: 0, fontSize: "13px", color: "#6b6b6e" }}>
+          Jouw gegevens blijven privé. We lezen alleen je bedrijfsgegevens uit.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function StepManual({ company, setCompany, kvkError, setKvkError }: {
+  company: CompanyData; setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
+  kvkError: string; setKvkError: (e: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Jouw bedrijf</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Twee velden — de rest vul je later in.</p>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <Input label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
+          onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
+        <Input label="Wat is je KVK-nummer?" placeholder="12345678" value={company.kvk_number}
+          inputMode="numeric" maxLength={8} error={kvkError}
+          onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
+      </div>
+    </div>
+  );
+}
+
+function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
+  company: CompanyData; setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
+  kvkError: string; setKvkError: (e: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Jouw kantoor</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Optioneel — je kunt dit later aanpassen.</p>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <Input label="Naam van je kantoor" placeholder="Bakker Boekhouders" value={company.company_name}
+          onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
+        <Input label="KVK-nummer van je kantoor" placeholder="12345678" value={company.kvk_number}
+          inputMode="numeric" maxLength={8} error={kvkError}
+          onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
+      </div>
+    </div>
+  );
+}
+
+function StepGmail() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Wil je je Gmail koppelen?</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          We importeren automatisch je facturen. Jij hoeft niets te doen.
+        </p>
+      </div>
+      <button
+        onClick={() => { window.location.href = "/api/email/connect?provider=gmail&redirect=/onboarding"; }}
+        style={{
+          textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
+          border: "none", cursor: "pointer", width: "100%", display: "flex", alignItems: "flex-start", gap: "16px",
+        }}
+      >
+        <span style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#EA4335", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "16px", flexShrink: 0 }}>G</span>
+        <div>
+          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Ja, koppel mijn Gmail</p>
+          <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>We importeren automatisch je facturen.</p>
+          <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#8e8e93" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
+        </div>
+      </button>
+      <p style={{ textAlign: "center", fontSize: "14px", color: "#8e8e93" }}>
+        Tik op &ldquo;Sla over&rdquo; om dit later in te stellen
+      </p>
+    </div>
+  );
+}
+
+function StepAccountant({ accountantEmail, setAccountantEmail }: {
+  accountantEmail: string; setAccountantEmail: (v: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Heb je een boekhouder?</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          Stuur een uitnodiging — hij kan dan al je facturen inzien.
+        </p>
+      </div>
+      <Input label="E-mailadres boekhouder" placeholder="jan@boekhouder.nl"
+        value={accountantEmail} inputMode="email" onChange={setAccountantEmail} />
+    </div>
+  );
+}
+
+function StepInviteClient({ clientEmail, setClientEmail }: {
+  clientEmail: string; setClientEmail: (v: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Voeg je eerste klant toe</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          Je klant ontvangt een e-mail om zijn account aan te maken.
+        </p>
+      </div>
+      <Input label="E-mailadres klant" placeholder="klant@bedrijf.nl"
+        value={clientEmail} inputMode="email" onChange={setClientEmail} />
+    </div>
+  );
+}
+
+function StepDone({ firstName, role }: { firstName: string; role: Role }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "16px" }}>
+      <span style={{ fontSize: "60px" }}>🎉</span>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+          Je bent klaar, {firstName}!
+        </h2>
+        <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          {role === "accountant"
+            ? "Nodig klanten uit en beheer alles op één plek."
+            : "BoekBrug is ingericht en klaar voor gebruik."}
+        </p>
+      </div>
+      <div style={{ background: "#f2f2f7", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#6b6b6e", textAlign: "left", width: "100%" }}>
         💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden
       </div>
     </div>
   );
+}
+
+// ── Helper ───────────────────────────────────────────────
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+    reader.onerror = () => reject(new Error("Bestand kon niet worden gelezen"));
+    reader.readAsDataURL(file);
+  });
 }

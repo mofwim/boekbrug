@@ -1,9 +1,9 @@
 // src/components/search/SearchBar.tsx
 // [BOEK-012] Smart search — grouped results (Facturen / Bestanden / Klanten) — May 2026
-// Fixes included:
-//   - [BOEK-012] dropdown background: explicit white, no CSS var transparency
-//   - [BOEK-012] portal outside-click: portalDropdownRef excludes portal from closing
-//   - [BOEK-012] mobile button: restored, isMobile-driven display (no Tailwind dependency)
+// [BOEK-012] FIX: SearchInput + DropdownContent moved OUTSIDE SearchBar — May 2026
+//   Root cause of focus-loss bug: inner functions recreate component identity on every
+//   keystroke → React unmounts/remounts the input → focus stolen after each character.
+//   Solution: extract to module-level components, pass all needed values as props.
 
 "use client";
 
@@ -17,7 +17,7 @@ import {
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useSearch } from "@/hooks/useSearch";
-import { flattenGroups, type SearchResult } from "@/lib/search";
+import { flattenGroups, type SearchResult, type SearchResultGroup } from "@/lib/search";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -31,7 +31,6 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }>
   overdue: { label: "Verlopen",  bg: "#FCEBEB", text: "#A32D2D" },
 };
 
-// Icon color per type
 const TYPE_CONFIG: Record<string, { bg: string; color: string }> = {
   invoice:  { bg: "#E6F1FB", color: "#185FA5" },
   document: { bg: "#EAF3DE", color: "#3B6D11" },
@@ -51,7 +50,7 @@ function saveRecent(term: string) {
   localStorage.setItem(RECENT_KEY, JSON.stringify(next));
 }
 
-// ─── Highlight matching text ──────────────────────────────────────────────────
+// ─── Highlight ────────────────────────────────────────────────────────────────
 
 function Highlight({ text, query }: { text: string; query: string }) {
   if (!query.trim() || !text) return <>{text}</>;
@@ -125,21 +124,30 @@ const IconChevron = () => (
   </svg>
 );
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Pure sub-components ──────────────────────────────────────────────────────
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      padding: "10px 16px 4px",
-      fontSize: 11,
-      fontWeight: 600,
-      letterSpacing: "0.06em",
-      textTransform: "uppercase" as const,
-      color: "#9E9E9E",
-      userSelect: "none" as const,
+      padding: "10px 16px 4px", fontSize: 11, fontWeight: 600,
+      letterSpacing: "0.06em", textTransform: "uppercase" as const,
+      color: "#9E9E9E", userSelect: "none" as const,
     }}>
       {children}
     </div>
+  );
+}
+
+function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd style={{
+      display: "inline-flex", alignItems: "center",
+      padding: "1px 5px", background: "#FAFAFA",
+      border: "0.5px solid #E0E0E0", borderRadius: 4,
+      fontSize: 10, color: "#757575",
+    }}>
+      {children}
+    </kbd>
   );
 }
 
@@ -164,7 +172,6 @@ function ResultRow({
   onMouseEnter: () => void; onClick: () => void;
 }) {
   const st = STATUS_CONFIG[item.status ?? ""];
-
   return (
     <button
       role="option"
@@ -181,7 +188,6 @@ function ResultRow({
       }}
     >
       <TypeIcon type={item.type} />
-
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const }}>
           <span style={{ fontSize: 14, fontWeight: 500, color: "#212121" }}>
@@ -201,13 +207,9 @@ function ResultRow({
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
           <Highlight text={item.subtitle} query={query} />
-          {item.meta
-            ? <span style={{ color: "#9E9E9E" }}> · {item.meta}</span>
-            : null}
+          {item.meta ? <span style={{ color: "#9E9E9E" }}> · {item.meta}</span> : null}
         </p>
       </div>
-
-      {/* Trailing: amount for invoices, chevron for others */}
       {item.type === "invoice" && item.meta ? (
         <span style={{ fontSize: 14, fontWeight: 600, color: "#212121", flexShrink: 0 }}>
           {item.meta}
@@ -219,16 +221,194 @@ function ResultRow({
   );
 }
 
-function Kbd({ children }: { children: React.ReactNode }) {
+// ─── [BOEK-012] SearchInput — MODULE LEVEL (not inside SearchBar) ─────────────
+// Must be outside SearchBar to preserve React identity across re-renders.
+// If defined inside SearchBar, every keystroke recreates the function →
+// React unmounts+remounts the input → focus lost after every character.
+
+interface SearchInputProps {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  query: string;
+  open: boolean;
+  loading: boolean;
+  placeholder: string;
+  fontSize?: number;
+  onChange: (val: string) => void;
+  onFocus?: () => void;
+  onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
+  onClear: () => void;
+}
+
+function SearchInput({
+  inputRef, query, open, loading, placeholder,
+  fontSize = 14, onChange, onFocus, onKeyDown, onClear,
+}: SearchInputProps) {
   return (
-    <kbd style={{
-      display: "inline-flex", alignItems: "center",
-      padding: "1px 5px", background: "#FAFAFA",
-      border: "0.5px solid #E0E0E0", borderRadius: 4,
-      fontSize: 10, color: "#757575",
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      padding: "8px 12px", background: "#F5F5F5", borderRadius: 12,
+      border: open ? "1px solid #BDBDBD" : "1px solid #E0E0E0",
+      transition: "border-color 0.15s", flex: 1,
     }}>
-      {children}
-    </kbd>
+      <span style={{ color: "#9E9E9E", flexShrink: 0 }}>
+        {loading ? <IconSpinner size={16} /> : <IconSearch size={16} />}
+      </span>
+      <input
+        ref={inputRef}
+        type="search"
+        value={query}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        aria-label="Zoeken"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        role="combobox"
+        aria-autocomplete="list"
+        style={{
+          flex: 1, background: "transparent", border: "none", outline: "none",
+          fontSize, color: "#212121", minWidth: 0,
+        }}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={onFocus}
+        onKeyDown={onKeyDown}
+      />
+      {query && (
+        <button
+          tabIndex={-1}
+          aria-label="Wissen"
+          onClick={onClear}
+          style={{
+            background: "#E0E0E0", border: "none", borderRadius: "50%",
+            width: 18, height: 18, display: "flex",
+            alignItems: "center", justifyContent: "center",
+            cursor: "pointer", color: "#757575", flexShrink: 0,
+          }}
+        >
+          <IconX size={10} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── [BOEK-012] DropdownContent — MODULE LEVEL (not inside SearchBar) ────────
+// Same reason: must be stable across re-renders.
+
+interface DropdownContentProps {
+  showRecent: boolean;
+  showResults: boolean;
+  loading: boolean;
+  query: string;
+  recent: string[];
+  groups: SearchResultGroup;
+  flatResults: SearchResult[];
+  selectedIdx: number;
+  totalCount: number;
+  onSelectRecent: (term: string) => void;
+  onSelectResult: (item: SearchResult) => void;
+  onHoverIdx: (idx: number) => void;
+}
+
+function DropdownContent({
+  showRecent, showResults, loading, query, recent,
+  groups, flatResults, selectedIdx, totalCount,
+  onSelectRecent, onSelectResult, onHoverIdx,
+}: DropdownContentProps) {
+  return (
+    <>
+      {/* Recent searches */}
+      {showRecent && recent.length > 0 && (
+        <>
+          <SectionLabel>Recent</SectionLabel>
+          {recent.map((term, i) => (
+            <button
+              key={term}
+              role="option"
+              aria-selected={selectedIdx === i}
+              onMouseEnter={() => onHoverIdx(i)}
+              onClick={() => onSelectRecent(term)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 16px", textAlign: "left",
+                background: selectedIdx === i ? "#F5F5F5" : "transparent",
+                border: "none", cursor: "pointer",
+                WebkitTapHighlightColor: "transparent",
+              }}
+            >
+              <span style={{ color: "#BDBDBD", flexShrink: 0 }}><IconClock /></span>
+              <span style={{ fontSize: 14, color: "#757575" }}>{term}</span>
+            </button>
+          ))}
+        </>
+      )}
+
+      {/* Empty state */}
+      {showResults && !loading && totalCount === 0 && (
+        <div style={{ padding: "32px 16px", textAlign: "center" }}>
+          <p style={{ fontSize: 14, color: "#9E9E9E", margin: 0 }}>
+            Geen resultaten voor{" "}
+            <strong style={{ color: "#616161", fontWeight: 500 }}>
+              &ldquo;{query}&rdquo;
+            </strong>
+          </p>
+        </div>
+      )}
+
+      {/* FACTUREN */}
+      {showResults && groups.invoices.length > 0 && (
+        <>
+          <SectionLabel>Facturen ({groups.invoices.length})</SectionLabel>
+          {groups.invoices.map((item) => {
+            const idx = flatResults.indexOf(item);
+            return (
+              <ResultRow
+                key={item.id} item={item} query={query}
+                selected={selectedIdx === idx}
+                onMouseEnter={() => onHoverIdx(idx)}
+                onClick={() => onSelectResult(item)}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* BESTANDEN */}
+      {showResults && groups.documents.length > 0 && (
+        <>
+          <SectionLabel>Bestanden ({groups.documents.length})</SectionLabel>
+          {groups.documents.map((item) => {
+            const idx = flatResults.indexOf(item);
+            return (
+              <ResultRow
+                key={item.id} item={item} query={query}
+                selected={selectedIdx === idx}
+                onMouseEnter={() => onHoverIdx(idx)}
+                onClick={() => onSelectResult(item)}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* KLANTEN */}
+      {showResults && groups.clients.length > 0 && (
+        <>
+          <SectionLabel>Klanten ({groups.clients.length})</SectionLabel>
+          {groups.clients.map((item) => {
+            const idx = flatResults.indexOf(item);
+            return (
+              <ResultRow
+                key={item.id} item={item} query={query}
+                selected={selectedIdx === idx}
+                onMouseEnter={() => onHoverIdx(idx)}
+                onClick={() => onSelectResult(item)}
+              />
+            );
+          })}
+        </>
+      )}
+    </>
   );
 }
 
@@ -248,12 +428,9 @@ export function SearchBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const mobileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  // [BOEK-012] ref to portal div — needed to exclude it from outside-click detection
   const portalDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Flat list for keyboard navigation (invoices first, then docs, then clients)
   const flatResults = flattenGroups(groups);
-
   const showRecent = open && query.length < 2;
   const showResults = open && query.length >= 2;
 
@@ -262,17 +439,14 @@ export function SearchBar() {
       ? recent.map((v) => ({ kind: "recent", value: v }))
       : flatResults.map((v) => ({ kind: "result", value: v }));
 
-  // Init portal target
   useEffect(() => { setPortalEl(document.body); }, []);
 
-  // Recalculate dropdown position when opened
   useEffect(() => {
     if (!open || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     setDropdownPos({ top: rect.bottom + 6, left: rect.left, width: rect.width });
   }, [open]);
 
-  // Detect mobile
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640);
     check();
@@ -280,10 +454,8 @@ export function SearchBar() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // Load recent on open
   useEffect(() => { if (open) setRecent(getRecent()); }, [open]);
 
-  // ⌘K global shortcut
   useEffect(() => {
     function onKeyDown(e: globalThis.KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -295,9 +467,7 @@ export function SearchBar() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  // [BOEK-012] Outside-click — check BOTH containerRef AND portalDropdownRef.
-  // The portal renders outside containerRef (appended to body), so without this
-  // check, any click on a result would close the dropdown before onClick fires.
+  // [BOEK-012] Outside-click excludes portal div
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
       if (isMobile) return;
@@ -309,7 +479,6 @@ export function SearchBar() {
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [isMobile]);
 
-  // Lock body scroll on mobile overlay
   useEffect(() => {
     if (isMobile && open) {
       document.body.style.overflow = "hidden";
@@ -320,10 +489,9 @@ export function SearchBar() {
     return () => { document.body.style.overflow = ""; };
   }, [isMobile, open]);
 
-  // Reset selection on results/recent change
   useEffect(() => { setSelectedIdx(-1); }, [flatResults.length, recent.length]);
 
-  // ─── helpers ──────────────────────────────────────────────────────────────
+  // ─── handlers ─────────────────────────────────────────────────────────────
 
   const openSearch = useCallback(() => {
     setOpen(true);
@@ -333,8 +501,6 @@ export function SearchBar() {
   const closeSearch = useCallback(() => {
     setOpen(false);
     clear();
-    if (inputRef.current) inputRef.current.value = "";
-    if (mobileInputRef.current) mobileInputRef.current.value = "";
   }, [clear]);
 
   const navigate = useCallback((result: SearchResult) => {
@@ -344,15 +510,11 @@ export function SearchBar() {
   }, [router, closeSearch]);
 
   const applyRecent = useCallback((term: string) => {
-    const ref = isMobile ? mobileInputRef : inputRef;
-    if (ref.current) ref.current.value = term;
     setQuery(term);
     setSelectedIdx(-1);
-  }, [setQuery, isMobile]);
+  }, [setQuery]);
 
-  // ─── keyboard nav ─────────────────────────────────────────────────────────
-
-  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (!open) { setOpen(true); return; }
     switch (e.key) {
       case "ArrowDown":
@@ -376,179 +538,41 @@ export function SearchBar() {
         closeSearch();
         break;
     }
-  }
+  }, [open, navItems, selectedIdx, applyRecent, navigate, closeSearch]);
 
-  function onInputChange(val: string) {
+  const onInputChange = useCallback((val: string) => {
     setQuery(val);
     setSelectedIdx(-1);
     if (!open) setOpen(true);
-  }
+  }, [setQuery, open]);
 
-  // ─── Grouped dropdown content ──────────────────────────────────────────────
+  // ─── shared dropdown props ─────────────────────────────────────────────────
 
-  function DropdownContent() {
-    return (
-      <>
-        {/* Recent searches */}
-        {showRecent && recent.length > 0 && (
-          <>
-            <SectionLabel>Recent</SectionLabel>
-            {recent.map((term, i) => (
-              <button
-                key={term}
-                role="option"
-                aria-selected={selectedIdx === i}
-                onMouseEnter={() => setSelectedIdx(i)}
-                onClick={() => applyRecent(term)}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", gap: 10,
-                  padding: "10px 16px", textAlign: "left",
-                  background: selectedIdx === i ? "#F5F5F5" : "transparent",
-                  border: "none", cursor: "pointer",
-                  WebkitTapHighlightColor: "transparent",
-                }}
-              >
-                <span style={{ color: "#BDBDBD", flexShrink: 0 }}><IconClock /></span>
-                <span style={{ fontSize: 14, color: "#757575" }}>{term}</span>
-              </button>
-            ))}
-          </>
-        )}
+  const dropdownProps: DropdownContentProps = {
+    showRecent, showResults, loading, query, recent,
+    groups, flatResults, selectedIdx, totalCount,
+    onSelectRecent: applyRecent,
+    onSelectResult: navigate,
+    onHoverIdx: setSelectedIdx,
+  };
 
-        {/* Empty state */}
-        {showResults && !loading && totalCount === 0 && (
-          <div style={{ padding: "32px 16px", textAlign: "center" }}>
-            <p style={{ fontSize: 14, color: "#9E9E9E", margin: 0 }}>
-              Geen resultaten voor{" "}
-              <strong style={{ color: "#616161", fontWeight: 500 }}>
-                &ldquo;{query}&rdquo;
-              </strong>
-            </p>
-          </div>
-        )}
+  const desktopInputProps: SearchInputProps = {
+    inputRef, query, open, loading,
+    placeholder: "Zoeken…",
+    onChange: onInputChange,
+    onFocus: () => setOpen(true),
+    onKeyDown: handleKeyDown,
+    onClear: clear,
+  };
 
-        {/* [BOEK-012] FACTUREN */}
-        {showResults && groups.invoices.length > 0 && (
-          <>
-            <SectionLabel>Facturen ({groups.invoices.length})</SectionLabel>
-            {groups.invoices.map((item) => {
-              const idx = flatResults.indexOf(item);
-              return (
-                <ResultRow
-                  key={item.id}
-                  item={item}
-                  query={query}
-                  selected={selectedIdx === idx}
-                  onMouseEnter={() => setSelectedIdx(idx)}
-                  onClick={() => navigate(item)}
-                />
-              );
-            })}
-          </>
-        )}
-
-        {/* [BOEK-012] BESTANDEN */}
-        {showResults && groups.documents.length > 0 && (
-          <>
-            <SectionLabel>Bestanden ({groups.documents.length})</SectionLabel>
-            {groups.documents.map((item) => {
-              const idx = flatResults.indexOf(item);
-              return (
-                <ResultRow
-                  key={item.id}
-                  item={item}
-                  query={query}
-                  selected={selectedIdx === idx}
-                  onMouseEnter={() => setSelectedIdx(idx)}
-                  onClick={() => navigate(item)}
-                />
-              );
-            })}
-          </>
-        )}
-
-        {/* [BOEK-012] KLANTEN */}
-        {showResults && groups.clients.length > 0 && (
-          <>
-            <SectionLabel>Klanten ({groups.clients.length})</SectionLabel>
-            {groups.clients.map((item) => {
-              const idx = flatResults.indexOf(item);
-              return (
-                <ResultRow
-                  key={item.id}
-                  item={item}
-                  query={query}
-                  selected={selectedIdx === idx}
-                  onMouseEnter={() => setSelectedIdx(idx)}
-                  onClick={() => navigate(item)}
-                />
-              );
-            })}
-          </>
-        )}
-      </>
-    );
-  }
-
-  // ─── Shared input wrapper ──────────────────────────────────────────────────
-
-  function SearchInput({ inputR, placeholder, fontSize = 14, onFocus }: {
-    inputR: React.RefObject<HTMLInputElement | null>;
-    placeholder: string;
-    fontSize?: number;
-    onFocus?: () => void;
-  }) {
-    return (
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8,
-        padding: "8px 12px",
-        background: "#F5F5F5",
-        borderRadius: 12,
-        border: open ? "1px solid #BDBDBD" : "1px solid #E0E0E0",
-        transition: "border-color 0.15s",
-        flex: 1,
-      }}>
-        <span style={{ color: "#9E9E9E", flexShrink: 0 }}>
-          {loading ? <IconSpinner size={16} /> : <IconSearch size={16} />}
-        </span>
-        <input
-          ref={inputR}
-          type="search"
-          defaultValue=""
-          placeholder={placeholder}
-          autoComplete="off"
-          spellCheck={false}
-          aria-label="Zoeken"
-          aria-expanded={open}
-          aria-haspopup="listbox"
-          role="combobox"
-          aria-autocomplete="list"
-          style={{
-            flex: 1, background: "transparent", border: "none", outline: "none",
-            fontSize, color: "#212121", minWidth: 0,
-          }}
-          onChange={(e) => onInputChange(e.target.value)}
-          onFocus={onFocus}
-          onKeyDown={handleKeyDown}
-        />
-        {query && (
-          <button
-            tabIndex={-1}
-            aria-label="Wissen"
-            onClick={() => { clear(); if (inputR.current) inputR.current.value = ""; }}
-            style={{
-              background: "#E0E0E0", border: "none", borderRadius: "50%",
-              width: 18, height: 18, display: "flex",
-              alignItems: "center", justifyContent: "center",
-              cursor: "pointer", color: "#757575", flexShrink: 0,
-            }}
-          >
-            <IconX size={10} />
-          </button>
-        )}
-      </div>
-    );
-  }
+  const mobileInputProps: SearchInputProps = {
+    inputRef: mobileInputRef, query, open, loading,
+    placeholder: "Zoeken naar facturen, bestanden…",
+    fontSize: 16,
+    onChange: onInputChange,
+    onKeyDown: handleKeyDown,
+    onClear: clear,
+  };
 
   // ─── render ───────────────────────────────────────────────────────────────
 
@@ -556,7 +580,7 @@ export function SearchBar() {
     <>
       <style>{`@keyframes bb-spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* ── Desktop: input + portal dropdown ── */}
+      {/* Desktop */}
       <div
         ref={containerRef}
         style={{
@@ -564,34 +588,24 @@ export function SearchBar() {
           display: isMobile ? "none" : "block",
         }}
       >
-        <SearchInput
-          inputR={inputRef}
-          placeholder="Zoeken…"
-          onFocus={() => setOpen(true)}
-        />
+        <SearchInput {...desktopInputProps} />
 
-        {/* [BOEK-012] Portal dropdown — fixed position, solid white, portal-ref for outside-click */}
         {open && (showRecent || showResults) && portalEl && createPortal(
           <div
             ref={portalDropdownRef}
             role="listbox"
             style={{
               position: "fixed",
-              top: dropdownPos.top,
-              left: dropdownPos.left,
-              width: dropdownPos.width,
-              background: "white",           // [BOEK-012] explicit — no CSS var
-              border: "1px solid #E0E0E0",
-              borderRadius: 12,
+              top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width,
+              background: "white",
+              border: "1px solid #E0E0E0", borderRadius: 12,
               boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-              zIndex: 100,
-              overflow: "hidden",
+              zIndex: 100, overflow: "hidden",
             }}
           >
             <div style={{ maxHeight: 400, overflowY: "auto", overscrollBehavior: "contain" }}>
-              <DropdownContent />
+              <DropdownContent {...dropdownProps} />
             </div>
-            {/* Keyboard hint footer */}
             <div style={{
               display: "flex", gap: 12, padding: "8px 16px",
               borderTop: "1px solid #F0F0F0", background: "#FAFAFA",
@@ -607,7 +621,7 @@ export function SearchBar() {
         )}
       </div>
 
-      {/* [BOEK-012] Mobile tap-target — isMobile-driven, no Tailwind dependency */}
+      {/* Mobile tap-target */}
       <button
         aria-label="Zoeken openen"
         onClick={openSearch}
@@ -623,23 +637,18 @@ export function SearchBar() {
         <IconSearch size={18} />
       </button>
 
-      {/* Mobile full-screen overlay */}
+      {/* Mobile overlay */}
       {isMobile && open && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 200,
           background: "white", display: "flex", flexDirection: "column",
         }}>
-          {/* Header */}
           <div style={{
             paddingTop: "env(safe-area-inset-top, 0px)",
             borderBottom: "1px solid #F0F0F0",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px" }}>
-              <SearchInput
-                inputR={mobileInputRef}
-                placeholder="Zoeken naar facturen, bestanden…"
-                fontSize={16} // 16px prevents iOS auto-zoom
-              />
+              <SearchInput {...mobileInputProps} />
               <button
                 onClick={closeSearch}
                 style={{
@@ -653,8 +662,6 @@ export function SearchBar() {
               </button>
             </div>
           </div>
-
-          {/* Scrollable results */}
           <div
             role="listbox"
             style={{
@@ -663,7 +670,7 @@ export function SearchBar() {
               paddingBottom: "env(safe-area-inset-bottom, 16px)",
             }}
           >
-            <DropdownContent />
+            <DropdownContent {...dropdownProps} />
           </div>
         </div>
       )}

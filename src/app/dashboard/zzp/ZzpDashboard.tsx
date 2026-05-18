@@ -30,7 +30,7 @@ const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
 
-const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
+const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }) // reserved for future use
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export function ZzpDashboard({ profile }: { profile: any }) {
@@ -45,28 +45,18 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiPrompt, setAiPrompt]                   = useState('')
   const [aiLoading, setAiLoading]                 = useState(false)
   const [aiError, setAiError]                     = useState<string | null>(null)
-  const [stats, setStats]                         = useState({ open: 0, openAmount: 0, paid: 0 })
 
   useEffect(() => { loadGlobal() }, [])
 
   async function loadGlobal() {
-    const [{ data: link }, { data: notifData }, { count }, { data: invData }] = await Promise.all([
+    const [{ data: link }, { data: notifData }, { count }] = await Promise.all([
       supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
       supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
-      supabase.from('invoices').select('status, total_inc_btw').eq('sender_id', profile.id),
     ])
     if (link?.accountant_id) setAccountantId(link.accountant_id)
     if (notifData) setNotifications(notifData)
     setUnreadMessages(count || 0)
-    if (invData) {
-      let open = 0, openAmount = 0, paid = 0
-      for (const inv of invData) {
-        if (inv.status === 'sent' || inv.status === 'overdue') { open++; openAmount += inv.total_inc_btw ?? 0 }
-        if (inv.status === 'paid') paid++
-      }
-      setStats({ open, openAmount, paid })
-    }
   }
 
   async function markAllRead() {
@@ -112,17 +102,31 @@ export function ZzpDashboard({ profile }: { profile: any }) {
           {firstName} 👋
         </h1>
 
-        {/* ── 3 action cards ── */}
+        {/* ── 4 action cards — [BOEK-029] new order — May 2026 ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-          {/* Nieuwe factuur */}
+          {/* 1. Nieuwe factuur */}
           <ActionCard
             icon="receipt_long" iconBg={M3.primary} iconColor={M3.onPrimary}
             label="Nieuwe factuur" sub="Maak en verstuur direct"
             onClick={() => router.push('/dashboard/invoice/new')}
           />
 
-          {/* Werken met AI */}
+          {/* 2. Mijn facturen */}
+          <ActionCard
+            icon="description" iconBg="#00897B" iconColor="#fff"
+            label="Mijn facturen" sub="Bekijk en beheer je facturen"
+            onClick={() => router.push('/dashboard/facturen')}
+          />
+
+          {/* 3. Mijn werkplek */}
+          <ActionCard
+            icon="work" iconBg={M3.success} iconColor="#fff"
+            label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
+            onClick={() => router.push('/dashboard/werkplek')}
+          />
+
+          {/* 4. Werken met AI */}
           <ActionCard
             icon="star" iconBg={M3.tertiary} iconColor="#fff"
             label="Werken met AI" sub="Beschrijf je factuur, AI regelt de rest"
@@ -132,7 +136,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             activeBg={M3.tertiaryContainer}
           />
 
-          {/* AI Panel — Material You tonal surface */}
+          {/* AI Panel */}
           {showAiPanel && (
             <div style={{
               background: '#fff', borderRadius: R.lg, padding: '20px 16px',
@@ -163,9 +167,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                   cursor: aiLoading || !aiPrompt.trim() ? 'default' : 'pointer',
                   background: aiLoading || !aiPrompt.trim() ? '#E7E0EC' : M3.tertiary,
                   color: aiLoading || !aiPrompt.trim() ? '#79747E' : '#fff',
-                  fontSize: 15, fontWeight: 600,
-                  transition: 'all 0.15s',
-                  transform: 'scale(1)',
+                  fontSize: 15, fontWeight: 600, transition: 'all 0.15s',
                 }}
                 onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
                 onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
@@ -175,31 +177,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             </div>
           )}
 
-          {/* Mijn werkplek */}
+          {/* [BOEK-029] Financieel overzicht — replaces stats cards */}
           <ActionCard
-            icon="work" iconBg={M3.success} iconColor="#fff"
-            label="Mijn werkplek" sub="Facturen, klanten en bestanden"
-            onClick={() => router.push('/dashboard/werkplek')}
+            icon="bar_chart" iconBg={M3.warning} iconColor="#fff"
+            label="Financieel overzicht" sub="BTW, omzet en cashflow"
+            onClick={() => router.push('/dashboard/quarterly')}
           />
-        </div>
 
-        {/* Quick stats — Material You tonal cards */}
-        {(stats.open > 0 || stats.paid > 0) && (
-          <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <StatCard
-              label="Openstaand" value={NL_EUR.format(stats.openAmount)}
-              sub={`${stats.open} factuur${stats.open !== 1 ? 'en' : ''}`}
-              bg={M3.warningContainer} color={M3.warning}
-              onClick={() => router.push('/dashboard/facturen?filter=sent')}
-            />
-            <StatCard
-              label="Betaald" value={String(stats.paid)}
-              sub={`factuur${stats.paid !== 1 ? 'en' : ''}`}
-              bg={M3.successContainer} color={M3.success}
-              onClick={() => router.push('/dashboard/facturen?filter=paid')}
-            />
-          </div>
-        )}
+        </div>
       </main>
 
       {/* [BOEK-029] FAB — + Nieuwe factuur — Material You */}
@@ -249,22 +234,7 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
   )
 }
 
-function StatCard({ label, value, sub, bg, color, onClick }: {
-  label: string; value: string; sub: string; bg: string; color: string; onClick: () => void
-}) {
-  return (
-    <button onClick={onClick} style={{
-      background: bg, borderRadius: R.lg, padding: '16px 14px',
-      border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
-      transition: 'all 0.15s',
-      WebkitTapHighlightColor: 'transparent',
-    }}>
-      <p style={{ fontSize: 11, color, fontWeight: 600, marginBottom: 6, letterSpacing: 0.3 }}>{label.toUpperCase()}</p>
-      <p style={{ fontSize: 20, fontWeight: 700, color, letterSpacing: -0.5, marginBottom: 2 }}>{value}</p>
-      <p style={{ fontSize: 11, color, opacity: 0.7 }}>{sub}</p>
-    </button>
-  )
-}
+// [BOEK-029] StatCard removed — replaced by Financieel overzicht ActionCard
 
 // [BOEK-029] Shared FAB — + Nieuwe factuur — all ZZP pages
 function Fab({ onClick }: { onClick: () => void }) {
