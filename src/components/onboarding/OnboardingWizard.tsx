@@ -452,22 +452,46 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
   async function handleFile(file: File) {
     setState("uploading");
     try {
+      // [BOEK-015] fix: convert file to base64 and send to /api/ai/classify
       const base64 = await fileToBase64(file);
-      const res = await fetch("/api/onboarding/extract", {
+      const res = await fetch("/api/ai/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64, mimeType: file.type, filename: file.name }),
+        body: JSON.stringify({
+          fileContent: base64,
+          fileName: file.name,
+          mimeType: file.type,
+        }),
       });
       const data = await res.json();
-      if (data.found && (data.company_name || data.kvk_number)) {
+      // classifyDocument returns: { type, confidence, vendor, amount, date }
+      // We use vendor as company_name — KVK/BTW require the dedicated extract endpoint
+      if (data.type === "invoice" && data.confidence >= 0.5 && data.vendor) {
         setCompany((p) => ({
           ...p,
-          company_name: data.company_name ?? p.company_name,
-          kvk_number: data.kvk_number ?? p.kvk_number,
-          btw_number: data.btw_number ?? p.btw_number,
-          iban: data.iban ?? p.iban,
-          address: data.address ?? p.address,
+          company_name: data.vendor ?? p.company_name,
         }));
+        // [BOEK-015] Also try dedicated extraction for KVK/BTW/IBAN
+        try {
+          const extractRes = await fetch("/api/onboarding/extract", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ base64, mimeType: file.type, filename: file.name }),
+          });
+          const extractData = await extractRes.json();
+          if (extractData.found) {
+            setCompany((p) => ({
+              ...p,
+              company_name: extractData.company_name ?? data.vendor ?? p.company_name,
+              kvk_number: extractData.kvk_number ?? p.kvk_number,
+              btw_number: extractData.btw_number ?? p.btw_number,
+              iban: extractData.iban ?? p.iban,
+              address: extractData.address ?? p.address,
+            }));
+          }
+        } catch {
+          // extract failed — we still have vendor from classify, show success
+        }
         setState("success");
       } else {
         onFallback();
@@ -542,7 +566,10 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
         <span style={{ fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Tik om te uploaden</span>
         <span style={{ fontSize: "14px", color: "#8e8e93" }}>PDF, JPG of PNG — max 25 MB</span>
       </button>
-      <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: "none" }}
+      {/* [BOEK-015] fix: expanded accept — includes webp, heic, application/pdf */}
+      <input ref={fileRef} type="file"
+        accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,image/*,application/pdf"
+        style={{ display: "none" }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
       <div style={{ background: "#f2f2f7", borderRadius: "14px", padding: "14px 16px", display: "flex", gap: "10px" }}>
         <span>🔒</span>
