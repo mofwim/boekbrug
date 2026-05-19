@@ -785,12 +785,14 @@ export async function extractCompanyDetails(
     found: false,
   };
 
+  // [BOEK-015] improved prompt — more examples, looser matching, explicit label variants
   const systemPrompt = `${SYSTEM_BASE}
 
-You extract Dutch business registration data from invoices and receipts.
-Extract the SENDER's data (the company that issued the invoice), not the receiver.
+You are extracting Dutch business registration data from an invoice or receipt.
+Extract ONLY the SENDER's data — the company or person who issued/sent this document.
+Do NOT extract the receiver/client data.
 
-Return only a JSON object with these exact keys:
+Return ONLY a JSON object with these exact keys (no markdown, no explanation):
 {
   "company_name": string or null,
   "kvk_number": string or null,
@@ -800,26 +802,28 @@ Return only a JSON object with these exact keys:
   "found": boolean
 }
 
-Rules:
-- kvk_number: 8 digits only, remove spaces and dashes (e.g. "12345678")
-- btw_number: Dutch format NL + 9 digits + B + 2 digits (e.g. "NL123456789B01")
-- iban: keep full IBAN including country code, remove spaces
-- address: street + house number only — no city, no postal code
-- found: true if at least company_name or kvk_number was extracted
-- If a field is not present in the document, set it to null
-- Return only JSON, no markdown, no explanation`;
+Extraction rules:
+- company_name: the trading name or legal name of the sender. Look for it at the top of the document, in the header, or next to the logo.
+- kvk_number: labeled as "KVK", "K.v.K.", "KvK-nummer", "Kvk", "Chamber of Commerce", "CoC". Extract digits only, ignore spaces and dots. Example: "KVK: 12 34 56 78" → "12345678"
+- btw_number: labeled as "BTW", "BTW-nr", "BTW-nummer", "VAT", "VAT number", "Btw-id". Format: NL + digits + B + digits. Example: "BTW: NL 123456789 B01" → "NL123456789B01". Remove all spaces.
+- iban: labeled as "IBAN", "Bankrekeningnummer", "Rekeningnummer". Keep full IBAN with country code, remove spaces.
+- address: street name + house number of the sender only. Exclude city and postal code.
+- found: set to true if at least company_name OR kvk_number was successfully extracted.
+- If a field truly does not appear in the document, set it to null.`;
 
-  const prompt = `Extract the sender company's registration details from this invoice.
+  const prompt = `Extract the SENDER's business registration details from this invoice document.
 Filename: ${filename}
 
-Look for:
-- Company name (bedrijfsnaam)
-- KVK number (Kvk-nummer, Chamber of Commerce)
-- BTW number (BTW-nummer, VAT number, starts with NL)
-- IBAN bank account number
-- Street address of the sender
+The sender is the company/person who created and sent this invoice (usually shown in the header or top section).
 
-Return JSON only.`;
+Search carefully for:
+1. Company name / Bedrijfsnaam (top of document, near logo)
+2. KVK number — may appear as: KVK, K.v.K., KvK-nummer, CoC (8 digits)
+3. BTW number — may appear as: BTW, BTW-nr, BTW-nummer, VAT (format: NL123456789B01)
+4. IBAN — may appear as: IBAN, Bankrekeningnummer, Rekeningnummer
+5. Street address of the sender (not the client)
+
+Return JSON only. If unsure between sender and receiver, choose the one at the TOP of the document.`;
 
   try {
     let raw: string;
@@ -849,21 +853,25 @@ Return JSON only.`;
     const parsed = safeParseJSON<ExtractCompanyDetailsResult>(raw);
     if (!parsed) return FALLBACK;
 
-    // Sanitize KVK — digits only, exactly 8
+    // [BOEK-015] Sanitize KVK — digits only, 7-8 digits accepted
     if (parsed.kvk_number) {
       const kvkClean = parsed.kvk_number.replace(/\D/g, '');
-      parsed.kvk_number = kvkClean.length === 8 ? kvkClean : null;
+      // Accept 7 or 8 digits — some older KVK numbers are 7 digits
+      parsed.kvk_number = (kvkClean.length >= 7 && kvkClean.length <= 8) ? kvkClean : null;
     }
 
-    // Sanitize BTW — NL + 9 digits + B + 2 digits
+    // [BOEK-015] Sanitize BTW — remove spaces/dots, normalize to NLxxxxxxxxxBxx
     if (parsed.btw_number) {
-      const btwClean = parsed.btw_number.replace(/\s/g, '').toUpperCase();
+      const btwClean = parsed.btw_number.replace(/[\s.\-]/g, '').toUpperCase();
+      // Accept standard Dutch BTW format
       parsed.btw_number = /^NL\d{9}B\d{2}$/.test(btwClean) ? btwClean : null;
     }
 
-    // Sanitize IBAN — remove spaces
+    // [BOEK-015] Sanitize IBAN — remove spaces, uppercase
     if (parsed.iban) {
-      parsed.iban = parsed.iban.replace(/\s/g, '').toUpperCase();
+      const ibanClean = parsed.iban.replace(/\s/g, '').toUpperCase();
+      // Basic IBAN validation: 2 letters + digits, 10-34 chars
+      parsed.iban = /^[A-Z]{2}\d{2}[A-Z0-9]{4,30}$/.test(ibanClean) ? ibanClean : null;
     }
 
     // Recompute found after sanitization

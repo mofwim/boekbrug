@@ -110,11 +110,15 @@ export async function GET(req: NextRequest) {
     headers: { Cookie: req.headers.get("cookie") || "" },
   }).catch(() => {});
 
-  // [BOEK-015] fix: check redirect param in state to know where to send user back
-  // stateData may include a redirect field set by /api/email/connect
-  const redirectTo = (stateData as { userId: string; provider: string; redirect?: string }).redirect;
-  const fromOnboarding = redirectTo?.includes("/onboarding") ||
-    req.headers.get("referer")?.includes("/onboarding");
+  // [BOEK-015] fix: check if user is still in onboarding — redirect accordingly
+  // referer is Google's URL at this point, so we check the DB instead
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("onboarding_done")
+    .eq("id", userId)
+    .single();
+
+  const fromOnboarding = !profile?.onboarding_done;
 
   if (fromOnboarding) {
     return NextResponse.redirect(
