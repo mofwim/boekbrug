@@ -26,7 +26,8 @@
 // ─────────────────────────────────────────────────────────
 
 // [BOEK-018] constants — May 2026
-const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
+//const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 1000;
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
