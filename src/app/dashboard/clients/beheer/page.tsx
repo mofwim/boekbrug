@@ -3,7 +3,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { KlantenBeheer } from '@/modules/accountant/pages/KlantenBeheer'
+import { KlantenBeheer } from '@/modules/accountant/pages'
 import { getAccountantClients } from '@/modules/accountant/accountant.repository'
 
 export const dynamic = 'force-dynamic'
