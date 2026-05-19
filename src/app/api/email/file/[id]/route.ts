@@ -6,6 +6,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
+// [BOEK-011] Normalize a stored value to a relative storage path.
+// Older invoices may have stored a full signed URL instead of a path.
+// New invoices store the raw relative path. This handles both safely.
+function toStoragePath(stored: string): string {
+  if (stored.startsWith("http")) {
+    const signMarker = "/object/sign/documents/";
+    const publicMarker = "/object/public/documents/";
+    let idx = stored.indexOf(signMarker);
+    if (idx !== -1) {
+      idx += signMarker.length;
+    } else {
+      idx = stored.indexOf(publicMarker);
+      if (idx === -1) return stored; // unknown shape — return as-is
+      idx += publicMarker.length;
+    }
+    // Strip query string (?token=...) and decode %20 etc.
+    return decodeURIComponent(stored.slice(idx).split("?")[0]);
+  }
+  // Already a relative path
+  return stored;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -39,10 +61,13 @@ export async function GET(
     );
   }
 
+  // [BOEK-011] Normalize — handles both relative paths and legacy full URLs
+  const storagePath = toStoragePath(invoice.pdf_url);
+
   // [BOEK-011] Create a signed URL valid for 5 minutes — enough to open/view
   const { data: signed, error } = await supabase.storage
     .from("documents")
-    .createSignedUrl(invoice.pdf_url, 300);
+    .createSignedUrl(storagePath, 300);
 
   if (error || !signed) {
     return NextResponse.json(
