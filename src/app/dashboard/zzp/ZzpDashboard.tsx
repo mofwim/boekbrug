@@ -45,6 +45,8 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiPrompt, setAiPrompt]                   = useState('')
   const [aiLoading, setAiLoading]                 = useState(false)
   const [aiError, setAiError]                     = useState<string | null>(null)
+  // [BOEK-029] BOEK-011 integration — pending incoming invoices count
+  const [pendingCount, setPendingCount]           = useState<number>(0)
 
   useEffect(() => { loadGlobal() }, [])
 
@@ -57,6 +59,17 @@ export function ZzpDashboard({ profile }: { profile: any }) {
     if (link?.accountant_id) setAccountantId(link.accountant_id)
     if (notifData) setNotifications(notifData)
     setUnreadMessages(count || 0)
+
+    // [BOEK-029] BOEK-011: fetch pending incoming invoices count
+    try {
+      const res = await fetch('/api/email/sync')
+      if (res.ok) {
+        const json = await res.json()
+        setPendingCount(json.pending_count ?? 0)
+      }
+    } catch {
+      // silent — badge blijft 0
+    }
   }
 
   async function markAllRead() {
@@ -117,6 +130,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             icon="description" iconBg="#00897B" iconColor="#fff"
             label="Mijn facturen" sub="Bekijk en beheer je facturen"
             onClick={() => router.push('/dashboard/facturen')}
+          />
+
+          {/* 3. Inkomend — [BOEK-029] BOEK-011 integration */}
+          <ActionCardBadge
+            icon="mark_email_unread" iconBg="#0288D1" iconColor="#fff"
+            label="Inkomend" sub="Facturen van leveranciers"
+            badge={pendingCount}
+            onClick={() => router.push('/dashboard/incoming')}
           />
 
           {/* 3. Mijn werkplek */}
@@ -235,6 +256,56 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
 }
 
 // [BOEK-029] StatCard removed — replaced by Financieel overzicht ActionCard
+
+// [BOEK-029] ActionCardBadge — like ActionCard but with a numeric badge
+function ActionCardBadge({ icon, iconBg, iconColor, label, sub, badge, onClick }: {
+  icon: string; iconBg: string; iconColor: string
+  label: string; sub: string; badge: number; onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 16,
+        background: '#fff', borderRadius: R.lg, padding: '18px 16px',
+        border: '2px solid transparent',
+        boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
+        transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
+      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+    >
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <div style={{
+          width: 48, height: 48, borderRadius: R.md,
+          background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <span className="material-symbols-outlined" style={{ color: iconColor, fontSize: 24 }}>{icon}</span>
+        </div>
+        {/* Badge */}
+        {badge > 0 && (
+          <div style={{
+            position: 'absolute', top: -4, right: -4,
+            background: '#B3261E', color: '#fff',
+            borderRadius: 9999, minWidth: 18, height: 18,
+            fontSize: 11, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '0 4px', fontFamily: FONT,
+            border: '2px solid #F8F9FA',
+          }}>
+            {badge > 99 ? '99+' : badge}
+          </div>
+        )}
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 2 }}>{label}</p>
+        <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
+      </div>
+      <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+    </button>
+  )
+}
 
 // [BOEK-029] Shared FAB — + Nieuwe factuur — all ZZP pages
 function Fab({ onClick }: { onClick: () => void }) {

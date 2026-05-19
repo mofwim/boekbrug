@@ -117,7 +117,6 @@ export function OnboardingWizard({
   }, []);
 
   async function finish() {
-    setSaving(true);
     await fetch("/api/onboarding", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -128,6 +127,9 @@ export function OnboardingWizard({
 
   // ── "Volgende" logic per step ──
   async function handleNext() {
+    // [BOEK-015] fix: always wrap in try/finally so saving resets even on error
+    setSaving(true);
+    try {
     if (role === "zzp") {
       if (step === 1) {
         // [BOEK-015] P2: skip role step if already set from register
@@ -190,6 +192,11 @@ export function OnboardingWizard({
       }
       if (step === 5) { await finish(); return; }
     }
+    } catch (err) {
+      console.error("[BOEK-015] handleNext error:", err);
+      setSaving(false); // only reset on actual error
+    }
+    // Note: no finally — finish() navigates away, component unmounts naturally
   }
 
   async function handleSkip() {
