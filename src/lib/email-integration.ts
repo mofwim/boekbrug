@@ -444,13 +444,17 @@ export async function syncUserEmails(userId: string): Promise<{
       if (!classification.isInvoice) continue
       verified++
 
-      // [BOEK-011] Deduplication — dedicated source_message_id column
+      // [BOEK-011] Deduplication key — messageId + filename
+      // One email can carry several PDF attachments, all sharing the same
+      // messageId. The filename makes each attachment uniquely identifiable.
+      const dedupKey = `${attachment.messageId}:${attachment.filename}`
+
       const { data: existing } = await supabase
         .from('invoices')
         .select('id')
         .eq('sender_id', userId)
         .eq('source', 'email')
-        .eq('source_message_id', attachment.messageId)
+        .eq('source_message_id', dedupKey)
         .limit(1)
 
       if (existing && existing.length > 0) continue
@@ -532,7 +536,7 @@ export async function syncUserEmails(userId: string): Promise<{
           total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,
           pdf_url: pdfUrl,
           document_id: documentId,
-          source_message_id: attachment.messageId,
+          source_message_id: dedupKey,
         })
         .select('id')
         .single()
