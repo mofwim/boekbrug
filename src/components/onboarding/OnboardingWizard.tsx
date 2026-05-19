@@ -63,6 +63,11 @@ export function OnboardingWizard({
   const safeStep = Math.max(1, initialStep) as StepId;
   const [step, setStep] = useState<StepId>(safeStep);
   const [role, setRole] = useState<Role>(initialRole);
+
+  // [BOEK-015] P2 fix: if role already set (from register page) skip step 2
+  // initialRole comes from profiles.role — if 'zzper' or 'accountant', user already chose
+  // [BOEK-015] P2: use initialStep (number) not safeStep (StepId = string|number)
+  const roleAlreadySet = initialRole !== "zzp" || (typeof initialStep === "number" && initialStep > 2);
   const [company, setCompany] = useState<CompanyData>({
     company_name: "", kvk_number: "", btw_number: "", iban: "", address: "",
   });
@@ -70,6 +75,8 @@ export function OnboardingWizard({
   const [accountantEmail, setAccountantEmail] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // [BOEK-011] Fix 2: detect gmail=connected from OAuth callback
   const [gmailConnected, setGmailConnected] = useState(false);
@@ -122,7 +129,11 @@ export function OnboardingWizard({
   // ── "Volgende" logic per step ──
   async function handleNext() {
     if (role === "zzp") {
-      if (step === 1) { await persistStep(2); setStep(2); return; }
+      if (step === 1) {
+        // [BOEK-015] P2: skip role step if already set from register
+        if (roleAlreadySet) { await persistStep(3); setStep(3); } else { await persistStep(2); setStep(2); }
+        return;
+      }
       if (step === 2) { await persistStep(3); setStep(3); return; }
       if (step === "3B") {
         const kvk = company.kvk_number.trim();
@@ -194,6 +205,18 @@ export function OnboardingWizard({
     }
   }
 
+  // [BOEK-015] Reset — clears all onboarding data and starts from Step 1
+  async function handleReset() {
+    setResetting(true);
+    try {
+      await fetch("/api/onboarding/reset", { method: "DELETE" });
+    } catch {
+      // silent — redirect anyway
+    }
+    // Hard reload to clear all state and re-fetch profile
+    window.location.href = "/onboarding";
+  }
+
   const isDone = (role === "zzp" && step === 6) || (role === "accountant" && step === 5);
   const hideNextButton = step === 3 || step === "3A" || step === 4;
   const showSkip =
@@ -215,8 +238,23 @@ export function OnboardingWizard({
       // [BOEK-015] fix: explicit minHeight prevents blank screen if Tailwind min-h-screen fails
       style={{ minHeight: "100vh", paddingBottom: "env(safe-area-inset-bottom)" }}
     >
+      {/* [BOEK-015] P3: Logo header */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "16px 20px 0",
+      }}>
+        <a href="/" style={{ textDecoration: "none" }}>
+          <span style={{ fontSize: "20px", fontWeight: 700, color: "#007aff", letterSpacing: "-0.5px" }}>
+            BoekBrug
+          </span>
+        </a>
+        <span style={{ fontSize: "13px", color: "#aeaeb2" }}>
+          Stap {typeof step === "string" ? step.replace("3A","3").replace("3B","3") : step} van {role === "accountant" ? 5 : 6}
+        </span>
+      </div>
+
       {/* Progress bar */}
-      <div style={{ height: "3px", background: "#e5e5ea" }}>
+      <div style={{ height: "3px", background: "#e5e5ea", marginTop: "12px" }}>
         <div
           style={{
             height: "3px",
@@ -292,8 +330,65 @@ export function OnboardingWizard({
               Sla over
             </button>
           )}
+
+          {/* [BOEK-015] Reset button — shown from step 2 onwards, hidden on done */}
+          {!isDone && step !== 1 && (
+            <button
+              onClick={() => setShowResetConfirm(true)}
+              disabled={resetting || saving}
+              style={{ width: "100%", padding: "8px", fontSize: "13px", color: "#c7c7cc", background: "none", border: "none", cursor: "pointer" }}
+            >
+              Opnieuw beginnen
+            </button>
+          )}
         </div>
       </div>
+
+      {/* [BOEK-015] Reset confirmation dialog */}
+      {showResetConfirm && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          display: "flex", alignItems: "flex-end", justifyContent: "center",
+          zIndex: 1000, paddingBottom: "env(safe-area-inset-bottom)",
+        }}>
+          <div style={{
+            background: "#fff", borderRadius: "20px 20px 0 0",
+            padding: "24px 20px 32px", width: "100%", maxWidth: "480px",
+          }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 700, color: "#1c1c1e", textAlign: "center" }}>
+              Opnieuw beginnen?
+            </h3>
+            <p style={{ margin: "0 0 24px", fontSize: "15px", color: "#6b6b6e", textAlign: "center" }}>
+              Je ingevoerde gegevens worden gewist. Gmail blijft gekoppeld.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <button
+                onClick={handleReset}
+                disabled={resetting}
+                style={{
+                  padding: "16px", borderRadius: "14px", fontSize: "16px",
+                  fontWeight: 600, background: "#ff3b30", color: "#fff",
+                  border: "none", cursor: resetting ? "not-allowed" : "pointer",
+                  opacity: resetting ? 0.6 : 1,
+                }}
+              >
+                {resetting ? "Bezig…" : "Ja, begin opnieuw"}
+              </button>
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                disabled={resetting}
+                style={{
+                  padding: "16px", borderRadius: "14px", fontSize: "16px",
+                  fontWeight: 600, background: "#f2f2f7", color: "#1c1c1e",
+                  border: "none", cursor: "pointer",
+                }}
+              >
+                Annuleren
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
