@@ -179,11 +179,12 @@ export async function getFolderContents(
  * Idempotent — creates the full year folder structure if not present.
  * Safe to call multiple times AND concurrently.
  *
- * [BOEK-033] Each folder is created via INSERT; a concurrent duplicate fails
- * with Postgres code 23505 (unique_violation) thanks to the partial unique
- * indexes (see bestanden-pipeline-migration.sql). That 23505 is caught and
- * treated as "already exists" — so concurrent callers (e.g. parallel email
- * sync) cannot create duplicate system folders.
+ * [BOEK-033] Performance: on the common path (structure already built) this
+ * costs ONE query — it reads all system folders, sees the year is complete,
+ * and returns. Only a missing/incomplete year triggers per-folder INSERTs.
+ * Each INSERT relies on the partial unique indexes; a concurrent duplicate
+ * fails with Postgres 23505 (unique_violation), caught and treated as
+ * "already exists" — so parallel callers cannot create duplicates.
  *
  * Structure:
  * {year}/
@@ -199,20 +200,58 @@ export async function ensureYearStructure(
 ): Promise<void> {
   const supabase = await resolveClient(ctx);
 
-  // [BOEK-033] Atomic find-or-create via INSERT + unique-violation catch.
-  // The partial unique indexes (folders_system_root_uniq / _child_uniq) make
-  // a concurrent duplicate INSERT fail with Postgres code 23505. We catch that,
-  // treat it as "already exists", and SELECT the row.
-  // Note: Supabase JS upsert() cannot target a PARTIAL index (it accepts only
-  // column names, not the WHERE predicate) — hence INSERT + catch, not upsert.
+  // ── [BOEK-033] FAST PATH ──────────────────────────────────────────────────
+  // Read ALL system folders for this user in ONE query. If the year structure
+  // is already complete, return immediately — no INSERTs, no per-folder calls.
+  // This is what makes page load fast: a built structure costs 1 query, not ~94.
+  const { data: existingRows, error: readError } = await supabase
+    .from("folders")
+    .select("id, name, parent_id, folder_type")
+    .eq("user_id", userId)
+    .eq("is_system", true);
+  if (readError) throw new Error(readError.message);
+
+  const existing = (existingRows ?? []) as {
+    id: string; name: string; parent_id: string | null; folder_type: string | null;
+  }[];
+
+  // Index existing folders by "parentId|name" for O(1) lookup.
+  const key = (parentId: string | null, name: string) => `${parentId ?? "ROOT"}|${name}`;
+  const byKey = new Map<string, string>(); // key → folder id
+  for (const f of existing) byKey.set(key(f.parent_id, f.name), f.id);
+
+  // Expected total for a complete year: 1 year + 4 quarters + 4 bank
+  // + 12 months + 24 (facturen/kosten) = 45 folders for this year,
+  // plus the 2 root folders (shared + imported) = checked separately.
+  const yearFolderId = byKey.get(key(null, String(year)));
+  const sharedExists = existing.some(f => f.folder_type === "shared" && f.parent_id === null);
+  const importedExists = existing.some(f => f.folder_type === "imported" && f.parent_id === null);
+
+  // Quick completeness check: if the year folder exists AND it has 4 quarters
+  // AND the two root folders exist, assume the structure is complete.
+  if (yearFolderId && sharedExists && importedExists) {
+    const quarterCount = existing.filter(
+      f => f.parent_id === yearFolderId && f.folder_type === "quarter"
+    ).length;
+    // 4 quarters present → deep structure was built in a prior call. Done.
+    if (quarterCount === 4) return;
+  }
+
+  // ── [BOEK-033] BUILD PATH ─────────────────────────────────────────────────
+  // Structure incomplete (new year, or interrupted earlier). Create only the
+  // folders that are missing. INSERT + catch 23505 keeps it concurrency-safe.
   async function findOrCreate(
     name: string,
     parentId: string | null,
     folderType: FolderType,
     color?: string
   ): Promise<string> {
-    // Step 1 — try to insert. If the row already exists, the partial unique
-    // index rejects it with code 23505 — which we treat as success.
+    // Already in our snapshot → reuse, no DB call.
+    const cached = byKey.get(key(parentId, name));
+    if (cached) return cached;
+
+    // Try to insert. A concurrent duplicate fails with 23505 — treated as OK.
+    // Supabase JS upsert() cannot target a PARTIAL index, hence INSERT + catch.
     const { error: insertError } = await supabase
       .from("folders")
       .insert({
@@ -223,13 +262,11 @@ export async function ensureYearStructure(
         folder_type: folderType,
         color: color ?? null,
       });
-
-    // 23505 = unique_violation → row already exists → not an error for us.
     if (insertError && insertError.code !== "23505") {
       throw new Error(insertError.message);
     }
 
-    // Step 2 — read back the id (row now guaranteed to exist).
+    // Read back the id (row now guaranteed to exist).
     let q = supabase
       .from("folders")
       .select("id")
@@ -240,6 +277,8 @@ export async function ensureYearStructure(
     else q = q.eq("parent_id", parentId);
     const { data, error } = await q.single();
     if (error) throw new Error(error.message);
+
+    byKey.set(key(parentId, name), data.id); // cache for the rest of this run
     return data.id;
   }
 
@@ -277,8 +316,19 @@ export async function ensureYearStructure(
 export async function ensureSharedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
   const supabase = await resolveClient(ctx);
 
-  // [BOEK-033] INSERT + unique-violation catch — atomic, no find-then-create race.
-  // 23505 (unique_violation) means the folder already exists → not an error.
+  // [BOEK-033] Fast path — SELECT first. Folder almost always already exists,
+  // so this is a single query on the common path (no INSERT attempt).
+  const { data: existing } = await supabase
+    .from("folders")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("name", SHARED_FOLDER_NAME)
+    .is("parent_id", null)
+    .eq("is_system", true)
+    .maybeSingle();
+  if (existing) return existing.id;
+
+  // Not found → INSERT. Concurrent duplicate fails with 23505 — treated as OK.
   const { error: insertError } = await supabase
     .from("folders")
     .insert({
@@ -316,7 +366,18 @@ export async function ensureSharedFolder(userId: string, ctx: BestandenContext =
 export async function ensureImportedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
   const supabase = await resolveClient(ctx);
 
-  // [BOEK-033] INSERT + unique-violation catch — atomic, no find-then-create race.
+  // [BOEK-033] Fast path — SELECT first.
+  const { data: existing } = await supabase
+    .from("folders")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("name", IMPORTED_FOLDER_NAME)
+    .is("parent_id", null)
+    .eq("is_system", true)
+    .maybeSingle();
+  if (existing) return existing.id;
+
+  // Not found → INSERT. Concurrent duplicate fails with 23505 — treated as OK.
   const { error: insertError } = await supabase
     .from("folders")
     .insert({
