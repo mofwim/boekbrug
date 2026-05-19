@@ -261,7 +261,7 @@ export function OnboardingWizard({
           {role === "zzp" && step === "3B" && (
             <StepManual company={company} setCompany={setCompany} kvkError={kvkError} setKvkError={setKvkError} />
           )}
-          {role === "zzp" && step === 4 && <StepGmail gmailConnected={gmailConnected} />}
+          {role === "zzp" && step === 4 && <StepGmail gmailConnected={gmailConnected} onNext={handleNext} />}
           {role === "zzp" && step === 5 && (
             <StepAccountant accountantEmail={accountantEmail} setAccountantEmail={setAccountantEmail} />
           )}
@@ -510,25 +510,14 @@ function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
       const uploadRes = await fetch("/api/files", {
         method: "POST",
         body: formData,
-        // [BOEK-015] No Content-Type header — browser sets multipart/form-data boundary automatically
       });
 
-      // [BOEK-015] log real error from /api/files for debugging
-      if (!uploadRes.ok) {
-        const errBody = await uploadRes.text().catch(() => uploadRes.statusText);
-        console.error("[BOEK-015] /api/files →", uploadRes.status, errBody);
-        setState("error");
-        return;
-      }
+      if (!uploadRes.ok) { setState("error"); return; }
 
       const uploadData = await uploadRes.json();
       const documentId: string = uploadData.id ?? uploadData.document?.id;
 
-      if (!documentId) {
-        console.error("[BOEK-015] documentId missing:", uploadData);
-        setState("error");
-        return;
-      }
+      if (!documentId) { setState("error"); return; }
 
       // [BOEK-015] Step 2: extract company details via /api/onboarding/extract
       // This endpoint uses extractCompanyDetails from @/lib/ai
@@ -682,14 +671,28 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
   );
 }
 
-function StepGmail({ gmailConnected }: { gmailConnected: boolean }) {
+function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext: () => void }) {
   // [BOEK-011] Fix 3: loading state while waiting for OAuth callback
   const [loading, setLoading] = useState(false);
+
+  // [BOEK-015] fix: reset loading when user returns to tab without completing OAuth
+  // window.location changes to Gmail → user cancels → comes back → loading was stuck
+  useEffect(() => {
+    if (!loading) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        // Give OAuth 500ms to redirect — if still here, user cancelled
+        setTimeout(() => setLoading(false), 500);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [loading]);
 
   // [BOEK-011] Fix 2: show success state when gmail=connected in URL
   if (gmailConnected) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "16px" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "20px" }}>
         <span style={{ fontSize: "52px" }}>✅</span>
         <div>
           <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
@@ -699,7 +702,18 @@ function StepGmail({ gmailConnected }: { gmailConnected: boolean }) {
             We importeren je facturen automatisch op de achtergrond.
           </p>
         </div>
-        <p style={{ fontSize: "14px", color: "#8e8e93" }}>Je gaat automatisch verder…</p>
+        {/* [BOEK-015] fix: explicit button — auto-advance may not fire if step wasn't set */}
+        <button
+          onClick={onNext}
+          style={{
+            width: "100%", padding: "16px", borderRadius: "16px",
+            fontSize: "16px", fontWeight: 600, background: "#007aff",
+            color: "#fff", border: "none", cursor: "pointer",
+          }}
+        >
+          Volgende →
+        </button>
+        <p style={{ fontSize: "14px", color: "#8e8e93" }}>Of wacht even, je gaat automatisch verder…</p>
       </div>
     );
   }
