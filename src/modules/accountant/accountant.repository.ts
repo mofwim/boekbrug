@@ -422,3 +422,79 @@ export async function getClientPaidInvoices(
 
   return data as InvoiceRow[]
 }
+
+// ─────────────────────────────────────────────────────────
+// Client management (write operations)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Unlinks a client from this accountant.
+ * Verifies ownership before deleting — returns error string if not allowed.
+ * Note: data archival (BOEK-032) is deferred — only the link row is removed.
+ */
+export async function unlinkClient(
+  accountantId: string,
+  clientId: string
+): Promise<{ error?: string }> {
+  const supabase = await createServerSupabaseClient()
+
+  // Verify this link belongs to this accountant
+  const { data: link } = await supabase
+    .from('accountant_clients')
+    .select('id')
+    .eq('accountant_id', accountantId)
+    .eq('zzper_id', clientId)
+    .maybeSingle()
+
+  if (!link) return { error: 'Klant niet gevonden of geen toegang.' }
+
+  const { error } = await supabase
+    .from('accountant_clients')
+    .delete()
+    .eq('id', link.id)
+
+  if (error) return { error: 'Verwijderen mislukt. Probeer het opnieuw.' }
+  return {}
+}
+
+/**
+ * Creates an invitation for a client email.
+ * Uses the invitations table with invited_by = 'accountant'.
+ * zzper_id is null because the client may not have an account yet.
+ * The client's email is stored in accountant_email (field repurposed for this direction).
+ * Full invite flow (email sending) is handled by BOEK-011/015 endpoints once live.
+ */
+export async function inviteClient(
+  accountantId: string,
+  clientEmail: string
+): Promise<{ error?: string }> {
+  const supabase = await createServerSupabaseClient()
+
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(clientEmail)) return { error: 'Ongeldig e-mailadres.' }
+
+  // Check for duplicate pending invite from this accountant
+  const { data: existing } = await supabase
+    .from('invitations')
+    .select('id, status')
+    .eq('accountant_email', clientEmail)
+    .eq('invited_by', 'accountant')
+    .maybeSingle()
+
+  if (existing?.status === 'pending') {
+    return { error: 'Er is al een uitnodiging verstuurd naar dit adres.' }
+  }
+
+  const { error } = await supabase
+    .from('invitations')
+    .insert({
+      zzper_id: null,
+      accountant_email: clientEmail,
+      invited_by: 'accountant',
+      status: 'pending',
+    })
+
+  if (error) return { error: 'Uitnodiging versturen mislukt. Probeer het opnieuw.' }
+  return {}
+}
