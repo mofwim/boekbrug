@@ -361,11 +361,45 @@ export async function syncUserEmails(userId: string): Promise<{
     ? new Date(profile.created_at).getTime()
     : Date.now() // fallback: now — fetches nothing from the past
 
+  // [BOEK-011] Fix: refresh access token before use — expires after 1 hour
+  let accessToken = connection.access_token
+
+  if (connection.refresh_token) {
+    try {
+      const refreshRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          refresh_token: connection.refresh_token,
+          client_id: process.env.GOOGLE_CLIENT_ID!,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+          grant_type: 'refresh_token',
+        }),
+      })
+
+      if (refreshRes.ok) {
+        const refreshData = await refreshRes.json()
+        accessToken = refreshData.access_token
+        // Save new token to DB
+        await supabase
+          .from('email_connections')
+          .update({ access_token: accessToken })
+          .eq('id', connection.id)
+        console.log('[BOEK-011] Token refreshed successfully')
+      } else {
+        const errBody = await refreshRes.text()
+        console.error('[BOEK-011] Token refresh failed:', errBody)
+      }
+    } catch (refreshError) {
+      console.error('[BOEK-011] Token refresh error:', refreshError)
+    }
+  }
+
   // Fetch attachments after registration date
   let attachments: GmailAttachment[] = []
   try {
     if (connection.provider === 'gmail') {
-      attachments = await fetchGmailAttachments(connection.access_token, syncAfterMs)
+      attachments = await fetchGmailAttachments(accessToken, syncAfterMs)
     }
     // Outlook: same pattern — add fetchOutlookAttachments when needed
   } catch (error) {
