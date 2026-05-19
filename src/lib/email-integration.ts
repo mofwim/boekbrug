@@ -215,7 +215,11 @@ async function fetchMessageAttachments(
         )
         if (!attRes.ok) return null
         const attData = await attRes.json()
-        return { ...att, data: attData.data } // base64url from Gmail
+        // [BOEK-011] Fix: convert base64url → base64 immediately after fetch
+        const base64 = (attData.data as string)
+          .replace(/-/g, '+')
+          .replace(/_/g, '/')
+        return { ...att, data: base64 }
       } catch {
         return null
       }
@@ -291,10 +295,8 @@ export async function classifyAttachment(
 ): Promise<AttachmentClassification> {
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
 
-  // Convert base64url to base64 if needed (Gmail uses base64url)
-  const base64 = base64Data.replace(/-/g, '+').replace(/_/g, '/')
-
-  const result = await verifyInvoiceFromPdf(base64, mimeType, filename)
+  // [BOEK-011] Data is already base64 (converted in fetchMessageAttachments)
+  const result = await verifyInvoiceFromPdf(base64Data, mimeType, filename)
 
   return {
     isInvoice: result.is_invoice,
