@@ -22,54 +22,13 @@ interface IncomingInvoiceRow {
   pdf_url: string | null;
   document_id: string | null;
   created_at: string;
-  // [BOEK-011] folder info — joined from the linked document
   folder_id: string | null;
   folder_name: string | null;
 }
 
-// [BOEK-011] Raw row from Supabase — documents join comes back nested
-interface RawInvoiceRow {
-  id: string;
-  client_name: string;
-  client_email: string | null;
-  total_ex_btw: number;
-  btw_amount: number;
-  total_inc_btw: number;
-  invoice_date: string;
-  invoice_number: string;
-  source: string;
-  pdf_url: string | null;
-  document_id: string | null;
-  created_at: string;
-  documents: {
-    folder_id: string | null;
-    folders: { name: string | null } | null;
-  } | null;
-}
-
-// Columns — includes a nested join to documents → folders for the folder link
+// Plain column list — no join. The join broke the query and emptied the page.
 const INVOICE_COLUMNS =
-  "id, client_name, client_email, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at, documents(folder_id, folders(name))";
-
-// Flatten the nested documents/folders join into top-level fields
-function flatten(rows: RawInvoiceRow[]): IncomingInvoiceRow[] {
-  return rows.map((r) => ({
-    id: r.id,
-    client_name: r.client_name,
-    client_email: r.client_email,
-    total_ex_btw: r.total_ex_btw,
-    btw_amount: r.btw_amount,
-    total_inc_btw: r.total_inc_btw,
-    invoice_date: r.invoice_date,
-    invoice_number: r.invoice_number,
-    source: r.source,
-    pdf_url: r.pdf_url,
-    document_id: r.document_id,
-    created_at: r.created_at,
-    folder_id: r.documents?.folder_id ?? null,
-    folder_name: r.documents?.folders?.name ?? null,
-  }));
-}
+  "id, client_name, client_email, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();
@@ -108,9 +67,57 @@ export default async function IncomingPage() {
     .order("created_at", { ascending: false })
     .limit(50);
 
-  // [BOEK-011] Cast through unknown — Supabase select() returns a wide union
-  const pendingInvoices = flatten((pendingRaw ?? []) as unknown as RawInvoiceRow[]);
-  const ignoredInvoices = flatten((ignoredRaw ?? []) as unknown as RawInvoiceRow[]);
+  // [BOEK-011] Base rows — cast through unknown (Supabase returns a wide union)
+  const pendingBase = (pendingRaw ?? []) as unknown as Omit<
+    IncomingInvoiceRow,
+    "folder_id" | "folder_name"
+  >[];
+  const ignoredBase = (ignoredRaw ?? []) as unknown as Omit<
+    IncomingInvoiceRow,
+    "folder_id" | "folder_name"
+  >[];
+
+  // [BOEK-011] Resolve folder info separately — safe, never breaks the page.
+  // Collect every linked document_id, fetch their folders in one query.
+  const allDocIds = [...pendingBase, ...ignoredBase]
+    .map((inv) => inv.document_id)
+    .filter((id): id is string => !!id);
+
+  const folderByDocId = new Map<string, { id: string | null; name: string | null }>();
+
+  if (allDocIds.length > 0) {
+    const { data: docs } = await supabase
+      .from("documents")
+      .select("id, folder_id, folders(name)")
+      .in("id", allDocIds);
+
+    for (const doc of (docs ?? []) as unknown as Array<{
+      id: string;
+      folder_id: string | null;
+      folders: { name: string | null } | null;
+    }>) {
+      folderByDocId.set(doc.id, {
+        id: doc.folder_id,
+        name: doc.folders?.name ?? null,
+      });
+    }
+  }
+
+  // Attach folder info to each invoice
+  const withFolder = (
+    rows: Omit<IncomingInvoiceRow, "folder_id" | "folder_name">[]
+  ): IncomingInvoiceRow[] =>
+    rows.map((inv) => {
+      const folder = inv.document_id ? folderByDocId.get(inv.document_id) : null;
+      return {
+        ...inv,
+        folder_id: folder?.id ?? null,
+        folder_name: folder?.name ?? null,
+      };
+    });
+
+  const pendingInvoices = withFolder(pendingBase);
+  const ignoredInvoices = withFolder(ignoredBase);
 
   const connectionStatus = {
     connected: !!connection,
