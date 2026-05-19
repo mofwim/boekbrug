@@ -169,6 +169,20 @@ async function callClaude(
 }
 
 // ─────────────────────────────────────────────────────────
+// [BOEK-011] cleanBase64 — normalize base64 before sending to Claude
+// Handles: data URL prefix, base64url chars, whitespace — May 2026
+// ─────────────────────────────────────────────────────────
+function cleanBase64(raw: string): string {
+  // Remove data URL prefix if present (e.g. "data:application/pdf;base64,...")
+  const withoutPrefix = raw.includes(',') ? raw.split(',')[1] : raw
+  // Convert base64url to standard base64 (Gmail uses - and _ instead of + and /)
+  return withoutPrefix
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .replace(/\s/g, '') // remove any whitespace
+}
+
+// ─────────────────────────────────────────────────────────
 // PDF caller — sends actual PDF bytes to Claude
 // [BOEK-011] reads the real content, not just metadata — May 2026
 // ─────────────────────────────────────────────────────────
@@ -177,6 +191,9 @@ async function callClaudeWithPdf(
   prompt: string,
   systemPrompt: string
 ): Promise<string> {
+  // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
+  const cleanData = cleanBase64(pdfBase64)
+
   const response = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -198,7 +215,7 @@ async function callClaudeWithPdf(
               source: {
                 type: 'base64',
                 media_type: 'application/pdf',
-                data: pdfBase64,
+                data: cleanData,
               },
             },
             {
@@ -234,6 +251,9 @@ async function callClaudeWithImage(
   prompt: string,
   systemPrompt: string
 ): Promise<string> {
+  // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
+  const cleanData = cleanBase64(imageBase64)
+
   const response = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -254,7 +274,7 @@ async function callClaudeWithImage(
               source: {
                 type: 'base64',
                 media_type: mimeType,
-                data: imageBase64,
+                data: cleanData,
               },
             },
             {
