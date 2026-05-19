@@ -449,10 +449,12 @@ export async function syncUserEmails(userId: string): Promise<{
       // messageId. The filename makes each attachment uniquely identifiable.
       const dedupKey = `${attachment.messageId}:${attachment.filename}`
 
+      // [BOEK-011] Incoming invoices: receiver_id = the user (they receive it)
+      // sender_id stays null — the vendor is not a BoekBrug user
       const { data: existing } = await supabase
         .from('invoices')
         .select('id')
-        .eq('sender_id', userId)
+        .eq('receiver_id', userId)
         .eq('source', 'email')
         .eq('source_message_id', dedupKey)
         .limit(1)
@@ -520,10 +522,14 @@ export async function syncUserEmails(userId: string): Promise<{
       }
 
       // [BOEK-011] Step 3: save the invoice with full AI-extracted breakdown
+      // Incoming invoice: the USER receives it → receiver_id = userId.
+      // sender_id stays null — the vendor is not a registered BoekBrug user.
+      // This keeps it out of "Mijn facturen" (which queries sender_id).
       const { data: insertedInvoice, error: dbError } = await supabase
         .from('invoices')
         .insert({
-          sender_id: userId,
+          sender_id: null,
+          receiver_id: userId,
           direction: 'incoming',
           status: 'received',
           source: 'email',
@@ -593,4 +599,4 @@ function extractSenderName(from: string): string {
   const match = from.match(/^"?([^"<]+)"?\s*</)
   if (match) return match[1].trim()
   return extractEmail(from)
-} 
+}

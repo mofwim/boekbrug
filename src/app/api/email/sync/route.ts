@@ -55,7 +55,7 @@ export async function GET(_req: NextRequest) {
   const { count: pendingCount } = await supabase
     .from('invoices')
     .select('id', { count: 'exact', head: true })
-    .eq('sender_id', user.id)
+    .eq('receiver_id', user.id)
     .eq('direction', 'incoming')
     .eq('status', 'received')
 

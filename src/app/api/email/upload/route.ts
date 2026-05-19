@@ -114,10 +114,13 @@ export async function POST(req: NextRequest) {
   }
 
   // Save the invoice — status 'received', awaiting confirmation
+  // [BOEK-011] Incoming invoice: receiver_id = user, sender_id = null
+  // Keeps it out of "Mijn facturen" (which queries sender_id)
   const { data: invoice, error: dbError } = await supabase
     .from("invoices")
     .insert({
-      sender_id: user.id,
+      sender_id: null,
+      receiver_id: user.id,
       direction: "incoming",
       status: "received",
       source: "upload",

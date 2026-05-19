@@ -46,11 +46,11 @@ export async function GET(
   // Verify the invoice belongs to this user and get the storage path
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, sender_id, pdf_url")
+    .select("id, receiver_id, pdf_url")
     .eq("id", id)
     .single();
 
-  if (!invoice || invoice.sender_id !== user.id) {
+  if (!invoice || invoice.receiver_id !== user.id) {
     return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
   }
 

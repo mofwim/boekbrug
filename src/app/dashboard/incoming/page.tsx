@@ -51,7 +51,7 @@ export default async function IncomingPage() {
   const { data: pendingRaw } = await supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
-    .eq("sender_id", user.id)
+    .eq("receiver_id", user.id)
     .eq("direction", "incoming")
     .eq("status", "received")
     .order("created_at", { ascending: false })
@@ -61,7 +61,7 @@ export default async function IncomingPage() {
   const { data: ignoredRaw } = await supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
-    .eq("sender_id", user.id)
+    .eq("receiver_id", user.id)
     .eq("direction", "incoming")
     .eq("status", "archived")
     .order("created_at", { ascending: false })

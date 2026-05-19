@@ -27,11 +27,11 @@ export async function POST(
   // Verify ownership
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, sender_id, direction, status")
+    .select("id, receiver_id, direction, status")
     .eq("id", id)
     .single();
 
-  if (!invoice || invoice.sender_id !== user.id) {
+  if (!invoice || invoice.receiver_id !== user.id) {
     return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
   }
 
@@ -73,7 +73,7 @@ export async function POST(
     .from("invoices")
     .update(updatePatch)
     .eq("id", id)
-    .eq("sender_id", user.id);
+    .eq("receiver_id", user.id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -135,7 +135,7 @@ export async function DELETE(
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)
-    .eq("sender_id", user.id)
+    .eq("receiver_id", user.id)
     .eq("direction", "incoming");
 
   if (error) {
@@ -170,7 +170,7 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)
-    .eq("sender_id", user.id)
+    .eq("receiver_id", user.id)
     .eq("direction", "incoming")
     .eq("status", "archived");
 
