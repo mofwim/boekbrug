@@ -74,7 +74,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         setSyncResult(`Fout: ${data.error}`);
       } else {
         setSyncResult(
-          `${data.classified} facturen gevonden, ${data.saved} opgeslagen`
+          `${data.verified ?? 0} facturen gevonden, ${data.saved ?? 0} opgeslagen`
         );
         // Reload to show new invoices
         setTimeout(() => window.location.reload(), 1500);

@@ -10,6 +10,14 @@ import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { translateToNL } from '@/lib/ai';
 
 export async function POST(req: NextRequest) {
+  // [BOEK-018] fix: parse body once before try/catch — req.json() can only be called once — May 2026
+  let body: { text?: unknown; sourceLanguage?: unknown } = {};
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
   try {
     // Auth check
     const supabase = await createServerSupabaseClient();
@@ -18,7 +26,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await req.json();
     const { text, sourceLanguage } = body;
 
     // Input validation
@@ -33,8 +40,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error('[BOEK-018] /api/ai/translate error:', error);
-    // Safe fallback — return original text
-    const body = await req.json().catch(() => ({}));
-    return NextResponse.json({ translation: body.text ?? '', original: body.text ?? '' }, { status: 200 });
+    // Safe fallback — return original text (body.text already parsed above)
+    const originalText = typeof body.text === 'string' ? body.text : '';
+    return NextResponse.json(
+      { translation: originalText, original: originalText },
+      { status: 200 }
+    );
   }
 }
