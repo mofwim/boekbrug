@@ -276,6 +276,18 @@ export function BestandenPage() {
     loadAllFolders();
   }, [currentFolderId]); // eslint-disable-line
 
+  // [BOEK-011] Open a specific folder when arriving via ?folder={id}
+  // Used by the incoming-invoices page link. Runs once on mount.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const folderParam = params.get("folder");
+    if (folderParam) {
+      setCurrentFolderId(folderParam);
+      // Clean the URL so refresh/back behaves normally
+      window.history.replaceState({}, "", "/dashboard/bestanden");
+    }
+  }, []); // eslint-disable-line
+
   // ── Search ──
   useEffect(() => {
     if (!search.trim()) { setSearchResults(null); return; }
