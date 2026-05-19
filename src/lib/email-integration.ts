@@ -422,6 +422,9 @@ export async function syncUserEmails(userId: string): Promise<{
   let saved = 0
   let errors = 0
 
+  // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
+  const { resolveImportTarget } = await import('@/lib/bestanden')
+
   for (const attachment of attachments) {
     try {
       // Claude reads the actual file — not metadata
@@ -451,7 +454,6 @@ export async function syncUserEmails(userId: string): Promise<{
         : new Date(attachment.date).toISOString().split('T')[0]
 
       // [BOEK-011] Step 1: store the PDF/image in Supabase Storage
-      // Path: {userId}/incoming/{timestamp}-{filename}
       let documentId: string | null = null
       let pdfUrl: string | null = null
 
@@ -468,7 +470,17 @@ export async function syncUserEmails(userId: string): Promise<{
           })
 
         if (!uploadErr) {
-          // [BOEK-011] Step 2: create a documents record (shows in Mijn Bestanden)
+          // [BOEK-011] Resolve the correct folder via BOEK-033's function
+          // ctx='pipeline' — background job, service_role, no user session
+          // Never returns null — falls back to "Geïmporteerde bestanden"
+          const folderId = await resolveImportTarget(
+            userId,
+            classification.invoiceDate ?? null,
+            'facturen',
+            'pipeline'
+          )
+
+          // [BOEK-011] Step 2: create the documents record with correct folder_id
           const { data: doc } = await supabase
             .from('documents')
             .insert({
@@ -478,6 +490,7 @@ export async function syncUserEmails(userId: string): Promise<{
               file_size: fileBuffer.length,
               file_type: attachment.mimeType,
               doc_type: 'factuur',
+              folder_id: folderId,
               year: new Date(invoiceDate).getFullYear(),
               source: 'email',
               ai_processed: true,
@@ -497,29 +510,41 @@ export async function syncUserEmails(userId: string): Promise<{
       }
 
       // [BOEK-011] Step 3: save the invoice with full AI-extracted breakdown
-      // Amounts come from Claude — user reviews/edits them on "Markeer betaald"
-      const { error: dbError } = await supabase.from('invoices').insert({
-        sender_id: userId,
-        direction: 'incoming',
-        status: 'received',
-        source: 'email',
-        client_name: classification.vendor || extractSenderName(attachment.from),
-        client_email: extractEmail(attachment.from),
-        invoice_date: invoiceDate,
-        invoice_number: classification.invoiceNumber || `EMAIL-${Date.now()}`,
-        total_ex_btw: classification.totalExBtw ?? 0,
-        btw_amount: classification.btwAmount ?? 0,
-        total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,
-        pdf_url: pdfUrl,
-        document_id: documentId,
-        source_message_id: attachment.messageId,
-      })
+      const { data: insertedInvoice, error: dbError } = await supabase
+        .from('invoices')
+        .insert({
+          sender_id: userId,
+          direction: 'incoming',
+          status: 'received',
+          source: 'email',
+          client_name: classification.vendor || extractSenderName(attachment.from),
+          client_email: extractEmail(attachment.from),
+          invoice_date: invoiceDate,
+          invoice_number: classification.invoiceNumber || `EMAIL-${Date.now()}`,
+          total_ex_btw: classification.totalExBtw ?? 0,
+          btw_amount: classification.btwAmount ?? 0,
+          total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,
+          pdf_url: pdfUrl,
+          document_id: documentId,
+          source_message_id: attachment.messageId,
+        })
+        .select('id')
+        .single()
 
       if (dbError) {
         console.error('[BOEK-011] Save error:', dbError.message)
         errors++
       } else {
         saved++
+
+        // [BOEK-011] Link the document back to the invoice (bidirectional)
+        // documents.invoice_id ↔ invoices.document_id
+        if (documentId && insertedInvoice?.id) {
+          await supabase
+            .from('documents')
+            .update({ invoice_id: insertedInvoice.id })
+            .eq('id', documentId)
+        }
       }
     } catch (error) {
       console.error('[BOEK-011] Processing error:', error)

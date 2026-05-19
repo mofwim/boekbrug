@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
+import { resolveImportTarget } from "@/lib/bestanden";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -82,6 +83,16 @@ export async function POST(req: NextRequest) {
 
   if (!uploadError) {
     pdfUrl = storagePath;
+
+    // [BOEK-011] Resolve correct folder via BOEK-033's function
+    // ctx='user' — manual upload, user is logged in (RLS session active)
+    const folderId = await resolveImportTarget(
+      user.id,
+      verification.invoice_date ?? null,
+      "facturen",
+      "user"
+    );
+
     const { data: doc } = await supabase
       .from("documents")
       .insert({
@@ -91,6 +102,7 @@ export async function POST(req: NextRequest) {
         file_size: file.size,
         file_type: file.type,
         doc_type: "factuur",
+        folder_id: folderId,
         year: new Date(invoiceDate).getFullYear(),
         source: "upload",
         ai_processed: true,
@@ -123,6 +135,14 @@ export async function POST(req: NextRequest) {
 
   if (dbError) {
     return NextResponse.json({ error: dbError.message }, { status: 500 });
+  }
+
+  // [BOEK-011] Link document back to invoice (bidirectional)
+  if (documentId && invoice?.id) {
+    await supabase
+      .from("documents")
+      .update({ invoice_id: invoice.id })
+      .eq("id", documentId);
   }
 
   return NextResponse.json({ ok: true, invoice_id: invoice?.id });
