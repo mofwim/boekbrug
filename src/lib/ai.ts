@@ -175,16 +175,23 @@ async function callClaude(
 
 // ─────────────────────────────────────────────────────────
 // [BOEK-011] cleanBase64 — normalize base64 before sending to Claude
-// Handles: data URL prefix, base64url chars, whitespace — May 2026
+// Handles: data URL prefix, base64url chars, whitespace, padding — May 2026
 // ─────────────────────────────────────────────────────────
 function cleanBase64(raw: string): string {
   // Remove data URL prefix if present (e.g. "data:application/pdf;base64,...")
-  const withoutPrefix = raw.includes(',') ? raw.split(',')[1] : raw
-  // Convert base64url to standard base64 (Gmail uses - and _ instead of + and /)
-  return withoutPrefix
-    .replace(/-/g, '+')
-    .replace(/_/g, '/')
-    .replace(/\s/g, '') // remove any whitespace
+  const withoutPrefix = raw.includes(",") ? raw.split(",")[1] : raw;
+
+  // Convert base64url → standard base64, strip whitespace
+  const normalized = withoutPrefix
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .replace(/\s/g, "");
+
+  // [BOEK-011] Fix padding — base64 length must be a multiple of 4.
+  // Gmail's base64url often drops trailing '=' padding. Claude rejects it.
+  const remainder = normalized.length % 4;
+  if (remainder === 0) return normalized;
+  return normalized + "=".repeat(4 - remainder);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -445,6 +452,19 @@ Return JSON only.`;
     let result: string;
 
     if (mimeType === 'application/pdf') {
+      // [BOEK-011] Validate PDF before sending — catch corrupt files early
+      // A valid PDF base64 starts with "JVBERi0" (= "%PDF-")
+      const cleaned = cleanBase64(fileBase64);
+      if (!cleaned.startsWith('JVBERi0')) {
+        console.warn(
+          `[BOEK-011] Skipping invalid PDF "${filename}" — base64 starts with: ${cleaned.slice(0, 12)}`
+        );
+        return {
+          is_invoice: false,
+          confidence: 0,
+          reason: 'Ongeldig PDF-bestand — overgeslagen',
+        };
+      }
       // Claude reads the actual PDF — text + scanned
       result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
     } else if (

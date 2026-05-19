@@ -145,7 +145,17 @@ async function fetchMessageAttachments(
   const from = headers.find(h => h.name === 'From')?.value || ''
   const date = headers.find(h => h.name === 'Date')?.value || ''
 
-  const attachments: GmailAttachment[] = []
+  // [BOEK-011] Intermediate shape — explicit flag, no guessing by string length
+  interface PendingAttachment {
+    filename: string
+    mimeType: string
+    size: number
+    // Exactly one of these is set:
+    attachmentId?: string  // needs a second fetch
+    inlineData?: string    // base64url already present
+  }
+
+  const pending: PendingAttachment[] = []
 
   // Recursively find attachment parts
   function walkParts(parts: unknown[]): void {
@@ -170,63 +180,59 @@ async function fetchMessageAttachments(
       if (!filename || size === 0) continue
       if (mimeType !== 'application/pdf' && !mimeType.startsWith('image/')) continue
 
-      const attachmentId = p.body?.attachmentId
-      const inlineData = p.body?.data
-
-      if (attachmentId) {
-        // Will fetch separately — store placeholder with attachmentId
-        attachments.push({
-          messageId,
-          filename,
-          mimeType,
-          data: attachmentId, // will be replaced below
-          subject,
-          from,
-          date,
-          size,
-        })
-      } else if (inlineData) {
-        attachments.push({
-          messageId,
-          filename,
-          mimeType,
-          data: inlineData,
-          subject,
-          from,
-          date,
-          size,
-        })
+      // [BOEK-011] Store with explicit flag — never confuse ID with data
+      if (p.body?.attachmentId) {
+        pending.push({ filename, mimeType, size, attachmentId: p.body.attachmentId })
+      } else if (p.body?.data) {
+        pending.push({ filename, mimeType, size, inlineData: p.body.data })
       }
     }
   }
 
   walkParts(msg.payload?.parts || [])
 
-  // Fetch actual attachment data for non-inline attachments
+  // [BOEK-011] Resolve each attachment — fetch by ID or use inline data
+  // Gmail always returns base64url → convert to standard base64 exactly once
   const resolved = await Promise.all(
-    attachments.map(async (att) => {
-      // If data looks like a base64url string (not an attachmentId), skip
-      if (att.data.length > 100 && !att.data.includes('/')) return att
+    pending.map(async (att): Promise<GmailAttachment | null> => {
+      let base64url: string | undefined
 
-      try {
-        const attRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${att.data}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        )
-        if (!attRes.ok) return null
-        const attData = await attRes.json()
-        // [BOEK-011] Fix: convert base64url → base64 immediately after fetch
-        const base64 = (attData.data as string)
-          .replace(/-/g, '+')
-          .replace(/_/g, '/')
-        return { ...att, data: base64 }
-      } catch {
-        return null
+      if (att.attachmentId) {
+        // Needs a second fetch to get the actual bytes
+        try {
+          const attRes = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${att.attachmentId}`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          )
+          if (!attRes.ok) return null
+          const attData = await attRes.json()
+          base64url = attData.data as string
+        } catch {
+          return null
+        }
+      } else {
+        base64url = att.inlineData
+      }
+
+      if (!base64url) return null
+
+      // [BOEK-011] base64url → standard base64 — done exactly once, here
+      const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
+
+      return {
+        messageId,
+        filename: att.filename,
+        mimeType: att.mimeType,
+        data: base64,
+        subject,
+        from,
+        date,
+        size: att.size,
       }
     })
   )
 
-  return resolved.filter(Boolean) as GmailAttachment[]
+  return resolved.filter((a): a is GmailAttachment => a !== null)
 }
 
 // ─── Outlook token exchange ──────────────────────────────────────────────────
