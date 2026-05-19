@@ -179,9 +179,11 @@ export async function getFolderContents(
  * Idempotent — creates the full year folder structure if not present.
  * Safe to call multiple times AND concurrently.
  *
- * [BOEK-033 Phase 1] Uses upsert with onConflict instead of "find-then-create".
- * The partial unique indexes (see bestanden-pipeline-migration.sql) make this
- * atomic — concurrent callers (e.g. parallel email sync) cannot create duplicates.
+ * [BOEK-033] Each folder is created via INSERT; a concurrent duplicate fails
+ * with Postgres code 23505 (unique_violation) thanks to the partial unique
+ * indexes (see bestanden-pipeline-migration.sql). That 23505 is caught and
+ * treated as "already exists" — so concurrent callers (e.g. parallel email
+ * sync) cannot create duplicate system folders.
  *
  * Structure:
  * {year}/
@@ -197,36 +199,35 @@ export async function ensureYearStructure(
 ): Promise<void> {
   const supabase = await resolveClient(ctx);
 
-  // [BOEK-033 Phase 1] Atomic find-or-create via upsert.
-  // The partial unique index on (user_id, parent_id, name) WHERE is_system=true
-  // (and the root variant) guarantees no duplicates under concurrency.
-  // ignoreDuplicates: true → on conflict do nothing; we then SELECT the id.
+  // [BOEK-033] Atomic find-or-create via INSERT + unique-violation catch.
+  // The partial unique indexes (folders_system_root_uniq / _child_uniq) make
+  // a concurrent duplicate INSERT fail with Postgres code 23505. We catch that,
+  // treat it as "already exists", and SELECT the row.
+  // Note: Supabase JS upsert() cannot target a PARTIAL index (it accepts only
+  // column names, not the WHERE predicate) — hence INSERT + catch, not upsert.
   async function findOrCreate(
     name: string,
     parentId: string | null,
     folderType: FolderType,
     color?: string
   ): Promise<string> {
-    // Step 1 — attempt insert; on conflict, ignore (atomic, no race).
+    // Step 1 — try to insert. If the row already exists, the partial unique
+    // index rejects it with code 23505 — which we treat as success.
     const { error: insertError } = await supabase
       .from("folders")
-      .upsert(
-        {
-          user_id: userId,
-          name,
-          parent_id: parentId,
-          is_system: true,
-          folder_type: folderType,
-          color: color ?? null,
-        },
-        {
-          onConflict: parentId === null
-            ? "user_id,name"            // root: matches partial idx (parent_id IS NULL)
-            : "user_id,parent_id,name", // child: matches partial idx
-          ignoreDuplicates: true,
-        }
-      );
-    if (insertError) throw new Error(insertError.message);
+      .insert({
+        user_id: userId,
+        name,
+        parent_id: parentId,
+        is_system: true,
+        folder_type: folderType,
+        color: color ?? null,
+      });
+
+    // 23505 = unique_violation → row already exists → not an error for us.
+    if (insertError && insertError.code !== "23505") {
+      throw new Error(insertError.message);
+    }
 
     // Step 2 — read back the id (row now guaranteed to exist).
     let q = supabase
@@ -276,21 +277,21 @@ export async function ensureYearStructure(
 export async function ensureSharedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
   const supabase = await resolveClient(ctx);
 
-  // [BOEK-033 Phase 1] Atomic upsert — no find-then-create race.
+  // [BOEK-033] INSERT + unique-violation catch — atomic, no find-then-create race.
+  // 23505 (unique_violation) means the folder already exists → not an error.
   const { error: insertError } = await supabase
     .from("folders")
-    .upsert(
-      {
-        user_id: userId,
-        name: SHARED_FOLDER_NAME,
-        parent_id: null,
-        is_system: true,
-        folder_type: "shared",
-        color: "#1A73E8",
-      },
-      { onConflict: "user_id,name", ignoreDuplicates: true }
-    );
-  if (insertError) throw new Error(insertError.message);
+    .insert({
+      user_id: userId,
+      name: SHARED_FOLDER_NAME,
+      parent_id: null,
+      is_system: true,
+      folder_type: "shared",
+      color: "#1A73E8",
+    });
+  if (insertError && insertError.code !== "23505") {
+    throw new Error(insertError.message);
+  }
 
   const { data, error } = await supabase
     .from("folders")
@@ -315,20 +316,20 @@ export async function ensureSharedFolder(userId: string, ctx: BestandenContext =
 export async function ensureImportedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
   const supabase = await resolveClient(ctx);
 
+  // [BOEK-033] INSERT + unique-violation catch — atomic, no find-then-create race.
   const { error: insertError } = await supabase
     .from("folders")
-    .upsert(
-      {
-        user_id: userId,
-        name: IMPORTED_FOLDER_NAME,
-        parent_id: null,
-        is_system: true,
-        folder_type: "imported",
-        color: "#5F6368",
-      },
-      { onConflict: "user_id,name", ignoreDuplicates: true }
-    );
-  if (insertError) throw new Error(insertError.message);
+    .insert({
+      user_id: userId,
+      name: IMPORTED_FOLDER_NAME,
+      parent_id: null,
+      is_system: true,
+      folder_type: "imported",
+      color: "#5F6368",
+    });
+  if (insertError && insertError.code !== "23505") {
+    throw new Error(insertError.message);
+  }
 
   const { data, error } = await supabase
     .from("folders")
