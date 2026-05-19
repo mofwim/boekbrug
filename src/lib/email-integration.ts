@@ -186,11 +186,14 @@ async function fetchMessageAttachments(
           size,
         })
       } else if (inlineData) {
+        // [BOEK-011] Fix: normalize inline base64 data immediately
+        const base64Standard = inlineData.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = base64Standard + '=='.slice(0, (4 - base64Standard.length % 4) % 4)
         attachments.push({
           messageId,
           filename,
           mimeType,
-          data: inlineData,
+          data: padded,
           subject,
           from,
           date,
@@ -202,11 +205,12 @@ async function fetchMessageAttachments(
 
   walkParts(msg.payload?.parts || [])
 
-  // Fetch actual attachment data for non-inline attachments
+  // [BOEK-011] Fix: fetch actual attachment data with correct base64 handling
   const resolved = await Promise.all(
     attachments.map(async (att) => {
-      // If data looks like a base64url string (not an attachmentId), skip
-      if (att.data.length > 100 && !att.data.includes('/')) return att
+      // att.data is attachmentId if it was set above — always fetch it
+      // (previous check was wrong — attachmentIds can be any length)
+      if (!att.data) return null
 
       try {
         const attRes = await fetch(
@@ -215,11 +219,22 @@ async function fetchMessageAttachments(
         )
         if (!attRes.ok) return null
         const attData = await attRes.json()
-        // [BOEK-011] Fix: convert base64url → base64 immediately after fetch
-        const base64 = (attData.data as string)
+
+        // [BOEK-011] Fix: proper base64url → base64 conversion with padding
+        const base64url = attData.data as string
+        const base64Standard = base64url
           .replace(/-/g, '+')
           .replace(/_/g, '/')
-        return { ...att, data: base64 }
+        // Add missing padding
+        const padded = base64Standard + '=='.slice(0, (4 - base64Standard.length % 4) % 4)
+
+        // [BOEK-011] Validate PDF magic bytes (JVBERi0 = "%PDF-" in base64)
+        if (att.mimeType === 'application/pdf' && !padded.startsWith('JVBERi0')) {
+          console.warn('[BOEK-011] Invalid PDF base64 for:', att.filename, '— first bytes:', padded.slice(0, 20))
+          return null
+        }
+
+        return { ...att, data: padded }
       } catch {
         return null
       }
