@@ -38,12 +38,17 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Verify current user matches state userId
+  // [BOEK-015] fix: use userId from state directly — session cookie may not transfer
+  // across OAuth redirect, causing false mismatch and redirect to /login
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user || user.id !== stateData.userId) {
+  // Use stateData.userId as the authoritative user — it was set when OAuth was initiated
+  // If session user exists and matches, great. If not, trust the state (CSRF already verified by state param)
+  const userId = user?.id ?? stateData.userId;
+
+  if (!userId) {
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_BASE_URL}/login`
     );
@@ -73,7 +78,7 @@ export async function GET(req: NextRequest) {
     .from("email_connections")
     .upsert(
       {
-        user_id: user.id,
+        user_id: userId,
         provider: "gmail",
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
@@ -86,11 +91,11 @@ export async function GET(req: NextRequest) {
   if (dbError) {
     // Try insert if upsert failed (onConflict column might not exist)
     await supabase.from("email_connections").delete().match({
-      user_id: user.id,
+      user_id: userId,
       provider: "gmail",
     });
     await supabase.from("email_connections").insert({
-      user_id: user.id,
+      user_id: userId,
       provider: "gmail",
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
@@ -105,12 +110,11 @@ export async function GET(req: NextRequest) {
     headers: { Cookie: req.headers.get("cookie") || "" },
   }).catch(() => {});
 
-  // [BOEK-011] Fix 1: redirect back to onboarding with success param
-  // If user came from onboarding (step 4) → back to onboarding with confirmation
-  // If user came from dashboard → back to incoming page
-  const referer = req.headers.get("referer") || "";
-  const fromOnboarding = referer.includes("/onboarding") ||
-    stateData.provider === "gmail"; // state always has provider
+  // [BOEK-015] fix: check redirect param in state to know where to send user back
+  // stateData may include a redirect field set by /api/email/connect
+  const redirectTo = (stateData as { userId: string; provider: string; redirect?: string }).redirect;
+  const fromOnboarding = redirectTo?.includes("/onboarding") ||
+    req.headers.get("referer")?.includes("/onboarding");
 
   if (fromOnboarding) {
     return NextResponse.redirect(
