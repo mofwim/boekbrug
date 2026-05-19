@@ -558,6 +558,19 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   }
 
+  // [BOEK-011] Notify the user when new invoices were imported
+  // Without this, the import is silent — the user never knows it happened
+  if (saved > 0) {
+    await supabase.from('notifications').insert({
+      user_id: userId,
+      title: `${saved} nieuwe ${saved === 1 ? 'factuur' : 'facturen'} geïmporteerd`,
+      body: 'Bekijk en bevestig je inkomende facturen.',
+      type: 'invoice',
+      read: false,
+      link: '/dashboard/incoming',
+    })
+  }
+
   return {
     provider: connection.provider,
     fetched: attachments.length,
@@ -566,8 +579,6 @@ export async function syncUserEmails(userId: string): Promise<{
     errors,
   }
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function extractEmail(from: string): string {
   const match = from.match(/<(.+?)>/)
