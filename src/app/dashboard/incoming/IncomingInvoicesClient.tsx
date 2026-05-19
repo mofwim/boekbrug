@@ -27,6 +27,9 @@ interface IncomingInvoice {
   pdf_url: string | null;
   document_id: string | null;
   created_at: string;
+  // [BOEK-011] folder where the file was stored in Mijn Bestanden
+  folder_id: string | null;
+  folder_name: string | null;
 }
 
 interface ConnectionStatus {
@@ -568,6 +571,27 @@ function InvoiceCard({
               <span style={{ fontSize: 16 }}>📄</span>
               {loadingPdf ? "Openen…" : "Bekijk factuur"}
             </button>
+          )}
+
+          {/* [BOEK-011] Folder location — link to Mijn Bestanden */}
+          {invoice.folder_id && (
+            <a
+              href={`/dashboard/bestanden?folder=${invoice.folder_id}`}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 12px", borderRadius: 10, marginBottom: 10,
+                background: "#f7f7f7", textDecoration: "none",
+              }}
+            >
+              <span style={{ fontSize: 15 }}>📁</span>
+              <span style={{ flex: 1, fontSize: 13, color: "#6b6b6e" }}>
+                Opgeslagen in{" "}
+                <span style={{ color: "#1c1c1e", fontWeight: 600 }}>
+                  {invoice.folder_name || "Mijn Bestanden"}
+                </span>
+              </span>
+              <span style={{ fontSize: 15, color: "#c7c7cc" }}>›</span>
+            </a>
           )}
 
           {/* Actions — depend on mode */}

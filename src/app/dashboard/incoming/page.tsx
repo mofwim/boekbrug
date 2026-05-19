@@ -22,11 +22,54 @@ interface IncomingInvoiceRow {
   pdf_url: string | null;
   document_id: string | null;
   created_at: string;
+  // [BOEK-011] folder info — joined from the linked document
+  folder_id: string | null;
+  folder_name: string | null;
 }
 
-// Columns fetched for every incoming invoice card
+// [BOEK-011] Raw row from Supabase — documents join comes back nested
+interface RawInvoiceRow {
+  id: string;
+  client_name: string;
+  client_email: string | null;
+  total_ex_btw: number;
+  btw_amount: number;
+  total_inc_btw: number;
+  invoice_date: string;
+  invoice_number: string;
+  source: string;
+  pdf_url: string | null;
+  document_id: string | null;
+  created_at: string;
+  documents: {
+    folder_id: string | null;
+    folders: { name: string | null } | null;
+  } | null;
+}
+
+// Columns — includes a nested join to documents → folders for the folder link
 const INVOICE_COLUMNS =
-  "id, client_name, client_email, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at";
+  "id, client_name, client_email, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at, documents(folder_id, folders(name))";
+
+// Flatten the nested documents/folders join into top-level fields
+function flatten(rows: RawInvoiceRow[]): IncomingInvoiceRow[] {
+  return rows.map((r) => ({
+    id: r.id,
+    client_name: r.client_name,
+    client_email: r.client_email,
+    total_ex_btw: r.total_ex_btw,
+    btw_amount: r.btw_amount,
+    total_inc_btw: r.total_inc_btw,
+    invoice_date: r.invoice_date,
+    invoice_number: r.invoice_number,
+    source: r.source,
+    pdf_url: r.pdf_url,
+    document_id: r.document_id,
+    created_at: r.created_at,
+    folder_id: r.documents?.folder_id ?? null,
+    folder_name: r.documents?.folders?.name ?? null,
+  }));
+}
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();
@@ -66,8 +109,8 @@ export default async function IncomingPage() {
     .limit(50);
 
   // [BOEK-011] Cast through unknown — Supabase select() returns a wide union
-  const pendingInvoices = (pendingRaw ?? []) as unknown as IncomingInvoiceRow[];
-  const ignoredInvoices = (ignoredRaw ?? []) as unknown as IncomingInvoiceRow[];
+  const pendingInvoices = flatten((pendingRaw ?? []) as unknown as RawInvoiceRow[]);
+  const ignoredInvoices = flatten((ignoredRaw ?? []) as unknown as RawInvoiceRow[]);
 
   const connectionStatus = {
     connected: !!connection,
