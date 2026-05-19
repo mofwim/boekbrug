@@ -593,4 +593,4 @@ function extractSenderName(from: string): string {
   const match = from.match(/^"?([^"<]+)"?\s*</)
   if (match) return match[1].trim()
   return extractEmail(from)
-}
+} 
