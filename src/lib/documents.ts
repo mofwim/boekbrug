@@ -86,15 +86,19 @@ export async function uploadDocument(
     // Get user data from auth to create profile
     const { data: { user: authUser } } = await supabase.auth.getUser();
     if (authUser) {
-      await supabase.from("profiles").insert({
-        id: userId,
-        email: authUser.email,
-        full_name: authUser.user_metadata?.full_name ?? null,
-        onboarding_step: 1,
-        onboarding_done: false,
-        role: "zzper",
-      }).throwOnError().then(() => {}).catch(() => {});
-      // Silent — if insert fails (race condition), the trigger or page.tsx will handle it
+      // Silent insert — ignore errors (race condition or already exists)
+      try {
+        await supabase.from("profiles").insert({
+          id: userId,
+          email: authUser.email,
+          full_name: authUser.user_metadata?.full_name ?? null,
+          onboarding_step: 1,
+          onboarding_done: false,
+          role: "zzper",
+        });
+      } catch {
+        // silent — profile may already exist
+      }
     }
   }
 
