@@ -1,11 +1,11 @@
 // src/app/api/email/upload/route.ts
 // [BOEK-011] Manual upload for paper/WhatsApp invoices
 // POST multipart/form-data with 'file' field
-// Runs AI classification → saves as incoming invoice with status='received'
+// Claude verifies → if real invoice → stored in Storage + documents + invoices
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { classifyDocument } from "@/lib/ai";
+import { verifyInvoiceFromPdf } from "@/lib/ai";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -30,71 +30,78 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 });
   }
 
-  // Validate file type
-  const allowed = [
-    "application/pdf",
-    "image/jpeg",
-    "image/png",
-    "image/heic",
-    "image/webp",
-  ];
-  if (!allowed.includes(file.type) && !file.name.endsWith(".pdf")) {
+  const okType =
+    file.type === "application/pdf" ||
+    file.type.startsWith("image/") ||
+    file.name.toLowerCase().endsWith(".pdf");
+  if (!okType) {
     return NextResponse.json(
       { error: "Alleen PDF of afbeelding toegestaan" },
       { status: 400 }
     );
   }
 
-  // Max 10MB
   if (file.size > 10 * 1024 * 1024) {
+    return NextResponse.json({ error: "Bestand te groot — max 10MB" }, { status: 400 });
+  }
+
+  // Read file bytes
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const base64 = buffer.toString("base64");
+
+  // [BOEK-011] Claude verifies the actual file
+  const verification = await verifyInvoiceFromPdf(base64, file.type, file.name);
+
+  if (!verification.is_invoice) {
     return NextResponse.json(
-      { error: "Bestand te groot — max 10MB" },
-      { status: 400 }
+      {
+        error:
+          verification.reason ||
+          "Dit lijkt geen factuur te zijn. Alleen facturen kunnen worden toegevoegd.",
+        rejected: true,
+      },
+      { status: 422 }
     );
   }
 
-  // AI classification using filename + metadata as context
-  const fileDescription = [
-    `Bestandsnaam: ${file.name}`,
-    `Bestandstype: ${file.type}`,
-    `Grootte: ${Math.round(file.size / 1024)}KB`,
-    `Bron: handmatige upload door gebruiker`,
-  ].join("\n");
+  // Store the file in Supabase Storage
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`;
 
-  const classification = await classifyDocument(fileDescription, file.name);
-
-  // Save to Supabase Storage → documents bucket
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  const now = new Date();
-  const year = now.getFullYear();
-  const quarter = Math.ceil((now.getMonth() + 1) / 3);
-  const storagePath = `${user.id}/${year}/Q${quarter}/${Date.now()}-${file.name}`;
-
-  const { error: storageError } = await supabase.storage
+  const { error: uploadError } = await supabase.storage
     .from("documents")
-    .upload(storagePath, buffer, {
-      contentType: file.type,
-      upsert: false,
-    });
+    .upload(storagePath, buffer, { contentType: file.type, upsert: false });
 
-  if (storageError) {
-    // Storage failed — still save invoice record without PDF
-    console.error("[BOEK-011] Storage upload failed:", storageError.message);
+  let documentId: string | null = null;
+  let pdfUrl: string | null = null;
+
+  const invoiceDate = verification.invoice_date
+    ? new Date(verification.invoice_date).toISOString().split("T")[0]
+    : new Date().toISOString().split("T")[0];
+
+  if (!uploadError) {
+    pdfUrl = storagePath;
+    const { data: doc } = await supabase
+      .from("documents")
+      .insert({
+        user_id: user.id,
+        file_name: file.name,
+        file_url: storagePath,
+        file_size: file.size,
+        file_type: file.type,
+        doc_type: "factuur",
+        year: new Date(invoiceDate).getFullYear(),
+        source: "upload",
+        ai_processed: true,
+        ai_doc_type: "invoice",
+      })
+      .select("id")
+      .single();
+    documentId = doc?.id ?? null;
   }
 
-  const { data: signedUrl } = storageError
-    ? { data: null }
-    : await supabase.storage
-        .from("documents")
-        .createSignedUrl(storagePath, 3600 * 24 * 7);
-
-  // Save invoice record
-  const invoiceDate = classification.date
-    ? new Date(classification.date).toISOString().split("T")[0]
-    : now.toISOString().split("T")[0];
-
+  // Save the invoice — status 'received', awaiting confirmation
   const { data: invoice, error: dbError } = await supabase
     .from("invoices")
     .insert({
@@ -102,36 +109,21 @@ export async function POST(req: NextRequest) {
       direction: "incoming",
       status: "received",
       source: "upload",
-      client_name: classification.vendor || "Onbekende afzender",
+      client_name: verification.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
-      total_inc_btw: classification.amount || 0,
-      total_ex_btw: 0,
-      btw_amount: 0,
-      invoice_number: `UPLOAD-${Date.now()}`,
-      pdf_url: signedUrl?.signedUrl || null,
+      invoice_number: verification.invoice_number || `UPLOAD-${Date.now()}`,
+      total_ex_btw: verification.total_ex_btw ?? 0,
+      btw_amount: verification.btw_amount ?? 0,
+      total_inc_btw: verification.total_inc_btw ?? verification.amount ?? 0,
+      pdf_url: pdfUrl,
+      document_id: documentId,
     })
-    .select("id, client_name, client_email, total_inc_btw, invoice_date, invoice_number, source, created_at")
+    .select("id")
     .single();
 
   if (dbError) {
     return NextResponse.json({ error: dbError.message }, { status: 500 });
   }
 
-  // Also save to documents table for file management
-  if (!storageError) {
-    await supabase.from("documents").insert({
-      user_id: user.id,
-      file_name: file.name,
-      file_url: storagePath,
-      file_size: file.size,
-      file_type: file.type,
-      doc_type: classification.type === "receipt" ? "bon" : "factuur",
-      year,
-      source: "upload",
-      ai_processed: true,
-      ai_doc_type: classification.type,
-    });
-  }
-
-  return NextResponse.json({ invoice, classification });
+  return NextResponse.json({ ok: true, invoice_id: invoice?.id });
 }

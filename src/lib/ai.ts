@@ -59,10 +59,15 @@ export interface VerifyInvoiceResult {
   is_invoice: boolean;       // true only if this is a real commercial invoice
   confidence: number;        // 0–1
   vendor?: string;           // who sent the invoice
-  amount?: number;           // total amount including BTW (numeric)
+  amount?: number;           // total amount including BTW (numeric) — alias of total_inc_btw
   invoice_number?: string;   // invoice number if found
   invoice_date?: string;     // DD-MM-YYYY
   reason?: string;           // why it was rejected (if is_invoice = false)
+  // [BOEK-011] detailed BTW breakdown — extracted in the same call, zero extra cost
+  total_ex_btw?: number;     // amount excluding BTW
+  btw_amount?: number;       // the BTW amount itself
+  total_inc_btw?: number;    // total including BTW
+  btw_rate?: number;         // detected rate: 0, 9 or 21
 }
 
 export interface TranslateResult {
@@ -394,9 +399,12 @@ Return only a JSON object with these exact keys:
   "is_invoice": boolean,
   "confidence": number between 0 and 1,
   "vendor": string or null,
-  "amount": number or null,
   "invoice_number": string or null,
   "invoice_date": "YYYY-MM-DD" or null,
+  "total_ex_btw": number or null,
+  "btw_amount": number or null,
+  "total_inc_btw": number or null,
+  "btw_rate": 0 | 9 | 21 or null,
   "reason": string or null
 }
 
@@ -413,13 +421,23 @@ Rules for is_invoice = false:
 - Anything that is not a financial document
 - Set reason to a short Dutch explanation why it was rejected
 
-confidence: how certain you are (0 = no idea, 1 = absolutely certain)
-amount: numeric only — no currency symbols, no dots/commas — e.g. 121.00`;
+Amount extraction rules:
+- All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
+- total_ex_btw: the subtotal before BTW (excl. BTW / netto)
+- btw_amount: the BTW/VAT amount shown on the invoice
+- total_inc_btw: the final total to pay (incl. BTW / bruto)
+- btw_rate: the percentage — usually 21, sometimes 9 or 0
+- If only the total is shown and BTW rate is known, calculate the breakdown
+- If a value genuinely cannot be found, set it to null — never guess
+- confidence: how certain you are (0 = no idea, 1 = absolutely certain)`;
 
   const prompt = `Verify if this document is a real invoice or receipt.
 Filename: ${filename}
 
-Read the full content and answer: is this a real financial document that requires or confirms payment?
+Read the full content and answer:
+1. Is this a real financial document that requires or confirms payment?
+2. Extract the vendor, invoice number, date
+3. Extract the full amount breakdown: amount excl. BTW, BTW amount, total incl. BTW, BTW rate
 
 Return JSON only.`;
 
@@ -466,6 +484,31 @@ Return JSON only.`;
         reason: parsed.reason || 'Te lage zekerheid — bestand overgeslagen',
       };
     }
+
+    // [BOEK-011] Normalize and reconcile amounts — never let bad numbers reach DB
+    const num = (v: unknown): number | undefined =>
+      typeof v === 'number' && isFinite(v) && v >= 0 ? v : undefined;
+
+    parsed.total_ex_btw = num(parsed.total_ex_btw);
+    parsed.btw_amount = num(parsed.btw_amount);
+    parsed.total_inc_btw = num(parsed.total_inc_btw);
+    parsed.btw_rate = num(parsed.btw_rate);
+
+    // Reconcile: if total is missing but ex + btw exist → compute it
+    if (parsed.total_inc_btw === undefined &&
+        parsed.total_ex_btw !== undefined &&
+        parsed.btw_amount !== undefined) {
+      parsed.total_inc_btw = parsed.total_ex_btw + parsed.btw_amount;
+    }
+    // Reconcile: if ex is missing but total + btw exist → compute it
+    if (parsed.total_ex_btw === undefined &&
+        parsed.total_inc_btw !== undefined &&
+        parsed.btw_amount !== undefined) {
+      parsed.total_ex_btw = parsed.total_inc_btw - parsed.btw_amount;
+    }
+
+    // amount = total incl. BTW (kept for backward compatibility)
+    parsed.amount = parsed.total_inc_btw ?? parsed.amount;
 
     return parsed;
   } catch (error) {

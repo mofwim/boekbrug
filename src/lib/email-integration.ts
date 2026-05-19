@@ -186,14 +186,11 @@ async function fetchMessageAttachments(
           size,
         })
       } else if (inlineData) {
-        // [BOEK-011] Fix: normalize inline base64 data immediately
-        const base64Standard = inlineData.replace(/-/g, '+').replace(/_/g, '/')
-        const padded = base64Standard + '=='.slice(0, (4 - base64Standard.length % 4) % 4)
         attachments.push({
           messageId,
           filename,
           mimeType,
-          data: padded,
+          data: inlineData,
           subject,
           from,
           date,
@@ -205,12 +202,11 @@ async function fetchMessageAttachments(
 
   walkParts(msg.payload?.parts || [])
 
-  // [BOEK-011] Fix: fetch actual attachment data with correct base64 handling
+  // Fetch actual attachment data for non-inline attachments
   const resolved = await Promise.all(
     attachments.map(async (att) => {
-      // att.data is attachmentId if it was set above — always fetch it
-      // (previous check was wrong — attachmentIds can be any length)
-      if (!att.data) return null
+      // If data looks like a base64url string (not an attachmentId), skip
+      if (att.data.length > 100 && !att.data.includes('/')) return att
 
       try {
         const attRes = await fetch(
@@ -219,22 +215,11 @@ async function fetchMessageAttachments(
         )
         if (!attRes.ok) return null
         const attData = await attRes.json()
-
-        // [BOEK-011] Fix: proper base64url → base64 conversion with padding
-        const base64url = attData.data as string
-        const base64Standard = base64url
+        // [BOEK-011] Fix: convert base64url → base64 immediately after fetch
+        const base64 = (attData.data as string)
           .replace(/-/g, '+')
           .replace(/_/g, '/')
-        // Add missing padding
-        const padded = base64Standard + '=='.slice(0, (4 - base64Standard.length % 4) % 4)
-
-        // [BOEK-011] Validate PDF magic bytes (JVBERi0 = "%PDF-" in base64)
-        if (att.mimeType === 'application/pdf' && !padded.startsWith('JVBERi0')) {
-          console.warn('[BOEK-011] Invalid PDF base64 for:', att.filename, '— first bytes:', padded.slice(0, 20))
-          return null
-        }
-
-        return { ...att, data: padded }
+        return { ...att, data: base64 }
       } catch {
         return null
       }
@@ -293,9 +278,14 @@ export interface AttachmentClassification {
   isInvoice: boolean
   confidence: number
   vendor?: string
-  amount?: number
+  amount?: number          // total incl. BTW
   invoiceDate?: string
   invoiceNumber?: string
+  // [BOEK-011] full BTW breakdown — extracted in the same Claude call
+  totalExBtw?: number
+  btwAmount?: number
+  totalIncBtw?: number
+  btwRate?: number
 }
 
 /**
@@ -320,6 +310,10 @@ export async function classifyAttachment(
     amount: result.amount,
     invoiceDate: result.invoice_date,
     invoiceNumber: result.invoice_number,
+    totalExBtw: result.total_ex_btw,
+    btwAmount: result.btw_amount,
+    totalIncBtw: result.total_inc_btw,
+    btwRate: result.btw_rate,
   }
 }
 
@@ -441,36 +435,84 @@ export async function syncUserEmails(userId: string): Promise<{
       if (!classification.isInvoice) continue
       verified++
 
-      // Deduplication — already processed this message?
+      // [BOEK-011] Deduplication — dedicated source_message_id column
       const { data: existing } = await supabase
         .from('invoices')
         .select('id')
         .eq('sender_id', userId)
         .eq('source', 'email')
-        .ilike('client_btw_number', `msg:${attachment.messageId}`)
+        .eq('source_message_id', attachment.messageId)
         .limit(1)
 
       if (existing && existing.length > 0) continue
 
-      // Save as incoming invoice — awaiting client confirmation
       const invoiceDate = classification.invoiceDate
         ? new Date(classification.invoiceDate).toISOString().split('T')[0]
         : new Date(attachment.date).toISOString().split('T')[0]
 
+      // [BOEK-011] Step 1: store the PDF/image in Supabase Storage
+      // Path: {userId}/incoming/{timestamp}-{filename}
+      let documentId: string | null = null
+      let pdfUrl: string | null = null
+
+      try {
+        const fileBuffer = Buffer.from(attachment.data, 'base64')
+        const safeName = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+        const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
+
+        const { error: uploadErr } = await supabase.storage
+          .from('documents')
+          .upload(storagePath, fileBuffer, {
+            contentType: attachment.mimeType,
+            upsert: false,
+          })
+
+        if (!uploadErr) {
+          // [BOEK-011] Step 2: create a documents record (shows in Mijn Bestanden)
+          const { data: doc } = await supabase
+            .from('documents')
+            .insert({
+              user_id: userId,
+              file_name: attachment.filename,
+              file_url: storagePath,
+              file_size: fileBuffer.length,
+              file_type: attachment.mimeType,
+              doc_type: 'factuur',
+              year: new Date(invoiceDate).getFullYear(),
+              source: 'email',
+              ai_processed: true,
+              ai_doc_type: 'invoice',
+            })
+            .select('id')
+            .single()
+
+          documentId = doc?.id ?? null
+          pdfUrl = storagePath
+        } else {
+          console.error('[BOEK-011] Storage upload failed:', uploadErr.message)
+        }
+      } catch (storageError) {
+        console.error('[BOEK-011] Storage error:', storageError)
+        // Continue — invoice record is still saved without the file
+      }
+
+      // [BOEK-011] Step 3: save the invoice with full AI-extracted breakdown
+      // Amounts come from Claude — user reviews/edits them on "Markeer betaald"
       const { error: dbError } = await supabase.from('invoices').insert({
         sender_id: userId,
         direction: 'incoming',
         status: 'received',
         source: 'email',
-        client_name: classification.vendor || attachment.from,
+        client_name: classification.vendor || extractSenderName(attachment.from),
         client_email: extractEmail(attachment.from),
         invoice_date: invoiceDate,
         invoice_number: classification.invoiceNumber || `EMAIL-${Date.now()}`,
-        total_inc_btw: classification.amount || 0,
-        total_ex_btw: 0,
-        btw_amount: 0,
-        // messageId stored for deduplication
-        client_btw_number: `msg:${attachment.messageId}`,
+        total_ex_btw: classification.totalExBtw ?? 0,
+        btw_amount: classification.btwAmount ?? 0,
+        total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,
+        pdf_url: pdfUrl,
+        document_id: documentId,
+        source_message_id: attachment.messageId,
       })
 
       if (dbError) {
@@ -499,4 +541,10 @@ export async function syncUserEmails(userId: string): Promise<{
 function extractEmail(from: string): string {
   const match = from.match(/<(.+?)>/)
   return match ? match[1] : from.trim()
+}
+
+function extractSenderName(from: string): string {
+  const match = from.match(/^"?([^"<]+)"?\s*</)
+  if (match) return match[1].trim()
+  return extractEmail(from)
 }

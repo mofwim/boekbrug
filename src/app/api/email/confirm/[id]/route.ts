@@ -1,14 +1,16 @@
 // src/app/api/email/confirm/[id]/route.ts
-// [BOEK-011] Confirm incoming invoice payment or dismiss it
-// POST → mark as paid (visible to accountant)
-// DELETE → dismiss (archive without processing)
+// [BOEK-011] Incoming invoice actions
+// POST   → mark as paid (with user-confirmed/edited amounts) → visible to accountant
+// DELETE → ignore (archive — recoverable, never hard-deleted)
+// PATCH  → restore an ignored invoice back to pending
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
-// POST /api/email/confirm/[id] — mark as paid
+// ── POST — mark as paid ───────────────────────────────────────────────────────
+
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
@@ -22,10 +24,10 @@ export async function POST(
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
 
-  // Verify invoice belongs to this user
+  // Verify ownership
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, sender_id, status, direction")
+    .select("id, sender_id, direction, status")
     .eq("id", id)
     .single();
 
@@ -40,14 +42,36 @@ export async function POST(
     );
   }
 
-  // Mark as paid + record when client confirmed
+  // [BOEK-011] Accept user-confirmed/edited amounts from the request body
+  // The user reviewed Claude's extracted numbers and either confirmed or fixed them
+  let body: {
+    total_ex_btw?: number;
+    btw_amount?: number;
+    total_inc_btw?: number;
+  } = {};
+  try {
+    body = await req.json();
+  } catch {
+    // No body — keep amounts already in DB
+  }
+
+  const updatePatch: Record<string, unknown> = {
+    status: "paid",
+    marked_paid_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  // Only overwrite amounts if the user actually sent valid numbers
+  const validNum = (v: unknown): v is number =>
+    typeof v === "number" && isFinite(v) && v >= 0;
+
+  if (validNum(body.total_ex_btw)) updatePatch.total_ex_btw = body.total_ex_btw;
+  if (validNum(body.btw_amount)) updatePatch.btw_amount = body.btw_amount;
+  if (validNum(body.total_inc_btw)) updatePatch.total_inc_btw = body.total_inc_btw;
+
   const { error } = await supabase
     .from("invoices")
-    .update({
-      status: "paid",
-      marked_paid_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePatch)
     .eq("id", id)
     .eq("sender_id", user.id);
 
@@ -55,7 +79,26 @@ export async function POST(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Create notification — invoice now visible to accountant
+  // [BOEK-011] Notify the linked accountant — invoice is now visible to them
+  const { data: link } = await supabase
+    .from("accountant_clients")
+    .select("accountant_id")
+    .eq("zzper_id", user.id)
+    .limit(1)
+    .single();
+
+  if (link?.accountant_id) {
+    await supabase.from("notifications").insert({
+      user_id: link.accountant_id,
+      title: "Nieuwe betaalde factuur",
+      body: "Een klant heeft een inkomende factuur als betaald gemarkeerd.",
+      type: "invoice",
+      read: false,
+      link: "/dashboard",
+    });
+  }
+
+  // Notify the user themselves — confirmation
   await supabase.from("notifications").insert({
     user_id: user.id,
     title: "Factuur bevestigd",
@@ -67,7 +110,8 @@ export async function POST(
   return NextResponse.json({ ok: true });
 }
 
-// DELETE /api/email/confirm/[id] — dismiss / ignore
+// ── DELETE — ignore (archive) ─────────────────────────────────────────────────
+
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -83,7 +127,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
 
-  // Archive the invoice (not delete — legal compliance)
+  // [BOEK-011] Archive — never hard-delete. Recoverable via PATCH.
   const { error } = await supabase
     .from("invoices")
     .update({
@@ -93,6 +137,42 @@ export async function DELETE(
     .eq("id", id)
     .eq("sender_id", user.id)
     .eq("direction", "incoming");
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+// ── PATCH — restore an ignored invoice ────────────────────────────────────────
+
+export async function PATCH(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const supabase = await createServerSupabaseClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+  }
+
+  // [BOEK-011] Restore: archived → received (back to pending queue)
+  const { error } = await supabase
+    .from("invoices")
+    .update({
+      status: "received",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("sender_id", user.id)
+    .eq("direction", "incoming")
+    .eq("status", "archived");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
