@@ -77,42 +77,74 @@ export default async function IncomingPage() {
     "folder_id" | "folder_name"
   >[];
 
-  // [BOEK-011] Resolve folder info separately — safe, never breaks the page.
-  // Collect every linked document_id, fetch their folders in one query.
+  // [BOEK-011] Resolve folder PATH for each invoice — safe, never breaks the page.
+  // 1. Get the folder_id for each linked document
+  // 2. Load all the user's folders once
+  // 3. Walk parent_id up to build the full path: "2026 / Q1 / maart / Facturen"
   const allDocIds = [...pendingBase, ...ignoredBase]
     .map((inv) => inv.document_id)
     .filter((id): id is string => !!id);
 
-  const folderByDocId = new Map<string, { id: string | null; name: string | null }>();
+  // document_id → folder_id
+  const folderIdByDocId = new Map<string, string | null>();
 
   if (allDocIds.length > 0) {
     const { data: docs } = await supabase
       .from("documents")
-      .select("id, folder_id, folders(name)")
+      .select("id, folder_id")
       .in("id", allDocIds);
 
     for (const doc of (docs ?? []) as unknown as Array<{
       id: string;
       folder_id: string | null;
-      folders: { name: string | null } | null;
     }>) {
-      folderByDocId.set(doc.id, {
-        id: doc.folder_id,
-        name: doc.folders?.name ?? null,
-      });
+      folderIdByDocId.set(doc.id, doc.folder_id);
     }
   }
 
-  // Attach folder info to each invoice
+  // Load every folder the user owns — to resolve full paths
+  const { data: allFolders } = await supabase
+    .from("folders")
+    .select("id, name, parent_id")
+    .eq("user_id", user.id);
+
+  const folderById = new Map<string, { name: string; parent_id: string | null }>();
+  for (const f of (allFolders ?? []) as unknown as Array<{
+    id: string;
+    name: string;
+    parent_id: string | null;
+  }>) {
+    folderById.set(f.id, { name: f.name, parent_id: f.parent_id });
+  }
+
+  // Build "2026 / Q1 / maart / Facturen" by walking up parent_id
+  function buildFolderPath(folderId: string | null): string | null {
+    if (!folderId) return null;
+    const parts: string[] = [];
+    let current: string | null = folderId;
+    let guard = 0; // safety — never loop forever
+    while (current && guard < 10) {
+      const node = folderById.get(current);
+      if (!node) break;
+      parts.unshift(node.name);
+      current = node.parent_id;
+      guard++;
+    }
+    return parts.length > 0 ? parts.join(" / ") : null;
+  }
+
+  // Attach folder id + full path to each invoice
   const withFolder = (
     rows: Omit<IncomingInvoiceRow, "folder_id" | "folder_name">[]
   ): IncomingInvoiceRow[] =>
     rows.map((inv) => {
-      const folder = inv.document_id ? folderByDocId.get(inv.document_id) : null;
+      const folderId = inv.document_id
+        ? folderIdByDocId.get(inv.document_id) ?? null
+        : null;
       return {
         ...inv,
-        folder_id: folder?.id ?? null,
-        folder_name: folder?.name ?? null,
+        folder_id: folderId,
+        folder_name: buildFolderPath(folderId),
       };
     });
 
