@@ -2,15 +2,39 @@
 // [BOEK-033] Mijn bestanden — Drive experience
 // Business logic: folder tree, contents, search, move, create, year structure
 // Server-only — nooit importeren in Client Components
+//
+// [BOEK-033 Phase 1] Every DB function accepts an optional `ctx` parameter.
+//   - 'user'     (default) → createServerSupabaseClient — RLS, user session
+//   - 'pipeline'           → createPipelineClient — service_role, no session
+//   The caller passes a context STRING, never a client object. It does not
+//   know how clients are built (repository pattern). Background jobs
+//   (BOEK-011 email sync) call with ctx='pipeline'; everything else defaults.
+//
+// [BOEK-033] createPipelineClient is shared infrastructure — NOT owned here.
+//   It lives in src/lib/supabase-pipeline.ts (built in a separate conversation).
+//   This file only imports it.
 
 import { createServerSupabaseClient } from "./supabase-server";
+import { createPipelineClient } from "./supabase-pipeline";
+
+// [BOEK-033 Phase 1] Context decides which Supabase client backs a call.
+export type BestandenContext = "user" | "pipeline";
+
+async function resolveClient(ctx: BestandenContext = "user") {
+  if (ctx === "pipeline") {
+    // service_role — bypasses RLS, for background jobs without a user session
+    return createPipelineClient();
+  }
+  // default — RLS-bound server client, user session
+  return await createServerSupabaseClient();
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
 export type FolderType =
   | "year" | "quarter" | "month"
   | "bank" | "facturen" | "kosten"
-  | "shared" | "custom";
+  | "shared" | "custom" | "imported";
 
 export interface FolderRow {
   id: string;
@@ -63,6 +87,11 @@ export interface SearchResult extends BestandRow {
 
 export const SHARED_FOLDER_NAME = "Gedeeld met boekhouder";
 
+// [BOEK-033 Phase 1] Fallback folder for files that cannot be classified
+// (no date, invalid date, low confidence). BOEK-011 imports land here when
+// a path cannot be resolved — never in the root, never folder_id null.
+export const IMPORTED_FOLDER_NAME = "Geïmporteerde bestanden";
+
 const NL_MONTHS: Record<number, string> = {
   1: "januari", 2: "februari", 3: "maart",
   4: "april",   5: "mei",      6: "juni",
@@ -97,8 +126,8 @@ export function buildTree(rows: FolderRow[], parentId: string | null): FolderNod
     .map(r => ({ ...r, children: buildTree(rows, r.id) }));
 }
 
-export async function getFolderTree(userId: string): Promise<FolderNode[]> {
-  const supabase = await createServerSupabaseClient();
+export async function getFolderTree(userId: string, ctx: BestandenContext = "user"): Promise<FolderNode[]> {
+  const supabase = await resolveClient(ctx);
   const { data, error } = await supabase
     .from("folders")
     .select(FOLDER_SELECT)
@@ -112,9 +141,10 @@ export async function getFolderTree(userId: string): Promise<FolderNode[]> {
 
 export async function getFolderContents(
   userId: string,
-  folderId: string | null
+  folderId: string | null,
+  ctx: BestandenContext = "user"
 ): Promise<FolderContents> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = await resolveClient(ctx);
 
   let folderQ = supabase
     .from("folders")
@@ -147,7 +177,11 @@ export async function getFolderContents(
 
 /**
  * Idempotent — creates the full year folder structure if not present.
- * Called on every page load (safe to call multiple times).
+ * Safe to call multiple times AND concurrently.
+ *
+ * [BOEK-033 Phase 1] Uses upsert with onConflict instead of "find-then-create".
+ * The partial unique indexes (see bestanden-pipeline-migration.sql) make this
+ * atomic — concurrent callers (e.g. parallel email sync) cannot create duplicates.
  *
  * Structure:
  * {year}/
@@ -156,17 +190,45 @@ export async function getFolderContents(
  *   Q3 (jul–sep)/ Bank/ juli/    {Facturen/ Kosten/} ...
  *   Q4 (okt–dec)/ Bank/ oktober/ {Facturen/ Kosten/} ...
  */
-export async function ensureYearStructure(userId: string, year: number): Promise<void> {
-  const supabase = await createServerSupabaseClient();
+export async function ensureYearStructure(
+  userId: string,
+  year: number,
+  ctx: BestandenContext = "user"
+): Promise<void> {
+  const supabase = await resolveClient(ctx);
 
-  // Helper: find or create a folder
+  // [BOEK-033 Phase 1] Atomic find-or-create via upsert.
+  // The partial unique index on (user_id, parent_id, name) WHERE is_system=true
+  // (and the root variant) guarantees no duplicates under concurrency.
+  // ignoreDuplicates: true → on conflict do nothing; we then SELECT the id.
   async function findOrCreate(
     name: string,
     parentId: string | null,
     folderType: FolderType,
     color?: string
   ): Promise<string> {
-    // Check if exists
+    // Step 1 — attempt insert; on conflict, ignore (atomic, no race).
+    const { error: insertError } = await supabase
+      .from("folders")
+      .upsert(
+        {
+          user_id: userId,
+          name,
+          parent_id: parentId,
+          is_system: true,
+          folder_type: folderType,
+          color: color ?? null,
+        },
+        {
+          onConflict: parentId === null
+            ? "user_id,name"            // root: matches partial idx (parent_id IS NULL)
+            : "user_id,parent_id,name", // child: matches partial idx
+          ignoreDuplicates: true,
+        }
+      );
+    if (insertError) throw new Error(insertError.message);
+
+    // Step 2 — read back the id (row now guaranteed to exist).
     let q = supabase
       .from("folders")
       .select("id")
@@ -175,22 +237,7 @@ export async function ensureYearStructure(userId: string, year: number): Promise
       .eq("is_system", true);
     if (parentId === null) q = q.is("parent_id", null);
     else q = q.eq("parent_id", parentId);
-    const { data: existing } = await q.single();
-    if (existing) return existing.id;
-
-    // Create
-    const { data, error } = await supabase
-      .from("folders")
-      .insert({
-        user_id: userId,
-        name,
-        parent_id: parentId,
-        is_system: true,
-        folder_type: folderType,
-        color: color ?? null,
-      })
-      .select("id")
-      .single();
+    const { data, error } = await q.single();
     if (error) throw new Error(error.message);
     return data.id;
   }
@@ -218,33 +265,78 @@ export async function ensureYearStructure(userId: string, year: number): Promise
   }
 
   // 3. Shared folder (always at root)
-  await ensureSharedFolder(userId);
+  await ensureSharedFolder(userId, ctx);
+
+  // 4. [BOEK-033 Phase 1] Imported-files fallback folder (always at root)
+  await ensureImportedFolder(userId, ctx);
 }
 
 // ─── ensureSharedFolder ──────────────────────────────────────────────────────────
 
-export async function ensureSharedFolder(userId: string): Promise<string> {
-  const supabase = await createServerSupabaseClient();
+export async function ensureSharedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
+  const supabase = await resolveClient(ctx);
 
-  const { data: existing } = await supabase
+  // [BOEK-033 Phase 1] Atomic upsert — no find-then-create race.
+  const { error: insertError } = await supabase
+    .from("folders")
+    .upsert(
+      {
+        user_id: userId,
+        name: SHARED_FOLDER_NAME,
+        parent_id: null,
+        is_system: true,
+        folder_type: "shared",
+        color: "#1A73E8",
+      },
+      { onConflict: "user_id,name", ignoreDuplicates: true }
+    );
+  if (insertError) throw new Error(insertError.message);
+
+  const { data, error } = await supabase
     .from("folders")
     .select("id")
     .eq("user_id", userId)
     .eq("name", SHARED_FOLDER_NAME)
+    .is("parent_id", null)
+    .eq("is_system", true)
     .single();
-  if (existing) return existing.id;
+  if (error) throw new Error(error.message);
+  return data.id;
+}
+
+// ─── ensureImportedFolder ────────────────────────────────────────────────────────
+
+/**
+ * [BOEK-033 Phase 1] The "Geïmporteerde bestanden" fallback folder.
+ * Files that cannot be classified to {year}/Q{n}/Facturen land here instead
+ * of the root. Always at root, is_system=true, folder_type='imported'.
+ * Returns the folder id — BOEK-011 uses it as a fallback target.
+ */
+export async function ensureImportedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
+  const supabase = await resolveClient(ctx);
+
+  const { error: insertError } = await supabase
+    .from("folders")
+    .upsert(
+      {
+        user_id: userId,
+        name: IMPORTED_FOLDER_NAME,
+        parent_id: null,
+        is_system: true,
+        folder_type: "imported",
+        color: "#5F6368",
+      },
+      { onConflict: "user_id,name", ignoreDuplicates: true }
+    );
+  if (insertError) throw new Error(insertError.message);
 
   const { data, error } = await supabase
     .from("folders")
-    .insert({
-      user_id: userId,
-      name: SHARED_FOLDER_NAME,
-      parent_id: null,
-      is_system: true,
-      folder_type: "shared",
-      color: "#1A73E8",
-    })
     .select("id")
+    .eq("user_id", userId)
+    .eq("name", IMPORTED_FOLDER_NAME)
+    .is("parent_id", null)
+    .eq("is_system", true)
     .single();
   if (error) throw new Error(error.message);
   return data.id;
@@ -256,9 +348,10 @@ export async function createFolder(
   userId: string,
   name: string,
   parentId?: string | null,
-  color?: string
+  color?: string,
+  ctx: BestandenContext = "user"
 ): Promise<FolderRow> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = await resolveClient(ctx);
   const { data, error } = await supabase
     .from("folders")
     .insert({
@@ -277,8 +370,13 @@ export async function createFolder(
 
 // ─── Rename Folder ───────────────────────────────────────────────────────────────
 
-export async function renameFolder(folderId: string, userId: string, newName: string): Promise<void> {
-  const supabase = await createServerSupabaseClient();
+export async function renameFolder(
+  folderId: string,
+  userId: string,
+  newName: string,
+  ctx: BestandenContext = "user"
+): Promise<void> {
+  const supabase = await resolveClient(ctx);
 
   // Guard: never rename system folders
   const { data: folder } = await supabase
@@ -293,8 +391,12 @@ export async function renameFolder(folderId: string, userId: string, newName: st
 
 // ─── Delete Folder ───────────────────────────────────────────────────────────────
 
-export async function deleteFolder(folderId: string, userId: string): Promise<void> {
-  const supabase = await createServerSupabaseClient();
+export async function deleteFolder(
+  folderId: string,
+  userId: string,
+  ctx: BestandenContext = "user"
+): Promise<void> {
+  const supabase = await resolveClient(ctx);
 
   const { data: folder } = await supabase
     .from("folders").select("id, name, is_system")
@@ -316,8 +418,13 @@ export async function deleteFolder(folderId: string, userId: string): Promise<vo
 
 // ─── Move Document ────────────────────────────────────────────────────────────────
 
-export async function moveDocument(documentId: string, folderId: string | null, userId: string): Promise<void> {
-  const supabase = await createServerSupabaseClient();
+export async function moveDocument(
+  documentId: string,
+  folderId: string | null,
+  userId: string,
+  ctx: BestandenContext = "user"
+): Promise<void> {
+  const supabase = await resolveClient(ctx);
   const { error } = await supabase
     .from("documents").update({ folder_id: folderId })
     .eq("id", documentId).eq("user_id", userId);
@@ -326,8 +433,13 @@ export async function moveDocument(documentId: string, folderId: string | null, 
 
 // ─── Move Folder ─────────────────────────────────────────────────────────────────
 
-export async function moveFolder(folderId: string, newParentId: string | null, userId: string): Promise<void> {
-  const supabase = await createServerSupabaseClient();
+export async function moveFolder(
+  folderId: string,
+  newParentId: string | null,
+  userId: string,
+  ctx: BestandenContext = "user"
+): Promise<void> {
+  const supabase = await resolveClient(ctx);
   if (folderId === newParentId) throw new Error("Kan map niet in zichzelf verplaatsen");
   const { error } = await supabase
     .from("folders").update({ parent_id: newParentId })
@@ -337,8 +449,13 @@ export async function moveFolder(folderId: string, newParentId: string | null, u
 
 // ─── Rename Document ──────────────────────────────────────────────────────────────
 
-export async function renameDocument(documentId: string, userId: string, newName: string): Promise<void> {
-  const supabase = await createServerSupabaseClient();
+export async function renameDocument(
+  documentId: string,
+  userId: string,
+  newName: string,
+  ctx: BestandenContext = "user"
+): Promise<void> {
+  const supabase = await resolveClient(ctx);
   const { error } = await supabase
     .from("documents").update({ file_name: newName.trim() })
     .eq("id", documentId).eq("user_id", userId);
@@ -347,8 +464,12 @@ export async function renameDocument(documentId: string, userId: string, newName
 
 // ─── Search ───────────────────────────────────────────────────────────────────────
 
-export async function searchBestanden(userId: string, query: string): Promise<SearchResult[]> {
-  const supabase = await createServerSupabaseClient();
+export async function searchBestanden(
+  userId: string,
+  query: string,
+  ctx: BestandenContext = "user"
+): Promise<SearchResult[]> {
+  const supabase = await resolveClient(ctx);
   const q = query.trim();
   if (!q) return [];
 
@@ -379,8 +500,13 @@ export async function searchBestanden(userId: string, query: string): Promise<Se
 
 /**
  * Find a folder id by its path in the year structure.
- * Used by AI classification to suggest the right folder.
- * path example: { year: 2026, quarter: 2, month: 5, type: 'facturen' }
+ * Used by AI classification (BOEK-033) and email import (BOEK-011)
+ * to place a file in the correct {year}/Q{n}/{maand}/Facturen folder.
+ *
+ * Returns null if the path's year structure does not exist.
+ * [BOEK-011 note] Callers MUST call ensureYearStructure(userId, path.year)
+ * BEFORE this — otherwise a file from an un-opened year returns null.
+ * Prefer resolveImportTarget() which handles this ordering for you.
  */
 export interface FolderPath {
   year: number;
@@ -389,8 +515,12 @@ export interface FolderPath {
   type?: "facturen" | "kosten" | "bank";
 }
 
-export async function findFolderByPath(userId: string, path: FolderPath): Promise<string | null> {
-  const supabase = await createServerSupabaseClient();
+export async function findFolderByPath(
+  userId: string,
+  path: FolderPath,
+  ctx: BestandenContext = "user"
+): Promise<string | null> {
+  const supabase = await resolveClient(ctx);
 
   // Get all system folders for this user
   const { data } = await supabase
@@ -400,7 +530,6 @@ export async function findFolderByPath(userId: string, path: FolderPath): Promis
     .eq("is_system", true);
 
   const folders = (data ?? []) as FolderRow[];
-  const byId = Object.fromEntries(folders.map(f => [f.id, f]));
 
   // Find year folder
   const yearFolder = folders.find(f => f.name === String(path.year) && f.parent_id === null && f.folder_type === "year");
@@ -436,4 +565,63 @@ export async function findFolderByPath(userId: string, path: FolderPath): Promis
     f.name.toLowerCase() === path.type
   );
   return typeFolder?.id ?? monthFolder.id;
+}
+// ─── resolveImportTarget ──────────────────────────────────────────────────────────
+
+/**
+ * [BOEK-033 Phase 1] One-call helper for importers (BOEK-011 email sync).
+ *
+ * Given an invoice date, this:
+ *   1. ensures the year structure for THAT invoice's year exists
+ *   2. returns the correct folder id ({year}/Q{n}/{maand}/Facturen)
+ *   3. falls back to "Geïmporteerde bestanden" if the date is missing/invalid
+ *
+ * This is THE function BOEK-011 calls. BOEK-011 owns NO folder logic itself —
+ * it passes ctx='pipeline' and an invoice date, gets back a folder_id.
+ * Never returns null — a file always has a valid folder_id.
+ *
+ * @param userId      owner of the files
+ * @param invoiceDate ISO date string extracted from invoice CONTENT, or null
+ * @param type        'facturen' | 'kosten' | 'bank'
+ * @param ctx         'pipeline' for background sync (service_role, no session),
+ *                    'user' (default) for foreground/UI calls
+ */
+export async function resolveImportTarget(
+  userId: string,
+  invoiceDate: string | null,
+  type: "facturen" | "kosten" | "bank",
+  ctx: BestandenContext = "user"
+): Promise<string> {
+  // resolveImportTarget only orchestrates — each helper resolves its own client by ctx.
+
+  // No date → cannot classify → fallback folder
+  if (!invoiceDate) {
+    return ensureImportedFolder(userId, ctx);
+  }
+
+  const d = new Date(invoiceDate);
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+
+  // Invalid / out-of-range date → fallback
+  // (matches BoekBrug_AI_Pipeline_Architecture.md: date outside 2020-2030 → null)
+  if (isNaN(d.getTime()) || year < 2020 || year > 2030) {
+    return ensureImportedFolder(userId, ctx);
+  }
+
+  const quarter = Math.ceil(month / 3);
+
+  // Ensure the structure for THIS invoice's year exists (not the current year).
+  // This is the mandatory ordering: ensure BEFORE findFolderByPath.
+  await ensureYearStructure(userId, year, ctx);
+
+  const folderId = await findFolderByPath(
+    userId,
+    { year, quarter, month: type === "bank" ? undefined : month, type },
+    ctx
+  );
+
+  // Structure was just ensured, so this should not be null — but guard anyway.
+  // Never return null; never leave a file's folder_id unset.
+  return folderId ?? (await ensureImportedFolder(userId, ctx));
 }
