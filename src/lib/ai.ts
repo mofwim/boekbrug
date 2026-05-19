@@ -143,6 +143,7 @@ async function callClaude(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',  // [BOEK-018] fix: API key was missing
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
@@ -179,6 +180,7 @@ async function callClaudeWithPdf(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',  // [BOEK-018] fix: API key was missing
       'anthropic-version': '2023-06-01',
       'anthropic-beta': 'pdfs-2024-09-25', // required for PDF support
     },
@@ -235,6 +237,7 @@ async function callClaudeWithImage(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',  // [BOEK-018] fix: API key was missing
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
