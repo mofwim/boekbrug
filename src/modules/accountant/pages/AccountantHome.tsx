@@ -321,7 +321,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           </button>
 
           <button
-            onClick={() => router.push('/dashboard/clients/beheer')}
+            onClick={() => router.push('/dashboard/bestanden')}
             style={{
               backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
               padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
@@ -331,10 +331,10 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
             onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#FFFFFF')}
           >
-            <span style={{ fontSize: 20 }}>👥</span>
+            <span style={{ fontSize: 20 }}>📁</span>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Klanten beheren</p>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>Toevoegen, koppelen</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Alle bestanden</p>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>Van al je klanten</p>
             </div>
             <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
           </button>
