@@ -7,7 +7,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { AccountantHome } from '@/modules/accountant/pages/AccountantHome'
+import AccountantHome from '@/modules/accountant/pages/AccountantHome'
 import {
   getAccountantClients,
   getAccountantOverview,

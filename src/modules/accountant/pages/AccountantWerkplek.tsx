@@ -64,7 +64,7 @@ export default function AccountantWerkplek() {
         zIndex: 40,
       }}>
         <button
-          onClick={() => router.back()}
+          onClick={() => router.push('/dashboard/accountant')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500, padding: 0 }}
         >
           ← Terug

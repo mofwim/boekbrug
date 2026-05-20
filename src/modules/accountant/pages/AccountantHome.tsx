@@ -299,6 +299,47 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             : `Hallo${profile.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}`} 👋
         </h1>
 
+        {/* ── Quick navigation ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+          <button
+            onClick={() => router.push('/dashboard/accountant/werkplek')}
+            style={{
+              backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
+              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+              cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
+              minHeight: 56,
+            }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#FFFFFF')}
+          >
+            <span style={{ fontSize: 20 }}>🛠️</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Mijn werkplek</p>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>Alle tools</p>
+            </div>
+            <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
+          </button>
+
+          <button
+            onClick={() => router.push('/dashboard/clients/beheer')}
+            style={{
+              backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
+              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+              cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
+              minHeight: 56,
+            }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#FFFFFF')}
+          >
+            <span style={{ fontSize: 20 }}>👥</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Klanten beheren</p>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>Toevoegen, koppelen</p>
+            </div>
+            <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
+          </button>
+        </div>
+
         {/* ── 2. Three numbers ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
           {[
@@ -369,7 +410,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Mijn klanten</h2>
             <button
-              onClick={() => router.push('/dashboard/clients/invite')}
+              onClick={() => router.push('/dashboard/clients/beheer')}
               style={{
                 backgroundColor: '#1A73E8', color: '#FFFFFF',
                 border: 'none', borderRadius: 8,
