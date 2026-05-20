@@ -74,18 +74,23 @@ interface Props {
 // Helpers
 // ─────────────────────────────────────────────────────────
 
-function greeting(fullName: string | null): string {
+/**
+ * Hydration-safe greeting.
+ * Time-based salutation differs between server (UTC) and client (local timezone),
+ * which causes React error #418. Return null initially, compute after mount.
+ */
+function timeSalutation(): string {
   const hour = new Date().getHours()
-  const salut = hour < 12 ? 'Goedemorgen' : hour < 18 ? 'Goedemiddag' : 'Goedenavond'
-  const first = fullName?.split(' ')[0] ?? ''
-  return `${salut}${first ? `, ${first}` : ''}`
+  if (hour < 12) return 'Goedemorgen'
+  if (hour < 18) return 'Goedemiddag'
+  return 'Goedenavond'
 }
 
 // ─────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────
 
-export function AccountantHome({ profile, overview, clients, todos, notifications: initialNotifs, unreadMessages: initialUnread }: Props) {
+export default function AccountantHome({ profile, overview, clients, todos, notifications: initialNotifs, unreadMessages: initialUnread }: Props) {
   const router = useRouter()
   const supabase = createClient()
 
@@ -93,6 +98,9 @@ export function AccountantHome({ profile, overview, clients, todos, notification
   const [notifications, setNotifications] = useState(initialNotifs)
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages] = useState(initialUnread)
+
+  // ── Time-based greeting (computed after mount to avoid hydration mismatch) ──
+  const [salutation, setSalutation] = useState<string | null>(null)
 
   // ── Last client shortcut (localStorage) ──
   const [lastClientId, setLastClientId] = useState<string | null>(null)
@@ -114,6 +122,9 @@ export function AccountantHome({ profile, overview, clients, todos, notification
 
   // ── Init ──
   useEffect(() => {
+    // Time-based greeting — set after mount to keep server/client HTML identical
+    setSalutation(timeSalutation())
+
     // Resolve last_client_id from localStorage
     const storedId = localStorage.getItem(LAST_CLIENT_KEY)
     if (storedId) {
@@ -283,7 +294,9 @@ export function AccountantHome({ profile, overview, clients, todos, notification
 
         {/* ── 1. Greeting ── */}
         <h1 style={{ fontSize: 22, fontWeight: 700, color: '#202124', margin: 0 }}>
-          {greeting(profile.full_name)} 👋
+          {salutation
+            ? `${salutation}${profile.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}`
+            : `Hallo${profile.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}`} 👋
         </h1>
 
         {/* ── 2. Three numbers ── */}
