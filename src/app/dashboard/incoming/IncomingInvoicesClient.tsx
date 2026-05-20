@@ -11,6 +11,7 @@
 // - Restore ignored invoices
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ interface Props {
   initialInvoices: IncomingInvoice[];
   ignoredInvoices: IncomingInvoice[];
   connectionStatus: ConnectionStatus;
+  // [BOEK-011] Used by the Logo Universal Click pattern (Navigation Strategy v1.0)
+  userRole: "zzper" | "accountant";
 }
 
 type Tab = "pending" | "ignored";
@@ -741,7 +744,11 @@ export default function IncomingInvoicesClient({
   initialInvoices,
   ignoredInvoices,
   connectionStatus,
+  userRole,
 }: Props) {
+  // [BOEK-011] Logo Universal Click target — depends on the user's role
+  const homeHref = userRole === "accountant" ? "/dashboard/accountant" : "/dashboard";
+
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
   const [tab, setTab] = useState<Tab>("pending");
@@ -838,17 +845,51 @@ export default function IncomingInvoicesClient({
         fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif",
       }}
     >
-      {/* Header */}
+      {/* [BOEK-011] Header — Logo Universal Click + Terug via <Link>
+          Implements Navigation Strategy v1.0:
+          - Logo always → home (dynamic by role)
+          - Terug uses <Link>, never router.back()
+          - Logo + Terug are separate concerns: Logo = escape hatch from anywhere,
+            Terug = explicit parent (/dashboard for /dashboard/incoming) */}
       <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
-        <a
-          href="/dashboard"
+        {/* Logo row */}
+        <div
           style={{
-            color: "#007aff", textDecoration: "none", fontSize: 17,
-            display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 8,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 12,
           }}
         >
-          ‹ Dashboard
-        </a>
+          <Link
+            href={homeHref}
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: "#007aff",
+              textDecoration: "none",
+              letterSpacing: -0.3,
+            }}
+          >
+            BoekBrug
+          </Link>
+        </div>
+
+        {/* Terug link (Link, not <a>, not router.back) */}
+        <Link
+          href={homeHref}
+          style={{
+            color: "#007aff",
+            textDecoration: "none",
+            fontSize: 17,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            marginBottom: 8,
+          }}
+        >
+          ‹ Terug
+        </Link>
         <h1
           style={{
             fontSize: 28, fontWeight: 700, color: "#1c1c1e",

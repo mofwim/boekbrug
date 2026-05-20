@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
+import Link from 'next/link'
 
 type InvoiceLine = {
   description: string
@@ -151,7 +152,8 @@ export default function InvoiceEditPage() {
       return
     }
 
-    router.push(`/dashboard/invoice/${invoiceId}`)
+    // [BOEK-031] replace ipv push — voorkomt back loop naar edit pagina — May 2026
+    router.replace(`/dashboard/invoice/${invoiceId}`)
   }
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -168,12 +170,17 @@ export default function InvoiceEditPage() {
       <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push(`/dashboard/invoice/${invoiceId}`)}
-              className="text-gray-400 hover:text-gray-600 text-sm"
+            {/* [BOEK-031] Back — Link to parent /invoice/[id] — Navigation Strategy — May 2026 */}
+            <Link
+              href={`/dashboard/invoice/${invoiceId}`}
+              className="text-gray-400 hover:text-gray-600 text-sm no-underline"
             >
               ← Terug
-            </button>
+            </Link>
+            {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}
+            <Link href="/dashboard" className="no-underline">
+              <span className="text-base font-bold text-blue-600">BoekBrug</span>
+            </Link>
             <h1 className="text-lg font-bold text-gray-900">Factuur bewerken</h1>
           </div>
           <span className="text-sm text-gray-400 font-mono">{invoiceNumber}</span>
@@ -412,12 +419,13 @@ export default function InvoiceEditPage() {
           >
             {saving ? 'Opslaan...' : 'Wijzigingen opslaan'}
           </button>
-          <button
-            onClick={() => router.push(`/dashboard/invoice/${invoiceId}`)}
-            className="border border-gray-200 text-gray-600 px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-50"
+          {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
+          <Link
+            href={`/dashboard/invoice/${invoiceId}`}
+            className="border border-gray-200 text-gray-600 px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-50 no-underline inline-block"
           >
             Annuleren
-          </button>
+          </Link>
         </div>
 
       </div>

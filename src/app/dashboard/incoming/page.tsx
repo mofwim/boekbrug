@@ -39,6 +39,18 @@ export default async function IncomingPage() {
 
   if (!user) redirect("/login");
 
+  // [BOEK-011] Fetch role for the Logo Universal Click pattern
+  // (Navigation Strategy v1.0). Incoming is ZZP-only in practice,
+  // but the link is dynamic for consistency across the app.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const userRole: "zzper" | "accountant" =
+    profile?.role === "accountant" ? "accountant" : "zzper";
+
   // Email connection status
   const { data: connection } = await supabase
     .from("email_connections")
@@ -164,6 +176,7 @@ export default async function IncomingPage() {
       initialInvoices={pendingInvoices}
       ignoredInvoices={ignoredInvoices}
       connectionStatus={connectionStatus}
+      userRole={userRole}
     />
   );
 }

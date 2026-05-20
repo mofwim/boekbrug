@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback, DragEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { T } from "./tokens";
 import { BestandRow, FolderRow, FolderNode, SearchResult, ViewMode } from "./types";
@@ -152,7 +153,16 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
-export function BestandenPage() {
+// [BOEK-033] role prop drives the logo's destination — accountant goes to their hub,
+// zzper to /dashboard. Passed in from page.tsx (server component) — no client fetch.
+interface BestandenPageProps {
+  role?: "zzper" | "accountant" | "client" | null;
+}
+
+export function BestandenPage({ role }: BestandenPageProps = {}) {
+  // [BOEK-033] Logo destination — when navigation.ts helper is built, swap this
+  // for getParentPath(); until then inline is fine (one source, one place).
+  const logoHref = role === "accountant" ? "/dashboard/accountant" : "/dashboard";
   const router = useRouter();
 
   // ── Data ──
@@ -902,6 +912,28 @@ export function BestandenPage() {
           }}
         >
           <div style={{ padding: "12px 8px" }}>
+            {/* [BOEK-033] BoekBrug logo — universal click target, returns to role home.
+                Drive-style: top-left of sidebar, above Mijn bestanden. */}
+            <Link
+              href={logoHref}
+              style={{
+                display: "flex", alignItems: "center",
+                padding: "6px 12px 14px",
+                textDecoration: "none",
+                transition: "opacity 0.15s",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.opacity = "0.7")}
+              onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+            >
+              <span style={{
+                fontSize: 22, fontWeight: 700, color: T.primary,
+                letterSpacing: "-0.02em", cursor: "pointer",
+                fontFamily: "'Google Sans','Roboto',sans-serif",
+              }}>
+                BoekBrug
+              </span>
+            </Link>
+
             {/* Root */}
             <button onClick={() => navigateTo(null)} style={{
               width: "100%", display: "flex", alignItems: "center", gap: 10,

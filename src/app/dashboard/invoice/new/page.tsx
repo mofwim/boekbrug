@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -579,7 +580,8 @@ function NewInvoicePageContent() {
       })
       const result = await res.json()
       if (!res.ok) { setError(result.error || 'Mislukt'); return }
-      router.push('/dashboard')
+      // [BOEK-031] replace ipv push — Navigation Strategy — May 2026
+      router.replace(result.creditnota_id ? `/dashboard/invoice/${result.creditnota_id}` : '/dashboard/facturen')
     } catch { setError('Onbekende fout') }
     finally { setLoadingCredit(false) }
   }
@@ -637,7 +639,8 @@ function NewInvoicePageContent() {
     }
 
     setShowConvertDialog(false)
-    router.push(`/dashboard/invoice/${factuur.id}`)
+    // [BOEK-031] replace ipv push — Navigation Strategy — May 2026
+    router.replace(`/dashboard/invoice/${factuur.id}`)
   }
 
   // ─── Main submit ───────────────────────────────────────────────────────────
@@ -774,7 +777,8 @@ function NewInvoicePageContent() {
       }).catch(() => {}) // volledig non-blocking
     }
 
-    router.push('/dashboard')
+    // [BOEK-031] replace naar detail pagina — Navigation Strategy — May 2026
+    router.replace(`/dashboard/invoice/${invoice.id}`)
   }
 
   // ─── Derived ───────────────────────────────────────────────────────────────
@@ -800,12 +804,18 @@ function NewInvoicePageContent() {
       <div style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px' }}>
         <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [DS] Back — Material You circular */}
-            <button onClick={() => router.back()}
-              style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s' }}
+            {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
+            <Link href="/dashboard/facturen"
+              style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s', textDecoration: 'none' }}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</button>
+            >←</Link>
+            {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}
+            <Link href="/dashboard" style={{ textDecoration: 'none', marginRight: 4 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: '#1A73E8', letterSpacing: '-0.01em' }}>
+                BoekBrug
+              </span>
+            </Link>
             <div>
               {/* [DS] Title — 16px/700 */}
               <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0, lineHeight: 1.2 }}>{pageTitle}</h1>
@@ -1042,10 +1052,11 @@ function NewInvoicePageContent() {
                   <button onClick={() => handleSubmit('draft')} disabled={loading} style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: cfg.activeBg, color: cfg.activeColor, fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
                     {invoiceType === 'factuur' ? 'Opslaan als concept' : 'Opslaan'}
                   </button>
-                  {/* [DS] Annuleren text button — × verwijderd */}
-                  <button onClick={() => router.push('/dashboard')} style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
+                  {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
+                  <Link href="/dashboard/facturen"
+                    style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                     Annuleren
-                  </button>
+                  </Link>
                 </div>
               </div>
             </div>

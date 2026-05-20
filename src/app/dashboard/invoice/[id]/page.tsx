@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound } from 'next/navigation'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
@@ -124,9 +125,9 @@ export default function InvoiceDetailPage() {
       }}>
         <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [DS] Back button — Material You circular tonal */}
-            <button
-              onClick={() => router.back()}
+            {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
+            <Link
+              href="/dashboard/facturen"
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -136,11 +137,18 @@ export default function InvoiceDetailPage() {
                 color: '#5F6368',
                 cursor: 'pointer',
                 fontSize: 18,
+                textDecoration: 'none',
                 transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
               }}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</button>
+            >←</Link>
+            {/* [BOEK-031] Logo — always goes to /dashboard for ZZP — Navigation Strategy — May 2026 */}
+            <Link href="/dashboard" style={{ textDecoration: 'none', marginRight: 4 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: '#1A73E8', letterSpacing: '-0.01em' }}>
+                BoekBrug
+              </span>
+            </Link>
             {loading ? (
               <div style={{ height: 16, width: 144, backgroundColor: '#E7E0EC', borderRadius: 9999 }} />
             ) : (

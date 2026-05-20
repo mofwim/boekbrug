@@ -1,5 +1,7 @@
 // app/dashboard/bestanden/page.tsx
 // [BOEK-033] Server wrapper — auth check + ensureYearStructure + render BestandenPage
+// [BOEK-033] Reads profile.role server-side and passes it to the client component
+//            so the sidebar logo can link to the correct home (no client fetch).
 
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -14,16 +16,18 @@ export default async function BestandenServerPage() {
 
   if (!user) redirect("/login");
 
+  // [BOEK-033] Read onboarding_done + role in a single query
   const { data: profile } = await supabase
     .from("profiles")
-    .select("onboarding_done")
+    .select("onboarding_done, role")
     .eq("id", user.id)
     .single();
 
   if (!profile?.onboarding_done) redirect("/onboarding");
 
-  // [BOEK-033] Ensure year structure exists — idempotent, safe to call every load
+  // [BOEK-033] Ensure year structure exists — idempotent, fast-path on built years
   await ensureYearStructure(user.id, new Date().getFullYear());
 
-  return <BestandenPage />;
+  // [BOEK-033] Pass role for the sidebar logo to point to the correct home
+  return <BestandenPage role={profile.role} />;
 }

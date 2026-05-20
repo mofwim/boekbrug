@@ -3,10 +3,12 @@
 // src/app/dashboard/_shared/index.tsx
 // مكونات مشتركة بين ZzpDashboard و AccountantDashboard
 // [INTEGRATION] role-based nav links in DashboardHeader — May 2026
+// [INTEGRATION] Logo Universal — next/link + role-aware href — May 2026
 
 import { useRouter } from 'next/navigation'
 import { useRef, useEffect } from 'react'
 import React from 'react'
+import Link from 'next/link'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
 import { InvoiceRowItem, STATUS_LABEL } from '@/components/invoice/InvoiceRow'
@@ -200,7 +202,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
 
 // ── ProfileMenu ───────────────────────────────────────────────────────────────
 // [BOEK-028] Profile dropdown — May 2026
-// [INTEGRATION] added Instellingen → /dashboard/settings — May 2026
+// [INTEGRATION] Instellingen → /dashboard/settings — May 2026
 
 function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void }) {
   const [open, setOpen] = React.useState(false)
@@ -256,7 +258,7 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
             </p>
           </div>
 
-          {/* [INTEGRATION] Instellingen — both roles — May 2026 */}
+          {/* Instellingen */}
           <button
             onClick={() => { setOpen(false); router.push('/dashboard/settings') }}
             style={{
@@ -448,7 +450,7 @@ function AccountantNavLinks() {
 
 // ── DashboardHeader ───────────────────────────────────────────────────────────
 // [BOEK-028] Responsive single-row header — no flex-wrap — May 2026
-// [INTEGRATION] accountant gets Werkplek + Klanten nav links — May 2026
+// [INTEGRATION] role-based nav + Logo Universal (next/link, role-aware) — May 2026
 
 interface DashboardHeaderProps {
   profile: any
@@ -471,8 +473,9 @@ export function DashboardHeader({
   onMessagesClick,
   onLogout,
 }: DashboardHeaderProps) {
-  const router = useRouter()
+  // [INTEGRATION] Logo Universal — role-aware href — May 2026
   const isAccountant = profile?.role === 'accountant'
+  const logoHref = isAccountant ? '/dashboard/accountant' : '/dashboard'
 
   return (
     <header style={{
@@ -489,18 +492,21 @@ export function DashboardHeader({
       fontFamily: "'Google Sans', 'Roboto', sans-serif",
     }}>
 
-      {/* Logo */}
-      <button
-        onClick={() => router.push('/dashboard')}
+      {/* Logo — [INTEGRATION] next/link + role-aware href — May 2026 */}
+      <Link
+        href={logoHref}
         style={{
           fontWeight: 700, fontSize: 17, color: '#1A73E8',
-          background: 'none', border: 'none', cursor: 'pointer',
           flexShrink: 0, letterSpacing: '-0.3px', lineHeight: 1,
-          padding: 0, fontFamily: "'Google Sans', 'Roboto', sans-serif",
+          textDecoration: 'none', cursor: 'pointer',
+          fontFamily: "'Google Sans', 'Roboto', sans-serif",
+          transition: 'opacity 0.15s',
         }}
+        onMouseEnter={e => ((e.currentTarget as HTMLAnchorElement).style.opacity = '0.75')}
+        onMouseLeave={e => ((e.currentTarget as HTMLAnchorElement).style.opacity = '1')}
       >
         BoekBrug
-      </button>
+      </Link>
 
       {/* Search */}
       <div style={{ flex: 1, minWidth: 0, maxWidth: 480, margin: '0 4px' }}>
