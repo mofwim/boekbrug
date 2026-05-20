@@ -158,7 +158,22 @@ export function BestandenPage() {
   // ── Data ──
   const [folderTree, setFolderTree] = useState<FolderNode[]>([]);
   const [allFolders, setAllFolders] = useState<FolderRow[]>([]);
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  // [BOEK-011 — edit by BOEK-011, file owned by BOEK-033]
+  // Read ?folder={id} from URL on first render so the page loads the right
+  // folder immediately. Replaces a previous useEffect-based version that had
+  // a race condition with loadContents — the root content was loaded first,
+  // then setCurrentFolderId fired after, sometimes too late.
+  // Initializing useState from URL avoids that entire ordering problem.
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const folderParam = params.get("folder");
+    if (folderParam) {
+      // Clean the URL so refresh/back behave normally
+      window.history.replaceState({}, "", "/dashboard/bestanden");
+    }
+    return folderParam;
+  });
   const [subFolders, setSubFolders] = useState<FolderRow[]>([]);
   const [docs, setDocs] = useState<BestandRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,17 +291,12 @@ export function BestandenPage() {
     loadAllFolders();
   }, [currentFolderId]); // eslint-disable-line
 
-  // [BOEK-011] Open a specific folder when arriving via ?folder={id}
-  // Used by the incoming-invoices page link. Runs once on mount.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const folderParam = params.get("folder");
-    if (folderParam) {
-      setCurrentFolderId(folderParam);
-      // Clean the URL so refresh/back behaves normally
-      window.history.replaceState({}, "", "/dashboard/bestanden");
-    }
-  }, []); // eslint-disable-line
+  // [BOEK-011 — removed by BOEK-011, file owned by BOEK-033]
+  // The previous useEffect that read ?folder={id} from the URL was removed
+  // here. It caused a race: loadContents fired with null before this effect
+  // updated currentFolderId, so the root was shown while breadcrumbs said
+  // otherwise. The URL is now read inline in useState above — single source
+  // of truth, no ordering issues.
 
   // ── Search ──
   useEffect(() => {
