@@ -4,7 +4,9 @@
 // [BOEK-029] Client component — profile always passed from server wrapper
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useParentPath } from '@/lib/navigation-hooks'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
@@ -43,6 +45,8 @@ function avatarColor(name: string) {
 export default function KlantenClient({ profile }: { profile: any }) {
   const router   = useRouter()
   const supabase = createClient()
+  // [BOEK-029] Navigation strategy — parent is always /dashboard for ZZP
+  const parentHref = useParentPath(profile.role ?? 'zzper')
 
   const [clients, setClients]       = useState<Client[]>([])
   const [loading, setLoading]       = useState(true)
@@ -148,9 +152,9 @@ export default function KlantenClient({ profile }: { profile: any }) {
         padding: '12px 16px 10px', position: 'sticky', top: 0, zIndex: 50,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <button onClick={() => router.back()} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT }}>
+          <Link href={parentHref} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT, textDecoration: 'none' }}>
             <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-          </button>
+          </Link>
           <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center' }}>Mijn klanten</h1>
           <button
             onClick={() => { setShowForm(p => !p); setError(null) }}

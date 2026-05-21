@@ -4,7 +4,9 @@
 // [BOEK-029] Client component — profile always passed from server wrapper
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useParentPath } from '@/lib/navigation-hooks'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { createNotification } from '@/lib/notifications'
@@ -77,6 +79,8 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 export default function FacturenClient({ profile }: { profile: any }) {
   const router   = useRouter()
   const supabase = createClient()
+  // [BOEK-029] Navigation strategy — parent is always /dashboard for ZZP
+  const parentHref = useParentPath(profile.role ?? 'zzper')
 
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [sort, setSort]                 = useState<SortOrder>('desc')
@@ -175,9 +179,9 @@ export default function FacturenClient({ profile }: { profile: any }) {
         padding: '12px 16px', position: 'sticky', top: 0, zIndex: 50,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <button onClick={() => router.back()} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT }}>
+          <Link href={parentHref} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT, textDecoration: 'none' }}>
             <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-          </button>
+          </Link>
           <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center' }}>Mijn facturen</h1>
           <div style={{ display: 'flex', gap: 6 }}>
             {/* Sort */}
