@@ -158,32 +158,3 @@ export function getParentPath(
 // and add 'use client' at the top of that file.
 // The pure functions above (getHomePath, getParentPath) stay in this file.
 
-'use client'
-
-import { usePathname, useSearchParams } from 'next/navigation'
-
-/**
- * Client-side hook. Returns the canonical parent path for the current route.
- *
- * @example
- * // In a client component:
- * const parent = useParentPath('zzper')
- * return <Link href={parent}>← Terug</Link>
- */
-export function useParentPath(role: Role): string {
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
-  return getParentPath(pathname, role, searchParams)
-}
-
-/**
- * Client-side hook. Returns the home path for the given role.
- * Convenience wrapper around getHomePath for client components.
- *
- * @example
- * const home = useHomePath(profile.role)
- * return <Link href={home}><Logo /></Link>
- */
-export function useHomePath(role: Role): string {
-  return getHomePath(role)
-}
