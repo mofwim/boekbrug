@@ -21,6 +21,8 @@ export default async function QuarterlyPage() {
     .single();
 
   const isAccountant = profile?.role === "accountant";
+  // [BOEK-013] role for navigation helper in QuarterlyOverview
+  const role = isAccountant ? "accountant" : "zzper";
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -39,7 +41,7 @@ export default async function QuarterlyPage() {
           BTW-aangifte, totalen en export per kwartaal
         </p>
       </div>
-      <QuarterlyOverview isAccountant={isAccountant} />
+      <QuarterlyOverview isAccountant={isAccountant} role={role} />
     </div>
   );
 }

@@ -7,7 +7,9 @@
 // Writes (unlink / invite) go through API routes.
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useParentPath } from '@/lib/navigation-hooks'
 import type { ClientSummary } from '../accountant.types'
 
 // ─────────────────────────────────────────────────────────
@@ -40,6 +42,7 @@ interface Props {
 
 export default function KlantenBeheer({ initialClients }: Props) {
   const router = useRouter()
+  const parentHref = useParentPath('accountant')
 
   const [clients, setClients] = useState<ClientSummary[]>(initialClients)
   const [inviteEmail, setInviteEmail] = useState('')
@@ -128,12 +131,12 @@ export default function KlantenBeheer({ initialClients }: Props) {
         top: 0,
         zIndex: 40,
       }}>
-        <button
-          onClick={() => router.push('/dashboard/accountant')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500, padding: 0 }}
+        <Link
+          href={parentHref}
+          style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500 }}
         >
           ← Terug
-        </button>
+        </Link>
         <h1 style={{ fontSize: 18, fontWeight: 600, color: '#202124', margin: 0 }}>
           Klanten beheren
         </h1>

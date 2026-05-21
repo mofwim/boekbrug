@@ -12,6 +12,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+// [BOEK-011] Centralized navigation — single source of truth across the app
+import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -746,8 +748,11 @@ export default function IncomingInvoicesClient({
   connectionStatus,
   userRole,
 }: Props) {
-  // [BOEK-011] Logo Universal Click target — depends on the user's role
-  const homeHref = userRole === "accountant" ? "/dashboard/accountant" : "/dashboard";
+  // [BOEK-011] Navigation paths — resolved through the central navigation helper
+  // homeHref   = role-based home (Logo target — Rule 1 of Navigation Strategy v1.0)
+  // parentHref = canonical parent of the current page (Terug target — Rule 2)
+  const homeHref = useHomePath(userRole);
+  const parentHref = useParentPath(userRole);
 
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
@@ -875,9 +880,11 @@ export default function IncomingInvoicesClient({
           </Link>
         </div>
 
-        {/* Terug link (Link, not <a>, not router.back) */}
+        {/* [BOEK-011] Terug — canonical parent via useParentPath.
+            For /dashboard/incoming the parent is /dashboard (zzp home),
+            but the rule lives in src/lib/navigation.ts now — not here. */}
         <Link
-          href={homeHref}
+          href={parentHref}
           style={{
             color: "#007aff",
             textDecoration: "none",

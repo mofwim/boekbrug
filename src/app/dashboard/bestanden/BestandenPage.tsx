@@ -7,6 +7,8 @@ import { useState, useEffect, useRef, useCallback, DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+import { useHomePath } from "@/lib/navigation-hooks";
+
 import { T } from "./tokens";
 import { BestandRow, FolderRow, FolderNode, SearchResult, ViewMode } from "./types";
 import { buildTree, folderColor, fileEmoji, formatDate, formatSize } from "./helpers";
@@ -154,15 +156,17 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 // [BOEK-033] role prop drives the logo's destination — accountant goes to their hub,
-// zzper to /dashboard. Passed in from page.tsx (server component) — no client fetch.
+// zzper (and anyone else) to /dashboard. Passed in from page.tsx (server component).
 interface BestandenPageProps {
   role?: "zzper" | "accountant" | "client" | null;
 }
 
 export function BestandenPage({ role }: BestandenPageProps = {}) {
-  // [BOEK-033] Logo destination — when navigation.ts helper is built, swap this
-  // for getParentPath(); until then inline is fine (one source, one place).
-  const logoHref = role === "accountant" ? "/dashboard/accountant" : "/dashboard";
+  // [BOEK-033] Normalise to navigation.ts Role union — only 'accountant' is special;
+  // every other value (zzper, client, null) maps to the ZZP home.
+  const navRole: "zzper" | "accountant" = role === "accountant" ? "accountant" : "zzper";
+  const logoHref = useHomePath(navRole);
+
   const router = useRouter();
 
   // ── Data ──

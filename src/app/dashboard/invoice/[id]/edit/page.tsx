@@ -8,6 +8,9 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
+// [BOEK-031] Navigation Strategy — May 2026
+import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
+import type { Role } from '@/lib/navigation'
 
 type InvoiceLine = {
   description: string
@@ -27,6 +30,11 @@ export default function InvoiceEditPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
+  const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
+  const parentHref = useParentPath(role)
+  const homeHref = useHomePath(role)
 
   // بيانات العميل
   const [clientName, setClientName] = useState('')
@@ -172,13 +180,13 @@ export default function InvoiceEditPage() {
           <div className="flex items-center gap-3">
             {/* [BOEK-031] Back — Link to parent /invoice/[id] — Navigation Strategy — May 2026 */}
             <Link
-              href={`/dashboard/invoice/${invoiceId}`}
+              href={parentHref}
               className="text-gray-400 hover:text-gray-600 text-sm no-underline"
             >
               ← Terug
             </Link>
             {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}
-            <Link href="/dashboard" className="no-underline">
+            <Link href={homeHref} className="no-underline">
               <span className="text-base font-bold text-blue-600">BoekBrug</span>
             </Link>
             <h1 className="text-lg font-bold text-gray-900">Factuur bewerken</h1>
@@ -421,7 +429,7 @@ export default function InvoiceEditPage() {
           </button>
           {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
           <Link
-            href={`/dashboard/invoice/${invoiceId}`}
+            href={parentHref}
             className="border border-gray-200 text-gray-600 px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-50 no-underline inline-block"
           >
             Annuleren

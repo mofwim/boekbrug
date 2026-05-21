@@ -10,6 +10,9 @@ import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
+// [BOEK-031] Navigation Strategy — May 2026
+import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
+import type { Role } from '@/lib/navigation'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
@@ -50,6 +53,12 @@ export default function InvoiceDetailPage() {
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [notFoundState, setNotFoundState] = useState(false)
+
+  // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
+  // profile.role may be null on first render → fallback 'zzper'
+  const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
+  const parentHref = useParentPath(role)
+  const homeHref = useHomePath(role)
 
   // [BOEK-031] linked creditnota — toon als er al een bestaat
   const [linkedCreditnota, setLinkedCreditnota] = useState<any>(null)
@@ -127,7 +136,7 @@ export default function InvoiceDetailPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
             <Link
-              href="/dashboard/facturen"
+              href={parentHref}
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -144,7 +153,7 @@ export default function InvoiceDetailPage() {
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >←</Link>
             {/* [BOEK-031] Logo — always goes to /dashboard for ZZP — Navigation Strategy — May 2026 */}
-            <Link href="/dashboard" style={{ textDecoration: 'none', marginRight: 4 }}>
+            <Link href={homeHref} style={{ textDecoration: 'none', marginRight: 4 }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: '#1A73E8', letterSpacing: '-0.01em' }}>
                 BoekBrug
               </span>

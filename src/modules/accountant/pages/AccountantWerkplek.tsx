@@ -3,7 +3,9 @@
 // src/modules/accountant/pages/AccountantWerkplek.tsx
 // [BOEK-028] Accountant werkplek — 4 tools — Google Workspace design — May 2026
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useParentPath } from '@/lib/navigation-hooks'
 
 // ─────────────────────────────────────────────────────────
 // Data
@@ -46,6 +48,7 @@ const TOOLS = [
 
 export default function AccountantWerkplek() {
   const router = useRouter()
+  const parentHref = useParentPath('accountant')
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
@@ -63,12 +66,12 @@ export default function AccountantWerkplek() {
         top: 0,
         zIndex: 40,
       }}>
-        <button
-          onClick={() => router.push('/dashboard/accountant')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500, padding: 0 }}
+        <Link
+          href={parentHref}
+          style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500 }}
         >
           ← Terug
-        </button>
+        </Link>
         <h1 style={{ fontSize: 18, fontWeight: 600, color: '#202124', margin: 0 }}>
           Mijn werkplek
         </h1>

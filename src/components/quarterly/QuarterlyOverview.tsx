@@ -4,9 +4,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { QuarterlySummary, ZzpQuarterlySummary } from "@/lib/quarterly";
 import { formatEur } from "@/lib/quarterly";
 import { downloadCsv } from "@/lib/export";
+import { useParentPath } from "@/lib/navigation-hooks";
+import type { Role } from "@/lib/navigation";
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
@@ -21,16 +24,19 @@ interface Client {
 
 interface Props {
   isAccountant: boolean;
+  // [BOEK-013] role passed from page.tsx for navigation helper
+  role: Role;
 }
 
-export function QuarterlyOverview({ isAccountant }: Props) {
-  return isAccountant ? <AccountantView /> : <ZzpView />;
+export function QuarterlyOverview({ isAccountant, role }: Props) {
+  return isAccountant ? <AccountantView role={role} /> : <ZzpView role={role} />;
 }
 
 // ─────────────────────────────────────────────────────────
 // ZZP View
 // ─────────────────────────────────────────────────────────
-function ZzpView() {
+function ZzpView({ role }: { role: Role }) {
+  const parentHref = useParentPath(role);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
   const [year, setYear] = useState(CURRENT_YEAR);
   const [mode, setMode] = useState<"paid" | "all">("paid");
@@ -69,14 +75,14 @@ function ZzpView() {
   return (
     <div className="space-y-4 pb-8">
 
-      {/* Back button */}
+      {/* Back button — [BOEK-013] uses navigation helper */}
       <div className="px-1">
-        <a href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-primary font-medium">
+        <Link href={parentHref} className="inline-flex items-center gap-1.5 text-sm text-primary font-medium">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
           Dashboard
-        </a>
+        </Link>
       </div>
 
       {/* Quarter + year selector */}
@@ -259,7 +265,8 @@ function ZzpView() {
 // ─────────────────────────────────────────────────────────
 // Accountant View — unchanged
 // ─────────────────────────────────────────────────────────
-function AccountantView() {
+function AccountantView({ role }: { role: Role }) {
+  const parentHref = useParentPath(role);
   const [year, setYear] = useState(CURRENT_YEAR);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
   const [data, setData] = useState<QuarterlySummary | null>(null);
@@ -334,12 +341,12 @@ function AccountantView() {
   return (
     <div className="space-y-4 pb-8">
       <div className="px-1">
-        <a href="/dashboard" className="inline-flex items-center gap-1.5 text-sm text-primary font-medium">
+        <Link href={parentHref} className="inline-flex items-center gap-1.5 text-sm text-primary font-medium">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
           Dashboard
-        </a>
+        </Link>
       </div>
 
       {clients.length > 0 && (

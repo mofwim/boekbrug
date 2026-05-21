@@ -9,6 +9,9 @@ import React, { useState, useEffect, useRef, Suspense } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+// [BOEK-031] Navigation Strategy — May 2026
+import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
+import type { Role } from '@/lib/navigation'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -65,6 +68,8 @@ type Profile = {
   postal_code: string
   city: string
   email: string
+  // [BOEK-031] role needed for navigation parent — May 2026
+  role?: string | null
 }
 
 type Client = {
@@ -319,6 +324,10 @@ function NewInvoicePageContent() {
 
   // ── Core state ──────────────────────────────────────────────────────────────
   const [profile, setProfile]         = useState<Profile | null>(null)
+  // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
+  const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
+  const parentHref = useParentPath(role)
+  const homeHref = useHomePath(role)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [loading, setLoading]         = useState(false)
   // [BOEK-031] linesLoading — wait for DB lines before allowing submit — May 2026
@@ -805,13 +814,13 @@ function NewInvoicePageContent() {
         <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
-            <Link href="/dashboard/facturen"
+            <Link href={parentHref}
               style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s', textDecoration: 'none' }}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >←</Link>
             {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}
-            <Link href="/dashboard" style={{ textDecoration: 'none', marginRight: 4 }}>
+            <Link href={homeHref} style={{ textDecoration: 'none', marginRight: 4 }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: '#1A73E8', letterSpacing: '-0.01em' }}>
                 BoekBrug
               </span>
@@ -1053,7 +1062,7 @@ function NewInvoicePageContent() {
                     {invoiceType === 'factuur' ? 'Opslaan als concept' : 'Opslaan'}
                   </button>
                   {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
-                  <Link href="/dashboard/facturen"
+                  <Link href={parentHref}
                     style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                     Annuleren
                   </Link>
