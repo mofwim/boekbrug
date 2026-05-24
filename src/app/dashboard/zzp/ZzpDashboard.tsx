@@ -146,12 +146,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
             onClick={() => router.push('/dashboard/werkplek')}
           />
-          <button 
-            onClick={() => { throw new Error('[BOEK-SENTRY] integration test') }}
-            style={{ padding: '8px 16px', background: '#dc2626', color: 'white', borderRadius: '6px' }}
-            >
-            Test Sentry
-          </button>
+
           {/* 4. Werken met AI */}
           <ActionCard
             icon="star" iconBg={M3.tertiary} iconColor="#fff"
