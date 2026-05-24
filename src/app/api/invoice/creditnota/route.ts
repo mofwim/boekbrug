@@ -49,13 +49,14 @@ export async function POST(request: NextRequest) {
 
     // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen
     // Draft facturen worden verwijderd — niet gecrediteerd
-    const CREDITABLE_STATUSES = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
-    if (!CREDITABLE_STATUSES.includes(original.status)) {
-      return NextResponse.json(
-        { error: 'Alleen verzonden facturen kunnen worden gecrediteerd. Concept-facturen verwijder je gewoon.' },
-        { status: 400 }
-      )
-    }
+    // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen
+      const CREDITABLE_STATUSES: string[] = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
+      if (!original.status || !CREDITABLE_STATUSES.includes(original.status)) {
+        return NextResponse.json(
+          { error: 'Alleen verzonden facturen kunnen worden gecrediteerd. Concept-facturen verwijder je gewoon.' },
+          { status: 400 }
+        )
+}
 
     // [BOEK-031] Controleer of er al een creditnota bestaat voor deze factuur
     // Zoek op invoice_lines description die de originele factuur id bevat
