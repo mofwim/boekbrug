@@ -5,6 +5,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+// [BOEK-011 + BOEK-SECURITY] invoice insert needs service_role to bypass
+// invoices_zzp_insert RLS — that policy expects sender_id = auth.uid(),
+// but incoming invoices have sender_id = null.
+import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { resolveImportTarget } from "@/lib/bestanden";
 
@@ -114,9 +118,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Save the invoice — status 'received', awaiting confirmation
-  // [BOEK-011] Incoming invoice: receiver_id = user, sender_id = null
-  // Keeps it out of "Mijn facturen" (which queries sender_id)
-  const { data: invoice, error: dbError } = await supabase
+  // [BOEK-011 + BOEK-SECURITY] Incoming invoice: receiver_id = user, sender_id = null.
+  // Must use service_role: invoices_zzp_insert RLS requires sender_id = auth.uid(),
+  // which fails for incoming (sender_id is null — vendor isn't a BoekBrug user).
+  const pipeline = createPipelineClient();
+  const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
       sender_id: null,
@@ -140,9 +146,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: dbError.message }, { status: 500 });
   }
 
-  // [BOEK-011] Link document back to invoice (bidirectional)
+  // [BOEK-011] Link document back to invoice (bidirectional) — same pipeline
   if (documentId && invoice?.id) {
-    await supabase
+    await pipeline
       .from("documents")
       .update({ invoice_id: invoice.id })
       .eq("id", documentId);

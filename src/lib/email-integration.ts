@@ -819,7 +819,16 @@ export async function syncUserEmails(userId: string): Promise<{
       // (outgoing). If we put userId in sender_id here, incoming invoices would
       // appear there as if the user created them. They also wouldn't appear in
       // /dashboard/incoming, which queries `.eq('receiver_id', userId)`.
-      const { data: insertedInvoice, error: dbError } = await supabase
+      // [BOEK-011 + BOEK-SECURITY] Invoice insert MUST use service_role.
+      //
+      // The invoices_zzp_insert RLS policy has WITH CHECK (sender_id = auth.uid()).
+      // Incoming invoices have sender_id = NULL (vendor isn't a BoekBrug user),
+      // so the user client fails with 403 — silently leaving an orphan document.
+      //
+      // Email sync is a pipeline operation by design (background job, AI-driven,
+      // no direct user action) — exactly the case service_role exists for.
+      const insertPipeline = createPipelineClient()
+      const { data: insertedInvoice, error: dbError } = await insertPipeline
         .from('invoices')
         .insert({
           sender_id: null,
@@ -849,8 +858,10 @@ export async function syncUserEmails(userId: string): Promise<{
 
         // [BOEK-011] Link the document back to the invoice (bidirectional)
         // documents.invoice_id ↔ invoices.document_id
+        // documents has its own RLS that allows the owner — but pipeline is
+        // simpler/safer here since we're already in service_role context.
         if (documentId && insertedInvoice?.id) {
-          await supabase
+          await insertPipeline
             .from('documents')
             .update({ invoice_id: insertedInvoice.id })
             .eq('id', documentId)
