@@ -13,7 +13,6 @@ import {
   getAccountantOverview,
   getTodoFeed,
 } from '@/modules/accountant/accountant.repository'
-import SentryUserProvider from '@/components/providers/SentryUserProvider' // [BOEK-SENTRY]
 
 export const dynamic = 'force-dynamic'
 
@@ -57,13 +56,6 @@ export default async function AccountantPage() {
     .eq('read', false)
 
   return (
-    <>
-      {/* [BOEK-SENTRY] set user context for all errors in this session */}
-      <SentryUserProvider
-        userId={profile.id}
-        email={profile.email}
-        role={profile.role}
-      />
       <AccountantHome
         profile={{
           id: profile.id,
@@ -77,6 +69,9 @@ export default async function AccountantPage() {
         notifications={notifications ?? []}
         unreadMessages={unreadMessages ?? 0}
       />
-    </>
-  )
+    
+    )
 }
+
+
+
