@@ -353,17 +353,6 @@ export default function InvoiceDetailPage() {
             </div>
           )}
 
-          {/* [DS] Creditnota terugbetaling */}
-          {invoice.invoice_type === 'creditnota' && profile?.iban && (
-            <div style={{ backgroundColor: '#F9DEDC', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Terugbetaling</p>
-              <p style={{ fontSize: 14, color: '#B3261E', lineHeight: 1.6, margin: 0 }}>
-                Het gecrediteerde bedrag wordt teruggestort op het rekeningnummer van de klant.
-                O.v.v. creditnota <strong>{invoice.invoice_number}</strong>.
-              </p>
-            </div>
-          )}
-
         </div>
       )}
     </div>

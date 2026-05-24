@@ -128,8 +128,9 @@ export async function saveEmailTokens(params: {
   }
 
   // Upsert by (user_id, provider) — UNIQUE constraint guarantees one row.
-  // access_token / refresh_token columns are explicitly null — the Vault
-  // secret IDs are the source of truth from here on.
+  // [BOEK-011 + BOEK-SECURITY Step 1h] The plaintext access_token and
+  // refresh_token columns have been dropped. Vault secret_ids are the only
+  // source of truth — never reference the old columns anywhere in code.
   const { error: upsertErr } = await supabase
     .from('email_connections')
     .upsert(
@@ -137,8 +138,6 @@ export async function saveEmailTokens(params: {
         user_id: userId,
         provider,
         email,
-        access_token: null,
-        refresh_token: null,
         access_token_secret_id: newAccessId,
         refresh_token_secret_id: newRefreshId,
         tokens_encrypted_at: new Date().toISOString(),
