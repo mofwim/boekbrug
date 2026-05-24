@@ -699,20 +699,55 @@ export async function syncUserEmails(userId: string): Promise<{
       if (!classification.isInvoice) continue
       verified++
 
-      // [BOEK-011] Deduplication key — messageId + filename
-      // One email can carry several PDF attachments, all sharing the same
-      // messageId. The filename makes each attachment uniquely identifiable.
+      // [BOEK-011] Deduplication — two checks before saving.
+      //
+      // Check A: same messageId + filename → same attachment seen before.
+      //   Catches re-syncs of the same email.
+      //
+      // Check B: same invoice_number + total → same invoice arrived in a
+      //   different email (forward, reminder, vendor re-sent). Different
+      //   messageId, so Check A misses it. Without this, we get duplicates
+      //   like ZIZZGFPN-0001 ×2, 26302362 ×2 etc.
+      //
+      // Both checks query receiver_id (not sender_id) — incoming invoices
+      // have sender_id = null since the architectural fix.
       const dedupKey = `${attachment.messageId}:${attachment.filename}`
 
-      const { data: existing } = await supabase
+      const { data: existingByMessage } = await supabase
         .from('invoices')
         .select('id')
-        .eq('sender_id', userId)
+        .eq('receiver_id', userId)
         .eq('source', 'email')
         .eq('source_message_id', dedupKey)
         .limit(1)
 
-      if (existing && existing.length > 0) continue
+      if (existingByMessage && existingByMessage.length > 0) continue
+
+      // Check B — content match. Only run when we actually have both fields,
+      // otherwise we'd match every "missing data" invoice with every other.
+      if (
+        classification.invoiceNumber &&
+        typeof classification.totalIncBtw === 'number'
+      ) {
+        const { data: existingByContent } = await supabase
+          .from('invoices')
+          .select('id, source_message_id')
+          .eq('receiver_id', userId)
+          .eq('source', 'email')
+          .eq('invoice_number', classification.invoiceNumber)
+          .eq('total_inc_btw', classification.totalIncBtw)
+          .limit(1)
+
+        if (existingByContent && existingByContent.length > 0) {
+          console.log('[BOEK-011] Skipping duplicate by content', {
+            invoiceNumber: classification.invoiceNumber,
+            totalIncBtw: classification.totalIncBtw,
+            existingMessageId: existingByContent[0].source_message_id,
+            newMessageId: dedupKey,
+          })
+          continue
+        }
+      }
 
       const invoiceDate = classification.invoiceDate
         ? new Date(classification.invoiceDate).toISOString().split('T')[0]
@@ -817,17 +852,25 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   }
 
-  // [BOEK-011] Notify the user when new invoices were imported
-  // Without this, the import is silent — the user never knows it happened
+  // [BOEK-011 + BOEK-SECURITY Phase 2.5] Notify the user about imported invoices.
+  // After Phase 2.5 cleanup, notifications has no INSERT policy for the
+  // authenticated context — any user-client insert returns 403. All notification
+  // writes must go through service_role (createPipelineClient). The user client
+  // (`supabase`) stays for reads where RLS is the right boundary.
   if (saved > 0) {
-    await supabase.from('notifications').insert({
+    const pipeline = createPipelineClient()
+    const { error: notifErr } = await pipeline.from('notifications').insert({
       user_id: userId,
       title: `${saved} nieuwe ${saved === 1 ? 'factuur' : 'facturen'} geïmporteerd`,
-      body: 'Bekijk en bevestig je inkomende facturen.',
+      body: `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald. Bevestig betalingsstatus.`,
       type: 'invoice',
       read: false,
       link: '/dashboard/incoming',
     })
+    if (notifErr) {
+      console.error('[BOEK-011] Failed to write notification', notifErr)
+      // Non-fatal — the import itself succeeded, the user just won't get a bell.
+    }
   }
 
   return {

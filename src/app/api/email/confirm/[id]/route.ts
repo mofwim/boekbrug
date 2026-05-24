@@ -6,6 +6,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+// [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
+import { createPipelineClient } from "@/lib/supabase-pipeline";
 
 // ── POST — mark as paid ───────────────────────────────────────────────────────
 
@@ -87,8 +89,13 @@ export async function POST(
     .limit(1)
     .single();
 
+  // [BOEK-011 + BOEK-SECURITY Phase 2.5] Notifications via service_role.
+  // User client returns 403 — no INSERT policy on notifications since Phase 2.5.
+  // Both inserts share the same pipeline instance.
+  const pipeline = createPipelineClient();
+
   if (link?.accountant_id) {
-    await supabase.from("notifications").insert({
+    const { error: accNotifErr } = await pipeline.from("notifications").insert({
       user_id: link.accountant_id,
       title: "Nieuwe betaalde factuur",
       body: "Een klant heeft een inkomende factuur als betaald gemarkeerd.",
@@ -96,16 +103,23 @@ export async function POST(
       read: false,
       link: "/dashboard",
     });
+    if (accNotifErr) {
+      console.error("[BOEK-011] accountant notification failed", accNotifErr);
+      // Non-fatal — the payment confirmation already succeeded.
+    }
   }
 
   // Notify the user themselves — confirmation
-  await supabase.from("notifications").insert({
+  const { error: userNotifErr } = await pipeline.from("notifications").insert({
     user_id: user.id,
     title: "Factuur bevestigd",
     body: "De factuur is gemarkeerd als betaald en doorgezet naar je boekhouder.",
     type: "payment",
     read: false,
   });
+  if (userNotifErr) {
+    console.error("[BOEK-011] user notification failed", userNotifErr);
+  }
 
   return NextResponse.json({ ok: true });
 }
