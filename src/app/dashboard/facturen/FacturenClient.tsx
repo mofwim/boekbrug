@@ -211,8 +211,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
         updateOptimistic(ctx.id, { status: 'draft' })
         showToast(err.error || 'Verzenden mislukt')
       } else {
-        // [BOEK-029 v2] Number may be empty for drafts — API assigns it on send
-        showToast(ctx.number ? `Factuur ${ctx.number} verzonden ✓` : 'Factuur verzonden ✓')
+        // [BOEK-031 FIX] Get generated invoice_number from API response
+        const result = await res.json().catch(() => ({}))
+        if (result.invoice_number) {
+          updateOptimistic(ctx.id, { invoice_number: result.invoice_number })
+        }
+        const displayNumber = result.invoice_number || ctx.number
+        showToast(displayNumber
+          ? `Factuur ${displayNumber} verzonden ✓`
+          : 'Factuur verzonden ✓')
       }
     } catch {
       updateOptimistic(ctx.id, { status: 'draft' })
