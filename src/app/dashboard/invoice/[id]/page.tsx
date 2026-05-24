@@ -9,10 +9,6 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound } from 'next/navigation'
 import dynamic from 'next/dynamic'
-import Link from 'next/link'
-// [BOEK-031] Navigation Strategy — May 2026
-import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
-import type { Role } from '@/lib/navigation'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
@@ -54,14 +50,13 @@ export default function InvoiceDetailPage() {
   const [loading, setLoading] = useState(true)
   const [notFoundState, setNotFoundState] = useState(false)
 
-  // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
-  // profile.role may be null on first render → fallback 'zzper'
-  const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
-  const parentHref = useParentPath(role)
-  const homeHref = useHomePath(role)
-
   // [BOEK-031] linked creditnota — toon als er al een bestaat
   const [linkedCreditnota, setLinkedCreditnota] = useState<any>(null)
+
+  // [BOEK-031] Send flow state — May 2026
+  const [showSendModal, setShowSendModal] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -110,6 +105,29 @@ export default function InvoiceDetailPage() {
 
   if (notFoundState) notFound()
 
+  // [BOEK-031] Send draft — calls /api/invoice/send (number + status + email) — May 2026
+  async function handleSendInvoice() {
+    setSending(true)
+    setSendError(null)
+
+    const res = await fetch('/api/invoice/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceId }),
+    })
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setSendError(data.error || 'Verzenden mislukt')
+      setSending(false)
+      return
+    }
+
+    // Success — refresh server data to show new status + number
+    setShowSendModal(false)
+    router.refresh()
+  }
+
   // [DS] STATUS_CONFIG — Material You chip tokens
   const statusCfg = invoice
     ? STATUS_CONFIG[invoice.status] || { label: invoice.status, bg: '#F1F3F4', color: '#5F6368' }
@@ -134,9 +152,9 @@ export default function InvoiceDetailPage() {
       }}>
         <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
-            <Link
-              href={parentHref}
+            {/* [DS] Back button — Material You circular tonal */}
+            <button
+              onClick={() => router.back()}
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -146,18 +164,11 @@ export default function InvoiceDetailPage() {
                 color: '#5F6368',
                 cursor: 'pointer',
                 fontSize: 18,
-                textDecoration: 'none',
                 transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
               }}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</Link>
-            {/* [BOEK-031] Logo — always goes to /dashboard for ZZP — Navigation Strategy — May 2026 */}
-            <Link href={homeHref} style={{ textDecoration: 'none', marginRight: 4 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: '#1A73E8', letterSpacing: '-0.01em' }}>
-                BoekBrug
-              </span>
-            </Link>
+            >←</button>
             {loading ? (
               <div style={{ height: 16, width: 144, backgroundColor: '#E7E0EC', borderRadius: 9999 }} />
             ) : (
@@ -224,6 +235,32 @@ export default function InvoiceDetailPage() {
         <InvoiceDetailSkeleton />
       ) : (
         <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 80 }}>
+
+          {/* [BOEK-031] Send banner — only for draft invoices — May 2026 */}
+          {invoice.status === 'draft' && (
+            <div style={{ backgroundColor: '#D3E3FD', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#1967D2' }}>↗</span>
+                <p style={{ fontSize: 12, color: '#1967D2', margin: 0 }}>
+                  <strong>Klaar om te verzenden?</strong> De factuur krijgt een definitief nummer.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSendModal(true)}
+                disabled={sending}
+                style={{ flexShrink: 0, marginLeft: 12, backgroundColor: '#1A73E8', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: sending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: sending ? 0.6 : 1 }}
+              >
+                {sending ? 'Verzenden...' : '✉ Verstuur factuur'}
+              </button>
+            </div>
+          )}
+
+          {/* [BOEK-031] Send error message */}
+          {sendError && (
+            <div style={{ backgroundColor: '#FCE8E6', borderRadius: 16, padding: '12px 16px' }}>
+              <p style={{ fontSize: 13, color: '#B3261E', margin: 0 }}>{sendError}</p>
+            </div>
+          )}
 
           {/* [DS] Creditnota banner — al een creditnota gekoppeld */}
           {linkedCreditnota && (
@@ -353,6 +390,58 @@ export default function InvoiceDetailPage() {
             </div>
           )}
 
+          {/* [DS] Creditnota terugbetaling */}
+          {invoice.invoice_type === 'creditnota' && profile?.iban && (
+            <div style={{ backgroundColor: '#F9DEDC', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Terugbetaling</p>
+              <p style={{ fontSize: 14, color: '#B3261E', lineHeight: 1.6, margin: 0 }}>
+                Het gecrediteerde bedrag wordt teruggestort op het rekeningnummer van de klant.
+                O.v.v. creditnota <strong>{invoice.invoice_number}</strong>.
+              </p>
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* [BOEK-031] Send confirmation modal — TODO: extract to shared CenteredModal — May 2026 */}
+      {showSendModal && invoice && (
+        <div onClick={() => setShowSendModal(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
+              Versturen naar {invoice.client_name}?
+            </h3>
+            <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
+              Bevestig de gegevens voordat je de factuur verstuurt.
+            </p>
+            <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Factuurnummer:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>
+                {invoice.invoice_number || 'Wordt toegekend bij verzending'}
+              </dd>
+              <dt style={{ color: '#5F6368', margin: 0 }}>E-mail:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_email}</dd>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Bedrag:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>€{(invoice.total_inc_btw ?? 0).toFixed(2)}</dd>
+            </dl>
+            <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
+              ⚠ Na verzending kun je deze factuur niet meer wijzigen. Voor correcties maak je een creditnota.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowSendModal(false)}
+                disabled={sending}
+                style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: sending ? 'default' : 'pointer' }}>
+                Annuleren
+              </button>
+              <button onClick={handleSendInvoice}
+                disabled={sending}
+                style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#1A73E8', color: 'white', fontSize: 14, fontWeight: 600, cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.6 : 1 }}>
+                {sending ? 'Verzenden...' : 'Versturen'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

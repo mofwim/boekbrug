@@ -31,6 +31,11 @@ export default function InvoiceEditPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // [BOEK-031] Send flow state — May 2026
+  const [invoiceStatus, setInvoiceStatus] = useState<string>('draft')
+  const [showSendModal, setShowSendModal] = useState(false)
+  const [sending, setSending] = useState(false)
+
   // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
   const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
   const parentHref = useParentPath(role)
@@ -85,6 +90,8 @@ export default function InvoiceEditPage() {
 
       // تعبئة الـ state بالبيانات الموجودة
       setInvoiceNumber(invoice.invoice_number)
+      // [BOEK-031] Track current status for button visibility — May 2026
+      setInvoiceStatus(invoice.status || 'draft')
       setClientName(invoice.client_name || '')
       setClientEmail(invoice.client_email || '')
       setClientAddress(invoice.client_address || '')
@@ -161,6 +168,63 @@ export default function InvoiceEditPage() {
     }
 
     // [BOEK-031] replace ipv push — voorkomt back loop naar edit pagina — May 2026
+    router.replace(`/dashboard/invoice/${invoiceId}`)
+  }
+
+  // [BOEK-031] Send invoice — saves first, then triggers /api/invoice/send — May 2026
+  async function handleSendInvoice() {
+    if (!clientName || !clientEmail || !invoiceDate || !dueDate) {
+      setError('Vul alle verplichte velden in (*)')
+      return
+    }
+    if (lines.some(l => !l.description || l.unit_price <= 0)) {
+      setError('Vul alle factuurregels correct in')
+      return
+    }
+
+    setSending(true)
+    setError('')
+
+    // 1. Save changes first (PUT)
+    const saveRes = await fetch(`/api/invoice/${invoiceId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: clientName,
+        client_email: clientEmail,
+        client_address: clientAddress,
+        client_postal_code: clientPostal,
+        client_city: clientCity,
+        client_btw_number: clientBtw,
+        invoice_date: invoiceDate,
+        due_date: dueDate,
+        lines,
+      }),
+    })
+
+    if (!saveRes.ok) {
+      const data = await saveRes.json().catch(() => ({}))
+      setError(data.error || 'Opslaan mislukt')
+      setSending(false)
+      return
+    }
+
+    // 2. Call send endpoint (generates number, updates status, emails)
+    const sendRes = await fetch('/api/invoice/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceId }),
+    })
+
+    if (!sendRes.ok) {
+      const data = await sendRes.json().catch(() => ({}))
+      setError(data.error || 'Verzenden mislukt')
+      setSending(false)
+      return
+    }
+
+    // 3. Success — refresh server data + navigate to detail
+    router.refresh()
     router.replace(`/dashboard/invoice/${invoiceId}`)
   }
 
@@ -419,14 +483,35 @@ export default function InvoiceEditPage() {
         )}
 
         {/* Acties */}
-        <div className="flex gap-3 pb-8">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
-          >
-            {saving ? 'Opslaan...' : 'Wijzigingen opslaan'}
-          </button>
+        <div className="flex gap-3 pb-8 flex-wrap">
+          {invoiceStatus === 'draft' ? (
+            <>
+              {/* [BOEK-031] Draft: 2 buttons — Save (keeps draft) + Send (triggers full flow) — May 2026 */}
+              <button
+                onClick={handleSave}
+                disabled={saving || sending}
+                className="bg-gray-100 text-gray-700 px-6 py-3 rounded-xl text-sm font-semibold hover:bg-gray-200 disabled:opacity-50"
+              >
+                {saving ? 'Opslaan...' : 'Wijzigingen opslaan'}
+              </button>
+              <button
+                onClick={() => setShowSendModal(true)}
+                disabled={saving || sending}
+                className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+              >
+                {sending ? 'Verzenden...' : '✉ Verstuur factuur'}
+              </button>
+            </>
+          ) : (
+            // [BOEK-031] Sent: only Save (changes are limited by backend PUT validation) — May 2026
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Opslaan...' : 'Wijzigingen opslaan'}
+            </button>
+          )}
           {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
           <Link
             href={parentHref}
@@ -437,6 +522,45 @@ export default function InvoiceEditPage() {
         </div>
 
       </div>
+
+      {/* [BOEK-031] Send confirmation modal — TODO: extract to shared CenteredModal component — May 2026 */}
+      {showSendModal && (
+        <div onClick={() => setShowSendModal(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
+              Versturen naar {clientName}?
+            </h3>
+            <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
+              Bevestig de gegevens voordat je de factuur verstuurt.
+            </p>
+            <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Factuurnummer:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>
+                {invoiceNumber || 'Wordt toegekend bij verzending'}
+              </dd>
+              <dt style={{ color: '#5F6368', margin: 0 }}>E-mail:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{clientEmail}</dd>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Bedrag:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>€{totalInc.toFixed(2)}</dd>
+            </dl>
+            <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
+              ⚠ Na verzending kun je deze factuur niet meer wijzigen. Voor correcties maak je een creditnota.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowSendModal(false)}
+                style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
+                Annuleren
+              </button>
+              <button onClick={() => { setShowSendModal(false); handleSendInvoice() }}
+                style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#1A73E8', color: 'white', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+                Versturen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

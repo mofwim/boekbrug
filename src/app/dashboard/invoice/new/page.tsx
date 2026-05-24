@@ -427,8 +427,14 @@ function NewInvoicePageContent() {
         : typeParam === 'creditnota' ? 'creditnota'
         : typeParam === 'offerte' ? 'pro_forma'
         : 'factuur'
-      const num = await generateNumber(supabase, user.id, initType)
-      setInvoiceNumber(num)
+      // [BOEK-031] Draft = no number. Generated only on send. — May 2026
+      // Pro forma is exception — needs preview number for UX.
+      if (initType === 'pro_forma') {
+        const num = await generateNumber(supabase, user.id, initType)
+        setInvoiceNumber(num)
+      } else {
+        setInvoiceNumber('') // empty = "Concept" in UI
+      }
 
       // Clients autocomplete
       const { data: cl } = await supabase
@@ -708,8 +714,8 @@ function NewInvoicePageContent() {
         invoiceType === 'creditnota' ? 'creditnota' : 'factuur'
       )
     } else {
-      // draft — keep preview number (will be replaced on send)
-      finalNumber = invoiceNumber
+      // [BOEK-031] draft = null. Number generated only on send. — May 2026
+      finalNumber = ''
     }
 
     // DB invoice_type mapping
