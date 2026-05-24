@@ -4,6 +4,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { redirect } from 'next/navigation'
 import DashboardClient from './DashboardClient'
+import SentryUserProvider from '@/components/providers/SentryUserProvider' // [BOEK-SENTRY]
 
 export const dynamic = 'force-dynamic'
 
@@ -26,5 +27,15 @@ export default async function DashboardPage() {
   if (profile.role === 'accountant') redirect('/dashboard/accountant')
 
   // ZZP → existing DashboardClient (unchanged)
-  return <DashboardClient profile={profile} />
+  return (
+    <>
+      {/* [BOEK-SENTRY] set user context for all errors in this session */}
+      <SentryUserProvider
+        userId={profile.id}
+        email={profile.email}
+        role={profile.role}
+      />
+      <DashboardClient profile={profile} />
+    </>
+  )
 }
