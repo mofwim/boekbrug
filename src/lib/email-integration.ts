@@ -809,11 +809,21 @@ export async function syncUserEmails(userId: string): Promise<{
         // Continue — invoice record is still saved without the file
       }
 
-      // [BOEK-011] Step 3: save the invoice with full AI-extracted breakdown
+      // [BOEK-011] Step 3: save the invoice with full AI-extracted breakdown.
+      //
+      // CRITICAL: incoming invoices use receiver_id, NOT sender_id.
+      //   - The user RECEIVES this invoice → receiver_id = userId
+      //   - The vendor SENDS it but isn't a BoekBrug user → sender_id = null
+      //
+      // useInfiniteInvoices queries `.eq('sender_id', userId)` for "Mijn facturen"
+      // (outgoing). If we put userId in sender_id here, incoming invoices would
+      // appear there as if the user created them. They also wouldn't appear in
+      // /dashboard/incoming, which queries `.eq('receiver_id', userId)`.
       const { data: insertedInvoice, error: dbError } = await supabase
         .from('invoices')
         .insert({
-          sender_id: userId,
+          sender_id: null,
+          receiver_id: userId,
           direction: 'incoming',
           status: 'received',
           source: 'email',
