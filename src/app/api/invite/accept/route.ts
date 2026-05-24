@@ -20,7 +20,15 @@ export async function POST(request: NextRequest) {
       .eq('status', 'pending')
       .single()
 
-    if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 })
+if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 })
+
+    // [BOEK-FOUNDATION-TYPES] zzper_id is nullable in DB schema
+    if (!invitation.zzper_id) {
+      return NextResponse.json(
+        { error: 'Ongeldige uitnodiging — gebruiker ID ontbreekt' },
+        { status: 400 }
+      )
+    }
 
     let accountantId: string
     let zzperId: string

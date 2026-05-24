@@ -466,8 +466,8 @@ function AccountantView({ role }: { role: Role }) {
                       <p className="text-xs text-muted-foreground truncate mt-0.5">{inv.client_name}</p>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
-                      <p className="text-sm font-semibold tabular-nums">{formatEur(inv.total_inc_btw)}</p>
-                      <StatusBadge status={inv.status} />
+                      <p className="text-sm font-semibold tabular-nums">{formatEur(inv.total_inc_btw ?? 0)}</p>
+                      <StatusBadge status={inv.status ?? "draft"} />
                     </div>
                   </a>
                 ))}

@@ -1,10 +1,12 @@
 // src/lib/audit.ts
 // [BOEK-SECURITY-2] Audit logging helper — v2 — May 2026
+// [BOEK-FOUNDATION-TYPES] Use Supabase Json type for jsonb columns — May 2026
 // =====================================================
 // التغييرات في v2:
 //   + أُضيف 'invoice.duplicated' للـ AuditAction union
 //   + أُضيف 'creditnota.created' (بدلاً من invoice.creditnota_created)
 //     للاتساق مع الـ ٤٠ historical rows في DB
+//   + Json type cast للـ jsonb columns
 // =====================================================
 // يسجّل critical actions في audit_logs (GDPR compliance)
 // كل writes تمر عبر service_role
@@ -12,6 +14,10 @@
 // =====================================================
 
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import type { Database } from '@/types/database.types'
+
+// [BOEK-FOUNDATION-TYPES] Json type matches Supabase jsonb column type
+type Json = Database['public']['Tables']['audit_logs']['Row']['old_value']
 
 // ── Types ─────────────────────────────────────────────
 
@@ -92,10 +98,11 @@ const FORBIDDEN_FIELDS = new Set([
 /**
  * Strips forbidden fields from an object before logging.
  * Also caps total JSON size at 10KB per record.
+ * [BOEK-FOUNDATION-TYPES] Returns Json type compatible with jsonb columns
  */
 function sanitizeForAudit(
   obj: Record<string, unknown> | undefined
-): Record<string, unknown> | undefined {
+): Json | undefined {
   if (!obj) return undefined
 
   const cleaned: Record<string, unknown> = {}
@@ -107,10 +114,11 @@ function sanitizeForAudit(
   // حد الحجم — 10KB أكثر من كافٍ، يمنع DoS عبر large jsonb
   const json = JSON.stringify(cleaned)
   if (json.length > 10_000) {
-    return { _truncated: true, _size: json.length, _preview: json.slice(0, 1_000) }
+    return { _truncated: true, _size: json.length, _preview: json.slice(0, 1_000) } as Json
   }
 
-  return cleaned
+  // [BOEK-FOUNDATION-TYPES] Safe cast — sanitized content is JSON-compatible
+  return cleaned as Json
 }
 
 // ── Main function ─────────────────────────────────────

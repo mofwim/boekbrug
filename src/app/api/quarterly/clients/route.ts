@@ -37,8 +37,9 @@ export async function GET() {
     return NextResponse.json({ error: linksError.message }, { status: 500 });
   }
 
-  const ids = (links ?? []).map((l) => l.zzper_id).filter(Boolean);
-
+const ids = (links ?? [])
+  .map((l) => l.zzper_id)
+  .filter((id) => id !== null) as string[];
   if (ids.length === 0) {
     return NextResponse.json([]);
   }

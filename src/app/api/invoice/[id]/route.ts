@@ -45,8 +45,7 @@ export async function PUT(
     if (error) return NextResponse.json({ error }, { status })
 
     // Human Control: betaalde of verwerkte facturen mogen niet bewerkt worden
-    if (NON_EDITABLE_STATUSES.includes(invoice!.status)) {
-      return NextResponse.json(
+if (invoice!.status && NON_EDITABLE_STATUSES.includes(invoice!.status)) {     return NextResponse.json(
         { error: 'Deze factuur kan niet meer worden bewerkt' },
         { status: 400 }
       )

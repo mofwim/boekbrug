@@ -4,10 +4,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import type { Database } from "@/types/database.types";
 
+type ProfileUpdate = Database["public"]["Tables"]["profiles"]["Update"];
 // [BOEK-015] fix: DB CHECK constraint = 'zzper' | 'accountant' | 'client'
 // UI sends 'zzp' → must map to 'zzper' before saving
-const ROLE_MAP: Record<string, string> = {
+type UserRole = "zzper" | "accountant" | "client";
+const ROLE_MAP: Record<string, UserRole> = {
   zzp: "zzper",
   accountant: "accountant",
 };
@@ -19,16 +22,15 @@ export async function PATCH(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
   const body = await req.json();
-  const patch: Record<string, unknown> = {};
-
+const patch: ProfileUpdate = {};
   // Progress fields
   if (typeof body.step === "number") patch.onboarding_step = body.step;
   if (typeof body.done === "boolean") patch.onboarding_done = body.done;
 
   // [BOEK-015] fix: map 'zzp' → 'zzper' to match DB CHECK constraint
-  if (typeof body.role === "string" && ROLE_MAP[body.role]) {
-    patch.role = ROLE_MAP[body.role];
-  }
+if (typeof body.role === "string" && ROLE_MAP[body.role]) {
+  patch.role = ROLE_MAP[body.role];  // ← هذا type: string عام
+}
 
   // [BOEK-015] fix: only include fields with real values — no nulls to DB
   if (typeof body.company_name === "string" && body.company_name.trim()) {

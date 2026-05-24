@@ -1,5 +1,6 @@
 // src/app/onboarding/page.tsx
 // [BOEK-015] fix: create profile if null, clamp step to min 1
+// [BOEK-FOUNDATION-TYPES] DB role enum: 'zzper' | 'accountant' | 'client' — not 'zzp'
 
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -25,7 +26,8 @@ export default async function OnboardingPage() {
       full_name: user.user_metadata?.full_name ?? null,
       onboarding_step: 1,
       onboarding_done: false,
-      role: "zzp",
+      // [BOEK-FOUNDATION-TYPES] DB CHECK constraint requires 'zzper' (not 'zzp')
+      role: "zzper",
     });
 
     // Re-fetch after insert
@@ -48,6 +50,7 @@ export default async function OnboardingPage() {
 
   // [BOEK-015] fix: onboarding_step = 0 in DB → clamp to 1 so Step 1 renders
   const initialStep = Math.max(1, profile?.onboarding_step ?? 1);
+  // [BOEK-FOUNDATION-TYPES] UI role uses 'zzp' shortcut, DB uses 'zzper'
   const initialRole = profile?.role === "accountant" ? "accountant" : "zzp";
 
   return (

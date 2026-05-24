@@ -20,6 +20,19 @@ import {
   invoicesToCsv,
   invoicesToCsvAccountant,
 } from "@/lib/export";
+import type { Database } from "@/types/database.types";
+
+// [BOEK-FOUNDATION-TYPES] Valid invoice statuses from DB CHECK constraint
+type InvoiceStatus = NonNullable<Database["public"]["Tables"]["invoices"]["Row"]["status"]>;
+
+const VALID_STATUSES: readonly InvoiceStatus[] = [
+  'draft', 'sent', 'paid', 'overdue', 'received',
+  'processing', 'processed', 'unclear', 'archived'
+] as const;
+
+function isValidStatus(s: string | null): s is InvoiceStatus {
+  return s !== null && (VALID_STATUSES as readonly string[]).includes(s);
+}
 
 // [BOEK-014] Separate SELECT constants — concatenation causes GenericStringError
 const INVOICE_SELECT =
@@ -85,8 +98,7 @@ export async function GET(req: NextRequest) {
 
     const { data: clientLinks } = await supabase
       .from("accountant_clients")
-      .select("zzper_id, profiles:zzper_id(id, full_name, company_name)")
-      .eq("accountant_id", user.id);
+.select("zzper_id, profiles!accountant_clients_zzper_id_fkey(id, full_name, company_name)")      .eq("accountant_id", user.id);
 
     if (!clientLinks || clientLinks.length === 0) {
       return new NextResponse("Geen klanten gekoppeld", { status: 404 });
@@ -95,14 +107,13 @@ export async function GET(req: NextRequest) {
     const clientNames: Record<string, string> = {};
     const clientIds: string[] = [];
 
-    for (const link of clientLinks) {
-      // profiles join returns array — take first element
-      const profilesArr = link.profiles as { id: string; full_name: string | null; company_name: string | null }[] | null;
-      const p = Array.isArray(profilesArr) ? profilesArr[0] ?? null : profilesArr;
-      if (!p) continue;
-      clientIds.push(p.id);
-      clientNames[p.id] = p.company_name ?? p.full_name ?? "Onbekend";
-    }
+for (const link of clientLinks) {
+  // [BOEK-FOUNDATION-TYPES] FK hint returns single object, not array
+  const p = link.profiles as { id: string; full_name: string | null; company_name: string | null } | null;
+  if (!p) continue;
+  clientIds.push(p.id);
+  clientNames[p.id] = p.company_name ?? p.full_name ?? "Onbekend";
+}
 
     if (clientIds.length === 0) {
       return new NextResponse("Geen klanten gevonden", { status: 404 });
@@ -168,11 +179,13 @@ export async function GET(req: NextRequest) {
     .lte("invoice_date", end)
     .order("invoice_date", { ascending: true });
 
-  if (profile?.role === "accountant") {
-    query = query.eq("status", statusFilter ?? "paid");
-  } else if (statusFilter) {
-    query = query.eq("status", statusFilter);
-  }
+// [BOEK-FOUNDATION-TYPES] validate status against DB CHECK constraint
+if (profile?.role === "accountant") {
+  const accountantStatus: InvoiceStatus = isValidStatus(statusFilter) ? statusFilter : "paid";
+  query = query.eq("status", accountantStatus);
+} else if (isValidStatus(statusFilter)) {
+  query = query.eq("status", statusFilter);
+}
 
   const { data: rawData, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

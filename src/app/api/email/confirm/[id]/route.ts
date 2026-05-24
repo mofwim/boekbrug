@@ -8,7 +8,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import type { Database } from "@/types/database.types";
 
+type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 // ── POST — mark as paid ───────────────────────────────────────────────────────
 
 export async function POST(
@@ -57,11 +59,11 @@ export async function POST(
     // No body — keep amounts already in DB
   }
 
-  const updatePatch: Record<string, unknown> = {
-    status: "paid",
-    marked_paid_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+const updatePatch: InvoiceUpdate = {
+  status: "paid",
+  marked_paid_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+};
 
   // Only overwrite amounts if the user actually sent valid numbers
   const validNum = (v: unknown): v is number =>

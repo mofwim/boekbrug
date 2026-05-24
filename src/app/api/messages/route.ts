@@ -87,16 +87,17 @@ export async function POST(request: NextRequest) {
       supabase.from('profiles').select('email, full_name').eq('id', receiver_id).single()
     ])
 
-    if (senderProfile && receiverProfile) {
+// [BOEK-FOUNDATION-TYPES] Only send notification if recipient has email
+    if (senderProfile && receiverProfile?.email) {
+      const senderName = senderProfile.company_name || senderProfile.full_name || 'BoekBrug gebruiker'
       sendMessageNotification({
         toEmail: receiverProfile.email,
-        receiverName: receiverProfile.full_name,
-        senderName: senderProfile.company_name || senderProfile.full_name,
+        receiverName: receiverProfile.full_name || 'Gebruiker',
+        senderName,
         messagePreview: content.trim().slice(0, 120),
         conversationUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/messages/${user.id}`
       }).catch(() => null)
     }
-
     return NextResponse.json({ success: true, message })
 
   } catch {

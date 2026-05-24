@@ -1,20 +1,22 @@
 // src/lib/quarterly.ts
 // [BOEK-013] Quarterly overview logic — May 2026
+// [BOEK-FOUNDATION-TYPES] Null safety for DB-nullable fields — May 2026
 // Pure functions — no DB calls — easy to test
 
 export type BtwRate = number;
 
+// [BOEK-FOUNDATION-TYPES] Interface reflects actual DB schema (nullable fields)
 export interface InvoiceForQuarterly {
   id: string;
-  invoice_number: string;
-  client_name: string;
-  status: string;
+  invoice_number: string | null;
+  client_name: string | null;
+  status: string | null;
   direction: string; // 'outgoing' | 'incoming'
-  total_ex_btw: number;
-  btw_amount: number;
-  total_inc_btw: number;
+  total_ex_btw: number | null;
+  btw_amount: number | null;
+  total_inc_btw: number | null;
   btw_rate: number;
-  invoice_date: string;
+  invoice_date: string | null;
   due_date?: string;
 }
 
@@ -73,6 +75,7 @@ export function getQuarter(date: string): 1 | 2 | 3 | 4 {
 // [BOEK-013] Build simplified ZZP summary — 4 numbers only
 // mode='paid'  → outgoing:paid only + incoming:paid only
 // mode='all'   → outgoing:paid+sent+overdue + incoming:paid+received+processing
+// [BOEK-FOUNDATION-TYPES] Null-safe: incomplete invoices treated as 0
 export function buildZzpSummary(
   invoices: InvoiceForQuarterly[],
   year: number,
@@ -91,24 +94,29 @@ export function buildZzpSummary(
     const isOutgoing = inv.direction === 'outgoing';
     const isIncoming = inv.direction === 'incoming';
 
+    // [BOEK-FOUNDATION-TYPES] Safe defaults for nullable fields
+    const incBtw = inv.total_inc_btw ?? 0;
+    const btw = inv.btw_amount ?? 0;
+    const status = inv.status ?? '';
+
     if (mode === 'paid') {
-      if (isOutgoing && inv.status === 'paid') {
-        totalIn += inv.total_inc_btw;
-        totalBtwIn += inv.btw_amount;
+      if (isOutgoing && status === 'paid') {
+        totalIn += incBtw;
+        totalBtwIn += btw;
       }
-      if (isIncoming && inv.status === 'paid') {
-        totalOut += inv.total_inc_btw;
-        totalBtwOut += inv.btw_amount;
+      if (isIncoming && status === 'paid') {
+        totalOut += incBtw;
+        totalBtwOut += btw;
       }
     } else {
       // mode === 'all'
-      if (isOutgoing && OUTGOING_STATUSES_ALL.includes(inv.status)) {
-        totalIn += inv.total_inc_btw;
-        totalBtwIn += inv.btw_amount;
+      if (isOutgoing && OUTGOING_STATUSES_ALL.includes(status)) {
+        totalIn += incBtw;
+        totalBtwIn += btw;
       }
-      if (isIncoming && INCOMING_STATUSES_ALL.includes(inv.status)) {
-        totalOut += inv.total_inc_btw;
-        totalBtwOut += inv.btw_amount;
+      if (isIncoming && INCOMING_STATUSES_ALL.includes(status)) {
+        totalOut += incBtw;
+        totalBtwOut += btw;
       }
     }
   }
@@ -116,7 +124,8 @@ export function buildZzpSummary(
   return { year, quarter, mode, totalIn, totalOut, totalBtwIn, totalBtwOut };
 }
 
-/** Build a full QuarterlySummary — used by accountant mode (unchanged) */
+/** Build a full QuarterlySummary — used by accountant mode */
+// [BOEK-FOUNDATION-TYPES] Null-safe: incomplete invoices treated as 0
 export function buildQuarterlySummary(
   invoices: InvoiceForQuarterly[],
   year: number,
@@ -134,22 +143,27 @@ export function buildQuarterlySummary(
   const btwMap = new Map<BtwRate, { excl: number; btw: number }>();
 
   for (const inv of invoices) {
-    totalExcl += inv.total_ex_btw;
-    totalBtw += inv.btw_amount;
-    totalIncl += inv.total_inc_btw;
+    // [BOEK-FOUNDATION-TYPES] Safe defaults for nullable numeric fields
+    const exBtw = inv.total_ex_btw ?? 0;
+    const btw = inv.btw_amount ?? 0;
+    const incBtw = inv.total_inc_btw ?? 0;
+
+    totalExcl += exBtw;
+    totalBtw += btw;
+    totalIncl += incBtw;
 
     if (inv.status === 'paid') {
-      paid += inv.total_inc_btw;
+      paid += incBtw;
     } else if (inv.due_date && new Date(inv.due_date) < now) {
-      overdue += inv.total_inc_btw;
+      overdue += incBtw;
     } else {
-      outstanding += inv.total_inc_btw;
+      outstanding += incBtw;
     }
 
     const existing = btwMap.get(inv.btw_rate) ?? { excl: 0, btw: 0 };
     btwMap.set(inv.btw_rate, {
-      excl: existing.excl + inv.total_ex_btw,
-      btw: existing.btw + inv.btw_amount,
+      excl: existing.excl + exBtw,
+      btw: existing.btw + btw,
     });
   }
 

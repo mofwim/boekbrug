@@ -1,5 +1,6 @@
 // src/app/api/search/route.ts
 // [BOEK-012] Smart search API — server only — May 2026
+// [BOEK-FOUNDATION-TYPES] Null safety for nullable FK fields — May 2026
 // ⚠️  This is the ONLY file allowed to import supabase-server.ts for search.
 //     All Supabase queries are here. search.ts has types only.
 
@@ -67,7 +68,10 @@ export async function GET(req: NextRequest) {
       .from("accountant_clients")
       .select("zzper_id")
       .eq("accountant_id", user.id);
-    const clientIds = (links ?? []).map((l: { zzper_id: string }) => l.zzper_id);
+    // [BOEK-FOUNDATION-TYPES] zzper_id is nullable — filter out nulls
+    const clientIds = (links ?? [])
+      .map((l) => l.zzper_id)
+      .filter((id): id is string => id !== null);
     senderIds = [user.id, ...clientIds];
   }
 
@@ -79,8 +83,13 @@ export async function GET(req: NextRequest) {
       .select("invoice_id")
       .or(buildOr(["description"], terms))
       .limit(30);
+    // [BOEK-FOUNDATION-TYPES] invoice_id is nullable — filter out nulls
     invoiceIdsFromLines = [
-      ...new Set((lineMatches ?? []).map((l: { invoice_id: string }) => l.invoice_id)),
+      ...new Set(
+        (lineMatches ?? [])
+          .map((l) => l.invoice_id)
+          .filter((id): id is string => id !== null)
+      ),
     ];
   }
 

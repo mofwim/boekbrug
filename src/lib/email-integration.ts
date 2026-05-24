@@ -62,7 +62,7 @@ export async function getEmailTokens(
     accessToken: accessToken as string,
     refreshToken: refreshToken as string,
     provider: conn.provider as 'gmail' | 'outlook',
-    email: conn.email,
+    email: conn.email ?? '',
     connectionId: conn.id,
   }
 }

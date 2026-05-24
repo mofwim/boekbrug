@@ -1,5 +1,6 @@
 // src/app/api/quarterly/route.ts
 // [BOEK-013] Quarterly financial overview — May 2026
+// [BOEK-FOUNDATION-TYPES] Null safety for DB-nullable fields — May 2026
 // GET /api/quarterly?year=2026&quarter=1
 // GET /api/quarterly?year=2026&quarter=1&mode=paid       ← ZZP betaald overzicht
 // GET /api/quarterly?year=2026&quarter=1&mode=all        ← ZZP alles overzicht
@@ -14,6 +15,16 @@ import {
   quarterEndDate,
 } from "@/lib/quarterly";
 import type { InvoiceForQuarterly } from "@/lib/quarterly";
+
+// [BOEK-FOUNDATION-TYPES] Helper: safely calculate btw_rate from nullable fields
+function calculateBtwRate(
+  totalExBtw: number | null,
+  btwAmount: number | null
+): number {
+  const exBtw = totalExBtw ?? 0;
+  const btw = btwAmount ?? 0;
+  return exBtw > 0 ? Math.round((btw / exBtw) * 100) : 0;
+}
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -77,9 +88,8 @@ export async function GET(req: NextRequest) {
       total_inc_btw: inv.total_inc_btw,
       invoice_date: inv.invoice_date,
       due_date: inv.due_date ?? undefined,
-      btw_rate: inv.total_ex_btw > 0
-        ? Math.round((inv.btw_amount / inv.total_ex_btw) * 100)
-        : 0,
+      // [BOEK-FOUNDATION-TYPES] Null-safe btw_rate calculation
+      btw_rate: calculateBtwRate(inv.total_ex_btw, inv.btw_amount),
     }));
 
     return NextResponse.json(buildQuarterlySummary(invoices, year, quarter));
@@ -113,9 +123,8 @@ export async function GET(req: NextRequest) {
     invoice_date: inv.invoice_date,
     due_date: inv.due_date ?? undefined,
     // [BOEK-013] btw_rate does not exist in DB — always calculate
-    btw_rate: inv.total_ex_btw > 0
-      ? Math.round((inv.btw_amount / inv.total_ex_btw) * 100)
-      : 0,
+    // [BOEK-FOUNDATION-TYPES] Null-safe btw_rate calculation
+    btw_rate: calculateBtwRate(inv.total_ex_btw, inv.btw_amount),
   }));
 
   return NextResponse.json(buildZzpSummary(invoices, year, quarter, mode));

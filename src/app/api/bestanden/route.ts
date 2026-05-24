@@ -5,7 +5,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { searchBestanden, ensureSharedFolder } from "@/lib/bestanden";
+import type { Database } from "@/types/database.types";
 
+type DocumentUpdate = Database["public"]["Tables"]["documents"]["Update"];
 const FOLDER_SELECT = "id, user_id, name, parent_id, color, created_at, starred, is_system, folder_type";
 const DOC_SELECT    = "id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, starred, trashed, trashed_at, source";
 
@@ -85,7 +87,7 @@ export async function PATCH(req: NextRequest) {
     trashed?: boolean;
   };
 
-  const patch: Record<string, unknown> = {};
+  const patch: DocumentUpdate = {};
   if (typeof body.file_name === "string") patch.file_name = body.file_name.trim();
   if ("folder_id" in body)                patch.folder_id = body.folder_id ?? null;
   if (typeof body.starred === "boolean")   patch.starred   = body.starred;

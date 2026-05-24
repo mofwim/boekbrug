@@ -8,7 +8,8 @@
 // via accountant_clients before returning any data.
 //
 // Visibility rule: accountant sees ONLY invoices where
-//   status IN ('paid', 'voldaan') AND sent_to_accountant = true
+//   status = 'paid' AND sent_to_accountant = true
+//   [BOEK-FOUNDATION-TYPES] 'voldaan' removed — not in DB CHECK constraint
 //   'received' invoices are NEVER returned here.
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
@@ -67,7 +68,7 @@ export async function getAccountantClients(
         .from('invoices')
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', profile.id)
-        .in('status', ['paid', 'voldaan'])
+        .in('status', ['paid'])
         .eq('sent_to_accountant', true)
         .gte('invoice_date', start)
         .lte('invoice_date', end)
@@ -77,7 +78,7 @@ export async function getAccountantClients(
         .from('invoices')
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', profile.id)
-        .in('status', ['paid', 'voldaan'])
+        .in('status', ['paid'])
         .eq('sent_to_accountant', true)
         .eq('accountant_status', 'verwerkt')
         .gte('invoice_date', start)
@@ -119,7 +120,7 @@ export async function getAccountantClients(
         company_name: profile.company_name,
         email: profile.email,
         status,
-        linked_at: row.created_at,
+        linked_at: row.created_at ?? "",
       } satisfies ClientSummary
     })
   )
@@ -175,7 +176,7 @@ export async function getClientDetail(
     .from('invoices')
     .select('id', { count: 'exact', head: true })
     .eq('sender_id', clientId)
-    .in('status', ['paid', 'voldaan'])
+    .in('status', ['paid'])
     .eq('sent_to_accountant', true)
     .gte('invoice_date', start)
     .lte('invoice_date', end)
@@ -184,7 +185,7 @@ export async function getClientDetail(
     .from('invoices')
     .select('id', { count: 'exact', head: true })
     .eq('sender_id', clientId)
-    .in('status', ['paid', 'voldaan'])
+    .in('status', ['paid'])
     .eq('sent_to_accountant', true)
     .eq('accountant_status', 'verwerkt')
     .gte('invoice_date', start)
@@ -230,7 +231,7 @@ export async function getClientDetail(
     postal_code: profile.postal_code,
     city: profile.city,
     status,
-    linked_at: link.created_at,
+    linked_at: link.created_at ?? "",
   } satisfies ClientDetail
 }
 
@@ -298,7 +299,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
         .from('invoices')
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId)
-        .in('status', ['paid', 'voldaan'])
+        .in('status', ['paid'])
         .eq('sent_to_accountant', true)
         .eq('accountant_status', 'vraag')
 
@@ -317,7 +318,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
         .from('invoices')
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId)
-        .in('status', ['paid', 'voldaan'])
+        .in('status', ['paid'])
         .eq('sent_to_accountant', true)
         .not('accountant_status', 'eq', 'verwerkt')
         .gte('invoice_date', start)
@@ -412,7 +413,7 @@ export async function getClientPaidInvoices(
       replaced_by_number
     `)
     .eq('sender_id', clientId)
-    .in('status', ['paid', 'voldaan'])
+    .in('status', ['paid'])
     .eq('sent_to_accountant', true)
     .gte('invoice_date', start)
     .lte('invoice_date', end)

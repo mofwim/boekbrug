@@ -30,6 +30,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
+    // [BOEK-FOUNDATION-TYPES] Required fields check before sending email
+    if (!invoice.client_email || !invoice.client_name || !invoice.invoice_number || invoice.total_inc_btw === null) {
+  return NextResponse.json(
+    { error: 'Factuur incompleet — vereiste velden ontbreken' },
+    { status: 400 }
+  )
+}
+
     const { data: profile } = await supabase
       .from('profiles')
       .select('full_name, company_name')
