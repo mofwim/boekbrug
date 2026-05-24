@@ -5,6 +5,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+// [BOEK-031] BOEK-SECURITY-2 — audit logs via service_role helper — May 2026
+import { logAuditAction, getClientIP } from '@/lib/audit'
 
 export async function POST(request: NextRequest) {
   try {
@@ -132,17 +134,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // [BOEK-031] Audit log
-    await supabase.from('audit_logs').insert({
-      user_id: user.id,
+    // [BOEK-031] BOEK-SECURITY-2 — audit via helper, newValue is object (fix JSON.stringify bug) — May 2026
+    await logAuditAction({
+      userId: user.id,
       action: 'creditnota.created',
-      entity_type: 'invoice',
-      entity_id: creditnota.id,
-      new_value: JSON.stringify({
+      entityType: 'invoice',  // singular — matches historical 2 rows
+      entityId: creditnota.id,
+      newValue: {
         creditnota_number: creditnota.invoice_number,
         original_invoice_id,
         original_invoice_number: original.invoice_number,
-      }),
+      },
+      ipAddress: getClientIP(request),
     })
 
     return NextResponse.json({
