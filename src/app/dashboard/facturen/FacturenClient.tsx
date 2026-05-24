@@ -64,6 +64,14 @@ interface ConfirmPayCtx {
   newStatus: 'paid' | 'sent'
   invoiceType: 'factuur' | 'creditnota' | 'pro_forma'
 }
+// [BOEK-029] Send confirmation for draft → sent
+interface SendCtx {
+  id: string
+  number: string
+  clientName: string
+  clientEmail: string
+  totalIncBtw: number
+}
 
 const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'all',     label: 'Alle'     },
@@ -89,6 +97,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const [toast, setToast]               = useState<string | null>(null)
   const [deleteCtx, setDeleteCtx]       = useState<DeleteCtx | null>(null)
   const [payCtx, setPayCtx]             = useState<ConfirmPayCtx | null>(null)
+  const [sendCtx, setSendCtx]           = useState<SendCtx | null>(null)  // [BOEK-029] Versturen confirm
   const [processingId, setProcessingId] = useState<string | null>(null)
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
@@ -159,6 +168,56 @@ export default function FacturenClient({ profile }: { profile: any }) {
   async function handleDeleteRequest(id: string, number: string, status: string) {
     if (status === 'paid') { router.push(`/dashboard/invoice/new?type=creditnota&original=${id}`); return }
     setDeleteCtx({ id, number, status })
+  }
+
+  // [BOEK-029] Versturen flow — open modal with client details
+  async function handleSendRequest(invoiceId: string) {
+    // Fetch full data to verify required fields before showing modal
+    const { data: inv } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, client_name, client_email, total_inc_btw')
+      .eq('id', invoiceId)
+      .single()
+
+    if (!inv) { showToast('Factuur niet gevonden'); return }
+    if (!inv.client_email) { showToast('Klant e-mail ontbreekt'); return }
+    if (!inv.client_name)  { showToast('Klant naam ontbreekt'); return }
+    if (!inv.invoice_number) { showToast('Factuurnummer ontbreekt'); return }
+
+    setSendCtx({
+      id: inv.id,
+      number: inv.invoice_number,
+      clientName: inv.client_name,
+      clientEmail: inv.client_email,
+      totalIncBtw: inv.total_inc_btw ?? 0,
+    })
+  }
+
+  // [BOEK-029] Versturen execute — call /api/invoice/send
+  async function executeSend(ctx: SendCtx) {
+    setSendCtx(null); setProcessingId(ctx.id)
+    // Optimistic — flip status immediately
+    updateOptimistic(ctx.id, { status: 'sent' })
+    try {
+      const res = await fetch('/api/invoice/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: ctx.id }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Verzenden mislukt' }))
+        // rollback
+        updateOptimistic(ctx.id, { status: 'draft' })
+        showToast(err.error || 'Verzenden mislukt')
+      } else {
+        showToast(`Factuur ${ctx.number} verzonden ✓`)
+      }
+    } catch {
+      updateOptimistic(ctx.id, { status: 'draft' })
+      showToast('Verzenden mislukt — controleer je verbinding')
+    } finally {
+      setProcessingId(null)
+    }
   }
 
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -300,13 +359,18 @@ export default function FacturenClient({ profile }: { profile: any }) {
 
                       {/* [BOEK-029] Fix 1: correct button per type+status */}
 
-                      {/* factuur + draft → Versturen only, no Betaald */}
+                      {/* factuur + draft → Versturen (opens send modal) */}
                       {!isCredit && !isOfferte && inv.status === 'draft' && (
                         <button
-                          onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (processingId === inv.id) return
+                            handleSendRequest(inv.id)
+                          }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span>
-                          Versturen
+                          {processingId === inv.id
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> Versturen</>}
                         </button>
                       )}
 
@@ -520,6 +584,24 @@ export default function FacturenClient({ profile }: { profile: any }) {
         />
       )}
 
+      {/* [BOEK-029] ── Send confirmation modal ── */}
+      {sendCtx && (
+        <BottomSheet
+          title={`Versturen naar ${sendCtx.clientName}?`}
+          body="Bevestig de gegevens voordat je de factuur verstuurt."
+          details={[
+            { label: 'Factuurnummer', value: sendCtx.number },
+            { label: 'E-mail',        value: sendCtx.clientEmail },
+            { label: 'Bedrag',        value: fmtEur(sendCtx.totalIncBtw) },
+          ]}
+          warning="Na verzending kun je deze factuur niet meer wijzigen. Voor correcties moet je een creditnota maken."
+          confirmLabel="Versturen"
+          confirmBg={M3.primary}
+          onConfirm={() => executeSend(sendCtx)}
+          onCancel={() => setSendCtx(null)}
+        />
+      )}
+
       {/* ── Delete dialog ── */}
       {deleteCtx && (
         <BottomSheet
@@ -568,17 +650,57 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel }: {
-  title: string; body: string; confirmLabel: string; confirmBg: string
-  onConfirm: () => void; onCancel: () => void
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning }: {
+  title: string
+  body: string
+  confirmLabel: string
+  confirmBg: string
+  onConfirm: () => void
+  onCancel: () => void
+  details?: { label: string; value: string }[]
+  warning?: string
 }) {
+  // [BOEK-029] CenteredModal — replaces bottom sheet for all dialogs
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.32)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div style={{ background: '#FFFBFE', borderRadius: '28px 28px 0 0', padding: '28px 20px max(env(safe-area-inset-bottom,0px),24px)', width: '100%', maxWidth: 480, boxShadow: '0 -4px 30px rgba(0,0,0,0.12)' }}>
-        {/* Handle */}
-        <div style={{ width: 32, height: 4, borderRadius: 2, background: '#79747E', margin: '0 auto 20px', opacity: 0.4 }} />
-        <p style={{ fontSize: 18, fontWeight: 600, color: '#1C1B1F', marginBottom: 10, textAlign: 'center', fontFamily: FONT }}>{title}</p>
-        <p style={{ fontSize: 14, color: '#49454F', textAlign: 'center', marginBottom: 28, lineHeight: 1.5, fontFamily: FONT }}>{body}</p>
+    <div
+      onClick={onCancel}
+      style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#FFFBFE',
+          borderRadius: 28,
+          padding: '28px 24px 24px',
+          width: '100%',
+          maxWidth: 420,
+          boxShadow: '0 24px 48px rgba(0,0,0,0.24)',
+          fontFamily: FONT,
+        }}
+      >
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#1C1B1F', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
+        <p style={{ fontSize: 14, color: '#49454F', textAlign: 'center', marginBottom: details && details.length > 0 ? 20 : 24, lineHeight: 1.5 }}>{body}</p>
+
+        {/* [BOEK-029] Optional details list */}
+        {details && details.length > 0 && (
+          <div style={{ background: '#F1F3F4', borderRadius: 12, padding: '14px 16px', marginBottom: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {details.map(d => (
+              <div key={d.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 13, color: '#5F6368', flexShrink: 0 }}>{d.label}</span>
+                <span style={{ fontSize: 13, color: '#1C1B1F', fontWeight: 600, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* [BOEK-029] Optional warning box */}
+        {warning && (
+          <div style={{ background: '#FEF7E0', borderRadius: 12, padding: '12px 14px', marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#EA8600', flexShrink: 0, marginTop: 1 }}>warning</span>
+            <p style={{ fontSize: 12.5, color: '#7C5800', lineHeight: 1.5, margin: 0 }}>{warning}</p>
+          </div>
+        )}
+
         <button onClick={onConfirm} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{confirmLabel}</button>
         <button onClick={onCancel}  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
       </div>
