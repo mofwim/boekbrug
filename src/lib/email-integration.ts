@@ -686,15 +686,72 @@ export async function syncUserEmails(userId: string): Promise<{
   // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
   const { resolveImportTarget } = await import('@/lib/bestanden')
 
-  for (const attachment of attachments) {
-    try {
-      // Claude reads the actual file — not metadata
-      const classification = await classifyAttachment(
-        attachment.data,
-        attachment.mimeType,
-        attachment.filename
-      )
+  // [BOEK-011] Two-phase processing to optimize duration without race conditions.
+  //
+  // PHASE 1 — AI classification in parallel (the slow part: ~2s × N → ~2s total).
+  // Anthropic accepts well over 3 concurrent calls per account, but we cap at 3
+  // to stay polite and avoid rate-limit surprises during big syncs.
+  //
+  // PHASE 2 — Save loop runs sequentially over the classified results.
+  // Sequential is critical here: dedup queries the DB after every insert, so
+  // two attachments with the same content would both pass dedup if processed
+  // in parallel ("nothing exists yet"). Keep sequential, keep correctness.
+  //
+  // Result: total time drops from ~Σ(AI) + Σ(save) to ~max(AI) + Σ(save).
+  // For 14 PDFs: 42s → ~12-15s.
 
+  type Classified = {
+    attachment: typeof attachments[number]
+    classification: Awaited<ReturnType<typeof classifyAttachment>>
+  }
+
+  // Mini concurrency limiter — no external dep. Inline so the helper stays
+  // self-contained. Caps concurrent promises at `max`.
+  async function mapConcurrent<T, R>(
+    items: T[],
+    max: number,
+    fn: (item: T) => Promise<R>
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length)
+    let cursor = 0
+    async function worker() {
+      while (true) {
+        const i = cursor++
+        if (i >= items.length) return
+        results[i] = await fn(items[i])
+      }
+    }
+    const workers = Array.from({ length: Math.min(max, items.length) }, worker)
+    await Promise.all(workers)
+    return results
+  }
+
+  // PHASE 1 — classify all attachments in parallel (max 3 in flight)
+  const classified: Classified[] = await mapConcurrent(
+    attachments,
+    3,
+    async (attachment) => {
+      try {
+        const classification = await classifyAttachment(
+          attachment.data,
+          attachment.mimeType,
+          attachment.filename
+        )
+        return { attachment, classification }
+      } catch (err) {
+        console.error('[BOEK-011] Classification error', { filename: attachment.filename, err })
+        // Return a "not an invoice" placeholder — sequential phase will skip it
+        return {
+          attachment,
+          classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
+        }
+      }
+    }
+  )
+
+  // PHASE 2 — save loop, sequential by design (dedup correctness)
+  for (const { attachment, classification } of classified) {
+    try {
       // Not an invoice → discard, no trace in DB
       if (!classification.isInvoice) continue
       verified++
