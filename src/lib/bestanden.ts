@@ -196,7 +196,8 @@ export async function getFolderContents(
 export async function ensureYearStructure(
   userId: string,
   year: number,
-  ctx: BestandenContext = "user"
+  // [BOEK-FOUNDATION-TYPES] System folders require service_role (RLS blocks is_system=true)
+  ctx: BestandenContext = "pipeline"
 ): Promise<void> {
   const supabase = await resolveClient(ctx);
 
@@ -313,7 +314,7 @@ export async function ensureYearStructure(
 
 // ─── ensureSharedFolder ──────────────────────────────────────────────────────────
 
-export async function ensureSharedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
+export async function ensureSharedFolder(userId: string, ctx: BestandenContext = "pipeline"): Promise<string> {
   const supabase = await resolveClient(ctx);
 
   // [BOEK-033] Fast path — SELECT first. Folder almost always already exists,
@@ -363,7 +364,7 @@ export async function ensureSharedFolder(userId: string, ctx: BestandenContext =
  * of the root. Always at root, is_system=true, folder_type='imported'.
  * Returns the folder id — BOEK-011 uses it as a fallback target.
  */
-export async function ensureImportedFolder(userId: string, ctx: BestandenContext = "user"): Promise<string> {
+export async function ensureImportedFolder(userId: string, ctx: BestandenContext = "pipeline"): Promise<string> {
   const supabase = await resolveClient(ctx);
 
   // [BOEK-033] Fast path — SELECT first.
