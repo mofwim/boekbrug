@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { syncUserEmails } from '@/lib/email-integration'
+import { syncUserEmails, deleteEmailConnection } from '@/lib/email-integration'
 
 // ── POST — run sync ───────────────────────────────────────────────────────────
 
@@ -78,13 +78,27 @@ export async function DELETE(_req: NextRequest) {
     return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
   }
 
-  const { error } = await supabase
+  // [BOEK-011 + BOEK-SECURITY] Read the user's connection to know which provider
+  // to disconnect — and to ensure we clean up its Vault secrets, not just the row.
+  // A raw DELETE FROM email_connections would leave secrets orphaned in Vault.
+  const { data: connection } = await supabase
     .from('email_connections')
-    .delete()
+    .select('provider')
     .eq('user_id', user.id)
+    .maybeSingle()
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!connection) {
+    // Nothing to disconnect — idempotent success
+    return NextResponse.json({ ok: true })
+  }
+
+  const result = await deleteEmailConnection(
+    user.id,
+    connection.provider as 'gmail' | 'outlook'
+  )
+
+  if (!result.success) {
+    return NextResponse.json({ error: 'Disconnect failed' }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })

@@ -1,11 +1,12 @@
 // src/app/api/email/callback/outlook/route.ts
-// [BOEK-011] Outlook OAuth callback — exchange code for tokens, store in email_connections
+// [BOEK-011] Outlook OAuth callback — exchange code for tokens, store via Vault helper
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import {
   exchangeOutlookCode,
   getOutlookUserEmail,
+  saveEmailTokens,
 } from "@/lib/email-integration";
 
 export async function GET(req: NextRequest) {
@@ -38,11 +39,15 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // [BOEK-011] Same robustness as Gmail callback — trust state if session cookie
+  // didn't survive the OAuth redirect. CSRF is already verified by the state param.
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user || user.id !== stateData.userId) {
+  const userId = user?.id ?? stateData.userId;
+
+  if (!userId) {
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_BASE_URL}/login`
     );
@@ -65,34 +70,20 @@ export async function GET(req: NextRequest) {
     // Not critical
   }
 
-  // Upsert into email_connections
-  const { error: dbError } = await supabase
-    .from("email_connections")
-    .upsert(
-      {
-        user_id: user.id,
-        provider: "outlook",
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        email,
-        connected_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,provider" }
-    );
+  // [BOEK-011 + BOEK-SECURITY] Persist tokens via Vault — no plaintext columns.
+  const saveResult = await saveEmailTokens({
+    userId,
+    provider: "outlook",
+    email,
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+  });
 
-  if (dbError) {
-    await supabase.from("email_connections").delete().match({
-      user_id: user.id,
-      provider: "outlook",
-    });
-    await supabase.from("email_connections").insert({
-      user_id: user.id,
-      provider: "outlook",
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-      email,
-      connected_at: new Date().toISOString(),
-    });
+  if (!saveResult.success) {
+    console.error("[BOEK-011] Failed to save Outlook tokens", saveResult.error);
+    return NextResponse.redirect(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/incoming?error=token_save_failed`
+    );
   }
 
   // Trigger initial sync

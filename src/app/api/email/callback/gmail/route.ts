@@ -1,11 +1,12 @@
 // src/app/api/email/callback/gmail/route.ts
-// [BOEK-011] Gmail OAuth callback — exchange code for tokens, store in email_connections
+// [BOEK-011] Gmail OAuth callback — exchange code for tokens, store via Vault helper
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import {
   exchangeGmailCode,
   getGmailUserEmail,
+  saveEmailTokens,
 } from "@/lib/email-integration";
 
 export async function GET(req: NextRequest) {
@@ -72,36 +73,22 @@ export async function GET(req: NextRequest) {
     // Not critical — store empty email
   }
 
-  // Upsert into email_connections
-  // One connection per user per provider — replace if already exists
-  const { error: dbError } = await supabase
-    .from("email_connections")
-    .upsert(
-      {
-        user_id: userId,
-        provider: "gmail",
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        email,
-        connected_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,provider" }
-    );
+  // [BOEK-011 + BOEK-SECURITY] Persist tokens via Vault — no plaintext columns.
+  // saveEmailTokens handles: create-or-update Vault secrets + upsert row by
+  // (user_id, provider). The plaintext columns stay null.
+  const saveResult = await saveEmailTokens({
+    userId,
+    provider: "gmail",
+    email,
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+  });
 
-  if (dbError) {
-    // Try insert if upsert failed (onConflict column might not exist)
-    await supabase.from("email_connections").delete().match({
-      user_id: userId,
-      provider: "gmail",
-    });
-    await supabase.from("email_connections").insert({
-      user_id: userId,
-      provider: "gmail",
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-      email,
-      connected_at: new Date().toISOString(),
-    });
+  if (!saveResult.success) {
+    console.error("[BOEK-011] Failed to save Gmail tokens", saveResult.error);
+    return NextResponse.redirect(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/incoming?error=token_save_failed`
+    );
   }
 
   // [BOEK-011] Trigger initial sync in background (fire and forget)

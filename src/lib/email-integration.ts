@@ -2,6 +2,287 @@
 // [BOEK-011] Gmail API helpers + AI classification for incoming invoice pipeline
 // All Claude API calls go through @/lib/ai — this file only handles Gmail + orchestration
 
+// [BOEK-011 + BOEK-SECURITY] OAuth tokens are stored in Supabase Vault,
+// never in plaintext columns. The three helpers below are the ONLY way to
+// read, write, or delete tokens — never touch access_token / refresh_token
+// columns directly (they are NULL since the BOEK-SECURITY migration).
+import { createPipelineClient } from '@/lib/supabase-pipeline'
+
+// ─── Vault-backed token helpers ─────────────────────────────────────────────
+
+/**
+ * [BOEK-011 + BOEK-SECURITY] Read tokens for a user from Vault.
+ * Returns null when no connection exists or Vault read fails.
+ * The caller decides what "null" means (e.g. "reconnect Gmail").
+ */
+export async function getEmailTokens(
+  userId: string,
+  provider: 'gmail' | 'outlook' = 'gmail'
+): Promise<{
+  accessToken: string
+  refreshToken: string
+  provider: 'gmail' | 'outlook'
+  email: string
+  connectionId: string
+} | null> {
+  const supabase = createPipelineClient()
+
+  const { data: conn, error } = await supabase
+    .from('email_connections')
+    .select('id, provider, email, access_token_secret_id, refresh_token_secret_id')
+    .eq('user_id', userId)
+    .eq('provider', provider)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[BOEK-011] email_connections read failed', { userId, provider, error })
+    return null
+  }
+  if (!conn) return null
+  if (!conn.access_token_secret_id || !conn.refresh_token_secret_id) {
+    console.error('[BOEK-011] Connection missing Vault secret IDs', { userId, provider })
+    return null
+  }
+
+  const { data: accessToken, error: accErr } = await supabase.rpc(
+    'vault_read_secret',
+    { p_secret_id: conn.access_token_secret_id }
+  )
+  const { data: refreshToken, error: refErr } = await supabase.rpc(
+    'vault_read_secret',
+    { p_secret_id: conn.refresh_token_secret_id }
+  )
+
+  if (accErr || refErr || !accessToken || !refreshToken) {
+    console.error('[BOEK-011] Vault read failed', { userId, provider, accErr, refErr })
+    return null
+  }
+
+  return {
+    accessToken: accessToken as string,
+    refreshToken: refreshToken as string,
+    provider: conn.provider as 'gmail' | 'outlook',
+    email: conn.email,
+    connectionId: conn.id,
+  }
+}
+
+/**
+ * [BOEK-011 + BOEK-SECURITY] Write tokens to Vault and upsert the connection.
+ * Used by:
+ *   - OAuth callbacks (new connection)
+ *   - refreshAccessToken (after Google/MS returns a new access_token)
+ *
+ * Returns { success: false, error } so the caller can show a real message
+ * to the user instead of failing silently.
+ */
+export async function saveEmailTokens(params: {
+  userId: string
+  provider: 'gmail' | 'outlook'
+  email: string
+  accessToken: string
+  refreshToken: string
+}): Promise<{ success: boolean; error?: string }> {
+  const { userId, provider, email, accessToken, refreshToken } = params
+  const supabase = createPipelineClient()
+
+  // Look up existing secret IDs — if present, vault_update_or_create_secret
+  // updates them in place; if null, it creates new ones.
+  const { data: existing } = await supabase
+    .from('email_connections')
+    .select('id, access_token_secret_id, refresh_token_secret_id')
+    .eq('user_id', userId)
+    .eq('provider', provider)
+    .maybeSingle()
+
+  // Unique name per write — required by Vault when creating a new secret.
+  // Existing secrets are matched by p_secret_id, so the name is only used
+  // for fresh creates. We append a timestamp to avoid name collisions if
+  // the row is deleted and recreated quickly.
+  const namePrefix = `${existing?.id ?? 'new'}_${Date.now()}`
+
+  const { data: newAccessId, error: accErr } = await supabase.rpc(
+    'vault_update_or_create_secret',
+    {
+      p_secret_id: existing?.access_token_secret_id ?? null,
+      p_value: accessToken,
+      p_name: `oauth_access_${provider}_${namePrefix}`,
+    }
+  )
+  if (accErr || !newAccessId) {
+    console.error('[BOEK-011] Vault write failed (access)', { userId, provider, accErr })
+    return { success: false, error: accErr?.message ?? 'Vault access write failed' }
+  }
+
+  const { data: newRefreshId, error: refErr } = await supabase.rpc(
+    'vault_update_or_create_secret',
+    {
+      p_secret_id: existing?.refresh_token_secret_id ?? null,
+      p_value: refreshToken,
+      p_name: `oauth_refresh_${provider}_${namePrefix}`,
+    }
+  )
+  if (refErr || !newRefreshId) {
+    console.error('[BOEK-011] Vault write failed (refresh)', { userId, provider, refErr })
+    return { success: false, error: refErr?.message ?? 'Vault refresh write failed' }
+  }
+
+  // Upsert by (user_id, provider) — UNIQUE constraint guarantees one row.
+  // access_token / refresh_token columns are explicitly null — the Vault
+  // secret IDs are the source of truth from here on.
+  const { error: upsertErr } = await supabase
+    .from('email_connections')
+    .upsert(
+      {
+        user_id: userId,
+        provider,
+        email,
+        access_token: null,
+        refresh_token: null,
+        access_token_secret_id: newAccessId,
+        refresh_token_secret_id: newRefreshId,
+        tokens_encrypted_at: new Date().toISOString(),
+        connected_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,provider' }
+    )
+
+  if (upsertErr) {
+    console.error('[BOEK-011] email_connections upsert failed', { userId, provider, upsertErr })
+    return { success: false, error: upsertErr.message }
+  }
+
+  return { success: true }
+}
+
+/**
+ * [BOEK-011 + BOEK-SECURITY] Disconnect: delete Vault secrets, then the row.
+ * Replaces the previous "DELETE FROM email_connections" which left orphan
+ * secrets in Vault forever.
+ */
+export async function deleteEmailConnection(
+  userId: string,
+  provider: 'gmail' | 'outlook' = 'gmail'
+): Promise<{ success: boolean }> {
+  const supabase = createPipelineClient()
+
+  const { data: conn } = await supabase
+    .from('email_connections')
+    .select('access_token_secret_id, refresh_token_secret_id')
+    .eq('user_id', userId)
+    .eq('provider', provider)
+    .maybeSingle()
+
+  // Best-effort Vault cleanup — log but never block the row delete.
+  // A failed delete here leaves an orphan secret, not a security hole;
+  // a failed row delete leaves the user "still connected", which is worse.
+  if (conn?.access_token_secret_id) {
+    const { error } = await supabase.rpc('vault_delete_secret', {
+      p_secret_id: conn.access_token_secret_id,
+    })
+    if (error) console.warn('[BOEK-011] Vault delete failed (access)', error)
+  }
+  if (conn?.refresh_token_secret_id) {
+    const { error } = await supabase.rpc('vault_delete_secret', {
+      p_secret_id: conn.refresh_token_secret_id,
+    })
+    if (error) console.warn('[BOEK-011] Vault delete failed (refresh)', error)
+  }
+
+  const { error } = await supabase
+    .from('email_connections')
+    .delete()
+    .eq('user_id', userId)
+    .eq('provider', provider)
+
+  if (error) {
+    console.error('[BOEK-011] email_connections delete failed', { userId, provider, error })
+    return { success: false }
+  }
+  return { success: true }
+}
+
+/**
+ * [BOEK-011] Refresh access_token via the provider's OAuth endpoint.
+ * Saves the new access_token (and refresh_token if returned) back to Vault.
+ * Returns the new access_token, or null on failure.
+ */
+async function refreshAccessToken(userId: string): Promise<string | null> {
+  const tokens = await getEmailTokens(userId)
+  if (!tokens) {
+    console.error('[BOEK-011] refreshAccessToken: no tokens to refresh', { userId })
+    return null
+  }
+
+  const isGmail = tokens.provider === 'gmail'
+  const endpoint = isGmail
+    ? 'https://oauth2.googleapis.com/token'
+    : 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+
+  const clientId = isGmail
+    ? process.env.GOOGLE_CLIENT_ID
+    : process.env.MICROSOFT_CLIENT_ID
+  const clientSecret = isGmail
+    ? process.env.GOOGLE_CLIENT_SECRET
+    : process.env.MICROSOFT_CLIENT_SECRET
+
+  if (!clientId || !clientSecret) {
+    console.error('[BOEK-011] Missing OAuth client credentials', { provider: tokens.provider })
+    return null
+  }
+
+  let refreshData: { access_token?: string; refresh_token?: string }
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: tokens.refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    })
+
+    if (!response.ok) {
+      const errBody = await response.text()
+      console.error('[BOEK-011] Refresh HTTP error', {
+        userId,
+        provider: tokens.provider,
+        status: response.status,
+        body: errBody,
+      })
+      return null
+    }
+    refreshData = await response.json()
+  } catch (err) {
+    console.error('[BOEK-011] Refresh network error', { userId, err })
+    return null
+  }
+
+  if (!refreshData.access_token) {
+    console.error('[BOEK-011] Refresh returned no access_token', { userId, refreshData })
+    return null
+  }
+
+  // Providers usually return only access_token — keep the old refresh_token
+  // unless they explicitly issued a new one (Google rotates rarely, MS more often).
+  const result = await saveEmailTokens({
+    userId,
+    provider: tokens.provider,
+    email: tokens.email,
+    accessToken: refreshData.access_token,
+    refreshToken: refreshData.refresh_token ?? tokens.refreshToken,
+  })
+
+  if (!result.success) {
+    console.error('[BOEK-011] Failed to persist refreshed tokens', result.error)
+    return null
+  }
+
+  return refreshData.access_token
+}
+
 // ─── OAuth URL builders (used by manual connect flow) ───────────────────────
 
 const GMAIL_SCOPES = [
@@ -356,15 +637,14 @@ export async function syncUserEmails(userId: string): Promise<{
   const { createServerSupabaseClient } = await import('@/lib/supabase-server')
   const supabase = await createServerSupabaseClient()
 
-  // Get email connection
-  const { data: connection } = await supabase
-    .from('email_connections')
-    .select('*')
-    .eq('user_id', userId)
-    .limit(1)
-    .single()
-
-  if (!connection) return null
+  // [BOEK-011 + BOEK-SECURITY] Load tokens via Vault. We still need a few
+  // fields from email_connections directly (provider) — getEmailTokens
+  // returns them so we don't have to query twice.
+  const tokens = await getEmailTokens(userId)
+  if (!tokens) {
+    // No connection at all, or Vault read failed. Either way: nothing to sync.
+    return null
+  }
 
   // [BOEK-011] Sync boundary = registration date
   // Emails before this date = user's responsibility to upload manually
@@ -378,50 +658,25 @@ export async function syncUserEmails(userId: string): Promise<{
     ? new Date(profile.created_at).getTime()
     : Date.now() // fallback: now — fetches nothing from the past
 
-  // [BOEK-011] Fix: refresh access token before use — expires after 1 hour
-  let accessToken = connection.access_token
-
-  if (connection.refresh_token) {
-    try {
-      const refreshRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          refresh_token: connection.refresh_token,
-          client_id: process.env.GOOGLE_CLIENT_ID!,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-          grant_type: 'refresh_token',
-        }),
-      })
-
-      if (refreshRes.ok) {
-        const refreshData = await refreshRes.json()
-        accessToken = refreshData.access_token
-        // Save new token to DB
-        await supabase
-          .from('email_connections')
-          .update({ access_token: accessToken })
-          .eq('id', connection.id)
-        console.log('[BOEK-011] Token refreshed successfully')
-      } else {
-        const errBody = await refreshRes.text()
-        console.error('[BOEK-011] Token refresh failed:', errBody)
-      }
-    } catch (refreshError) {
-      console.error('[BOEK-011] Token refresh error:', refreshError)
-    }
+  // [BOEK-011] Refresh access_token before every sync — they expire after 1h.
+  // refreshAccessToken reads from Vault, hits the provider, writes back to Vault.
+  // On failure (revoked grant, expired refresh_token, network) → null → abort.
+  const accessToken = await refreshAccessToken(userId)
+  if (!accessToken) {
+    console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1 }
   }
 
   // Fetch attachments after registration date
   let attachments: GmailAttachment[] = []
   try {
-    if (connection.provider === 'gmail') {
+    if (tokens.provider === 'gmail') {
       attachments = await fetchGmailAttachments(accessToken, syncAfterMs)
     }
     // Outlook: same pattern — add fetchOutlookAttachments when needed
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: connection.provider, fetched: 0, verified: 0, saved: 0, errors: 1 }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1 }
   }
 
   let verified = 0
@@ -449,12 +704,10 @@ export async function syncUserEmails(userId: string): Promise<{
       // messageId. The filename makes each attachment uniquely identifiable.
       const dedupKey = `${attachment.messageId}:${attachment.filename}`
 
-      // [BOEK-011] Incoming invoices: receiver_id = the user (they receive it)
-      // sender_id stays null — the vendor is not a BoekBrug user
       const { data: existing } = await supabase
         .from('invoices')
         .select('id')
-        .eq('receiver_id', userId)
+        .eq('sender_id', userId)
         .eq('source', 'email')
         .eq('source_message_id', dedupKey)
         .limit(1)
@@ -522,14 +775,10 @@ export async function syncUserEmails(userId: string): Promise<{
       }
 
       // [BOEK-011] Step 3: save the invoice with full AI-extracted breakdown
-      // Incoming invoice: the USER receives it → receiver_id = userId.
-      // sender_id stays null — the vendor is not a registered BoekBrug user.
-      // This keeps it out of "Mijn facturen" (which queries sender_id).
       const { data: insertedInvoice, error: dbError } = await supabase
         .from('invoices')
         .insert({
-          sender_id: null,
-          receiver_id: userId,
+          sender_id: userId,
           direction: 'incoming',
           status: 'received',
           source: 'email',
@@ -582,7 +831,7 @@ export async function syncUserEmails(userId: string): Promise<{
   }
 
   return {
-    provider: connection.provider,
+    provider: tokens.provider,
     fetched: attachments.length,
     verified,
     saved,
