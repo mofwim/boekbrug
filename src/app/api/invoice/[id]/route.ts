@@ -1,14 +1,38 @@
-// src/app/api/invoice/[id]/duplicate/route.ts
-// BOEK-003: Invoice Duplicate (POST)
+// src/app/api/invoice/[id]/route.ts
+// BOEK-001: Invoice Edit (PUT)
+// BOEK-002: Invoice Delete (DELETE)
+// [BOEK-031] Invoice numbering format: {seq}-{year} e.g. 001-2026, CR-001-2026, PF-001-2026
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 // [BOEK-031] BOEK-SECURITY-2 — audit logs via service_role helper — May 2026
 import { logAuditAction, getClientIP } from '@/lib/audit'
 
-export async function POST(
+// الحالات التي لا يمكن تعديلها — Human Control
+const NON_EDITABLE_STATUSES = ['paid', 'processing', 'processed']
+
+// ── مساعد مشترك ───────────────────────────────────────────────────────────────
+async function getAuthorizedInvoice(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  invoiceId: string,
+  userId: string
+) {
+  const { data: invoice, error } = await supabase
+    .from('invoices')
+    .select('id, sender_id, status, invoice_number')
+    .eq('id', invoiceId)
+    .single()
+
+  if (error || !invoice) return { error: 'Factuur niet gevonden', status: 404 as const }
+  if (invoice.sender_id !== userId) return { error: 'Geen toegang', status: 403 as const }
+
+  return { invoice }
+}
+
+// ── PUT: Factuur bewerken (BOEK-001) ─────────────────────────────────────────
+export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+{ params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   try {
@@ -17,70 +41,135 @@ export async function POST(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { data: original, error: fetchError } = await supabase
-      .from('invoices')
-      .select('*')
-      .eq('id', id)
-      .eq('sender_id', user.id)
-      .single()
+    const { invoice, error, status } = await getAuthorizedInvoice(supabase, id, user.id)
+    if (error) return NextResponse.json({ error }, { status })
 
-    if (fetchError || !original) {
-      return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
-    }
-
-    const today = new Date().toISOString().split('T')[0]
-    const dueDate = new Date()
-    dueDate.setDate(dueDate.getDate() + 30)
-
-    const { data: newInvoice, error: insertError } = await supabase
-      .from('invoices')
-      .insert({
-        sender_id: user.id,
-        invoice_number: null,
-        invoice_date: today,
-        due_date: dueDate.toISOString().split('T')[0],
-        status: 'draft',
-        direction: original.direction,
-        total_ex_btw: original.total_ex_btw,
-        btw_amount: original.btw_amount,
-        total_inc_btw: original.total_inc_btw,
-        sent_to_accountant: false,
-        client_name: original.client_name,
-        client_email: original.client_email,
-        client_address: original.client_address,
-        client_postal_code: original.client_postal_code,
-        client_city: original.client_city,
-        client_btw_number: original.client_btw_number
-      })
-      .select()
-      .single()
-
-    if (insertError || !newInvoice) {
-      return NextResponse.json({ error: 'Dupliceren mislukt' }, { status: 500 })
-    }
-
-    const { data: originalLines } = await supabase
-      .from('invoice_lines')
-      .select('description, quantity, unit_price, btw_rate, line_total')
-      .eq('invoice_id', id)
-
-    if (originalLines && originalLines.length > 0) {
-      await supabase.from('invoice_lines').insert(
-        originalLines.map(l => ({ ...l, invoice_id: newInvoice.id }))
+    // Human Control: betaalde of verwerkte facturen mogen niet bewerkt worden
+    if (NON_EDITABLE_STATUSES.includes(invoice!.status)) {
+      return NextResponse.json(
+        { error: 'Deze factuur kan niet meer worden bewerkt' },
+        { status: 400 }
       )
     }
+
+    const body = await request.json()
+    const {
+      client_name, client_email, client_address,
+      client_postal_code, client_city, client_btw_number,
+      invoice_date, due_date, lines
+    } = body
+
+    if (!client_name || !client_email || !invoice_date || !due_date) {
+      return NextResponse.json({ error: 'Verplichte velden ontbreken' }, { status: 400 })
+    }
+    if (!lines || lines.length === 0) {
+      return NextResponse.json({ error: 'Minimaal één factuurregel vereist' }, { status: 400 })
+    }
+    if (lines.some((l: any) => !l.description || l.unit_price <= 0)) {
+      return NextResponse.json({ error: 'Ongeldige factuurregels' }, { status: 400 })
+    }
+
+    // [BOEK-031] BOEK-SECURITY-2 — capture before-state for audit oldValue — May 2026
+    const { data: beforeState } = await supabase
+      .from('invoices')
+      .select('client_name, client_email, invoice_date, due_date, total_inc_btw')
+      .eq('id', id)
+      .single()
+
+    const total_ex_btw = lines.reduce((sum: number, l: any) => sum + l.quantity * l.unit_price, 0)
+    const btw_amount = lines.reduce((sum: number, l: any) => sum + l.quantity * l.unit_price * (l.btw_rate / 100), 0)
+    const total_inc_btw = total_ex_btw + btw_amount
+
+    const { error: updateError } = await supabase
+      .from('invoices')
+      .update({
+        client_name, client_email, client_address,
+        client_postal_code, client_city, client_btw_number,
+        invoice_date, due_date,
+        total_ex_btw, btw_amount, total_inc_btw,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+
+    if (updateError) return NextResponse.json({ error: 'Bijwerken mislukt' }, { status: 500 })
+
+    await supabase.from('invoice_lines').delete().eq('invoice_id', id)
+    await supabase.from('invoice_lines').insert(
+      lines.map((l: any) => ({
+        invoice_id: id,
+        description: l.description,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        btw_rate: l.btw_rate,
+        line_total: l.quantity * l.unit_price
+      }))
+    )
+
+    // [BOEK-031] BOEK-SECURITY-2 — audit via service_role helper — May 2026
+    await logAuditAction({
+      userId: user.id,
+      action: 'invoice.updated',
+      entityType: 'invoice',  // singular — matches historical 40 rows
+      entityId: id,
+      oldValue: beforeState ?? undefined,
+      newValue: {
+        client_name,
+        client_email,
+        invoice_date,
+        due_date,
+        total_inc_btw,
+      },
+      ipAddress: getClientIP(request),
+    })
+
+    return NextResponse.json({ success: true })
+
+  } catch {
+    return NextResponse.json({ error: 'Onbekende fout' }, { status: 500 })
+  }
+}
+
+// ── DELETE: Factuur verwijderen (BOEK-002) ────────────────────────────────────
+export async function DELETE(
+  request: NextRequest,
+{ params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+
+  try {
+    const supabase = await createServerSupabaseClient()
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { invoice, error, status } = await getAuthorizedInvoice(supabase, id, user.id)
+    if (error) return NextResponse.json({ error }, { status })
+
+    if (invoice!.status !== 'draft') {
+      return NextResponse.json(
+        { error: 'Alleen concept-facturen kunnen worden verwijderd' },
+        { status: 400 }
+      )
+    }
+
+    await supabase.from('invoice_lines').delete().eq('invoice_id', id)
+
+    const { error: deleteError } = await supabase
+      .from('invoices').delete().eq('id', id)
+
+    if (deleteError) return NextResponse.json({ error: 'Verwijderen mislukt' }, { status: 500 })
 
     // [BOEK-031] BOEK-SECURITY-2 — audit via helper, oldValue is object (fix JSON.stringify bug) — May 2026
     await logAuditAction({
       userId: user.id,
-      action: 'invoice.duplicated',
-      entityType: 'invoice',  // singular — matches historical 13 rows
-      entityId: newInvoice.id,
-      oldValue: { source_invoice_id: id },
+      action: 'invoice.deleted',
+      entityType: 'invoice',  // singular — matches historical
+      entityId: id,
+      oldValue: { invoice_number: invoice!.invoice_number },
       ipAddress: getClientIP(request),
     })
 
-    return NextResponse.json({ success: true, invoiceId: newInvoice.id })
+    return NextResponse.json({ success: true })
 
   } catch {
     return NextResponse.json({ error: 'Onbekende fout' }, { status: 500 })
