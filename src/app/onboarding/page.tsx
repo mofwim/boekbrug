@@ -1,88 +1,56 @@
-// src/app/api/auth/callback/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@supabase/ssr'
+// src/app/onboarding/page.tsx
+import { redirect } from "next/navigation";
+import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = req.nextUrl
-  const code = searchParams.get('code')
-  const next = searchParams.get('next') ?? '/dashboard'
+export default async function OnboardingPage() {
+  const supabase = await createServerSupabaseClient();
 
-  if (!code) {
-    return NextResponse.redirect(new URL('/login?error=no_code', req.url))
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
 
-  // Build redirect response FIRST — cookies must be set on THIS response
-  const redirectOnboarding = NextResponse.redirect(new URL('/onboarding', req.url))
-  const redirectDashboard = NextResponse.redirect(new URL(next, req.url))
-  const redirectError = NextResponse.redirect(new URL('/login?error=auth_failed', req.url))
+  let { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, onboarding_done, onboarding_step, role, email")
+    .eq("id", user.id)
+    .single();
 
-  // Create supabase client that writes cookies onto the redirect response
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => req.cookies.getAll(),
-        setAll: (cookies) => {
-          cookies.forEach(({ name, value, options }) => {
-            redirectOnboarding.cookies.set(name, value, options)
-            redirectDashboard.cookies.set(name, value, options)
-          })
-        },
-      },
-    }
-  )
-
-  const { data, error } = await supabase.auth.exchangeCodeForSession(code)
-  const user = data?.user ?? (await supabase.auth.getUser()).data.user
-
-  if (error || !user) {
-    console.error('[Google-OAuth] exchangeCodeForSession failed:', error?.message)
-    return redirectError
-  }
-
-  // Check existing profile
-  const { data: existingProfile } = await supabase
-    .from('profiles')
-    .select('id, onboarding_done')
-    .eq('id', user.id)
-    .single()
-
-  if (!existingProfile) {
-    const googleName = user.user_metadata?.full_name || user.user_metadata?.name || ''
-    const googleEmail = user.email || ''
-
-    await supabase.from('profiles').insert({
+  if (!profile) {
+    await supabase.from("profiles").insert({
       id: user.id,
-      full_name: googleName,
-      email: googleEmail,
-      role: 'zzper',
+      email: user.email,
+      full_name: user.user_metadata?.full_name ?? null,
+      onboarding_step: 1,
       onboarding_done: false,
-      onboarding_step: 0,
-    })
+      role: "zzper",
+    });
 
-    return redirectOnboarding
+    const { data: fresh } = await supabase
+      .from("profiles")
+      .select("full_name, onboarding_done, onboarding_step, role, email")
+      .eq("id", user.id)
+      .single();
+
+    profile = fresh;
   }
 
-  if (!existingProfile.onboarding_done) {
-    return redirectOnboarding
-  }
+  if (profile?.onboarding_done) redirect("/dashboard");
 
-  // Store Gmail token if available
-  const session = data.session
-  if (session?.provider_token) {
-    await supabase.from('email_connections').upsert(
-      {
-        user_id: user.id,
-        provider: 'gmail',
-        access_token: session.provider_token,
-        refresh_token: session.provider_refresh_token || '',
-        email: user.email || '',
-        connected_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id,provider' }
-    )
-  }
+  const userName =
+    profile?.full_name ??
+    user.user_metadata?.full_name ??
+    user.email ??
+    "daar";
 
-  return redirectDashboard
+  const initialStep = Math.max(1, profile?.onboarding_step ?? 1);
+  const initialRole = profile?.role === "accountant" ? "accountant" : "zzp";
+
+  return (
+    <OnboardingWizard
+      userName={userName}
+      userEmail={user.email ?? ""}
+      initialStep={initialStep}
+      initialRole={initialRole}
+    />
+  );
 }
