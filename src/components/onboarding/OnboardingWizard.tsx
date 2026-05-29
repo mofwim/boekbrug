@@ -63,7 +63,10 @@ export function OnboardingWizard({
   const safeStep = Math.max(1, initialStep) as StepId;
   const [step, setStep] = useState<StepId>(safeStep);
   const [role, setRole] = useState<Role>(initialRole);
-
+  // Reset saving state whenever step changes — handles all transitions
+  useEffect(() => {
+    setSaving(false);
+  }, [step]);
   // [BOEK-015] P2 fix: if role already set (from register page) skip step 2
   // initialRole comes from profiles.role — if 'zzper' or 'accountant', user already chose
   // [BOEK-015] P2: use initialStep (number) not safeStep (StepId = string|number)

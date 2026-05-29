@@ -29,6 +29,7 @@ Sentry.init({
 
   // [BOEK-SENTRY] Filter noise before sending to Sentry
   beforeSend(event, hint) {
+    const frames = event.exception?.values?.[0]?.stacktrace?.frames ?? []
     const errorMessage =
       event.exception?.values?.[0]?.value ?? ''
 
@@ -53,6 +54,7 @@ Sentry.init({
       delete data.btw_number
       delete data.iban
     }
+      if (frames.some(f => f.filename?.includes('vercel.live'))) return null
 
     return event
   },
@@ -65,4 +67,5 @@ Sentry.init({
     /Loading chunk \d+ failed/,
     /Loading CSS chunk \d+ failed/,
   ],
+
 })

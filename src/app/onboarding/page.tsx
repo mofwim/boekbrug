@@ -1,64 +1,88 @@
-// src/app/onboarding/page.tsx
-// [BOEK-015] fix: create profile if null, clamp step to min 1
-// [BOEK-FOUNDATION-TYPES] DB role enum: 'zzper' | 'accountant' | 'client' — not 'zzp'
+// src/app/api/auth/callback/route.ts
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
 
-import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+export async function GET(req: NextRequest) {
+  const { searchParams } = req.nextUrl
+  const code = searchParams.get('code')
+  const next = searchParams.get('next') ?? '/dashboard'
 
-export default async function OnboardingPage() {
-  const supabase = await createServerSupabaseClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  let { data: profile } = await supabase
-    .from("profiles")
-    .select("full_name, onboarding_done, onboarding_step, role, email")
-    .eq("id", user.id)
-    .single();
-
-  // [BOEK-015] fix: profile missing → create it so onboarding can proceed
-  if (!profile) {
-    await supabase.from("profiles").insert({
-      id: user.id,
-      email: user.email,
-      full_name: user.user_metadata?.full_name ?? null,
-      onboarding_step: 1,
-      onboarding_done: false,
-      // [BOEK-FOUNDATION-TYPES] DB CHECK constraint requires 'zzper' (not 'zzp')
-      role: "zzper",
-    });
-
-    // Re-fetch after insert
-    const { data: fresh } = await supabase
-      .from("profiles")
-      .select("full_name, onboarding_done, onboarding_step, role, email")
-      .eq("id", user.id)
-      .single();
-
-    profile = fresh;
+  if (!code) {
+    return NextResponse.redirect(new URL('/login?error=no_code', req.url))
   }
 
-  if (profile?.onboarding_done) redirect("/dashboard");
+  // Build redirect response FIRST — cookies must be set on THIS response
+  const redirectOnboarding = NextResponse.redirect(new URL('/onboarding', req.url))
+  const redirectDashboard = NextResponse.redirect(new URL(next, req.url))
+  const redirectError = NextResponse.redirect(new URL('/login?error=auth_failed', req.url))
 
-  const userName =
-    profile?.full_name ??
-    user.user_metadata?.full_name ??
-    user.email ??
-    "daar";
+  // Create supabase client that writes cookies onto the redirect response
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => req.cookies.getAll(),
+        setAll: (cookies) => {
+          cookies.forEach(({ name, value, options }) => {
+            redirectOnboarding.cookies.set(name, value, options)
+            redirectDashboard.cookies.set(name, value, options)
+          })
+        },
+      },
+    }
+  )
 
-  // [BOEK-015] fix: onboarding_step = 0 in DB → clamp to 1 so Step 1 renders
-  const initialStep = Math.max(1, profile?.onboarding_step ?? 1);
-  // [BOEK-FOUNDATION-TYPES] UI role uses 'zzp' shortcut, DB uses 'zzper'
-  const initialRole = profile?.role === "accountant" ? "accountant" : "zzp";
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+  const user = data?.user ?? (await supabase.auth.getUser()).data.user
 
-  return (
-    <OnboardingWizard
-      userName={userName}
-      userEmail={user.email ?? ""}
-      initialStep={initialStep}
-      initialRole={initialRole}
-    />
-  );
+  if (error || !user) {
+    console.error('[Google-OAuth] exchangeCodeForSession failed:', error?.message)
+    return redirectError
+  }
+
+  // Check existing profile
+  const { data: existingProfile } = await supabase
+    .from('profiles')
+    .select('id, onboarding_done')
+    .eq('id', user.id)
+    .single()
+
+  if (!existingProfile) {
+    const googleName = user.user_metadata?.full_name || user.user_metadata?.name || ''
+    const googleEmail = user.email || ''
+
+    await supabase.from('profiles').insert({
+      id: user.id,
+      full_name: googleName,
+      email: googleEmail,
+      role: 'zzper',
+      onboarding_done: false,
+      onboarding_step: 0,
+    })
+
+    return redirectOnboarding
+  }
+
+  if (!existingProfile.onboarding_done) {
+    return redirectOnboarding
+  }
+
+  // Store Gmail token if available
+  const session = data.session
+  if (session?.provider_token) {
+    await supabase.from('email_connections').upsert(
+      {
+        user_id: user.id,
+        provider: 'gmail',
+        access_token: session.provider_token,
+        refresh_token: session.provider_refresh_token || '',
+        email: user.email || '',
+        connected_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,provider' }
+    )
+  }
+
+  return redirectDashboard
 }
