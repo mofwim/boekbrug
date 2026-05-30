@@ -43,10 +43,20 @@ export default function ClientDetailPage() {
   async function removeClient() {
     const confirmed = window.confirm(`Weet je zeker dat je ${client?.company_name || client?.full_name} wilt ontkoppelen?`)
     if (!confirmed) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    await supabase.from('accountant_clients').delete().eq('accountant_id', user.id).eq('zzper_id', clientId)
-    router.push('/dashboard')
+
+    // Call API — handles email + audit + notification server-side
+    const res = await fetch('/api/accountant/unlink', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId }),
+    })
+
+    if (res.ok) {
+      router.push('/dashboard')
+    } else {
+      const data = await res.json().catch(() => ({}))
+      alert(data.error || 'Ontkoppelen mislukt')
+    }
   }
 
   if (loading) return (
