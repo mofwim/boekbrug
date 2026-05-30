@@ -123,9 +123,17 @@ export default function InvoiceDetailPage() {
       return
     }
 
-    // Success — refresh server data to show new status + number
+    // Use API response data directly — avoids Supabase read-after-write lag
+    // The API already committed the new number + status to DB
+    const responseData = await res.json().catch(() => ({}))
+    setInvoice((prev: any) => ({
+      ...prev,
+      status: 'sent',
+      invoice_number: responseData.invoice_number ?? prev.invoice_number,
+    }))
+
     setShowSendModal(false)
-    router.refresh()
+    setSending(false)
   }
 
   // [DS] STATUS_CONFIG — Material You chip tokens
