@@ -21,24 +21,16 @@ function AcceptInviteContent() {
     async function load() {
       if (!token) { setStatus('error'); return }
 
-      const { data: inv } = await supabase
-        .from('invitations')
-        .select('*')
-        .eq('token', token)
-        .eq('status', 'pending')
-        .single()
+      // Fetch invitation info via API — uses service role to bypass RLS
+      // Direct Supabase call fails for unauthenticated users (RLS blocks profiles read)
+      const infoRes = await fetch(`/api/invite/info?token=${token}`)
+      if (!infoRes.ok) { setStatus('error'); return }
 
-      if (!inv) { setStatus('error'); return }
+      const info = await infoRes.json()
+      setZzperName(info.zzperName)
 
-      setInvitation(inv)
-
-      const { data: zzperProfile } = await supabase
-        .from('profiles')
-        .select('full_name, company_name')
-        .eq('id', inv.zzper_id)
-        .single()
-
-      setZzperName(zzperProfile?.company_name || zzperProfile?.full_name || 'Onbekend')
+      // Also verify invitation exists (info route already checks pending status)
+      setInvitation({ token })
 
       const { data: { user } } = await supabase.auth.getUser()
       setUser(user)
