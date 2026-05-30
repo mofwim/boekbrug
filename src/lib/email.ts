@@ -16,7 +16,7 @@ export async function sendAccountantInvite({
   acceptUrl: string
 }) {
   await resend.emails.send({
-    from: 'BoekBrug <onboarding@resend.dev>',
+    from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${zzperName} wil je toevoegen als boekhouder`,
     html: `
@@ -47,8 +47,8 @@ export async function sendClientInvite({
   acceptUrl: string
 }) {
   await resend.emails.send({
-    from: 'BoekBrug <onboarding@resend.dev>',
-    to: 'mofwim@gmail.com', // مؤقت للاختبار
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
     subject: `${accountantName} nodigt je uit op BoekBrug`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
@@ -82,8 +82,8 @@ export async function sendInvoiceToClient({
   dueDate: string
 }) {
   await resend.emails.send({
-    from: 'BoekBrug <onboarding@resend.dev>',
-    to: 'mofwim@gmail.com', // مؤقت للاختبار
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
     subject: `Factuur ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
@@ -116,8 +116,8 @@ export async function sendMessageNotification({
   conversationUrl: string
 }) {
   await resend.emails.send({
-    from: 'BoekBrug <onboarding@resend.dev>',
-    to: 'mofwim@gmail.com', // مؤقت للاختبار
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
     subject: `Nieuw bericht van ${senderName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">

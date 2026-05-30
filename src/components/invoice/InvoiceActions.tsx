@@ -5,7 +5,7 @@
 // مكون مشترك — يُستخدم في صفحة تفاصيل الفاتورة
 
 import { useState } from 'react'
-//import { useInfiniteInvoices } from "@/hooks/useInfiniteInvoices";
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 
 type Props = {
@@ -75,9 +75,9 @@ const canDelete = status === 'draft'
         <p className="text-xs text-red-500 mt-1">{error}</p>
       )}
 
-      {/* Delete Confirm Modal — Human Control */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      {/* Delete Confirm Modal — rendered via portal to escape sticky header stacking context */}
+      {showDeleteConfirm && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4">
             <div className="space-y-1">
               <h2 className="text-base font-bold text-gray-900">Factuur verwijderen?</h2>
@@ -104,7 +104,8 @@ const canDelete = status === 'draft'
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   )
