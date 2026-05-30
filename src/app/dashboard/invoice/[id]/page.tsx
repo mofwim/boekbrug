@@ -124,12 +124,13 @@ export default function InvoiceDetailPage() {
     }
 
     // Use API response data directly — avoids Supabase read-after-write lag
-    // The API already committed the new number + status to DB
+    // The API already committed the new number + status + type to DB
     const responseData = await res.json().catch(() => ({}))
     setInvoice((prev: any) => ({
       ...prev,
       status: 'sent',
       invoice_number: responseData.invoice_number ?? prev.invoice_number,
+      invoice_type: responseData.invoice_type ?? prev.invoice_type,
     }))
 
     setShowSendModal(false)

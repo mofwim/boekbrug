@@ -80,21 +80,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Factuurbedrag ontbreekt' }, { status: 400 })
     }
 
-    // ── 7. Generate number if missing (drafts) ─────────────────
-    let finalNumber = invoice.invoice_number
-    if (!finalNumber) {
-      const numberType: InvoiceNumberType =
-        invoice.invoice_type === 'creditnota' ? 'creditnota'
-        : invoice.invoice_type === 'pro_forma' ? 'pro_forma'
-        : 'factuur'
+    // ── 7. Pro forma / Offerte → convert to official Factuur upon sending ─
+    // Per Belastingdienst: only official facturen count — pro forma is not a legal invoice
+    const isConversion = invoice.invoice_type === 'pro_forma' || invoice.invoice_type === 'offerte'
+    const finalType = isConversion ? 'factuur' : invoice.invoice_type
 
-      finalNumber = await generateInvoiceNumber(supabase, user.id, numberType)
-      if (!finalNumber) {
+    // Generate number: always for conversion, only if missing for regular drafts
+    let finalNumber = invoice.invoice_number
+    if (isConversion || !finalNumber) {
+      const numberType: InvoiceNumberType =
+        finalType === 'creditnota' ? 'creditnota' : 'factuur'
+
+      const generated = await generateInvoiceNumber(supabase, user.id, numberType)
+      if (!generated) {
         return NextResponse.json(
           { error: 'Kon factuurnummer niet genereren' },
           { status: 500 }
         )
       }
+      finalNumber = generated
     }
 
     // ── 8. UPDATE DB — commit number + status (legal trigger) ─
@@ -104,6 +108,7 @@ export async function POST(request: NextRequest) {
       .update({
         status: 'sent',
         invoice_number: finalNumber,
+        invoice_type: finalType,
         // [BOEK-031] TODO: Remove after DB trigger for AUTO-UPDATE updated_at is added
         updated_at: new Date().toISOString(),
       })
@@ -207,6 +212,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         invoice_number: finalNumber,
+        invoice_type: finalType,
+        converted: isConversion,
         warning: 'email_failed',
       })
     }
@@ -214,6 +221,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       invoice_number: finalNumber,
+      invoice_type: finalType,
+      converted: isConversion,
     })
 
   } catch (err) {
