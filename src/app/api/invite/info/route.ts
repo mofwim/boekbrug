@@ -5,6 +5,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 
+// Invitations expire after 14 days
+const INVITE_VALIDITY_DAYS = 14
+
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('token')
   if (!token) return NextResponse.json({ error: 'token verplicht' }, { status: 400 })
@@ -14,12 +17,21 @@ export async function GET(request: NextRequest) {
 
     const { data: invitation } = await pipeline
       .from('invitations')
-      .select('id, zzper_id, accountant_email, status, invited_by')
+      .select('id, zzper_id, accountant_email, status, invited_by, created_at')
       .eq('token', token)
       .eq('status', 'pending')
       .single()
 
-    if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 404 })
+    if (!invitation) {
+      return NextResponse.json({ error: 'Uitnodiging ongeldig of verlopen' }, { status: 404 })
+    }
+
+    // Check expiry — 14 days from created_at
+    const createdAt = new Date(invitation.created_at!)
+    const expiresAt = new Date(createdAt.getTime() + INVITE_VALIDITY_DAYS * 24 * 60 * 60 * 1000)
+    if (Date.now() > expiresAt.getTime()) {
+      return NextResponse.json({ error: 'Uitnodiging verlopen', expired: true }, { status: 410 })
+    }
 
     const { data: profile } = await pipeline
       .from('profiles')

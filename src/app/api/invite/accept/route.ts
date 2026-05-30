@@ -23,6 +23,17 @@ export async function POST(request: NextRequest) {
 
 if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 })
 
+    // Check expiry — invitations valid for 14 days from created_at
+    const INVITE_VALIDITY_DAYS = 14
+    const createdAt = new Date(invitation.created_at!)
+    const expiresAt = new Date(createdAt.getTime() + INVITE_VALIDITY_DAYS * 24 * 60 * 60 * 1000)
+    if (Date.now() > expiresAt.getTime()) {
+      return NextResponse.json(
+        { error: 'Uitnodiging verlopen — vraag een nieuwe aan', expired: true },
+        { status: 410 }
+      )
+    }
+
     // [BOEK-FOUNDATION-TYPES] zzper_id is nullable in DB schema
     if (!invitation.zzper_id) {
       return NextResponse.json(
