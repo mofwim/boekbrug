@@ -7,25 +7,24 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()
 
-    // تحقق من المستخدم
-    //const { data: { user } } = await supabase.auth.getUser()
-   // if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    // جلب إيميل المحاسب من الطلب
-   // const { accountantEmail } = await request.json()
-    //if (!accountantEmail) return NextResponse.json({ error: 'Email verplicht' }, { status: 400 })
-      // منع ZZP'er من إضافة نفسه كمحاسب
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { accountantEmail } = await request.json()
+    // Accept both camelCase (settings page) and snake_case (onboarding wizard)
+    const body = await request.json()
+    const accountantEmail: string = body.accountantEmail ?? body.accountant_email ?? ''
+
+    if (!accountantEmail) {
+      return NextResponse.json({ error: 'E-mailadres verplicht' }, { status: 400 })
+    }
 
     // تحقق أن الإيميل ليس نفس إيميل المستخدم
     if (accountantEmail.toLowerCase() === user.email?.toLowerCase()) {
-      return NextResponse.json({ 
-        error: 'Je kunt jezelf niet als boekhouder toevoegen' 
+      return NextResponse.json({
+        error: 'Je kunt jezelf niet als boekhouder toevoegen'
       }, { status: 400 })
     }
+
     // جلب بيانات ZZP'er
     const { data: profile } = await supabase
       .from('profiles')
@@ -46,17 +45,27 @@ export async function POST(request: NextRequest) {
       .select()
       .single()
 
-    if (invError) return NextResponse.json({ error: 'Uitnodiging opslaan mislukt' }, { status: 500 })
+    if (invError) {
+      console.error('[invite/accountant] insert failed:', invError)
+      return NextResponse.json({ error: 'Uitnodiging opslaan mislukt' }, { status: 500 })
+    }
 
-    // بناء رابط القبول
-    const acceptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/invite/accept?token=${invitation.token}`
+    // بناء رابط القبول — fallback to request origin if env var missing
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
+    const acceptUrl = `${baseUrl}/invite/accept?token=${invitation.token}`
 
-    // إرسال الإيميل للمحاسب
-    await sendAccountantInvite({
-      toEmail: accountantEmail,
-      zzperName,
-      acceptUrl
-    })
+    // إرسال الإيميل للمحاسب — best-effort, invitation already saved
+    try {
+      await sendAccountantInvite({
+        toEmail: accountantEmail,
+        zzperName,
+        acceptUrl
+      })
+    } catch (emailErr) {
+      console.error('[invite/accountant] email failed:', emailErr)
+      // Invitation saved — email failure shouldn't 500 the whole request
+      return NextResponse.json({ success: true, warning: 'email_failed' })
+    }
 
     return NextResponse.json({ success: true })
 
