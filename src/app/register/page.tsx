@@ -87,7 +87,7 @@ function RegisterContent() {
     const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
 
     if (signUpError) {
-      if (signUpError.status === 422) {
+      if (signUpError.status === 422 || signUpError.message?.toLowerCase().includes('already')) {
         setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
       } else {
         setError('Registratie mislukt — probeer opnieuw')
@@ -98,6 +98,15 @@ function RegisterContent() {
 
     if (!data.user) {
       setError('Registratie mislukt — probeer opnieuw')
+      setLoading(false)
+      return
+    }
+
+    // Supabase returns a user with EMPTY identities[] when the email already exists
+    // (security measure to avoid leaking which emails are registered).
+    // Detect this and show the correct message instead of failing on profile insert.
+    if (data.user.identities && data.user.identities.length === 0) {
+      setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
       setLoading(false)
       return
     }
@@ -115,7 +124,12 @@ function RegisterContent() {
       })
 
     if (profileError) {
-      setError('Profiel aanmaken mislukt')
+      // Likely duplicate profile (email already registered)
+      if (profileError.code === '23505') {
+        setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
+      } else {
+        setError('Profiel aanmaken mislukt')
+      }
       setLoading(false)
       return
     }
