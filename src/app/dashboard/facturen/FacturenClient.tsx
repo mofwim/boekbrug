@@ -9,7 +9,6 @@ import { useRouter } from 'next/navigation'
 import { useParentPath } from '@/lib/navigation-hooks'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { createNotification } from '@/lib/notifications'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
@@ -151,7 +150,18 @@ export default function FacturenClient({ profile }: { profile: any }) {
       if (ctx.invoiceType === 'creditnota') {
         showToast(`Creditnota ${ctx.number} voldaan ✓`)
       } else {
-        await createNotification({ supabase, userId: profile.id, title: 'Factuur betaald', body: `Factuur ${ctx.number} is gemarkeerd als betaald.`, type: 'payment' })
+        // Notification insert needs service role (RLS blocks client insert) → API route
+        try {
+          await fetch('/api/notifications/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: 'Factuur betaald',
+              body: `Factuur ${ctx.number} is gemarkeerd als betaald.`,
+              type: 'payment',
+            }),
+          })
+        } catch { /* non-blocking — payment already succeeded */ }
         showToast(`Factuur ${ctx.number} betaald ✓`)
       }
     }
