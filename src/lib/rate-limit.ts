@@ -35,6 +35,7 @@ export const RATE_LIMITS = {
   EMAIL_SYNC:          { maxRequests: 10, windowMinutes: 5 },     // 10 / 5min
   DOCUMENT_CLASSIFY:   { maxRequests: 50, windowMinutes: 60 },    // 50 / hour
   ACCOUNTANT_INVITE:   { maxRequests: 20, windowMinutes: 1440 },  // 20 / day
+  INVOICE_SEND:        { maxRequests: 100, windowMinutes: 60 },   // 100 / hour
 } as const
 
 // ── Main function ─────────────────────────────────────

@@ -7,13 +7,12 @@
 // - Audit log via service_role
 // - Sends email (best-effort, doesn't block legal completion)
 // - Notifies accountant (best-effort, via service_role)
-// - Rate limit: 10 sends/hour per user
+// - Rate limit: 100 sends/hour per user (via RATE_LIMITS.INVOICE_SEND)
 //
 // Per Dutch Belastingdienst (Article 35 — Wet OB 1968):
 // Once number is generated and committed to DB, the invoice is legally sent.
 // Email is delivery mechanism, not legal trigger.
 //
-// TODO: Add INVOICE_SEND preset to RATE_LIMITS in BOEK-SECURITY-2 follow-up
 // TODO: Add DB trigger for AUTO-UPDATE updated_at, then remove manual setting
 // =====================================================
 
@@ -22,7 +21,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendInvoiceToClient } from '@/lib/email'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
-import { checkRateLimit, rateLimitResponse } from '@/lib/rate-limit'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 import * as Sentry from '@sentry/nextjs'
 
@@ -35,12 +34,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // ── 2. Rate limit — 10 sends/hour per user ─────────────────
+    // ── 2. Rate limit — 100 sends/hour per user ────────────────
     const limit = await checkRateLimit({
       userId: user.id,
       endpoint: '/api/invoice/send',
-      maxRequests: 10,
-      windowMinutes: 60,
+      ...RATE_LIMITS.INVOICE_SEND,
     })
     if (!limit.allowed) return rateLimitResponse(limit)
 
