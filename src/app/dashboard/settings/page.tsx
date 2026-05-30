@@ -56,23 +56,12 @@ export default function SettingsPage() {
         setPostalCode(data.postal_code || '')
         setCity(data.city || '')
       }
-      // جلب محاسب الـ ZZP'er إذا كان مرتبطاً
-      
+      // جلب محاسب الـ ZZP'er إذا كان مرتبطاً — via API (service role bypasses RLS)
       if (data?.role === 'zzper') {
-        const { data: links } = await supabase
-          .from('accountant_clients')
-          .select('accountant_id')
-          .eq('zzper_id', user.id)
-          .limit(1)  // ← بدل .single()
-
-        if (links && links.length > 0) {
-          const { data: accountantData } = await supabase
-            .from('profiles')
-            .select('full_name, company_name, email')
-            .eq('id', links[0].accountant_id)
-            .single()
-
-          if (accountantData) setAccountant(accountantData)
+        const res = await fetch('/api/settings/accountant')
+        if (res.ok) {
+          const json = await res.json()
+          if (json.accountant) setAccountant(json.accountant)
         }
       }
     }
