@@ -1,3 +1,4 @@
+//src/app/dashboard/settings/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -130,15 +131,14 @@ export default function SettingsPage() {
     )
     if (!confirmed) return
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    await supabase
-      .from('accountant_clients')
-      .delete()
-      .eq('zzper_id', user.id)
-
-    setAccountant(null)
+    // Call API — handles email notification + audit log server-side
+    const res = await fetch('/api/accountant/unlink-by-client', { method: 'POST' })
+    if (res.ok) {
+      setAccountant(null)
+    } else {
+      const data = await res.json().catch(() => ({}))
+      alert(data.error || 'Ontkoppelen mislukt')
+    }
   }
 
   // انتظار تحميل البيانات

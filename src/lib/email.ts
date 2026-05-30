@@ -136,3 +136,28 @@ export async function sendMessageNotification({
     `
   })
 }
+// ── إشعار المحاسب بإنهاء الربط من قبل العميل ──────────────────────────────────
+export async function sendAccountantUnlinkedNotification({
+  toEmail,
+  accountantName,
+  clientName
+}: {
+  toEmail: string
+  accountantName: string
+  clientName: string
+}) {
+  await resend.emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject: `${clientName} heeft de koppeling beëindigd`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #1c1c1e;">Koppeling beëindigd</h2>
+        <p style="color: #555;">Beste ${accountantName},</p>
+        <p style="color: #555;"><strong>${clientName}</strong> heeft de koppeling met jou als boekhouder beëindigd via BoekBrug.</p>
+        <p style="color: #555;">Je hebt geen toegang meer tot nieuwe facturen of documenten van deze klant. Historische gegevens waar je eerder aan hebt gewerkt, blijven beschikbaar voor je administratie.</p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `
+  })
+}
