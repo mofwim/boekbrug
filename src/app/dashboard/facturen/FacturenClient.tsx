@@ -62,6 +62,9 @@ interface ConfirmPayCtx {
   number: string
   newStatus: 'paid' | 'sent'
   invoiceType: 'factuur' | 'creditnota' | 'pro_forma'
+  // [BOEK-003] payment method — required by DB constraint invoices_paid_requires_method
+  // UI shows "Bank" / "Contant"; DB stores 'bank' / 'kas'
+  paymentMethod?: 'bank' | 'kas'
 }
 // [BOEK-029] Send confirmation for draft → sent
 interface SendCtx {
@@ -139,8 +142,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
     updateOptimistic(ctx.id, { status: ctx.newStatus })
     const patch: any = { status: ctx.newStatus }
     if (ctx.newStatus === 'paid') {
-      patch.sent_to_accountant = true
+      // [BOEK-003] payment_method required by DB constraint (paid ⟹ method).
+      // shared is GENERATED from status='paid' — accountant sees it automatically.
+      // sent_to_accountant removed (model A: shared is computed, no manual gate).
+      patch.payment_method = ctx.paymentMethod ?? 'bank'
       patch.marked_paid_at = new Date().toISOString()
+    } else {
+      // [BOEK-003] undo payment → clear method + timestamp (back to 'sent')
+      patch.payment_method = null
+      patch.marked_paid_at = null
     }
     const { error } = await supabase.from('invoices').update(patch).eq('id', ctx.id)
     if (error) {
@@ -621,6 +631,13 @@ export default function FacturenClient({ profile }: { profile: any }) {
           }
           onConfirm={() => executePay(payCtx)}
           onCancel={() => setPayCtx(null)}
+          /* [BOEK-003] factuur + marking as paid → ask Bank/Contant.
+             creditnota and undo (newStatus='sent') keep single confirm button. */
+          paymentChoice={
+            payCtx.invoiceType === 'factuur' && payCtx.newStatus === 'paid'
+              ? (method) => executePay({ ...payCtx, paymentMethod: method })
+              : undefined
+          }
         />
       )}
 
@@ -694,7 +711,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning }: {
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning, paymentChoice }: {
   title: string
   body: string
   confirmLabel: string
@@ -703,6 +720,8 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   onCancel: () => void
   details?: { label: string; value: string }[]
   warning?: string
+  // [BOEK-003] when set, replaces single confirm button with Bank / Contant choice
+  paymentChoice?: (method: 'bank' | 'kas') => void
 }) {
   // [BOEK-029] CenteredModal — replaces bottom sheet for all dialogs
   return (
@@ -745,8 +764,33 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
           </div>
         )}
 
-        <button onClick={onConfirm} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{confirmLabel}</button>
-        <button onClick={onCancel}  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+        {/* [BOEK-003] payment method choice (Bank / Contant) or standard confirm */}
+        {paymentChoice ? (
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+              <button
+                onClick={() => paymentChoice('bank')}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
+                Bank
+              </button>
+              <button
+                onClick={() => paymentChoice('kas')}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
+                Contant
+              </button>
+            </div>
+            <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+          </>
+        ) : (
+          <>
+            <button onClick={onConfirm} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{confirmLabel}</button>
+            <button onClick={onCancel}  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
+          </>
+        )}
       </div>
     </div>
   )
