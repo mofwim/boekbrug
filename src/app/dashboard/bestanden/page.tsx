@@ -29,5 +29,5 @@ export default async function BestandenServerPage() {
   await ensureYearStructure(user.id, new Date().getFullYear());
 
   // [BOEK-033] Pass role for the sidebar logo to point to the correct home
-  return <BestandenPage role={profile.role} />;
-}
+// [BOEK-002] narrow role to BestandenPage's union (Supabase returns generic string after type regen)
+return <BestandenPage role={profile.role as 'zzper' | 'accountant' | 'client' | null} />;}

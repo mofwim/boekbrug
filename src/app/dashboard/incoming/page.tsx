@@ -165,8 +165,8 @@ export default async function IncomingPage() {
 
   const connectionStatus = {
     connected: !!connection,
-    provider: connection?.provider ?? null,
-    email: connection?.email ?? null,
+    provider: (connection?.provider ?? null) as 'gmail' | 'outlook' | null,
+    email: (connection?.email ?? null) as string | null,
     connected_at: connection?.connected_at ?? null,
     pending_count: pendingInvoices.length,
   };

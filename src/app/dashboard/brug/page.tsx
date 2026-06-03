@@ -1,0 +1,73 @@
+// src/app/dashboard/brug/page.tsx
+// [BOEK-002] Bridge view — server wrapper.
+// Fetches invoices + documents + folders (RLS-filtered), builds the bridge tree
+// server-side (rendering logic stays on the server), passes nodes to the client.
+//
+// Mirrors the project pattern: createServerSupabaseClient, profile fetch,
+// redirect guards, force-dynamic. Does NOT touch bestanden.ts (BOEK-033).
+
+import { redirect } from 'next/navigation'
+import { createServerSupabaseClient } from '@/lib/supabase-server'
+import {
+  buildBridgeTree,
+  type BridgeInvoice,
+  type BridgeDocument,
+  type BridgeFolder,
+} from '@/lib/bridge-tree'
+import BrugClient from './BrugClient'
+
+export const dynamic = 'force-dynamic'
+export const metadata = { title: 'Brug — BoekBrug' }
+
+// Exact columns the renderer needs (match BridgeInvoice / BridgeDocument).
+const INVOICE_COLS =
+  'id, invoice_number, invoice_type, status, direction, invoice_date, payment_method, total_inc_btw, document_id, pdf_url, sender_id, receiver_id'
+const DOCUMENT_COLS =
+  'id, file_name, file_url, folder_id, doc_type, year, period, invoice_id, user_id, created_at'
+const FOLDER_COLS = 'id, name, parent_id, folder_type, user_id'
+
+export default async function BrugServerPage() {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('onboarding_done, role')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile?.onboarding_done) redirect('/onboarding')
+
+  const isAccountant = profile.role === 'accountant'
+
+  // RLS does the filtering:
+  //  - ZZP'er: owner_all / zzp_select → own invoices; documents_owner_all → own docs.
+  //  - Accountant: invoices_accountant_read (shared=true, linked clients);
+  //                documents_accountant_read (shared docs of linked clients).
+  // So we simply select; the policies scope the rows correctly per role.
+  const [invoicesRes, documentsRes, foldersRes] = await Promise.all([
+    supabase.from('invoices').select(INVOICE_COLS),
+    supabase.from('documents').select(DOCUMENT_COLS).eq('trashed', false),
+    supabase.from('folders').select(FOLDER_COLS),
+  ])
+
+  // NOTE: cast via `unknown` because database.types.ts may predate the B.1
+  // migration (payment_method / shared). The columns DO exist in the DB;
+  // BridgeInvoice/BridgeDocument are the source of truth for shape here.
+  // Best fix: regenerate types →
+  //   npx supabase gen types typescript --project-id <ref> > src/types/database.types.ts
+  const invoices = ((invoicesRes.data ?? []) as unknown) as BridgeInvoice[]
+  const documents = ((documentsRes.data ?? []) as unknown) as BridgeDocument[]
+  const folders = ((foldersRes.data ?? []) as unknown) as BridgeFolder[]
+
+  // Build the tree server-side. Rendering logic never reaches the client.
+  const nodes = buildBridgeTree({
+    invoices,
+    documents,
+    folders,
+    accountantView: isAccountant,
+  })
+
+  return <BrugClient nodes={nodes} role={profile.role} />
+}

@@ -62,26 +62,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/onboarding', req.url))
   }
 
-  // [Google-OAuth] Store Google provider_token in email_connections for BOEK-011
-  // provider_token = Google access token with gmail.readonly scope
-  // This means: one Google login = Gmail automatically connected, no extra step
-  const session = data.session
-  if (session?.provider_token) {
-    await supabase
-      .from('email_connections')
-      .upsert(
-        {
-          user_id: user.id,
-          provider: 'gmail',
-          access_token: session.provider_token,
-          refresh_token: session.provider_refresh_token || '',
-          email: user.email || '',
-          connected_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id,provider' }
-      )
-  }
-
   // [Google-OAuth] Existing user, onboarding done → go to dashboard (or `next` param)
+  //
+  // NOTE: Gmail connection is intentionally NOT handled here.
+  // OAuth tokens are stored ENCRYPTED in Vault by /api/email/callback/gmail
+  // (BOEK-011 + BOEK-SECURITY) via saveEmailTokens(), which writes the
+  // *_secret_id reference columns. The previous code here upserted raw
+  // access_token/refresh_token into email_connections, but those plaintext
+  // columns no longer exist (replaced by Vault refs), so the write failed
+  // silently and broke the type check after types were regenerated.
+  // Gmail linking is a deliberate user action via the "Connect Gmail" flow.
   return NextResponse.redirect(new URL(next, req.url))
 }

@@ -104,8 +104,7 @@ export async function saveEmailTokens(params: {
   const { data: newAccessId, error: accErr } = await supabase.rpc(
     'vault_update_or_create_secret',
     {
-      p_secret_id: existing?.access_token_secret_id ?? null,
-      p_value: accessToken,
+      p_secret_id: (existing?.access_token_secret_id ?? null) as unknown as string,      p_value: accessToken,
       p_name: `oauth_access_${provider}_${namePrefix}`,
     }
   )
@@ -117,8 +116,7 @@ export async function saveEmailTokens(params: {
   const { data: newRefreshId, error: refErr } = await supabase.rpc(
     'vault_update_or_create_secret',
     {
-      p_secret_id: existing?.refresh_token_secret_id ?? null,
-      p_value: refreshToken,
+      p_secret_id: (existing?.refresh_token_secret_id ?? null) as unknown as string,      p_value: refreshToken,
       p_name: `oauth_refresh_${provider}_${namePrefix}`,
     }
   )
