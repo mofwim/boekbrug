@@ -61,12 +61,34 @@ export default async function BrugServerPage() {
   const documents = ((documentsRes.data ?? []) as unknown) as BridgeDocument[]
   const folders = ((foldersRes.data ?? []) as unknown) as BridgeFolder[]
 
+  // [BOEK-005] Accountant view: resolve client UUIDs → display labels
+  // ("Naam — Bedrijf") so the Klanten folders show names, not raw ids.
+  let clientNames: Map<string, string> | undefined
+  if (isAccountant) {
+    const { data: links } = await supabase
+      .from('accountant_clients')
+      .select('zzper_id, profiles:zzper_id (id, full_name, company_name)')
+      .eq('accountant_id', user.id)
+
+    clientNames = new Map<string, string>()
+    for (const link of links ?? []) {
+      const p = (link as any).profiles
+      if (!p?.id) continue
+      const name = (p.full_name ?? '').trim()
+      const company = (p.company_name ?? '').trim()
+      const label =
+        name && company ? `${name} — ${company}` : (company || name || p.id)
+      clientNames.set(p.id, label)
+    }
+  }
+
   // Build the tree server-side. Rendering logic never reaches the client.
   const nodes = buildBridgeTree({
     invoices,
     documents,
     folders,
     accountantView: isAccountant,
+    clientNames,
   })
 
   return <BrugClient nodes={nodes} role={profile.role} />

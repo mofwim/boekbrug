@@ -249,8 +249,19 @@ export interface BuildBridgeTreeInput {
    * UI can group under Klanten/[client]. Client's own view leaves this null.
    */
   accountantView?: boolean
+  /**
+   * Map of clientId → display label (e.g. "Mohammad — ABC BV"). Used in the
+   * Klanten path segment so the accountant sees names, not UUIDs. If a client
+   * id is missing from the map, the UUID is used as a safe fallback.
+   */
+  clientNames?: Map<string, string>
   /** Optional sink for unexpected status values routed to Overig. */
   onUnexpected?: (kind: 'invoice_status', value: string, id: string) => void
+}
+
+/** Resolve a client's display label; falls back to the raw id if unknown. */
+function clientLabel(clientId: string, names?: Map<string, string>): string {
+  return names?.get(clientId) ?? clientId
 }
 
 /**
@@ -261,7 +272,7 @@ export interface BuildBridgeTreeInput {
  * the document side, so the PDF never appears twice.
  */
 export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
-  const { invoices, documents, folders, accountantView = false, onUnexpected } = input
+  const { invoices, documents, folders, accountantView = false, clientNames, onUnexpected } = input
 
   const folderMap = new Map<string, BridgeFolder>()
   for (const f of folders) folderMap.set(f.id, f)
@@ -295,7 +306,9 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
     const clientId =
       inv.direction === 'incoming' ? inv.receiver_id : inv.sender_id
 
-    const finalPath = accountantView && clientId ? ['Klanten', clientId, ...path] : path
+    const finalPath = accountantView && clientId
+      ? ['Klanten', clientLabel(clientId, clientNames), ...path]
+      : path
 
     nodes.push({
       source: 'invoice',
@@ -319,7 +332,7 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
     // Fallback: a document with no/unknown folder → Overig (never lost).
     const finalBase = path.length > 0 ? path : [NODE.overig]
     const finalPath =
-      accountantView ? ['Klanten', doc.user_id, ...finalBase] : finalBase
+      accountantView ? ['Klanten', clientLabel(doc.user_id, clientNames), ...finalBase] : finalBase
 
     nodes.push({
       source: 'document',
