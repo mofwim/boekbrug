@@ -8,13 +8,13 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
 import {
   buildBridgeTree,
   type BridgeInvoice,
   type BridgeDocument,
   type BridgeFolder,
 } from '@/lib/bridge-tree'
-import { getDocumentUrl } from '@/lib/documents'
 import BrugClient from './BrugClient'
 
 export const dynamic = 'force-dynamic'
@@ -95,16 +95,29 @@ export default async function BrugServerPage() {
   // [BOEK-002] Resolve playable URLs server-side.
   // documents store a raw storage path in file_url → needs a signed URL.
   // invoices may carry a full http(s) url already → leave as-is.
-  // RLS already scoped the rows, so signing here is safe (no extra ownership
-  // check needed — and notably this works for the accountant opening a linked
-  // client's shared file, which /api/files/[id]/url would reject on user_id).
+  //
+  // ⚠️ Why service_role here (despite the pipeline-client warning):
+  // Storage bucket policies are SEPARATE from table RLS. Table RLS let the
+  // accountant READ the row metadata, but the storage bucket only lets a user
+  // sign their OWN files — so the accountant can't sign a linked client's file
+  // via the user session (returns null → no link, the bug we saw).
+  // We sign with service_role, but ONLY for nodes that already passed table RLS
+  // (the rows were fetched under the user session + the clientNames filter), so
+  // no unauthorized path is ever signed. service_role is used here strictly to
+  // bypass STORAGE rls, not to widen which rows are visible.
+  const pipeline = createPipelineClient()
+  const signUrl = async (path: string): Promise<string | null> => {
+    const { data } = await pipeline.storage.from('documents').createSignedUrl(path, 3600)
+    return data?.signedUrl ?? null
+  }
+
   const signedNodes = await Promise.all(
     nodes.map(async (n) => {
       if (!n.pdfUrl) return n
       // Already a full URL → keep.
       if (/^https?:\/\//i.test(n.pdfUrl)) return n
-      // Storage path → sign it (documents bucket).
-      const signed = await getDocumentUrl(n.pdfUrl)
+      // Storage path → sign it (documents bucket) via service_role.
+      const signed = await signUrl(n.pdfUrl)
       return { ...n, pdfUrl: signed }
     })
   )
