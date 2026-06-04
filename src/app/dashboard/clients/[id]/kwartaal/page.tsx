@@ -92,7 +92,6 @@ export default function KwartaalPage() {
   const [loading, setLoading] = useState(true)
   const [sortAsc, setSortAsc] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -146,25 +145,27 @@ export default function KwartaalPage() {
   const totalBtw = invoices.reduce((s, i) => s + (i.btw_amount || 0), 0)
 
   // [BOEK-028] accountant_status update
-  // [BOEK-028] accountant_status update
-  // Creditnota + verwerkt → also set status = 'voldaan' — May 2026
-  async function handleAction(invoiceId: string, action: ActionValue) {
+  // [BOEK-006] action can be null = "niet verwerkt" (neutral, accountant hasn't acted)
+  async function handleAction(invoiceId: string, action: ActionValue | null) {
     setUpdatingId(invoiceId)
-    setOpenDropdownId(null)
 
-    const invoice = invoices.find(i => i.id === invoiceId)
-    const isCreditnota = invoice?.invoice_type === 'creditnota'
-    const update: Record<string, string> = { accountant_status: action }
+    // [BOEK-006] null clears the status (neutral state)
+    const update: Record<string, string | null> = { accountant_status: action }
 
-    // [BOEK-028] Creditnota verwerkt → status wordt voldaan
-    if (isCreditnota && action === 'verwerkt') {
-      update.status = 'voldaan'
-    }
+    // NOTE: 'voldaan' is a UI-only label, NOT a DB status (violates CHECK).
+    // Creditnota stays 'paid' in DB; the UI shows "Voldaan" based on type+status.
+    // (removed the previous update.status = 'voldaan' which caused a 23514 error)
 
     setInvoices(prev => prev.map(i =>
-      i.id === invoiceId ? { ...i, accountant_status: action, ...(update.status ? { status: update.status } : {}) } : i
+      i.id === invoiceId ? { ...i, accountant_status: action } : i
     ))
-    await supabase.from('invoices').update(update).eq('id', invoiceId)
+    const { error } = await supabase.from('invoices').update(update).eq('id', invoiceId)
+    if (error) {
+      // revert optimistic on failure
+      setInvoices(prev => prev.map(i =>
+        i.id === invoiceId ? { ...i, accountant_status: invoices.find(x => x.id === invoiceId)?.accountant_status ?? null } : i
+      ))
+    }
     setUpdatingId(null)
   }
 
@@ -263,7 +264,6 @@ export default function KwartaalPage() {
               {sorted.map(invoice => {
                 const amount      = getAmount(invoice)
                 const isExpanded  = expandedId === invoice.id
-                const isDropdown  = openDropdownId === invoice.id
                 const isUpdating  = updatingId === invoice.id
                 const isOutgoing  = invoice.direction === 'outgoing'
                 const rowBg       = ACCOUNTANT_ACTIONS.find(a => a.value === invoice.accountant_status)?.rowBg
@@ -277,7 +277,6 @@ export default function KwartaalPage() {
                       className="px-4 py-3 cursor-pointer active:opacity-80 transition-opacity"
                       onClick={() => {
                         setExpandedId(isExpanded ? null : invoice.id)
-                        setOpenDropdownId(null)
                       }}
                     >
                       <div className="flex items-center justify-between gap-3">
@@ -313,36 +312,11 @@ export default function KwartaalPage() {
                           <p style={{ fontSize: 14, fontWeight: 600, color: amount >= 0 ? '#34A853' : '#EA4335', fontFamily: "'Roboto Mono', monospace" }}>
                             {NL_NUMBER.format(amount)}
                           </p>
-                          {/* ••• dropdown trigger */}
-                          <button
-                            onClick={e => {
-                              e.stopPropagation()
-                              setOpenDropdownId(isDropdown ? null : invoice.id)
-                              setExpandedId(null)
-                            }}
-                            style={{ fontSize: 13, padding: '2px 6px', borderRadius: 4, backgroundColor: '#F1F3F4', color: '#5F6368', border: 'none', cursor: 'pointer' }}
-                          >
-                            •••
-                          </button>
                         </div>
                       </div>
 
-                      {/* [BOEK-028] Inline action dropdown — 3 options only */}
-                      {isDropdown && (
-                        <div className="mt-2 grid grid-cols-3 gap-2"
-                          onClick={e => e.stopPropagation()}>
-                          {ACCOUNTANT_ACTIONS.map(a => (
-                            <button key={a.value}
-                              onClick={() => handleAction(invoice.id, a.value)}
-                              style={{ padding: '8px', borderRadius: 4, fontSize: 12, fontWeight: 500, backgroundColor: a.bg, color: a.color, border: 'none', cursor: 'pointer' }}>
-                              {a.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Current status badge (shown when dropdown is closed) */}
-                      {!isDropdown && invoice.accountant_status && (
+                      {/* [BOEK-006] status badge preview (when collapsed) */}
+                      {!isExpanded && invoice.accountant_status && (
                         <div className="mt-1.5">
                           <ActionBadge value={invoice.accountant_status} />
                         </div>
@@ -353,6 +327,41 @@ export default function KwartaalPage() {
                     {isExpanded && (
                       <div className="px-4 pb-4 pt-1" onClick={e => e.stopPropagation()}>
                         <div style={{ backgroundColor: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+                          {/* [BOEK-006] Status actions — 3 states + neutral, one tap */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 10, borderBottom: '1px solid #E0E0E0' }}>
+                            <span style={{ fontSize: 12, color: '#5F6368', fontWeight: 500 }}>Status</span>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                              {ACCOUNTANT_ACTIONS.map(a => {
+                                const active = invoice.accountant_status === a.value
+                                return (
+                                  <button key={a.value}
+                                    onClick={() => handleAction(invoice.id, active ? null : a.value)}
+                                    style={{
+                                      padding: '8px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+                                      backgroundColor: active ? a.bg : '#FFFFFF',
+                                      color: active ? a.color : '#5F6368',
+                                      border: active ? `1px solid ${a.color}` : '1px solid #E0E0E0',
+                                      cursor: 'pointer',
+                                    }}>
+                                    {a.label}
+                                  </button>
+                                )
+                              })}
+                              {/* neutral — accountant hasn't acted */}
+                              <button
+                                onClick={() => handleAction(invoice.id, null)}
+                                style={{
+                                  padding: '8px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+                                  backgroundColor: !invoice.accountant_status ? '#E7E0EC' : '#FFFFFF',
+                                  color: !invoice.accountant_status ? '#49454F' : '#5F6368',
+                                  border: !invoice.accountant_status ? '1px solid #49454F' : '1px solid #E0E0E0',
+                                  cursor: 'pointer',
+                                }}>
+                                Niet verwerkt
+                              </button>
+                            </div>
+                          </div>
 
                           {/* Client info */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 10, borderBottom: '1px solid #E0E0E0' }}>
