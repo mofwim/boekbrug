@@ -14,6 +14,7 @@ import {
   type BridgeDocument,
   type BridgeFolder,
 } from '@/lib/bridge-tree'
+import { getDocumentUrl } from '@/lib/documents'
 import BrugClient from './BrugClient'
 
 export const dynamic = 'force-dynamic'
@@ -91,5 +92,22 @@ export default async function BrugServerPage() {
     clientNames,
   })
 
-  return <BrugClient nodes={nodes} role={profile.role} />
+  // [BOEK-002] Resolve playable URLs server-side.
+  // documents store a raw storage path in file_url → needs a signed URL.
+  // invoices may carry a full http(s) url already → leave as-is.
+  // RLS already scoped the rows, so signing here is safe (no extra ownership
+  // check needed — and notably this works for the accountant opening a linked
+  // client's shared file, which /api/files/[id]/url would reject on user_id).
+  const signedNodes = await Promise.all(
+    nodes.map(async (n) => {
+      if (!n.pdfUrl) return n
+      // Already a full URL → keep.
+      if (/^https?:\/\//i.test(n.pdfUrl)) return n
+      // Storage path → sign it (documents bucket).
+      const signed = await getDocumentUrl(n.pdfUrl)
+      return { ...n, pdfUrl: signed }
+    })
+  )
+
+  return <BrugClient nodes={signedNodes} role={profile.role} />
 }
