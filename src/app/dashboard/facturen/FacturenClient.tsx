@@ -102,6 +102,9 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const [payCtx, setPayCtx]             = useState<ConfirmPayCtx | null>(null)
   const [sendCtx, setSendCtx]           = useState<SendCtx | null>(null)  // [BOEK-029] Versturen confirm
   const [processingId, setProcessingId] = useState<string | null>(null)
+  // [BOEK-004] dialog shown when client tries to unpay an accountant-verwerkt invoice
+  const [verwerktCtx, setVerwerktCtx] = useState<{ id: string; number: string } | null>(null)
+  const [requestSent, setRequestSent] = useState(false)
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
   const [archivedInvoices, setArchivedInvoices] = useState<any[]>([])
@@ -156,8 +159,13 @@ export default function FacturenClient({ profile }: { profile: any }) {
     if (error) {
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       updateOptimistic(ctx.id, { status: prev })
-      // [BOEK-004] surface DB guard messages (e.g. verwerkt conflict) to the user
-      showToast(error.message || 'Bijwerken mislukt')
+      // [BOEK-004] verwerkt conflict (trigger) → show actionable dialog; else toast
+      if (error.message && error.message.includes('verwerkt')) {
+        setRequestSent(false)
+        setVerwerktCtx({ id: ctx.id, number: ctx.number })
+      } else {
+        showToast(error.message || 'Bijwerken mislukt')
+      }
     } else if (ctx.newStatus === 'paid') {
       if (ctx.invoiceType === 'creditnota') {
         showToast(`Creditnota ${ctx.number} voldaan ✓`)
@@ -178,6 +186,39 @@ export default function FacturenClient({ profile }: { profile: any }) {
       }
     }
     setProcessingId(null)
+  }
+
+  // [BOEK-004] Ask the linked accountant to undo "verwerkt" so payment can change.
+  async function requestUnverwerkt() {
+    if (!verwerktCtx || !profile?.id) return
+    // find the linked accountant for this client
+    const { data: link } = await supabase
+      .from('accountant_clients')
+      .select('accountant_id')
+      .eq('zzper_id', profile.id)
+      .limit(1)
+      .maybeSingle()
+
+    if (!link?.accountant_id) {
+      showToast('Geen boekhouder gekoppeld')
+      setVerwerktCtx(null)
+      return
+    }
+
+    const res = await fetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receiver_id: link.accountant_id,
+        content: `Verzoek: maak de verwerking van factuur ${verwerktCtx.number} ongedaan, zodat ik de betaalstatus kan aanpassen.`,
+      }),
+    })
+
+    if (res.ok) {
+      setRequestSent(true)
+    } else {
+      showToast('Versturen mislukt')
+    }
   }
 
   async function executeDelete(ctx: DeleteCtx) {
@@ -677,6 +718,44 @@ export default function FacturenClient({ profile }: { profile: any }) {
           onConfirm={() => executeDelete(deleteCtx)}
           onCancel={() => setDeleteCtx(null)}
         />
+      )}
+
+      {/* [BOEK-004] Verwerkt conflict dialog */}
+      {verwerktCtx && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => setVerwerktCtx(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
+          >
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>
+              Factuur is verwerkt
+            </h3>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
+              {requestSent
+                ? `Je verzoek voor factuur ${verwerktCtx.number} is naar de boekhouder gestuurd.`
+                : `De boekhouder heeft factuur ${verwerktCtx.number} verwerkt. Vraag eerst om de verwerking ongedaan te maken voordat je de betaalstatus wijzigt.`}
+            </p>
+            <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
+              {!requestSent && (
+                <button
+                  onClick={requestUnverwerkt}
+                  style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+                >
+                  Stuur verzoek naar boekhouder
+                </button>
+              )}
+              <button
+                onClick={() => setVerwerktCtx(null)}
+                style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+              >
+                Sluiten
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Toast ── */}
