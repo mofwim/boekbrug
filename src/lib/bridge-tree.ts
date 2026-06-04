@@ -306,6 +306,13 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
     const clientId =
       inv.direction === 'incoming' ? inv.receiver_id : inv.sender_id
 
+    // [BOEK-005] In accountant view, only show rows belonging to a LINKED client
+    // (clientId present in clientNames). This excludes the accountant's own
+    // invoices (they are not their own client) and any unlinked stray rows.
+    if (accountantView) {
+      if (!clientId || !clientNames?.has(clientId)) continue
+    }
+
     const finalPath = accountantView && clientId
       ? ['Klanten', clientLabel(clientId, clientNames), ...path]
       : path
@@ -327,6 +334,10 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
   // ---- Documents (physical) ----
   for (const doc of documents) {
     if (invoiceLinkedDocIds.has(doc.id)) continue // attached to an invoice already
+
+    // [BOEK-005] In accountant view, only linked clients' documents (same rule
+    // as invoices) — excludes the accountant's own docs and unlinked strays.
+    if (accountantView && !clientNames?.has(doc.user_id)) continue
 
     const path = folderPath(doc.folder_id, folderMap)
     // Fallback: a document with no/unknown folder → Overig (never lost).
