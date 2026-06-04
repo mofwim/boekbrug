@@ -156,6 +156,8 @@ export default function FacturenClient({ profile }: { profile: any }) {
     if (error) {
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       updateOptimistic(ctx.id, { status: prev })
+      // [BOEK-004] surface DB guard messages (e.g. verwerkt conflict) to the user
+      showToast(error.message || 'Bijwerken mislukt')
     } else if (ctx.newStatus === 'paid') {
       if (ctx.invoiceType === 'creditnota') {
         showToast(`Creditnota ${ctx.number} voldaan ✓`)
