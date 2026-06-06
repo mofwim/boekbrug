@@ -1,0 +1,337 @@
+// lib/ubl-export.ts
+// [BOEK-020] UBL 2.1 invoice export — pure generator (data in → XML string out)
+// June 2026
+//
+// Standard: UBL 2.1 (urn:oasis:names:specification:ubl:schema:xsd:Invoice-2)
+// Accepted by Dutch accounting software (Exact Online, Snelstart, Twinfield, Yuki).
+// NOT SI-UBL / Peppol BIS (no CustomizationID) — deliberately lenient for import use.
+//
+// Design rules:
+//  - Pure function: takes RAW data (not display-formatted rows), returns an XML string.
+//    No date/amount pre-formatting from export.ts — those produce display values
+//    (comma decimals, no zero-padding) that UBL rejects.
+//  - Amounts: dot decimal, exactly 2 decimals.
+//  - Dates: YYYY-MM-DD (zero-padded).
+//  - Totals are DERIVED from invoice_lines for internal consistency
+//    (TaxExclusiveAmount = LineExtensionAmount = Σ line amounts;
+//     TaxInclusiveAmount = TaxExclusiveAmount + Σ tax). The stored invoice header
+//     totals are only used as a cross-check (warning, never silent override).
+//  - xmlbuilder2 handles XML escaping (& < > " ') and element nesting.
+//  - btw_rate: on invoice_lines it IS a real column — read it directly (do NOT
+//    recompute via the invoices-level Math.round trick).
+
+import { create } from "xmlbuilder2";
+
+// ─── Input shapes (raw DB-ish, decoupled from database.types for testability) ──
+
+/** Seller = the ZZP'er, from `profiles`. */
+export interface UblSupplier {
+  company_name: string | null;
+  full_name: string | null;
+  kvk_number: string | null;
+  btw_number: string | null;
+  iban: string | null;
+  address: string | null;
+  postal_code: string | null;
+  city: string | null;
+}
+
+/** Invoice header, from `invoices` (raw — dates as 'YYYY-MM-DD', amounts as numbers). */
+export interface UblInvoiceHeader {
+  invoice_number: string | null;
+  invoice_date: string | null;
+  due_date: string | null;
+  invoice_type: string | null; // 'factuur' | 'creditnota' | 'pro_forma' | 'offerte'
+  total_ex_btw: number | null;
+  btw_amount: number | null;
+  total_inc_btw: number | null;
+  client_name: string | null;
+  client_address: string | null;
+  client_postal_code: string | null;
+  client_city: string | null;
+  client_btw_number: string | null;
+}
+
+/** Invoice line, from `invoice_lines`. `line_total` is treated as EX BTW. */
+export interface UblInvoiceLine {
+  description: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  btw_rate: number | null; // real column on invoice_lines (default 21)
+  line_total: number | null; // ex BTW (quantity * unit_price)
+}
+
+// ─── Errors (stable codes — UI/route maps to Dutch copy) ───────────────────────
+
+export type UblErrorCode =
+  | "SUPPLIER_MISSING_KVK"
+  | "SUPPLIER_MISSING_BTW"
+  | "SUPPLIER_MISSING_NAME"
+  | "NO_LINES"
+  | "MISSING_INVOICE_NUMBER"
+  | "MISSING_INVOICE_DATE";
+
+export class UblValidationError extends Error {
+  code: UblErrorCode;
+  constructor(code: UblErrorCode, message: string) {
+    super(message);
+    this.name = "UblValidationError";
+    this.code = code;
+  }
+}
+
+// ─── Small helpers ─────────────────────────────────────────────────────────────
+
+/** Round to 2 decimals (avoids float drift), return number. */
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/** Format a number as a UBL amount: dot decimal, exactly 2 places. */
+function money(n: number): string {
+  return round2(n).toFixed(2);
+}
+
+/** Format a quantity: up to a few decimals, dot decimal, no trailing-zero noise. */
+function qty(n: number): string {
+  // UBL accepts decimals; keep it simple and stable.
+  return String(round2(n));
+}
+
+/**
+ * Normalize a date to UBL YYYY-MM-DD (zero-padded).
+ * Accepts 'YYYY-MM-DD' (Supabase `date`), full ISO timestamps, or Date.
+ */
+function toUblDate(input: string | null): string | null {
+  if (!input) return null;
+  // Already a clean date string?
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(input);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const d = new Date(input);
+  if (isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const da = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${mo}-${da}`;
+}
+
+/** UBL InvoiceTypeCode: 380 = commercial invoice, 381 = credit note. */
+function invoiceTypeCode(invoiceType: string | null): "380" | "381" {
+  return invoiceType === "creditnota" ? "381" : "380";
+}
+
+/**
+ * UBL tax category code per VAT rate.
+ *  S = standard rated (>0%), Z = zero rated (0%).
+ * (E/AE for exempt/reverse-charge are out of scope for v1 single-invoice export.)
+ */
+function taxCategoryId(rate: number): "S" | "Z" {
+  return rate > 0 ? "S" : "Z";
+}
+
+const NS = {
+  inv: "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
+  cbc: "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+  cac: "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+};
+const EUR = "EUR";
+
+// ─── Validation ─────────────────────────────────────────────────────────────────
+
+function supplierName(s: UblSupplier): string | null {
+  return s.company_name?.trim() || s.full_name?.trim() || null;
+}
+
+/**
+ * Validate inputs without throwing — useful for the UI to pre-check
+ * and decide whether to show/enable the export button.
+ */
+export function validateUblInputs(
+  header: UblInvoiceHeader,
+  lines: UblInvoiceLine[],
+  supplier: UblSupplier
+): { ok: true } | { ok: false; code: UblErrorCode } {
+  if (!supplierName(supplier)) return { ok: false, code: "SUPPLIER_MISSING_NAME" };
+  if (!supplier.kvk_number?.trim()) return { ok: false, code: "SUPPLIER_MISSING_KVK" };
+  if (!supplier.btw_number?.trim()) return { ok: false, code: "SUPPLIER_MISSING_BTW" };
+  if (!header.invoice_number?.trim()) return { ok: false, code: "MISSING_INVOICE_NUMBER" };
+  if (!toUblDate(header.invoice_date)) return { ok: false, code: "MISSING_INVOICE_DATE" };
+  if (!lines || lines.length === 0) return { ok: false, code: "NO_LINES" };
+  return { ok: true };
+}
+
+// ─── Tax grouping ────────────────────────────────────────────────────────────────
+
+interface TaxGroup {
+  rate: number; // e.g. 21, 9, 0
+  taxable: number; // Σ line ex-btw at this rate
+  tax: number; // round2(taxable * rate/100)
+}
+
+function groupByRate(lines: UblInvoiceLine[]): TaxGroup[] {
+  const map = new Map<number, number>(); // rate -> taxable
+  for (const l of lines) {
+    const rate = Number(l.btw_rate ?? 0);
+    const ex = Number(l.line_total ?? 0);
+    map.set(rate, (map.get(rate) ?? 0) + ex);
+  }
+  return [...map.entries()]
+    .sort((a, b) => b[0] - a[0]) // 21 before 9 before 0
+    .map(([rate, taxable]) => ({
+      rate,
+      taxable: round2(taxable),
+      tax: round2(taxable * (rate / 100)),
+    }));
+}
+
+// ─── Generator ────────────────────────────────────────────────────────────────────
+
+export interface UblBuildResult {
+  xml: string;
+  /** Non-fatal cross-check notes (e.g. derived totals differ from stored header). */
+  warnings: string[];
+}
+
+/**
+ * Build a valid UBL 2.1 invoice XML from raw data.
+ * Throws UblValidationError on missing required data.
+ */
+export function buildInvoiceUbl(
+  header: UblInvoiceHeader,
+  lines: UblInvoiceLine[],
+  supplier: UblSupplier
+): UblBuildResult {
+  const check = validateUblInputs(header, lines, supplier);
+  if (!check.ok) {
+    throw new UblValidationError(check.code, `UBL export blocked: ${check.code}`);
+  }
+
+  const warnings: string[] = [];
+  const issueDate = toUblDate(header.invoice_date)!; // validated
+  const dueDate = toUblDate(header.due_date);
+
+  // Derive totals from lines (internal consistency over stored header).
+  const groups = groupByRate(lines);
+  const lineExtensionTotal = round2(groups.reduce((s, g) => s + g.taxable, 0));
+  const totalTax = round2(groups.reduce((s, g) => s + g.tax, 0));
+  const taxInclusive = round2(lineExtensionTotal + totalTax);
+
+  // Cross-check against stored header totals (warn only).
+  const storedEx = Number(header.total_ex_btw ?? 0);
+  const storedInc = Number(header.total_inc_btw ?? 0);
+  if (storedEx && Math.abs(storedEx - lineExtensionTotal) > 0.01) {
+    warnings.push(
+      `Header total_ex_btw (${money(storedEx)}) differs from line sum (${money(lineExtensionTotal)}).`
+    );
+  }
+  if (storedInc && Math.abs(storedInc - taxInclusive) > 0.01) {
+    warnings.push(
+      `Header total_inc_btw (${money(storedInc)}) differs from derived total (${money(taxInclusive)}).`
+    );
+  }
+
+  const sName = supplierName(supplier)!;
+
+  const root = create({ version: "1.0", encoding: "UTF-8" }).ele(NS.inv, "Invoice", {
+    "xmlns:cbc": NS.cbc,
+    "xmlns:cac": NS.cac,
+  });
+
+  // ── Header fields (order matters in UBL 2.1) ──
+  root.ele(NS.cbc, "UBLVersionID").txt("2.1");
+  root.ele(NS.cbc, "ID").txt(header.invoice_number!.trim());
+  root.ele(NS.cbc, "IssueDate").txt(issueDate);
+  if (dueDate) root.ele(NS.cbc, "DueDate").txt(dueDate);
+  root.ele(NS.cbc, "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
+  root.ele(NS.cbc, "DocumentCurrencyCode").txt(EUR);
+
+  // ── AccountingSupplierParty (the ZZP'er) ──
+  const supParty = root
+    .ele(NS.cac, "AccountingSupplierParty")
+    .ele(NS.cac, "Party");
+  supParty.ele(NS.cac, "PartyName").ele(NS.cbc, "Name").txt(sName);
+  const supAddr = supParty.ele(NS.cac, "PostalAddress");
+  if (supplier.address?.trim()) supAddr.ele(NS.cbc, "StreetName").txt(supplier.address.trim());
+  if (supplier.city?.trim()) supAddr.ele(NS.cbc, "CityName").txt(supplier.city.trim());
+  if (supplier.postal_code?.trim()) supAddr.ele(NS.cbc, "PostalZone").txt(supplier.postal_code.trim());
+  supAddr.ele(NS.cac, "Country").ele(NS.cbc, "IdentificationCode").txt("NL");
+  // VAT scheme
+  const supTax = supParty.ele(NS.cac, "PartyTaxScheme");
+  supTax.ele(NS.cbc, "CompanyID").txt(supplier.btw_number!.trim());
+  supTax.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+  // Legal entity + KVK
+  const supLegal = supParty.ele(NS.cac, "PartyLegalEntity");
+  supLegal.ele(NS.cbc, "RegistrationName").txt(sName);
+  supLegal.ele(NS.cbc, "CompanyID").txt(supplier.kvk_number!.trim());
+
+  // ── AccountingCustomerParty (the client) ──
+  const cusParty = root
+    .ele(NS.cac, "AccountingCustomerParty")
+    .ele(NS.cac, "Party");
+  cusParty
+    .ele(NS.cac, "PartyName")
+    .ele(NS.cbc, "Name")
+    .txt(header.client_name?.trim() || "Onbekend");
+  const cusAddr = cusParty.ele(NS.cac, "PostalAddress");
+  if (header.client_address?.trim()) cusAddr.ele(NS.cbc, "StreetName").txt(header.client_address.trim());
+  if (header.client_city?.trim()) cusAddr.ele(NS.cbc, "CityName").txt(header.client_city.trim());
+  if (header.client_postal_code?.trim()) cusAddr.ele(NS.cbc, "PostalZone").txt(header.client_postal_code.trim());
+  cusAddr.ele(NS.cac, "Country").ele(NS.cbc, "IdentificationCode").txt("NL");
+  if (header.client_btw_number?.trim()) {
+    const cusTax = cusParty.ele(NS.cac, "PartyTaxScheme");
+    cusTax.ele(NS.cbc, "CompanyID").txt(header.client_btw_number.trim());
+    cusTax.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+  }
+
+  // ── PaymentMeans (IBAN) — optional, before TaxTotal ──
+  if (supplier.iban?.trim()) {
+    const pm = root.ele(NS.cac, "PaymentMeans");
+    pm.ele(NS.cbc, "PaymentMeansCode").txt("30"); // 30 = credit transfer
+    pm.ele(NS.cac, "PayeeFinancialAccount").ele(NS.cbc, "ID").txt(supplier.iban.trim());
+  }
+
+  // ── TaxTotal (one TaxSubtotal per rate) ──
+  const taxTotal = root.ele(NS.cac, "TaxTotal");
+  taxTotal.ele(NS.cbc, "TaxAmount", { currencyID: EUR }).txt(money(totalTax));
+  for (const g of groups) {
+    const sub = taxTotal.ele(NS.cac, "TaxSubtotal");
+    sub.ele(NS.cbc, "TaxableAmount", { currencyID: EUR }).txt(money(g.taxable));
+    sub.ele(NS.cbc, "TaxAmount", { currencyID: EUR }).txt(money(g.tax));
+    const cat = sub.ele(NS.cac, "TaxCategory");
+    cat.ele(NS.cbc, "ID").txt(taxCategoryId(g.rate));
+    cat.ele(NS.cbc, "Percent").txt(String(g.rate));
+    cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+  }
+
+  // ── LegalMonetaryTotal ──
+  const lmt = root.ele(NS.cac, "LegalMonetaryTotal");
+  lmt.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(lineExtensionTotal));
+  lmt.ele(NS.cbc, "TaxExclusiveAmount", { currencyID: EUR }).txt(money(lineExtensionTotal));
+  lmt.ele(NS.cbc, "TaxInclusiveAmount", { currencyID: EUR }).txt(money(taxInclusive));
+  lmt.ele(NS.cbc, "PayableAmount", { currencyID: EUR }).txt(money(taxInclusive));
+
+  // ── InvoiceLine (1..n) ──
+  lines.forEach((l, i) => {
+    const rate = Number(l.btw_rate ?? 0);
+    const ex = round2(Number(l.line_total ?? 0));
+    const line = root.ele(NS.cac, "InvoiceLine");
+    line.ele(NS.cbc, "ID").txt(String(i + 1));
+    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: "C62" }).txt(qty(Number(l.quantity ?? 1)));
+    line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
+    const item = line.ele(NS.cac, "Item");
+    const desc = l.description?.trim() || "Artikel";
+    item.ele(NS.cbc, "Description").txt(desc);
+    item.ele(NS.cbc, "Name").txt(desc);
+    const cat = item.ele(NS.cac, "ClassifiedTaxCategory");
+    cat.ele(NS.cbc, "ID").txt(taxCategoryId(rate));
+    cat.ele(NS.cbc, "Percent").txt(String(rate));
+    cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+    line
+      .ele(NS.cac, "Price")
+      .ele(NS.cbc, "PriceAmount", { currencyID: EUR })
+      .txt(money(Number(l.unit_price ?? 0)));
+  });
+
+  const xml = root.end({ prettyPrint: true });
+  return { xml, warnings };
+}
