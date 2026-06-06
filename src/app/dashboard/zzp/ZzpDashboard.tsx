@@ -140,7 +140,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/incoming')}
           />
 
-          {/* 3. Mijn werkplek */}
+          {/* 4. Bank — [BOEK-029] BOEK-016 integration */}
+          <ActionCard
+            icon="account_balance" iconBg="#5F6368" iconColor="#fff"
+            label="Bank" sub="Koppel je afschrift"
+            onClick={() => router.push('/dashboard/bank')}
+          />
+
+          {/* 5. Mijn werkplek */}
           <ActionCard
             icon="work" iconBg={M3.success} iconColor="#fff"
             label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
