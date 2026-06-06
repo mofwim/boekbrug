@@ -7,7 +7,8 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-
+// [BOEK-020] UBL export button
+import UblExportButton from '@/components/export/UblExportButton'
 type Props = {
   invoiceId: string
   invoiceNumber: string
@@ -67,7 +68,8 @@ const canDelete = status === 'draft'
           >
             ✕ Verwijderen
           </button>
-        )}
+        )}{/* [BOEK-020] UBL/XML export — single invoice (hides itself for draft) */}
+        <UblExportButton invoiceId={invoiceId} invoiceNumber={invoiceNumber} status={status} />
       </div>
 
       {/* Foutmelding */}
