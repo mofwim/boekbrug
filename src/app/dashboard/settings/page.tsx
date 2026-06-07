@@ -33,6 +33,15 @@ export default function SettingsPage() {
   const [errorProfile, setErrorProfile] = useState('')
   const [errorInvite, setErrorInvite] = useState('')
 
+  // [BOEK-032] حالة تصدير البيانات + حذف الحساب
+  const [exportConfirmed, setExportConfirmed] = useState(false)
+  const [exportLoading, setExportLoading] = useState(false)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [delEmail, setDelEmail] = useState('')
+  const [delPassword, setDelPassword] = useState('')
+  const [delLoading, setDelLoading] = useState(false)
+  const [delError, setDelError] = useState('')
+
   // تحميل بيانات الملف الشخصي عند فتح الصفحة
   useEffect(() => {
     async function load() {
@@ -65,6 +74,14 @@ export default function SettingsPage() {
           if (json.accountant) setAccountant(json.accountant)
         }
       }
+
+      // [BOEK-032] هل سبق تأكيد تصدير البيانات؟ (يُبقي زر الحذف مُفعّلاً لو غادر وعاد)
+      const { data: dr } = await supabase
+        .from('deletion_requests')
+        .select('export_confirmed')
+        .eq('user_id', user.id)
+        .maybeSingle()
+      if (dr?.export_confirmed) setExportConfirmed(true)
     }
     load()
   }, [])
@@ -138,6 +155,60 @@ export default function SettingsPage() {
     } else {
       const data = await res.json().catch(() => ({}))
       alert(data.error || 'Ontkoppelen mislukt')
+    }
+  }
+
+  // [BOEK-032] تصدير كل بيانات الحساb (ZIP) ثم تفعيل زر الحذف
+  async function exportData() {
+    setExportLoading(true)
+    setDelError('')
+    try {
+      const res = await fetch('/api/account/export', { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setDelError(data.error || 'Export mislukt')
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `boekbrug-export-${new Date().toISOString().slice(0, 10)}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      setExportConfirmed(true)
+    } catch {
+      setDelError('Export mislukt — probeer opnieuw')
+    } finally {
+      setExportLoading(false)
+    }
+  }
+
+  // [BOEK-032] تأكيد الحذف بـ email + password — تعطيل لا حذف فيزيائي
+  async function confirmDelete() {
+    if (!delEmail || !delPassword) {
+      setDelError('Vul je e-mailadres en wachtwoord in')
+      return
+    }
+    setDelLoading(true)
+    setDelError('')
+    try {
+      const res = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: delEmail, password: delPassword }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setDelError(data.error || 'Verwijderen mislukt')
+        return
+      }
+      await supabase.auth.signOut()
+      router.push('/login')
+    } catch {
+      setDelError('Verwijderen mislukt — probeer opnieuw')
+    } finally {
+      setDelLoading(false)
     }
   }
 
@@ -336,7 +407,99 @@ export default function SettingsPage() {
           </div>
         )}
 
+        {/* [BOEK-032] Gevarenzone — gegevens exporteren + account verwijderen */}
+        <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3 border border-red-100">
+          <p className="text-xs font-semibold text-red-400 uppercase tracking-wide">
+            Gevarenzone
+          </p>
+          <p className="text-sm text-gray-500">
+            Exporteer eerst al je gegevens. Daarna kun je je account verwijderen.
+            Je gegevens worden niet direct gewist: facturen en administratie
+            moeten wettelijk 7 jaar bewaard blijven (Bewaarplicht). Je account
+            wordt gedeactiveerd en is daarna niet meer toegankelijk.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button
+              onClick={exportData}
+              disabled={exportLoading}
+              className="flex-1 bg-[#1A73E8] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-50"
+            >
+              {exportLoading
+                ? 'Exporteren...'
+                : exportConfirmed
+                ? 'Opnieuw exporteren'
+                : 'Exporteer mijn gegevens'}
+            </button>
+            <button
+              onClick={() => { setDelError(''); setDeleteModalOpen(true) }}
+              disabled={!exportConfirmed}
+              className="flex-1 border border-red-300 text-red-600 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Account verwijderen
+            </button>
+          </div>
+          {!exportConfirmed && (
+            <p className="text-xs text-gray-400">
+              Verwijderen is pas mogelijk nadat je je gegevens hebt geëxporteerd.
+            </p>
+          )}
+        </div>
+
       </div>
+
+      {/* [BOEK-032] Bevestig verwijderen — e-mail + wachtwoord */}
+      {deleteModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => { if (!delLoading) setDeleteModalOpen(false) }}
+        >
+          <div
+            className="bg-white w-full max-w-sm p-6 space-y-4"
+            style={{ borderRadius: 28 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="text-base font-bold text-gray-900">Account verwijderen</h2>
+            <p className="text-sm text-gray-500">
+              Bevestig met je e-mailadres en wachtwoord. Je account wordt
+              gedeactiveerd en is daarna niet meer toegankelijk. Je gegevens
+              blijven wettelijk bewaard (Bewaarplicht ~7 jaar).
+            </p>
+            <div className="space-y-2">
+              <input
+                type="email"
+                value={delEmail}
+                onChange={e => setDelEmail(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                placeholder="E-mailadres"
+              />
+              <input
+                type="password"
+                value={delPassword}
+                onChange={e => setDelPassword(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                placeholder="Wachtwoord"
+              />
+            </div>
+            {delError && <p className="text-sm text-red-500">{delError}</p>}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setDeleteModalOpen(false)}
+                disabled={delLoading}
+                className="flex-1 border border-gray-300 text-gray-600 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+              >
+                Annuleren
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={delLoading}
+                className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-red-700 disabled:opacity-50"
+              >
+                {delLoading ? 'Verwijderen...' : 'Definitief verwijderen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

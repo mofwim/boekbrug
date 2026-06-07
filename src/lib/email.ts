@@ -240,3 +240,51 @@ export async function sendDraftQueueEmail({
   // clientName is intentionally available for future personalization / subject use.
   void clientName
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// [BOEK-032] APPEND THIS FUNCTION to src/lib/email.ts (end of file).
+// Do NOT rewrite the rest of the file — surgical, tagged addition, pre-approved
+// by Tech Lead. email.ts is the single home for all Resend sends.
+//
+// House style matches the existing templates (#007aff brand, same footer) —
+// emails are brand-level, not the dashboard palette. All values here are
+// numbers/dates (no user free text), so no HTML escaping is required.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function sendAccountExportSummary({
+  toEmail,
+  invoiceCount,
+  fileCount,
+  skippedCount,
+  generatedAt
+}: {
+  toEmail: string
+  invoiceCount: number
+  fileCount: number
+  skippedCount: number
+  generatedAt: string
+}) {
+  const datum = new Date(generatedAt).toLocaleDateString('nl-NL')
+  const skippedLine =
+    skippedCount > 0
+      ? `<p style="color:#999; font-size:13px;">${skippedCount} bestand(en) konden niet worden opgehaald en zijn overgeslagen.</p>`
+      : ''
+
+  await resend.emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject: 'Je BoekBrug-gegevensexport',
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #1c1c1e;">Je gegevensexport is klaar</h2>
+        <p style="color: #555;">Je hebt een export van je BoekBrug-gegevens gedownload op ${datum}.</p>
+        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0;">
+          <p style="margin:4px 0; color:#1c1c1e;"><strong>Facturen:</strong> ${invoiceCount}</p>
+          <p style="margin:4px 0; color:#1c1c1e;"><strong>Documenten:</strong> ${fileCount}</p>
+        </div>
+        ${skippedLine}
+        <p style="color: #555; font-size: 13px;">Heb je deze export niet zelf aangevraagd? Neem dan direct contact met ons op.</p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `
+  })
+}
