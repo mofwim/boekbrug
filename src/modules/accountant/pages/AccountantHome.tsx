@@ -18,6 +18,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '@/app/dashboard/_shared'
 import { composeDraftEmail } from '@/lib/ai'
+import DraftQueue from '@/components/draft-queue/DraftQueue'
 import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.types'
 
 // ─────────────────────────────────────────────────────────
@@ -48,13 +49,6 @@ const TODO_ICON: Record<string, string> = {
 // ─────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────
-
-interface DraftQueueItem {
-  clientId: string
-  clientName: string
-  text: string
-  addedAt: string
-}
 
 interface Props {
   profile: {
@@ -112,14 +106,6 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
   const [aiLoading, setAiLoading] = useState(false)
   const [aiResult, setAiResult] = useState<{ subject: string; body: string } | null>(null)
 
-  // ── Draft Queue ──
-  const [draftQueue, setDraftQueue] = useState<DraftQueueItem[]>([])
-  const [showDraftQueue, setShowDraftQueue] = useState(false)
-  const [draftQueueClientId, setDraftQueueClientId] = useState('')
-  const [draftInput, setDraftInput] = useState('')
-  const [composing, setComposing] = useState(false)
-  const [composedEmail, setComposedEmail] = useState<{ subject: string; body: string } | null>(null)
-
   // ── Init ──
   useEffect(() => {
     // Time-based greeting — set after mount to keep server/client HTML identical
@@ -133,25 +119,6 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
       if (found) setLastClientName(found.company_name || found.full_name)
       else localStorage.removeItem(LAST_CLIENT_KEY) // stale
     }
-
-    // Load draft queue from DB
-    async function loadDraftQueue() {
-      const { data } = await supabase
-        .from('draft_queue')
-        .select('items')
-        .eq('accountant_id', profile.id)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-      if (data?.[0]?.items) {
-        try {
-          const items = Array.isArray(data[0].items)
-            ? data[0].items
-            : JSON.parse(data[0].items)
-          setDraftQueue(items)
-        } catch { /* ignore */ }
-      }
-    }
-    loadDraftQueue()
   }, [])
 
   // ─────────────────────────────────────────────────────────
@@ -200,77 +167,10 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
   }
 
   // ─────────────────────────────────────────────────────────
-  // Draft Queue
-  // ─────────────────────────────────────────────────────────
-
-  async function saveDraftQueue(updated: DraftQueueItem[]) {
-    const { data: existing } = await supabase
-      .from('draft_queue').select('id').eq('accountant_id', profile.id).limit(1)
-    if (existing?.[0]) {
-      await supabase.from('draft_queue')
-        .update({ items: updated, updated_at: new Date().toISOString() })
-        .eq('id', existing[0].id)
-    } else {
-      await supabase.from('draft_queue').insert({
-        accountant_id: profile.id,
-        client_id: draftQueueClientId || null,
-        items: updated,
-      })
-    }
-  }
-
-  async function addManualItem() {
-    if (!draftInput.trim() || !draftQueueClientId) return
-    const client = clients.find(c => c.id === draftQueueClientId)
-    const newItem: DraftQueueItem = {
-      clientId: draftQueueClientId,
-      clientName: client?.company_name || client?.full_name || 'Onbekend',
-      text: draftInput.trim(),
-      addedAt: new Date().toISOString(),
-    }
-    const updated = [...draftQueue, newItem]
-    setDraftQueue(updated)
-    setDraftInput('')
-    await saveDraftQueue(updated)
-  }
-
-  async function composeEmail() {
-    const clientForQueue = clients.find(c => c.id === draftQueueClientId)
-    const clientName = clientForQueue?.company_name || clientForQueue?.full_name || 'Klant'
-    const items = draftQueue
-      .filter(i => !draftQueueClientId || i.clientId === draftQueueClientId)
-      .map(i => i.text)
-    if (items.length === 0) return
-    setComposing(true)
-    try {
-      const result = await composeDraftEmail(
-        profile.full_name || profile.company_name || 'Uw boekhouder',
-        clientName,
-        items
-      )
-      setComposedEmail(result)
-    } catch {
-      setComposedEmail({
-        subject: `Ontbrekende stukken — ${clientName}`,
-        body: `Beste ${clientName},\n\nKunnen jullie de volgende stukken aanleveren?\n\n${items.map(i => `• ${i}`).join('\n')}\n\nMet vriendelijke groet,\n${profile.full_name || 'Uw boekhouder'}`,
-      })
-    } finally {
-      setComposing(false)
-    }
-  }
-
-  async function clearDraftQueue() {
-    setDraftQueue([])
-    setComposedEmail(null)
-    await supabase.from('draft_queue').update({ items: [] }).eq('accountant_id', profile.id)
-  }
-
-  // ─────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────
 
   const unreadNotifCount = notifications.filter(n => !n.read).length
-  const visibleQueueItems = draftQueue.filter(i => !draftQueueClientId || i.clientId === draftQueueClientId)
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
@@ -562,114 +462,8 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
 
       </main>
 
-      {/* ── Draft Queue floating (preserved exactly) ── */}
-      <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 50, maxWidth: showDraftQueue ? 340 : 'auto' }}>
-        {showDraftQueue ? (
-          <div style={{ backgroundColor: '#FFFFFF', borderRadius: 12, boxShadow: '0 4px 24px rgba(0,0,0,0.18)', width: 340, overflow: 'hidden' }}>
-
-            {/* Queue header */}
-            <div style={{ backgroundColor: '#202124', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>📋</span>
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#FFFFFF' }}>Draft Queue</span>
-                {draftQueue.length > 0 && (
-                  <span style={{ backgroundColor: '#EA4335', color: '#FFFFFF', fontSize: 11, fontWeight: 700, borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {draftQueue.length}
-                  </span>
-                )}
-              </div>
-              <button onClick={() => setShowDraftQueue(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>✕</button>
-            </div>
-
-            {/* Client selector */}
-            <div style={{ padding: '12px 16px 8px' }}>
-              <select
-                value={draftQueueClientId}
-                onChange={e => setDraftQueueClientId(e.target.value)}
-                style={{ width: '100%', fontSize: 14, padding: '8px 12px', border: '1px solid #BDBDBD', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124' }}
-              >
-                <option value="">Selecteer klant</option>
-                {clients.map(c => (
-                  <option key={c.id} value={c.id}>{c.company_name ?? c.full_name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Items */}
-            <div style={{ padding: '0 16px 8px', maxHeight: 160, overflowY: 'auto' }}>
-              {visibleQueueItems.length === 0 ? (
-                <p style={{ fontSize: 12, color: '#5F6368', textAlign: 'center', padding: '8px 0' }}>Geen items</p>
-              ) : visibleQueueItems.map((item, idx) => (
-                <div key={idx} style={{ fontSize: 12, color: '#202124', padding: '6px 0', borderBottom: '1px solid #F1F3F4', display: 'flex', gap: 8 }}>
-                  <span style={{ color: '#9AA0A6', flexShrink: 0 }}>•</span>
-                  <span>{item.text}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Add item */}
-            <div style={{ padding: '8px 16px', display: 'flex', gap: 8 }}>
-              <input
-                value={draftInput}
-                onChange={e => setDraftInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addManualItem()}
-                placeholder="Item toevoegen..."
-                style={{ flex: 1, fontSize: 13, padding: '6px 10px', border: '1px solid #BDBDBD', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124' }}
-              />
-              <button
-                onClick={addManualItem}
-                disabled={!draftInput.trim() || !draftQueueClientId}
-                style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 14, fontWeight: 600, cursor: 'pointer', opacity: (!draftInput.trim() || !draftQueueClientId) ? 0.4 : 1 }}
-              >+</button>
-            </div>
-
-            {/* Composed email preview */}
-            {composedEmail && (
-              <div style={{ margin: '0 16px 8px', padding: 12, backgroundColor: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8, fontSize: 12, color: '#202124' }}>
-                <p style={{ fontWeight: 600, margin: '0 0 4px' }}>Onderwerp: {composedEmail.subject}</p>
-                <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5, margin: 0 }}>{composedEmail.body}</p>
-              </div>
-            )}
-
-            {/* Actions */}
-            <div style={{ padding: '8px 16px 16px', display: 'flex', gap: 8 }}>
-              <button
-                onClick={composeEmail}
-                disabled={composing || visibleQueueItems.length === 0}
-                style={{ flex: 1, backgroundColor: '#34A853', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '8px 10px', fontSize: 12, fontWeight: 500, cursor: 'pointer', opacity: (composing || visibleQueueItems.length === 0) ? 0.4 : 1 }}
-              >
-                {composing ? 'AI stelt op...' : 'AI opstellen'}
-              </button>
-              {composedEmail && (
-                <button
-                  onClick={() => {
-                    const client = clients.find(c => c.id === draftQueueClientId)
-                    if (client?.email)
-                      window.location.href = `mailto:${client.email}?subject=${encodeURIComponent(composedEmail.subject)}&body=${encodeURIComponent(composedEmail.body)}`
-                  }}
-                  style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '8px 10px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
-                >Versturen</button>
-              )}
-              <button
-                onClick={clearDraftQueue}
-                style={{ backgroundColor: '#EA4335', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '8px 10px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}
-              >Wissen</button>
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => setShowDraftQueue(true)}
-            style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', backgroundColor: '#202124', color: '#FFFFFF', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}
-          >
-            📋 Draft Queue
-            {draftQueue.length > 0 && (
-              <span style={{ position: 'absolute', top: -6, right: -6, backgroundColor: '#EA4335', color: '#FFFFFF', fontSize: 11, fontWeight: 700, borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {draftQueue.length}
-              </span>
-            )}
-          </button>
-        )}
-      </div>
+      {/* ── Draft Queue (extracted to /components/draft-queue) ── */}
+      <DraftQueue clients={clients} />
 
     </div>
   )
