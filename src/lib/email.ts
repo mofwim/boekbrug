@@ -187,3 +187,56 @@ export async function sendClientUnlinkedNotification({
     `
   })
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// [BOEK-030] APPEND THIS FUNCTION to src/lib/email.ts (end of file).
+// Do NOT rewrite the rest of the file — this is a surgical, tagged addition,
+// pre-approved by Tech Lead. email.ts is the single home for all Resend sends,
+// so the Draft Queue letter is sent from here (no second Resend client).
+//
+// House style matches the existing templates in this file (#007aff brand, same
+// footer) — emails are brand-level, not the Workspace dashboard palette.
+// The AI/edited body is plain text with \n line breaks; we HTML-escape it and
+// convert newlines to <br> so arbitrary content can't break the markup.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function sendDraftQueueEmail({
+  toEmail,
+  clientName,
+  accountantName,
+  subject,
+  body
+}: {
+  toEmail: string
+  clientName: string
+  accountantName: string
+  subject: string
+  body: string
+}) {
+  const escape = (s: string) =>
+    s.replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+
+  const safeBody = escape(body).replace(/\r?\n/g, '<br>')
+
+  await resend.emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #1c1c1e;">Bericht van je boekhouder</h2>
+        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0; color:#1c1c1e; line-height:1.5;">
+          ${safeBody}
+        </div>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">
+          ${escape(accountantName)} · via BoekBrug — De brug tussen jou en je boekhouder
+        </p>
+      </div>
+    `
+  })
+
+  // clientName is intentionally available for future personalization / subject use.
+  void clientName
+}
