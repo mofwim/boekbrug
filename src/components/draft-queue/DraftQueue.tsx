@@ -10,9 +10,17 @@
 // so it stays visible across all accountant pages.
 //
 // Design: matches the accountant module's Workspace inline-style convention
-//   (#1A73E8, 8px radius, 36px buttons, Roboto, ≤100ms background-only animation),
+//   (#1A73E8, 8px radius, 36px buttons, Roboto, <=100ms background-only animation),
 //   as in KlantenBeheer.tsx / AccountantWerkplek.tsx. NOT the ZZP Material You system.
 // Responsive: floating card bottom-right on desktop; full-width bottom-sheet on mobile.
+//
+// Email flow (Tech Lead decisions):
+//   - The Onderwerp/Bericht editor is ALWAYS available to write manually.
+//   - "AI opstellen" fills it (skeleton while the AI call is in flight).
+//   - "Versturen" is enabled once subject + body are non-empty (typed or AI). After a
+//     confirmed send the server auto-clears the queue (mirrored locally).
+//   - "Annuleren" discards the DRAFT only — it never deletes the queue. Items are
+//     removed individually via the X on each row; the queue clears only after a send.
 //
 // All persistence + AI + send go through /api/draft-queue (server-side, RLS, Resend).
 // This component holds UI state only.
@@ -46,12 +54,17 @@ export default function DraftQueue({ clients }: Props) {
   const [input, setInput] = useState('')
 
   const [composing, setComposing] = useState(false)
-  const [composed, setComposed] = useState<{ subject: string; body: string } | null>(null)
+  const [subject, setSubject] = useState('')
+  const [bodyText, setBodyText] = useState('')
 
   const [sending, setSending] = useState(false)
   const [sentOk, setSentOk] = useState(false)
   const [sentCleared, setSentCleared] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const selectedItems = selectedId ? (queues[selectedId] ?? []) : []
+  const totalCount = Object.values(queues).reduce((sum, items) => sum + items.length, 0)
+  const canSend = subject.trim().length > 0 && bodyText.trim().length > 0
 
   // ── Load all queues on mount (persisted between sessions) ──
   useEffect(() => {
@@ -70,19 +83,28 @@ export default function DraftQueue({ clients }: Props) {
     return () => { active = false }
   }, [])
 
-  const selectedItems = selectedId ? (queues[selectedId] ?? []) : []
-  const totalCount = Object.values(queues).reduce((sum, items) => sum + items.length, 0)
-
   function clientName(id: string): string {
     const c = clients.find(x => x.id === id)
     return c?.company_name || c?.full_name || 'Klant'
   }
 
-  function resetEmailState() {
-    setComposed(null)
+  // Clears only the sent/feedback status — never a draft the user is writing.
+  function clearStatus() {
     setSentOk(false)
     setSentCleared(false)
     setError(null)
+  }
+
+  // Full reset of the email draft + status (used on client switch and "Annuleren").
+  function resetEmail() {
+    setSubject('')
+    setBodyText('')
+    clearStatus()
+  }
+
+  function selectClient(id: string) {
+    setSelectedId(id)
+    resetEmail()
   }
 
   // ── Add manual item ──
@@ -100,18 +122,18 @@ export default function DraftQueue({ clients }: Props) {
       if (!res.ok) { setError(json.error ?? 'Toevoegen mislukt'); return }
       setQueues(prev => ({ ...prev, [selectedId]: json.items }))
       setInput('')
-      resetEmailState()
+      clearStatus()
     } catch {
       setError('Netwerkfout. Probeer het opnieuw.')
     }
   }
 
-  // ── Remove one item ──
+  // ── Remove one item (X) ──
   async function removeItem(itemId: string) {
     if (!selectedId) return
     const next = selectedItems.filter(i => i.id !== itemId)
     setQueues(prev => ({ ...prev, [selectedId]: next }))  // optimistic
-    resetEmailState()
+    clearStatus()
     try {
       await fetch('/api/draft-queue', {
         method: 'PATCH',
@@ -121,12 +143,13 @@ export default function DraftQueue({ clients }: Props) {
     } catch { /* optimistic; reload on next mount */ }
   }
 
-  // ── AI compose (server-side) ──
+  // ── AI compose (server-side) — fills the editor ──
   async function compose() {
     if (!selectedId || selectedItems.length === 0) return
     setComposing(true)
     setError(null)
     setSentOk(false)
+    setSentCleared(false)
     try {
       const res = await fetch('/api/draft-queue', {
         method: 'POST',
@@ -135,7 +158,8 @@ export default function DraftQueue({ clients }: Props) {
       })
       const json = await res.json()
       if (!res.ok) { setError(json.error ?? 'Opstellen mislukt'); return }
-      setComposed({ subject: json.subject ?? '', body: json.body ?? '' })
+      setSubject(json.subject ?? '')
+      setBodyText(json.body ?? '')
     } catch {
       setError('Netwerkfout. Probeer het opnieuw.')
     } finally {
@@ -143,9 +167,9 @@ export default function DraftQueue({ clients }: Props) {
     }
   }
 
-  // ── Send via Resend (after human review) ──
+  // ── Send via Resend (manual- or AI-written; human confirms) ──
   async function send() {
-    if (!selectedId || !composed) return
+    if (!selectedId || !canSend) return
     setSending(true)
     setError(null)
     try {
@@ -155,8 +179,8 @@ export default function DraftQueue({ clients }: Props) {
         body: JSON.stringify({
           action: 'send',
           client_id: selectedId,
-          subject: composed.subject,
-          body: composed.body,
+          subject: subject.trim(),
+          body: bodyText.trim(),
         }),
       })
       const json = await res.json()
@@ -164,13 +188,15 @@ export default function DraftQueue({ clients }: Props) {
       setSentOk(true)
       setSentCleared(!!json.cleared)
       if (json.cleared) {
-        // Server auto-cleared the queue after a confirmed send — mirror it locally.
+        // Server auto-cleared the queue after a confirmed send — mirror it locally
+        // and discard the now-sent draft.
         setQueues(prev => {
           const next = { ...prev }
           delete next[selectedId]
           return next
         })
-        setComposed(null)
+        setSubject('')
+        setBodyText('')
       }
     } catch {
       setError('Netwerkfout. Probeer het opnieuw.')
@@ -179,28 +205,9 @@ export default function DraftQueue({ clients }: Props) {
     }
   }
 
-  // ── Clear this client's queue ("Annuleren") ──
-  async function clearQueue() {
-    if (!selectedId) return
-    setError(null)
-    try {
-      const res = await fetch(`/api/draft-queue?client_id=${encodeURIComponent(selectedId)}`, {
-        method: 'DELETE',
-      })
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}))
-        setError(json.error ?? 'Verwijderen mislukt')
-        return
-      }
-      setQueues(prev => {
-        const next = { ...prev }
-        delete next[selectedId]
-        return next
-      })
-      resetEmailState()
-    } catch {
-      setError('Netwerkfout. Probeer het opnieuw.')
-    }
+  // ── Annuleren — discard the draft only; the queue is left untouched ──
+  function discardDraft() {
+    resetEmail()
   }
 
   // ─────────────────────────────────────────────────────────
@@ -215,10 +222,15 @@ export default function DraftQueue({ clients }: Props) {
     background: '#FFFFFF', color: '#1A73E8', border: '1px solid #1A73E8', borderRadius: 8,
     padding: '0 16px', height: 36, fontSize: 14, fontWeight: 500, cursor: 'pointer',
   }
+  const editorBox: CSSProperties = {
+    background: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8,
+    padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
+  }
+  const labelStyle: CSSProperties = { fontSize: 11, fontWeight: 600, color: '#5F6368' }
 
   return (
     <>
-      {/* Responsive rules — SSR-stable, no client-only branching */}
+      {/* Responsive + skeleton rules — SSR-stable, no client-only branching */}
       <style>{`
         .bq-dq-root { font-family: 'Google Sans','Roboto',sans-serif; }
         @keyframes bq-shimmer { 0% { background-position: -240px 0; } 100% { background-position: 240px 0; } }
@@ -283,7 +295,7 @@ export default function DraftQueue({ clients }: Props) {
               {/* Client dropdown */}
               <select
                 value={selectedId}
-                onChange={e => { setSelectedId(e.target.value); resetEmailState() }}
+                onChange={e => selectClient(e.target.value)}
                 style={{
                   width: '100%', height: 36, fontSize: 14, padding: '0 10px',
                   border: '1px solid #BDBDBD', borderRadius: 8, background: '#F8F9FA',
@@ -302,40 +314,40 @@ export default function DraftQueue({ clients }: Props) {
               </select>
 
               {/* Items list */}
-              {selectedId && (
-                selectedItems.length === 0 ? (
-                  <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>
-                    Nog geen openstaande punten voor deze klant.
-                  </p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {selectedItems.map(item => (
-                      <div key={item.id} style={{
-                        display: 'flex', alignItems: 'flex-start', gap: 8,
-                        background: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8,
-                        padding: '8px 10px',
-                      }}>
-                        <span style={{ flex: 1, fontSize: 13, color: '#202124', lineHeight: 1.4 }}>
-                          {item.source === 'not_found' && (
-                            <span style={{
-                              fontSize: 10, fontWeight: 600, color: '#C5221F', background: '#FCE8E6',
-                              borderRadius: 4, padding: '1px 5px', marginRight: 6, textTransform: 'uppercase',
-                            }}>Niet gevonden</span>
-                          )}
-                          {item.description}
-                        </span>
-                        <button
-                          onClick={() => removeItem(item.id)}
-                          aria-label="Verwijderen"
-                          style={{ background: 'none', border: 'none', color: '#5F6368', fontSize: 15, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}
-                        >✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )
+              {selectedId && selectedItems.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {selectedItems.map(item => (
+                    <div key={item.id} style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 8,
+                      background: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8,
+                      padding: '8px 10px',
+                    }}>
+                      <span style={{ flex: 1, fontSize: 13, color: '#202124', lineHeight: 1.4 }}>
+                        {item.source === 'not_found' && (
+                          <span style={{
+                            fontSize: 10, fontWeight: 600, color: '#C5221F', background: '#FCE8E6',
+                            borderRadius: 4, padding: '1px 5px', marginRight: 6, textTransform: 'uppercase',
+                          }}>Niet gevonden</span>
+                        )}
+                        {item.description}
+                      </span>
+                      <button
+                        onClick={() => removeItem(item.id)}
+                        aria-label="Verwijderen"
+                        style={{ background: 'none', border: 'none', color: '#5F6368', fontSize: 15, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
               )}
 
-              {/* Manual add */}
+              {selectedId && selectedItems.length === 0 && !sentOk && (
+                <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>
+                  Nog geen openstaande punten voor deze klant.
+                </p>
+              )}
+
+              {/* Manual add (always available to build the list) */}
               {selectedId && (
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
@@ -357,46 +369,41 @@ export default function DraftQueue({ clients }: Props) {
                 </div>
               )}
 
-              {/* Compose skeleton — perceived speed during the AI call */}
-              {composing && !composed && (
-                <div style={{
-                  background: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8,
-                  padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
-                }}>
-                  <div className="bq-skel" style={{ height: 12, width: '40%' }} />
-                  <div className="bq-skel" style={{ height: 34, width: '100%' }} />
-                  <div className="bq-skel" style={{ height: 12, width: '30%' }} />
-                  <div className="bq-skel" style={{ height: 90, width: '100%' }} />
-                </div>
-              )}
-
-              {/* Composed preview — editable (Human confirms) */}
-              {composed && (
-                <div style={{
-                  background: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8,
-                  padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
-                }}>
-                  <label style={{ fontSize: 11, fontWeight: 600, color: '#5F6368' }}>Onderwerp</label>
-                  <input
-                    value={composed.subject}
-                    onChange={e => setComposed({ ...composed, subject: e.target.value })}
-                    style={{
-                      height: 34, fontSize: 13, padding: '0 8px',
-                      border: '1px solid #BDBDBD', borderRadius: 6, background: '#FFFFFF', color: '#202124', outline: 'none',
-                    }}
-                  />
-                  <label style={{ fontSize: 11, fontWeight: 600, color: '#5F6368' }}>Bericht</label>
-                  <textarea
-                    value={composed.body}
-                    onChange={e => setComposed({ ...composed, body: e.target.value })}
-                    rows={7}
-                    style={{
-                      fontSize: 13, padding: 8, lineHeight: 1.5, resize: 'vertical',
-                      border: '1px solid #BDBDBD', borderRadius: 6, background: '#FFFFFF', color: '#202124', outline: 'none',
-                      fontFamily: 'inherit',
-                    }}
-                  />
-                </div>
+              {/* Email editor — manual or AI-filled; skeleton only during the AI call */}
+              {selectedId && selectedItems.length > 0 && (
+                composing ? (
+                  <div style={editorBox}>
+                    <div className="bq-skel" style={{ height: 12, width: '40%' }} />
+                    <div className="bq-skel" style={{ height: 34, width: '100%' }} />
+                    <div className="bq-skel" style={{ height: 12, width: '30%' }} />
+                    <div className="bq-skel" style={{ height: 90, width: '100%' }} />
+                  </div>
+                ) : (
+                  <div style={editorBox}>
+                    <label style={labelStyle}>Onderwerp</label>
+                    <input
+                      value={subject}
+                      onChange={e => { setSubject(e.target.value); clearStatus() }}
+                      placeholder="Onderwerp van de e-mail…"
+                      style={{
+                        height: 34, fontSize: 13, padding: '0 8px',
+                        border: '1px solid #BDBDBD', borderRadius: 6, background: '#FFFFFF', color: '#202124', outline: 'none',
+                      }}
+                    />
+                    <label style={labelStyle}>Bericht</label>
+                    <textarea
+                      value={bodyText}
+                      onChange={e => { setBodyText(e.target.value); clearStatus() }}
+                      rows={7}
+                      placeholder="Schrijf hier je bericht, of gebruik 'AI opstellen'…"
+                      style={{
+                        fontSize: 13, padding: 8, lineHeight: 1.5, resize: 'vertical',
+                        border: '1px solid #BDBDBD', borderRadius: 6, background: '#FFFFFF',
+                        color: '#202124', outline: 'none', fontFamily: 'inherit',
+                      }}
+                    />
+                  </div>
+                )
               )}
 
               {/* Feedback */}
@@ -408,27 +415,27 @@ export default function DraftQueue({ clients }: Props) {
               )}
 
               {/* Actions */}
-              {selectedId && (
+              {selectedId && selectedItems.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   <button
                     onClick={compose}
-                    disabled={composing || sending || selectedItems.length === 0}
-                    style={{ ...btnSecondary, opacity: (composing || sending || selectedItems.length === 0) ? 0.5 : 1 }}
+                    disabled={composing || sending}
+                    style={{ ...btnSecondary, opacity: (composing || sending) ? 0.5 : 1 }}
                   >{composing ? 'Bezig…' : 'AI opstellen'}</button>
 
                   <button
                     onClick={send}
-                    disabled={!composed || sending}
-                    style={{ ...btnPrimary, opacity: (!composed || sending) ? 0.5 : 1 }}
+                    disabled={!canSend || sending || composing}
+                    style={{ ...btnPrimary, opacity: (!canSend || sending || composing) ? 0.5 : 1 }}
                   >{sending ? 'Versturen…' : 'Versturen'}</button>
 
                   <button
-                    onClick={clearQueue}
-                    disabled={selectedItems.length === 0 || sending}
+                    onClick={discardDraft}
+                    disabled={(!subject && !bodyText) || sending}
                     style={{
-                      background: '#FFFFFF', color: '#C5221F', border: '1px solid #BDBDBD',
+                      background: '#FFFFFF', color: '#5F6368', border: '1px solid #BDBDBD',
                       borderRadius: 8, padding: '0 16px', height: 36, fontSize: 14, fontWeight: 500,
-                      cursor: 'pointer', opacity: (selectedItems.length === 0 || sending) ? 0.5 : 1, marginLeft: 'auto',
+                      cursor: 'pointer', opacity: ((!subject && !bodyText) || sending) ? 0.5 : 1, marginLeft: 'auto',
                     }}
                   >Annuleren</button>
                 </div>
