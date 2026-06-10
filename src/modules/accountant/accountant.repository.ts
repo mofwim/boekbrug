@@ -8,7 +8,7 @@
 // via accountant_clients before returning any data.
 //
 // Visibility rule: accountant sees ONLY invoices where
-//   status = 'paid' AND sent_to_accountant = true
+//   shared = true  (shared GENERATED ALWAYS AS status='paid' — model A)
 //   [BOEK-FOUNDATION-TYPES] 'voldaan' removed — not in DB CHECK constraint
 //   'received' invoices are NEVER returned here.
 
@@ -69,7 +69,7 @@ export async function getAccountantClients(
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', profile.id)
         .in('status', ['paid'])
-        .eq('sent_to_accountant', true)
+        .eq('shared', true)
         .gte('invoice_date', start)
         .lte('invoice_date', end)
 
@@ -79,7 +79,7 @@ export async function getAccountantClients(
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', profile.id)
         .in('status', ['paid'])
-        .eq('sent_to_accountant', true)
+        .eq('shared', true)
         .eq('accountant_status', 'verwerkt')
         .gte('invoice_date', start)
         .lte('invoice_date', end)
@@ -177,7 +177,7 @@ export async function getClientDetail(
     .select('id', { count: 'exact', head: true })
     .eq('sender_id', clientId)
     .in('status', ['paid'])
-    .eq('sent_to_accountant', true)
+    .eq('shared', true)
     .gte('invoice_date', start)
     .lte('invoice_date', end)
 
@@ -186,7 +186,7 @@ export async function getClientDetail(
     .select('id', { count: 'exact', head: true })
     .eq('sender_id', clientId)
     .in('status', ['paid'])
-    .eq('sent_to_accountant', true)
+    .eq('shared', true)
     .eq('accountant_status', 'verwerkt')
     .gte('invoice_date', start)
     .lte('invoice_date', end)
@@ -300,7 +300,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId)
         .in('status', ['paid'])
-        .eq('sent_to_accountant', true)
+        .eq('shared', true)
         .eq('accountant_status', 'vraag')
 
       if ((vraagCount ?? 0) > 0) {
@@ -319,7 +319,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId)
         .in('status', ['paid'])
-        .eq('sent_to_accountant', true)
+        .eq('shared', true)
         .not('accountant_status', 'eq', 'verwerkt')
         .gte('invoice_date', start)
         .lte('invoice_date', end)
@@ -414,7 +414,7 @@ export async function getClientPaidInvoices(
     `)
     .eq('sender_id', clientId)
     .in('status', ['paid'])
-    .eq('sent_to_accountant', true)
+    .eq('shared', true)
     .gte('invoice_date', start)
     .lte('invoice_date', end)
     .order('invoice_date', { ascending: true })
