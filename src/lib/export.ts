@@ -40,7 +40,6 @@ export interface InvRow {
   invoice_date: string | null;
   due_date: string | null;
   created_at: string | null;
-  sent_to_accountant: boolean | null;
   invoice_type?: string | null; // [BOEK-014] 'factuur' | 'creditnota' | 'pro_forma'
 }
 
@@ -71,7 +70,6 @@ export interface InvoiceExportRowFull extends InvoiceExportRow {
   client_postal_code: string;
   client_city: string;
   direction: string;
-  sent_to_accountant: string; // "Ja" | "Nee"
   invoice_type: string;       // [BOEK-014] 'factuur' | 'creditnota' | 'pro_forma'
 }
 
@@ -146,7 +144,6 @@ export function toExportRowFull(inv: InvRow, period: string): InvoiceExportRowFu
     btw_rate: calcBtwRate(btwAmt, exBtw),
     invoice_date: fmtDateNL(inv.invoice_date),
     due_date: fmtDateNL(inv.due_date),
-    sent_to_accountant: inv.sent_to_accountant ? "Ja" : "Nee",
     invoice_type: inv.invoice_type ?? "factuur", // [BOEK-014]
     period,
   };
@@ -177,7 +174,7 @@ export function invoicesToCsv(rows: InvoiceExportRow[]): string {
     "Bedrag incl. BTW",
     "Factuurdatum",
     "Vervaldatum",
-    "Naar boekhouder",
+    // [BRIDGE-A] "Naar boekhouder" removed — sent_to_accountant column dropped
     "Periode",
   ];
 
@@ -207,7 +204,6 @@ export function invoicesToCsv(rows: InvoiceExportRow[]): string {
         fmtAmountNL(r.total_inc_btw),
         r.invoice_date,
         r.due_date,
-        (r as InvoiceExportRowFull).sent_to_accountant ?? "",
         r.period,
       ]
         .map(escape)
@@ -239,7 +235,7 @@ export function invoicesToCsvAccountant(
     "Bedrag incl. BTW",
     "Factuurdatum",
     "Vervaldatum",
-    "Naar boekhouder",
+    // [BRIDGE-A] "Naar boekhouder" removed — sent_to_accountant column dropped
     "Periode",
   ];
 
@@ -271,7 +267,6 @@ export function invoicesToCsvAccountant(
         fmtAmountNL(r.total_inc_btw),
         r.invoice_date,
         r.due_date,
-        r.sent_to_accountant,
         r.period,
       ]
         .map(escape)

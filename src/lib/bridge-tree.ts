@@ -1,5 +1,7 @@
 // src/lib/bridge-tree.ts
 // [BOEK-002] Bridge Folder Rendering — the heart of the Rendering philosophy.
+// [BRIDGE-A] June 2026 — sharing criterion expanded (sent/received/paid) +
+//            paid/verwerkt semantic split + accounting buckets for accountant.
 //
 // Invoices are NOT stored in physical folders. They are RENDERED into a tree
 // from their metadata (invoice_date + direction + status + payment_method).
@@ -11,8 +13,22 @@
 // That makes the whole rendering layer unit-testable and free of RLS concerns
 // (RLS already filtered the rows before they reach here).
 //
-// Ownership: this file is NEW and owned by [BOEK-002]. It READS the shapes of
-// invoices/documents but does not import or modify bestanden.ts (BOEK-033).
+// [BRIDGE-A] Semantic rules (decided, signed):
+//   - 'Verwerkt' is NEVER a path node. It is the accountant's processing state
+//     (accountant_status) and renders as a BADGE only. The old code routed
+//     paid invoices into a 'Verwerkt' folder — that was a semantic bug
+//     (payment state mislabeled as processing state).
+//   - paid    → [year, Q, 'Voldaan', Bank|Contant]            (both views)
+//   - unpaid  → ZZP view:        [year, Q, Verzonden|Ontvangen]
+//               accountant view: [year, Q, Debiteuren|Crediteuren]
+//     The ZZP'er hates accounting jargon — Debiteuren/Crediteuren appear in
+//     accountantView only.
+//   - 'overdue' is NEVER a stored status (computed: sent + due_date < today).
+//     It renders as a 'Verlopen' badge on unpaid nodes — never as a folder
+//     and never read from the status column.
+//
+// Ownership: owned by [BOEK-002]; [BRIDGE-A] edits tagged inline. It READS the
+// shapes of invoices/documents but does not import or modify bestanden.ts.
 
 // ============================================================================
 // Types — minimal shapes needed for rendering (derived from DB schema)
@@ -28,6 +44,10 @@ export interface BridgeInvoice {
     | 'processing' | 'processed' | 'unclear' | 'archived' | null
   direction: 'outgoing' | 'incoming' | null
   invoice_date: string | null          // ISO date or null
+  /** [BRIDGE-A] needed for the computed 'Verlopen' badge (never from status). */
+  due_date: string | null
+  /** [BRIDGE-A] accountant processing state → 'Verwerkt'/'Vraag' badges. */
+  accountant_status: 'te_verwerken' | 'in_behandeling' | 'verwerkt' | 'vraag' | null
   payment_method: 'bank' | 'kas' | null
   total_inc_btw: number | null
   document_id: string | null           // linked physical PDF, if any
@@ -62,7 +82,7 @@ export interface BridgeFolder {
 
 export type NodeSource = 'invoice' | 'document'
 
-/** A badge shown on a node (e.g. "Verlopen", "Creditnota", "Contant"). */
+/** A badge shown on a node (e.g. "Verlopen", "Creditnota", "Verwerkt"). */
 export interface NodeBadge {
   label: string
   tone: 'success' | 'warning' | 'error' | 'neutral' | 'info'
@@ -76,7 +96,7 @@ export interface TreeNode {
   source: NodeSource
   id: string
   displayName: string
-  /** Full path segments from root, e.g. ['2026','Q2','Verzonden','Verwerkt','Bank']. */
+  /** Full path segments from root, e.g. ['2026','Q2','Voldaan','Bank']. */
   path: string[]
   date: string | null
   amount: number | null
@@ -94,9 +114,15 @@ export interface TreeNode {
 // ============================================================================
 
 const NODE = {
+  // ZZP labels (no accounting jargon)
   verzonden: 'Verzonden',
   ontvangen: 'Ontvangen',
-  verwerkt: 'Verwerkt',
+  // [BRIDGE-A] accountant labels (accountantView only)
+  debiteuren: 'Debiteuren',            // outgoing, unpaid — receivables
+  crediteuren: 'Crediteuren',          // incoming, unpaid — payables
+  // [BRIDGE-A] paid bucket — both views. Replaces the old (wrong) 'Verwerkt'
+  // path node: Verwerkt is accountant_status, rendered as a badge only.
+  voldaan: 'Voldaan',
   bank: 'Bank',
   kas: 'Contant',            // UI label for DB 'kas'
   concept: 'Concept',
@@ -127,9 +153,24 @@ function methodLeaf(method: BridgeInvoice['payment_method']): string {
   return method === 'kas' ? NODE.kas : NODE.bank
 }
 
-/** Direction branch label; defaults to Verzonden if direction is null. */
-function directionBranch(direction: BridgeInvoice['direction']): string {
-  return direction === 'incoming' ? NODE.ontvangen : NODE.verzonden
+/**
+ * [BRIDGE-A] Branch label for an UNPAID official invoice.
+ * ZZP view keeps plain Dutch; accountant view gets accounting buckets.
+ * Defaults to outgoing if direction is null (same fallback as before).
+ */
+function unpaidBranch(
+  direction: BridgeInvoice['direction'],
+  accountantView: boolean
+): string {
+  if (direction === 'incoming') {
+    return accountantView ? NODE.crediteuren : NODE.ontvangen
+  }
+  return accountantView ? NODE.debiteuren : NODE.verzonden
+}
+
+/** [BRIDGE-A] ISO-date string compare is safe for YYYY-MM-DD. */
+function isPastDue(dueDate: string | null, todayIso: string): boolean {
+  return !!dueDate && dueDate.slice(0, 10) < todayIso
 }
 
 // ============================================================================
@@ -137,8 +178,17 @@ function directionBranch(direction: BridgeInvoice['direction']): string {
 // ============================================================================
 // Check order (decided in architecture): invoice_type → status (+ date) → Overig.
 // Every invoice gets a node. No silent loss.
+//
+// [BRIDGE-A] creditnota change: it now follows the SAME status routing as a
+// factuur (so a paid creditnota lands in Voldaan, an unpaid one in the unpaid
+// branch) while keeping its 'Creditnota' badge. Previously it was pinned to
+// Verzonden regardless of status — inconsistent with the accounting split.
 
-function invoicePath(inv: BridgeInvoice): { path: string[]; badges: NodeBadge[] } {
+function invoicePath(
+  inv: BridgeInvoice,
+  accountantView: boolean,
+  todayIso: string
+): { path: string[]; badges: NodeBadge[] } {
   const badges: NodeBadge[] = []
   const type = inv.invoice_type ?? 'factuur'
 
@@ -150,17 +200,15 @@ function invoicePath(inv: BridgeInvoice): { path: string[]; badges: NodeBadge[] 
     return { path: [NODE.proforma], badges }
   }
   if (type === 'creditnota') {
-    // creditnota is outgoing; flagged, kept with sent invoices
+    // [BRIDGE-A] badge + fall through to normal status routing (see note above)
     badges.push({ label: 'Creditnota', tone: 'info' })
-    const yr = inv.invoice_date ? yearOf(inv.invoice_date) : null
-    const path = yr ? [yr, `Q${quarterOf(inv.invoice_date!)}`, NODE.verzonden] : [NODE.verzonden]
-    return { path, badges }
   }
 
-  // 2) factuur — status drives placement
+  // 2) status drives placement
   const status = inv.status
 
-  // Draft → Concept (never visible to accountant; shared is false anyway)
+  // Draft → Concept (never visible to accountant; shared=false — draft is the
+  // only non-shared active status under the [BRIDGE-A] criterion)
   if (status === 'draft') {
     return { path: [NODE.concept], badges }
   }
@@ -171,11 +219,7 @@ function invoicePath(inv: BridgeInvoice): { path: string[]; badges: NodeBadge[] 
   }
 
   // "Awaiting human confirmation" group → Inbox
-  // processing / unclear, and received with no date yet.
   if (status === 'processing' || status === 'unclear') {
-    return { path: [NODE.inbox], badges }
-  }
-  if (status === 'received' && !inv.invoice_date) {
     return { path: [NODE.inbox], badges }
   }
 
@@ -187,34 +231,47 @@ function invoicePath(inv: BridgeInvoice): { path: string[]; badges: NodeBadge[] 
   // From here invoice_date is present → compute year/quarter
   const yr = yearOf(inv.invoice_date)
   const q = `Q${quarterOf(inv.invoice_date)}`
-  const branch = directionBranch(inv.direction)
 
-  // Paid → .../[branch]/Verwerkt/[Bank|Contant]
+  // [BRIDGE-A] Paid → .../Voldaan/[Bank|Contant] — payment state, NOT
+  // 'Verwerkt' (that was the semantic bug: accountant_status is a badge).
   if (status === 'paid') {
-    return { path: [yr, q, branch, NODE.verwerkt, methodLeaf(inv.payment_method)], badges }
+    return { path: [yr, q, NODE.voldaan, methodLeaf(inv.payment_method)], badges }
   }
 
-  // Overdue → branch + Verlopen badge (not yet paid)
-  if (status === 'overdue') {
-    badges.push({ label: 'Verlopen', tone: 'error' })
-    return { path: [yr, q, branch], badges }
-  }
-
-  // sent / received(with date) / processed → branch (active, pending)
-  if (status === 'sent' || status === 'received' || status === 'processed') {
-    return { path: [yr, q, branch], badges }
+  // Unpaid official invoice → direction bucket.
+  // 'overdue' is handled defensively (DB CHECK allows it even though the app
+  // never stores it) and gets the same routing as 'sent'.
+  if (
+    status === 'sent' || status === 'received' ||
+    status === 'processed' || status === 'overdue'
+  ) {
+    // [BRIDGE-A] 'Verlopen' is COMPUTED (due_date in the past), never a folder
+    if (status === 'overdue' || isPastDue(inv.due_date, todayIso)) {
+      badges.push({ label: 'Verlopen', tone: 'error' })
+    }
+    return { path: [yr, q, unpaidBranch(inv.direction, accountantView)], badges }
   }
 
   // Unknown/future status value → Overig safety net (+ caller can log)
   return { path: [NODE.overig], badges }
 }
 
-/** Build a status badge for paid/contant context (visual cue). */
+/**
+ * Status + accountant badges.
+ * [BRIDGE-A] 'Verwerkt' / 'Vraag' come from accountant_status ONLY — this is
+ * the single place the processing state surfaces in the tree.
+ */
 function statusBadges(inv: BridgeInvoice, base: NodeBadge[]): NodeBadge[] {
   const out = [...base]
   if (inv.status === 'paid') {
     out.push({ label: 'Betaald', tone: 'success' })
     if (inv.payment_method === 'kas') out.push({ label: 'Contant', tone: 'neutral' })
+  }
+  // [BRIDGE-A] processing state badges (apply to any shared invoice)
+  if (inv.accountant_status === 'verwerkt') {
+    out.push({ label: 'Verwerkt', tone: 'success' })
+  } else if (inv.accountant_status === 'vraag') {
+    out.push({ label: 'Vraag', tone: 'warning' })
   }
   return out
 }
@@ -247,6 +304,7 @@ export interface BuildBridgeTreeInput {
   /**
    * Accountant view: prefix every node path with the owning client id so the
    * UI can group under Klanten/[client]. Client's own view leaves this null.
+   * [BRIDGE-A] Also switches unpaid bucket labels to Debiteuren/Crediteuren.
    */
   accountantView?: boolean
   /**
@@ -255,6 +313,11 @@ export interface BuildBridgeTreeInput {
    * id is missing from the map, the UUID is used as a safe fallback.
    */
   clientNames?: Map<string, string>
+  /**
+   * [BRIDGE-A] 'Today' as ISO date (YYYY-MM-DD) for the computed 'Verlopen'
+   * badge. Defaults to the current date. Injectable for unit tests.
+   */
+  today?: string
   /** Optional sink for unexpected status values routed to Overig. */
   onUnexpected?: (kind: 'invoice_status', value: string, id: string) => void
 }
@@ -272,7 +335,13 @@ function clientLabel(clientId: string, names?: Map<string, string>): string {
  * the document side, so the PDF never appears twice.
  */
 export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
-  const { invoices, documents, folders, accountantView = false, clientNames, onUnexpected } = input
+  const {
+    invoices, documents, folders,
+    accountantView = false, clientNames, onUnexpected,
+  } = input
+
+  // [BRIDGE-A] single 'today' for the whole build — stable + testable
+  const todayIso = (input.today ?? new Date().toISOString()).slice(0, 10)
 
   const folderMap = new Map<string, BridgeFolder>()
   for (const f of folders) folderMap.set(f.id, f)
@@ -287,7 +356,7 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
 
   // ---- Invoices (rendered) ----
   for (const inv of invoices) {
-    const { path, badges } = invoicePath(inv)
+    const { path, badges } = invoicePath(inv, accountantView, todayIso)
 
     // Detect the Overig safety-net route to optionally log it.
     if (path.length === 1 && path[0] === NODE.overig && inv.status) {

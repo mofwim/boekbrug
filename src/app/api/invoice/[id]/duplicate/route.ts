@@ -42,7 +42,7 @@ export async function POST(
         total_ex_btw: original.total_ex_btw,
         btw_amount: original.btw_amount,
         total_inc_btw: original.total_inc_btw,
-        sent_to_accountant: false,
+        // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
         client_name: original.client_name,
         client_email: original.client_email,
         client_address: original.client_address,

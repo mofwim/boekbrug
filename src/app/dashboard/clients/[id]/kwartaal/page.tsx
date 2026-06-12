@@ -3,7 +3,8 @@
 // src/app/dashboard/clients/[id]/kwartaal/page.tsx
 // [BOEK-028] Kwartaal page — per client, per quarter — May 2026
 // Accessible via: /dashboard/clients/[id]/kwartaal?q=1&year=2026
-// Shows paid invoices (outgoing + incoming) filtered by quarter
+// [BRIDGE-A] Shows ALL shared invoices (sent/received/paid) filtered by quarter
+// Accounting split: Debiteuren / Crediteuren / Voldaan — Verlopen computed at display
 // Inline expand on row click — no page navigation
 // Action dropdown: Verwerkt / In behandeling / Vraag (Not Found removed)
 
@@ -50,6 +51,21 @@ function getAmount(inv: any): number {
 function getBtwRate(inv: any): number {
   if (!inv.total_ex_btw || inv.total_ex_btw === 0) return 0
   return Math.round((inv.btw_amount / inv.total_ex_btw) * 100)
+}
+
+// [BRIDGE-A] Accounting split — section definitions (accountant terminology)
+const SECTIONS = [
+  { key: 'debiteuren',  title: 'Debiteuren',  sub: 'verzonden — nog te ontvangen',
+    filter: (i: any) => i.direction === 'outgoing' && i.status === 'sent' },
+  { key: 'crediteuren', title: 'Crediteuren', sub: 'ontvangen — nog te betalen',
+    filter: (i: any) => i.direction === 'incoming' && i.status === 'received' },
+  { key: 'voldaan',     title: 'Voldaan',     sub: 'betaald',
+    filter: (i: any) => i.status === 'paid' },
+] as const
+
+// [BRIDGE-A] Verlopen is computed at display time — never stored in DB
+function isVerlopen(inv: any): boolean {
+  return inv.status === 'sent' && !!inv.due_date && new Date(inv.due_date) < new Date()
 }
 
 // ─────────────────────────────────────────────────────────
@@ -104,24 +120,24 @@ export default function KwartaalPage() {
         .from('profiles').select('*').eq('id', clientId).single()
       if (clientData) setClient(clientData)
 
-      // [BOEK-028] Two queries — outgoing + incoming — merged into one table
-      // Outgoing: sender_id = clientId, direction = outgoing, status = paid
+      // [BRIDGE-A] Two queries — outgoing + incoming — merged, then split by section
+      // Outgoing: sent (Debiteuren) + paid (Voldaan). 'voldaan' removed — never a DB value.
       const { data: outgoing } = await supabase
         .from('invoices')
         .select('*, invoice_lines(*), invoice_type, replaced_by_number')
         .eq('sender_id', clientId)
         .eq('direction', 'outgoing')
-        .in('status', ['paid', 'voldaan'])
+        .in('status', ['sent', 'paid'])
         .gte('invoice_date', dateStart)
         .lte('invoice_date', dateEnd)
 
-      // Incoming: receiver_id = clientId, direction = incoming, status = paid
+      // Incoming: received (Crediteuren) + paid (Voldaan).
       const { data: incoming } = await supabase
         .from('invoices')
         .select('*, invoice_lines(*), invoice_type, replaced_by_number')
         .eq('receiver_id', clientId)
         .eq('direction', 'incoming')
-        .in('status', ['paid', 'voldaan'])
+        .in('status', ['received', 'paid'])
         .gte('invoice_date', dateStart)
         .lte('invoice_date', dateEnd)
 
@@ -139,7 +155,8 @@ export default function KwartaalPage() {
     return sortAsc ? da - db : db - da
   })
 
-  // Totals for header summary
+  // [BRIDGE-A] Totals include ALL shared invoices (sent/received/paid) —
+  // M decision: quarter BTW is on Factuurdatum, not Betaaldatum (accrual view).
   const totalIn  = invoices.filter(i => i.direction === 'outgoing').reduce((s, i) => s + (i.total_inc_btw || 0), 0)
   const totalOut = invoices.filter(i => i.direction === 'incoming').reduce((s, i) => s + (i.total_inc_btw || 0), 0)
   const totalBtw = invoices.reduce((s, i) => s + (i.btw_amount || 0), 0)
@@ -205,29 +222,16 @@ export default function KwartaalPage() {
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* [BOEK-028] Top action buttons: PDF Bank | CAMT | KW | Documenten */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-          {[
-            { key: 'pdf_bank',   label: 'PDF Bank',   icon: '📄', color: '#1A73E8' },
-            { key: 'camt',       label: 'CAMT',       icon: '🏦', color: '#34A853' },
-            { key: 'kw',         label: 'KW',         icon: '📊', color: '#9334E6' },
-            { key: 'documenten', label: 'Documenten', icon: '📂', color: '#ff6b00' },
-          ].map(btn => (
-            <button
-              key={btn.key}
-              onClick={() => {
-                if (btn.key === 'documenten')
-                  router.push(`/dashboard/documents?clientId=${clientId}`)
-                else
-                  alert(`${btn.label} — koppeling volgt in BOEK-016`)
-              }}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '12px 8px', backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, cursor: 'pointer', transition: 'background 0.1s ease' }}
-            >
-              <span className="text-xl">{btn.icon}</span>
-              <span className="text-xs font-semibold" style={{ color: btn.color }}>{btn.label}</span>
-            </button>
-          ))}
-        </div>
+        {/* [BRIDGE-A][POLISH ب-2/ب-3] Dead buttons removed (PDF Bank/CAMT/KW — legacy
+            pre-pivot idea, never wired). Documenten now opens the Brug — the hub. */}
+        <button
+          onClick={() => router.push('/dashboard/brug')}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, cursor: 'pointer', transition: 'background 0.1s ease', width: '100%' }}
+        >
+          <span className="text-xl">📂</span>
+          <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>Documenten — bekijk in Brug</span>
+          <span style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
+        </button>
 
         {/* Quarter summary */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
@@ -257,11 +261,21 @@ export default function KwartaalPage() {
 
           {sorted.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '48px 0' }}>
-              Geen betaalde facturen in Q{q} {year}
+              Geen facturen in Q{q} {year}
             </p>
           ) : (
             <div style={{ borderTop: '1px solid #E0E0E0' }}>
-              {sorted.map(invoice => {
+              {/* [BRIDGE-A] Accounting sections — empty sections hidden */}
+              {SECTIONS.map(section => {
+                const rows = sorted.filter(section.filter)
+                if (rows.length === 0) return null
+                return (
+                  <div key={section.key}>
+                    <div style={{ padding: '10px 16px', backgroundColor: '#F8F9FA', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <h3 style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0 }}>{section.title}</h3>
+                      <span style={{ fontSize: 12, color: '#5F6368' }}>({rows.length}) · {section.sub}</span>
+                    </div>
+                    {rows.map(invoice => {
                 const amount      = getAmount(invoice)
                 const isExpanded  = expandedId === invoice.id
                 const isUpdating  = updatingId === invoice.id
@@ -293,6 +307,13 @@ export default function KwartaalPage() {
                               }}>
                               {isOutgoing ? 'Uitg.' : 'Ink.'}
                             </span>
+                            {/* [BRIDGE-A] Verlopen — computed, display-only */}
+                            {isVerlopen(invoice) && (
+                              <span className="text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+                                style={{ backgroundColor: '#F9DEDC', color: '#B3261E' }}>
+                                Verlopen
+                              </span>
+                            )}
                             {invoice.invoice_type === 'creditnota' && (
                               <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                                 style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#FCE8E6', color: '#C5221F', fontWeight: 500 }}>
@@ -426,6 +447,9 @@ export default function KwartaalPage() {
                       </div>
                     )}
 
+                  </div>
+                )
+                    })}
                   </div>
                 )
               })}

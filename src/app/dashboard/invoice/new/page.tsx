@@ -623,8 +623,7 @@ function NewInvoicePageContent() {
       invoice_type: 'factuur',
       direction: 'outgoing',
       ...totals,
-      sent_to_accountant: false,
-      source: 'created',
+// [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status      source: 'created',
       client_name: clientName,
       client_email: clientEmail,
       client_address: clientAddress,
@@ -733,7 +732,7 @@ function NewInvoicePageContent() {
       direction: 'outgoing',
       // [BOEK-031] credit: bedragen zijn negatief — gebruik freshTotals
       ...freshTotals,
-      sent_to_accountant: false,
+      // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
       source: 'created',
       client_name: clientName,
       client_email: clientEmail,

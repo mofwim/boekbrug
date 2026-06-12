@@ -607,7 +607,6 @@ export type Database = {
           replaced_by_number: string | null
           search_vector: unknown
           sender_id: string | null
-          sent_to_accountant: boolean | null
           shared: boolean | null
           source: string | null
           source_message_id: string | null
@@ -643,7 +642,6 @@ export type Database = {
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
-          sent_to_accountant?: boolean | null
           shared?: boolean | null
           source?: string | null
           source_message_id?: string | null
@@ -679,7 +677,6 @@ export type Database = {
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
-          sent_to_accountant?: boolean | null
           shared?: boolean | null
           source?: string | null
           source_message_id?: string | null

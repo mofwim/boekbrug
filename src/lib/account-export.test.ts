@@ -29,7 +29,6 @@ const sampleInvoice: InvRow = {
   invoice_date: "2026-05-14",
   due_date: "2026-06-14",
   created_at: "2026-05-14T00:00:00.000Z",
-  sent_to_accountant: true,
   invoice_type: "factuur",
 };
 

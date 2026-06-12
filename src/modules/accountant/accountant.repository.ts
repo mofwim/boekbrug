@@ -7,10 +7,12 @@
 // Access control: every function verifies accountant ↔ client linkage
 // via accountant_clients before returning any data.
 //
-// Visibility rule: accountant sees ONLY invoices where
-//   shared = true  (shared GENERATED ALWAYS AS status='paid' — model A)
+// Visibility rule [BRIDGE-A]: accountant sees ONLY invoices where
+//   shared = true  (GENERATED ALWAYS AS status IN ('sent','received','paid'))
+//   Draft is the only non-shared active status. RLS enforces linkage +
+//   shared=true at the DB level; the explicit .eq('shared', true) filters in
+//   this file are defense-in-depth, not the security boundary.
 //   [BOEK-FOUNDATION-TYPES] 'voldaan' removed — not in DB CHECK constraint
-//   'received' invoices are NEVER returned here.
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import {
@@ -57,6 +59,9 @@ export async function getAccountantClients(
   const { year, quarter } = getCurrentQuarter()
   const { start, end } = getQuarterRange(year, quarter)
 
+  // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes
+  // sent/received; readiness math (klaar/wacht) stays on paid until the
+  // portal redesign decides what 'ready' means with receivables visible.
   // For each client, compute status from current quarter data
   const summaries = await Promise.all(
     data.map(async (row: any) => {
@@ -169,6 +174,7 @@ export async function getClientDetail(
   if (!profile) return null
 
   // Compute status
+  // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes sent/received
   const { year, quarter } = getCurrentQuarter()
   const { start, end } = getQuarterRange(year, quarter)
 
@@ -284,6 +290,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
   const { year, quarter } = getCurrentQuarter()
   const { start, end } = getQuarterRange(year, quarter)
 
+  // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes sent/received
   const todos: TodoItem[] = []
 
   await Promise.all(
@@ -368,7 +375,17 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
 // ─────────────────────────────────────────────────────────
 
 /**
- * Returns paid invoices for a client in a given quarter.
+ * [BRIDGE-A] Returns ALL shared invoices (sent/received/paid) for a client in
+ * a given quarter — no longer paid-only. This feeds the accountant's
+ * accounting split (Debiteuren / Crediteuren / Voldaan / Overdue), computed
+ * in the UI from direction + status + due_date:
+ *   Debiteuren  = direction='outgoing' AND status='sent'
+ *   Crediteuren = direction='incoming' AND status='received'
+ *   Voldaan     = status='paid'
+ *   Overdue     = status='sent' AND due_date < today  (computed, never stored)
+ * Function name kept to avoid breaking existing imports (rename is a separate
+ * cosmetic ticket).
+ *
  * Verifies linkage before querying — returns [] if not linked.
  *
  * btw_rate is NOT selected (not in DB).
@@ -407,13 +424,17 @@ export async function getClientPaidInvoices(
       btw_amount,
       total_inc_btw,
       invoice_date,
+      due_date,
       marked_paid_at,
       accountant_status,
       accountant_note,
       replaced_by_number
     `)
-    .eq('sender_id', clientId)
-    .in('status', ['paid'])
+    // [BRIDGE-A] both directions: outgoing (client = sender) feeds
+    // Debiteuren/Voldaan; incoming (client = receiver) feeds Crediteuren.
+    // The old sender-only filter silently dropped every incoming invoice.
+    // clientId is a verified-linkage UUID from our own DB — safe to embed.
+    .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
     .eq('shared', true)
     .gte('invoice_date', start)
     .lte('invoice_date', end)

@@ -134,7 +134,7 @@ const INVOICE_FIELDS =
   "invoice_number, client_name, client_email, client_address, " +
   "client_postal_code, client_city, status, direction, total_ex_btw, " +
   "btw_amount, total_inc_btw, invoice_date, due_date, created_at, " +
-  "sent_to_accountant, invoice_type";
+  "invoice_type";
 
 /**
  * Build the full account export ZIP for a VERIFIED userId.

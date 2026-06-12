@@ -68,8 +68,8 @@ export interface TodoItem {
 // ─────────────────────────────────────────────────────────
 
 /**
- * Accountant sees only: status IN ('paid','voldaan') AND sent_to_accountant = true
- * 'received' invoices (from Gmail, pending client confirmation) are NEVER visible here.
+ * [BRIDGE-A] Accountant sees: shared = true (GENERATED from status IN sent/received/paid).
+ * Sections: Debiteuren (outgoing+sent) / Crediteuren (incoming+received) / Voldaan (paid).
  * btw_rate is NOT in DB — always compute: Math.round((btw_amount / total_ex_btw) * 100)
  */
 export interface InvoiceRow {
@@ -83,6 +83,7 @@ export interface InvoiceRow {
   btw_amount: number
   total_inc_btw: number
   invoice_date: string
+  due_date: string | null        // [BRIDGE-A] for computed Verlopen — never stored as status
   marked_paid_at: string | null  // when client marked paid — NOT actual payment date
   accountant_status: string | null
   accountant_note: string | null  // accountant-only, client never sees this

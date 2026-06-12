@@ -17,6 +17,7 @@ const DS = {
   chip: {
     paid:    { bg: '#CEEAD6', color: '#137333' },
     sent:    { bg: '#D3E3FD', color: '#1967D2' },
+    received:{ bg: '#FEF7E0', color: '#B26A00' }, // [BRIDGE-A] incoming unpaid (Crediteuren)
     overdue: { bg: '#F9DEDC', color: '#B3261E' },
     draft:   { bg: '#E7E0EC', color: '#49454F' },
     credit:  { bg: '#FCE8E6', color: '#C5221F' },
@@ -78,10 +79,11 @@ export function getDisplayStatus(invoice: { status: string; due_date: string | n
 }
 
 export const STATUS_LABEL: Record<string, string> = {
-  draft:   'Concept',
-  sent:    'Verzonden',
-  paid:    'Betaald',
-  overdue: 'Verlopen',
+  draft:    'Concept',
+  sent:     'Verzonden',
+  received: 'Ontvangen', // [BRIDGE-A] shared now includes received
+  paid:     'Betaald',
+  overdue:  'Verlopen',
 }
 
 // ── Chip helpers ──────────────────────────────────────────────────────────────

@@ -36,10 +36,10 @@ function isValidStatus(s: string | null): s is InvoiceStatus {
 
 // [BOEK-014] Separate SELECT constants — concatenation causes GenericStringError
 const INVOICE_SELECT =
-  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, sent_to_accountant, invoice_type" as const;
+  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type" as const;
 
 const INVOICE_SELECT_WITH_SENDER =
-  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, sent_to_accountant, invoice_type, sender_id" as const;
+  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type, sender_id" as const;
 
 // Local type for accountant query rows — includes sender_id
 type InvRowWithSender = InvRow & { sender_id: string | null };
