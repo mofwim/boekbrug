@@ -232,6 +232,11 @@ export function InvoicePDF({
   const docTitle = DOC_TITLES[invoice.invoice_type as string] ?? 'FACTUUR'
   const isCreditnota = invoice.invoice_type === 'creditnota'
 
+  // [FACTUUR-A] Normalize BTW-id casing on a legal document: NL...B01 reads
+  // correctly even if the profile stored it lower-case (e.g. nl123456789b01).
+  const senderBtw = profile.btw_number ? String(profile.btw_number).toUpperCase() : '—'
+  const clientBtw = invoice.client_btw_number ? String(invoice.client_btw_number).toUpperCase() : ''
+
   const groups = btwBreakdown(lines ?? [])
   const multiRate = groups.length > 1
   // Fallback for legacy invoices without lines: derive the single rate.
@@ -262,7 +267,7 @@ export function InvoicePDF({
             <Text style={styles.partyText}>{profile.address}</Text>
             <Text style={styles.partyText}>{profile.postal_code} {profile.city}</Text>
             <Text style={styles.partyText}>KVK: {profile.kvk_number || '—'}</Text>
-            <Text style={styles.partyText}>BTW: {profile.btw_number || '—'}</Text>
+            <Text style={styles.partyText}>BTW: {senderBtw}</Text>
             <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
           </View>
 
@@ -274,8 +279,8 @@ export function InvoicePDF({
             <Text style={styles.partyText}>
               {invoice.client_postal_code || ''} {invoice.client_city || ''}
             </Text>
-            {invoice.client_btw_number && (
-              <Text style={styles.partyText}>BTW: {invoice.client_btw_number}</Text>
+            {clientBtw !== '' && (
+              <Text style={styles.partyText}>BTW: {clientBtw}</Text>
             )}
             <Text style={styles.partyText}>{invoice.client_email || ''}</Text>
           </View>

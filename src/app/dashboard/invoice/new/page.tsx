@@ -296,6 +296,89 @@ function OutlinedInput({
   )
 }
 
+// ─── [FACTUUR-A] DateField — June 2026 ───────────────────────────────────────
+// A native <input type="date"> renders in the BROWSER's locale: on a US-locale
+// desktop it shows MM/DD/YYYY, which is wrong (and dangerous) for a Dutch legal
+// document. This component guarantees a DD-MM-YYYY display on every device while
+// KEEPING the device's own date picker (the iOS wheel / desktop calendar) — the
+// real native input is layered transparently on top and drives the value; we
+// just paint our own Dutch-formatted face underneath it.
+//
+// Value in/out stays ISO (YYYY-MM-DD), so storage and the rest of the form are
+// untouched.
+function DateField({
+  value, onChange, label, required = false, focusColor, hasError = false, min,
+}: {
+  value: string                 // ISO yyyy-mm-dd
+  onChange: (iso: string) => void
+  label: string
+  required?: boolean
+  focusColor: string
+  hasError?: boolean
+  min?: string                  // ISO lower bound (optional)
+}) {
+  const [focused, setFocused] = useState(false)
+  const borderColor = hasError ? '#EA4335' : focused ? focusColor : '#E0E0E0'
+  const borderWidth = hasError || focused ? '2px' : '1px'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
+        {label}{required && <span style={{ color: '#EA4335', marginLeft: 2 }}>*</span>}
+      </label>
+      <div style={{ position: 'relative', width: '100%' }}>
+        {/* Painted Dutch face — what the user reads */}
+        <div
+          aria-hidden
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            width: '100%', minHeight: 48,
+            border: `${borderWidth} solid ${borderColor}`,
+            borderRadius: 8, padding: '0 16px',
+            fontSize: 16, color: value ? '#202124' : '#9AA0A6',
+            backgroundColor: hasError ? '#FFF8F7' : 'white',
+            boxSizing: 'border-box', transition: 'border 0.1s ease',
+            fontFamily: 'inherit',
+          }}
+        >
+          <span style={{ fontFamily: 'Roboto Mono, monospace' }}>
+            {value ? formatDateNL(value) : 'dd-mm-jjjj'}
+          </span>
+          <span style={{ color: '#9AA0A6', fontSize: 18 }}>📅</span>
+        </div>
+        {/* Transparent native input on top — keeps the device picker */}
+        <input
+          type="date"
+          value={value}
+          min={min}
+          onChange={e => onChange(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%',
+            opacity: 0, cursor: 'pointer',
+            // iOS needs a real font-size to avoid zoom even when invisible
+            fontSize: 16,
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ─── [FACTUUR-A] Payment-term presets — June 2026 ────────────────────────────
+// Quick chips that compute Vervaldatum = Factuurdatum + N days. Manual editing
+// stays fully available via the DateField. 30 days is the Dutch default.
+const BETALINGSTERMIJNEN = [14, 30, 60] as const
+const DEFAULT_TERMIJN = 30
+function addDaysISO(iso: string, days: number): string {
+  // String-based to stay timezone-proof on date-only values.
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().split('T')[0]
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────────
 
 function NewInvoicePageContent() {
@@ -381,6 +464,9 @@ function NewInvoicePageContent() {
   // factuurdatum keeps the (still-untouched) leverdatum in sync.
   const [deliveryDate, setDeliveryDate]       = useState(today)
   const [deliveryTouched, setDeliveryTouched] = useState(false)
+  // [FACTUUR-A] Selected payment term (days). Drives Vervaldatum from
+  // Factuurdatum. null = manually edited (no chip highlighted).
+  const [betalingstermijn, setBetalingstermijn] = useState<number | null>(DEFAULT_TERMIJN)
 
   // [FACTUUR-A] Send confirmation dialog — sending is irreversible (number
   // consumed + e-mail delivered). Centered modal, per house convention.
@@ -427,9 +513,9 @@ function NewInvoicePageContent() {
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       if (p) setProfile(p)
 
-      // Due date default +30 days
-      const due = new Date(); due.setDate(due.getDate() + 30)
-      setDueDate(due.toISOString().split('T')[0])
+      // [FACTUUR-A] Default Vervaldatum = Factuurdatum + 30 (default term),
+      // computed timezone-proof via addDaysISO.
+      setDueDate(addDaysISO(today, DEFAULT_TERMIJN))
 
       // [FACTUUR-A] No browser-side number anymore — numbering is fully
       // server-side (atomic, legal). The UI shows "Concept" until the send
@@ -826,7 +912,14 @@ function NewInvoicePageContent() {
     // renders the PDF and delivers the e-mail with the attachment. Awaited
     // (not fire-and-forget) so we can surface pdf_failed / email_failed and
     // route the user to recovery. A draft save skips this entirely.
-    if (mode === 'sent') {
+    //
+    // [FACTUUR-A] OFFERTE NEVER goes through the send route. An offerte is a
+    // price quote, not a legal invoice: it gets NO number and does NOT become
+    // a factuur here. It is saved (as pro_forma) and the user converts it
+    // later via the explicit "Omzetten naar factuur" button. Routing it
+    // through /api/invoice/send would mint a factuur number (the bug that
+    // produced 007-2026 from an offerte).
+    if (mode === 'sent' && invoiceType !== 'offerte') {
       try {
         const res = await fetch('/api/invoice/send', {
           method: 'POST',
@@ -1057,36 +1150,97 @@ function NewInvoicePageContent() {
             </div>
 
             {/* [DS] Datums card */}
-            {/* [FACTUUR-A] Native date inputs render in the browser's own
-                locale (can show MM/DD/YYYY on US systems) — we keep the native
-                picker (iOS wheel is excellent) but pin an unambiguous Dutch
-                DD-MM-YYYY caption under each field. Storage stays ISO. */}
+            {/* [FACTUUR-A] Custom DateField guarantees a DD-MM-YYYY display on
+                every device (no US MM/DD/YYYY) while keeping the device's own
+                date picker. Vervaldatum gets quick payment-term chips. */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>Datums</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <div>
-                  <OutlinedInput value={invoiceDate} onChange={e => {
-                    setInvoiceDate(e.target.value)
+                <DateField
+                  value={invoiceDate}
+                  label={invoiceType === 'offerte' ? 'Offertedatum' : 'Factuurdatum'}
+                  required
+                  focusColor={cfg.focusColor}
+                  hasError={!!fieldErrors.invoiceDate}
+                  onChange={iso => {
+                    setInvoiceDate(iso)
                     clearFieldError('invoiceDate')
-                    // [FACTUUR-A] keep an untouched leverdatum in sync
-                    if (!deliveryTouched) { setDeliveryDate(e.target.value); clearFieldError('deliveryDate') }
-                  }} label={invoiceType === 'offerte' ? 'Offertedatum *' : 'Factuurdatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.invoiceDate} />
-                  {invoiceDate && <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0', fontFamily: 'Roboto Mono, monospace' }}>{formatDateNL(invoiceDate)}</p>}
-                </div>
-                <div>
-                  <OutlinedInput value={dueDate} onChange={e => { setDueDate(e.target.value); clearFieldError('dueDate') }} label={invoiceType === 'offerte' ? 'Geldig tot *' : 'Vervaldatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.dueDate} />
-                  {dueDate && <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0', fontFamily: 'Roboto Mono, monospace' }}>{formatDateNL(dueDate)}</p>}
-                </div>
+                    // [FACTUUR-A] If a payment term is active, recompute the
+                    // Vervaldatum from the new factuurdatum.
+                    if (betalingstermijn !== null && iso) {
+                      setDueDate(addDaysISO(iso, betalingstermijn))
+                      clearFieldError('dueDate')
+                    }
+                    // Keep an untouched leverdatum in sync.
+                    if (!deliveryTouched) { setDeliveryDate(iso); clearFieldError('deliveryDate') }
+                  }}
+                />
+                <DateField
+                  value={dueDate}
+                  label={invoiceType === 'offerte' ? 'Geldig tot' : 'Vervaldatum'}
+                  required
+                  focusColor={cfg.focusColor}
+                  hasError={!!fieldErrors.dueDate}
+                  min={invoiceDate || undefined}
+                  onChange={iso => {
+                    // Manual edit clears the active term chip.
+                    setBetalingstermijn(null)
+                    setDueDate(iso)
+                    clearFieldError('dueDate')
+                  }}
+                />
               </div>
+
+              {/* [FACTUUR-A] Payment-term chips — only for factuur/creditnota
+                  (an offerte uses "Geldig tot", not a payment term). */}
+              {invoiceType !== 'offerte' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, color: '#9AA0A6' }}>Betalingstermijn:</span>
+                  {BETALINGSTERMIJNEN.map(days => {
+                    const active = betalingstermijn === days
+                    return (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => {
+                          setBetalingstermijn(days)
+                          if (invoiceDate) { setDueDate(addDaysISO(invoiceDate, days)); clearFieldError('dueDate') }
+                        }}
+                        style={{
+                          fontSize: 13, fontWeight: 500,
+                          padding: '6px 14px', borderRadius: 9999,
+                          border: active ? `1px solid ${cfg.activeBorder}` : '1px solid #E0E0E0',
+                          backgroundColor: active ? cfg.activeBg : 'white',
+                          color: active ? cfg.activeColor : '#5F6368',
+                          cursor: 'pointer', transition: 'all 0.1s ease',
+                        }}
+                      >
+                        {days} dagen
+                      </button>
+                    )
+                  })}
+                  {betalingstermijn === null && (
+                    <span style={{ fontSize: 12, color: '#9AA0A6', fontStyle: 'italic' }}>Aangepast</span>
+                  )}
+                </div>
+              )}
+
               {/* [FACTUUR-A] Leverdatum — Art. 35a sub f. Factuur only;
                   defaults to factuurdatum, editable. */}
               {invoiceType === 'factuur' && (
-                <div>
-                  <OutlinedInput value={deliveryDate} onChange={e => { setDeliveryTouched(true); setDeliveryDate(e.target.value); clearFieldError('deliveryDate') }} label="Leverdatum *" type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.deliveryDate} />
-                  <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0' }}>
-                    {deliveryDate ? <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{formatDateNL(deliveryDate)}</span> : 'Datum waarop de levering of dienst is verricht'}
-                  </p>
-                </div>
+                <DateField
+                  value={deliveryDate}
+                  label="Leverdatum"
+                  required
+                  focusColor={cfg.focusColor}
+                  hasError={!!fieldErrors.deliveryDate}
+                  onChange={iso => { setDeliveryTouched(true); setDeliveryDate(iso); clearFieldError('deliveryDate') }}
+                />
+              )}
+              {invoiceType === 'factuur' && (
+                <p style={{ fontSize: 11, color: '#9AA0A6', margin: '-4px 0 0' }}>
+                  Leverdatum = datum waarop de levering of dienst is verricht.
+                </p>
               )}
             </div>
 
@@ -1187,7 +1341,7 @@ function NewInvoicePageContent() {
                     handleSubmit('sent')
                   }
                 }} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
-                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Versturen naar klant' : '↩ Versturen'}
+                  {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Offerte opslaan' : '↩ Versturen'}
                 </button>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => handleSubmit('draft')} disabled={loading} style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: cfg.activeBg, color: cfg.activeColor, fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
