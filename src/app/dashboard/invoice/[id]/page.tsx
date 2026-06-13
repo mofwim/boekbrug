@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
-import { useRouter, useParams, notFound } from 'next/navigation'
+import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
@@ -57,6 +57,44 @@ export default function InvoiceDetailPage() {
   const [showSendModal, setShowSendModal] = useState(false)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+
+  // [FACTUUR-A] Delivery recovery banner — read ?delivery= once on mount — June 2026
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const [deliveryWarning, setDeliveryWarning] = useState<'pdf_failed' | 'email_failed' | null>(null)
+  const [resending, setResending] = useState(false)
+  const [resendSuccess, setResendSuccess] = useState(false)
+
+  useEffect(() => {
+    const d = searchParams.get('delivery')
+    if (d === 'pdf_failed' || d === 'email_failed') setDeliveryWarning(d)
+  }, [searchParams])
+
+  // [FACTUUR-A] Resend handler — calls /api/invoice/send with resend:true — June 2026
+  // Re-delivers PDF+email; does NOT touch invoice_number or status.
+  async function handleResend() {
+    setResending(true)
+    setSendError(null)
+
+    const res = await fetch('/api/invoice/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoiceId, resend: true }),
+    })
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setSendError(data.error || 'Opnieuw versturen mislukt')
+      setResending(false)
+      return
+    }
+
+    // Success — hide banner + clean ?delivery= from URL
+    setDeliveryWarning(null)
+    setResendSuccess(true)
+    setResending(false)
+    router.replace(pathname) // strips query params
+  }
 
   useEffect(() => {
     async function load() {
@@ -245,6 +283,41 @@ export default function InvoiceDetailPage() {
       ) : (
         <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 80 }}>
 
+          {/* [FACTUUR-A] Delivery recovery banner — shows when ?delivery=pdf_failed|email_failed — June 2026 */}
+          {deliveryWarning && (
+            <div style={{ backgroundColor: '#FEF7E0', borderLeft: '4px solid #F9AB00', borderRadius: '0 16px 16px 0', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1 }}>
+                <span style={{ color: '#E37400', flexShrink: 0, fontSize: 16 }}>⚠</span>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: '#7C4D00', margin: 0 }}>
+                    De factuur is uitgegeven, maar de bezorging is mislukt
+                  </p>
+                  <p style={{ fontSize: 12, color: '#7C4D00', margin: '2px 0 0', opacity: 0.85 }}>
+                    {deliveryWarning === 'pdf_failed'
+                      ? 'De PDF kon niet worden gegenereerd. Het factuurnummer is wel definitief.'
+                      : 'De e-mail kon niet worden afgeleverd. Het factuurnummer is wel definitief.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleResend}
+                disabled={resending}
+                style={{ flexShrink: 0, backgroundColor: '#F9AB00', color: '#202124', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: resending ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: resending ? 0.6 : 1 }}
+              >
+                {resending ? 'Verzenden...' : '↻ Opnieuw versturen'}
+              </button>
+            </div>
+          )}
+
+          {/* [FACTUUR-A] Resend success — toast-like — June 2026 */}
+          {resendSuccess && (
+            <div style={{ backgroundColor: '#E6F4EA', borderRadius: 16, padding: '10px 16px' }}>
+              <p style={{ fontSize: 13, color: '#137333', margin: 0 }}>
+                ✓ De factuur is opnieuw verzonden.
+              </p>
+            </div>
+          )}
+
           {/* [BOEK-031] Send banner — only for draft invoices — May 2026 */}
           {invoice.status === 'draft' && (
             <div style={{ backgroundColor: '#D3E3FD', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -399,16 +472,7 @@ export default function InvoiceDetailPage() {
             </div>
           )}
 
-          {/* [DS] Creditnota terugbetaling */}
-          {invoice.invoice_type === 'creditnota' && profile?.iban && (
-            <div style={{ backgroundColor: '#F9DEDC', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Terugbetaling</p>
-              <p style={{ fontSize: 14, color: '#B3261E', lineHeight: 1.6, margin: 0 }}>
-                Het gecrediteerde bedrag wordt teruggestort op het rekeningnummer van de klant.
-                O.v.v. creditnota <strong>{invoice.invoice_number}</strong>.
-              </p>
-            </div>
-          )}
+          {/* [FACTUUR-A] Terugbetaling block removed — PDF carries authoritative legal text — June 2026 */}
 
         </div>
       )}
