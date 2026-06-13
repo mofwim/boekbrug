@@ -296,16 +296,14 @@ function OutlinedInput({
   )
 }
 
-// ─── [FACTUUR-A] DateField — June 2026 ───────────────────────────────────────
-// A native <input type="date"> renders in the BROWSER's locale: on a US-locale
-// desktop it shows MM/DD/YYYY, which is wrong (and dangerous) for a Dutch legal
-// document. This component guarantees a DD-MM-YYYY display on every device while
-// KEEPING the device's own date picker (the iOS wheel / desktop calendar) — the
-// real native input is layered transparently on top and drives the value; we
-// just paint our own Dutch-formatted face underneath it.
-//
-// Value in/out stays ISO (YYYY-MM-DD), so storage and the rest of the form are
-// untouched.
+// ─── [FACTUUR-A] DateField — June 2026 (reverted to clean native) ────────────
+// A native <input type="date"> renders in the browser's locale (US desktops
+// may show MM/DD/YYYY). The earlier overlay approach to force DD-MM-YYYY
+// produced a doubled calendar icon and a worse tap experience, so we reverted:
+// clean native field (best picker on every device — iOS wheel, desktop
+// calendar) + an unambiguous Dutch DD-MM-YYYY caption underneath. The caption
+// is the source of truth for what the date means; the field is just the input.
+// Value in/out stays ISO (yyyy-mm-dd).
 function DateField({
   value, onChange, label, required = false, focusColor, hasError = false, min,
 }: {
@@ -326,42 +324,29 @@ function DateField({
       <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
         {label}{required && <span style={{ color: '#EA4335', marginLeft: 2 }}>*</span>}
       </label>
-      <div style={{ position: 'relative', width: '100%' }}>
-        {/* Painted Dutch face — what the user reads */}
-        <div
-          aria-hidden
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            width: '100%', minHeight: 48,
-            border: `${borderWidth} solid ${borderColor}`,
-            borderRadius: 8, padding: '0 16px',
-            fontSize: 16, color: value ? '#202124' : '#9AA0A6',
-            backgroundColor: hasError ? '#FFF8F7' : 'white',
-            boxSizing: 'border-box', transition: 'border 0.1s ease',
-            fontFamily: 'inherit',
-          }}
-        >
-          <span style={{ fontFamily: 'Roboto Mono, monospace' }}>
-            {value ? formatDateNL(value) : 'dd-mm-jjjj'}
-          </span>
-          <span style={{ color: '#9AA0A6', fontSize: 18 }}>📅</span>
-        </div>
-        {/* Transparent native input on top — keeps the device picker */}
-        <input
-          type="date"
-          value={value}
-          min={min}
-          onChange={e => onChange(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          style={{
-            position: 'absolute', inset: 0, width: '100%', height: '100%',
-            opacity: 0, cursor: 'pointer',
-            // iOS needs a real font-size to avoid zoom even when invisible
-            fontSize: 16,
-          }}
-        />
-      </div>
+      <input
+        type="date"
+        value={value}
+        min={min}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          width: '100%', minHeight: 48,
+          border: `${borderWidth} solid ${borderColor}`,
+          borderRadius: 8, padding: '0 16px',
+          fontSize: 16, color: '#202124',
+          backgroundColor: hasError ? '#FFF8F7' : 'white',
+          outline: 'none', boxSizing: 'border-box',
+          transition: 'border 0.1s ease', fontFamily: 'inherit',
+        }}
+      />
+      {/* Dutch DD-MM-YYYY caption — the unambiguous read of the value */}
+      {value && (
+        <p style={{ fontSize: 11, color: '#9AA0A6', margin: '2px 0 0', fontFamily: 'Roboto Mono, monospace' }}>
+          {formatDateNL(value)}
+        </p>
+      )}
     </div>
   )
 }
@@ -1150,9 +1135,8 @@ function NewInvoicePageContent() {
             </div>
 
             {/* [DS] Datums card */}
-            {/* [FACTUUR-A] Custom DateField guarantees a DD-MM-YYYY display on
-                every device (no US MM/DD/YYYY) while keeping the device's own
-                date picker. Vervaldatum gets quick payment-term chips. */}
+            {/* [FACTUUR-A] Clean native date fields + Dutch DD-MM-YYYY caption
+                under each (DateField). Vervaldatum gets quick payment-term chips. */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>Datums</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
