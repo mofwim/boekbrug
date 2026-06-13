@@ -204,7 +204,10 @@ export async function POST(request: NextRequest) {
           toEmail: original.client_email,
           clientName: original.client_name ?? '',
           zzperName: profile?.company_name || profile?.full_name || 'Onbekend',
-          invoiceNumber: creditnota.invoice_number,
+          // [FACTUUR-A] use the locally generated number (guaranteed non-null —
+          // we returned 500 above if generation failed). creditnota.invoice_number
+          // is typed string|null by the DB schema, which the e-mail signature rejects.
+          invoiceNumber: creditnotaNumber,
           totalInc: creditnota.total_inc_btw ?? 0,
           dueDate: creditnota.due_date ?? '',
           invoiceDate: creditnota.invoice_date ?? undefined,
