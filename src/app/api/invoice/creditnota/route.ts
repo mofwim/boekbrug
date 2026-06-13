@@ -1,12 +1,35 @@
 // src/app/api/invoice/creditnota/route.ts
 // [BOEK-031] Creditnota aanmaken — May 2026
-// Regel: alleen voor verzonden facturen (sent / paid / overdue)
+// [FACTUUR-A] Consistency rebuild — June 2026
+// Regel: alleen voor verzonden facturen (sent / paid / overdue / received / processing / processed)
 // Creditnota corrigeert — verwijderen mag nooit
+// =====================================================
+// [FACTUUR-A] Changes:
+//   * Numbering unified on lib/invoice-numbering generateInvoiceNumber
+//     (CR- prefix — same generator as the send route; the old
+//     rpc('generate_invoice_number') + 'CN-' fallback produced a second,
+//     conflicting numbering scheme).
+//   * Fixed silently swallowed `source: 'created'` — a BRIDGE-A comment was
+//     merged onto the same line and commented the field out.
+//   * Real duplicate guard via original_invoice_id (the column + FK exist on
+//     invoices) — the old check matched invoice_number = 'CN-…' which never
+//     matches CR- format, i.e. dead code.
+//   * delivery_date copied from the original (the creditnota corrects that
+//     same supply — Art. 35a sub f).
+//   * Creditnota is itself a legal invoice (Art. 35) → it is now DELIVERED:
+//     PDF rendered + e-mailed, same pipeline as the send route. Best-effort:
+//     a delivery failure never rolls back the creditnota (number consumed).
+// =====================================================
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 // [BOEK-031] BOEK-SECURITY-2 — audit logs via service_role helper — May 2026
 import { logAuditAction, getClientIP } from '@/lib/audit'
+// [FACTUUR-A] unified numbering + legal delivery — June 2026
+import { generateInvoiceNumber } from '@/lib/invoice-numbering'
+import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
+import { sendInvoiceToClient } from '@/lib/email'
+import * as Sentry from '@sentry/nextjs'
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,21 +49,18 @@ export async function POST(request: NextRequest) {
     }
 
     // [BOEK-031] Haal de originele factuur op — verificatie eigenaar
-    const { data: original, error: fetchError } = await supabase
+    // [FACTUUR-A] select('*') — delivery_date + full address block needed
+    const { data: originalData, error: fetchError } = await supabase
       .from('invoices')
-      .select(`
-        id, sender_id, status, invoice_number, invoice_type,
-        client_name, client_email, client_address,
-        client_postal_code, client_city, client_btw_number,
-        total_ex_btw, btw_amount, total_inc_btw,
-        invoice_date, due_date, direction
-      `)
+      .select('*')
       .eq('id', original_invoice_id)
       .single()
 
-    if (fetchError || !original) {
+    if (fetchError || !originalData) {
       return NextResponse.json({ error: 'Originele factuur niet gevonden' }, { status: 404 })
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const original = originalData as any
 
     // [BOEK-031] Alleen de eigenaar mag een creditnota aanmaken
     if (original.sender_id !== user.id) {
@@ -49,27 +69,24 @@ export async function POST(request: NextRequest) {
 
     // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen
     // Draft facturen worden verwijderd — niet gecrediteerd
-    // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen
-      const CREDITABLE_STATUSES: string[] = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
-      if (!original.status || !CREDITABLE_STATUSES.includes(original.status)) {
-        return NextResponse.json(
-          { error: 'Alleen verzonden facturen kunnen worden gecrediteerd. Concept-facturen verwijder je gewoon.' },
-          { status: 400 }
-        )
-}
+    const CREDITABLE_STATUSES: string[] = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
+    if (!original.status || !CREDITABLE_STATUSES.includes(original.status)) {
+      return NextResponse.json(
+        { error: 'Alleen verzonden facturen kunnen worden gecrediteerd. Concept-facturen verwijder je gewoon.' },
+        { status: 400 }
+      )
+    }
 
-    // [BOEK-031] Controleer of er al een creditnota bestaat voor deze factuur
-    // Zoek op invoice_lines description die de originele factuur id bevat
+    // [FACTUUR-A] Duplicate guard — one creditnota per invoice, enforced via
+    // original_invoice_id (column + FK exist on invoices). Replaces the dead
+    // invoice_number='CN-…' check that could never match CR- numbering.
     const { data: existingCreditnota } = await supabase
       .from('invoices')
-      .select('id')
+      .select('id, invoice_number')
       .eq('sender_id', user.id)
       .eq('invoice_type', 'creditnota')
-      .eq('invoice_number', `CN-${original.invoice_number}`)
+      .eq('original_invoice_id', original_invoice_id)
       .maybeSingle()
-
-    // Ook checken via de gegenereerde nummering (als generate_invoice_number al gebruikt is)
-    // De echte deduplicatie zit in de UI — één creditnota per factuur
 
     if (existingCreditnota) {
       return NextResponse.json(
@@ -78,21 +95,27 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // [BOEK-031] Genereer creditnota nummer
-    const { data: creditnotaNumber } = await supabase
-      .rpc('generate_invoice_number', { user_id: user.id })
+    // [FACTUUR-A] Genereer creditnota nummer — unified generator, CR- prefix.
+    // Same Art. 35 rule applies: once committed, no rollback.
+    const creditnotaNumber = await generateInvoiceNumber(supabase, user.id, 'creditnota')
+    if (!creditnotaNumber) {
+      return NextResponse.json({ error: 'Kon creditnotanummer niet genereren' }, { status: 500 })
+    }
+
+    const today = new Date().toISOString().split('T')[0]
 
     // [BOEK-031] Maak de creditnota aan
     // Bedragen zijn NEGATIEF — creditnota annuleert de originele factuur
-    // receiver_id heeft FK naar profiles.id — kan geen invoice id bevatten
-    // original_invoice_id link wordt bewaard in invoice_lines descriptions
+    // [FACTUUR-A] original_invoice_id now stored properly (column exists);
+    // source:'created' restored (was swallowed by an inline comment).
     const { data: creditnota, error: insertError } = await supabase
       .from('invoices')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .insert({
         sender_id: user.id,
-        invoice_number: creditnotaNumber || `CN-${original.invoice_number}`,
-        invoice_date: new Date().toISOString().split('T')[0],
-        due_date: new Date().toISOString().split('T')[0],
+        invoice_number: creditnotaNumber,
+        invoice_date: today,
+        due_date: today,
         status: 'sent',
         invoice_type: 'creditnota',
         direction: original.direction,
@@ -100,18 +123,26 @@ export async function POST(request: NextRequest) {
         total_ex_btw: -(original.total_ex_btw || 0),
         btw_amount: -(original.btw_amount || 0),
         total_inc_btw: -(original.total_inc_btw || 0),
-// [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status        source: 'created',
+        // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
+        source: 'created',
         client_name: original.client_name,
         client_email: original.client_email,
         client_address: original.client_address,
         client_postal_code: original.client_postal_code,
         client_city: original.client_city,
         client_btw_number: original.client_btw_number,
-      })
+        original_invoice_id,
+        // [FACTUUR-A] Leverdatum of the corrected supply travels with the
+        // creditnota (Art. 35a sub f). Falls back to the original invoice
+        // date. NOTE: requires the FACTUUR-A delivery_date migration + type
+        // regen (CMD) before deploy.
+        delivery_date: original.delivery_date ?? original.invoice_date ?? null,
+      } as any)
       .select()
       .single()
 
     if (insertError || !creditnota) {
+      console.error('[FACTUUR-A] Creditnota insert failed', { original_invoice_id, insertError })
       return NextResponse.json({ error: 'Creditnota aanmaken mislukt' }, { status: 500 })
     }
 
@@ -134,7 +165,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // [BOEK-031] BOEK-SECURITY-2 — audit via helper, newValue is object (fix JSON.stringify bug) — May 2026
+    // [BOEK-031] BOEK-SECURITY-2 — audit via helper, newValue is object — May 2026
     await logAuditAction({
       userId: user.id,
       action: 'creditnota.created',
@@ -148,13 +179,63 @@ export async function POST(request: NextRequest) {
       ipAddress: getClientIP(request),
     })
 
+    // ── [FACTUUR-A] Deliver the creditnota — PDF + e-mail, best-effort ──
+    // A creditnota is a legal invoice (Art. 35); the recipient needs the
+    // document for their own administration. Delivery failure NEVER rolls
+    // back the creditnota (number consumed) — response carries a warning,
+    // recovery via the send route's resend mode.
+    let warning: string | undefined
+    if (original.client_email) {
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single()
+
+        const { data: creditLines } = await supabase
+          .from('invoice_lines')
+          .select('*')
+          .eq('invoice_id', creditnota.id)
+
+        const pdfBuffer = await renderInvoicePdf(creditnota, creditLines ?? [], profile ?? {})
+
+        await sendInvoiceToClient({
+          toEmail: original.client_email,
+          clientName: original.client_name ?? '',
+          zzperName: profile?.company_name || profile?.full_name || 'Onbekend',
+          invoiceNumber: creditnota.invoice_number,
+          totalInc: creditnota.total_inc_btw ?? 0,
+          dueDate: creditnota.due_date ?? '',
+          invoiceDate: creditnota.invoice_date ?? undefined,
+          pdfBuffer,
+          isCreditnota: true,
+        })
+      } catch (deliveryErr) {
+        warning = 'delivery_failed'
+        console.error('[FACTUUR-A] Creditnota delivery failed', {
+          creditnota_id: creditnota.id,
+          error: deliveryErr,
+        })
+        Sentry.captureException(deliveryErr, {
+          tags: { feature: 'creditnota', severity: 'medium' },
+          extra: { creditnota_id: creditnota.id, userId: user.id },
+        })
+      }
+    }
+
     return NextResponse.json({
       success: true,
       creditnota_id: creditnota.id,
       creditnota_number: creditnota.invoice_number,
+      ...(warning ? { warning } : {}),
     })
 
-  } catch {
+  } catch (err) {
+    console.error('[FACTUUR-A] /api/invoice/creditnota fatal error', err)
+    Sentry.captureException(err, {
+      tags: { feature: 'creditnota', severity: 'high' },
+    })
     return NextResponse.json({ error: 'Onbekende fout' }, { status: 500 })
   }
 }

@@ -12,44 +12,31 @@ import Link from 'next/link'
 // [BOEK-031] Navigation Strategy — May 2026
 import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
+// [FACTUUR-A] Single Dutch formatting source — June 2026
+import { formatDateNL } from '@/lib/format-nl'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
-// ─── [BOEK-031] Invoice number generator — new format: 001-2026 — May 2026 ───
-// Queries DB directly to get next sequence for this user + year
-// factuur:    001-2026
-// creditnota: CR-001-2026
-// pro_forma:  PF-001-2026
-async function generateNumber(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  type: 'factuur' | 'creditnota' | 'pro_forma'
-): Promise<string> {
-  const year = new Date().getFullYear()
-  const prefix = type === 'creditnota' ? 'CR-' : type === 'pro_forma' ? 'PF-' : ''
+// ─── [FACTUUR-A] Numbering moved server-side — June 2026 ─────────────────────
+// The browser-side generateNumber() was removed: it did a SELECT-then-compute
+// from the client (the same race the TODO in invoice-numbering.ts warns about)
+// AND bypassed the atomic, legal numbering in /api/invoice/send. The page now
+// ALWAYS saves a draft (no number) and lets the send route mint the number —
+// single source of truth, no gaps (Art. 35 Wet OB 1968). BRIDGE-C later swaps
+// the route's internals to a PostgreSQL sequence.
 
-  // Find highest existing sequence for this user + year + type
-  const { data } = await supabase
-    .from('invoices')
-    .select('invoice_number')
-    .eq('sender_id', userId)
-    .eq('invoice_type', type)
-    .ilike('invoice_number', `${prefix}%-${year}`)
-    .order('created_at', { ascending: false })
-    .limit(50)
-
-  let maxSeq = 0
-  for (const inv of data ?? []) {
-    const num = inv.invoice_number ?? ''
-    // Extract sequence: "CR-016-2026" → 16, "001-2026" → 1
-    const parts = num.replace(/^(CR-|PF-)/, '').split('-')
-    const seq = parseInt(parts[0], 10)
-    if (!isNaN(seq) && seq > maxSeq) maxSeq = seq
-  }
-
-  const nextSeq = String(maxSeq + 1).padStart(3, '0')
-  return `${prefix}${nextSeq}-${year}`
+// ─── [FACTUUR-A] Client-side BTW-id format check — June 2026 ─────────────────
+// Mirrors BOEK-019: NL + 9 digits + 'B' + 2 digits (e.g. NL123456789B01).
+// Non-blocking on the customer field (foreign customers are valid), but we
+// flag a malformed Dutch-looking number so it never silently lands on a
+// legal invoice.
+const NL_BTW_RE = /^NL\d{9}B\d{2}$/i
+function looksLikeDutchBtw(v: string): boolean {
+  return /^NL/i.test(v.replace(/\s/g, ''))
+}
+function isValidDutchBtw(v: string): boolean {
+  return NL_BTW_RE.test(v.replace(/\s/g, ''))
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -249,6 +236,18 @@ function OutlinedInput({
 }) {
   const [focused, setFocused] = useState(false)
 
+  // [FACTUUR-A] On mobile, the fixed bottom action bar + the on-screen
+  // keyboard can cover a focused field. Nudge it into the middle of the
+  // visible area. Guarded so it only fires on small screens.
+  function handleFocus(e: React.FocusEvent<HTMLInputElement>) {
+    setFocused(true)
+    onFocus?.()
+    if (typeof window !== 'undefined' && window.innerWidth <= 640) {
+      const el = e.currentTarget
+      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300)
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -275,7 +274,7 @@ function OutlinedInput({
         value={value}
         onChange={onChange}
         onKeyDown={handleKeyDown}
-        onFocus={() => { setFocused(true); onFocus?.() }}
+        onFocus={handleFocus}
         onBlur={() => setFocused(false)}
         placeholder={placeholder}
         style={{
@@ -337,8 +336,10 @@ function NewInvoicePageContent() {
   const [fieldErrors, setFieldErrors] = useState<{
     clientName?: boolean
     clientEmail?: boolean
+    clientAddress?: boolean
     invoiceDate?: boolean
     dueDate?: boolean
+    deliveryDate?: boolean
     lines?: { description?: boolean; unit_price?: boolean; quantity?: boolean }[]
   }>({})
 
@@ -375,6 +376,15 @@ function NewInvoicePageContent() {
   const today = new Date().toISOString().split('T')[0]
   const [invoiceDate, setInvoiceDate] = useState(today)
   const [dueDate, setDueDate]         = useState('')
+  // [FACTUUR-A] Leverdatum (Art. 35a sub f) — defaults to invoice date until
+  // the user touches it. deliveryTouched tracks that so changing the
+  // factuurdatum keeps the (still-untouched) leverdatum in sync.
+  const [deliveryDate, setDeliveryDate]       = useState(today)
+  const [deliveryTouched, setDeliveryTouched] = useState(false)
+
+  // [FACTUUR-A] Send confirmation dialog — sending is irreversible (number
+  // consumed + e-mail delivered). Centered modal, per house convention.
+  const [showSendConfirm, setShowSendConfirm] = useState(false)
 
   // ── Lines — pre-filled from replace flow, offerte, or AI generation ──────────
   // [BOEK-029] from offerte: use total_ex_btw as unit_price so BTW calculates correctly
@@ -421,20 +431,11 @@ function NewInvoicePageContent() {
       const due = new Date(); due.setDate(due.getDate() + 30)
       setDueDate(due.toISOString().split('T')[0])
 
-      // [BOEK-031] Invoice number — new format 001-2026 — May 2026
-      // type determined by current invoiceType at load time (factuur default)
-      const initType = offerteParam ? 'factuur'
-        : typeParam === 'creditnota' ? 'creditnota'
-        : typeParam === 'offerte' ? 'pro_forma'
-        : 'factuur'
-      // [BOEK-031] Draft = no number. Generated only on send. — May 2026
-      // Pro forma is exception — needs preview number for UX.
-      if (initType === 'pro_forma') {
-        const num = await generateNumber(supabase, user.id, initType)
-        setInvoiceNumber(num)
-      } else {
-        setInvoiceNumber('') // empty = "Concept" in UI
-      }
+      // [FACTUUR-A] No browser-side number anymore — numbering is fully
+      // server-side (atomic, legal). The UI shows "Concept" until the send
+      // route mints the definitive number. Pro forma no longer shows a PF-
+      // preview here; it is minted on conversion like everything else.
+      setInvoiceNumber('') // empty = "Concept" in UI
 
       // Clients autocomplete
       const { data: cl } = await supabase
@@ -608,22 +609,29 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    // [BOEK-031] New format: 001-2026 — May 2026
-    const newNum = await generateNumber(supabase, user.id, 'factuur')
-
     // [BOEK-031] Always compute fresh from current lines — May 2026
     const totals = computeTotals(lines)
 
+    // [FACTUUR-A] Unified path: insert as DRAFT (no browser number), then the
+    // send route mints the atomic legal number, renders the PDF and delivers
+    // the e-mail. The on-page offerte→factuur convert no longer writes
+    // status:'sent' with a client-generated number.
     const { data: factuur, error: err } = await supabase.from('invoices').insert({
       sender_id: user.id,
-      invoice_number: newNum,
+      invoice_number: null,
       invoice_date: invoiceDate,
       due_date: dueDate,
-      status: 'sent',
+      status: 'draft',
       invoice_type: 'factuur',
       direction: 'outgoing',
       ...totals,
-// [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status      source: 'created',
+      // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
+      // [FACTUUR-A] fix: this `source` field was previously commented out by a
+      // BRIDGE-A comment merged onto the same line — restored.
+      source: 'created',
+      // [FACTUUR-A] offerte conversion gets a Leverdatum too (Art. 35a sub f),
+      // defaulting to the invoice date.
+      delivery_date: invoiceDate,
       client_name: clientName,
       client_email: clientEmail,
       client_address: clientAddress,
@@ -652,7 +660,33 @@ function NewInvoicePageContent() {
         .eq('id', offerteId)
     }
 
-    setShowConvertDialog(false)
+    // [FACTUUR-A] Mint number + render PDF + deliver via the route
+    try {
+      const res = await fetch('/api/invoice/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: factuur.id }),
+      })
+      const result = await res.json().catch(() => ({}))
+      setShowConvertDialog(false)
+      if (!res.ok) {
+        setError(result.error || 'Verzenden mislukt — opgeslagen als concept')
+        setConvertingOfferte(false)
+        router.replace(`/dashboard/invoice/${factuur.id}`)
+        return
+      }
+      if (result.warning === 'pdf_failed' || result.warning === 'email_failed') {
+        router.replace(`/dashboard/invoice/${factuur.id}?delivery=${result.warning}`)
+        return
+      }
+    } catch {
+      setShowConvertDialog(false)
+      setError('Verzenden mislukt — opgeslagen als concept')
+      setConvertingOfferte(false)
+      router.replace(`/dashboard/invoice/${factuur.id}`)
+      return
+    }
+
     // [BOEK-031] replace ipv push — Navigation Strategy — May 2026
     router.replace(`/dashboard/invoice/${factuur.id}`)
   }
@@ -670,6 +704,23 @@ function NewInvoicePageContent() {
     if (!clientEmail) { errs.clientEmail = true; hasAnyError = true }
     if (!invoiceDate) { errs.invoiceDate = true; hasAnyError = true }
     if (!dueDate) { errs.dueDate = true; hasAnyError = true }
+
+    // [FACTUUR-A] Art. 35a sub c — customer address is mandatory ON A FACTUUR
+    // (not on an offerte/pro forma). Enforced on both save modes for factuur
+    // so a draft can't grow into a sendable invoice missing its address.
+    if (invoiceType === 'factuur' && !clientAddress.trim()) {
+      errs.clientAddress = true; hasAnyError = true
+    }
+    // [FACTUUR-A] Leverdatum required for factuur (Art. 35a sub f)
+    if (invoiceType === 'factuur' && !deliveryDate) {
+      errs.deliveryDate = true; hasAnyError = true
+    }
+    // [FACTUUR-A] Customer BTW-id: only block when it LOOKS Dutch but is
+    // malformed. Empty or clearly-foreign numbers pass (valid cases).
+    if (clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) {
+      setError('Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)')
+      return
+    }
 
     const lineErrs = lines.map(l => ({
       description: !l.description.trim(),
@@ -703,31 +754,27 @@ function NewInvoicePageContent() {
     const currentSign = invoiceType === 'creditnota' ? -1 : 1
     const freshTotals = computeTotals(lines, currentSign)
 
-    // [BOEK-031] New numbering format: 001-2026 / CR-001-2026 / PF-001-2026 — May 2026
-    let finalNumber = invoiceNumber
-    if (invoiceType === 'offerte') {
-      // Pro forma gets PF- number in DB but not shown in UI
-      finalNumber = await generateNumber(supabase, user.id, 'pro_forma')
-    } else if (mode === 'sent') {
-      finalNumber = await generateNumber(supabase, user.id,
-        invoiceType === 'creditnota' ? 'creditnota' : 'factuur'
-      )
-    } else {
-      // [BOEK-031] draft = null. Number generated only on send. — May 2026
-      finalNumber = ''
-    }
-
-    // DB invoice_type mapping
+    // [FACTUUR-A] Unified path — June 2026:
+    // The browser NEVER mints a number anymore. We always INSERT a draft
+    // (invoice_number = null); the send route mints the atomic, legal number.
+    // Offerte is the one exception that needs a PF- preview, but it too is
+    // saved without a final factuur number — it gets one only on conversion.
     const dbType = invoiceType === 'creditnota' ? 'creditnota'
                  : invoiceType === 'offerte' ? 'pro_forma'
                  : 'factuur'
 
     const { data: invoice, error: insertErr } = await supabase.from('invoices').insert({
       sender_id: user.id,
-      invoice_number: finalNumber || null,
+      // [FACTUUR-A] Always null on insert — number is minted on send (Art. 35)
+      invoice_number: null,
       invoice_date: invoiceDate,
       due_date: dueDate,
-      status: mode === 'sent' ? 'sent' : 'draft',
+      // [FACTUUR-A] Leverdatum — only meaningful for factuur; null otherwise.
+      // Requires the delivery_date migration + type regen (CMD) before deploy.
+      delivery_date: invoiceType === 'factuur' ? deliveryDate : null,
+      // [FACTUUR-A] Always insert as draft. Sending is a separate, explicit,
+      // server-side step — the page no longer writes status:'sent' directly.
+      status: 'draft',
       invoice_type: dbType,
       direction: 'outgoing',
       // [BOEK-031] credit: bedragen zijn negatief — gebruik freshTotals
@@ -761,34 +808,54 @@ function NewInvoicePageContent() {
     )
 
     // [BOEK-031] Replace flow — markeer de oude factuur
-    if (replacesId && finalNumber) {
+    // [FACTUUR-A] No browser-side number to stamp anymore; archive only.
+    if (replacesId) {
       await supabase.from('invoices')
-        .update({ replaced_by_number: finalNumber, status: 'archived' })
+        .update({ status: 'archived' })
         .eq('id', replacesId)
     }
 
     // [BOEK-031] from_offerte flow — archiveer de originele offerte — May 2026
-    // Note: offerte_converted_to FK update via server only to avoid RLS 400
     if (offerteId) {
       await supabase.from('invoices')
         .update({ status: 'archived' })
         .eq('id', offerteId)
     }
 
-    // [BOEK-031] Email verzenden — non-blocking, nooit crash bij fout — May 2026
-    if (mode === 'sent' && clientEmail) {
-      fetch('/api/invoice/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          invoiceId: invoice.id,
-          clientEmail,
-          clientName,
-          invoiceNumber: finalNumber,
-          totalInc: freshTotals.total_inc_btw,
-          dueDate,
-        }),
-      }).catch(() => {}) // volledig non-blocking
+    // [FACTUUR-A] Send via the route — the ONLY place that mints the number,
+    // renders the PDF and delivers the e-mail with the attachment. Awaited
+    // (not fire-and-forget) so we can surface pdf_failed / email_failed and
+    // route the user to recovery. A draft save skips this entirely.
+    if (mode === 'sent') {
+      try {
+        const res = await fetch('/api/invoice/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId: invoice.id }),
+        })
+        const result = await res.json().catch(() => ({}))
+
+        if (!res.ok) {
+          // Number was NOT consumed (route validates before minting) — the
+          // draft is safe. Show the error and let the user fix + retry.
+          setError(result.error || 'Verzenden mislukt — de factuur is opgeslagen als concept')
+          setLoading(false)
+          router.replace(`/dashboard/invoice/${invoice.id}`)
+          return
+        }
+
+        // Soft warnings: invoice IS legally issued, delivery needs a retry.
+        if (result.warning === 'pdf_failed' || result.warning === 'email_failed') {
+          router.replace(`/dashboard/invoice/${invoice.id}?delivery=${result.warning}`)
+          return
+        }
+      } catch {
+        // Network blip after a clean insert — the draft is intact.
+        setError('Verzenden mislukt — de factuur is opgeslagen als concept')
+        setLoading(false)
+        router.replace(`/dashboard/invoice/${invoice.id}`)
+        return
+      }
     }
 
     // [BOEK-031] replace naar detail pagina — Navigation Strategy — May 2026
@@ -934,6 +1001,27 @@ function NewInvoicePageContent() {
                     {profile.kvk_number && <p style={{ fontSize: 12, color: '#9AA0A6', margin: 0 }}>KVK: {profile.kvk_number}</p>}
                     {profile.btw_number && <p style={{ fontSize: 12, color: '#9AA0A6', margin: 0 }}>BTW: {profile.btw_number}</p>}
                   </div>
+                  {/* [FACTUUR-A] Non-blocking legal-completeness warning on the
+                      sender's own data — a malformed BTW-id or missing KVK
+                      silently lands on every legal invoice otherwise. Links to
+                      settings; never blocks the form. */}
+                  {invoiceType === 'factuur' && (() => {
+                    const missing: string[] = []
+                    if (!profile.address || !profile.kvk_number) missing.push('adres/KVK')
+                    if (!profile.btw_number) missing.push('BTW-nummer')
+                    else if (looksLikeDutchBtw(profile.btw_number) && !isValidDutchBtw(profile.btw_number)) {
+                      missing.push('geldig BTW-nummer (NL…B01)')
+                    }
+                    if (missing.length === 0) return null
+                    return (
+                      <div style={{ marginTop: 10, backgroundColor: '#FEF7E0', borderLeft: '3px solid #FBBC04', borderRadius: '0 8px 8px 0', padding: '8px 12px' }}>
+                        <p style={{ fontSize: 12, color: '#EA8600', margin: 0, lineHeight: 1.5 }}>
+                          Je gegevens missen: {missing.join(', ')}. Een factuur is wettelijk pas volledig met deze gegevens.{' '}
+                          <Link href="/dashboard/settings" style={{ color: '#1967D2', textDecoration: 'underline' }}>Aanvullen</Link>
+                        </p>
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
             )}
@@ -955,21 +1043,51 @@ function NewInvoicePageContent() {
                 )}
               </div>
               <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label="E-mailadres" type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
-              <OutlinedInput value={clientAddress} onChange={e => setClientAddress(e.target.value)} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} />
+              <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} required={invoiceType === 'factuur'} hasError={!!fieldErrors.clientAddress} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label="Postcode" focusColor={cfg.focusColor} />
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />
               </div>
-              <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} />
+              <div>
+                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)} />
+                {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
+                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
+                )}
+              </div>
             </div>
 
             {/* [DS] Datums card */}
+            {/* [FACTUUR-A] Native date inputs render in the browser's own
+                locale (can show MM/DD/YYYY on US systems) — we keep the native
+                picker (iOS wheel is excellent) but pin an unambiguous Dutch
+                DD-MM-YYYY caption under each field. Storage stays ISO. */}
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>Datums</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <OutlinedInput value={invoiceDate} onChange={e => { setInvoiceDate(e.target.value); clearFieldError('invoiceDate') }} label={invoiceType === 'offerte' ? 'Offertedatum *' : 'Factuurdatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.invoiceDate} />
-                <OutlinedInput value={dueDate} onChange={e => { setDueDate(e.target.value); clearFieldError('dueDate') }} label={invoiceType === 'offerte' ? 'Geldig tot *' : 'Vervaldatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.dueDate} />
+                <div>
+                  <OutlinedInput value={invoiceDate} onChange={e => {
+                    setInvoiceDate(e.target.value)
+                    clearFieldError('invoiceDate')
+                    // [FACTUUR-A] keep an untouched leverdatum in sync
+                    if (!deliveryTouched) { setDeliveryDate(e.target.value); clearFieldError('deliveryDate') }
+                  }} label={invoiceType === 'offerte' ? 'Offertedatum *' : 'Factuurdatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.invoiceDate} />
+                  {invoiceDate && <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0', fontFamily: 'Roboto Mono, monospace' }}>{formatDateNL(invoiceDate)}</p>}
+                </div>
+                <div>
+                  <OutlinedInput value={dueDate} onChange={e => { setDueDate(e.target.value); clearFieldError('dueDate') }} label={invoiceType === 'offerte' ? 'Geldig tot *' : 'Vervaldatum *'} type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.dueDate} />
+                  {dueDate && <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0', fontFamily: 'Roboto Mono, monospace' }}>{formatDateNL(dueDate)}</p>}
+                </div>
               </div>
+              {/* [FACTUUR-A] Leverdatum — Art. 35a sub f. Factuur only;
+                  defaults to factuurdatum, editable. */}
+              {invoiceType === 'factuur' && (
+                <div>
+                  <OutlinedInput value={deliveryDate} onChange={e => { setDeliveryTouched(true); setDeliveryDate(e.target.value); clearFieldError('deliveryDate') }} label="Leverdatum *" type="date" focusColor={cfg.focusColor} hasError={!!fieldErrors.deliveryDate} />
+                  <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0' }}>
+                    {deliveryDate ? <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{formatDateNL(deliveryDate)}</span> : 'Datum waarop de levering of dienst is verricht'}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* [DS] Factuurregels card */}
@@ -1004,7 +1122,7 @@ function NewInvoicePageContent() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9AA0A6' }}>
-                    <span>Totaal</span>
+                    <span>Totaal excl.</span>
                     <span style={{ fontWeight: 600, color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.quantity * line.unit_price)}</span>
                   </div>
                 </div>
@@ -1059,7 +1177,16 @@ function NewInvoicePageContent() {
             {/* [DS] Fixed bottom bar — safe area — full-width pill — 48px min */}
             <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))', zIndex: 10 }}>
               <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button onClick={() => handleSubmit('sent')} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
+                <button onClick={() => {
+                  // [FACTUUR-A] Factuur send is irreversible (number consumed
+                  // + e-mail with PDF delivered) → confirm first. Offerte and
+                  // creditnota keep their existing direct flow.
+                  if (invoiceType === 'factuur') {
+                    setShowSendConfirm(true)
+                  } else {
+                    handleSubmit('sent')
+                  }
+                }} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
                   {linesLoading ? 'Laden...' : loading ? 'Bezig...' : invoiceType === 'factuur' ? '✉ Opslaan en versturen' : invoiceType === 'offerte' ? '📋 Versturen naar klant' : '↩ Versturen'}
                 </button>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -1076,6 +1203,42 @@ function NewInvoicePageContent() {
             </div>
           </>
       </div>
+
+      {/* [FACTUUR-A] Send confirmation — centered modal (house convention) */}
+      {showSendConfirm && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 420, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>Factuur versturen?</h2>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
+              Bij verzenden krijgt de factuur een <strong>definitief nummer</strong> en wordt de PDF per e-mail bezorgd. Dit kan niet ongedaan worden gemaakt.
+            </p>
+            <div style={{ backgroundColor: '#F8F9FA', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {([
+                ['Aan', clientName || '—'],
+                ['E-mail', clientEmail || '—'],
+                ['Bedrag', NL_NUMBER.format(totalInc)],
+                ['Factuurdatum', formatDateNL(invoiceDate)],
+                ['Vervaldatum', formatDateNL(dueDate)],
+              ] as [string, string][]).map(([label, value]) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <span style={{ fontSize: 13, color: '#5F6368' }}>{label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word' }}>{value}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => { setShowSendConfirm(false); handleSubmit('sent') }} disabled={loading}
+                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading ? '#9AA0A6' : '#1A73E8', color: 'white', fontSize: 16, fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer' }}>
+                {loading ? 'Versturen...' : '✉ Ja, verstuur'}
+              </button>
+              <button onClick={() => setShowSendConfirm(false)} disabled={loading}
+                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#F1F3F4', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer' }}>
+                Annuleren
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* [DS] Offerte → Factuur convert dialog */}
       {showConvertDialog && (

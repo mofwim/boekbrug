@@ -591,6 +591,7 @@ export type Database = {
           client_name: string | null
           client_postal_code: string | null
           created_at: string | null
+          delivery_date: string | null
           direction: string | null
           document_id: string | null
           due_date: string | null
@@ -626,6 +627,7 @@ export type Database = {
           client_name?: string | null
           client_postal_code?: string | null
           created_at?: string | null
+          delivery_date?: string | null
           direction?: string | null
           document_id?: string | null
           due_date?: string | null
@@ -661,6 +663,7 @@ export type Database = {
           client_name?: string | null
           client_postal_code?: string | null
           created_at?: string | null
+          delivery_date?: string | null
           direction?: string | null
           document_id?: string | null
           due_date?: string | null

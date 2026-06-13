@@ -2,6 +2,8 @@
 // كل functions الإيميل في مكان واحد — Resend
 
 import { Resend } from 'resend'
+// [FACTUUR-A] Single Dutch formatting source — June 2026
+import { formatDateNL, formatEuroNL } from './format-nl'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
@@ -66,13 +68,23 @@ export async function sendClientInvite({
 }
 
 // ── إيميل للعميل عند استلام فاتورة ───────────────────────────────────────────
+// [FACTUUR-A] Rebuilt — June 2026:
+//   * PDF attached (Resend attachments) — the e-mail now carries the actual
+//     legal invoice, not a bare notification. Critical defect #1 closed.
+//   * Amount via formatEuroNL ("€ 243,21" — not "€243.21").
+//   * Dates via formatDateNL ("12-07-2026" — not "2026-07-12").
+//   * Optional invoiceDate row + creditnota wording support.
+//   * Body text + marketing footer preserved (good assets).
 export async function sendInvoiceToClient({
   toEmail,
   clientName,
   zzperName,
   invoiceNumber,
   totalInc,
-  dueDate
+  dueDate,
+  invoiceDate,
+  pdfBuffer,
+  isCreditnota = false
 }: {
   toEmail: string
   clientName: string
@@ -80,24 +92,58 @@ export async function sendInvoiceToClient({
   invoiceNumber: string
   totalInc: number
   dueDate: string
+  /** ISO date — shown as Factuurdatum when provided */
+  invoiceDate?: string
+  /** Rendered invoice PDF — attached when provided */
+  pdfBuffer?: Buffer
+  /** Creditnota wording (subject + heading) */
+  isCreditnota?: boolean
 }) {
+  const docLabel = isCreditnota ? 'Creditnota' : 'Factuur'
+  const numberLabel = isCreditnota ? 'Creditnotanummer' : 'Factuurnummer'
+
+  const invoiceDateRow = invoiceDate
+    ? `<p style="margin:4px 0; color:#1c1c1e;"><strong>${isCreditnota ? 'Datum' : 'Factuurdatum'}:</strong> ${formatDateNL(invoiceDate)}</p>`
+    : ''
+  const dueDateRow = isCreditnota
+    ? ''
+    : `<p style="margin:4px 0; color:#1c1c1e;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>`
+
+  const attachmentLine = pdfBuffer
+    ? `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.</p>`
+    : ''
+
   await resend.emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
-    subject: `Factuur ${invoiceNumber} van ${zzperName}`,
+    subject: `${docLabel} ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Nieuwe factuur ontvangen</h2>
+        <h2 style="color: #1c1c1e;">${isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
         <p style="color: #555;">Beste ${clientName},</p>
-        <p style="color: #555;">Je hebt een factuur ontvangen van <strong>${zzperName}</strong>.</p>
+        <p style="color: #555;">Je hebt een ${docLabel.toLowerCase()} ontvangen van <strong>${zzperName}</strong>.</p>
         <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0;">
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Factuurnummer:</strong> ${invoiceNumber}</p>
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Bedrag:</strong> €${totalInc.toFixed(2)}</p>
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Vervaldatum:</strong> ${dueDate}</p>
+          <p style="margin:4px 0; color:#1c1c1e;"><strong>${numberLabel}:</strong> ${invoiceNumber}</p>
+          <p style="margin:4px 0; color:#1c1c1e;"><strong>Bedrag:</strong> ${formatEuroNL(totalInc)}</p>
+          ${invoiceDateRow}
+          ${dueDateRow}
         </div>
+        ${attachmentLine}
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
-    `
+    `,
+    // [FACTUUR-A] Attach the legal PDF — only when rendering succeeded.
+    // No attachments key at all when absent (cleaner than empty array).
+    ...(pdfBuffer
+      ? {
+          attachments: [
+            {
+              filename: `${invoiceNumber}.pdf`,
+              content: pdfBuffer,
+            },
+          ],
+        }
+      : {})
   })
 }
 
