@@ -201,7 +201,7 @@ export default function InvoiceDetailPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {/* [DS] Back button — Material You circular tonal */}
             <button
-              onClick={() => router.back()}
+              onClick={() => router.push('/dashboard/facturen')} // [FACTUUR-A-FIX] geen router.back() — vaste bestemming, voorkomt navigatie-loop
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -388,7 +388,7 @@ export default function InvoiceDetailPage() {
                     profile?.address,
                     [profile?.postal_code, profile?.city].filter(Boolean).join(' '),
                     profile?.kvk_number ? `KVK: ${profile.kvk_number}` : null,
-                    profile?.btw_number ? `BTW: ${profile.btw_number}` : null,
+                    profile?.btw_number ? `BTW: ${profile.btw_number.toUpperCase()}` : null, // [FACTUUR-A-FIX]
                   ]
                 },
                 {
@@ -397,7 +397,7 @@ export default function InvoiceDetailPage() {
                     invoice?.client_name || '—',
                     invoice?.client_address,
                     [invoice?.client_postal_code, invoice?.client_city].filter(Boolean).join(' '),
-                    invoice?.client_btw_number ? `BTW: ${invoice.client_btw_number}` : null,
+                    invoice?.client_btw_number ? `BTW: ${invoice.client_btw_number.toUpperCase()}` : null, // [FACTUUR-A-FIX]
                     invoice?.client_email,
                   ]
                 },
