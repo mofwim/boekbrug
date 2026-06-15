@@ -15,8 +15,10 @@
 // [FACTUUR-B] The SELECT-then-compute race is gone. The raw sequence is now
 // allocated atomically by the SECURITY DEFINER rpc next_invoice_seq() (single
 // source of truth, single read+increment statement, row-locked on conflict).
-// This lib only FORMATS that integer. The contract is unchanged — same
-// signature, same return shape — so the two call sites
+// This lib only FORMATS that integer, via formatInvoiceNumber() from
+// invoice-template.ts (the single source of truth for {seq}/{year} rendering,
+// shared with the onboarding/Settings extraction). The contract is unchanged
+// -- same signature, same return shape -- so the two call sites
 // (api/invoice/send/route.ts, api/invoice/creditnota/route.ts) are untouched.
 //
 // SAFE TO SHIP STANDALONE: while profiles.invoice_number_template is NULL for
@@ -26,6 +28,7 @@
 // =====================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { formatInvoiceNumber } from './invoice-template'
 
 export type InvoiceNumberType = 'factuur' | 'creditnota' | 'pro_forma'
 
@@ -63,12 +66,6 @@ async function resolveFormat(
   }
 
   return { template, padding }
-}
-
-/** Substitutes {seq} (zero-padded) and {year} into a template (all occurrences). */
-function formatNumber(template: string, seq: number, padding: number, year: number): string {
-  const seqStr = String(seq).padStart(padding, '0')
-  return template.split('{seq}').join(seqStr).split('{year}').join(String(year))
 }
 
 /**
@@ -117,5 +114,5 @@ export async function generateInvoiceNumber(
     return ''
   }
 
-  return formatNumber(template, seq, padding, year)
+  return formatInvoiceNumber(template, seq, padding, year)
 }
