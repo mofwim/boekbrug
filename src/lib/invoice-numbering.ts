@@ -1,13 +1,28 @@
 // src/lib/invoice-numbering.ts
 // [BOEK-031] Shared invoice number generator — May 2026
+// [FACTUUR-B] Atomic + customizable numbering — June 2026
 // =====================================================
-// Format: "001-2026" / "CR-001-2026" / "PF-001-2026"
+// Format (default):  "001-2026" / "CR-001-2026" / "PF-001-2026"
+// Custom (factuur):   driven by profiles.invoice_number_template, e.g.
+//                     "045-2026", "2026-045", "045/2026", "INV-045-2026",
+//                     "2764283" (continuous). creditnota / pro_forma always
+//                     keep their system format — customization is factuur-only.
 //
 // Per Dutch Belastingdienst (Article 35 — Wet OB 1968):
-// Numbers must be sequential without gaps.
+// numbers must be sequential without gaps, and forward-only (no rollback
+// once issued).
 //
-// TODO: Replace SELECT-then-INSERT with PostgreSQL sequence
-// to prevent race conditions in concurrent send scenarios.
+// [FACTUUR-B] The SELECT-then-compute race is gone. The raw sequence is now
+// allocated atomically by the SECURITY DEFINER rpc next_invoice_seq() (single
+// source of truth, single read+increment statement, row-locked on conflict).
+// This lib only FORMATS that integer. The contract is unchanged — same
+// signature, same return shape — so the two call sites
+// (api/invoice/send/route.ts, api/invoice/creditnota/route.ts) are untouched.
+//
+// SAFE TO SHIP STANDALONE: while profiles.invoice_number_template is NULL for
+// everyone (no onboarding template written yet), behavior is byte-for-byte the
+// old default ({seq}-{year}, padding 3) — the only change is that the race is
+// closed. Customization activates per-user the moment a template is stored.
 // =====================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -15,12 +30,63 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export type InvoiceNumberType = 'factuur' | 'creditnota' | 'pro_forma'
 
 /**
+ * Resolves the effective template + padding for a (user, type).
+ *  - creditnota / pro_forma : always the system format (CR-/PF-){seq}-{year}.
+ *  - factuur                : the user's custom template if configured,
+ *                             otherwise the default {seq}-{year}.
+ */
+async function resolveFormat(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  userId: string,
+  type: InvoiceNumberType
+): Promise<{ template: string; padding: number }> {
+  const prefix = type === 'creditnota' ? 'CR-' : type === 'pro_forma' ? 'PF-' : ''
+  // System default for every type (the factuur prefix is empty).
+  let template = `${prefix}{seq}-{year}`
+  let padding = 3
+
+  // Customization applies to factuur only (decision: factuur-only).
+  if (type === 'factuur') {
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('invoice_number_template, invoice_number_padding')
+      .eq('id', userId)
+      .single()
+
+    const custom = prof?.invoice_number_template
+    if (typeof custom === 'string' && custom.trim() !== '') {
+      template = custom
+      const p = prof?.invoice_number_padding
+      padding = typeof p === 'number' && p > 0 ? p : 3
+    }
+  }
+
+  return { template, padding }
+}
+
+/** Substitutes {seq} (zero-padded) and {year} into a template (all occurrences). */
+function formatNumber(template: string, seq: number, padding: number, year: number): string {
+  const seqStr = String(seq).padStart(padding, '0')
+  return template.split('{seq}').join(seqStr).split('{year}').join(String(year))
+}
+
+/**
  * Generates the next sequential invoice number for a user.
  *
- * @param supabase — Supabase client (server or service role)
- * @param userId — sender_id (the freelancer)
- * @param type — invoice type for prefix selection
- * @returns formatted invoice number, e.g. "017-2026", "CR-003-2026", "PF-005-2026"
+ * @param supabase — authenticated session client (carries auth.uid())
+ * @param userId — sender_id (the freelancer); MUST equal auth.uid()
+ * @param type — invoice type (prefix / customization selection)
+ * @returns formatted invoice number, e.g. "045-2026", "CR-003-2026".
+ *          Returns '' on allocation failure — the callers already guard with
+ *          `if (!generated)` and return a clean 500. We NEVER fabricate a
+ *          number on error (that would risk a duplicate or a gap).
+ *
+ * [FACTUUR-B] Atomic: the raw sequence comes from next_invoice_seq() in one
+ * read+increment statement — no race window, forward-only (Art. 35). Yearly
+ * reset vs continuous is inferred from the template: {year} present => reset
+ * (counter keyed by calendar year); absent => continuous (counter keyed by the
+ * year=0 sentinel).
  */
 export async function generateInvoiceNumber(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,30 +94,28 @@ export async function generateInvoiceNumber(
   userId: string,
   type: InvoiceNumberType
 ): Promise<string> {
+  // Server year — matches the prior implementation's behavior exactly.
   const year = new Date().getFullYear()
-  const prefix = type === 'creditnota' ? 'CR-'
-    : type === 'pro_forma' ? 'PF-'
-    : ''
 
-  // Find highest existing sequence for this user + year + type
-  const { data } = await supabase
-    .from('invoices')
-    .select('invoice_number')
-    .eq('sender_id', userId)
-    .eq('invoice_type', type)
-    .ilike('invoice_number', `${prefix}%-${year}`)
-    .order('created_at', { ascending: false })
-    .limit(50)
+  const { template, padding } = await resolveFormat(supabase, userId, type)
 
-  let maxSeq = 0
-  for (const inv of data ?? []) {
-    const num = inv.invoice_number ?? ''
-    // Extract sequence: "CR-016-2026" → 16, "001-2026" → 1
-    const parts = num.replace(/^(CR-|PF-)/, '').split('-')
-    const seq = parseInt(parts[0], 10)
-    if (!isNaN(seq) && seq > maxSeq) maxSeq = seq
+  // {year} in the template => yearly reset (key by the calendar year);
+  // {year} absent          => continuous numbering (key by the 0 sentinel).
+  const counterYear = template.includes('{year}') ? year : 0
+
+  // Atomic allocation — single source of truth, no SELECT-then-compute window.
+  const { data, error } = await supabase.rpc('next_invoice_seq', {
+    p_user_id: userId,
+    p_year: counterYear,
+    p_type: type,
+  })
+
+  const seq = typeof data === 'number' ? data : Number(data)
+  if (error || !Number.isFinite(seq) || seq <= 0) {
+    // Fail cleanly — caller returns a 500. Surfaces in Vercel runtime logs.
+    console.error('[FACTUUR-B] next_invoice_seq failed', { userId, type, counterYear, error })
+    return ''
   }
 
-  const nextSeq = String(maxSeq + 1).padStart(3, '0')
-  return `${prefix}${nextSeq}-${year}`
+  return formatNumber(template, seq, padding, year)
 }
