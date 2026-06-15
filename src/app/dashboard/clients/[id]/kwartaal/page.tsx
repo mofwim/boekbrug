@@ -438,7 +438,7 @@ export default function KwartaalPage() {
                           {/* Openen button — only this navigates */}
                           <div className="pt-2">
                             <button
-                              onClick={() => router.push(`/dashboard/invoice/${invoice.id}`)}
+                              onClick={() => router.push(`/dashboard/invoice/${invoice.id}?from=client&clientId=${clientId}&q=${q}&year=${year}`)}
                               style={{ width: '100%', padding: '8px 16px', borderRadius: 8, backgroundColor: '#1A73E8', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
                               Openen →
                             </button>
