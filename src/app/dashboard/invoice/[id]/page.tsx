@@ -70,6 +70,21 @@ export default function InvoiceDetailPage() {
     if (d === 'pdf_failed' || d === 'email_failed') setDeliveryWarning(d)
   }, [searchParams])
 
+  // [BOEK-031] Context-aware back navigation — May 2026
+  // If accountant opened invoice from a client's kwartaal page, return there.
+  // Otherwise (ZZP default), go to /dashboard/facturen.
+  const fromParam     = searchParams.get('from')
+  const clientIdParam = searchParams.get('clientId')
+  const qParam        = searchParams.get('q')
+  const yearParam     = searchParams.get('year')
+  const terugHref =
+    fromParam === 'client' && clientIdParam
+      ? `/dashboard/clients/${clientIdParam}/kwartaal${qParam || yearParam ? `?${new URLSearchParams({
+          ...(qParam ? { q: qParam } : {}),
+          ...(yearParam ? { year: yearParam } : {}),
+        }).toString()}` : ''}`
+      : '/dashboard/facturen'
+
   // [FACTUUR-A] Resend handler — calls /api/invoice/send with resend:true — June 2026
   // Re-delivers PDF+email; does NOT touch invoice_number or status.
   async function handleResend() {
@@ -201,7 +216,7 @@ export default function InvoiceDetailPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {/* [DS] Back button — Material You circular tonal */}
             <button
-              onClick={() => router.push('/dashboard/facturen')} // [FACTUUR-A-FIX] geen router.back() — vaste bestemming, voorkomt navigatie-loop
+              onClick={() => router.push(terugHref)} // [BOEK-031] context-aware: client→kwartaal | ZZP→facturen
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
