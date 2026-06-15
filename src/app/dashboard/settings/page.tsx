@@ -4,6 +4,8 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+// [FACTUUR-B] numbering extraction (client-side live preview)
+import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -41,6 +43,29 @@ export default function SettingsPage() {
   const [delPassword, setDelPassword] = useState('')
   const [delLoading, setDelLoading] = useState(false)
   const [delError, setDelError] = useState('')
+
+  // [FACTUUR-B] factuurnummering
+  const [numberingNext, setNumberingNext] = useState<string>('')
+  const [numberingLocked, setNumberingLocked] = useState(false)
+  const [numberingInput, setNumberingInput] = useState('')
+  const [numberingLoading, setNumberingLoading] = useState(false)
+  const [numberingSuccess, setNumberingSuccess] = useState('')
+  const [numberingError, setNumberingError] = useState('')
+
+  // [FACTUUR-B] load current numbering state (next number + lock)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/invoice/numbering')
+        if (!res.ok) return
+        const d = await res.json()
+        if (d?.ok) {
+          setNumberingNext(d.next ?? '')
+          setNumberingLocked(!!d.locked)
+        }
+      } catch { /* silent */ }
+    })()
+  }, [])
 
   // تحميل بيانات الملف الشخصي عند فتح الصفحة
   useEffect(() => {
@@ -116,6 +141,30 @@ export default function SettingsPage() {
     }
 
     setLoadingProfile(false)
+  }
+
+  // [FACTUUR-B] save numbering via the single server authority (lock + seed live there)
+  async function saveNumbering() {
+    setNumberingLoading(true); setNumberingError(''); setNumberingSuccess('')
+    try {
+      const res = await fetch('/api/invoice/numbering', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice_start: numberingInput.trim() }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setNumberingError(d?.error || 'Opslaan mislukt — probeer opnieuw')
+        if (d?.locked) setNumberingLocked(true)
+      } else {
+        setNumberingNext(d.next ?? '')
+        setNumberingInput('')
+        setNumberingSuccess('Nummering opgeslagen ✓')
+      }
+    } catch {
+      setNumberingError('Opslaan mislukt — probeer opnieuw')
+    }
+    setNumberingLoading(false)
   }
 
   // إرسال دعوة للمحاسب
@@ -353,6 +402,72 @@ export default function SettingsPage() {
             {loadingProfile ? 'Opslaan...' : 'Opslaan'}
           </button>
         </div>
+
+        {/* [FACTUUR-B] Factuurnummering — ZZP'er only */}
+        {profile.role === 'zzper' && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm space-y-3">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+              Factuurnummering
+            </p>
+
+            {numberingNext && (
+              <p className="text-sm text-gray-600">
+                Je volgende factuur wordt:{' '}
+                <span className="font-semibold text-gray-900">{numberingNext}</span>
+              </p>
+            )}
+
+            {numberingLocked ? (
+              <p className="text-sm text-gray-500">
+                🔒 Je nummering staat vast — er is al een factuur verstuurd.
+                Wijzigen kan niet meer (wettelijk verplicht).
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-gray-500">
+                  Kom je van een ander programma? Vul je volgende factuurnummer in —
+                  bijv. <span className="font-mono">045-2026</span>.
+                </p>
+                <input
+                  type="text"
+                  value={numberingInput}
+                  onChange={e => { setNumberingInput(e.target.value); setNumberingError(''); setNumberingSuccess('') }}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder="bijv. 045-2026"
+                />
+
+                {/* live preview */}
+                {(() => {
+                  const t = numberingInput.trim()
+                  if (!t) return null
+                  const p = previewInvoiceStart(t, new Date().getFullYear())
+                  if (p.ok) return (
+                    <p className="text-sm text-green-600">
+                      ✓ Eerste factuur: <span className="font-semibold">{p.first}</span> · volgende: {p.next}
+                    </p>
+                  )
+                  if (p.reason !== 'empty') return <p className="text-sm text-amber-600">{reasonToDutch(p.reason)}</p>
+                  return null
+                })()}
+
+                {numberingSuccess && <p className="text-sm text-green-600">{numberingSuccess}</p>}
+                {numberingError && <p className="text-sm text-red-500">{numberingError}</p>}
+
+                <button
+                  onClick={saveNumbering}
+                  disabled={
+                    numberingLoading ||
+                    (numberingInput.trim() !== '' &&
+                      !previewInvoiceStart(numberingInput.trim(), new Date().getFullYear()).ok)
+                  }
+                  className="bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {numberingLoading ? 'Opslaan...' : 'Nummering opslaan'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* دعوة المحاسب — للـ ZZP'er فقط */}
         {profile.role === 'zzper' && (
