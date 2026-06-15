@@ -6,8 +6,9 @@
 // breadcrumb + folder/file list. No fetching, no rendering logic here —
 // that all lives server-side in bridge-tree.ts.
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
 
 // ─── Design tokens — Material You (BoekBrug Design System v1.0) ───────────────
@@ -86,6 +87,26 @@ function hasHidden(nodes: TreeNode[]): boolean {
 export default function BrugClient({ nodes, role }: { nodes: TreeNode[]; role: string | null }) {
   const [cwd, setCwd] = useState<string[]>([])
   const [showHidden, setShowHidden] = useState(false)
+  const router = useRouter()
+
+  // [BRIDGE-REFRESH] Re-fetch when the tab regains focus. The page is
+  // force-dynamic server-side, but tab/folder navigation here is client-side
+  // state (cwd) — it never re-runs the server fetch. So when the accountant
+  // processed an invoice / the client marked one paid in ANOTHER tab and comes
+  // back, router.refresh() re-runs the server component and the fresh nodes
+  // flow in as a prop. No manual reload needed. (Layer 1 — full Realtime for
+  // the bridge comes later with the interactive hub.)
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') router.refresh()
+    }
+    window.addEventListener('visibilitychange', onFocus)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('visibilitychange', onFocus)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [router])
 
   const level = useMemo(() => computeLevel(nodes, cwd, showHidden), [nodes, cwd, showHidden])
   const showToggle = useMemo(() => hasHidden(nodes), [nodes])
@@ -100,13 +121,24 @@ export default function BrugClient({ nodes, role }: { nodes: TreeNode[]; role: s
         <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: 0, letterSpacing: -0.3 }}>
           Brug
         </h1>
-        <Link
-          href={homeHref}
-          style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>home</span>
-          Home
-        </Link>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* [BRIDGE-REFRESH] expliciete vernieuw-knop — naast de automatische focus-refresh */}
+          <button
+            onClick={() => router.refresh()}
+            title="Vernieuwen"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
+            Vernieuwen
+          </button>
+          <Link
+            href={homeHref}
+            style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>home</span>
+            Home
+          </Link>
+        </div>
       </div>
 
       {/* Breadcrumb */}
