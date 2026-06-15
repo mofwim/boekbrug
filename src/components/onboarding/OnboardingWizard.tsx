@@ -15,12 +15,12 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-
+// [FACTUUR-B] numbering extraction (client-side live preview)
+import { previewInvoiceStart, reasonToDutch } from "@/lib/invoice-template";
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
-type StepId = 1 | 2 | 3 | "3A" | "3B" | 4 | 5 | 6;
-
+type StepId = 1 | 2 | 3 | "3A" | "3B" | "3C" | 4 | 5 | 6;
 interface CompanyData {
   company_name: string;
   kvk_number: string;
@@ -44,9 +44,9 @@ function stepToProgress(step: StepId, role: Role): number {
     return map[String(step)] ?? 10;
   }
   const map: Record<string, number> = {
-    "1": 5, "2": 20, "3": 35, "3A": 52, "3B": 52, "4": 70, "5": 85, "6": 100,
+    "1": 5, "2": 20, "3": 35, "3A": 52, "3B": 52, "3C": 60, "4": 70, "5": 85, "6": 100,
   };
-  return map[String(step)] ?? 5;
+    return map[String(step)] ?? 5;
 }
 
 const KVK_REGEX = /^\d{8}$/;
@@ -78,6 +78,9 @@ export function OnboardingWizard({
   const [accountantEmail, setAccountantEmail] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
+  // [FACTUUR-B] invoice numbering start (step 3C)
+  const [invoiceStart, setInvoiceStart] = useState("");
+  const [numberingError, setNumberingError] = useState("");
   const [resetting, setResetting] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
@@ -148,6 +151,24 @@ export function OnboardingWizard({
           company_name: company.company_name.trim() || null,
           kvk_number: kvk || null,
         });
+        setStep("3C"); // [FACTUUR-B] go to numbering step before Gmail
+        return;
+      }
+      if (step === "3C") {
+        // [FACTUUR-B] save numbering (skippable). Empty = default 001-{year}.
+        if (invoiceStart.trim()) {
+          const res = await fetch("/api/invoice/numbering", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ invoice_start: invoiceStart.trim() }),
+          });
+          if (!res.ok) {
+            setNumberingError("Kon de nummering niet opslaan — probeer opnieuw of sla over.");
+            return;
+          }
+        }
+        setNumberingError("");
+        await persistStep(4);
         setStep(4);
         return;
       }
@@ -206,6 +227,7 @@ export function OnboardingWizard({
     if (role === "zzp") {
       if (step === 3) { setStep("3B"); return; }
       if (step === "3A" || step === "3B") { await persistStep(4); setStep(4); return; }
+      if (step === "3C") { await persistStep(4); setStep(4); return; } // [FACTUUR-B]
       if (step === 4) { await persistStep(5); setStep(5); return; }
       if (step === 5) { await finish(); return; }
     }
@@ -237,10 +259,17 @@ export function OnboardingWizard({
   // [BOEK-015] Fix 3: disable Volgende until company_name is filled
   const isCompanyStep = step === "3B" || (role === "accountant" && step === 3);
   const kvkVal = company.kvk_number.trim();
-  const isNextDisabled = isCompanyStep && (
-    !company.company_name.trim() ||
-    (kvkVal.length > 0 && !/^\d{8}$/.test(kvkVal))
-  );
+  // [FACTUUR-B] also disable "Volgende" while a typed numbering value is unparseable
+  const numberingTrimmed = invoiceStart.trim();
+  const numberingBad =
+    step === "3C" &&
+    numberingTrimmed !== "" &&
+    !previewInvoiceStart(numberingTrimmed, new Date().getFullYear()).ok;
+  const isNextDisabled =
+    (isCompanyStep && (
+      !company.company_name.trim() ||
+      (kvkVal.length > 0 && !/^\d{8}$/.test(kvkVal))
+    )) || numberingBad;
 
   return (
     <div
@@ -259,7 +288,7 @@ export function OnboardingWizard({
           </span>
         </a>
         <span style={{ fontSize: "13px", color: "#aeaeb2" }}>
-          Stap {typeof step === "string" ? step.replace("3A","3").replace("3B","3") : step} van {role === "accountant" ? 5 : 6}
+          Stap {typeof step === "string" ? step.replace("3A","3").replace("3B","3").replace("3C","3") : step} van {role === "accountant" ? 5 : 6}
         </span>
       </div>
 
@@ -301,13 +330,20 @@ export function OnboardingWizard({
                   iban: company.iban || null,
                   address: company.address || null,
                 });
-                setStep(4);
+                setStep("3C"); // [FACTUUR-B] go to numbering step before Gmail
               }}
               onFallback={() => setStep("3B")}
             />
           )}
           {role === "zzp" && step === "3B" && (
             <StepManual company={company} setCompany={setCompany} kvkError={kvkError} setKvkError={setKvkError} />
+          )}
+          {role === "zzp" && step === "3C" && (
+            <StepInvoiceStart
+              value={invoiceStart}
+              onChange={(v) => { setInvoiceStart(v); setNumberingError(""); }}
+              error={numberingError}
+            />
           )}
           {role === "zzp" && step === 4 && <StepGmail gmailConnected={gmailConnected} onNext={handleNext} />}
           {role === "zzp" && step === 5 && (
@@ -577,6 +613,59 @@ function StepHowToStart({ onUpload, onManual }: { onUpload: () => void; onManual
           </p>
         </button>
       </div>
+    </div>
+  );
+}
+
+function StepInvoiceStart({ value, onChange, error }: {
+  value: string; onChange: (v: string) => void; error?: string;
+}) {
+  const year = new Date().getFullYear();
+  const trimmed = value.trim();
+  const preview = trimmed ? previewInvoiceStart(trimmed, year) : null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+          Met welk factuurnummer wil je beginnen?
+        </h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          Kom je van een ander programma? Vul je volgende factuurnummer in —
+          wij gaan verder waar jij gebleven bent.
+        </p>
+      </div>
+
+      <Input
+        label="Je volgende factuurnummer"
+        placeholder="bijv. 045-2026"
+        value={value}
+        onChange={onChange}
+        error={error}
+      />
+
+      {/* live confirmation — the "understanding loop" */}
+      {!trimmed && (
+        <div style={{ fontSize: "14px", color: "#8e8e93" }}>
+          Laat leeg om bij <strong>001-{year}</strong> te beginnen.
+        </div>
+      )}
+      {trimmed && preview && preview.ok && (
+        <div style={{
+          background: "#e9f9ef", border: "1px solid #34c759", borderRadius: "14px",
+          padding: "14px 16px", fontSize: "15px", color: "#1c1c1e",
+        }}>
+          <div>✓ Je eerste factuur wordt: <strong>{preview.first}</strong></div>
+          <div style={{ marginTop: "4px", color: "#6b6b6e" }}>De volgende: {preview.next}</div>
+        </div>
+      )}
+      {trimmed && preview && !preview.ok && preview.reason !== "empty" && (
+        <div style={{
+          background: "#fff4e5", border: "1px solid #ff9500", borderRadius: "14px",
+          padding: "14px 16px", fontSize: "14px", color: "#1c1c1e",
+        }}>
+          {reasonToDutch(preview.reason)}
+        </div>
+      )}
     </div>
   );
 }

@@ -37,6 +37,8 @@ export type AuditAction =
   | 'invoice.duplicated'              // ← v2: matches historical data
   | 'invoice.status_changed'
   | 'creditnota.created'              // ← v2: matches historical data
+  | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
+  | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
   // Level 2 — Accountant relationships
   | 'accountant.client_invited'
   | 'accountant.client_linked'
