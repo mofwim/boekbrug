@@ -65,7 +65,7 @@ export default async function IncomingPage() {
     .select(INVOICE_COLUMNS)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .eq("status", "received")
+    .eq("status", "processing")
     .order("created_at", { ascending: false })
     .limit(100);
 

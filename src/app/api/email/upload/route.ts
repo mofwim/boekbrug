@@ -128,7 +128,9 @@ export async function POST(req: NextRequest) {
       sender_id: null,
       receiver_id: user.id,
       direction: "incoming",
-      status: "received",
+      // [BRIDGE-B] Hold state — not shared with the accountant until the client
+      // verifies. 'processing' is excluded from the `shared` GENERATED expression.
+      status: "processing",
       source: "upload",
       client_name: verification.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,

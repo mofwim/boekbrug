@@ -74,7 +74,7 @@ export function getQuarter(date: string): 1 | 2 | 3 | 4 {
 
 // [BOEK-013] Build simplified ZZP summary — 4 numbers only
 // mode='paid'  → outgoing:paid only + incoming:paid only
-// mode='all'   → outgoing:paid+sent+overdue + incoming:paid+received+processing
+// mode='all'   → outgoing:paid+sent+overdue + incoming:paid+received  [BRIDGE-B: verified only]
 // [BOEK-FOUNDATION-TYPES] Null-safe: incomplete invoices treated as 0
 export function buildZzpSummary(
   invoices: InvoiceForQuarterly[],
@@ -83,7 +83,9 @@ export function buildZzpSummary(
   mode: 'paid' | 'all'
 ): ZzpQuarterlySummary {
   const OUTGOING_STATUSES_ALL = ['paid', 'sent', 'overdue'];
-  const INCOMING_STATUSES_ALL = ['paid', 'received', 'processing'];
+  // [BRIDGE-B] 'processing' removed: unverified incoming invoices must NOT count
+  // in quarterly totals (AI prepares, human confirms). 'all' = verified only.
+  const INCOMING_STATUSES_ALL = ['paid', 'received'];
 
   let totalIn = 0;
   let totalOut = 0;

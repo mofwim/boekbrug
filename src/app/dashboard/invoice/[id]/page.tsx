@@ -26,7 +26,7 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }
   paid:       { label: 'Betaald',        bg: '#CEEAD6', color: '#137333' },
   overdue:    { label: 'Verlopen',       bg: '#F9DEDC', color: '#B3261E' },
   received:   { label: 'Ontvangen',      bg: '#D3E3FD', color: '#1967D2' },
-  processing: { label: 'In behandeling', bg: '#FEF7E0', color: '#EA8600' },
+  processing: { label: 'Te verifiëren', bg: '#FEF7E0', color: '#EA8600' },
   processed:  { label: 'Verwerkt',       bg: '#CEEAD6', color: '#137333' },
   unclear:    { label: 'Onduidelijk',    bg: '#F9DEDC', color: '#B3261E' },
   archived:   { label: 'Gearchiveerd',   bg: '#F1F3F4', color: '#5F6368' },

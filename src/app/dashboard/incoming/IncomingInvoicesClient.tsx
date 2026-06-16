@@ -1,14 +1,16 @@
 "use client";
 // src/app/dashboard/incoming/IncomingInvoicesClient.tsx
-// [BOEK-011] Payment confirmation queue — incoming invoices from email
+// [BOEK-011] Verification queue — incoming invoices from email  ([BRIDGE-B])
 // Mobile-first, iOS-style design
 //
 // Features:
 // - Tabs: Te bevestigen | Genegeerd
 // - Tap a card → expands (accordion) with full details + PDF view
-// - "Markeer betaald" → review/edit AI-extracted amounts → confirm
+// - "Verifiëren" → review/edit AI amounts (TRAIL 2/3) →
+//     "Bevestig / verifieer" (becomes a shared Crediteur, unpaid)  OR
+//     "Markeer als betaald" → Bank/Contant (marks paid)
 // - "Negeer" → confirmation → archive (recoverable)
-// - Restore ignored invoices
+// - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
@@ -230,28 +232,46 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
 function ConfirmPaidModal({
   invoice,
-  onConfirm,
+  onVerify,
+  onPay,
   onCancel,
 }: {
   invoice: IncomingInvoice;
-  onConfirm: (amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number }) => void;
+  // [BRIDGE-B] verify → becomes a SHARED Crediteur (unpaid). pay → mark paid (needs method).
+  onVerify: (amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number }) => void;
+  onPay: (
+    amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number },
+    method: "bank" | "kas"
+  ) => void;
   onCancel: () => void;
 }) {
   const [exBtw, setExBtw] = useState(invoice.total_ex_btw || 0);
   const [btwAmount, setBtwAmount] = useState(invoice.btw_amount || 0);
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // [BRIDGE-B] payStep = showing the Bank/Contant choice (after "Markeer als betaald")
+  const [payStep, setPayStep] = useState(false);
 
-  // Total is always derived — never edited directly
+  // Total is always derived — never edited directly. This IS TRAIL 2: excl + BTW = incl.
   const totalIncBtw = exBtw + btwAmount;
 
-  const handleConfirm = () => {
+  // [BRIDGE-B] TRAIL 3 — legal BTW rate must round to 0 / 9 / 21. FLAG, never block.
+  const btwRate = exBtw > 0 ? Math.round((btwAmount / exBtw) * 100) : null;
+  const rateFlag = btwRate !== null && btwRate !== 0 && btwRate !== 9 && btwRate !== 21;
+
+  const amounts = {
+    total_ex_btw: exBtw,
+    btw_amount: btwAmount,
+    total_inc_btw: totalIncBtw,
+  };
+
+  const handleVerify = () => {
     setSubmitting(true);
-    onConfirm({
-      total_ex_btw: exBtw,
-      btw_amount: btwAmount,
-      total_inc_btw: totalIncBtw,
-    });
+    onVerify(amounts);
+  };
+  const handlePay = (method: "bank" | "kas") => {
+    setSubmitting(true);
+    onPay(amounts, method);
   };
 
   return (
@@ -272,112 +292,192 @@ function ConfirmPaidModal({
           width: "100%", maxWidth: 430,
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: 19, color: "#1c1c1e", marginBottom: 4 }}>
-          Markeer als betaald
-        </div>
-        <div style={{ fontSize: 14, color: "#8e8e93", marginBottom: 20 }}>
-          Controleer de bedragen. AI heeft ze automatisch uitgelezen.
-        </div>
+        {!payStep ? (
+          <>
+            <div style={{ fontWeight: 700, fontSize: 19, color: "#1c1c1e", marginBottom: 4 }}>
+              Factuur bevestigen
+            </div>
+            <div style={{ fontSize: 14, color: "#8e8e93", marginBottom: 20 }}>
+              Controleer de bedragen. AI heeft ze automatisch uitgelezen.
+            </div>
 
-        {/* Amounts breakdown */}
-        <div
-          style={{
-            background: "#f2f2f7", borderRadius: 14,
-            padding: "16px", marginBottom: 16,
-          }}
-        >
-          {/* Excl BTW */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <span style={{ fontSize: 14, color: "#6b6b6e" }}>Bedrag excl. BTW</span>
-            {editing ? (
-              <input
-                type="number"
-                value={exBtw}
-                onChange={(e) => setExBtw(Math.max(0, parseFloat(e.target.value) || 0))}
+            {/* Amounts breakdown */}
+            <div
+              style={{
+                background: "#f2f2f7", borderRadius: 14,
+                padding: "16px", marginBottom: 16,
+              }}
+            >
+              {/* Excl BTW */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 14, color: "#6b6b6e" }}>Bedrag excl. BTW</span>
+                {editing ? (
+                  <input
+                    type="number"
+                    value={exBtw}
+                    onChange={(e) => setExBtw(Math.max(0, parseFloat(e.target.value) || 0))}
+                    style={{
+                      width: 110, padding: "6px 10px", fontSize: 16,
+                      borderRadius: 8, border: "1.5px solid #007aff",
+                      textAlign: "right", outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 15, fontWeight: 600, color: "#1c1c1e" }}>
+                    {formatAmount(exBtw)}
+                  </span>
+                )}
+              </div>
+
+              {/* BTW amount */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: rateFlag ? 6 : 12 }}>
+                <span style={{ fontSize: 14, color: "#6b6b6e" }}>BTW</span>
+                {editing ? (
+                  <input
+                    type="number"
+                    value={btwAmount}
+                    onChange={(e) => setBtwAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                    style={{
+                      width: 110, padding: "6px 10px", fontSize: 16,
+                      borderRadius: 8,
+                      border: `1.5px solid ${rateFlag ? "#EA8600" : "#007aff"}`,
+                      textAlign: "right", outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 15, fontWeight: 600, color: rateFlag ? "#EA8600" : "#1c1c1e" }}>
+                    {formatAmount(btwAmount)}
+                  </span>
+                )}
+              </div>
+
+              {/* [BRIDGE-B] TRAIL 3 flag — non-blocking warning on an unexpected BTW rate */}
+              {rateFlag && (
+                <div style={{ fontSize: 12, color: "#EA8600", lineHeight: 1.4, marginBottom: 12, display: "flex", gap: 6 }}>
+                  <span>⚠️</span>
+                  <span>BTW-tarief lijkt {btwRate}% — controleer de bedragen (verwacht 0%, 9% of 21%).</span>
+                </div>
+              )}
+
+              {/* Divider */}
+              <div style={{ height: 1, background: "#d1d1d6", margin: "12px 0" }} />
+
+              {/* Total — always computed */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#1c1c1e" }}>Totaal</span>
+                <span style={{ fontSize: 18, fontWeight: 700, color: "#1c1c1e" }}>
+                  {formatAmount(totalIncBtw)}
+                </span>
+              </div>
+            </div>
+
+            {/* Edit toggle */}
+            {!editing && (
+              <button
+                onClick={() => setEditing(true)}
                 style={{
-                  width: 110, padding: "6px 10px", fontSize: 16,
-                  borderRadius: 8, border: "1.5px solid #007aff",
-                  textAlign: "right", outline: "none",
+                  width: "100%", padding: "10px", marginBottom: 10,
+                  background: "transparent", border: "none",
+                  color: "#007aff", fontWeight: 600, fontSize: 14, cursor: "pointer",
                 }}
-              />
-            ) : (
-              <span style={{ fontSize: 15, fontWeight: 600, color: "#1c1c1e" }}>
-                {formatAmount(exBtw)}
-              </span>
+              >
+                Bedragen aanpassen
+              </button>
             )}
-          </div>
 
-          {/* BTW amount */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <span style={{ fontSize: 14, color: "#6b6b6e" }}>BTW</span>
-            {editing ? (
-              <input
-                type="number"
-                value={btwAmount}
-                onChange={(e) => setBtwAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+            {/* PRIMARY — verify (becomes a shared Crediteur, unpaid) */}
+            <button
+              onClick={handleVerify}
+              disabled={submitting}
+              style={{
+                width: "100%", padding: "16px", borderRadius: 14,
+                background: submitting ? "#c7c7cc" : "#34c759",
+                color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
+                cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
+              }}
+            >
+              {submitting ? "Bezig…" : "Bevestig / verifieer"}
+            </button>
+
+            {/* SECONDARY — mark as paid → opens Bank/Contant choice */}
+            <button
+              onClick={() => setPayStep(true)}
+              disabled={submitting}
+              style={{
+                width: "100%", padding: "14px", borderRadius: 14,
+                background: "#eef4ff", color: "#007aff",
+                border: "1.5px solid #007aff",
+                fontWeight: 600, fontSize: 15,
+                cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
+              }}
+            >
+              Markeer als betaald
+            </button>
+
+            {/* Cancel */}
+            <button
+              onClick={onCancel}
+              disabled={submitting}
+              style={{
+                width: "100%", padding: "14px", borderRadius: 14,
+                background: "#f2f2f7", color: "#1c1c1e", border: "none",
+                fontWeight: 600, fontSize: 15, cursor: "pointer",
+              }}
+            >
+              Annuleren
+            </button>
+          </>
+        ) : (
+          /* [BRIDGE-B] Payment-method step — mirrors the outgoing "mark paid" dialog */
+          <>
+            <div style={{ fontWeight: 700, fontSize: 19, color: "#1c1c1e", marginBottom: 4 }}>
+              Hoe is deze factuur betaald?
+            </div>
+            <div style={{ fontSize: 14, color: "#8e8e93", marginBottom: 20 }}>
+              De factuur wordt als betaald gemarkeerd en doorgestuurd naar je boekhouder.
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+              <button
+                onClick={() => handlePay("bank")}
+                disabled={submitting}
                 style={{
-                  width: 110, padding: "6px 10px", fontSize: 16,
-                  borderRadius: 8, border: "1.5px solid #007aff",
-                  textAlign: "right", outline: "none",
+                  flex: 1, padding: "16px", borderRadius: 14,
+                  background: submitting ? "#c7c7cc" : "#34c759",
+                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
+                  cursor: submitting ? "not-allowed" : "pointer",
                 }}
-              />
-            ) : (
-              <span style={{ fontSize: 15, fontWeight: 600, color: "#1c1c1e" }}>
-                {formatAmount(btwAmount)}
-              </span>
-            )}
-          </div>
+              >
+                🏛️ Bank
+              </button>
+              <button
+                onClick={() => handlePay("kas")}
+                disabled={submitting}
+                style={{
+                  flex: 1, padding: "16px", borderRadius: 14,
+                  background: submitting ? "#c7c7cc" : "#34c759",
+                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
+                  cursor: submitting ? "not-allowed" : "pointer",
+                }}
+              >
+                💳 Contant
+              </button>
+            </div>
 
-          {/* Divider */}
-          <div style={{ height: 1, background: "#d1d1d6", margin: "12px 0" }} />
-
-          {/* Total — always computed */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: "#1c1c1e" }}>Totaal</span>
-            <span style={{ fontSize: 18, fontWeight: 700, color: "#1c1c1e" }}>
-              {formatAmount(totalIncBtw)}
-            </span>
-          </div>
-        </div>
-
-        {/* Edit toggle */}
-        {!editing && (
-          <button
-            onClick={() => setEditing(true)}
-            style={{
-              width: "100%", padding: "10px", marginBottom: 10,
-              background: "transparent", border: "none",
-              color: "#007aff", fontWeight: 600, fontSize: 14, cursor: "pointer",
-            }}
-          >
-            Bedragen aanpassen
-          </button>
+            {/* Back to the review step */}
+            <button
+              onClick={() => setPayStep(false)}
+              disabled={submitting}
+              style={{
+                width: "100%", padding: "14px", borderRadius: 14,
+                background: "transparent", color: "#8e8e93", border: "none",
+                fontWeight: 600, fontSize: 15, cursor: "pointer",
+              }}
+            >
+              ‹ Terug
+            </button>
+          </>
         )}
-
-        {/* Actions */}
-        <button
-          onClick={handleConfirm}
-          disabled={submitting}
-          style={{
-            width: "100%", padding: "16px", borderRadius: 14,
-            background: submitting ? "#c7c7cc" : "#34c759",
-            color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
-            cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
-          }}
-        >
-          {submitting ? "Bezig…" : "Bevestig — markeer betaald"}
-        </button>
-        <button
-          onClick={onCancel}
-          disabled={submitting}
-          style={{
-            width: "100%", padding: "14px", borderRadius: 14,
-            background: "#f2f2f7", color: "#1c1c1e", border: "none",
-            fontWeight: 600, fontSize: 15, cursor: "pointer",
-          }}
-        >
-          Annuleren
-        </button>
       </div>
     </div>
   );
@@ -620,7 +720,7 @@ function InvoiceCard({
                   fontWeight: 700, fontSize: 14, cursor: "pointer",
                 }}
               >
-                Markeer betaald
+                Verifiëren
               </button>
             </div>
           ) : (
@@ -783,8 +883,8 @@ export default function IncomingInvoicesClient({
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ── Confirm paid — with reviewed amounts ──
-  const handleConfirmPaid = useCallback(
+  // ── [BRIDGE-B] Verify — processing → received (shared Crediteur, unpaid) ──
+  const handleVerify = useCallback(
     async (
       invoice: IncomingInvoice,
       amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number }
@@ -798,7 +898,37 @@ export default function IncomingInvoicesClient({
         const res = await fetch(`/api/email/confirm/${invoice.id}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(amounts),
+          body: JSON.stringify({ action: "verify", ...amounts }),
+        });
+        if (res.ok) {
+          showToast("✓ Factuur geverifieerd");
+        } else {
+          showToast("Verificatie mislukt — ververs de pagina");
+        }
+      } catch {
+        showToast("Fout — ververs de pagina");
+      }
+    },
+    []
+  );
+
+  // ── [BRIDGE-B] Pay — → paid (requires payment_method: bank | kas) ──
+  const handlePay = useCallback(
+    async (
+      invoice: IncomingInvoice,
+      amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number },
+      method: "bank" | "kas"
+    ) => {
+      // Optimistic — remove from pending
+      setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
+      setConfirmPaidFor(null);
+      setExpandedId(null);
+
+      try {
+        const res = await fetch(`/api/email/confirm/${invoice.id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "pay", payment_method: method, ...amounts }),
         });
         if (res.ok) {
           showToast("✓ Factuur gemarkeerd als betaald");
@@ -982,7 +1112,8 @@ export default function IncomingInvoicesClient({
       {confirmPaidFor && (
         <ConfirmPaidModal
           invoice={confirmPaidFor}
-          onConfirm={(amounts) => handleConfirmPaid(confirmPaidFor, amounts)}
+          onVerify={(amounts) => handleVerify(confirmPaidFor, amounts)}
+          onPay={(amounts, method) => handlePay(confirmPaidFor, amounts, method)}
           onCancel={() => setConfirmPaidFor(null)}
         />
       )}

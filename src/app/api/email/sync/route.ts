@@ -57,7 +57,8 @@ export async function GET(_req: NextRequest) {
     .select('id', { count: 'exact', head: true })
     .eq('receiver_id', user.id)
     .eq('direction', 'incoming')
-    .eq('status', 'received')
+    // [BRIDGE-B] pending = awaiting human verification (was 'received')
+    .eq('status', 'processing')
 
   return NextResponse.json({
     connected: !!connection,
