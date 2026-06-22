@@ -68,6 +68,13 @@ export interface VerifyInvoiceResult {
   btw_amount?: number;       // the BTW amount itself
   total_inc_btw?: number;    // total including BTW
   btw_rate?: number;         // detected rate: 0, 9 or 21
+  // [BRIDGE-EXTRACT] Per-field confidence (0–1) — lets the UI ask the user to
+  // confirm ONLY the fields the AI is unsure about, instead of guessing silently.
+  field_confidence?: {
+    vendor?: number;
+    invoice_number?: number;
+    invoice_date?: number;
+  };
 }
 
 export interface TranslateResult {
@@ -426,6 +433,11 @@ Return only a JSON object with these exact keys:
   "btw_amount": number or null,
   "total_inc_btw": number or null,
   "btw_rate": 0 | 9 | 21 or null,
+  "field_confidence": {
+    "vendor": number between 0 and 1,
+    "invoice_number": number between 0 and 1,
+    "invoice_date": number between 0 and 1
+  },
   "reason": string or null
 }
 
@@ -465,7 +477,17 @@ Amount extraction rules:
 - btw_rate: the percentage — usually 21, sometimes 9 or 0
 - If only the total is shown and BTW rate is known, calculate the breakdown
 - If a value genuinely cannot be found, set it to null — never guess
-- confidence: how certain you are (0 = no idea, 1 = absolutely certain)${receiverHint}`;
+- confidence: how certain you are (0 = no idea, 1 = absolutely certain)
+
+Per-field confidence rules:
+- field_confidence.vendor: how certain you are the vendor (sender) is correct.
+  LOW (< 0.7) if sender/receiver were ambiguous, names were close, or the layout was unclear.
+- field_confidence.invoice_number: LOW if you had to guess, or the only candidate looked
+  like a page number, customer number, or date rather than a clear invoice number.
+- field_confidence.invoice_date: LOW if multiple dates were present (invoice / due / delivery)
+  and it was unclear which is the invoice date.
+- Be honest. A low score is BETTER than a confident wrong answer — the user will be asked
+  to confirm low-confidence fields. Do not inflate these scores.${receiverHint}`;
 
   const prompt = `Verify if this document is a real invoice or receipt.
 Filename: ${filename}
@@ -524,6 +546,16 @@ Return JSON only.`;
     // Clamp confidence
     parsed.confidence = Math.min(1, Math.max(0, parsed.confidence ?? 0));
 
+    // [BRIDGE-EXTRACT] Normalize per-field confidence (clamp 0–1; default to a
+    // neutral 1 when the AI omitted a field's score so we don't false-flag).
+    const clamp01 = (v: unknown): number =>
+      typeof v === 'number' && isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+    parsed.field_confidence = {
+      vendor: clamp01(parsed.field_confidence?.vendor),
+      invoice_number: clamp01(parsed.field_confidence?.invoice_number),
+      invoice_date: clamp01(parsed.field_confidence?.invoice_date),
+    };
+
     // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
     // despite the prompt, drop it — the receiver is never the vendor. Loose match
     // (case-insensitive, trimmed) so "kiwi food market" ~ "Kiwi Food Market B.V."
@@ -532,7 +564,8 @@ Return JSON only.`;
       const v = norm(parsed.vendor);
       const r = norm(receiverName);
       if (v && r && (v === r || v.includes(r) || r.includes(v))) {
-        parsed.vendor = undefined;   // never surface the receiver as vendor
+        parsed.vendor = undefined;          // never surface the receiver as vendor
+        parsed.field_confidence.vendor = 0; // force-flag: the user must supply it
       }
     }
 
@@ -544,7 +577,10 @@ Return JSON only.`;
         /^\d{1,2}\s*[-/]\s*\d{1,2}$/.test(inv) ||                 // 1-1, 1/2
         /^(pagina|page|blad|pag\.?)\b/i.test(inv) ||              // Pagina 1...
         /\bvan\b/i.test(inv);                                     // 1 van 2
-      if (looksLikePage) parsed.invoice_number = undefined;
+      if (looksLikePage) {
+        parsed.invoice_number = undefined;
+        parsed.field_confidence.invoice_number = 0; // force-flag for confirmation
+      }
     }
 
     // Enforce minimum confidence threshold

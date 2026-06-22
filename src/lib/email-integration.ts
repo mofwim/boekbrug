@@ -573,6 +573,12 @@ export interface AttachmentClassification {
   btwAmount?: number
   totalIncBtw?: number
   btwRate?: number
+  // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
+  fieldConfidence?: {
+    vendor?: number
+    invoice_number?: number
+    invoice_date?: number
+  }
 }
 
 /**
@@ -604,6 +610,7 @@ export async function classifyAttachment(
     btwAmount: result.btw_amount,
     totalIncBtw: result.total_inc_btw,
     btwRate: result.btw_rate,
+    fieldConfidence: result.field_confidence,
   }
 }
 
@@ -940,6 +947,10 @@ export async function syncUserEmails(userId: string): Promise<{
           pdf_url: pdfUrl,
           document_id: documentId,
           source_message_id: dedupKey,
+          // [BRIDGE-EXTRACT] per-field AI confidence (stored for parity; note the
+          // email path sets status='received' directly, so it skips the verify
+          // modal — the flags surface only for 'processing' invoices today).
+          field_confidence: classification.fieldConfidence ?? null,
         })
         .select('id')
         .single()

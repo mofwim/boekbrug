@@ -24,11 +24,17 @@ interface IncomingInvoiceRow {
   created_at: string;
   folder_id: string | null;
   folder_name: string | null;
+  // [BRIDGE-EXTRACT] per-field AI confidence — drives the modal's "confirm" flags
+  field_confidence: {
+    vendor?: number;
+    invoice_number?: number;
+    invoice_date?: number;
+  } | null;
 }
 
 // Plain column list — no join. The join broke the query and emptied the page.
 const INVOICE_COLUMNS =
-  "id, client_name, client_email, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at";
+  "id, client_name, client_email, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();

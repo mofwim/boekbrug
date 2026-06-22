@@ -207,6 +207,8 @@ export async function POST(req: NextRequest) {
       total_inc_btw: verification.total_inc_btw ?? verification.amount ?? 0,
       pdf_url: pdfUrl,
       document_id: documentId,
+      // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields
+      field_confidence: verification.field_confidence ?? null,
     })
     .select("id")
     .single();

@@ -35,6 +35,12 @@ interface IncomingInvoice {
   // [BOEK-011] folder where the file was stored in Mijn Bestanden
   folder_id: string | null;
   folder_name: string | null;
+  // [BRIDGE-EXTRACT] per-field AI confidence (0–1) — flags weak fields in the modal
+  field_confidence: {
+    vendor?: number;
+    invoice_number?: number;
+    invoice_date?: number;
+  } | null;
 }
 
 interface ConnectionStatus {
@@ -238,16 +244,27 @@ function ConfirmPaidModal({
 }: {
   invoice: IncomingInvoice;
   // [BRIDGE-B] verify → becomes a SHARED Crediteur (unpaid). pay → mark paid (needs method).
-  onVerify: (amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number }) => void;
+  // [BRIDGE-EXTRACT] amounts now also carries reviewed client_name/invoice_number/invoice_date.
+  onVerify: (amounts: {
+    total_ex_btw: number; btw_amount: number; total_inc_btw: number;
+    client_name: string; invoice_number: string; invoice_date: string;
+  }) => void;
   onPay: (
-    amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number },
+    amounts: {
+      total_ex_btw: number; btw_amount: number; total_inc_btw: number;
+      client_name: string; invoice_number: string; invoice_date: string;
+    },
     method: "bank" | "kas"
   ) => void;
   onCancel: () => void;
 }) {
   const [exBtw, setExBtw] = useState(invoice.total_ex_btw || 0);
   const [btwAmount, setBtwAmount] = useState(invoice.btw_amount || 0);
-  const [editing, setEditing] = useState(false);
+  // [BRIDGE-EXTRACT] inline edit of the AI-extracted vendor / number / date.
+  // Edited alongside amounts under the same "Bedragen aanpassen" toggle.
+  const [vendor, setVendor] = useState(invoice.client_name || "");
+  const [invoiceNumber, setInvoiceNumber] = useState(invoice.invoice_number || "");
+  const [invoiceDate, setInvoiceDate] = useState(invoice.invoice_date || "");
   const [submitting, setSubmitting] = useState(false);
   // [BRIDGE-B] payStep = showing the Bank/Contant choice (after "Markeer als betaald")
   const [payStep, setPayStep] = useState(false);
@@ -259,10 +276,32 @@ function ConfirmPaidModal({
   const btwRate = exBtw > 0 ? Math.round((btwAmount / exBtw) * 100) : null;
   const rateFlag = btwRate !== null && btwRate !== 0 && btwRate !== 9 && btwRate !== 21;
 
+  // [BRIDGE-EXTRACT] N-N page-number pattern in the invoice number → soft flag
+  // (e.g. "1-1" likely a page indicator the AI mistook for a number). Never blocks.
+  const numberFlag = /^\d{1,2}\s*[-/]\s*\d{1,2}$/.test(invoiceNumber.trim());
+
+  // [BRIDGE-EXTRACT] Per-field low-confidence flags — the AI told us which fields
+  // it was unsure about. Threshold 0.7: below = ask the user to confirm. An empty
+  // field (guard nulled it → conf 0) also flags. These are SOFT (never block).
+  const fc = invoice.field_confidence;
+  const LOW = 0.7;
+  const vendorLow = (fc?.vendor ?? 1) < LOW || !vendor.trim();
+  const numberLow = (fc?.invoice_number ?? 1) < LOW || numberFlag;
+  const dateLow = (fc?.invoice_date ?? 1) < LOW;
+  const anyLow = vendorLow || numberLow || dateLow;
+
+  // Auto-open the edit fields when the AI flagged any field as uncertain, so the
+  // user lands directly on what needs confirming instead of having to find it.
+  const [editing, setEditing] = useState(anyLow);
+
   const amounts = {
     total_ex_btw: exBtw,
     btw_amount: btwAmount,
     total_inc_btw: totalIncBtw,
+    // [BRIDGE-EXTRACT] reviewed metadata — persisted by the confirm route
+    client_name: vendor.trim(),
+    invoice_number: invoiceNumber.trim(),
+    invoice_date: invoiceDate.trim(),
   };
 
   const handleVerify = () => {
@@ -368,6 +407,112 @@ function ConfirmPaidModal({
                 <span style={{ fontSize: 18, fontWeight: 700, color: "#1c1c1e" }}>
                   {formatAmount(totalIncBtw)}
                 </span>
+              </div>
+            </div>
+
+            {/* [BRIDGE-EXTRACT] Vendor / number / date — editable under the same toggle */}
+            <div
+              style={{
+                background: "#f2f2f7", borderRadius: 14,
+                padding: "16px", marginBottom: 16,
+              }}
+            >
+              {/* [BRIDGE-EXTRACT] AI-uncertainty banner — asks the user to confirm
+                  the specific fields the AI was not sure about. Soft, never blocks. */}
+              {anyLow && (
+                <div style={{
+                  display: "flex", alignItems: "flex-start", gap: 8,
+                  padding: "10px 12px", marginBottom: 14,
+                  background: "#fff4e5", borderRadius: 10,
+                  border: "1px solid #ffd9a8",
+                }}>
+                  <span style={{ fontSize: 14, lineHeight: 1.3 }}>💡</span>
+                  <span style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.4 }}>
+                    De AI was niet zeker over{" "}
+                    {[
+                      vendorLow ? "de leverancier" : null,
+                      numberLow ? "het factuurnummer" : null,
+                      dateLow ? "de factuurdatum" : null,
+                    ].filter(Boolean).join(", ")}
+                    . Controleer en pas aan waar nodig.
+                  </span>
+                </div>
+              )}
+
+              {/* Vendor */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
+                <span style={{ fontSize: 14, color: vendorLow ? "#EA8600" : "#6b6b6e", flexShrink: 0, fontWeight: vendorLow ? 600 : 400 }}>
+                  Leverancier {vendorLow && "⚠️"}
+                </span>
+                {editing ? (
+                  <input
+                    type="text"
+                    value={vendor}
+                    onChange={(e) => setVendor(e.target.value)}
+                    style={{
+                      flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 15,
+                      borderRadius: 8, border: "1.5px solid #007aff",
+                      textAlign: "right", outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 15, fontWeight: 600, color: "#1c1c1e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {vendor || "—"}
+                  </span>
+                )}
+              </div>
+
+              {/* Invoice number */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: numberFlag ? 6 : 12, gap: 10 }}>
+                <span style={{ fontSize: 14, color: "#6b6b6e", flexShrink: 0 }}>Factuurnummer</span>
+                {editing ? (
+                  <input
+                    type="text"
+                    value={invoiceNumber}
+                    onChange={(e) => setInvoiceNumber(e.target.value)}
+                    style={{
+                      flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 15,
+                      borderRadius: 8,
+                      border: `1.5px solid ${numberFlag ? "#EA8600" : "#007aff"}`,
+                      textAlign: "right", outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 15, fontWeight: 600, color: numberFlag ? "#EA8600" : "#1c1c1e" }}>
+                    {invoiceNumber || "—"}
+                  </span>
+                )}
+              </div>
+
+              {/* [BRIDGE-EXTRACT] N-N flag — likely a page number, not an invoice number */}
+              {numberFlag && (
+                <div style={{ fontSize: 12, color: "#EA8600", lineHeight: 1.4, marginBottom: 12, display: "flex", gap: 6 }}>
+                  <span>⚠️</span>
+                  <span>"{invoiceNumber}" lijkt een paginanummer — controleer het factuurnummer.</span>
+                </div>
+              )}
+
+              {/* Invoice date */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 14, color: dateLow ? "#EA8600" : "#6b6b6e", flexShrink: 0, fontWeight: dateLow ? 600 : 400 }}>
+                  Factuurdatum {dateLow && "⚠️"}
+                </span>
+                {editing ? (
+                  <input
+                    type="date"
+                    value={invoiceDate}
+                    onChange={(e) => setInvoiceDate(e.target.value)}
+                    style={{
+                      padding: "6px 10px", fontSize: 15,
+                      borderRadius: 8, border: "1.5px solid #007aff",
+                      textAlign: "right", outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 15, fontWeight: 600, color: "#1c1c1e" }}>
+                    {invoiceDate || "—"}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -887,7 +1032,10 @@ export default function IncomingInvoicesClient({
   const handleVerify = useCallback(
     async (
       invoice: IncomingInvoice,
-      amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number }
+      amounts: {
+        total_ex_btw: number; btw_amount: number; total_inc_btw: number;
+        client_name: string; invoice_number: string; invoice_date: string;
+      }
     ) => {
       // Optimistic — remove from pending
       setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
@@ -916,7 +1064,10 @@ export default function IncomingInvoicesClient({
   const handlePay = useCallback(
     async (
       invoice: IncomingInvoice,
-      amounts: { total_ex_btw: number; btw_amount: number; total_inc_btw: number },
+      amounts: {
+        total_ex_btw: number; btw_amount: number; total_inc_btw: number;
+        client_name: string; invoice_number: string; invoice_date: string;
+      },
       method: "bank" | "kas"
     ) => {
       // Optimistic — remove from pending
