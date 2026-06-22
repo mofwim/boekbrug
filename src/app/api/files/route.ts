@@ -92,13 +92,22 @@ export async function POST(req: NextRequest) {
   const notes     = (formData.get("notes")     as string | null) ?? undefined;
   const shared    = formData.get("shared") === "true";
 
-  const { id, error } = await uploadDocument(user.id, file, {
+  const { id, error, duplicate, existing } = await uploadDocument(user.id, file, {
     year,
     quarter,
     invoiceId,
     notes,
     shared,
   });
+
+  // [BRIDGE-EXTRACT] Duplicate → 409 (consistent with /api/email/upload), and
+  // surface WHERE the file already lives so the UI can point the user to it.
+  if (duplicate) {
+    return NextResponse.json(
+      { error, duplicate: true, existing },
+      { status: 409 }
+    );
+  }
 
   if (error) return NextResponse.json({ error }, { status: 400 });
   return NextResponse.json({ id }, { status: 201 });
