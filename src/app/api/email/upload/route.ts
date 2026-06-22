@@ -13,6 +13,7 @@ import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
+import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
@@ -67,20 +68,21 @@ export async function POST(req: NextRequest) {
 
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id, folders(name)")
+    .select("id, file_name, folder_id")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle();
 
   if (existingDoc) {
-    const folderRel = existingDoc.folders as
-      | { name: string }
-      | { name: string }[]
-      | null;
-    const folderName = Array.isArray(folderRel)
-      ? (folderRel[0]?.name ?? null)
-      : (folderRel?.name ?? null);
+    // [BRIDGE-EXTRACT] Full folder path (root→leaf) — folders nest, leaf name
+    // alone is ambiguous. Walk parent_id up the chain.
+    const folderPath = await buildFolderBreadcrumb(
+      supabase,
+      user.id,
+      existingDoc.folder_id ?? null
+    );
+    const folderName = folderPath.length ? folderPath[folderPath.length - 1] : null;
 
     await logAuditAction({
       userId: user.id,
@@ -91,8 +93,8 @@ export async function POST(req: NextRequest) {
       ipAddress: getClientIP(req),
     });
 
-    const where = folderName
-      ? `Dit bestand staat al in de map "${folderName}"`
+    const where = folderPath.length
+      ? `Dit bestand staat al in: ${folderPath.join(" / ")}`
       : "Dit bestand is al toegevoegd";
 
     return NextResponse.json(
@@ -103,6 +105,7 @@ export async function POST(req: NextRequest) {
           id: existingDoc.id,
           file_name: existingDoc.file_name,
           folder_name: folderName,
+          folder_path: folderPath,
         },
       },
       { status: 409 }

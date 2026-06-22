@@ -11,6 +11,48 @@ import { logAuditAction } from "./audit";
 
 export { inferDocType } from "./documents-utils";
 
+// ─── [BRIDGE-EXTRACT] Folder breadcrumb ──────────────────────────────────────
+
+/**
+ * Build the full folder path for a folder, walking parent_id up to the root.
+ * Used to tell the user EXACTLY where a duplicate file already lives, e.g.
+ * "2026 / Q1 / Facturen" instead of just the leaf name.
+ *
+ * Returns the path segments root→leaf. Empty array when folderId is null
+ * (file sits at the root with no folder). Capped at 10 hops as a cycle guard.
+ *
+ * eslint-disable: supabase client type is inferred; depth-bounded loop.
+ */
+export async function buildFolderBreadcrumb(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  userId: string,
+  folderId: string | null
+): Promise<string[]> {
+  if (!folderId) return [];
+
+  const segments: string[] = [];
+  let currentId: string | null = folderId;
+  let guard = 0;
+
+  while (currentId && guard < 10) {
+    const { data: folder } = await supabase
+      .from("folders")
+      .select("name, parent_id")
+      .eq("id", currentId)
+      .eq("user_id", userId)
+      .maybeSingle() as { data: { name: string; parent_id: string | null } | null };
+
+    if (!folder) break;
+    segments.unshift(folder.name);          // prepend → root ends up first
+    currentId = folder.parent_id ?? null;
+    guard++;
+  }
+
+  return segments;
+}
+
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 // [BOEK-033] All file types allowed — ZZP uploads any business document
@@ -63,7 +105,12 @@ export async function uploadDocument(
   error?: string;
   duplicate?: boolean;
   // [BRIDGE-EXTRACT] When duplicate=true, tells the UI WHERE the file already lives
-  existing?: { id: string; file_name: string; folder_name: string | null };
+  existing?: {
+    id: string;
+    file_name: string;
+    folder_name: string | null;
+    folder_path: string[];          // root→leaf breadcrumb, e.g. ["2026","Q1","Facturen"]
+  };
 }> {
   // [BOEK-033] All file types allowed — only size limit enforced
   if (file.size > MAX_FILE_SIZE) {
@@ -81,25 +128,23 @@ export async function uploadDocument(
   const contentHash = await computeContentHashFromFile(file);
 
   // [BRIDGE-EXTRACT] Fetch enough to tell the user WHERE the file already is.
-  // folders(name) is a nested select via the documents_folder_id_fkey relation.
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id, folders(name)")
+    .select("id, file_name, folder_id")
     .eq("user_id", userId)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle();
 
   if (existingDoc) {
-    // folders(name) can be typed as object OR array by the generated types
-    // depending on FK uniqueness inference — normalize both shapes safely.
-    const folderRel = existingDoc.folders as
-      | { name: string }
-      | { name: string }[]
-      | null;
-    const folderName = Array.isArray(folderRel)
-      ? (folderRel[0]?.name ?? null)
-      : (folderRel?.name ?? null);
+    // [BRIDGE-EXTRACT] Full folder path (root→leaf) — folders nest, so the leaf
+    // name alone ("Facturen") is ambiguous. Walk parent_id up the chain.
+    const folderPath = await buildFolderBreadcrumb(
+      supabase,
+      userId,
+      existingDoc.folder_id ?? null
+    );
+    const folderName = folderPath.length ? folderPath[folderPath.length - 1] : null;
 
     // Non-fatal audit — never blocks the response
     await logAuditAction({
@@ -111,8 +156,8 @@ export async function uploadDocument(
     });
 
     // Build a Dutch message that points the user to the existing file.
-    const where = folderName
-      ? `Dit bestand staat al in de map "${folderName}"`
+    const where = folderPath.length
+      ? `Dit bestand staat al in: ${folderPath.join(" / ")}`
       : "Dit bestand is al toegevoegd";
 
     return {
@@ -123,6 +168,7 @@ export async function uploadDocument(
         id: existingDoc.id,
         file_name: existingDoc.file_name,
         folder_name: folderName,
+        folder_path: folderPath,
       },
     };
   }

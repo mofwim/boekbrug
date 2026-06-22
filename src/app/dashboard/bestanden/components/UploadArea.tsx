@@ -16,6 +16,14 @@ interface UploadAreaProps {
 interface FailedFile {
   name: string;
   reason: string;
+  // [BRIDGE-EXTRACT] When the failure is a duplicate, this points to the
+  // existing copy so we can render a link straight to it.
+  existing?: {
+    id: string;
+    file_name: string;
+    folder_name: string | null;
+    folder_path: string[];
+  };
 }
 
 export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
@@ -37,8 +45,21 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
 
     setProgress(20);
     const res = await fetch("/api/files", { method: "POST", body: fd });
-    const json = await res.json() as { id?: string; error?: string };
-    if (!json.id) throw new Error(json.error ?? "Upload mislukt");
+    const json = await res.json() as {
+      id?: string;
+      error?: string;
+      duplicate?: boolean;
+      existing?: FailedFile["existing"];
+    };
+    if (!json.id) {
+      // [BRIDGE-EXTRACT] Duplicate (409) carries `existing` → surface it so the
+      // catch can render a link to the file that's already there.
+      const e = new Error(json.error ?? "Upload mislukt") as Error & {
+        existing?: FailedFile["existing"];
+      };
+      if (json.duplicate && json.existing) e.existing = json.existing;
+      throw e;
+    }
 
     setProgress(60);
 
@@ -90,9 +111,11 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
       try {
         await uploadSingleFile(fileArray[i]);
       } catch (err) {
+        const e = err as Error & { existing?: FailedFile["existing"] };
         failed.push({
           name: fileArray[i].name,
-          reason: err instanceof Error ? err.message : "Onbekende fout",
+          reason: e instanceof Error ? e.message : "Onbekende fout",
+          existing: e?.existing,
         });
       }
     }
@@ -109,6 +132,18 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
     setDragging(false);
     handleFiles(e.dataTransfer.files);
   }, [handleFiles]);
+
+  // [BRIDGE-EXTRACT] Open the existing duplicate in a new tab via signed URL —
+  // same mechanism as the file list's download/preview (/api/files/[id]/url).
+  const openExistingFile = useCallback(async (docId: string) => {
+    try {
+      const r = await fetch(`/api/files/${docId}/url`);
+      const { url } = await r.json() as { url?: string };
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      /* signed-url fetch failed — nothing to open */
+    }
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -202,9 +237,33 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
                 <p style={{ fontSize: 13, fontWeight: 500, color: T.onSurface, margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {f.name}
                 </p>
-                <p style={{ fontSize: 12, color: T.error, margin: 0 }}>
-                  {f.reason}
-                </p>
+                {f.existing ? (
+                  // [BRIDGE-EXTRACT] Duplicate → clickable link straight to the
+                  // existing file, with the full folder path so the user knows
+                  // exactly where it lives.
+                  <button
+                    type="button"
+                    onClick={() => openExistingFile(f.existing!.id)}
+                    style={{
+                      background: "none", border: "none", padding: 0, cursor: "pointer",
+                      textAlign: "left", display: "flex", alignItems: "center", gap: 4,
+                      fontSize: 12, color: T.primary, textDecoration: "underline",
+                    }}
+                  >
+                    <Icon name="folder" size={13} color={T.primary} />
+                    <span>
+                      Al aanwezig in:{" "}
+                      {f.existing.folder_path.length
+                        ? f.existing.folder_path.join(" / ")
+                        : "Hoofdmap"}
+                      {" "}— openen
+                    </span>
+                  </button>
+                ) : (
+                  <p style={{ fontSize: 12, color: T.error, margin: 0 }}>
+                    {f.reason}
+                  </p>
+                )}
               </div>
             </div>
           ))}
