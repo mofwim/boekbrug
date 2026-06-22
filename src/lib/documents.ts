@@ -58,7 +58,13 @@ export async function uploadDocument(
     quarter: number;
     shared?: boolean; // true = visible to linked accountant too
   }
-): Promise<{ id: string; error?: string; duplicate?: boolean }> {
+): Promise<{
+  id: string;
+  error?: string;
+  duplicate?: boolean;
+  // [BRIDGE-EXTRACT] When duplicate=true, tells the UI WHERE the file already lives
+  existing?: { id: string; file_name: string; folder_name: string | null };
+}> {
   // [BOEK-033] All file types allowed — only size limit enforced
   if (file.size > MAX_FILE_SIZE) {
     return { id: "", error: "Bestand te groot (max 50MB)" };
@@ -74,15 +80,27 @@ export async function uploadDocument(
   // Reject (Layer 1: stop the bleeding) — references are Layer 2.
   const contentHash = await computeContentHashFromFile(file);
 
+  // [BRIDGE-EXTRACT] Fetch enough to tell the user WHERE the file already is.
+  // folders(name) is a nested select via the documents_folder_id_fkey relation.
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id")
+    .select("id, file_name, folder_id, folders(name)")
     .eq("user_id", userId)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle();
 
   if (existingDoc) {
+    // folders(name) can be typed as object OR array by the generated types
+    // depending on FK uniqueness inference — normalize both shapes safely.
+    const folderRel = existingDoc.folders as
+      | { name: string }
+      | { name: string }[]
+      | null;
+    const folderName = Array.isArray(folderRel)
+      ? (folderRel[0]?.name ?? null)
+      : (folderRel?.name ?? null);
+
     // Non-fatal audit — never blocks the response
     await logAuditAction({
       userId,
@@ -91,7 +109,22 @@ export async function uploadDocument(
       entityId: existingDoc.id,
       newValue: { file_name: file.name, content_hash: contentHash, path: "mijn_bestanden" },
     });
-    return { id: "", error: "Dit bestand is al toegevoegd", duplicate: true };
+
+    // Build a Dutch message that points the user to the existing file.
+    const where = folderName
+      ? `Dit bestand staat al in de map "${folderName}"`
+      : "Dit bestand is al toegevoegd";
+
+    return {
+      id: "",
+      error: where,
+      duplicate: true,
+      existing: {
+        id: existingDoc.id,
+        file_name: existingDoc.file_name,
+        folder_name: folderName,
+      },
+    };
   }
 
   const path = buildStoragePath(userId, file.name, opts.year, opts.quarter, shared);

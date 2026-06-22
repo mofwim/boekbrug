@@ -67,13 +67,21 @@ export async function POST(req: NextRequest) {
 
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id")
+    .select("id, file_name, folder_id, folders(name)")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
     .maybeSingle();
 
   if (existingDoc) {
+    const folderRel = existingDoc.folders as
+      | { name: string }
+      | { name: string }[]
+      | null;
+    const folderName = Array.isArray(folderRel)
+      ? (folderRel[0]?.name ?? null)
+      : (folderRel?.name ?? null);
+
     await logAuditAction({
       userId: user.id,
       action: "document.duplicate_blocked",
@@ -82,8 +90,21 @@ export async function POST(req: NextRequest) {
       newValue: { file_name: file.name, content_hash: contentHash, path: "manual_upload" },
       ipAddress: getClientIP(req),
     });
+
+    const where = folderName
+      ? `Dit bestand staat al in de map "${folderName}"`
+      : "Dit bestand is al toegevoegd";
+
     return NextResponse.json(
-      { error: "Dit bestand is al toegevoegd", duplicate: true },
+      {
+        error: where,
+        duplicate: true,
+        existing: {
+          id: existingDoc.id,
+          file_name: existingDoc.file_name,
+          folder_name: folderName,
+        },
+      },
       { status: 409 }
     );
   }
