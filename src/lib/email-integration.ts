@@ -7,6 +7,9 @@
 // read, write, or delete tokens — never touch access_token / refresh_token
 // columns directly (they are NULL since the BOEK-SECURITY migration).
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
+import { computeContentHash } from '@/lib/content-hash'
+import { logAuditAction } from '@/lib/audit'
 
 // ─── Vault-backed token helpers ─────────────────────────────────────────────
 
@@ -753,6 +756,34 @@ export async function syncUserEmails(userId: string): Promise<{
       if (!classification.isInvoice) continue
       verified++
 
+      // [BRIDGE-EXTRACT] Check 0 (PRIMARY) — byte-hash dedup.
+      // Deterministic: identical bytes → identical hash, regardless of how the
+      // AI named the vendor (Atapack vs Atapacks) or which email carried it.
+      // Cross-path: catches the same file from manual upload / Mijn bestanden too.
+      // Runs BEFORE Storage and BOTH inserts → a rejected duplicate never creates
+      // an orphan invoice. Checks A/B below remain as a secondary net.
+      const fileBuffer = Buffer.from(attachment.data, 'base64')
+      const contentHash = computeContentHash(fileBuffer)
+
+      const { data: existingByHash } = await supabase
+        .from('documents')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('content_hash', contentHash)
+        .limit(1)
+        .maybeSingle()
+
+      if (existingByHash) {
+        await logAuditAction({
+          userId,
+          action: 'document.duplicate_blocked',
+          entityType: 'document',
+          entityId: existingByHash.id,
+          newValue: { file_name: attachment.filename, content_hash: contentHash, path: 'email' },
+        })
+        continue
+      }
+
       // [BOEK-011] Deduplication — two checks before saving.
       //
       // Check A: same messageId + filename → same attachment seen before.
@@ -812,7 +843,7 @@ export async function syncUserEmails(userId: string): Promise<{
       let pdfUrl: string | null = null
 
       try {
-        const fileBuffer = Buffer.from(attachment.data, 'base64')
+        // [BRIDGE-EXTRACT] fileBuffer already computed above for the byte-hash gate
         const safeName = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
         const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
 
@@ -849,6 +880,7 @@ export async function syncUserEmails(userId: string): Promise<{
               source: 'email',
               ai_processed: true,
               ai_doc_type: 'invoice',
+              content_hash: contentHash,         // [BRIDGE-EXTRACT] byte-hash for cross-path dedup
             })
             .select('id')
             .single()

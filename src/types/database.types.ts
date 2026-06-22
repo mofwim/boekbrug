@@ -277,6 +277,7 @@ export type Database = {
           ai_doc_type: string | null
           ai_processed: boolean | null
           ai_suggested_folder: string | null
+          content_hash: string | null
           created_at: string
           doc_type: string | null
           file_name: string
@@ -301,6 +302,7 @@ export type Database = {
           ai_doc_type?: string | null
           ai_processed?: boolean | null
           ai_suggested_folder?: string | null
+          content_hash?: string | null
           created_at?: string
           doc_type?: string | null
           file_name: string
@@ -325,6 +327,7 @@ export type Database = {
           ai_doc_type?: string | null
           ai_processed?: boolean | null
           ai_suggested_folder?: string | null
+          content_hash?: string | null
           created_at?: string
           doc_type?: string | null
           file_name?: string

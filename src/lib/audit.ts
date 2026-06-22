@@ -1,6 +1,7 @@
 // src/lib/audit.ts
 // [BOEK-SECURITY-2] Audit logging helper — v2 — May 2026
 // [BOEK-FOUNDATION-TYPES] Use Supabase Json type for jsonb columns — May 2026
+// [BRIDGE-EXTRACT] + 'document.duplicate_blocked' added to AuditAction union — Jun 2026
 // =====================================================
 // التغييرات في v2:
 //   + أُضيف 'invoice.duplicated' للـ AuditAction union
@@ -46,6 +47,7 @@ export type AuditAction =
   | 'accountant.invoice_status_set'
   // Level 3 — Files
   | 'document.uploaded'
+  | 'document.duplicate_blocked'      // ← [BRIDGE-EXTRACT] byte-hash dedup: re-upload of identical file refused
   | 'document.deleted'
   | 'document.bulk_deleted'
   | 'document.restored'

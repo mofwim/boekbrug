@@ -5,6 +5,9 @@
 
 import { createServerSupabaseClient } from "./supabase-server";
 import { inferDocType } from "./documents-utils";
+// [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
+import { computeContentHashFromFile } from "./content-hash";
+import { logAuditAction } from "./audit";
 
 export { inferDocType } from "./documents-utils";
 
@@ -55,7 +58,7 @@ export async function uploadDocument(
     quarter: number;
     shared?: boolean; // true = visible to linked accountant too
   }
-): Promise<{ id: string; error?: string }> {
+): Promise<{ id: string; error?: string; duplicate?: boolean }> {
   // [BOEK-033] All file types allowed — only size limit enforced
   if (file.size > MAX_FILE_SIZE) {
     return { id: "", error: "Bestand te groot (max 50MB)" };
@@ -63,6 +66,34 @@ export async function uploadDocument(
 
   const supabase = await createServerSupabaseClient();
   const shared = opts.shared ?? false;
+
+  // [BRIDGE-EXTRACT] Byte-hash dedup gate — BEFORE Storage upload and DB insert.
+  // Hash the raw file bytes (deterministic: identical bytes → identical hash).
+  // Cross-path: documents from email / manual invoice / Mijn bestanden all carry
+  // content_hash, so we catch the same file regardless of how it arrived.
+  // Reject (Layer 1: stop the bleeding) — references are Layer 2.
+  const contentHash = await computeContentHashFromFile(file);
+
+  const { data: existingDoc } = await supabase
+    .from("documents")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("content_hash", contentHash)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingDoc) {
+    // Non-fatal audit — never blocks the response
+    await logAuditAction({
+      userId,
+      action: "document.duplicate_blocked",
+      entityType: "document",
+      entityId: existingDoc.id,
+      newValue: { file_name: file.name, content_hash: contentHash, path: "mijn_bestanden" },
+    });
+    return { id: "", error: "Dit bestand is al toegevoegd", duplicate: true };
+  }
+
   const path = buildStoragePath(userId, file.name, opts.year, opts.quarter, shared);
 
   // 1. Upload to Storage
@@ -116,6 +147,7 @@ export async function uploadDocument(
       year: opts.year,
       invoice_id: opts.invoiceId ?? null,
       notes: opts.notes ?? null,
+      content_hash: contentHash,                 // [BRIDGE-EXTRACT] byte-hash for cross-path dedup
     })
     .select("id")
     .single();

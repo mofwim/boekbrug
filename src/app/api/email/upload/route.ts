@@ -11,6 +11,9 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { resolveImportTarget } from "@/lib/bestanden";
+// [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
+import { computeContentHash } from "@/lib/content-hash";
+import { logAuditAction, getClientIP } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -54,6 +57,36 @@ export async function POST(req: NextRequest) {
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const base64 = buffer.toString("base64");
+
+  // [BRIDGE-EXTRACT] Byte-hash dedup gate — BEFORE AI verify, Storage, and BOTH
+  // inserts (documents + invoices). Hash the raw bytes (deterministic). A rejected
+  // duplicate must never reach the invoice insert, or we'd block the document but
+  // still create an orphan invoice. Cross-path: same hash as email / Mijn bestanden.
+  // Reject (Layer 1) — references are Layer 2. Also saves an AI call on duplicates.
+  const contentHash = computeContentHash(buffer);
+
+  const { data: existingDoc } = await supabase
+    .from("documents")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("content_hash", contentHash)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingDoc) {
+    await logAuditAction({
+      userId: user.id,
+      action: "document.duplicate_blocked",
+      entityType: "document",
+      entityId: existingDoc.id,
+      newValue: { file_name: file.name, content_hash: contentHash, path: "manual_upload" },
+      ipAddress: getClientIP(req),
+    });
+    return NextResponse.json(
+      { error: "Dit bestand is al toegevoegd", duplicate: true },
+      { status: 409 }
+    );
+  }
 
   // [BOEK-011] Claude verifies the actual file
   const verification = await verifyInvoiceFromPdf(base64, file.type, file.name);
@@ -111,6 +144,7 @@ export async function POST(req: NextRequest) {
         source: "upload",
         ai_processed: true,
         ai_doc_type: "invoice",
+        content_hash: contentHash,               // [BRIDGE-EXTRACT] byte-hash for cross-path dedup
       })
       .select("id")
       .single();
