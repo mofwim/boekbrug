@@ -1,6 +1,8 @@
 // src/app/api/quarterly/route.ts
 // [BOEK-013] Quarterly financial overview — May 2026
 // [BOEK-FOUNDATION-TYPES] Null safety for DB-nullable fields — May 2026
+// [BRIDGE-QUARTER] June 2026 — ZZP uitgaven fix: incoming invoices were never
+//                  fetched (sender_id-only filter). Now fetch both directions.
 // GET /api/quarterly?year=2026&quarter=1
 // GET /api/quarterly?year=2026&quarter=1&mode=paid       ← ZZP betaald overzicht
 // GET /api/quarterly?year=2026&quarter=1&mode=all        ← ZZP alles overzicht
@@ -51,6 +53,8 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Accountant mode (unchanged) ──────────────────────────────
+  // [BRIDGE-QUARTER] Intentionally untouched. Accountant sees their client's
+  // OUTGOING paid invoices (sender_id = clientId). This is correct by design.
   if (profile?.role === "accountant") {
     if (!clientId) return NextResponse.json({ error: "Geen klant geselecteerd" }, { status: 400 });
 
@@ -99,33 +103,59 @@ export async function GET(req: NextRequest) {
   const start = quarterStartDate(year, quarter);
   const end = quarterEndDate(year, quarter);
 
-  // [BOEK-013] Fetch all relevant statuses for this quarter
-  // We filter by direction+status in buildZzpSummary — fetch broadly here
+  // [BRIDGE-QUARTER] ROOT-CAUSE FIX for "Uitgaven = €0,00".
+  //
+  // Before: .eq("sender_id", user.id) fetched ONLY outgoing invoices (where the
+  // ZZP'er is the sender). Incoming invoices (CAN, OZ&ER) have the ZZP'er as the
+  // RECEIVER (receiver_id = user.id, sender_id = the supplier), so they were
+  // never fetched. buildZzpSummary then received zero incoming rows and totalOut
+  // stayed 0 — wrong VAT 5b (voorbelasting).
+  //
+  // After: fetch BOTH directions for this ZZP'er. buildZzpSummary already filters
+  // by direction + status correctly; it just needs the incoming rows to exist.
+  //
+  // Two axes preserved (Bridge model):
+  //   outgoing → Inkomsten (totalIn)   incoming → Uitgaven (totalOut)
   const { data, error } = await supabase
     .from("invoices")
-    .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date")
-    .eq("sender_id", user.id)
+    .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, sender_id, receiver_id")
+    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
     .not("status", "eq", "draft"); // never include draft/concept
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const invoices: InvoiceForQuarterly[] = (data ?? []).map((inv) => ({
-    id: inv.id,
-    invoice_number: inv.invoice_number,
-    client_name: inv.client_name,
-    status: inv.status,
-    direction: inv.direction ?? "outgoing",
-    total_ex_btw: inv.total_ex_btw,
-    btw_amount: inv.btw_amount,
-    total_inc_btw: inv.total_inc_btw,
-    invoice_date: inv.invoice_date,
-    due_date: inv.due_date ?? undefined,
-    // [BOEK-013] btw_rate does not exist in DB — always calculate
-    // [BOEK-FOUNDATION-TYPES] Null-safe btw_rate calculation
-    btw_rate: calculateBtwRate(inv.total_ex_btw, inv.btw_amount),
-  }));
+  const invoices: InvoiceForQuarterly[] = (data ?? []).map((inv) => {
+    // [BRIDGE-QUARTER] Direction safety: with incoming rows now in scope, a NULL
+    // direction must NOT silently fall back to "outgoing" (that would miscount an
+    // incoming invoice as Inkomsten). Infer from ownership instead:
+    //   receiver_id = me  → incoming (I received it → expense)
+    //   sender_id   = me  → outgoing (I sent it → income)
+    // If neither/both resolve ambiguously, keep the stored direction when present.
+    let direction = inv.direction;
+    if (!direction) {
+      if (inv.receiver_id === user.id) direction = "incoming";
+      else if (inv.sender_id === user.id) direction = "outgoing";
+      else direction = "outgoing"; // last-resort fallback (should not happen here)
+    }
+
+    return {
+      id: inv.id,
+      invoice_number: inv.invoice_number,
+      client_name: inv.client_name,
+      status: inv.status,
+      direction,
+      total_ex_btw: inv.total_ex_btw,
+      btw_amount: inv.btw_amount,
+      total_inc_btw: inv.total_inc_btw,
+      invoice_date: inv.invoice_date,
+      due_date: inv.due_date ?? undefined,
+      // [BOEK-013] btw_rate does not exist in DB — always calculate
+      // [BOEK-FOUNDATION-TYPES] Null-safe btw_rate calculation
+      btw_rate: calculateBtwRate(inv.total_ex_btw, inv.btw_amount),
+    };
+  });
 
   return NextResponse.json(buildZzpSummary(invoices, year, quarter, mode));
 }
