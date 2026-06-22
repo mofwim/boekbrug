@@ -627,6 +627,7 @@ export type Database = {
           direction: string | null
           document_id: string | null
           due_date: string | null
+          field_confidence: Json | null
           id: string
           invoice_date: string | null
           invoice_number: string | null
@@ -634,6 +635,7 @@ export type Database = {
           marked_paid_at: string | null
           offerte_converted_to: string | null
           original_invoice_id: string | null
+          payment_date: string | null
           payment_method: string | null
           pdf_url: string | null
           receiver_id: string | null
@@ -663,6 +665,7 @@ export type Database = {
           direction?: string | null
           document_id?: string | null
           due_date?: string | null
+          field_confidence?: Json | null
           id?: string
           invoice_date?: string | null
           invoice_number?: string | null
@@ -670,6 +673,7 @@ export type Database = {
           marked_paid_at?: string | null
           offerte_converted_to?: string | null
           original_invoice_id?: string | null
+          payment_date?: string | null
           payment_method?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
@@ -699,6 +703,7 @@ export type Database = {
           direction?: string | null
           document_id?: string | null
           due_date?: string | null
+          field_confidence?: Json | null
           id?: string
           invoice_date?: string | null
           invoice_number?: string | null
@@ -706,6 +711,7 @@ export type Database = {
           marked_paid_at?: string | null
           offerte_converted_to?: string | null
           original_invoice_id?: string | null
+          payment_date?: string | null
           payment_method?: string | null
           pdf_url?: string | null
           receiver_id?: string | null

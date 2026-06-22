@@ -65,6 +65,8 @@ interface ConfirmPayCtx {
   // [BOEK-003] payment method — required by DB constraint invoices_paid_requires_method
   // UI shows "Bank" / "Contant"; DB stores 'bank' / 'kas'
   paymentMethod?: 'bank' | 'kas'
+  // [BRIDGE-QUARTER] real payment date (YYYY-MM-DD) — Axis 2 / cash
+  paymentDate?: string
 }
 // [BOEK-029] Send confirmation for draft → sent
 interface SendCtx {
@@ -150,10 +152,16 @@ export default function FacturenClient({ profile }: { profile: any }) {
       // sent_to_accountant removed (model A: shared is computed, no manual gate).
       patch.payment_method = ctx.paymentMethod ?? 'bank'
       patch.marked_paid_at = new Date().toISOString()
+      // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Falls back to today
+      // if the modal somehow didn't supply one. marked_paid_at stays the precise
+      // confirmation timestamp; payment_date is the accounting day.
+      patch.payment_date = ctx.paymentDate ?? new Date().toISOString().slice(0, 10)
     } else {
       // [BOEK-003] undo payment → clear method + timestamp (back to 'sent')
       patch.payment_method = null
       patch.marked_paid_at = null
+      // [BRIDGE-QUARTER] undo → clear the payment date too
+      patch.payment_date = null
     }
     const { error } = await supabase.from('invoices').update(patch).eq('id', ctx.id)
     if (error) {
@@ -678,7 +686,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
              creditnota and undo (newStatus='sent') keep single confirm button. */
           paymentChoice={
             payCtx.invoiceType === 'factuur' && payCtx.newStatus === 'paid'
-              ? (method) => executePay({ ...payCtx, paymentMethod: method })
+              ? (method, paymentDate) => executePay({ ...payCtx, paymentMethod: method, paymentDate })
               : undefined
           }
         />
@@ -802,8 +810,12 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   details?: { label: string; value: string }[]
   warning?: string
   // [BOEK-003] when set, replaces single confirm button with Bank / Contant choice
-  paymentChoice?: (method: 'bank' | 'kas') => void
+  // [BRIDGE-QUARTER] now also receives the real payment date (YYYY-MM-DD)
+  paymentChoice?: (method: 'bank' | 'kas', paymentDate: string) => void
 }) {
+  // [BRIDGE-QUARTER] real payment date — only relevant when paymentChoice is set
+  // (marking as paid). Defaults to today; user corrects if they paid earlier.
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
   // [BOEK-029] CenteredModal — replaces bottom sheet for all dialogs
   return (
     <div
@@ -848,16 +860,25 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
         {/* [BOEK-003] payment method choice (Bank / Contant) or standard confirm */}
         {paymentChoice ? (
           <>
+            {/* [BRIDGE-QUARTER] Real payment date — the day money actually moved */}
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#1C1B1F', marginBottom: 6 }}>Betaaldatum</label>
+            <input
+              type="date"
+              value={paymentDate}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={e => setPaymentDate(e.target.value)}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#1C1B1F', background: '#fff', boxSizing: 'border-box' }}
+            />
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
               <button
-                onClick={() => paymentChoice('bank')}
+                onClick={() => paymentChoice('bank', paymentDate)}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
               <button
-                onClick={() => paymentChoice('kas')}
+                onClick={() => paymentChoice('kas', paymentDate)}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>

@@ -69,6 +69,9 @@ export async function POST(
     client_name?: string;
     invoice_number?: string;
     invoice_date?: string;
+    // [BRIDGE-QUARTER] real payment date (Axis 2 / cash). Distinct from
+    // marked_paid_at (in-system confirmation timestamp).
+    payment_date?: string;
   } = {};
   try {
     body = await req.json();
@@ -135,6 +138,16 @@ export async function POST(
     updatePatch.status = "paid";
     updatePatch.payment_method = body.payment_method;
     updatePatch.marked_paid_at = new Date().toISOString();
+    // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Accept a valid
+    // YYYY-MM-DD; otherwise fall back to today's date (in-system confirmation
+    // day) so a paid invoice never lacks a payment_date. marked_paid_at remains
+    // the precise confirmation timestamp; payment_date is the accounting day.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    updatePatch.payment_date =
+      typeof body.payment_date === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(body.payment_date)
+        ? body.payment_date
+        : todayIso;
   } else {
     // verify → enters the accountant's world as a Crediteur (unpaid, shared)
     updatePatch.status = "received";
@@ -162,6 +175,9 @@ export async function POST(
       status: updatePatch.status,
       action,
       ...(action === "pay" ? { payment_method: body.payment_method } : {}),
+      ...(action === "pay" && updatePatch.payment_date
+        ? { payment_date: updatePatch.payment_date }
+        : {}),
       ...(warnings.length ? { warnings } : {}),
       ...(updatePatch.client_name ? { client_name: updatePatch.client_name } : {}),
       ...(updatePatch.invoice_number ? { invoice_number: updatePatch.invoice_number } : {}),

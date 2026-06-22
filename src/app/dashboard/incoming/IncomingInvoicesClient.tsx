@@ -254,7 +254,9 @@ function ConfirmPaidModal({
       total_ex_btw: number; btw_amount: number; total_inc_btw: number;
       client_name: string; invoice_number: string; invoice_date: string;
     },
-    method: "bank" | "kas"
+    method: "bank" | "kas",
+    // [BRIDGE-QUARTER] real payment date (YYYY-MM-DD) — Axis 2 / cash
+    paymentDate: string
   ) => void;
   onCancel: () => void;
 }) {
@@ -268,6 +270,12 @@ function ConfirmPaidModal({
   const [submitting, setSubmitting] = useState(false);
   // [BRIDGE-B] payStep = showing the Bank/Contant choice (after "Markeer als betaald")
   const [payStep, setPayStep] = useState(false);
+  // [BRIDGE-QUARTER] real payment date (defaults to today) + confirmation amount.
+  // confirmAmount is UI-only for now (NOT stored) — explicit defer per brief §2.
+  const [paymentDate, setPaymentDate] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [confirmAmount, setConfirmAmount] = useState("");
 
   // Total is always derived — never edited directly. This IS TRAIL 2: excl + BTW = incl.
   const totalIncBtw = exBtw + btwAmount;
@@ -310,7 +318,7 @@ function ConfirmPaidModal({
   };
   const handlePay = (method: "bank" | "kas") => {
     setSubmitting(true);
-    onPay(amounts, method);
+    onPay(amounts, method, paymentDate);
   };
 
   return (
@@ -581,6 +589,46 @@ function ConfirmPaidModal({
             <div style={{ fontSize: 14, color: "#8e8e93", marginBottom: 20 }}>
               De factuur wordt als betaald gemarkeerd en doorgestuurd naar je boekhouder.
             </div>
+
+            {/* [BRIDGE-QUARTER] Real payment date — the day the money actually
+                moved. Defaults to today; the user corrects it if they paid earlier. */}
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1c1c1e", marginBottom: 6 }}>
+              Betaaldatum
+            </label>
+            <input
+              type="date"
+              value={paymentDate}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setPaymentDate(e.target.value)}
+              disabled={submitting}
+              style={{
+                width: "100%", padding: "12px 14px", borderRadius: 12,
+                border: "1px solid #d1d1d6", fontSize: 15, marginBottom: 14,
+                fontFamily: "inherit", color: "#1c1c1e", background: "#fff",
+                boxSizing: "border-box",
+              }}
+            />
+
+            {/* [BRIDGE-QUARTER] Confirmation amount — UI only for now (not stored).
+                Explicit defer per brief §2: helps the user sanity-check, no DB write. */}
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#1c1c1e", marginBottom: 6 }}>
+              Betaald bedrag <span style={{ color: "#8e8e93", fontWeight: 400 }}>(optioneel)</span>
+            </label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              placeholder={totalIncBtw.toFixed(2)}
+              value={confirmAmount}
+              onChange={(e) => setConfirmAmount(e.target.value)}
+              disabled={submitting}
+              style={{
+                width: "100%", padding: "12px 14px", borderRadius: 12,
+                border: "1px solid #d1d1d6", fontSize: 15, marginBottom: 20,
+                fontFamily: "inherit", color: "#1c1c1e", background: "#fff",
+                boxSizing: "border-box",
+              }}
+            />
 
             <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
               <button
@@ -1068,7 +1116,9 @@ export default function IncomingInvoicesClient({
         total_ex_btw: number; btw_amount: number; total_inc_btw: number;
         client_name: string; invoice_number: string; invoice_date: string;
       },
-      method: "bank" | "kas"
+      method: "bank" | "kas",
+      // [BRIDGE-QUARTER] real payment date (YYYY-MM-DD)
+      paymentDate: string
     ) => {
       // Optimistic — remove from pending
       setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
@@ -1079,7 +1129,12 @@ export default function IncomingInvoicesClient({
         const res = await fetch(`/api/email/confirm/${invoice.id}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "pay", payment_method: method, ...amounts }),
+          body: JSON.stringify({
+            action: "pay",
+            payment_method: method,
+            payment_date: paymentDate,
+            ...amounts,
+          }),
         });
         if (res.ok) {
           showToast("✓ Factuur gemarkeerd als betaald");
@@ -1264,7 +1319,7 @@ export default function IncomingInvoicesClient({
         <ConfirmPaidModal
           invoice={confirmPaidFor}
           onVerify={(amounts) => handleVerify(confirmPaidFor, amounts)}
-          onPay={(amounts, method) => handlePay(confirmPaidFor, amounts, method)}
+          onPay={(amounts, method, paymentDate) => handlePay(confirmPaidFor, amounts, method, paymentDate)}
           onCancel={() => setConfirmPaidFor(null)}
         />
       )}
