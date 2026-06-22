@@ -148,6 +148,39 @@ function yearOf(dateIso: string): string {
   return String(new Date(dateIso).getUTCFullYear())
 }
 
+/**
+ * [BRIDGE-QUARTER] Quarter folder label.
+ *
+ * Root cause of "Q2 duplicated": invoices were rendered into a SHORT label
+ * ("Q2") while the physical system folders use a LONG label ("Q2 (apr–jun)").
+ * Two different strings at the same tree level = two sibling nodes for the
+ * same quarter.
+ *
+ * Fix is role-aware (decided with M — the two views are intentionally different):
+ *   - ZZP view: match the folder label EXACTLY so invoice nodes MERGE with the
+ *     physical-folder nodes into one quarter. The em-dash (–, U+2013) and the
+ *     Dutch month abbreviations must match the seeded system-folder names
+ *     byte-for-byte, or the merge silently fails.
+ *   - Accountant view: keep the short "Q2" — there is no competing folder node
+ *     in that view, and the accountant tree is an accounting roll-up, not a
+ *     file browser.
+ *
+ * The four labels are stable/seeded across all users (confirmed). If a future
+ * locale changes them, this is the single place to update.
+ */
+const QUARTER_FOLDER_LABEL: Record<number, string> = {
+  1: 'Q1 (jan–mrt)',
+  2: 'Q2 (apr–jun)',
+  3: 'Q3 (jul–sep)',
+  4: 'Q4 (okt–dec)',
+}
+
+function quarterLabel(dateIso: string, accountantView: boolean): string {
+  const q = quarterOf(dateIso)
+  if (accountantView) return `Q${q}`
+  return QUARTER_FOLDER_LABEL[q] ?? `Q${q}` // fallback: never lose the node
+}
+
 /** Bank|Contant leaf label from payment_method (defaults to Bank if missing). */
 function methodLeaf(method: BridgeInvoice['payment_method']): string {
   return method === 'kas' ? NODE.kas : NODE.bank
@@ -230,7 +263,10 @@ function invoicePath(
 
   // From here invoice_date is present → compute year/quarter
   const yr = yearOf(inv.invoice_date)
-  const q = `Q${quarterOf(inv.invoice_date)}`
+  // [BRIDGE-QUARTER] role-aware label: long folder-matching label in ZZP view
+  // (so invoice nodes merge with physical-folder nodes), short "Qn" in
+  // accountant view (no competing folder node there).
+  const q = quarterLabel(inv.invoice_date, accountantView)
 
   // [BRIDGE-A] Paid → .../Voldaan/[Bank|Contant] — payment state, NOT
   // 'Verwerkt' (that was the semantic bug: accountant_status is a badge).
