@@ -583,12 +583,15 @@ export interface AttachmentClassification {
 export async function classifyAttachment(
   base64Data: string,
   mimeType: string,
-  filename: string
+  filename: string,
+  // [BRIDGE-EXTRACT] receiver identity (our company) — passed to the AI so it
+  // never returns us as the vendor on an incoming invoice.
+  receiverName?: string | null
 ): Promise<AttachmentClassification> {
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
 
   // [BOEK-011] Data is already base64 (converted in fetchMessageAttachments)
-  const result = await verifyInvoiceFromPdf(base64Data, mimeType, filename)
+  const result = await verifyInvoiceFromPdf(base64Data, mimeType, filename, receiverName)
 
   return {
     isInvoice: result.is_invoice,
@@ -648,11 +651,15 @@ export async function syncUserEmails(userId: string): Promise<{
 
   // [BOEK-011] Sync boundary = registration date
   // Emails before this date = user's responsibility to upload manually
+  // [BRIDGE-EXTRACT] also grab the receiver identity (our company name) so the
+  // AI never returns us as the vendor on incoming invoices.
   const { data: profile } = await supabase
     .from('profiles')
-    .select('created_at')
+    .select('created_at, company_name, full_name')
     .eq('id', userId)
     .single()
+
+  const receiverName = profile?.company_name || profile?.full_name || null
 
   const syncAfterMs = profile?.created_at
     ? new Date(profile.created_at).getTime()
@@ -735,7 +742,8 @@ export async function syncUserEmails(userId: string): Promise<{
         const classification = await classifyAttachment(
           attachment.data,
           attachment.mimeType,
-          attachment.filename
+          attachment.filename,
+          receiverName
         )
         return { attachment, classification }
       } catch (err) {

@@ -390,13 +390,27 @@ Return JSON only.`;
 export async function verifyInvoiceFromPdf(
   fileBase64: string,
   mimeType: string,
-  filename: string
+  filename: string,
+  // [BRIDGE-EXTRACT] Who WE are — the receiver of this incoming invoice. When
+  // provided, the AI must never return this name as the vendor (it's the client,
+  // not the sender). Fixes the W.Ketels/Kiwi confusion. Optional → callers that
+  // don't pass it keep the old behaviour.
+  receiverName?: string | null
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
     is_invoice: false,
     confidence: 0,
     reason: 'AI verificatie mislukt — bestand overgeslagen',
   };
+
+  // [BRIDGE-EXTRACT] Inject the receiver identity into the prompt when known.
+  const receiverHint = receiverName
+    ? `\n\nIMPORTANT — who the RECEIVER is:
+- The recipient of this invoice is "${receiverName}" (this is OUR company, the client).
+- "${receiverName}" is the RECEIVER, never the vendor/sender. Even if this name appears
+  prominently (e.g. under "Factuur aan", "T.a.v.", or at the top), do NOT return it as "vendor".
+- The vendor is the OTHER party — the company that issued and sent the invoice to us.`
+    : '';
 
   const systemPrompt = `${SYSTEM_BASE}
 
@@ -421,6 +435,21 @@ Rules for is_invoice = true:
 - Must be a request for payment OR proof of payment
 - Can be: factuur, rekening, nota, bon, receipt, invoice
 
+Vendor (sender) extraction rules — read carefully:
+- "vendor" = the party that ISSUED and SENT the invoice (the supplier/leverancier).
+  Usually shown in the header, near the logo, or labelled "Afzender" / "Factuur van".
+- The RECEIVER/client (labelled "Factuur aan", "T.a.v.", "Aan", "Klant") is NOT the vendor.
+- Never merge two names into one (e.g. do NOT output "Ketels/Kiwi" or "Atapack Kiwi").
+  Return ONLY the sender's name.
+- If sender and receiver are ambiguous, the vendor is the one whose bank/IBAN, KVK and
+  BTW number appear as the party to be PAID — not the party being billed.
+
+Invoice number extraction rules:
+- Look for labels: "Factuurnummer", "Factuur nr", "Invoice no", "Nr", "Referentie".
+- IGNORE page indicators: "Pagina", "Page", "Blad", "Pag." — a value like "1-1", "1 van 2"
+  or "Pagina 1/3" is a PAGE number, NOT the invoice number. Never return these as invoice_number.
+- If the only number-like value found is a page indicator, set invoice_number to null.
+
 Rules for is_invoice = false:
 - Marketing emails, newsletters, ads
 - Order confirmations WITHOUT a payment amount
@@ -436,7 +465,7 @@ Amount extraction rules:
 - btw_rate: the percentage — usually 21, sometimes 9 or 0
 - If only the total is shown and BTW rate is known, calculate the breakdown
 - If a value genuinely cannot be found, set it to null — never guess
-- confidence: how certain you are (0 = no idea, 1 = absolutely certain)`;
+- confidence: how certain you are (0 = no idea, 1 = absolutely certain)${receiverHint}`;
 
   const prompt = `Verify if this document is a real invoice or receipt.
 Filename: ${filename}
@@ -494,6 +523,29 @@ Return JSON only.`;
 
     // Clamp confidence
     parsed.confidence = Math.min(1, Math.max(0, parsed.confidence ?? 0));
+
+    // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
+    // despite the prompt, drop it — the receiver is never the vendor. Loose match
+    // (case-insensitive, trimmed) so "kiwi food market" ~ "Kiwi Food Market B.V."
+    if (receiverName && parsed.vendor) {
+      const norm = (s: string) => s.toLowerCase().replace(/\b(b\.?v\.?|v\.?o\.?f\.?|n\.?v\.?)\b/g, '').replace(/[^a-z0-9]/g, '').trim();
+      const v = norm(parsed.vendor);
+      const r = norm(receiverName);
+      if (v && r && (v === r || v.includes(r) || r.includes(v))) {
+        parsed.vendor = undefined;   // never surface the receiver as vendor
+      }
+    }
+
+    // [BRIDGE-EXTRACT] Defensive guard: strip page-number patterns mistaken for
+    // an invoice number. "1-1", "1 van 2", "Pagina 1/3" are pages, not invoices.
+    if (parsed.invoice_number) {
+      const inv = parsed.invoice_number.trim();
+      const looksLikePage =
+        /^\d{1,2}\s*[-/]\s*\d{1,2}$/.test(inv) ||                 // 1-1, 1/2
+        /^(pagina|page|blad|pag\.?)\b/i.test(inv) ||              // Pagina 1...
+        /\bvan\b/i.test(inv);                                     // 1 van 2
+      if (looksLikePage) parsed.invoice_number = undefined;
+    }
 
     // Enforce minimum confidence threshold
     // Below 0.6 → treat as not an invoice to avoid false positives

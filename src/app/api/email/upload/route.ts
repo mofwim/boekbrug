@@ -112,8 +112,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // [BRIDGE-EXTRACT] Tell the AI who WE are (the receiver) so it never returns
+  // our own company as the vendor. Falls back to full_name, then null.
+  const { data: me } = await supabase
+    .from("profiles")
+    .select("company_name, full_name")
+    .eq("id", user.id)
+    .maybeSingle();
+  const receiverName = me?.company_name || me?.full_name || null;
+
   // [BOEK-011] Claude verifies the actual file
-  const verification = await verifyInvoiceFromPdf(base64, file.type, file.name);
+  const verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName);
 
   if (!verification.is_invoice) {
     return NextResponse.json(

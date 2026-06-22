@@ -59,12 +59,16 @@ export async function POST(
   }
 
   // [BRIDGE-B] body: action + user-reviewed/edited amounts (+ payment_method for pay)
+  // [BRIDGE-EXTRACT] also accepts reviewed client_name / invoice_number / invoice_date
   let body: {
     action?: string;
     total_ex_btw?: number;
     btw_amount?: number;
     total_inc_btw?: number;
     payment_method?: string;
+    client_name?: string;
+    invoice_number?: string;
+    invoice_date?: string;
   } = {};
   try {
     body = await req.json();
@@ -107,6 +111,19 @@ export async function POST(
   if (validNum(body.btw_amount)) updatePatch.btw_amount = body.btw_amount;
   if (validNum(body.total_inc_btw)) updatePatch.total_inc_btw = body.total_inc_btw;
 
+  // [BRIDGE-EXTRACT] Persist reviewed metadata when the user edited it inline.
+  // Only write non-empty strings; ignore blanks so a cleared field can't wipe data.
+  if (typeof body.client_name === "string" && body.client_name.trim()) {
+    updatePatch.client_name = body.client_name.trim();
+  }
+  if (typeof body.invoice_number === "string" && body.invoice_number.trim()) {
+    updatePatch.invoice_number = body.invoice_number.trim();
+  }
+  // invoice_date: accept only a valid YYYY-MM-DD (the <input type="date"> format)
+  if (typeof body.invoice_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.invoice_date)) {
+    updatePatch.invoice_date = body.invoice_date;
+  }
+
   if (action === "pay") {
     // DB constraint invoices_paid_requires_method: paid REQUIRES a method.
     if (body.payment_method !== "bank" && body.payment_method !== "kas") {
@@ -146,6 +163,9 @@ export async function POST(
       action,
       ...(action === "pay" ? { payment_method: body.payment_method } : {}),
       ...(warnings.length ? { warnings } : {}),
+      ...(updatePatch.client_name ? { client_name: updatePatch.client_name } : {}),
+      ...(updatePatch.invoice_number ? { invoice_number: updatePatch.invoice_number } : {}),
+      ...(updatePatch.invoice_date ? { invoice_date: updatePatch.invoice_date } : {}),
     },
     ipAddress: getClientIP(req),
   });
