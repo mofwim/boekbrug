@@ -42,6 +42,14 @@ const TONE: Record<NodeBadge['tone'], { bg: string; color: string }> = {
   neutral: { bg: '#E7E0EC', color: '#49454F' },
 }
 
+// [BRIDGE-POLISH 3a-1] Direction marker — reuses existing TONE swatches so no
+// new palette is introduced. Uitg. (outgoing) = success green; Ink. (incoming)
+// = error red — matching the colour language used elsewhere in the bridge.
+const DIRECTION_MARK: Record<'outgoing' | 'incoming', { label: string; tone: NodeBadge['tone'] }> = {
+  outgoing: { label: 'Uitg.', tone: 'success' },
+  incoming: { label: 'Ink.',  tone: 'error' },
+}
+
 // ─── Level view: from flat nodes + current path → subfolders + files here ─────
 interface LevelView {
   folders: { name: string; count: number }[]
@@ -222,6 +230,12 @@ function FileRow({ node }: { node: TreeNode }) {
       <span className="material-symbols-outlined" style={{ fontSize: 22, color: node.source === 'invoice' ? M3.success : M3.outline }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {/* [BRIDGE-POLISH 3a-1] direction marker (invoices only) */}
+          {node.direction && (
+            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: R.full, background: TONE[DIRECTION_MARK[node.direction].tone].bg, color: TONE[DIRECTION_MARK[node.direction].tone].color }}>
+              {DIRECTION_MARK[node.direction].label}
+            </span>
+          )}
           <span style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {node.displayName}
           </span>
@@ -231,6 +245,12 @@ function FileRow({ node }: { node: TreeNode }) {
             </span>
           ))}
         </div>
+        {/* [BRIDGE-POLISH 3a-1] counterparty name (invoices only) */}
+        {node.partyName && (
+          <div style={{ fontSize: 12.5, color: M3.onSurface, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {node.partyName}
+          </div>
+        )}
         {(node.date || node.amount != null) && (
           <div style={{ fontSize: 12, color: M3.outline, marginTop: 2, display: 'flex', gap: 10 }}>
             {node.date && <span>{fmtDate(node.date)}</span>}

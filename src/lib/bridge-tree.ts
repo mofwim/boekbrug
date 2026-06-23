@@ -55,6 +55,13 @@ export interface BridgeInvoice {
   // ownership (for accountant Klanten dimension)
   sender_id: string | null
   receiver_id: string | null
+  /**
+   * [BRIDGE-POLISH 3a-1] Counterparty name as stored on the invoice.
+   * For an outgoing invoice this is the customer; for an incoming one it is the
+   * supplier/vendor (the email pipeline writes the vendor here). One column
+   * serves both directions — the UI picks the label from `direction`.
+   */
+  client_name: string | null
 }
 
 /** Only the document columns the renderer needs. */
@@ -107,6 +114,16 @@ export interface TreeNode {
   hidden: boolean
   /** Klanten/[clientId] prefix dimension for accountant view (null for client). */
   clientId: string | null
+  /**
+   * [BRIDGE-POLISH 3a-1] Counterparty name for display under the title.
+   * Invoice nodes only; documents leave this null (they have no counterparty).
+   */
+  partyName: string | null
+  /**
+   * [BRIDGE-POLISH 3a-1] Invoice direction, drives the Ink./Uitg. marker and
+   * the supplier-vs-customer label. Documents leave this null (no marker).
+   */
+  direction: 'outgoing' | 'incoming' | null
 }
 
 // ============================================================================
@@ -433,6 +450,9 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
       pdfUrl,
       hidden: inv.status === 'archived',
       clientId: accountantView ? clientId : null,
+      // [BRIDGE-POLISH 3a-1] counterparty + direction for the card UI
+      partyName: inv.client_name?.trim() || null,
+      direction: inv.direction,
     })
   }
 
@@ -461,6 +481,9 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
       pdfUrl: doc.file_url,
       hidden: false,
       clientId: accountantView ? doc.user_id : null,
+      // [BRIDGE-POLISH 3a-1] documents have no counterparty/direction
+      partyName: null,
+      direction: null,
     })
   }
 
