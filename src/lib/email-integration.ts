@@ -10,6 +10,11 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
 import { logAuditAction } from '@/lib/audit'
+// [BOEK-SAFECORE] jsonb column type for invoices.field_confidence — mirrors the
+// audit.ts pattern (derive the Json type from generated types, cast at write).
+import type { Database } from '@/types/database.types'
+type InvoiceFieldConfidence =
+  Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
 // ─── Vault-backed token helpers ─────────────────────────────────────────────
 
@@ -623,6 +628,109 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   }
   return chunks
 }
+
+// ─── [BOEK-SAFECORE] Rule 1 — arithmetic safety (no silent arithmetic error) ──
+//
+// The automated email path was the LEAST guarded path: it wrote status='received'
+// directly (→ shared → straight to the accountant) with NO arithmetic check at
+// all. The TRAIL 2/3 checks lived only in the manual confirm route, which the
+// email path never touches. That is the inversion this fixes: the path with NO
+// human review (users don't review AI imports in practice) now gets the MOST
+// machine checks, not zero.
+//
+// Behaviour: a confirmed arithmetic problem does NOT pass silently to the final
+// state. The invoice is HELD in 'processing' (the existing verify-queue buffer,
+// excluded from `shared`) instead of 'received', with a clear reason. A human
+// then reviews it via the confirm route, where Pillar ⑤ (the eye confirms)
+// takes over. No new enum, no migration — just 'processing' instead of
+// 'received' when the math is impossible or inconsistent.
+//
+// 🔴 HONEST LIMIT (named, not hidden): this catches arithmetic that is
+// impossible (NaN/∞/≤0, out-of-range date) or internally inconsistent
+// (excl+BTW≠incl, illegal rate). It does NOT catch a value that is internally
+// consistent but factually wrong (AI read 1.250 instead of 1.350 — all sums
+// agree, but the source number is wrong). That class is undetectable by
+// arithmetic alone and is explicitly out of scope here.
+
+interface ArithmeticVerdict {
+  ok: boolean
+  // Human-readable Dutch reason (for field_confidence._safecore + audit).
+  reason?: string
+  // Machine flags for the audit trail / future UI.
+  flags?: string[]
+}
+
+/**
+ * [BOEK-SAFECORE] Pure arithmetic gate for an AI-classified incoming invoice.
+ * No DB, no side effects — just a verdict on the numbers.
+ *
+ * Structural (impossible values) → blocked:
+ *   - any of ex/btw/incl is NaN, ±Infinity, or < 0
+ *   - invoice year outside 2020–2030 (a plausible business range)
+ * Consistency (internally wrong) → blocked:
+ *   - |ex + btw − incl| > 0.02  (Excl/Incl mix-ups, dropped lines)
+ *   - rate ∉ {0, 9, 21}  (legal NL BTW rates; computed, since btw_rate is
+ *     not stored — Math.round((btw/ex)*100), guarded against ex=0)
+ *
+ * Note: a zero/empty invoice (all three 0) is treated as a structural problem
+ * (incl ≤ 0) — an incoming invoice with no amount is not a valid financial
+ * record and must not reach the accountant unreviewed.
+ */
+function evaluateArithmetic(c: AttachmentClassification): ArithmeticVerdict {
+  const flags: string[] = []
+  const reasons: string[] = []
+
+  const ex = c.totalExBtw ?? 0
+  const btw = c.btwAmount ?? 0
+  const incl = c.totalIncBtw ?? c.amount ?? 0
+
+  // ── Structural: impossible numbers ──
+  const finiteNonNeg = (v: number) => Number.isFinite(v) && v >= 0
+  if (!finiteNonNeg(ex) || !finiteNonNeg(btw) || !finiteNonNeg(incl)) {
+    flags.push('non_finite_or_negative')
+    reasons.push('ongeldige bedragen (NaN/∞/negatief)')
+  }
+
+  // incl must be a real positive total — a 0/blank invoice is not bookable.
+  if (Number.isFinite(incl) && incl <= 0) {
+    flags.push('non_positive_total')
+    reasons.push('totaalbedrag ontbreekt of is 0')
+  }
+
+  // ── Structural: date sanity (year 2020–2030) ──
+  if (typeof c.invoiceDate === 'string' && c.invoiceDate.trim()) {
+    const d = new Date(c.invoiceDate)
+    const year = d.getFullYear()
+    if (Number.isNaN(d.getTime()) || year < 2020 || year > 2030) {
+      flags.push('date_out_of_range')
+      reasons.push('factuurdatum buiten geldig bereik (2020–2030)')
+    }
+  }
+
+  // ── Consistency checks only run when the numbers are at least finite. ──
+  // (No point checking ex+btw=incl when one of them is already NaN/∞.)
+  if (finiteNonNeg(ex) && finiteNonNeg(btw) && finiteNonNeg(incl) && incl > 0) {
+    // excl + BTW must equal incl (tolerance 0.02 for rounding)
+    if (Math.abs(ex + btw - incl) > 0.02) {
+      flags.push('sum_mismatch')
+      reasons.push('excl + BTW ≠ totaal')
+    }
+    // Legal BTW rate: computed (btw_rate is NOT stored). Guard division by zero;
+    // when ex=0 we can't derive a rate, so we skip the rate check (the sum check
+    // above already covers ex=0 cases meaningfully).
+    if (ex > 0) {
+      const rate = Math.round((btw / ex) * 100)
+      if (rate !== 0 && rate !== 9 && rate !== 21) {
+        flags.push('illegal_btw_rate')
+        reasons.push(`ongeldig BTW-tarief (${rate}%)`)
+      }
+    }
+  }
+
+  if (flags.length === 0) return { ok: true }
+  return { ok: false, reason: reasons.join('; '), flags }
+}
+
 // ─── Main sync entry point ────────────────────────────────────────────────────
 
 export type EmailProvider = 'gmail' | 'outlook'
@@ -696,6 +804,9 @@ export async function syncUserEmails(userId: string): Promise<{
   let verified = 0
   let saved = 0
   let errors = 0
+  // [BOEK-SAFECORE] Rule 1 — count of invoices HELD in 'processing' for an
+  // arithmetic problem (subset of `saved`; they exist but aren't shared yet).
+  let held = 0
 
   // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
   const { resolveImportTarget } = await import('@/lib/bestanden')
@@ -823,26 +934,97 @@ export async function syncUserEmails(userId: string): Promise<{
 
       if (existingByMessage && existingByMessage.length > 0) continue
 
-      // Check B — content match. Only run when we actually have both fields,
-      // otherwise we'd match every "missing data" invoice with every other.
+      // ── [BOEK-SAFECORE] Rule 2 — semantic idempotency (no double financial effect) ──
+      //
+      // Check B catches the SAME invoice arriving as a DIFFERENT file (vendor
+      // re-sent, forward, reminder, regenerated PDF). Byte-hash (Check 0) misses
+      // these — different bytes → different hash. So this is the financial-truth
+      // net that prevents paying the same invoice twice.
+      //
+      // KEY = invoice_number + total_inc_btw  (+ invoice_date ONLY when both
+      // sides have a REAL extracted date). This is deliberately WIDE, not
+      // precise: the asymmetry of harm decides it —
+      //   · false POSITIVE (flag a non-duplicate) → lands in the verify queue,
+      //     a human dismisses it, no money lost.
+      //   · false NEGATIVE (miss a real duplicate) → the user pays twice, real
+      //     money lost.
+      // For idempotency we bias toward catching MORE. So vendor name is NOT in
+      // the key — a duplicate must be caught even when the vendor name differs.
+      //
+      // 🔴 KNOWN LIMIT (named, not hidden): this catches duplicates by
+      // number+amount(+date). It does NOT use vendor identity, and there is no
+      // stored vendor KvK/BTW to anchor it. The "same vendor, different name"
+      // problem (Silifke ≡ OZ&ER) is a SEPARATE concern, closed later by
+      // BRIDGE-ALIAS. We do NOT claim full idempotency here.
+      //
+      // Cross-path: NOT restricted to source='email' anymore — a manual upload
+      // of the same invoice followed by an email copy (or vice-versa) is also a
+      // duplicate. Scoped to receiver_id + direction='incoming'.
       if (
         classification.invoiceNumber &&
         typeof classification.totalIncBtw === 'number'
       ) {
-        const { data: existingByContent } = await supabase
+        // Only constrain on date when THIS invoice has a real extracted date.
+        // When the date is a fallback (attachment date), constraining would
+        // narrow the catch — exactly what we don't want. So: real date → use
+        // it as an extra filter; no real date → match on number+total only
+        // (wider catch). invoiceDate here is the AI-extracted value, NOT the
+        // fallback computed later for storage.
+        const hasRealDate =
+          typeof classification.invoiceDate === 'string' &&
+          /^\d{4}-\d{2}-\d{2}/.test(classification.invoiceDate)
+        const realDateIso = hasRealDate
+          ? new Date(classification.invoiceDate as string).toISOString().split('T')[0]
+          : null
+
+        let contentQuery = supabase
           .from('invoices')
-          .select('id, source_message_id')
+          .select('id, source_message_id, invoice_date, client_name')
           .eq('receiver_id', userId)
-          .eq('source', 'email')
+          .eq('direction', 'incoming')
           .eq('invoice_number', classification.invoiceNumber)
           .eq('total_inc_btw', classification.totalIncBtw)
-          .limit(1)
+
+        // Add the date filter ONLY when we have a real date on the incoming one.
+        // (A stored invoice with a NULL date will simply not match this filter,
+        // which is acceptable — number+total alone already flags it via the
+        // no-date branch on the NEXT arrival; we never widen by dropping the
+        // filter retroactively.)
+        if (realDateIso) {
+          contentQuery = contentQuery.eq('invoice_date', realDateIso)
+        }
+
+        const { data: existingByContent } = await contentQuery.limit(1)
 
         if (existingByContent && existingByContent.length > 0) {
-          console.log('[BOEK-011] Skipping duplicate by content', {
+          const original = existingByContent[0]
+
+          // [BOEK-SAFECORE] Audit the blocked duplicate — truth in the log,
+          // silence in the UI (we don't over-claim "all duplicates caught").
+          // entityId = the ORIGINAL invoice (the duplicate is never created);
+          // newValue carries the REJECTED candidate's identity. Mirrors the
+          // existing 'document.duplicate_blocked' pattern. Non-fatal.
+          await logAuditAction({
+            userId,
+            action: 'invoice.duplicated',
+            entityType: 'invoice',
+            entityId: original.id,
+            newValue: {
+              reason: 'semantic_duplicate_blocked',
+              invoice_number: classification.invoiceNumber,
+              total_inc_btw: classification.totalIncBtw,
+              rejected_vendor: classification.vendor ?? null,
+              rejected_message_id: dedupKey,
+              original_message_id: original.source_message_id ?? null,
+              date_matched: Boolean(realDateIso),
+            },
+          })
+
+          console.log('[BOEK-SAFECORE] Skipping semantic duplicate', {
             invoiceNumber: classification.invoiceNumber,
             totalIncBtw: classification.totalIncBtw,
-            existingMessageId: existingByContent[0].source_message_id,
+            dateMatched: Boolean(realDateIso),
+            existingMessageId: original.source_message_id,
             newMessageId: dedupKey,
           })
           continue
@@ -928,6 +1110,34 @@ export async function syncUserEmails(userId: string): Promise<{
       //
       // Email sync is a pipeline operation by design (background job, AI-driven,
       // no direct user action) — exactly the case service_role exists for.
+
+      // ── [BOEK-SAFECORE] Rule 1 — arithmetic gate, computed BEFORE insert ──
+      // A bad invoice is HELD in 'processing' (verify queue, excluded from
+      // `shared`) instead of going straight to 'received' → shared → accountant.
+      // The reason is MERGED into field_confidence (never overwriting the AI's
+      // per-field confidence) under a _safecore key.
+      const verdict = evaluateArithmetic(classification)
+
+      // Merge, don't overwrite: keep the AI's fieldConfidence, add _safecore
+      // only when held. When there's nothing at all, keep null (parity with the
+      // pre-SAFECORE behaviour for clean invoices — no empty {} churn).
+      const aiConfidence = classification.fieldConfidence ?? null
+      let fieldConfidenceValue: Record<string, unknown> | null = aiConfidence
+      if (!verdict.ok) {
+        fieldConfidenceValue = {
+          ...(aiConfidence ?? {}),
+          _safecore: {
+            arithmetic_ok: false,
+            reason: verdict.reason,
+            flags: verdict.flags,
+            held_at: new Date().toISOString(),
+          },
+        }
+      }
+
+      // Held in 'processing' on failure; normal 'received' on success.
+      const invoiceStatus = verdict.ok ? 'received' : 'processing'
+
       const insertPipeline = createPipelineClient()
       const { data: insertedInvoice, error: dbError } = await insertPipeline
         .from('invoices')
@@ -935,7 +1145,7 @@ export async function syncUserEmails(userId: string): Promise<{
           sender_id: null,
           receiver_id: userId,
           direction: 'incoming',
-          status: 'received',
+          status: invoiceStatus,
           source: 'email',
           client_name: classification.vendor || extractSenderName(attachment.from),
           client_email: extractEmail(attachment.from),
@@ -947,10 +1157,11 @@ export async function syncUserEmails(userId: string): Promise<{
           pdf_url: pdfUrl,
           document_id: documentId,
           source_message_id: dedupKey,
-          // [BRIDGE-EXTRACT] per-field AI confidence (stored for parity; note the
-          // email path sets status='received' directly, so it skips the verify
-          // modal — the flags surface only for 'processing' invoices today).
-          field_confidence: classification.fieldConfidence ?? null,
+          // [BRIDGE-EXTRACT] per-field AI confidence + [BOEK-SAFECORE] _safecore
+          // hold reason (merged when held; null when nothing to store).
+          // Cast to Json — sanitized, JSON-compatible content (same pattern as
+          // audit.ts). The jsonb column type is Json | null.
+          field_confidence: fieldConfidenceValue as InvoiceFieldConfidence,
         })
         .select('id')
         .single()
@@ -960,6 +1171,28 @@ export async function syncUserEmails(userId: string): Promise<{
         errors++
       } else {
         saved++
+
+        // [BOEK-SAFECORE] When held for an arithmetic problem, audit it —
+        // truth in the log. Non-fatal. (Only on a held invoice; a clean
+        // 'received' invoice needs no SAFECORE audit row.)
+        if (!verdict.ok && insertedInvoice?.id) {
+          held++
+          await logAuditAction({
+            userId,
+            action: 'invoice.arithmetic_blocked',
+            entityType: 'invoice',
+            entityId: insertedInvoice.id,
+            newValue: {
+              held_status: 'processing',
+              reason: verdict.reason,
+              flags: verdict.flags,
+              invoice_number: classification.invoiceNumber ?? null,
+              total_ex_btw: classification.totalExBtw ?? null,
+              btw_amount: classification.btwAmount ?? null,
+              total_inc_btw: classification.totalIncBtw ?? classification.amount ?? null,
+            },
+          })
+        }
 
         // [BOEK-011] Link the document back to the invoice (bidirectional)
         // documents.invoice_id ↔ invoices.document_id
@@ -985,10 +1218,29 @@ export async function syncUserEmails(userId: string): Promise<{
   // (`supabase`) stays for reads where RLS is the right boundary.
   if (saved > 0) {
     const pipeline = createPipelineClient()
+    // [BOEK-SAFECORE] Honest copy: when some invoices are HELD for review, say
+    // so — don't tell the user to confirm payment on an invoice we've flagged
+    // as arithmetically wrong. We don't over-claim ("all checked"); we state
+    // the concrete situation only.
+    const cleanCount = saved - held
+    let body: string
+    if (held > 0 && cleanCount > 0) {
+      body =
+        `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald. ` +
+        `${held} ${held === 1 ? 'factuur staat' : 'facturen staan'} klaar ter controle ` +
+        `(mogelijk een rekenfout). Bevestig de rest.`
+    } else if (held > 0 && cleanCount === 0) {
+      body =
+        `BoekBrug heeft ${held} ${held === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald die ` +
+        `${held === 1 ? 'controle nodig heeft' : 'controle nodig hebben'} (mogelijk een rekenfout).`
+    } else {
+      body = `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald. Bevestig betalingsstatus.`
+    }
+
     const { error: notifErr } = await pipeline.from('notifications').insert({
       user_id: userId,
       title: `${saved} nieuwe ${saved === 1 ? 'factuur' : 'facturen'} geïmporteerd`,
-      body: `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald. Bevestig betalingsstatus.`,
+      body,
       type: 'invoice',
       read: false,
       link: '/dashboard/incoming',

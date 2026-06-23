@@ -2,6 +2,7 @@
 // [BOEK-SECURITY-2] Audit logging helper — v2 — May 2026
 // [BOEK-FOUNDATION-TYPES] Use Supabase Json type for jsonb columns — May 2026
 // [BRIDGE-EXTRACT] + 'document.duplicate_blocked' added to AuditAction union — Jun 2026
+// [BOEK-SAFECORE] + 'invoice.arithmetic_blocked' added to AuditAction union — Jun 2026
 // =====================================================
 // التغييرات في v2:
 //   + أُضيف 'invoice.duplicated' للـ AuditAction union
@@ -40,6 +41,7 @@ export type AuditAction =
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
+  | 'invoice.arithmetic_blocked'       // ← [BOEK-SAFECORE] auto-import held in 'processing': excl+BTW≠incl, illegal rate, or NaN/∞/≤0/bad-date
   // Level 2 — Accountant relationships
   | 'accountant.client_invited'
   | 'accountant.client_linked'
