@@ -22,9 +22,9 @@
 // Defense in depth: the update touches ONLY payment fields — never amounts.
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useParentPath } from '@/lib/navigation-hooks'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
@@ -119,6 +119,29 @@ export default function IncomingManageClient({
   // [BOEK-004] dialog when a change is blocked because the accountant verwerkt it
   const [verwerktCtx, setVerwerktCtx]   = useState<{ id: string; number: string } | null>(null)
   const [requestSent, setRequestSent]   = useState(false)
+
+  // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
+  // Lands the user on the exact row: auto-expand, scroll into view, brief highlight.
+  const searchParams = useSearchParams()
+  const focusId = searchParams.get('focus')
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
+  useEffect(() => {
+    if (!focusId) return
+    // Only act if the focused row actually exists in this list.
+    if (!invoices.some(i => i.id === focusId)) return
+    setExpandedId(focusId)
+    setHighlightId(focusId)
+    // Wait a tick for the row to render, then scroll to it.
+    const scrollTimer = setTimeout(() => {
+      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+    // Fade the highlight after a few seconds — a cue, not a permanent state.
+    const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
+    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId])
 
   const displayed = invoices.filter(inv => {
     if (filter === 'all') return true
@@ -311,11 +334,20 @@ export default function IncomingManageClient({
               const isVerwerkt = inv.accountant_status === 'verwerkt'
 
               return (
-                <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1 }}>
+                <div
+                  key={inv.id}
+                  ref={el => { rowRefs.current[inv.id] = el }}
+                  style={{
+                    borderRadius: R.lg,
+                    overflow: 'hidden',
+                    boxShadow: highlightId === inv.id ? `0 0 0 2px ${M3.primary}, ${EL1}` : EL1,
+                    transition: 'box-shadow 0.4s ease',
+                  }}
+                >
                   {/* Main row */}
                   <div
                     onClick={() => setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                    style={{ background: highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'background 0.4s ease' }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>

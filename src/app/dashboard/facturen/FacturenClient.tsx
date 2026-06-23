@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useParentPath } from '@/lib/navigation-hooks'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -108,6 +108,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const [verwerktCtx, setVerwerktCtx] = useState<{ id: string; number: string } | null>(null)
   const [requestSent, setRequestSent] = useState(false)
 
+  // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
+  // Reached when the accountant marks an OUTGOING invoice 'verwerkt'. Lands on
+  // the row: auto-expand, scroll, brief highlight. Best-effort — if the row
+  // isn't in the currently loaded page (infinite list), the page still opens.
+  const searchParams = useSearchParams()
+  const focusId = searchParams.get('focus')
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
   const [archivedInvoices, setArchivedInvoices] = useState<any[]>([])
 
@@ -131,6 +140,20 @@ export default function FacturenClient({ profile }: { profile: any }) {
     invoices, loading, hasMore, refreshing,
     loadMore, refresh, updateOptimistic, removeOptimistic,
   } = useInfiniteInvoices({ userId: profile.id, status: statusMap[filter] })
+
+  // [BRIDGE-NOTIF] Reveal a ?focus= row once it's present in the loaded list.
+  useEffect(() => {
+    if (!focusId || loading) return
+    if (!invoices.some(i => i.id === focusId)) return
+    setExpandedId(focusId)
+    setHighlightId(focusId)
+    const scrollTimer = setTimeout(() => {
+      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+    const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
+    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, loading, invoices.length])
 
   const displayed = invoices.filter(inv => {
     if (inv.status === 'archived') return false
@@ -417,11 +440,20 @@ export default function FacturenClient({ profile }: { profile: any }) {
               const rowBg = isCredit ? '#FFF8F0' : isOfferte ? '#F8F9FA' : '#fff'
 
               return (
-                <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1 }}>
+                <div
+                  key={inv.id}
+                  ref={el => { rowRefs.current[inv.id] = el }}
+                  style={{
+                    borderRadius: R.lg,
+                    overflow: 'hidden',
+                    boxShadow: highlightId === inv.id ? `0 0 0 2px ${M3.primary}, ${EL1}` : EL1,
+                    transition: 'box-shadow 0.4s ease',
+                  }}
+                >
                   {/* Main row */}
                   <div
                     onClick={() => setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: rowBg, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                    style={{ background: highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'background 0.4s ease' }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>

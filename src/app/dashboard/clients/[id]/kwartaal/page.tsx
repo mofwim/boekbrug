@@ -8,7 +8,7 @@
 // Inline expand on row click — no page navigation
 // Action dropdown: Verwerkt / In behandeling / Vraag (Not Found removed)
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 
@@ -110,6 +110,13 @@ export default function KwartaalPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
 
+  // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
+  // The accountant clicks an enriched notification and lands on the exact row:
+  // auto-expand, scroll into view, brief highlight ring.
+  const focusId = searchParams.get('focus')
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
@@ -147,6 +154,20 @@ export default function KwartaalPage() {
     }
     load()
   }, [clientId, q, year])
+
+  // [BRIDGE-NOTIF] When invoices are loaded and a ?focus= row exists, reveal it.
+  useEffect(() => {
+    if (!focusId || loading) return
+    if (!invoices.some(i => i.id === focusId)) return
+    setExpandedId(focusId)
+    setHighlightId(focusId)
+    const scrollTimer = setTimeout(() => {
+      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+    const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
+    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, loading, invoices.length])
 
   // [BOEK-028] Sort by marked_paid_at DESC default
   const sorted = [...invoices].sort((a, b) => {
@@ -189,6 +210,18 @@ export default function KwartaalPage() {
       // invoices), so it's the correct notification target. The route verifies
       // the accountant↔client link server-side and writes via service_role.
       const inv = invoices.find(x => x.id === invoiceId)
+      const nrLabel = inv?.invoice_number ? `factuur ${inv.invoice_number}` : 'een factuur'
+      const party = typeof inv?.client_name === 'string' && inv.client_name.trim()
+        ? ` (${inv.client_name.trim()})`
+        : ''
+      const amount = typeof inv?.total_inc_btw === 'number' && inv.total_inc_btw > 0
+        ? ` · ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(inv.total_inc_btw)}`
+        : ''
+      // Direction-aware target: outgoing lives in /facturen, incoming in /incoming/manage.
+      // Both read ?focus= to land on the exact row.
+      const target = inv?.direction === 'outgoing'
+        ? `/dashboard/facturen?focus=${invoiceId}`
+        : `/dashboard/incoming/manage?focus=${invoiceId}`
       try {
         await fetch('/api/notifications/notify-client', {
           method: 'POST',
@@ -196,11 +229,9 @@ export default function KwartaalPage() {
           body: JSON.stringify({
             clientId,
             title: 'Factuur verwerkt',
-            body: inv?.invoice_number
-              ? `Je boekhouder heeft factuur ${inv.invoice_number} verwerkt.`
-              : 'Je boekhouder heeft een factuur verwerkt.',
+            body: `Je boekhouder heeft ${nrLabel}${party}${amount} verwerkt.`,
             type: 'status',
-            link: '/dashboard/incoming/manage',
+            link: target,
           }),
         })
       } catch { /* non-blocking — verwerkt already saved */ }
@@ -306,7 +337,13 @@ export default function KwartaalPage() {
 
                 return (
                   <div key={invoice.id}
-                    style={{ backgroundColor: rowBg, opacity: isUpdating ? 0.6 : 1 }}>
+                    ref={el => { rowRefs.current[invoice.id] = el }}
+                    style={{
+                      backgroundColor: rowBg,
+                      opacity: isUpdating ? 0.6 : 1,
+                      boxShadow: highlightId === invoice.id ? '0 0 0 2px #1A73E8' : undefined,
+                      transition: 'box-shadow 0.4s ease',
+                    }}>
 
                     {/* Main row — click to expand inline */}
                     <div

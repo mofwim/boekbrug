@@ -43,7 +43,7 @@ export async function POST(
   // Verify ownership + load current amounts (TRAIL needs unchanged fields too)
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw")
+    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date")
     .eq("id", id)
     .single();
 
@@ -196,19 +196,59 @@ export async function POST(
 
   const pipeline = createPipelineClient();
 
+  // ── [BRIDGE-NOTIF] Notification enrichment ──────────────────────────────────
+  // A senior accountant wants WHO + WHAT + amount + a click that lands on the row.
+  // All values are best-effort; every piece degrades gracefully if missing.
+
+  // Effective incl amount for display (reviewed value where the user edited it).
+  const fmtEur = (n: number) =>
+    new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(n);
+  const amountLabel = incBtw > 0 ? ` · ${fmtEur(incBtw)}` : "";
+
+  // Invoice number + vendor (client_name on an INCOMING invoice = the supplier).
+  const invNr = invoice.invoice_number ? `factuur ${invoice.invoice_number}` : "een factuur";
+  const vendor =
+    typeof invoice.client_name === "string" && invoice.client_name.trim()
+      ? ` (${invoice.client_name.trim()})`
+      : "";
+
+  // Client (the ZZP'er) display name — for the ACCOUNTANT's notification only.
+  let clientName = "Een klant";
+  {
+    const { data: me } = await supabase
+      .from("profiles")
+      .select("full_name, company_name")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (me?.company_name?.trim()) clientName = me.company_name.trim();
+    else if (me?.full_name?.trim()) clientName = me.full_name.trim();
+  }
+
+  // Quarter for the accountant deep-link, derived from invoice_date (fallback: today).
+  // The row lives in /dashboard/clients/{zzper}/kwartaal?q=&year=&focus={id}.
+  const baseDate =
+    typeof invoice.invoice_date === "string" && /^\d{4}-\d{2}-\d{2}/.test(invoice.invoice_date)
+      ? new Date(invoice.invoice_date)
+      : new Date();
+  const dlYear = baseDate.getFullYear();
+  const dlQuarter = Math.ceil((baseDate.getMonth() + 1) / 3);
+  const accountantLink = `/dashboard/clients/${user.id}/kwartaal?q=${dlQuarter}&year=${dlYear}&focus=${id}`;
+
+  // Client deep-link — always the management surface, focused on this row.
+  const clientLink = `/dashboard/incoming/manage?focus=${id}`;
+
   if (link?.accountant_id) {
     const { error: accNotifErr } = await pipeline.from("notifications").insert({
       user_id: link.accountant_id,
-      title: action === "pay" ? "Nieuwe betaalde factuur" : "Nieuwe factuur ter inzage",
+      title: action === "pay" ? "Factuur betaald gemarkeerd" : "Nieuwe crediteur ter inzage",
       body:
         action === "pay"
-          ? "Een klant heeft een inkomende factuur als betaald gemarkeerd."
-          : "Een klant heeft een inkomende factuur geverifieerd (crediteur).",
+          ? `${clientName} markeerde ${invNr}${vendor}${amountLabel} als betaald.`
+          : `${clientName} verifieerde ${invNr}${vendor}${amountLabel} — nieuwe crediteur.`,
       type: "invoice",
       read: false,
-      // [BRIDGE-NOTIF] dead-click fix: route to the accountant home, not the
-      // generic /dashboard router page.
-      link: "/dashboard/accountant",
+      // [BRIDGE-NOTIF] deep-link: lands on the client's quarter and focuses the row.
+      link: accountantLink,
     });
     if (accNotifErr) {
       console.error("[BRIDGE-B] accountant notification failed", accNotifErr);
@@ -222,13 +262,12 @@ export async function POST(
     title: action === "pay" ? "Factuur betaald" : "Factuur geverifieerd",
     body:
       action === "pay"
-        ? "De factuur is gemarkeerd als betaald en doorgezet naar je boekhouder."
-        : "De factuur is geverifieerd en doorgezet naar je boekhouder.",
+        ? `${invNr.charAt(0).toUpperCase() + invNr.slice(1)}${vendor}${amountLabel} — betaald en doorgezet naar je boekhouder.`
+        : `${invNr.charAt(0).toUpperCase() + invNr.slice(1)}${vendor}${amountLabel} — geverifieerd en doorgezet naar je boekhouder.`,
     type: action === "pay" ? "payment" : "invoice",
     read: false,
-    // [BRIDGE-NOTIF] dead-click fix: this route is incoming-only (guarded above
-    // by `direction !== "incoming"`), so the target is always the incoming view.
-    link: "/dashboard/incoming",
+    // [BRIDGE-NOTIF] deep-link: management surface, focused on this row.
+    link: clientLink,
   });
   if (userNotifErr) {
     console.error("[BRIDGE-B] user notification failed", userNotifErr);
