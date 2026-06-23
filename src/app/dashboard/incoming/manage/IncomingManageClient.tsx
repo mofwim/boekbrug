@@ -225,6 +225,28 @@ export default function IncomingManageClient({
     else showToast('Versturen mislukt')
   }
 
+  // [BRIDGE-POLISH 3b fix] Open PDF via the signed-URL route — NOT the raw
+  // pdf_url. Storage paths (e.g. "incoming/...pdf") are not directly fetchable;
+  // they 404 as relative URLs. /api/email/file/[id] returns a short-lived signed
+  // URL, exactly as the verification queue (IncomingInvoicesClient) does.
+  const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null)
+  async function openPdf(id: string) {
+    setPdfLoadingId(id)
+    try {
+      const res = await fetch(`/api/email/file/${id}`)
+      const data = await res.json()
+      if (data.url) {
+        window.open(data.url, '_blank', 'noopener,noreferrer')
+      } else {
+        showToast(data.error || 'Kon bestand niet openen')
+      }
+    } catch {
+      showToast('Kon bestand niet openen')
+    } finally {
+      setPdfLoadingId(null)
+    }
+  }
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
 
@@ -369,13 +391,14 @@ export default function IncomingManageClient({
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {inv.pdf_url && (
-                          <a
-                            href={inv.pdf_url} target="_blank" rel="noopener noreferrer"
-                            onClick={e => e.stopPropagation()}
-                            style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>picture_as_pdf</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); if (pdfLoadingId !== inv.id) openPdf(inv.id) }}
+                            style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                              {pdfLoadingId === inv.id ? 'hourglass_empty' : 'picture_as_pdf'}
+                            </span>
                             Bekijk PDF
-                          </a>
+                          </button>
                         )}
                       </div>
                     </div>
