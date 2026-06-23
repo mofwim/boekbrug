@@ -6,6 +6,11 @@ import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
+// [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
+import {
+  validateKvk, validateBtw, validateIban,
+  normalizeBtw, normalizeIban,
+} from '@/lib/validation'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -34,6 +39,8 @@ export default function SettingsPage() {
   const [successInvite, setSuccessInvite] = useState('')
   const [errorProfile, setErrorProfile] = useState('')
   const [errorInvite, setErrorInvite] = useState('')
+  // [BRIDGE-POLISH 3a-3] per-field validation errors (KVK / BTW / IBAN)
+  const [fieldErrors, setFieldErrors] = useState<{ kvk?: string; btw?: string; iban?: string }>({})
 
   // [BOEK-032] حالة تصدير البيانات + حذف الحساب
   const [exportConfirmed, setExportConfirmed] = useState(false)
@@ -117,17 +124,39 @@ export default function SettingsPage() {
     setErrorProfile('')
     setSuccessProfile('')
 
+    // [BRIDGE-POLISH 3a-3] Formal validation BEFORE any write. Empty values are
+    // valid (all three fields are optional); only non-empty malformed values
+    // block the save. Errors surface inline per field.
+    const kvkRes  = validateKvk(kvk)
+    const btwRes  = validateBtw(btw)
+    const ibanRes = validateIban(iban)
+    const nextErrors = {
+      kvk:  kvkRes.valid  ? undefined : kvkRes.error,
+      btw:  btwRes.valid  ? undefined : btwRes.error,
+      iban: ibanRes.valid ? undefined : ibanRes.error,
+    }
+    if (!kvkRes.valid || !btwRes.valid || !ibanRes.valid) {
+      setFieldErrors(nextErrors)
+      setErrorProfile('Controleer de gemarkeerde velden')
+      setLoadingProfile(false)
+      return
+    }
+    setFieldErrors({})
+
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // [BRIDGE-POLISH 3a-3] Store the CANONICAL form (normalized), never the raw
+    // input — so what we persist always matches what was validated. KVK keeps
+    // its trimmed digits; BTW/IBAN are upper-cased + whitespace-stripped.
     const { error } = await supabase
       .from('profiles')
       .update({
         full_name: fullName,
         company_name: companyName,
-        kvk_number: kvk,
-        btw_number: btw,
-        iban: iban,
+        kvk_number: kvk.trim() || null,
+        btw_number: normalizeBtw(btw) || null,
+        iban: normalizeIban(iban) || null,
         address: address,
         postal_code: postalCode,
         city: city
@@ -137,6 +166,10 @@ export default function SettingsPage() {
     if (error) {
       setErrorProfile('Opslaan mislukt — probeer opnieuw')
     } else {
+      // Reflect the normalized values back into the form fields
+      setBtw(normalizeBtw(btw))
+      setIban(normalizeIban(iban))
+      setKvk(kvk.trim())
       setSuccessProfile('Profiel opgeslagen ✓')
     }
 
@@ -323,10 +356,11 @@ export default function SettingsPage() {
               <input
                 type="text"
                 value={kvk}
-                onChange={e => setKvk(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                onChange={e => { setKvk(e.target.value); setFieldErrors(p => ({ ...p, kvk: undefined })) }}
+                className={`w-full border rounded-xl px-3 py-2 text-sm ${fieldErrors.kvk ? 'border-red-400' : 'border-gray-300'}`}
                 placeholder="12345678"
               />
+              {fieldErrors.kvk && <p className="text-xs text-red-500 mt-1">{fieldErrors.kvk}</p>}
             </div>
 
             {/* رقم BTW */}
@@ -335,10 +369,11 @@ export default function SettingsPage() {
               <input
                 type="text"
                 value={btw}
-                onChange={e => setBtw(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                onChange={e => { setBtw(e.target.value); setFieldErrors(p => ({ ...p, btw: undefined })) }}
+                className={`w-full border rounded-xl px-3 py-2 text-sm ${fieldErrors.btw ? 'border-red-400' : 'border-gray-300'}`}
                 placeholder="NL123456789B01"
               />
+              {fieldErrors.btw && <p className="text-xs text-red-500 mt-1">{fieldErrors.btw}</p>}
             </div>
 
             {/* IBAN */}
@@ -347,10 +382,11 @@ export default function SettingsPage() {
               <input
                 type="text"
                 value={iban}
-                onChange={e => setIban(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                onChange={e => { setIban(e.target.value); setFieldErrors(p => ({ ...p, iban: undefined })) }}
+                className={`w-full border rounded-xl px-3 py-2 text-sm ${fieldErrors.iban ? 'border-red-400' : 'border-gray-300'}`}
                 placeholder="NL12 ABNA 0123 4567 89"
               />
+              {fieldErrors.iban && <p className="text-xs text-red-500 mt-1">{fieldErrors.iban}</p>}
             </div>
 
             {/* العنوان */}
@@ -385,7 +421,7 @@ export default function SettingsPage() {
                 value={city}
                 onChange={e => setCity(e.target.value)}
                 className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                placeholder="Amsterdam"
+                placeholder="Vul je stad in"
               />
             </div>
           </div>

@@ -1246,6 +1246,19 @@ export default function IncomingInvoicesClient({
             ? "Alles verwerkt"
             : `${pending.length} ${pending.length === 1 ? "factuur" : "facturen"} wacht op bevestiging`}
         </p>
+        {/* [BRIDGE-POLISH 3b] Entry to the management surface for confirmed
+            incoming invoices (received/paid). iOS-styled to match THIS surface. */}
+        <Link
+          href="/dashboard/incoming/manage"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            marginTop: 12, padding: "8px 14px", borderRadius: 10,
+            background: "#eef4ff", color: "#007aff",
+            fontSize: 14, fontWeight: 600, textDecoration: "none",
+          }}
+        >
+          Bevestigde inkoopfacturen ›
+        </Link>
       </div>
 
       <div style={{ padding: "0 16px" }}>

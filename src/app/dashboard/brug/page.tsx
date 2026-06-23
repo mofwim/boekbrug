@@ -24,7 +24,7 @@ export const metadata = { title: 'Brug — BoekBrug' }
 // Exact columns the renderer needs (match BridgeInvoice / BridgeDocument).
 // [BRIDGE-A] + due_date (computed 'Verlopen' badge), accountant_status ('Verwerkt'/'Vraag' badges)
 const INVOICE_COLS =
-  'id, invoice_number, invoice_type, status, direction, invoice_date, due_date, payment_method, accountant_status, total_inc_btw, document_id, pdf_url, sender_id, receiver_id'
+  'id, invoice_number, invoice_type, status, direction, invoice_date, due_date, payment_method, accountant_status, total_inc_btw, document_id, pdf_url, sender_id, receiver_id, client_name'
 const DOCUMENT_COLS =
   'id, file_name, file_url, folder_id, doc_type, year, period, invoice_id, user_id, created_at'
 const FOLDER_COLS = 'id, name, parent_id, folder_type, user_id'

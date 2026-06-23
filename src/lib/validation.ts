@@ -23,10 +23,15 @@ export interface ValidationResult {
 // BTW: NL + 9 digits + B + 2 digits.  e.g. NL123456789B01
 export const KVK_REGEX = /^\d{8}$/;
 export const BTW_REGEX = /^NL\d{9}B\d{2}$/;
+// [BRIDGE-POLISH 3a-3] Dutch IBAN: NL + 2 check digits + 4 bank letters + 10 digits.
+// Structural shape only — the mod-97 checksum is verified separately below.
+export const IBAN_NL_REGEX = /^NL\d{2}[A-Z]{4}\d{10}$/;
 
 // ── Dutch error messages (confirmed) ─────────────────────
 export const KVK_ERROR = "KVK-nummer moet uit 8 cijfers bestaan";
 export const BTW_ERROR = "BTW-nummer moet de vorm NL000000000B00 hebben";
+// [BRIDGE-POLISH 3a-3]
+export const IBAN_ERROR = "IBAN is ongeldig — controleer het rekeningnummer";
 
 const VALID: ValidationResult = { valid: true };
 
@@ -69,6 +74,51 @@ export function validateBtw(value: string | null | undefined): ValidationResult 
   const v = normalizeBtw(value);
   if (v === "") return VALID; // optional → empty allowed
   if (!BTW_REGEX.test(v)) return { valid: false, error: BTW_ERROR };
+  return VALID;
+}
+
+/**
+ * [BRIDGE-POLISH 3a-3]
+ * Canonical IBAN string: removes ALL whitespace and upper-cases. Dutch IBANs are
+ * conventionally grouped in fours for display ("NL12 ABNA …") but stored compact.
+ * Returns "" for null / undefined / blank.
+ */
+export function normalizeIban(value: string | null | undefined): string {
+  return (value ?? "").replace(/\s+/g, "").toUpperCase();
+}
+
+/**
+ * [BRIDGE-POLISH 3a-3]
+ * ISO 7064 / ISO 13616 mod-97 checksum (the same algorithm every bank uses).
+ * Move the first four chars to the end, map letters → numbers (A=10 … Z=35),
+ * then the big integer mod 97 must equal 1. Computed digit-by-digit so it works
+ * without BigInt. Assumes the structural shape was already checked by the caller.
+ */
+function ibanMod97(compact: string): number {
+  const rearranged = compact.slice(4) + compact.slice(0, 4);
+  let remainder = 0;
+  for (const ch of rearranged) {
+    // A–Z → 10–35; digits → their value
+    const code = ch >= "A" && ch <= "Z" ? (ch.charCodeAt(0) - 55).toString() : ch;
+    for (const d of code) {
+      remainder = (remainder * 10 + (d.charCodeAt(0) - 48)) % 97;
+    }
+  }
+  return remainder;
+}
+
+/**
+ * Validate a Dutch IBAN.
+ * Empty / null is VALID — the field is optional (same convention as KVK/BTW).
+ * Case/whitespace tolerant via normalizeIban; store normalizeIban(value).
+ * Checks BOTH the NL structural shape AND the mod-97 checksum, so a typo in the
+ * account number is caught, not just a malformed format.
+ */
+export function validateIban(value: string | null | undefined): ValidationResult {
+  const v = normalizeIban(value);
+  if (v === "") return VALID; // optional → empty allowed
+  if (!IBAN_NL_REGEX.test(v)) return { valid: false, error: IBAN_ERROR };
+  if (ibanMod97(v) !== 1) return { valid: false, error: IBAN_ERROR };
   return VALID;
 }
 

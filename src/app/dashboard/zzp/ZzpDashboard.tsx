@@ -140,6 +140,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/incoming')}
           />
 
+          {/* [BRIDGE-POLISH 3b] Inkoopfacturen — manage confirmed incoming
+              (received/paid): mark paid, undo, see accountant 'Verwerkt' status */}
+          <ActionCard
+            icon="payments" iconBg="#7C5800" iconColor="#fff"
+            label="Inkoopfacturen" sub="Betaal en beheer bevestigde inkoop"
+            onClick={() => router.push('/dashboard/incoming/manage')}
+          />
+
           {/* 4. Bank — [BOEK-029] BOEK-016 integration */}
           <ActionCard
             icon="account_balance" iconBg="#1A73E8" iconColor="#fff"
