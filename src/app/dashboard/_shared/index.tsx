@@ -298,12 +298,13 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
 // [BOEK-028] Bell with outside click + markAsRead — May 2026
 
 function NotificationsBell({
-  notifications, unreadCount, showNotifications, onToggle,
+  notifications, unreadCount, showNotifications, onToggle, onMarkAllRead,
 }: {
   notifications: any[]
   unreadCount: number
   showNotifications: boolean
   onToggle: () => void
+  onMarkAllRead?: () => void
 }) {
   const router = useRouter()
   const bellRef = useRef<HTMLDivElement>(null)
@@ -367,8 +368,31 @@ function NotificationsBell({
           borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
           width: 320, zIndex: 200, overflow: 'hidden',
         }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Meldingen</p>
+            {/* [BRIDGE-NOTIF] explicit mark-all-read — user stays in control, no auto-clear on open */}
+            {onMarkAllRead && notifications.some(n => !(readOverride[n.id] ?? n.read)) && (
+              <button
+                onClick={() => {
+                  // optimistic local clear so the badge/highlight update instantly
+                  setReadOverride(prev => {
+                    const next = { ...prev }
+                    notifications.forEach(n => { next[n.id] = true })
+                    return next
+                  })
+                  onMarkAllRead()
+                }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 12, fontWeight: 500, color: '#1A73E8',
+                  padding: '2px 4px', borderRadius: 4, whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F1F3F4')}
+                onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
+              >
+                Alles gelezen
+              </button>
+            )}
           </div>
           {notifications.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '32px 16px', margin: 0 }}>
@@ -461,6 +485,8 @@ interface DashboardHeaderProps {
   onToggleNotifications: () => void
   onMessagesClick: () => void
   onLogout: () => void
+  // [BRIDGE-NOTIF] explicit "mark all read" — replaces the old auto-clear on open
+  onMarkAllRead?: () => void
 }
 
 export function DashboardHeader({
@@ -472,6 +498,7 @@ export function DashboardHeader({
   onToggleNotifications,
   onMessagesClick,
   onLogout,
+  onMarkAllRead,
 }: DashboardHeaderProps) {
   // [INTEGRATION] Logo Universal — role-aware href — May 2026
   const isAccountant = profile?.role === 'accountant'
@@ -554,6 +581,7 @@ export function DashboardHeader({
           unreadCount={unreadNotifCount}
           showNotifications={showNotifications}
           onToggle={onToggleNotifications}
+          onMarkAllRead={onMarkAllRead}
         />
 
         {/* Avatar + profile dropdown */}

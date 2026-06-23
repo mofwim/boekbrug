@@ -182,6 +182,28 @@ export default function KwartaalPage() {
       setInvoices(prev => prev.map(i =>
         i.id === invoiceId ? { ...i, accountant_status: invoices.find(x => x.id === invoiceId)?.accountant_status ?? null } : i
       ))
+    } else if (action === 'verwerkt') {
+      // [BRIDGE-NOTIF] N2 — close the trust loop: tell the client their invoice
+      // was processed. Non-blocking; the status change already succeeded.
+      // clientId here IS the ZZP'er's profile id (sender_id/receiver_id of these
+      // invoices), so it's the correct notification target. The route verifies
+      // the accountant↔client link server-side and writes via service_role.
+      const inv = invoices.find(x => x.id === invoiceId)
+      try {
+        await fetch('/api/notifications/notify-client', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId,
+            title: 'Factuur verwerkt',
+            body: inv?.invoice_number
+              ? `Je boekhouder heeft factuur ${inv.invoice_number} verwerkt.`
+              : 'Je boekhouder heeft een factuur verwerkt.',
+            type: 'status',
+            link: '/dashboard/incoming/manage',
+          }),
+        })
+      } catch { /* non-blocking — verwerkt already saved */ }
     }
     setUpdatingId(null)
   }

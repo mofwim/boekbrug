@@ -184,8 +184,8 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
         unreadMessages={unreadMessages}
         onToggleNotifications={() => {
           setShowNotifications(prev => !prev)
-          if (!showNotifications && unreadNotifCount > 0) markAllRead()
         }}
+        onMarkAllRead={markAllRead}
         onMessagesClick={() => router.push('/dashboard/messages')}
         onLogout={handleLogout}
       />

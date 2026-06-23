@@ -206,7 +206,9 @@ export async function POST(
           : "Een klant heeft een inkomende factuur geverifieerd (crediteur).",
       type: "invoice",
       read: false,
-      link: "/dashboard",
+      // [BRIDGE-NOTIF] dead-click fix: route to the accountant home, not the
+      // generic /dashboard router page.
+      link: "/dashboard/accountant",
     });
     if (accNotifErr) {
       console.error("[BRIDGE-B] accountant notification failed", accNotifErr);
@@ -224,6 +226,9 @@ export async function POST(
         : "De factuur is geverifieerd en doorgezet naar je boekhouder.",
     type: action === "pay" ? "payment" : "invoice",
     read: false,
+    // [BRIDGE-NOTIF] dead-click fix: this route is incoming-only (guarded above
+    // by `direction !== "incoming"`), so the target is always the incoming view.
+    link: "/dashboard/incoming",
   });
   if (userNotifErr) {
     console.error("[BRIDGE-B] user notification failed", userNotifErr);

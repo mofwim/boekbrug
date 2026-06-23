@@ -102,7 +102,8 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         profile={profile} notifications={notifications}
         showNotifications={showNotifications} unreadNotifCount={unreadNotifCount}
         unreadMessages={unreadMessages}
-        onToggleNotifications={() => { setShowNotifications(p => !p); if (!showNotifications && unreadNotifCount > 0) markAllRead() }}
+        onToggleNotifications={() => { setShowNotifications(p => !p) }}
+        onMarkAllRead={markAllRead}
         onMessagesClick={() => accountantId ? router.push(`/dashboard/messages/${accountantId}`) : router.push('/dashboard/messages')}
         onLogout={async () => { await supabase.auth.signOut(); router.push('/login') }}
       />

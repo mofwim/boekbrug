@@ -187,6 +187,8 @@ export default function FacturenClient({ profile }: { profile: any }) {
               title: 'Factuur betaald',
               body: `Factuur ${ctx.number} is gemarkeerd als betaald.`,
               type: 'payment',
+              // [BRIDGE-NOTIF] dead-click fix: open the invoices list.
+              link: '/dashboard/facturen',
             }),
           })
         } catch { /* non-blocking — payment already succeeded */ }
