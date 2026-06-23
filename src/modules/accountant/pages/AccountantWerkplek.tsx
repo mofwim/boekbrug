@@ -20,17 +20,31 @@ const TOOLS = [
     isNew: true,
   },
   {
-    icon: '📁',
-    label: 'Alle bestanden',
-    sub: 'Bestanden van al je klanten',
-    href: '/dashboard/bestanden',
-    isNew: false,
+    // [BRIDGE-ACC-SURFACE] ACC-2: the Bridge is the accountant's lens on the
+    // client's financial truth — the single channel for client documents.
+    icon: '🌉',
+    label: 'Brug',
+    sub: 'Documenten van je klanten',
+    href: '/brug',
+    isNew: true,
   },
   {
     icon: '📄',
     label: 'Mijn facturen',
     sub: 'Facturen die jij aan klanten stuurt',
     href: '/dashboard/facturen',
+    isNew: false,
+  },
+  {
+    // [BRIDGE-ACC-SURFACE] ACC-3: was labelled "Alle bestanden — van al je
+    // klanten", which was untrue: /dashboard/bestanden is scoped to user_id
+    // (the accountant's OWN storage — templates, internal docs), not client
+    // data. Relabelled honestly; client documents live in the Bridge above.
+    // Route unchanged — separation already exists at the data layer.
+    icon: '📁',
+    label: 'Mijn eigen bestanden',
+    sub: 'Sjablonen en eigen documenten',
+    href: '/dashboard/bestanden',
     isNew: false,
   },
   {
