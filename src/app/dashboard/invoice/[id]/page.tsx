@@ -47,6 +47,10 @@ export default function InvoiceDetailPage() {
   const [invoice, setInvoice] = useState<any>(null)
   const [lines, setLines] = useState<any[]>([])
   const [profile, setProfile] = useState<any>(null)
+  // [ACC-INVOICE-VIEW] viewer's own profile — reliable "self" side for the
+  // Van/Aan cards. On an incoming invoice the sender_id points at an external
+  // party with no profiles row, so we cannot derive the ZZP'er from it.
+  const [viewerProfile, setViewerProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [notFoundState, setNotFoundState] = useState(false)
 
@@ -130,13 +134,15 @@ export default function InvoiceDetailPage() {
 
       setInvoice(invoiceData)
 
-      const [{ data: senderProfile }, { data: linesData }] = await Promise.all([
+      const [{ data: senderProfile }, { data: linesData }, { data: ownProfile }] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', invoiceData.sender_id).single(),
-        supabase.from('invoice_lines').select('*').eq('invoice_id', invoiceId)
+        supabase.from('invoice_lines').select('*').eq('invoice_id', invoiceId),
+        supabase.from('profiles').select('*').eq('id', user.id).single(),
       ])
 
       if (senderProfile) setProfile(senderProfile)
       if (linesData) setLines(linesData)
+      if (ownProfile) setViewerProfile(ownProfile) // [ACC-INVOICE-VIEW]
 
       // [BOEK-031] Controleer of er al een creditnota bestaat voor deze factuur
       // receiver_id wordt gebruikt als link naar de originele factuur
@@ -198,8 +204,42 @@ export default function InvoiceDetailPage() {
   const canCreateCreditnota =
     invoice &&
     invoice.invoice_type !== 'creditnota' &&
+    invoice.direction !== 'incoming' && // [ACC-INVOICE-VIEW] creditnota only on own outgoing invoices
     CREDITABLE_STATUSES.includes(invoice.status) &&
     !linkedCreditnota
+
+  // [ACC-INVOICE-VIEW] Direction is the single source of truth. Only an explicit
+  // 'incoming' flips the view; NULL/legacy/anything else renders as outgoing
+  // (the safe, unchanged default that covers every normal invoice).
+  const isIncoming = invoice?.direction === 'incoming'
+
+  // [ACC-INVOICE-VIEW] Party blocks derived from direction.
+  //   outgoing:  Van = ZZP'er (own profile)        | Aan = customer (client_*)
+  //   incoming:  Van = supplier (client_* fields)  | Aan = ZZP'er (own profile)
+  // On incoming, the supplier lives in client_* (there are no supplier_* columns),
+  // and the ZZP'er is the logged-in viewer (sender_id points at an external party).
+  const selfBlock = {
+    name: viewerProfile?.company_name || viewerProfile?.full_name,
+    lines: [
+      viewerProfile?.company_name || viewerProfile?.full_name,
+      viewerProfile?.address,
+      [viewerProfile?.postal_code, viewerProfile?.city].filter(Boolean).join(' '),
+      viewerProfile?.kvk_number ? `KVK: ${viewerProfile.kvk_number}` : null,
+      viewerProfile?.btw_number ? `BTW: ${viewerProfile.btw_number.toUpperCase()}` : null,
+    ],
+  }
+  const counterpartyBlock = {
+    name: invoice?.client_name || '—',
+    lines: [
+      invoice?.client_name || '—',
+      invoice?.client_address,
+      [invoice?.client_postal_code, invoice?.client_city].filter(Boolean).join(' '),
+      invoice?.client_btw_number ? `BTW: ${invoice.client_btw_number.toUpperCase()}` : null,
+      invoice?.client_email,
+    ],
+  }
+  const vanBlock = isIncoming ? counterpartyBlock : selfBlock
+  const aanBlock = isIncoming ? selfBlock : counterpartyBlock
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA' }}>
@@ -264,7 +304,11 @@ export default function InvoiceDetailPage() {
                   invoiceNumber={invoice.invoice_number}
                   status={invoice.status}
                 />
-                {invoice && profile && (
+                {/* [ACC-INVOICE-VIEW] Outgoing: generate the invoice PDF.
+                    Incoming: InvoicePDF assumes outgoing (Van=profile/Aan=client)
+                    and would emit a wrong document — show the original supplier
+                    PDF from pdf_url instead. */}
+                {!isIncoming && invoice && profile && (
                   <PDFDownloadLink
                     document={<InvoicePDF invoice={invoice} lines={lines} profile={profile} />}
                     fileName={`${invoice.invoice_number || 'concept'}.pdf`}
@@ -285,6 +329,27 @@ export default function InvoiceDetailPage() {
                       </button>
                     )}
                   </PDFDownloadLink>
+                )}
+                {isIncoming && invoice?.pdf_url && (
+                  <a
+                    href={invoice.pdf_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      backgroundColor: '#1A73E8',
+                      color: 'white',
+                      fontSize: 13,
+                      fontWeight: 500,
+                      padding: '8px 16px',
+                      borderRadius: 9999,
+                      border: 'none',
+                      cursor: 'pointer',
+                      textDecoration: 'none',
+                      transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
+                    }}
+                  >
+                    ↓ Origineel PDF
+                  </a>
                 )}
               </>
             )}
@@ -398,23 +463,11 @@ export default function InvoiceDetailPage() {
               {[
                 {
                   title: 'Van',
-                  lines: [
-                    profile?.company_name || profile?.full_name,
-                    profile?.address,
-                    [profile?.postal_code, profile?.city].filter(Boolean).join(' '),
-                    profile?.kvk_number ? `KVK: ${profile.kvk_number}` : null,
-                    profile?.btw_number ? `BTW: ${profile.btw_number.toUpperCase()}` : null, // [FACTUUR-A-FIX]
-                  ]
+                  lines: vanBlock.lines,
                 },
                 {
                   title: 'Aan',
-                  lines: [
-                    invoice?.client_name || '—',
-                    invoice?.client_address,
-                    [invoice?.client_postal_code, invoice?.client_city].filter(Boolean).join(' '),
-                    invoice?.client_btw_number ? `BTW: ${invoice.client_btw_number.toUpperCase()}` : null, // [FACTUUR-A-FIX]
-                    invoice?.client_email,
-                  ]
+                  lines: aanBlock.lines,
                 },
                 {
                   title: 'Details',
@@ -475,8 +528,10 @@ export default function InvoiceDetailPage() {
             </div>
           </div>
 
-          {/* [DS] Betalingsinformatie */}
-          {profile?.iban && invoice.invoice_type !== 'creditnota' && (
+          {/* [DS] Betalingsinformatie — [ACC-INVOICE-VIEW] outgoing only;
+              on incoming the IBAN belongs to the supplier (in the original PDF),
+              not the ZZP'er's own profile. */}
+          {!isIncoming && profile?.iban && invoice.invoice_type !== 'creditnota' && (
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
               <p style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Betalingsinformatie</p>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
