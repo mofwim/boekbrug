@@ -25,7 +25,7 @@ const TOOLS = [
     icon: '🌉',
     label: 'Brug',
     sub: 'Documenten van je klanten',
-    href: '/brug',
+    href: '/dashboard/brug',
     isNew: true,
   },
   {
