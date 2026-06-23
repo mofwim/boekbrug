@@ -731,6 +731,53 @@ function evaluateArithmetic(c: AttachmentClassification): ArithmeticVerdict {
   return { ok: false, reason: reasons.join('; '), flags }
 }
 
+// ─── [SAFECORE-GAP] Placeholder-aware dedup helpers ───────────────────────────
+//
+// Problem: when AI extraction fails to find a real invoice number, both the
+// upload and email paths substitute a UNIQUE placeholder — `UPLOAD-<ts>` or
+// `EMAIL-<ts>`. SAFECORE Rule 2's key trusts invoice_number, so a unique
+// placeholder makes the key differ on every arrival → duplicate detection is
+// silently defeated → double-pay risk.
+//
+// Fix (defense in depth): the prompt fix in ai.ts attacks the ROOT (extract the
+// number correctly). These helpers are the SAFETY NET for when extraction still
+// fails — because it never becomes perfect. When the number is a placeholder we
+// don't trust it; we fall back to the next anchor (a RELIABLE vendor) and, only
+// if that's junk too, we honestly mark the invoice un-dedupable for the human
+// review that already happens in the verify queue.
+
+/**
+ * A placeholder invoice number is a generated stand-in, not a real number.
+ * Prefix-agnostic across both ingestion paths (UPLOAD-/EMAIL- + timestamp).
+ */
+function isPlaceholderInvoiceNumber(n: string | null | undefined): boolean {
+  if (!n) return true // null/empty is itself "no real number"
+  return /^(UPLOAD|EMAIL)-\d+$/.test(n.trim())
+}
+
+/**
+ * Normalize a vendor name for use as a dedup anchor: trim, lowercase, collapse
+ * whitespace. NOT a full alias map (that's BRIDGE-ALIAS) — just formatting
+ * normalization so "Atapack  B.V." and "atapack b.v." match.
+ */
+function normalizeVendor(v: string | null | undefined): string {
+  return (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/**
+ * Is the vendor name reliable enough to anchor a fallback dedup key?
+ * Rejects empty and the known "unknown sender" placeholders. A junk vendor
+ * must NOT be used as a key — matching on vendor+total+date with a junk vendor
+ * (or worse, total+date alone) could wrongly block a LEGITIMATE invoice, which
+ * in a financial-truth system is its own serious error (a missing crediteur).
+ */
+function isReliableVendor(v: string | null | undefined): boolean {
+  const n = normalizeVendor(v)
+  if (n.length < 2) return false
+  const junk = new Set(['onbekende afzender', 'onbekend', 'unknown', '-', '—'])
+  return !junk.has(n)
+}
+
 // ─── Main sync entry point ────────────────────────────────────────────────────
 
 export type EmailProvider = 'gmail' | 'outlook'
@@ -941,35 +988,48 @@ export async function syncUserEmails(userId: string): Promise<{
       // these — different bytes → different hash. So this is the financial-truth
       // net that prevents paying the same invoice twice.
       //
-      // KEY = invoice_number + total_inc_btw  (+ invoice_date ONLY when both
-      // sides have a REAL extracted date). This is deliberately WIDE, not
-      // precise: the asymmetry of harm decides it —
-      //   · false POSITIVE (flag a non-duplicate) → lands in the verify queue,
-      //     a human dismisses it, no money lost.
-      //   · false NEGATIVE (miss a real duplicate) → the user pays twice, real
-      //     money lost.
-      // For idempotency we bias toward catching MORE. So vendor name is NOT in
-      // the key — a duplicate must be caught even when the vendor name differs.
+      // [SAFECORE-GAP] The key is now PLACEHOLDER-AWARE and GRADED:
       //
-      // 🔴 KNOWN LIMIT (named, not hidden): this catches duplicates by
-      // number+amount(+date). It does NOT use vendor identity, and there is no
-      // stored vendor KvK/BTW to anchor it. The "same vendor, different name"
-      // problem (Silifke ≡ OZ&ER) is a SEPARATE concern, closed later by
-      // BRIDGE-ALIAS. We do NOT claim full idempotency here.
+      //   1. Real invoice number → key = invoice_number + total (+ date if real).
+      //      WIDE catch is safe here: the number is the precision ANCHOR, so a
+      //      false positive is rare. (vendor NOT in key — a duplicate must be
+      //      caught even when the vendor name differs; Silifke≡OZ&ER → ALIAS.)
       //
-      // Cross-path: NOT restricted to source='email' anymore — a manual upload
-      // of the same invoice followed by an email copy (or vice-versa) is also a
-      // duplicate. Scoped to receiver_id + direction='incoming'.
-      if (
-        classification.invoiceNumber &&
-        typeof classification.totalIncBtw === 'number'
-      ) {
-        // Only constrain on date when THIS invoice has a real extracted date.
-        // When the date is a fallback (attachment date), constraining would
-        // narrow the catch — exactly what we don't want. So: real date → use
-        // it as an extra filter; no real date → match on number+total only
-        // (wider catch). invoiceDate here is the AI-extracted value, NOT the
-        // fallback computed later for storage.
+      //   2. Placeholder number (UPLOAD-/EMAIL-<ts>, or empty) → the number is
+      //      junk (unique per arrival), so we DON'T trust it. Fall back to the
+      //      next anchor:
+      //        a. RELIABLE vendor → key = vendor_normalized + total + date.
+      //        b. UNRELIABLE vendor (empty / "Onbekende afzender") → mark
+      //           un-dedupable + log; do NOT match on total+date alone. Without a
+      //           number AND without a reliable vendor, total+date is too loose —
+      //           it could BLOCK a legitimate invoice (a missing crediteur at the
+      //           accountant = its own financial-truth error). So we stop honestly
+      //           and let the human review (the invoice is held in the queue).
+      //
+      // 🔴 ASYMMETRY NOTE: "wide catch is safe" held ONLY because the number was
+      // the precision anchor. With the number gone, going wider (total+date) is
+      // DANGEROUS, not safer — it can block a real invoice. So the no-number path
+      // is deliberately CONSERVATIVE: reliable vendor or nothing.
+      //
+      // 🔴 KNOWN LIMITS (named, not hidden):
+      //   · No stored vendor KvK/BTW → vendor anchor is name-only; "same vendor,
+      //     different name" stays a gap → BRIDGE-ALIAS.
+      //   · Automated semantic fallback is EMAIL-path only. The upload path has
+      //     byte-hash + human review (it writes 'processing'); a shared dedup
+      //     function for both paths is deferred (Option B) until real data shows
+      //     it recurring.
+      //
+      // Cross-path on email: scoped to receiver_id + direction='incoming' (not
+      // source='email'), so an email copy of a manually-uploaded invoice matches.
+
+      // [SAFECORE-GAP] carried to the insert when we cannot dedup an invoice —
+      // recorded in field_confidence._safecore for the audit trail / human review.
+      let dedupNote: { dedup: string; reason: string } | null = null
+
+      if (typeof classification.totalIncBtw === 'number') {
+        const numberIsReal = !isPlaceholderInvoiceNumber(classification.invoiceNumber)
+
+        // Real date (AI-extracted), used as an extra filter when available.
         const hasRealDate =
           typeof classification.invoiceDate === 'string' &&
           /^\d{4}-\d{2}-\d{2}/.test(classification.invoiceDate)
@@ -977,57 +1037,114 @@ export async function syncUserEmails(userId: string): Promise<{
           ? new Date(classification.invoiceDate as string).toISOString().split('T')[0]
           : null
 
-        let contentQuery = supabase
-          .from('invoices')
-          .select('id, source_message_id, invoice_date, client_name')
-          .eq('receiver_id', userId)
-          .eq('direction', 'incoming')
-          .eq('invoice_number', classification.invoiceNumber)
-          .eq('total_inc_btw', classification.totalIncBtw)
+        // Decide the key tier.
+        type DedupTier =
+          | { kind: 'number' }
+          | { kind: 'vendor' }
+          | { kind: 'none'; reason: string }
+        let tier: DedupTier
 
-        // Add the date filter ONLY when we have a real date on the incoming one.
-        // (A stored invoice with a NULL date will simply not match this filter,
-        // which is acceptable — number+total alone already flags it via the
-        // no-date branch on the NEXT arrival; we never widen by dropping the
-        // filter retroactively.)
-        if (realDateIso) {
-          contentQuery = contentQuery.eq('invoice_date', realDateIso)
+        if (numberIsReal) {
+          tier = { kind: 'number' }
+        } else if (isReliableVendor(classification.vendor)) {
+          tier = { kind: 'vendor' }
+        } else {
+          tier = {
+            kind: 'none',
+            reason:
+              'geen betrouwbaar factuurnummer en geen betrouwbare afzender — duplicaatcontrole niet mogelijk',
+          }
         }
 
-        const { data: existingByContent } = await contentQuery.limit(1)
-
-        if (existingByContent && existingByContent.length > 0) {
-          const original = existingByContent[0]
-
-          // [BOEK-SAFECORE] Audit the blocked duplicate — truth in the log,
-          // silence in the UI (we don't over-claim "all duplicates caught").
-          // entityId = the ORIGINAL invoice (the duplicate is never created);
-          // newValue carries the REJECTED candidate's identity. Mirrors the
-          // existing 'document.duplicate_blocked' pattern. Non-fatal.
+        if (tier.kind === 'none') {
+          // Un-dedupable: do NOT run a loose total+date match (would risk
+          // blocking a legitimate invoice). Record it; the human reviews it in
+          // the verify queue. Non-fatal audit.
+          dedupNote = { dedup: 'un-dedupable', reason: tier.reason }
           await logAuditAction({
             userId,
             action: 'invoice.duplicated',
             entityType: 'invoice',
-            entityId: original.id,
+            entityId: undefined,
             newValue: {
-              reason: 'semantic_duplicate_blocked',
-              invoice_number: classification.invoiceNumber,
+              reason: 'un_dedupable',
+              detail: tier.reason,
+              invoice_number: classification.invoiceNumber ?? null,
               total_inc_btw: classification.totalIncBtw,
               rejected_vendor: classification.vendor ?? null,
-              rejected_message_id: dedupKey,
-              original_message_id: original.source_message_id ?? null,
-              date_matched: Boolean(realDateIso),
+              message_id: dedupKey,
             },
           })
-
-          console.log('[BOEK-SAFECORE] Skipping semantic duplicate', {
-            invoiceNumber: classification.invoiceNumber,
+          console.log('[SAFECORE-GAP] Invoice un-dedupable — held for human review', {
             totalIncBtw: classification.totalIncBtw,
-            dateMatched: Boolean(realDateIso),
-            existingMessageId: original.source_message_id,
-            newMessageId: dedupKey,
+            messageId: dedupKey,
           })
-          continue
+          // Fall through to insert — we do NOT skip a possibly-real invoice.
+        } else {
+          // Build the query for the chosen anchor (number or vendor).
+          let contentQuery = supabase
+            .from('invoices')
+            .select('id, source_message_id, invoice_date, client_name, invoice_number')
+            .eq('receiver_id', userId)
+            .eq('direction', 'incoming')
+            .eq('total_inc_btw', classification.totalIncBtw)
+
+          if (tier.kind === 'number') {
+            contentQuery = contentQuery.eq('invoice_number', classification.invoiceNumber as string)
+          } else {
+            // vendor tier: client_name on an incoming invoice IS the vendor.
+            // ilike handles case-insensitivity; we pass the RAW (trimmed) vendor
+            // so we don't fight the stored formatting. 🔴 Limit: ilike is exact
+            // apart from case — it does NOT collapse internal whitespace, so
+            // "Atapack  B.V." (two spaces) won't match "Atapack B.V." (one).
+            // Full normalization needs a DB function; deferred (this is the rare
+            // placeholder+reliable-vendor fallback). The date filter below adds
+            // the precision that makes this acceptable. Stronger vendor matching
+            // is BRIDGE-ALIAS territory.
+            contentQuery = contentQuery.ilike('client_name', (classification.vendor ?? '').trim())
+          }
+
+          // Date filter: applied when we have a real date. For the vendor tier
+          // it's especially valuable (tightens a looser key). For the number
+          // tier it's an extra precision filter (number already anchors).
+          if (realDateIso) {
+            contentQuery = contentQuery.eq('invoice_date', realDateIso)
+          }
+
+          const { data: existingByContent } = await contentQuery.limit(1)
+
+          if (existingByContent && existingByContent.length > 0) {
+            const original = existingByContent[0]
+
+            // [BOEK-SAFECORE] Audit the blocked duplicate — truth in the log,
+            // silence in the UI. entityId = the ORIGINAL (the duplicate is never
+            // created); newValue carries the REJECTED candidate. Non-fatal.
+            await logAuditAction({
+              userId,
+              action: 'invoice.duplicated',
+              entityType: 'invoice',
+              entityId: original.id,
+              newValue: {
+                reason: 'semantic_duplicate_blocked',
+                matched_on: tier.kind, // 'number' | 'vendor'
+                invoice_number: classification.invoiceNumber ?? null,
+                total_inc_btw: classification.totalIncBtw,
+                rejected_vendor: classification.vendor ?? null,
+                rejected_message_id: dedupKey,
+                original_message_id: original.source_message_id ?? null,
+                date_matched: Boolean(realDateIso),
+              },
+            })
+
+            console.log('[BOEK-SAFECORE] Skipping semantic duplicate', {
+              matchedOn: tier.kind,
+              totalIncBtw: classification.totalIncBtw,
+              dateMatched: Boolean(realDateIso),
+              existingMessageId: original.source_message_id,
+              newMessageId: dedupKey,
+            })
+            continue
+          }
         }
       }
 
@@ -1123,15 +1240,23 @@ export async function syncUserEmails(userId: string): Promise<{
       // pre-SAFECORE behaviour for clean invoices — no empty {} churn).
       const aiConfidence = classification.fieldConfidence ?? null
       let fieldConfidenceValue: Record<string, unknown> | null = aiConfidence
-      if (!verdict.ok) {
+      // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) so
+      // the audit/human-review trail records WHY this invoice skipped dedup.
+      if (!verdict.ok || dedupNote) {
+        const safecore: Record<string, unknown> = {}
+        if (!verdict.ok) {
+          safecore.arithmetic_ok = false
+          safecore.reason = verdict.reason
+          safecore.flags = verdict.flags
+          safecore.held_at = new Date().toISOString()
+        }
+        if (dedupNote) {
+          safecore.dedup = dedupNote.dedup
+          safecore.dedup_reason = dedupNote.reason
+        }
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),
-          _safecore: {
-            arithmetic_ok: false,
-            reason: verdict.reason,
-            flags: verdict.flags,
-            held_at: new Date().toISOString(),
-          },
+          _safecore: safecore,
         }
       }
 

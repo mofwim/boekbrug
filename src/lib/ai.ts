@@ -457,10 +457,22 @@ Vendor (sender) extraction rules — read carefully:
   BTW number appear as the party to be PAID — not the party being billed.
 
 Invoice number extraction rules:
-- Look for labels: "Factuurnummer", "Factuur nr", "Invoice no", "Nr", "Referentie".
-- IGNORE page indicators: "Pagina", "Page", "Blad", "Pag." — a value like "1-1", "1 van 2"
-  or "Pagina 1/3" is a PAGE number, NOT the invoice number. Never return these as invoice_number.
-- If the only number-like value found is a page indicator, set invoice_number to null.
+- The factuurnummer is the invoice's OWN identifier — usually the longest
+  standalone number on the document (often 6+ digits, e.g. 26302362), printed
+  next to a label like "Factuurnummer", "Factuur nr", "Invoice no", "Nr",
+  "Referentie". Prefer the value directly tied to such a label.
+- Do NOT confuse it with other numbers on the page:
+  · PAGE indicators ("Pagina", "Page", "Blad", "Pag.") — a value like "1-1",
+    "1 van 2", or "Pagina 1/3" is a PAGE number, never the invoice number.
+  · Debiteurnummer / Klantnummer (customer number).
+  · Ordernummer / Bestelnummer (order number).
+  · Dates, KVK, BTW, or IBAN numbers.
+- In crowded tables (many numbers close together), the page indicator often
+  sits near "Pagina"; the real factuurnummer is the longer number tied to the
+  invoice-number label, NOT the small "1-1"-style page value next to "Pagina".
+- If you genuinely cannot find a clear invoice number (only a page/customer/
+  order number is present), set invoice_number to null — never substitute one
+  of those other numbers.
 
 Rules for is_invoice = false:
 - Marketing emails, newsletters, ads
