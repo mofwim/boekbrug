@@ -28,6 +28,9 @@ import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.
 // [BOEK-028] localStorage key — kept as-is (fragile by design, deferred to DB later)
 const LAST_CLIENT_KEY = 'last_client_id'
 
+// [BRIDGE-NOTIF] STATUS_COLOR / STATUS_LABEL / TODO_ICON are retained but no
+// longer referenced — the readiness chip + 'Vandaag te doen' display were removed
+// (no honest backend yet). Kept intact so the UI returns cleanly later.
 const STATUS_COLOR: Record<string, string> = {
   klaar:       '#34A853',
   bijna_klaar: '#FBBC04',
@@ -85,6 +88,12 @@ function timeSalutation(): string {
 // ─────────────────────────────────────────────────────────
 
 export default function AccountantHome({ profile, overview, clients, todos, notifications: initialNotifs, unreadMessages: initialUnread }: Props) {
+  // [BRIDGE-NOTIF] overview + todos are intentionally retained but not rendered
+  // (display removed until a readiness/to-do backend exists). Referenced here so
+  // the kept props don't trip no-unused-vars. Remove these two lines when the
+  // readiness UI returns.
+  void overview
+  void todos
   const router = useRouter()
   const supabase = createClient()
 
@@ -200,7 +209,10 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
         </h1>
 
         {/* ── Quick navigation ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+        {/* [BRIDGE-NOTIF] 'Alle bestanden' card removed (flat file-pile contradicts
+            the client-by-client workflow). Route/page untouched — reachable via
+            werkplek. werkplek now full-width. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
           <button
             onClick={() => router.push('/dashboard/accountant/werkplek')}
             style={{
@@ -219,91 +231,16 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             </div>
             <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
           </button>
-
-          <button
-            onClick={() => router.push('/dashboard/bestanden')}
-            style={{
-              backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
-              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
-              cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
-              minHeight: 56,
-            }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#FFFFFF')}
-          >
-            <span style={{ fontSize: 20 }}>📁</span>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Alle bestanden</p>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>Van al je klanten</p>
-            </div>
-            <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
-          </button>
         </div>
 
-        {/* ── 2. Three numbers ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-          {[
-            { value: overview.total_clients,     label: 'Klanten totaal' },
-            { value: overview.ready_for_quarter,  label: 'Klaar voor KW' },
-            { value: overview.waiting,            label: 'Wacht op stukken' },
-          ].map(({ value, label }) => (
-            <div
-              key={label}
-              style={{
-                backgroundColor: '#FFFFFF',
-                border: '1px solid #E0E0E0',
-                borderRadius: 8,
-                padding: '16px 12px',
-                textAlign: 'center',
-              }}
-            >
-              <p style={{ fontSize: 28, fontWeight: 700, color: '#202124', margin: '0 0 4px' }}>{value}</p>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0, lineHeight: 1.3 }}>{label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* ── 3. Vandaag te doen ── */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 16 }}>⚡</span>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Vandaag te doen</h2>
-          </div>
-
-          {todos.length === 0 ? (
-            <p style={{ fontSize: 14, color: '#34A853', padding: '16px', margin: 0, fontWeight: 500 }}>
-              Alles bijgewerkt ✓
-            </p>
-          ) : (
-            <div>
-              {todos.map((todo, idx) => (
-                <button
-                  key={`${todo.client_id}-${todo.type}-${idx}`}
-                  onClick={() => openClient(todo.client_id)}
-                  style={{
-                    width: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    padding: '12px 16px',
-                    background: 'none',
-                    border: 'none',
-                    borderBottom: idx < todos.length - 1 ? '1px solid #F1F3F4' : 'none',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
-                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-                >
-                  <span style={{ fontSize: 16, flexShrink: 0 }}>{TODO_ICON[todo.type]}</span>
-                  <span style={{ fontSize: 14, color: '#202124', flex: 1 }}>{todo.description}</span>
-                  <span style={{ fontSize: 12, color: '#1A73E8', flexShrink: 0, fontWeight: 600 }}>→</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* [BRIDGE-NOTIF] Hidden until a readiness/to-do backend exists.
+            The 3-number bar (Klanten totaal / Klaar voor KW / Wacht op stukken)
+            and the 'Vandaag te doen' feed implied a system that had inspected
+            every client and computed readiness/missing-docs — it had not. Showing
+            placeholder counts is a lie in a financial-truth system, so the DISPLAY
+            is removed. The `overview` and `todos` props/queries are left intact
+            (page.tsx still fetches them) and this UI returns once the backend is
+            real. Same pattern as the deferred UBL download / decorative pay field. */}
 
         {/* ── 4. Mijn klanten ── */}
         <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
@@ -349,11 +286,10 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                   onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
                   onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
                 >
-                  {/* Status dot */}
-                  <div style={{
-                    width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-                    backgroundColor: STATUS_COLOR[client.status] ?? '#E0E0E0',
-                  }} />
+                  {/* [BRIDGE-NOTIF] Status dot + chip removed — same readiness
+                      signal that has no honest backend yet. Name + email + arrow
+                      stay. client.status field is untouched (returns with the
+                      readiness backend). */}
 
                   {/* Name + email */}
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -365,18 +301,8 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                     </p>
                   </div>
 
-                  {/* Status chip + arrow */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 500,
-                      padding: '2px 8px', borderRadius: 4,
-                      backgroundColor: client.status === 'klaar' ? '#CEEAD6' : client.status === 'bijna_klaar' ? '#FEF7E0' : '#FCE8E6',
-                      color: client.status === 'klaar' ? '#137333' : client.status === 'bijna_klaar' ? '#EA8600' : '#C5221F',
-                    }}>
-                      {STATUS_LABEL[client.status]}
-                    </span>
-                    <span style={{ fontSize: 13, color: '#1A73E8', fontWeight: 600 }}>→</span>
-                  </div>
+                  {/* Arrow */}
+                  <span style={{ fontSize: 13, color: '#1A73E8', fontWeight: 600, flexShrink: 0 }}>→</span>
                 </button>
               ))}
             </div>
