@@ -1,13 +1,23 @@
 // app/api/export/ubl/route.ts
 // [BOEK-020] UBL 2.1 single-invoice export — download route — June 2026
+// [BOEK-020] Phase 3: accountant dual-path authorization — June 2026
 //
 // GET /api/export/ubl?invoiceId={uuid}
 //   → returns a UBL 2.1 XML file (Content-Disposition: attachment)
 //
-// Scope (Phase 2): ZZP'er exports their OWN invoice (sender_id = auth.uid()).
-// Session client + RLS only — NO service_role (read-only, RLS already scopes rows).
-// Accountant branch (?clientId=) is Phase 3; RLS already permits it
-// (invoice_lines_select_accountant + profiles_select_accountant_clients, paid only).
+// Authorization (dual-path):
+//   - ZZP'er exports their OWN invoice (sender_id = auth.uid()), OR
+//   - a linked accountant exports their client's invoice (accountant_clients link).
+// Session client + RLS only — NO service_role / pipeline client.
+//   UBL is generated from DB data (invoices + invoice_lines + profiles); it never
+//   touches Storage, so no signed-URL/pipeline workaround is needed.
+//   RLS already scopes reads: invoices_accountant_read (shared/paid + linked),
+//   invoice_lines_select_accountant, profiles_select_accountant_clients.
+//
+// Supplier anchor: the UBL AccountingSupplierParty = the invoice SELLER = sender.
+//   The supplier profile is loaded for the SELLER (ownerId), NOT the current user —
+//   otherwise an accountant export would list the accountant as the seller.
+//   Incoming invoices (ZZP'er = buyer) are not UBL-exportable from this side.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -22,7 +32,7 @@ import {
 
 // [BOEK-020] Single-line SELECT literals — avoids GenericStringError (see BOEK-014)
 const INVOICE_SELECT =
-  "id, sender_id, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number" as const;
+  "id, sender_id, direction, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number" as const;
 
 const LINES_SELECT =
   "description, quantity, unit_price, btw_rate, line_total" as const;
@@ -65,12 +75,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invoiceId ontbreekt" }, { status: 400 });
   }
 
-  // ── Invoice (scoped to the ZZP'er as sender; RLS also enforces) ──
+  // ── Invoice (by id; RLS still applies: own invoice, or accountant on a
+  //    shared/paid client invoice) ──
   const { data: invoiceRow, error: invErr } = await supabase
     .from("invoices")
     .select(INVOICE_SELECT)
     .eq("id", invoiceId)
-    .eq("sender_id", user.id)
     .maybeSingle();
 
   if (invErr) {
@@ -80,33 +90,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
   }
 
-  // ── Lines ──
-  const { data: lineRows, error: linesErr } = await supabase
-    .from("invoice_lines")
-    .select(LINES_SELECT)
-    .eq("invoice_id", invoiceId)
-    .order("id", { ascending: true });
-
-  if (linesErr) {
-    return NextResponse.json({ error: linesErr.message }, { status: 500 });
-  }
-
-  // ── Supplier = the ZZP'er's own profile ──
-  const { data: profileRow, error: profErr } = await supabase
-    .from("profiles")
-    .select(PROFILE_SELECT)
-    .eq("id", user.id)
-    .single();
-
-  if (profErr || !profileRow) {
-    return NextResponse.json(
-      { error: "Profielgegevens niet gevonden" },
-      { status: 500 }
-    );
-  }
-
-  // ── Map DB rows → pure generator inputs ──
   const inv = invoiceRow as unknown as {
+    sender_id: string | null;
+    direction: string | null;
     invoice_number: string | null;
     invoice_date: string | null;
     due_date: string | null;
@@ -121,6 +107,62 @@ export async function GET(req: NextRequest) {
     client_btw_number: string | null;
   };
 
+  // ── UBL supplier = the invoice SELLER = sender. Incoming invoices have the
+  //    ZZP'er as buyer, so they are not UBL-exportable from this side. ──
+  const ownerId = inv.sender_id;
+  if (inv.direction === "incoming" || !ownerId) {
+    return NextResponse.json(
+      {
+        error: "UBL-export is alleen beschikbaar voor uitgaande facturen.",
+        code: "INCOMING_NOT_SUPPORTED",
+      },
+      { status: 422 }
+    );
+  }
+
+  // ── Dual-path authorization: owner (ZZP'er) OR a linked accountant ──
+  let authorized = ownerId === user.id;
+  if (!authorized) {
+    const { data: link } = await supabase
+      .from("accountant_clients")
+      .select("id")
+      .eq("accountant_id", user.id)
+      .eq("zzper_id", ownerId)
+      .maybeSingle();
+    authorized = !!link;
+  }
+  if (!authorized) {
+    // 404 (not 403) — do not reveal existence of another user's invoice.
+    return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
+  }
+
+  // ── Lines (RLS: own, or accountant on paid client invoice) ──
+  const { data: lineRows, error: linesErr } = await supabase
+    .from("invoice_lines")
+    .select(LINES_SELECT)
+    .eq("invoice_id", invoiceId)
+    .order("id", { ascending: true });
+
+  if (linesErr) {
+    return NextResponse.json({ error: linesErr.message }, { status: 500 });
+  }
+
+  // ── Supplier = the SELLER's profile (ownerId), NOT the current user.
+  //    Critical: when an accountant exports, the supplier must be the ZZP'er. ──
+  const { data: profileRow, error: profErr } = await supabase
+    .from("profiles")
+    .select(PROFILE_SELECT)
+    .eq("id", ownerId)
+    .single();
+
+  if (profErr || !profileRow) {
+    return NextResponse.json(
+      { error: "Profielgegevens niet gevonden" },
+      { status: 500 }
+    );
+  }
+
+  // ── Map DB rows → pure generator inputs ──
   const header: UblInvoiceHeader = {
     invoice_number: inv.invoice_number,
     invoice_date: inv.invoice_date,
@@ -161,20 +203,15 @@ export async function GET(req: NextRequest) {
     warnings = result.warnings;
   } catch (err) {
     if (err instanceof UblValidationError) {
-      // 422: request understood, but data isn't ready for a valid UBL file.
       return NextResponse.json(
         { error: DUTCH_ERROR[err.code], code: err.code },
         { status: 422 }
       );
     }
     console.error("[BOEK-020] UBL generation error:", err);
-    return NextResponse.json(
-      { error: "UBL genereren mislukt" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "UBL genereren mislukt" }, { status: 500 });
   }
 
-  // Cross-check diagnostics — non-fatal. Surface in Vercel Runtime Logs.
   if (warnings.length > 0) {
     console.warn(`[BOEK-020] UBL warnings for invoice ${invoiceId}:`, warnings);
   }
