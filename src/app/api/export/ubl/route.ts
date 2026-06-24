@@ -40,20 +40,29 @@ const LINES_SELECT =
 const PROFILE_SELECT =
   "company_name, full_name, kvk_number, btw_number, iban, address, postal_code, city" as const;
 
-// [BOEK-020] Map generator error codes → Dutch user messages (UI text in Dutch)
-const DUTCH_ERROR: Record<UblErrorCode, string> = {
-  SUPPLIER_MISSING_KVK:
-    "Vul eerst je KVK- en BTW-nummer in bij je gegevens voordat je UBL exporteert.",
-  SUPPLIER_MISSING_BTW:
-    "Vul eerst je KVK- en BTW-nummer in bij je gegevens voordat je UBL exporteert.",
-  SUPPLIER_MISSING_NAME:
-    "Vul eerst je bedrijfs- of persoonsnaam in bij je gegevens voordat je UBL exporteert.",
-  NO_LINES:
-    "Deze factuur heeft geen factuurregels en kan niet als UBL geëxporteerd worden.",
-  MISSING_INVOICE_NUMBER:
-    "Deze factuur heeft nog geen factuurnummer. Verstuur de factuur eerst.",
-  MISSING_INVOICE_DATE: "Deze factuur heeft geen geldige factuurdatum.",
-};
+// [BOEK-020] Map generator error codes → Dutch user messages (UI text in Dutch).
+// Context-aware: when an accountant exports a client's invoice, missing seller
+// data belongs to the CLIENT, so the message must address that (the accountant
+// cannot edit the client's profile).
+function dutchError(code: UblErrorCode, isOwner: boolean): string {
+  switch (code) {
+    case "SUPPLIER_MISSING_KVK":
+    case "SUPPLIER_MISSING_BTW":
+      return isOwner
+        ? "Vul eerst je KVK- en BTW-nummer in bij je gegevens voordat je UBL exporteert."
+        : "De klant heeft nog geen KVK-/BTW-nummer ingevuld. UBL-export is daardoor niet mogelijk.";
+    case "SUPPLIER_MISSING_NAME":
+      return isOwner
+        ? "Vul eerst je bedrijfs- of persoonsnaam in bij je gegevens voordat je UBL exporteert."
+        : "De klant heeft nog geen bedrijfs- of persoonsnaam ingevuld. UBL-export is daardoor niet mogelijk.";
+    case "NO_LINES":
+      return "Deze factuur heeft geen bedragen en kan niet als UBL geëxporteerd worden.";
+    case "MISSING_INVOICE_NUMBER":
+      return "Deze factuur heeft nog geen factuurnummer. Verstuur de factuur eerst.";
+    case "MISSING_INVOICE_DATE":
+      return "Deze factuur heeft geen geldige factuurdatum.";
+  }
+}
 
 /** Make a filesystem-safe filename fragment from the invoice number. */
 function safeFilenamePart(invoiceNumber: string | null): string {
@@ -204,7 +213,7 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     if (err instanceof UblValidationError) {
       return NextResponse.json(
-        { error: DUTCH_ERROR[err.code], code: err.code },
+        { error: dutchError(err.code, ownerId === user.id), code: err.code },
         { status: 422 }
       );
     }

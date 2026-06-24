@@ -143,6 +143,37 @@ function supplierName(s: UblSupplier): string | null {
 }
 
 /**
+ * Resolve the lines to use for the UBL.
+ * If the invoice has real line items, use them. If it has none (e.g. a scanned /
+ * imported invoice where only header totals were extracted) but it does have a
+ * positive ex-BTW total, synthesize ONE summary line from the header totals so
+ * the invoice is still exportable. Amounts stay faithful to the stored totals;
+ * any rounding gap is surfaced as a warning by buildInvoiceUbl().
+ * Returns [] only when there is neither line detail nor a usable total.
+ */
+export function effectiveLines(
+  header: UblInvoiceHeader,
+  lines: UblInvoiceLine[]
+): UblInvoiceLine[] {
+  if (lines && lines.length > 0) return lines;
+  const ex = Number(header.total_ex_btw ?? 0);
+  if (ex > 0) {
+    const btw = Number(header.btw_amount ?? 0);
+    const rate = Math.round((btw / ex) * 100);
+    return [
+      {
+        description: "Factuurbedrag",
+        quantity: 1,
+        unit_price: ex,
+        btw_rate: rate,
+        line_total: ex,
+      },
+    ];
+  }
+  return [];
+}
+
+/**
  * Validate inputs without throwing — useful for the UI to pre-check
  * and decide whether to show/enable the export button.
  */
@@ -156,7 +187,8 @@ export function validateUblInputs(
   if (!supplier.btw_number?.trim()) return { ok: false, code: "SUPPLIER_MISSING_BTW" };
   if (!header.invoice_number?.trim()) return { ok: false, code: "MISSING_INVOICE_NUMBER" };
   if (!toUblDate(header.invoice_date)) return { ok: false, code: "MISSING_INVOICE_DATE" };
-  if (!lines || lines.length === 0) return { ok: false, code: "NO_LINES" };
+  // NO_LINES only when there is neither line detail nor usable header totals.
+  if (effectiveLines(header, lines).length === 0) return { ok: false, code: "NO_LINES" };
   return { ok: true };
 }
 
@@ -210,8 +242,14 @@ export function buildInvoiceUbl(
   const issueDate = toUblDate(header.invoice_date)!; // validated
   const dueDate = toUblDate(header.due_date);
 
+  // Use real line items, or a synthesized summary line for header-only invoices.
+  const effLines = effectiveLines(header, lines);
+  if (lines.length === 0 && effLines.length > 0) {
+    warnings.push("No invoice_lines — synthesized a single summary line from header totals.");
+  }
+
   // Derive totals from lines (internal consistency over stored header).
-  const groups = groupByRate(lines);
+  const groups = groupByRate(effLines);
   const lineExtensionTotal = round2(groups.reduce((s, g) => s + g.taxable, 0));
   const totalTax = round2(groups.reduce((s, g) => s + g.tax, 0));
   const taxInclusive = round2(lineExtensionTotal + totalTax);
@@ -311,7 +349,7 @@ export function buildInvoiceUbl(
   lmt.ele(NS.cbc, "PayableAmount", { currencyID: EUR }).txt(money(taxInclusive));
 
   // ── InvoiceLine (1..n) ──
-  lines.forEach((l, i) => {
+  effLines.forEach((l, i) => {
     const rate = Number(l.btw_rate ?? 0);
     const ex = round2(Number(l.line_total ?? 0));
     const line = root.ele(NS.cac, "InvoiceLine");
