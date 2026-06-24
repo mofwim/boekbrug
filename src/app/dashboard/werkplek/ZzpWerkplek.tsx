@@ -5,6 +5,7 @@
 // Moved here so werkplek/page.tsx can be a server component with role-based routing.
 
 import { useRouter } from 'next/navigation'
+import IntakeButton from '@/components/intake/IntakeButton'
 
 const M3 = {
   primary: '#1A73E8', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
@@ -45,6 +46,8 @@ export default function ZzpWerkplek() {
 
       <main style={{ maxWidth: 480, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* [SMART-INTAKE-B] Bon/factuur toevoegen — foto of bestand */}
+          <IntakeButton variant="card" />
           {ITEMS.map(item => (
             <button
               key={item.href}

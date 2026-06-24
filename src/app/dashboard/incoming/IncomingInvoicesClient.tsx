@@ -12,7 +12,7 @@
 // - "Negeer" → confirmation → archive (recoverable)
 // - Restore ignored invoices → back to the verification queue
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
 import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
@@ -1117,15 +1117,18 @@ function DetailRow({ label, value, bold }: { label: string; value: string; bold?
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // [SMART-INTAKE-B] separate camera input (capture) alongside the file input
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (file: File) => {
     if (uploading) return;
     const okType =
       file.type === "application/pdf" ||
       file.type.startsWith("image/") ||
-      file.name.toLowerCase().endsWith(".pdf");
+      file.name.toLowerCase().endsWith(".pdf") ||
+      /\.(xml|mt940|sta|camt|053|txt)$/i.test(file.name);
     if (!okType) {
-      alert("Alleen PDF of afbeelding toegestaan");
+      alert("Alleen PDF, afbeelding of bankafschrift toegestaan");
       return;
     }
 
@@ -1133,12 +1136,14 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/email/upload", { method: "POST", body: formData });
+      // [SMART-INTAKE-B] Unified router: classifies invoice / receipt / bank /
+      // document and routes accordingly (was /api/email/upload — invoice-only).
+      const res = await fetch("/api/intake", { method: "POST", body: formData });
+      const data = await res.json();
       if (res.ok) {
         onUploaded();
         window.location.reload();
       } else {
-        const data = await res.json();
         alert(data.error || "Upload mislukt");
       }
     } catch {
@@ -1156,8 +1161,38 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
         }}
       >
-        Handmatig uploaden
+        Toevoegen
       </div>
+
+      {/* [SMART-INTAKE-B] Camera button — fast path for the cashier (10 sec) */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleFile(file);
+          e.currentTarget.value = "";
+        }}
+      />
+      <button
+        onClick={() => !uploading && cameraInputRef.current?.click()}
+        disabled={uploading}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          width: "100%", padding: "16px", borderRadius: 16, marginBottom: 10,
+          background: uploading ? "#c7c7cc" : "#007aff", color: "#fff",
+          border: "none", fontWeight: 700, fontSize: 16,
+          cursor: uploading ? "not-allowed" : "pointer",
+        }}
+      >
+        <span style={{ fontSize: 20 }}>📷</span>
+        {uploading ? "Verwerken…" : "Foto maken"}
+      </button>
+
+      {/* File / drag-drop (PDF, image, bank statement) */}
       <label
         style={{
           display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
@@ -1177,7 +1212,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       >
         <input
           type="file"
-          accept=".pdf,image/*"
+          accept=".pdf,image/*,.xml,.mt940,.sta,.camt,.053,.txt"
           style={{ display: "none" }}
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -1188,7 +1223,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         <span style={{ fontSize: 14, color: uploading ? "#8e8e93" : "#007aff", fontWeight: 600 }}>
           {uploading ? "Verwerken…" : "Kies bestand of sleep hier naartoe"}
         </span>
-        <span style={{ fontSize: 12, color: "#8e8e93" }}>PDF of afbeelding</span>
+        <span style={{ fontSize: 12, color: "#8e8e93" }}>PDF, afbeelding of bankafschrift</span>
       </label>
     </div>
   );

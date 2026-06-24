@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '../_shared'
 import { generateInvoiceFromPrompt } from '@/lib/ai'
+import IntakeButton from '@/components/intake/IntakeButton'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -126,6 +127,9 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/invoice/new')}
           />
 
+          {/* [SMART-INTAKE-B] Bon/factuur toevoegen — foto of bestand → AI sorteert */}
+          <IntakeButton variant="card" />
+
           {/* 2. Mijn facturen */}
           <ActionCard
             icon="description" iconBg="#00897B" iconColor="#fff"
@@ -226,6 +230,8 @@ export function ZzpDashboard({ profile }: { profile: any }) {
 
       {/* [BOEK-029] FAB — + Nieuwe factuur — Material You */}
       <Fab onClick={() => router.push('/dashboard/invoice/new')} />
+      {/* [SMART-INTAKE-B] FAB — Bon/factuur fotograferen of uploaden (above) */}
+      <IntakeButton variant="fab" />
     </div>
   )
 }
