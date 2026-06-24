@@ -26,6 +26,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useParentPath } from '@/lib/navigation-hooks'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
+// [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
+import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const M3 = {
@@ -82,6 +84,10 @@ interface IncomingRow {
   created_at: string
   document_id: string | null
   pdf_url: string | null
+  // [PAY-SAFE] vendor payment details — to PREPARE a payment (QR / copy).
+  // Null on legacy rows (forward-only extraction) or when the AI didn't find it.
+  vendor_iban: string | null
+  payment_reference: string | null
 }
 
 // Pay confirm context — payment fields only (defense in depth: never amounts)
@@ -119,6 +125,15 @@ export default function IncomingManageClient({
   // [BOEK-004] dialog when a change is blocked because the accountant verwerkt it
   const [verwerktCtx, setVerwerktCtx]   = useState<{ id: string; number: string } | null>(null)
   const [requestSent, setRequestSent]   = useState(false)
+  // [PAY-SAFE] Prepare-payment sheet (QR + copy details). Holds the row to pay.
+  const [prepareCtx, setPrepareCtx]     = useState<IncomingRow | null>(null)
+  // [PAY-SAFE] No-double-pay warning before marking paid. Holds the pending pay
+  // context + the matched already-paid invoice so the owner can decide.
+  const [dupWarn, setDupWarn]           = useState<{
+    ctx: PayCtx
+    match: { invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
+  } | null>(null)
+  const [checkingId, setCheckingId]     = useState<string | null>(null)
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // Lands the user on the exact row: auto-expand, scroll into view, brief highlight.
@@ -153,6 +168,35 @@ export default function IncomingManageClient({
   // Local optimistic patch (no hook — this surface owns its list)
   function patchLocal(id: string, patch: Partial<IncomingRow>) {
     setInvoices(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)))
+  }
+
+  // ── [PAY-SAFE] No-double-pay gate — runs BEFORE the mark-paid dialog ──
+  // Server check (read-only) for an already-paid twin (same vendor + amount,
+  // recent). If found → warn and let the owner decide. If not → open the normal
+  // pay dialog. A failed check NEVER blocks paying (warn-don't-block, and the
+  // check is a convenience, not a guard). 'received' → 'paid' only; an undo
+  // (paid → received) skips the check entirely.
+  async function requestPay(inv: IncomingRow) {
+    const ctx: PayCtx = { id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid' }
+    setCheckingId(inv.id)
+    try {
+      const res = await fetch('/api/incoming/check-paid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: inv.id }),
+      })
+      const data = await res.json()
+      if (res.ok && data.duplicate && data.match) {
+        setDupWarn({ ctx, match: data.match })
+      } else {
+        setPayCtx(ctx) // no twin → normal flow
+      }
+    } catch {
+      // Check failed (network etc.) — never block paying; open the normal dialog.
+      setPayCtx(ctx)
+    } finally {
+      setCheckingId(null)
+    }
   }
 
   // ── Mark paid / undo — session client, PAYMENT FIELDS ONLY ──
@@ -377,16 +421,16 @@ export default function IncomingManageClient({
                         {fmtEur(inv.total_inc_btw)}
                       </p>
 
-                      {/* received → Betaald? */}
+                      {/* received → Betaald? (gated by no-double-pay check) */}
                       {inv.status === 'received' && (
                         <button
                           onClick={e => {
                             e.stopPropagation()
-                            if (processingId === inv.id) return
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid' })
+                            if (processingId === inv.id || checkingId === inv.id) return
+                            requestPay(inv)
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#49454F', display: 'flex', alignItems: 'center', gap: 4 }}>
-                          {processingId === inv.id
+                          {processingId === inv.id || checkingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : 'Betaald?'}
                         </button>
@@ -422,6 +466,16 @@ export default function IncomingManageClient({
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
+                            the QR + copy sheet. No DB write; pure preparation. */}
+                        {inv.status === 'received' && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setPrepareCtx(inv) }}
+                            style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
+                            Betalen
+                          </button>
+                        )}
                         {inv.pdf_url && (
                           <button
                             onClick={e => { e.stopPropagation(); if (pdfLoadingId !== inv.id) openPdf(inv.id) }}
@@ -484,6 +538,51 @@ export default function IncomingManageClient({
               )}
               <button onClick={() => setVerwerktCtx(null)} style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
                 Sluiten
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── [PAY-SAFE] Prepare-payment sheet (QR + copy details) ── */}
+      {prepareCtx && (
+        <PreparePaymentSheet
+          inv={prepareCtx}
+          onClose={() => setPrepareCtx(null)}
+          onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
+        />
+      )}
+
+      {/* ── [PAY-SAFE] No-double-pay warning ── */}
+      {dupWarn && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => setDupWarn(null)}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.warning }}>warning</span>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>Mogelijk al betaald</h3>
+            </div>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 8px' }}>
+              Je hebt mogelijk al een factuur van dezelfde leverancier voor hetzelfde bedrag betaald:
+            </p>
+            <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#1C1B1F' }}>
+              <div style={{ fontWeight: 600 }}>{dupWarn.match.client_name ?? '—'}</div>
+              <div style={{ color: '#5F6368', marginTop: 2 }}>
+                {dupWarn.match.invoice_number ? `Factuur ${dupWarn.match.invoice_number} · ` : ''}
+                {fmtEur(dupWarn.match.total_inc_btw)}
+                {dupWarn.match.payment_date ? ` · betaald ${fmtDate(dupWarn.match.payment_date)}` : ''}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
+              <button
+                onClick={() => { const c = dupWarn.ctx; setDupWarn(null); setPayCtx(c) }}
+                style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.warning, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+                Toch markeren als betaald
+              </button>
+              <button onClick={() => setDupWarn(null)} style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+                Annuleren
               </button>
             </div>
           </div>
@@ -572,6 +671,135 @@ function EmptyState() {
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
       <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 4, fontFamily: FONT }}>Geen inkoopfacturen</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>Bevestigde inkoopfacturen verschijnen hier</p>
+    </div>
+  )
+}
+
+// ─── [PAY-SAFE] Prepare-payment sheet — QR + copy details ─────────────────────
+// PURE preparation. Generates an EPC069-12 QR (client-side, the IBAN never
+// leaves the browser) the owner scans with their OWN bank app, plus copyable
+// IBAN / amount / reference for mobile (the cashier's primary case). NO DB
+// write, NO money movement. Closing it leaves the invoice exactly as it was
+// ('received') — preparing then cancelling has zero effect, by design.
+function PreparePaymentSheet({
+  inv,
+  onClose,
+  onCopied,
+}: {
+  inv: IncomingRow
+  onClose: () => void
+  onCopied: (what: string) => void
+}) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [qrError, setQrError] = useState<string | null>(null)
+
+  const amount = inv.total_inc_btw ?? 0
+  // Reference: betalingskenmerk when present, else the invoice number (the EPC
+  // remittance field — what the owner quotes when paying).
+  const reference = (inv.payment_reference ?? inv.invoice_number ?? '').trim()
+  const ibanOk = isValidIban(inv.vendor_iban)
+  const ibanDisplay = (inv.vendor_iban ?? '').replace(/(.{4})/g, '$1 ').trim()
+
+  useEffect(() => {
+    let cancelled = false
+    async function gen() {
+      const built = buildEpcQrPayload({
+        iban: inv.vendor_iban ?? '',
+        name: inv.client_name ?? '',
+        amount,
+        reference,
+      })
+      if (!built.ok || !built.payload) {
+        if (!cancelled) setQrError(built.error ?? 'Geen QR mogelijk')
+        return
+      }
+      try {
+        // Dynamic import keeps qrcode out of the main bundle until needed.
+        const QR = await import('qrcode')
+        const url = await QR.toDataURL(built.payload, { margin: 1, width: 240 })
+        if (!cancelled) setQrDataUrl(url)
+      } catch {
+        if (!cancelled) setQrError('QR kon niet worden gegenereerd')
+      }
+    }
+    gen()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inv.id])
+
+  async function copy(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      onCopied(label)
+    } catch {
+      onCopied(label) // best-effort; clipboard may be blocked in some contexts
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#FFFBFE', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#1C1B1F', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>Betalen</p>
+        <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
+          Scan met je bankapp of kopieer de gegevens. Je betaalt in je eigen bank.
+        </p>
+
+        {ibanOk ? (
+          <>
+            {/* QR */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+              {qrDataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={qrDataUrl} alt="Betaal-QR" width={220} height={220} style={{ borderRadius: 12, border: '1px solid #E0E0E0' }} />
+              ) : qrError ? (
+                <div style={{ fontSize: 13, color: M3.error, textAlign: 'center', padding: 20 }}>{qrError}</div>
+              ) : (
+                <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9AA0A6' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 32 }}>hourglass_empty</span>
+                </div>
+              )}
+            </div>
+
+            {/* Copy rows */}
+            <CopyRow label="IBAN" value={ibanDisplay} raw={(inv.vendor_iban ?? '')} onCopy={copy} />
+            <CopyRow label="Bedrag" value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
+            {reference && <CopyRow label="Kenmerk" value={reference} raw={reference} onCopy={copy} />}
+            <CopyRow label="Naam" value={inv.client_name ?? '—'} raw={inv.client_name ?? ''} onCopy={copy} />
+          </>
+        ) : (
+          // No valid IBAN → honest fallback, no QR.
+          <div style={{ background: M3.warningContainer, borderRadius: R.md, padding: '14px 16px', marginBottom: 20, fontSize: 13, color: '#7C5800', lineHeight: 1.5 }}>
+            Geen geldig IBAN gevonden op deze factuur. Open de PDF om het rekeningnummer te bekijken en betaal handmatig in je bankapp.
+          </div>
+        )}
+
+        <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
+          Klaar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function CopyRow({ label, value, raw, onCopy }: {
+  label: string
+  value: string
+  raw: string
+  onCopy: (value: string, label: string) => void
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: '#F8F9FA', borderRadius: R.md, marginBottom: 8 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 11, color: '#5F6368', fontWeight: 500, marginBottom: 2 }}>{label}</p>
+        <p style={{ fontSize: 14, fontWeight: 600, color: '#1C1B1F', fontFamily: FONT_NUM, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</p>
+      </div>
+      <button
+        onClick={() => onCopy(raw, label)}
+        aria-label={`Kopieer ${label}`}
+        style={{ background: M3.primaryContainer, border: 'none', borderRadius: R.full, width: 36, height: 36, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.primary }}>content_copy</span>
+      </button>
     </div>
   )
 }
