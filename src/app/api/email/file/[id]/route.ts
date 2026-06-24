@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createPipelineClient } from "@/lib/supabase-pipeline";
 
 // [BOEK-011] Normalize a stored value to a relative storage path.
 // Older invoices may have stored a full signed URL instead of a path.
@@ -85,12 +86,32 @@ export async function GET(
   // [BOEK-011] Normalize — handles both relative paths and legacy full URLs
   const storagePath = toStoragePath(invoice.pdf_url);
 
-  // [BOEK-011] Create a signed URL valid for 5 minutes — enough to open/view
-  const { data: signed, error } = await supabase.storage
+  // [BOEK-011 + ACC-INVOICE-VIEW] Sign with service_role — same reasoning as
+  // /dashboard/brug/page.tsx documents:
+  //
+  // Storage bucket policies are SEPARATE from table RLS. The policy
+  // `documents_read` on storage.objects requires
+  //   (storage.foldername(name))[1] = auth.uid()::text
+  // i.e. only the file's owner can sign it. A linked accountant opening a
+  // client's incoming invoice is authorized at the row level (we just checked
+  // accountant_clients above), but is NOT the storage owner — so a session
+  // client createSignedUrl returns an error and we crashed with 500.
+  //
+  // Switching to the pipeline client here bypasses Storage RLS *only* —
+  // it does NOT widen which rows are accessible, because authorization for
+  // this specific invoice already passed the dual-path check above using the
+  // session client. No path is ever signed without prior ownership/link proof.
+  const pipeline = createPipelineClient();
+  const { data: signed, error } = await pipeline.storage
     .from("documents")
     .createSignedUrl(storagePath, 300);
 
   if (error || !signed) {
+    console.error("[BOEK-011] createSignedUrl failed", {
+      invoiceId: id,
+      storagePath,
+      error,
+    });
     return NextResponse.json(
       { error: "Kon bestand niet openen" },
       { status: 500 }
