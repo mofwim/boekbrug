@@ -226,8 +226,15 @@ export default function InvoiceDetailPage() {
     ? STATUS_CONFIG[invoice.status] || { label: invoice.status, bg: '#F1F3F4', color: '#5F6368' }
     : null
 
+  // [ACC-INVOICE-DETAIL] Owner = the logged-in viewer whose id equals the
+  // invoice's sender_id (the party who issued it). An accountant opening a
+  // client's outgoing invoice has a different id, so isOwner is false for them.
+  // Identity-based, not query-param based: cannot be spoofed or absent.
+  const isOwner = !!invoice && viewerProfile?.id === invoice.sender_id
+
   const canCreateCreditnota =
     invoice &&
+    isOwner && // [ACC-INVOICE-DETAIL] creditnota is an owner-only action, never the accountant
     invoice.invoice_type !== 'creditnota' &&
     invoice.direction !== 'incoming' && // [ACC-INVOICE-VIEW] creditnota only on own outgoing invoices
     CREDITABLE_STATUSES.includes(invoice.status) &&
