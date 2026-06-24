@@ -88,6 +88,10 @@ interface IncomingRow {
   // Null on legacy rows (forward-only extraction) or when the AI didn't find it.
   vendor_iban: string | null
   payment_reference: string | null
+  // [PAY-SAFE-CONFIRM] UI marker: owner generated a payment QR/details.
+  // NOT a financial state — persists across the async pay round-trip so the
+  // "Ik heb betaald" confirm CTA survives prepare → leave → pay → return.
+  payment_prepared_at: string | null
 }
 
 // Pay confirm context — payment fields only (defense in depth: never amounts)
@@ -199,6 +203,30 @@ export default function IncomingManageClient({
     }
   }
 
+  // ── [PAY-SAFE-CONFIRM] Mark a row as "payment prepared" (UI marker only) ──
+  // Written when the prepare sheet closes. NOT a financial state: only the
+  // payment_prepared_at timestamp, never status/amounts. Session client (row
+  // belongs to the receiver). Idempotent — re-preparing just refreshes the ts.
+  // Skipped if the row is already paid (no marker needed) or already marked.
+  async function markPrepared(inv: IncomingRow) {
+    if (inv.status !== 'received' || inv.payment_prepared_at) return
+    const now = new Date().toISOString()
+    patchLocal(inv.id, { payment_prepared_at: now })
+    const { error } = await supabase
+      .from('invoices')
+      .update({ payment_prepared_at: now })
+      .eq('id', inv.id)
+      .eq('receiver_id', profile.id)
+      .eq('direction', 'incoming')
+    if (error) {
+      // Non-fatal: the marker is a convenience. Roll back the local flag so the
+      // UI doesn't claim a state the DB doesn't have.
+      patchLocal(inv.id, { payment_prepared_at: null })
+    }
+  }
+
+  // ── [PAY-SAFE-CONFIRM] Gate Betalen-action through the existing pay flow ──
+
   // ── Mark paid / undo — session client, PAYMENT FIELDS ONLY ──
   async function executePay(ctx: PayCtx) {
     setPayCtx(null); setProcessingId(ctx.id)
@@ -212,10 +240,15 @@ export default function IncomingManageClient({
       patch.payment_method = ctx.paymentMethod ?? 'bank'
       patch.marked_paid_at = new Date().toISOString()
       patch.payment_date   = ctx.paymentDate ?? new Date().toISOString().slice(0, 10)
+      // [PAY-SAFE-CONFIRM] Confirmed paid → the "prepared" marker has served
+      // its purpose; clear it so a paid row never shows "wacht op bevestiging".
+      patch.payment_prepared_at = null
     } else {
       patch.payment_method = null
       patch.marked_paid_at = null
       patch.payment_date   = null
+      // [PAY-SAFE-CONFIRM] Undo paid → back to a clean unpaid row, no stale marker.
+      patch.payment_prepared_at = null
     }
 
     const { error } = await supabase
@@ -241,6 +274,7 @@ export default function IncomingManageClient({
       patchLocal(ctx.id, {
         payment_method: patch.payment_method,
         payment_date: patch.payment_date,
+        payment_prepared_at: null,
       })
       // Notify the user — confirmation (service role via API; non-blocking)
       try {
@@ -256,7 +290,7 @@ export default function IncomingManageClient({
       } catch { /* non-blocking — payment already succeeded */ }
       showToast(`Inkoopfactuur ${ctx.number} betaald ✓`)
     } else {
-      patchLocal(ctx.id, { payment_method: null, payment_date: null })
+      patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null })
       showToast(`Betaling ongedaan gemaakt`)
     }
     setProcessingId(null)
@@ -376,6 +410,9 @@ export default function IncomingManageClient({
                 ? inv.total_inc_btw - totalExBtw
                 : null)
               const isVerwerkt = inv.accountant_status === 'verwerkt'
+              // [PAY-SAFE-CONFIRM] prepared-but-unconfirmed: payment QR generated,
+              // owner hasn't confirmed paying yet. Only meaningful while unpaid.
+              const isPrepared = inv.status === 'received' && !!inv.payment_prepared_at
 
               return (
                 <div
@@ -410,6 +447,14 @@ export default function IncomingManageClient({
                             Verwerkt
                           </span>
                         )}
+                        {/* [PAY-SAFE-CONFIRM] prepared, awaiting the owner's confirm.
+                            A UI marker — NOT a paid state. */}
+                        {isPrepared && (
+                          <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>schedule</span>
+                            Voorbereid
+                          </span>
+                        )}
                       </div>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {inv.client_name ?? '—'} · {fmtDate(inv.invoice_date)}
@@ -421,7 +466,11 @@ export default function IncomingManageClient({
                         {fmtEur(inv.total_inc_btw)}
                       </p>
 
-                      {/* received → Betaald? (gated by no-double-pay check) */}
+                      {/* received → confirm payment (gated by no-double-pay check).
+                          After prepare, becomes a prominent "Ik heb betaald" CTA
+                          that PERSISTS — catching the owner on return from their
+                          bank. Both variants route through the SAME requestPay
+                          (check → Bank/Contant + date → paid). */}
                       {inv.status === 'received' && (
                         <button
                           onClick={e => {
@@ -429,10 +478,18 @@ export default function IncomingManageClient({
                             if (processingId === inv.id || checkingId === inv.id) return
                             requestPay(inv)
                           }}
-                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#49454F', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          style={{
+                            fontSize: 12, fontWeight: isPrepared ? 600 : 500, borderRadius: R.full,
+                            border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT,
+                            background: isPrepared ? M3.primary : M3.surfaceVariant,
+                            color: isPrepared ? M3.onPrimary : '#49454F',
+                            display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
+                          }}>
                           {processingId === inv.id || checkingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : 'Betaald?'}
+                            : isPrepared
+                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span> Ik heb betaald</>
+                              : 'Betaald?'}
                         </button>
                       )}
 
@@ -548,7 +605,7 @@ export default function IncomingManageClient({
       {prepareCtx && (
         <PreparePaymentSheet
           inv={prepareCtx}
-          onClose={() => setPrepareCtx(null)}
+          onClose={() => { markPrepared(prepareCtx); setPrepareCtx(null) }}
           onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
         />
       )}
@@ -775,8 +832,11 @@ function PreparePaymentSheet({
         )}
 
         <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
-          Klaar
+          Sluiten
         </button>
+        <p style={{ fontSize: 12, color: '#5F6368', textAlign: 'center', marginTop: 10, lineHeight: 1.4 }}>
+          Na betalen in je bank: bevestig met &quot;Ik heb betaald&quot; op de factuur.
+        </p>
       </div>
     </div>
   )
