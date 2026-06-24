@@ -43,14 +43,35 @@ export async function GET(
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
 
-  // Verify the invoice belongs to this user and get the storage path
+  // Verify access and get the storage path.
+  // Two authorized roles (BOEK-011 + ACC-INVOICE-VIEW cross-boundary fix):
+  //   1. the receiver (the ZZP'er who owns the incoming invoice), or
+  //   2. an accountant linked to that ZZP'er via accountant_clients.
+  // Previously only (1) was allowed, so accountants opening a client's incoming
+  // invoice (?from=client) got a 404 on both "Origineel PDF" and UBL.
   const { data: invoice } = await supabase
     .from("invoices")
     .select("id, receiver_id, pdf_url")
     .eq("id", id)
     .single();
 
-  if (!invoice || invoice.receiver_id !== user.id) {
+  if (!invoice) {
+    return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
+  }
+
+  let authorized = invoice.receiver_id === user.id;
+
+  if (!authorized && invoice.receiver_id) {
+    const { data: link } = await supabase
+      .from("accountant_clients")
+      .select("id")
+      .eq("accountant_id", user.id)
+      .eq("zzper_id", invoice.receiver_id)
+      .maybeSingle();
+    authorized = !!link;
+  }
+
+  if (!authorized) {
     return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
   }
 
