@@ -13,12 +13,14 @@ type Props = {
   invoiceId: string
   invoiceNumber: string
   status: string
+  // [BOEK-020] thread direction to hide UBL export on incoming invoices
+  direction?: string | null
 }
 
 // فقط draft يمكن حذفه — Human Control من الوثيقة
 const DELETABLE_STATUSES = ['draft']
 
-export function InvoiceActions({ invoiceId, invoiceNumber, status }: Props) {
+export function InvoiceActions({ invoiceId, invoiceNumber, status, direction }: Props) {
   const router = useRouter()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [loadingDelete, setLoadingDelete] = useState(false)
@@ -68,8 +70,9 @@ const canDelete = status === 'draft'
           >
             ✕ Verwijderen
           </button>
-        )}{/* [BOEK-020] UBL/XML export — single invoice (hides itself for draft) */}
-        <UblExportButton invoiceId={invoiceId} invoiceNumber={invoiceNumber} status={status} />
+        )}
+        {/* [BOEK-020] UBL/XML export — single invoice (hides itself for draft/incoming) */}
+        <UblExportButton invoiceId={invoiceId} invoiceNumber={invoiceNumber} status={status} direction={direction} />
       </div>
 
       {/* Foutmelding */}

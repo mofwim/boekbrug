@@ -18,6 +18,8 @@ type Props = {
   status: string
   /** Optional — used to hide the button for non-invoice documents. */
   invoiceType?: string | null
+  /** Optional — UBL export only applies to outgoing invoices (seller = us). */
+  direction?: string | null
 }
 
 // UBL export is meaningless for concept invoices (no legal number yet)
@@ -27,7 +29,7 @@ const NON_EXPORTABLE_TYPE = ['offerte', 'pro_forma']
 
 type State = 'idle' | 'loading' | 'done' | 'error'
 
-export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType }: Props) {
+export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType, direction }: Props) {
   const [state, setState] = useState<State>('idle')
   const [error, setError] = useState('')
 
@@ -35,6 +37,9 @@ export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType 
   // this only hides the obvious non-cases.
   if (NON_EXPORTABLE_STATUS.includes(status)) return null
   if (invoiceType && NON_EXPORTABLE_TYPE.includes(invoiceType)) return null
+  // Incoming invoices: the ZZP'er is the buyer, not the seller → no UBL from our side.
+  // (Mirrors the route's INCOMING_NOT_SUPPORTED guard; this just hides the dead action.)
+  if (direction === 'incoming') return null
 
   async function handleExport() {
     setState('loading')

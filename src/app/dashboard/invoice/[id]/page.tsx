@@ -335,6 +335,7 @@ export default function InvoiceDetailPage() {
                   invoiceId={invoiceId}
                   invoiceNumber={invoice.invoice_number}
                   status={invoice.status}
+                  direction={invoice.direction} /*[BOEK-020]*/
                 />
                 {/* [ACC-INVOICE-VIEW] Outgoing: generate the invoice PDF.
                     Incoming: InvoicePDF assumes outgoing (Van=profile/Aan=client)
