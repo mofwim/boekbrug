@@ -637,6 +637,7 @@ export type Database = {
           original_invoice_id: string | null
           payment_date: string | null
           payment_method: string | null
+          payment_reference: string | null
           pdf_url: string | null
           receiver_id: string | null
           replaced_by_number: string | null
@@ -649,6 +650,7 @@ export type Database = {
           total_ex_btw: number | null
           total_inc_btw: number | null
           updated_at: string | null
+          vendor_iban: string | null
         }
         Insert: {
           accountant_note?: string | null
@@ -675,6 +677,7 @@ export type Database = {
           original_invoice_id?: string | null
           payment_date?: string | null
           payment_method?: string | null
+          payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
           replaced_by_number?: string | null
@@ -687,6 +690,7 @@ export type Database = {
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
+          vendor_iban?: string | null
         }
         Update: {
           accountant_note?: string | null
@@ -713,6 +717,7 @@ export type Database = {
           original_invoice_id?: string | null
           payment_date?: string | null
           payment_method?: string | null
+          payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
           replaced_by_number?: string | null
@@ -725,6 +730,7 @@ export type Database = {
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
+          vendor_iban?: string | null
         }
         Relationships: [
           {

@@ -207,6 +207,10 @@ export async function POST(req: NextRequest) {
       total_inc_btw: verification.total_inc_btw ?? verification.amount ?? 0,
       pdf_url: pdfUrl,
       document_id: documentId,
+      // [PAY-SAFE-EXTRACT] vendor payment details — null when absent. Prepares
+      // a future payment (EPC QR / pre-filled); BoekBrug never processes money.
+      vendor_iban: verification.vendor_iban ?? null,
+      payment_reference: verification.payment_reference ?? null,
       // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields
       field_confidence: verification.field_confidence ?? null,
     })

@@ -586,6 +586,9 @@ export interface AttachmentClassification {
   btwAmount?: number
   totalIncBtw?: number
   btwRate?: number
+  // [PAY-SAFE-EXTRACT] vendor payment details (IBAN to pay + betalingskenmerk)
+  vendorIban?: string
+  paymentReference?: string
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -623,6 +626,9 @@ export async function classifyAttachment(
     btwAmount: result.btw_amount,
     totalIncBtw: result.total_inc_btw,
     btwRate: result.btw_rate,
+    // [PAY-SAFE-EXTRACT] vendor payment details from the same Claude call
+    vendorIban: result.vendor_iban,
+    paymentReference: result.payment_reference,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -1150,6 +1156,10 @@ export async function syncUserEmails(userId: string): Promise<{
           pdf_url: pdfUrl,
           document_id: documentId,
           source_message_id: dedupKey,
+          // [PAY-SAFE-EXTRACT] vendor payment details — null when the AI didn't
+          // find them (prepares a future payment; never processes money).
+          vendor_iban: classification.vendorIban ?? null,
+          payment_reference: classification.paymentReference ?? null,
           // [BRIDGE-EXTRACT] per-field AI confidence + [BOEK-SAFECORE] _safecore
           // hold reason (merged when held; null when nothing to store).
           // Cast to Json — sanitized, JSON-compatible content (same pattern as

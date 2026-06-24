@@ -62,6 +62,12 @@ export interface VerifyInvoiceResult {
   amount?: number;           // total amount including BTW (numeric) — alias of total_inc_btw
   invoice_number?: string;   // invoice number if found
   invoice_date?: string;     // DD-MM-YYYY
+  // [PAY-SAFE-EXTRACT] Vendor payment details — the IBAN to PAY and the
+  // payment reference (betalingskenmerk). Used later to PREPARE a payment
+  // (EPC/SEPA QR or pre-filled details) the owner executes in their OWN bank.
+  // BoekBrug never processes money — these only prepare it. Null when absent.
+  vendor_iban?: string;      // the vendor's IBAN (party to be paid), normalized
+  payment_reference?: string; // betalingskenmerk / structured payment reference
   reason?: string;           // why it was rejected (if is_invoice = false)
   // [BOEK-011] detailed BTW breakdown — extracted in the same call, zero extra cost
   total_ex_btw?: number;     // amount excluding BTW
@@ -429,6 +435,8 @@ Return only a JSON object with these exact keys:
   "vendor": string or null,
   "invoice_number": string or null,
   "invoice_date": "YYYY-MM-DD" or null,
+  "vendor_iban": string or null,
+  "payment_reference": string or null,
   "total_ex_btw": number or null,
   "btw_amount": number or null,
   "total_inc_btw": number or null,
@@ -473,6 +481,23 @@ Invoice number extraction rules:
 - If you genuinely cannot find a clear invoice number (only a page/customer/
   order number is present), set invoice_number to null — never substitute one
   of those other numbers.
+
+Vendor IBAN + payment reference extraction rules:
+- "vendor_iban" = the bank account number (IBAN) of the VENDOR — the party to
+  be PAID. It belongs to the SENDER/supplier, NOT to us (the receiver). It is
+  usually near labels like "IBAN", "Rekeningnummer", "Bankrekening", "t.n.v.",
+  or in the payment/footer block. A Dutch IBAN looks like "NL00BANK0123456789"
+  (2 letters + 2 digits + 4 letters + 10 digits); foreign IBANs vary in length.
+- Return the IBAN WITHOUT spaces, in UPPERCASE (e.g. "NL37BNGH0123456789").
+- If MULTIPLE IBANs appear, prefer the one tied to the vendor / "to be paid".
+  If you cannot tell which IBAN belongs to the vendor, set vendor_iban to null
+  — never guess an IBAN, and never return our own (receiver) IBAN.
+- "payment_reference" = the betalingskenmerk / structured payment reference the
+  invoice asks you to quote when paying (labels: "Betalingskenmerk",
+  "Kenmerk", "Referentie", "Mededeling", "Payment reference"). This is often
+  DIFFERENT from the invoice number. If only an invoice number is given as the
+  reference, set payment_reference to null (the system falls back to the invoice
+  number). If genuinely absent, set it to null — never invent one.
 
 Rules for is_invoice = false:
 - Marketing emails, newsletters, ads
@@ -593,6 +618,28 @@ Return JSON only.`;
         parsed.invoice_number = undefined;
         parsed.field_confidence.invoice_number = 0; // force-flag for confirmation
       }
+    }
+
+    // [PAY-SAFE-EXTRACT] Normalize the vendor payment fields.
+    // IBAN: strip ALL whitespace, uppercase (canonical form for storage +
+    // future mod-97 validation at QR-prepare time). Empty → undefined.
+    // We do NOT validate the IBAN here (prepare-time concern) — we only
+    // canonicalize so storage is consistent. An obviously-too-short value is
+    // dropped to avoid persisting junk (a real IBAN is ≥15 chars).
+    if (typeof parsed.vendor_iban === 'string') {
+      const iban = parsed.vendor_iban.replace(/\s+/g, '').toUpperCase();
+      parsed.vendor_iban =
+        iban.length >= 15 && /^[A-Z0-9]+$/.test(iban) ? iban : undefined;
+    } else {
+      parsed.vendor_iban = undefined;
+    }
+    // payment_reference: trim; empty → undefined (the system falls back to the
+    // invoice number when preparing a payment, so a missing reference is fine).
+    if (typeof parsed.payment_reference === 'string') {
+      const ref = parsed.payment_reference.trim();
+      parsed.payment_reference = ref.length ? ref : undefined;
+    } else {
+      parsed.payment_reference = undefined;
     }
 
     // Enforce minimum confidence threshold
