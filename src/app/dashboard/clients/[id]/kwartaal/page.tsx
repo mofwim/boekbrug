@@ -356,8 +356,8 @@ export default function KwartaalPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {/* [QUARTER-VENDOR-NAME] party name primary — incoming=vendor, outgoing=client */}
-                              {invoice.client_name || invoice.invoice_number}
+                              {/* [QUARTER-VENDOR-NAME v2] invoice_number primary — matches bridge pattern */}
+                              {invoice.invoice_number}
                             </p>
                             {/* direction badge */}
                             <span className="text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0"
@@ -382,9 +382,9 @@ export default function KwartaalPage() {
                             )}
                           </div>
                           <p style={{ fontSize: 12, color: '#5F6368', marginTop: 2 }}>
-                            {/* [QUARTER-VENDOR-NAME] invoice_number now secondary — only show if party name was primary */}
+                            {/* [QUARTER-VENDOR-NAME v2] party name secondary — incoming=vendor, outgoing=client */}
                             {invoice.client_name && (
-                              <span>{invoice.invoice_number} · </span>
+                              <span style={{ fontWeight: 500, color: '#202124' }}>{invoice.client_name} · </span>
                             )}
                             {fmt(invoice.invoice_date)}
                             {invoice.marked_paid_at && (
