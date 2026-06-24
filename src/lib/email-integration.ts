@@ -10,6 +10,14 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
 import { logAuditAction } from '@/lib/audit'
+// [IMPORT-MONITOR Part 0] SAFECORE primitives moved to a shared module so the
+// read-time health classifier can reuse the EXACT same logic. Move-only: these
+// were defined privately below; behaviour is identical.
+import {
+  evaluateArithmetic,
+  isPlaceholderInvoiceNumber,
+  isReliableVendor,
+} from '@/lib/safecore'
 // [BOEK-SAFECORE] jsonb column type for invoices.field_confidence — mirrors the
 // audit.ts pattern (derive the Json type from generated types, cast at write).
 import type { Database } from '@/types/database.types'
@@ -629,154 +637,14 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return chunks
 }
 
-// ─── [BOEK-SAFECORE] Rule 1 — arithmetic safety (no silent arithmetic error) ──
+// ─── [IMPORT-MONITOR Part 0] SAFECORE primitives moved to src/lib/safecore.ts ──
 //
-// The automated email path was the LEAST guarded path: it wrote status='received'
-// directly (→ shared → straight to the accountant) with NO arithmetic check at
-// all. The TRAIL 2/3 checks lived only in the manual confirm route, which the
-// email path never touches. That is the inversion this fixes: the path with NO
-// human review (users don't review AI imports in practice) now gets the MOST
-// machine checks, not zero.
-//
-// Behaviour: a confirmed arithmetic problem does NOT pass silently to the final
-// state. The invoice is HELD in 'processing' (the existing verify-queue buffer,
-// excluded from `shared`) instead of 'received', with a clear reason. A human
-// then reviews it via the confirm route, where Pillar ⑤ (the eye confirms)
-// takes over. No new enum, no migration — just 'processing' instead of
-// 'received' when the math is impossible or inconsistent.
-//
-// 🔴 HONEST LIMIT (named, not hidden): this catches arithmetic that is
-// impossible (NaN/∞/≤0, out-of-range date) or internally inconsistent
-// (excl+BTW≠incl, illegal rate). It does NOT catch a value that is internally
-// consistent but factually wrong (AI read 1.250 instead of 1.350 — all sums
-// agree, but the source number is wrong). That class is undetectable by
-// arithmetic alone and is explicitly out of scope here.
+// evaluateArithmetic / ArithmeticVerdict (Rule 1 — arithmetic safety) and the
+// SAFECORE-GAP dedup helpers (isPlaceholderInvoiceNumber / normalizeVendor /
+// isReliableVendor) previously lived here as private functions. They are now
+// imported from @/lib/safecore (move-only, identical behaviour) so the
+// read-time import-health classifier can reuse the exact same logic.
 
-interface ArithmeticVerdict {
-  ok: boolean
-  // Human-readable Dutch reason (for field_confidence._safecore + audit).
-  reason?: string
-  // Machine flags for the audit trail / future UI.
-  flags?: string[]
-}
-
-/**
- * [BOEK-SAFECORE] Pure arithmetic gate for an AI-classified incoming invoice.
- * No DB, no side effects — just a verdict on the numbers.
- *
- * Structural (impossible values) → blocked:
- *   - any of ex/btw/incl is NaN, ±Infinity, or < 0
- *   - invoice year outside 2020–2030 (a plausible business range)
- * Consistency (internally wrong) → blocked:
- *   - |ex + btw − incl| > 0.02  (Excl/Incl mix-ups, dropped lines)
- *   - rate ∉ {0, 9, 21}  (legal NL BTW rates; computed, since btw_rate is
- *     not stored — Math.round((btw/ex)*100), guarded against ex=0)
- *
- * Note: a zero/empty invoice (all three 0) is treated as a structural problem
- * (incl ≤ 0) — an incoming invoice with no amount is not a valid financial
- * record and must not reach the accountant unreviewed.
- */
-function evaluateArithmetic(c: AttachmentClassification): ArithmeticVerdict {
-  const flags: string[] = []
-  const reasons: string[] = []
-
-  const ex = c.totalExBtw ?? 0
-  const btw = c.btwAmount ?? 0
-  const incl = c.totalIncBtw ?? c.amount ?? 0
-
-  // ── Structural: impossible numbers ──
-  const finiteNonNeg = (v: number) => Number.isFinite(v) && v >= 0
-  if (!finiteNonNeg(ex) || !finiteNonNeg(btw) || !finiteNonNeg(incl)) {
-    flags.push('non_finite_or_negative')
-    reasons.push('ongeldige bedragen (NaN/∞/negatief)')
-  }
-
-  // incl must be a real positive total — a 0/blank invoice is not bookable.
-  if (Number.isFinite(incl) && incl <= 0) {
-    flags.push('non_positive_total')
-    reasons.push('totaalbedrag ontbreekt of is 0')
-  }
-
-  // ── Structural: date sanity (year 2020–2030) ──
-  if (typeof c.invoiceDate === 'string' && c.invoiceDate.trim()) {
-    const d = new Date(c.invoiceDate)
-    const year = d.getFullYear()
-    if (Number.isNaN(d.getTime()) || year < 2020 || year > 2030) {
-      flags.push('date_out_of_range')
-      reasons.push('factuurdatum buiten geldig bereik (2020–2030)')
-    }
-  }
-
-  // ── Consistency checks only run when the numbers are at least finite. ──
-  // (No point checking ex+btw=incl when one of them is already NaN/∞.)
-  if (finiteNonNeg(ex) && finiteNonNeg(btw) && finiteNonNeg(incl) && incl > 0) {
-    // excl + BTW must equal incl (tolerance 0.02 for rounding)
-    if (Math.abs(ex + btw - incl) > 0.02) {
-      flags.push('sum_mismatch')
-      reasons.push('excl + BTW ≠ totaal')
-    }
-    // Legal BTW rate: computed (btw_rate is NOT stored). Guard division by zero;
-    // when ex=0 we can't derive a rate, so we skip the rate check (the sum check
-    // above already covers ex=0 cases meaningfully).
-    if (ex > 0) {
-      const rate = Math.round((btw / ex) * 100)
-      if (rate !== 0 && rate !== 9 && rate !== 21) {
-        flags.push('illegal_btw_rate')
-        reasons.push(`ongeldig BTW-tarief (${rate}%)`)
-      }
-    }
-  }
-
-  if (flags.length === 0) return { ok: true }
-  return { ok: false, reason: reasons.join('; '), flags }
-}
-
-// ─── [SAFECORE-GAP] Placeholder-aware dedup helpers ───────────────────────────
-//
-// Problem: when AI extraction fails to find a real invoice number, both the
-// upload and email paths substitute a UNIQUE placeholder — `UPLOAD-<ts>` or
-// `EMAIL-<ts>`. SAFECORE Rule 2's key trusts invoice_number, so a unique
-// placeholder makes the key differ on every arrival → duplicate detection is
-// silently defeated → double-pay risk.
-//
-// Fix (defense in depth): the prompt fix in ai.ts attacks the ROOT (extract the
-// number correctly). These helpers are the SAFETY NET for when extraction still
-// fails — because it never becomes perfect. When the number is a placeholder we
-// don't trust it; we fall back to the next anchor (a RELIABLE vendor) and, only
-// if that's junk too, we honestly mark the invoice un-dedupable for the human
-// review that already happens in the verify queue.
-
-/**
- * A placeholder invoice number is a generated stand-in, not a real number.
- * Prefix-agnostic across both ingestion paths (UPLOAD-/EMAIL- + timestamp).
- */
-function isPlaceholderInvoiceNumber(n: string | null | undefined): boolean {
-  if (!n) return true // null/empty is itself "no real number"
-  return /^(UPLOAD|EMAIL)-\d+$/.test(n.trim())
-}
-
-/**
- * Normalize a vendor name for use as a dedup anchor: trim, lowercase, collapse
- * whitespace. NOT a full alias map (that's BRIDGE-ALIAS) — just formatting
- * normalization so "Atapack  B.V." and "atapack b.v." match.
- */
-function normalizeVendor(v: string | null | undefined): string {
-  return (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
-/**
- * Is the vendor name reliable enough to anchor a fallback dedup key?
- * Rejects empty and the known "unknown sender" placeholders. A junk vendor
- * must NOT be used as a key — matching on vendor+total+date with a junk vendor
- * (or worse, total+date alone) could wrongly block a LEGITIMATE invoice, which
- * in a financial-truth system is its own serious error (a missing crediteur).
- */
-function isReliableVendor(v: string | null | undefined): boolean {
-  const n = normalizeVendor(v)
-  if (n.length < 2) return false
-  const junk = new Set(['onbekende afzender', 'onbekend', 'unknown', '-', '—'])
-  return !junk.has(n)
-}
 
 // ─── Main sync entry point ────────────────────────────────────────────────────
 

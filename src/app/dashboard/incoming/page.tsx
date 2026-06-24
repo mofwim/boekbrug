@@ -5,6 +5,12 @@
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import IncomingInvoicesClient from "./IncomingInvoicesClient";
+// [IMPORT-MONITOR] Part 1 — read-time health classification (visibility only).
+import {
+  classifyImportHealth,
+  type ImportHealth,
+  type FieldConfidence,
+} from "@/lib/import-health";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +30,15 @@ interface IncomingInvoiceRow {
   created_at: string;
   folder_id: string | null;
   folder_name: string | null;
-  // [BRIDGE-EXTRACT] per-field AI confidence — drives the modal's "confirm" flags
-  field_confidence: {
-    vendor?: number;
-    invoice_number?: number;
-    invoice_date?: number;
-  } | null;
+  // [BRIDGE-EXTRACT] per-field AI confidence — drives the modal's "confirm" flags.
+  // [IMPORT-MONITOR] widened to FieldConfidence: at runtime this jsonb ALSO
+  // carries a nested _safecore object on email-path invoices held for a math
+  // problem. The classifier reads it; the existing modal still reads only the
+  // flat AI scores (a structural subset), so nothing downstream breaks.
+  field_confidence: FieldConfidence | null;
+  // [IMPORT-MONITOR] Part 1 — read-time health verdict (clean | needs-review +
+  // plain-language reasons). Computed server-side from existing signals only.
+  health: ImportHealth;
 }
 
 // Plain column list — no join. The join broke the query and emptied the page.
@@ -85,14 +94,15 @@ export default async function IncomingPage() {
     .order("created_at", { ascending: false })
     .limit(50);
 
-  // [BOEK-011] Base rows — cast through unknown (Supabase returns a wide union)
+  // [BOEK-011] Base rows — cast through unknown (Supabase returns a wide union).
+  // [IMPORT-MONITOR] Also omit `health` here: it is computed below, not selected.
   const pendingBase = (pendingRaw ?? []) as unknown as Omit<
     IncomingInvoiceRow,
-    "folder_id" | "folder_name"
+    "folder_id" | "folder_name" | "health"
   >[];
   const ignoredBase = (ignoredRaw ?? []) as unknown as Omit<
     IncomingInvoiceRow,
-    "folder_id" | "folder_name"
+    "folder_id" | "folder_name" | "health"
   >[];
 
   // [BOEK-011] Resolve folder PATH for each invoice — safe, never breaks the page.
@@ -151,9 +161,9 @@ export default async function IncomingPage() {
     return parts.length > 0 ? parts.join(" / ") : null;
   }
 
-  // Attach folder id + full path to each invoice
+  // Attach folder id + full path + [IMPORT-MONITOR] computed import health.
   const withFolder = (
-    rows: Omit<IncomingInvoiceRow, "folder_id" | "folder_name">[]
+    rows: Omit<IncomingInvoiceRow, "folder_id" | "folder_name" | "health">[]
   ): IncomingInvoiceRow[] =>
     rows.map((inv) => {
       const folderId = inv.document_id
@@ -163,6 +173,16 @@ export default async function IncomingPage() {
         ...inv,
         folder_id: folderId,
         folder_name: buildFolderPath(folderId),
+        // [IMPORT-MONITOR] Part 1 — health from existing signals only (reads the
+        // stored _safecore, else recomputes via the shared arithmetic gate; plus
+        // the AI per-field confidence). Pure, read-time, no writes.
+        health: classifyImportHealth({
+          total_ex_btw: inv.total_ex_btw,
+          btw_amount: inv.btw_amount,
+          total_inc_btw: inv.total_inc_btw,
+          invoice_date: inv.invoice_date,
+          field_confidence: inv.field_confidence,
+        }),
       };
     });
 

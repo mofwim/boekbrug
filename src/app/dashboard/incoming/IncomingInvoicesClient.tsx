@@ -19,6 +19,21 @@ import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+// [IMPORT-MONITOR] Read-time health verdict computed server-side (page.tsx via
+// @/lib/import-health). Mirrored here so the client stays self-contained — the
+// shape MUST match ImportHealth in @/lib/import-health.
+interface ImportHealth {
+  level: "clean" | "needs-review";
+  // Plain-language Dutch reasons, owner-facing. Empty when level === 'clean'.
+  reasons: string[];
+  flags: {
+    arithmetic: boolean;
+    vendor: boolean;
+    invoiceNumber: boolean;
+    invoiceDate: boolean;
+  };
+}
+
 interface IncomingInvoice {
   id: string;
   client_name: string;
@@ -41,6 +56,8 @@ interface IncomingInvoice {
     invoice_number?: number;
     invoice_date?: number;
   } | null;
+  // [IMPORT-MONITOR] import-health verdict — drives the calm/attention surface
+  health: ImportHealth;
 }
 
 interface ConnectionStatus {
@@ -347,6 +364,33 @@ function ConfirmPaidModal({
             <div style={{ fontSize: 14, color: "#8e8e93", marginBottom: 20 }}>
               Controleer de bedragen. AI heeft ze automatisch uitgelezen.
             </div>
+
+            {/* [IMPORT-MONITOR] Part 3 — surface the arithmetic WHY in the modal.
+                The per-field ⚠️ flags below already cover vendor/number/date and
+                an unexpected BTW rate. This adds the one thing the modal never
+                showed: the stored _safecore reason from an email-path arithmetic
+                hold (e.g. "excl + BTW ≠ totaal"), so the owner sees exactly what
+                to fix. Only renders when the health verdict flags arithmetic and
+                a concrete reason exists. */}
+            {invoice.health.flags.arithmetic &&
+              invoice.health.reasons.length > 0 && (
+                <div
+                  style={{
+                    display: "flex", alignItems: "flex-start", gap: 8,
+                    padding: "12px 14px", marginBottom: 16,
+                    background: "#fff4e5", borderRadius: 12,
+                    border: "1px solid #ffd9a8",
+                  }}
+                >
+                  <span style={{ fontSize: 15, lineHeight: 1.3 }}>⚠️</span>
+                  <span style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
+                    {invoice.health.reasons
+                      .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
+                      .join(" · ")}
+                    . Controleer en pas de bedragen aan.
+                  </span>
+                </div>
+              )}
 
             {/* Amounts breakdown */}
             <div
@@ -807,6 +851,38 @@ function InvoiceCard({
           <div style={{ fontSize: 13, color: "#8e8e93" }}>
             {formatDate(invoice.invoice_date)}
           </div>
+          {/* [IMPORT-MONITOR] Health badge — only in the pending queue. Flagged
+              invoices get a calm-but-clear attention pill; clean invoices get a
+              quiet "ready to confirm" hint (calm, never the alarming "review").
+              The ignored tab shows nothing here — it must not nag. */}
+          {mode === "pending" && (
+            invoice.health.level === "needs-review" ? (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  marginTop: 6, padding: "3px 9px", borderRadius: 8,
+                  background: "#fff4e5", border: "1px solid #ffd9a8",
+                }}
+              >
+                <span style={{ fontSize: 11 }}>⚠️</span>
+                <span style={{ fontSize: 12, color: "#9a5b00", fontWeight: 600 }}>
+                  Aandacht nodig
+                </span>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  marginTop: 6,
+                }}
+              >
+                <span style={{ fontSize: 11, color: "#34c759" }}>✓</span>
+                <span style={{ fontSize: 12, color: "#8e8e93" }}>
+                  Klaar om te bevestigen
+                </span>
+              </div>
+            )
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -829,6 +905,39 @@ function InvoiceCard({
       {expanded && (
         <div style={{ padding: "0 16px 16px" }}>
           <div style={{ height: 1, background: "#f2f2f7", marginBottom: 14 }} />
+
+          {/* [IMPORT-MONITOR] Part 3 — the WHY. For a flagged invoice, show the
+              plain-language reason(s) the system is unsure, sourced from the
+              read-time health verdict (stored _safecore reason and/or the AI's
+              low-confidence fields). Reassurance-shaped: "here's what to check",
+              not a dense breakdown. Shown only in the pending queue; clean
+              invoices show nothing here (no demand on the tired owner). */}
+          {mode === "pending" &&
+            invoice.health.level === "needs-review" &&
+            invoice.health.reasons.length > 0 && (
+              <div
+                style={{
+                  display: "flex", alignItems: "flex-start", gap: 8,
+                  padding: "12px 14px", marginBottom: 14,
+                  background: "#fff4e5", borderRadius: 12,
+                  border: "1px solid #ffd9a8",
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1.3 }}>💡</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#9a5b00", marginBottom: 4 }}>
+                    Even controleren
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
+                    {/* Capitalize the first reason; join the rest naturally. */}
+                    {invoice.health.reasons
+                      .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
+                      .join(" · ")}
+                    .
+                  </div>
+                </div>
+              </div>
+            )}
 
           {/* Detail rows */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
@@ -1179,6 +1288,22 @@ export default function IncomingInvoicesClient({
 
   const list = tab === "pending" ? pending : ignored;
 
+  // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────
+  // HEALTH: "is anything WRONG?"  → invoices the AI/arithmetic flagged.
+  // FLOW:   "is anything waiting to be SENT onward?" → every pending invoice
+  //          (the upload path holds all in 'processing'; even a clean one needs
+  //          one confirming tap to reach the accountant).
+  // These are separate. A clean-but-unsent invoice is HEALTHY (no warning) AND
+  // waiting-to-flow. Collapsing them into one line is what produced the old
+  // dishonesty ("Alles verwerkt" when invoices were in fact still queued, or an
+  // alarming "review" on a perfectly clean upload). We keep them apart:
+  //   - calm about correctness (don't nag a clean invoice)
+  //   - honest about flow (never imply "done" while items wait to be sent)
+  const needsAttentionCount = pending.filter(
+    (inv) => inv.health.level === "needs-review"
+  ).length;
+  const readyToConfirmCount = pending.length - needsAttentionCount;
+
   return (
     <div
       style={{
@@ -1241,11 +1366,33 @@ export default function IncomingInvoicesClient({
         >
           Inkomend
         </h1>
-        <p style={{ fontSize: 14, color: "#8e8e93", margin: "4px 0 0" }}>
-          {pending.length === 0
-            ? "Alles verwerkt"
-            : `${pending.length} ${pending.length === 1 ? "factuur" : "facturen"} wacht op bevestiging`}
-        </p>
+        {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
+            about flow. Never says "done" while items still wait to be sent. */}
+        {pending.length === 0 ? (
+          <p style={{ fontSize: 14, color: "#8e8e93", margin: "4px 0 0" }}>
+            Alles verwerkt
+          </p>
+        ) : needsAttentionCount > 0 ? (
+          <p style={{ fontSize: 14, color: "#EA8600", margin: "4px 0 0", fontWeight: 600 }}>
+            {needsAttentionCount}{" "}
+            {needsAttentionCount === 1 ? "factuur heeft" : "facturen hebben"} je
+            aandacht nodig
+            {readyToConfirmCount > 0 && (
+              <span style={{ color: "#8e8e93", fontWeight: 400 }}>
+                {" "}· {readyToConfirmCount} klaar om te bevestigen
+              </span>
+            )}
+          </p>
+        ) : (
+          <p style={{ fontSize: 14, color: "#8e8e93", margin: "4px 0 0" }}>
+            <span style={{ color: "#34c759", fontWeight: 600 }}>
+              Niets om te corrigeren
+            </span>{" "}
+            · {readyToConfirmCount}{" "}
+            {readyToConfirmCount === 1 ? "factuur klaar" : "facturen klaar"} om te
+            bevestigen
+          </p>
+        )}
         {/* [BRIDGE-POLISH 3b] Entry to the management surface for confirmed
             incoming invoices (received/paid). iOS-styled to match THIS surface. */}
         <Link
