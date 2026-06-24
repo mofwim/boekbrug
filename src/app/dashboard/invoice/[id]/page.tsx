@@ -51,6 +51,10 @@ export default function InvoiceDetailPage() {
   // Van/Aan cards. On an incoming invoice the sender_id points at an external
   // party with no profiles row, so we cannot derive the ZZP'er from it.
   const [viewerProfile, setViewerProfile] = useState<any>(null)
+  // [ACC-INVOICE-VIEW] original-PDF fetch state — documents bucket is private,
+  // so we fetch a fresh signed URL from the existing Wave 3 file route rather
+  // than linking the raw (relative, expiring) pdf_url.
+  const [loadingOriginal, setLoadingOriginal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notFoundState, setNotFoundState] = useState(false)
 
@@ -91,6 +95,27 @@ export default function InvoiceDetailPage() {
 
   // [FACTUUR-A] Resend handler — calls /api/invoice/send with resend:true — June 2026
   // Re-delivers PDF+email; does NOT touch invoice_number or status.
+  // [ACC-INVOICE-VIEW] Open the original supplier PDF via the existing Wave 3
+  // signed-URL route (same mechanism BRIDGE-POLISH used for the incoming
+  // management surface). The documents bucket is private and pdf_url is stored
+  // inconsistently (raw path or an expired signed URL), so we never link it
+  // directly — we ask the route for a fresh signed URL keyed by invoice id.
+  async function openOriginal() {
+    setLoadingOriginal(true)
+    try {
+      const res = await fetch(`/api/email/file/${invoiceId}`)
+      if (!res.ok) throw new Error('not ok')
+      const data = await res.json().catch(() => ({}))
+      const url = data.url || data.signedUrl || data.signed_url
+      if (!url) throw new Error('no url')
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      setSendError('Origineel PDF kon niet worden geopend')
+    } finally {
+      setLoadingOriginal(false)
+    }
+  }
+
   async function handleResend() {
     setResending(true)
     setSendError(null)
@@ -331,10 +356,9 @@ export default function InvoiceDetailPage() {
                   </PDFDownloadLink>
                 )}
                 {isIncoming && invoice?.pdf_url && (
-                  <a
-                    href={invoice.pdf_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    onClick={openOriginal}
+                    disabled={loadingOriginal}
                     style={{
                       backgroundColor: '#1A73E8',
                       color: 'white',
@@ -343,13 +367,13 @@ export default function InvoiceDetailPage() {
                       padding: '8px 16px',
                       borderRadius: 9999,
                       border: 'none',
-                      cursor: 'pointer',
-                      textDecoration: 'none',
+                      cursor: loadingOriginal ? 'wait' : 'pointer',
+                      opacity: loadingOriginal ? 0.6 : 1,
                       transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
                     }}
                   >
-                    ↓ Origineel PDF
-                  </a>
+                    {loadingOriginal ? 'Laden...' : '↓ Origineel PDF'}
+                  </button>
                 )}
               </>
             )}
