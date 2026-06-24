@@ -55,6 +55,10 @@ interface IncomingInvoice {
     vendor?: number;
     invoice_number?: number;
     invoice_date?: number;
+    // [SMART-INTAKE] intake suggestion: a kassabon routed here is likely paid.
+    // A SUGGESTION only — the human confirms via "Markeer als betaald".
+    _intake_kind?: string;     // 'receipt' when it came from the camera as a bon
+    _intake_suggest?: string;  // 'paid' → surface "Markeer als betaald" prominently
   } | null;
   // [IMPORT-MONITOR] import-health verdict — drives the calm/attention surface
   health: ImportHealth;
@@ -582,34 +586,82 @@ function ConfirmPaidModal({
               </button>
             )}
 
-            {/* PRIMARY — verify (becomes a shared Crediteur, unpaid) */}
-            <button
-              onClick={handleVerify}
-              disabled={submitting}
-              style={{
-                width: "100%", padding: "16px", borderRadius: 14,
-                background: submitting ? "#c7c7cc" : "#34c759",
-                color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
-                cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
-              }}
-            >
-              {submitting ? "Bezig…" : "Bevestig / verifieer"}
-            </button>
+            {/* [SMART-INTAKE] When the intake router flagged this as a paid bon,
+                surface "Markeer als betaald" as the PRIMARY action (the human
+                still confirms Bank/Contant). Otherwise the normal order:
+                verify (unpaid Crediteur) primary, mark-paid secondary. */}
+            {fc?._intake_suggest === "paid" ? (
+              <>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6, marginBottom: 10,
+                  padding: "8px 12px", borderRadius: 10, background: "#e8f5e9",
+                  color: "#1b5e20", fontSize: 13, fontWeight: 600,
+                }}>
+                  <span style={{ fontSize: 16 }}>🧾</span>
+                  Kassabon — waarschijnlijk al betaald. Controleer en bevestig.
+                </div>
 
-            {/* SECONDARY — mark as paid → opens Bank/Contant choice */}
-            <button
-              onClick={() => setPayStep(true)}
-              disabled={submitting}
-              style={{
-                width: "100%", padding: "14px", borderRadius: 14,
-                background: "#eef4ff", color: "#007aff",
-                border: "1.5px solid #007aff",
-                fontWeight: 600, fontSize: 15,
-                cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
-              }}
-            >
-              Markeer als betaald
-            </button>
+                {/* PRIMARY — mark as paid (suggested for a bon) */}
+                <button
+                  onClick={() => setPayStep(true)}
+                  disabled={submitting}
+                  style={{
+                    width: "100%", padding: "16px", borderRadius: 14,
+                    background: submitting ? "#c7c7cc" : "#34c759",
+                    color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
+                    cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
+                  }}
+                >
+                  Markeer als betaald
+                </button>
+
+                {/* SECONDARY — verify as unpaid (if the bon is actually not paid) */}
+                <button
+                  onClick={handleVerify}
+                  disabled={submitting}
+                  style={{
+                    width: "100%", padding: "14px", borderRadius: 14,
+                    background: "#eef4ff", color: "#007aff",
+                    border: "1.5px solid #007aff",
+                    fontWeight: 600, fontSize: 15,
+                    cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
+                  }}
+                >
+                  {submitting ? "Bezig…" : "Toch niet betaald — verifieer"}
+                </button>
+              </>
+            ) : (
+              <>
+                {/* PRIMARY — verify (becomes a shared Crediteur, unpaid) */}
+                <button
+                  onClick={handleVerify}
+                  disabled={submitting}
+                  style={{
+                    width: "100%", padding: "16px", borderRadius: 14,
+                    background: submitting ? "#c7c7cc" : "#34c759",
+                    color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
+                    cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
+                  }}
+                >
+                  {submitting ? "Bezig…" : "Bevestig / verifieer"}
+                </button>
+
+                {/* SECONDARY — mark as paid → opens Bank/Contant choice */}
+                <button
+                  onClick={() => setPayStep(true)}
+                  disabled={submitting}
+                  style={{
+                    width: "100%", padding: "14px", borderRadius: 14,
+                    background: "#eef4ff", color: "#007aff",
+                    border: "1.5px solid #007aff",
+                    fontWeight: 600, fontSize: 15,
+                    cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
+                  }}
+                >
+                  Markeer als betaald
+                </button>
+              </>
+            )}
 
             {/* Cancel */}
             <button

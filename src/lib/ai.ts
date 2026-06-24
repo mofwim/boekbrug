@@ -68,6 +68,15 @@ export interface VerifyInvoiceResult {
   // BoekBrug never processes money — these only prepare it. Null when absent.
   vendor_iban?: string;      // the vendor's IBAN (party to be paid), normalized
   payment_reference?: string; // betalingskenmerk / structured payment reference
+  // [SMART-INTAKE] What KIND of document this is, so the intake router can send
+  // it to the right destination. A "receipt"/kassabon is a PAID proof; an
+  // "invoice" is a payment request (usually unpaid). "other" → not a financial
+  // document for the invoice pipeline (route to bestanden instead).
+  document_kind?: "invoice" | "receipt" | "other";
+  // [SMART-INTAKE] Did this document indicate it is ALREADY PAID? True for a
+  // kassabon / pin-receipt (paid at the counter). The router uses this to
+  // pre-suggest "paid" in the verify queue — the human still confirms (Pillar ⑤).
+  is_paid?: boolean;
   reason?: string;           // why it was rejected (if is_invoice = false)
   // [BOEK-011] detailed BTW breakdown — extracted in the same call, zero extra cost
   total_ex_btw?: number;     // amount excluding BTW
@@ -437,6 +446,8 @@ Return only a JSON object with these exact keys:
   "invoice_date": "YYYY-MM-DD" or null,
   "vendor_iban": string or null,
   "payment_reference": string or null,
+  "document_kind": "invoice" | "receipt" | "other",
+  "is_paid": boolean,
   "total_ex_btw": number or null,
   "btw_amount": number or null,
   "total_inc_btw": number or null,
@@ -505,6 +516,24 @@ Rules for is_invoice = false:
 - Shipping notifications
 - Anything that is not a financial document
 - Set reason to a short Dutch explanation why it was rejected
+
+Document kind + paid status (ALWAYS set these):
+- "document_kind" tells what this is:
+  - "invoice": a payment REQUEST — has an invoice number, a vendor, a due date
+    or payment terms ("te betalen", "betaal binnen 14 dagen", an IBAN to pay to).
+    Usually NOT yet paid.
+  - "receipt": a PROOF OF PAYMENT already made — a kassabon, pin-receipt, or
+    cash receipt. Signs: "PIN", "Contant", "Betaald", "Voldaan", a store till
+    receipt layout, no invoice number / no payment request, paid on the spot.
+  - "other": not an invoice and not a receipt (newsletter, quote, reminder,
+    shipping note, contract). For "other", set is_invoice=false too.
+- "is_paid": true ONLY when the document shows the payment is ALREADY DONE
+  (a receipt/kassabon: "PIN", "Contant betaald", "Voldaan", "Betaald"). For a
+  normal unpaid invoice (a request to pay), set is_paid=false. When unsure,
+  set is_paid=false — it is safer to ask the human to confirm payment than to
+  mark something paid that is not.
+- A receipt is still a real financial document: keep is_invoice=true for both
+  "invoice" and "receipt" (both enter the pipeline); only "other" is false.
 
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
@@ -641,6 +670,15 @@ Return JSON only.`;
     } else {
       parsed.payment_reference = undefined;
     }
+
+    // [SMART-INTAKE] Normalize the classification fields. Default to the safe
+    // side: unknown kind → 'invoice' (enters the verify queue, human reviews);
+    // unknown paid → false (human confirms payment, never auto-mark paid).
+    parsed.document_kind =
+      parsed.document_kind === "receipt" || parsed.document_kind === "other"
+        ? parsed.document_kind
+        : "invoice";
+    parsed.is_paid = parsed.is_paid === true;
 
     // Enforce minimum confidence threshold
     // Below 0.6 → treat as not an invoice to avoid false positives
