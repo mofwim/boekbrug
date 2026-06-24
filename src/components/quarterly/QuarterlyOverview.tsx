@@ -462,8 +462,14 @@ function AccountantView({ role }: { role: Role }) {
                     className="flex items-center justify-between px-4 py-3.5 active:bg-muted/60 transition-colors"
                   >
                     <div className="min-w-0 flex-1 mr-3">
-                      <p className="text-sm font-medium truncate">{inv.invoice_number}</p>
-                      <p className="text-xs text-muted-foreground truncate mt-0.5">{inv.client_name}</p>
+                      {/* [QUARTER-VENDOR-NAME] party name as primary, invoice_number as fallback */}
+                      <p className="text-sm font-medium truncate">
+                        {inv.client_name || inv.invoice_number}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">
+                        {inv.client_name && <span>{inv.invoice_number} &middot; </span>}
+                        {inv.invoice_date}
+                      </p>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       <p className="text-sm font-semibold tabular-nums">{formatEur(inv.total_inc_btw ?? 0)}</p>
