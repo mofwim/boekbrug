@@ -43,6 +43,7 @@ function ZzpView({ role }: { role: Role }) {
   const [data, setData] = useState<ZzpQuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [packaging, setPackaging] = useState(false); // [CLOSING-PACKAGE]
 
   useEffect(() => {
     setLoading(true);
@@ -57,6 +58,30 @@ function ZzpView({ role }: { role: Role }) {
       .then(setData)
       .finally(() => setLoading(false));
   }, [quarter, year, mode]);
+
+  // [CLOSING-PACKAGE] Download the full quarterly package (ZIP) for the accountant.
+  async function handlePackageExport() {
+    setPackaging(true);
+    try {
+      const params = new URLSearchParams({ year: String(year), quarter: String(quarter) });
+      const res = await fetch(`/api/closing-package?${params}`);
+      if (!res.ok) {
+        alert("Pakket genereren mislukt — probeer opnieuw");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `kwartaalpakket-Q${quarter}-${year}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Pakket genereren mislukt — controleer je verbinding");
+    } finally {
+      setPackaging(false);
+    }
+  }
 
   async function handleExport() {
     setExporting(true);
@@ -123,6 +148,19 @@ function ZzpView({ role }: { role: Role }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             {exporting ? "…" : "CSV"}
+          </button>
+
+          {/* [CLOSING-PACKAGE] Full quarterly package (ZIP) for the accountant */}
+          <button
+            onClick={handlePackageExport}
+            disabled={packaging || !data}
+            title="Download alle facturen, bonnen en het bankafschrift als één ZIP voor je boekhouder"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+            </svg>
+            {packaging ? "Pakket maken…" : "Kwartaalpakket"}
           </button>
         </div>
       </div>
@@ -275,6 +313,7 @@ function AccountantView({ role }: { role: Role }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [clientsLoading, setClientsLoading] = useState(false);
+  const [packaging, setPackaging] = useState(false); // [CLOSING-PACKAGE]
 
   useEffect(() => {
     setClientsLoading(true);
@@ -315,6 +354,35 @@ function AccountantView({ role }: { role: Role }) {
       downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`);
     } finally {
       setExporting(false);
+    }
+  }
+
+  // [CLOSING-PACKAGE] Download the client's full quarterly package (ZIP).
+  async function handlePackageExport() {
+    if (!selectedClientId) return;
+    setPackaging(true);
+    try {
+      const params = new URLSearchParams({
+        year: String(year),
+        quarter: String(quarter),
+        clientId: selectedClientId,
+      });
+      const res = await fetch(`/api/closing-package?${params}`);
+      if (!res.ok) {
+        alert("Pakket genereren mislukt — probeer opnieuw");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `kwartaalpakket-Q${quarter}-${year}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Pakket genereren mislukt — controleer je verbinding");
+    } finally {
+      setPackaging(false);
     }
   }
 
@@ -399,6 +467,19 @@ function AccountantView({ role }: { role: Role }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             {exporting ? "…" : "CSV"}
+          </button>
+
+          {/* [CLOSING-PACKAGE] Full quarterly package (ZIP) for this client */}
+          <button
+            onClick={handlePackageExport}
+            disabled={packaging || !data || !selectedClientId}
+            title="Download alle facturen, bonnen en het bankafschrift van deze klant als één ZIP"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+            </svg>
+            {packaging ? "Pakket maken…" : "Kwartaalpakket"}
           </button>
         </div>
       </div>
