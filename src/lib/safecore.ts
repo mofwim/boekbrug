@@ -161,3 +161,115 @@ export function isReliableVendor(v: string | null | undefined): boolean {
   const junk = new Set(['onbekende afzender', 'onbekend', 'unknown', '-', '—'])
   return !junk.has(n)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SAFECORE Rule 2 — shared semantic-duplicate detection (graded key)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// This is the SAME graded logic the email path runs inline (BOEK-SAFECORE Rule 2
+// + SAFECORE-GAP), extracted so OTHER ingestion paths (the /api/intake camera +
+// file path) catch the same "same invoice, different file" duplicate. Without
+// this, byte-hash alone misses a re-photographed / re-generated invoice → the
+// same invoice enters twice → double-pay risk.
+//
+// The decision logic is pure; the DB read is injected as `findMatch` so this
+// module stays dependency-free (no Supabase import). The caller passes a small
+// query function. Returns the matched original (block) or null (allow).
+
+export interface SemanticDedupInput {
+  invoiceNumber: string | null | undefined
+  vendor: string | null | undefined       // client_name on an incoming invoice
+  totalIncBtw: number | null | undefined
+  invoiceDate: string | null | undefined  // ISO or DD-MM; we re-derive ISO
+}
+
+export interface SemanticDedupMatch {
+  id: string
+  invoice_number: string | null
+  client_name: string | null
+}
+
+/** Anchor used for the match — for audit/telemetry. */
+export type DedupTierKind = 'number' | 'vendor' | 'none'
+
+export interface SemanticDedupQuery {
+  // tier: 'number' → match on invoice_number + total (+ date). 'vendor' → match
+  // on vendor(client_name, case-insensitive) + total + date. The caller runs the
+  // scoped DB query (receiver_id + direction='incoming') and returns the first
+  // match or null.
+  tier: 'number' | 'vendor'
+  total: number
+  invoiceNumber?: string
+  vendor?: string
+  dateIso?: string | null
+}
+
+export interface SemanticDedupResult {
+  duplicate: boolean
+  tier: DedupTierKind
+  match?: SemanticDedupMatch
+  // when tier='none' — recorded for the audit trail; the invoice is NOT blocked
+  // (too loose to safely block), it is allowed through for human review.
+  undedupableReason?: string
+}
+
+/**
+ * Decide-then-query semantic duplicate check, mirroring the email path exactly:
+ *   1. real invoice number → key = number + total (+ date)
+ *   2. placeholder/empty number + reliable vendor → key = vendor + total + date
+ *   3. placeholder/empty number + unreliable vendor → un-dedupable (allow, log)
+ *
+ * `findMatch` performs the scoped DB read for a given tier and returns the first
+ * matching original (or null). Kept injectable so safecore stays I/O-free.
+ */
+export async function findSemanticDuplicate(
+  input: SemanticDedupInput,
+  findMatch: (q: SemanticDedupQuery) => Promise<SemanticDedupMatch | null>
+): Promise<SemanticDedupResult> {
+  // No usable total → cannot form any safe key. Allow (human reviews).
+  if (typeof input.totalIncBtw !== 'number' || !Number.isFinite(input.totalIncBtw)) {
+    return { duplicate: false, tier: 'none', undedupableReason: 'geen bruikbaar totaalbedrag' }
+  }
+
+  const numberIsReal = !isPlaceholderInvoiceNumber(input.invoiceNumber)
+
+  const hasRealDate =
+    typeof input.invoiceDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(input.invoiceDate)
+  const dateIso = hasRealDate
+    ? new Date(input.invoiceDate as string).toISOString().split('T')[0]
+    : null
+
+  if (numberIsReal) {
+    const match = await findMatch({
+      tier: 'number',
+      total: input.totalIncBtw,
+      invoiceNumber: (input.invoiceNumber as string).trim(),
+      dateIso,
+    })
+    return match
+      ? { duplicate: true, tier: 'number', match }
+      : { duplicate: false, tier: 'number' }
+  }
+
+  if (isReliableVendor(input.vendor)) {
+    const match = await findMatch({
+      tier: 'vendor',
+      total: input.totalIncBtw,
+      vendor: (input.vendor as string).trim(),
+      dateIso,
+    })
+    return match
+      ? { duplicate: true, tier: 'vendor', match }
+      : { duplicate: false, tier: 'vendor' }
+  }
+
+  // No real number AND no reliable vendor → total+date alone is too loose to
+  // block safely (could reject a legitimate invoice = a missing crediteur).
+  // Allow through; the caller logs it and the human reviews in the queue.
+  return {
+    duplicate: false,
+    tier: 'none',
+    undedupableReason:
+      'geen betrouwbaar factuurnummer en geen betrouwbare afzender — duplicaatcontrole niet mogelijk',
+  }
+}

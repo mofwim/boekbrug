@@ -29,6 +29,9 @@ import { parseBankFile } from "@/lib/bank-parser"
 import { dedupTransactions, mapToRows, dateRange } from "@/lib/bank-import"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+// [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
+// email path, so the camera/file path also blocks "same invoice, different file".
+import { findSemanticDuplicate } from "@/lib/safecore"
 // [SMART-INTAKE] jsonb column type for invoices.field_confidence — same pattern
 // as email-integration.ts / audit.ts: derive the Json type, cast at write.
 import type { Database } from "@/types/database.types"
@@ -134,6 +137,72 @@ export async function POST(req: NextRequest) {
     is_paid: v.is_paid,
     confidence: v.confidence,
   })
+
+  // ── [SAFECORE Rule 2] Semantic duplicate gate (invoice/receipt only) ────────
+  // Byte-hash (above) only catches the SAME file. This catches the SAME INVOICE
+  // arriving as a DIFFERENT file (re-photographed, regenerated PDF, re-upload) —
+  // the real double-pay risk. Same graded key as the email path: real number →
+  // number+total(+date); placeholder number + reliable vendor → vendor+total+date;
+  // otherwise un-dedupable (allowed for human review, never silently blocked).
+  // Runs BEFORE storage/insert so a duplicate costs nothing.
+  if (decision.destination === "invoice" || decision.destination === "receipt") {
+    const dup = await findSemanticDuplicate(
+      {
+        invoiceNumber: v.invoice_number,
+        vendor: v.vendor,
+        totalIncBtw: v.total_inc_btw ?? v.amount,
+        invoiceDate: v.invoice_date,
+      },
+      async (q) => {
+        let query = supabase
+          .from("invoices")
+          .select("id, invoice_number, client_name")
+          .eq("receiver_id", user.id)
+          .eq("direction", "incoming")
+          .eq("total_inc_btw", q.total)
+        if (q.tier === "number" && q.invoiceNumber) {
+          query = query.eq("invoice_number", q.invoiceNumber)
+        } else if (q.tier === "vendor" && q.vendor) {
+          query = query.ilike("client_name", q.vendor)
+        }
+        if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
+        const { data } = await query.limit(1)
+        return data && data.length > 0
+          ? { id: data[0].id, invoice_number: data[0].invoice_number, client_name: data[0].client_name }
+          : null
+      }
+    )
+
+    if (dup.duplicate && dup.match) {
+      // Block the duplicate before any storage/insert. Truth in the audit log,
+      // a clear message to the owner. The original is untouched.
+      await logAuditAction({
+        userId: user.id,
+        action: "invoice.duplicated",
+        entityType: "invoice",
+        entityId: dup.match.id,
+        newValue: {
+          reason: "semantic_duplicate_blocked",
+          matched_on: dup.tier,
+          invoice_number: v.invoice_number ?? null,
+          total_inc_btw: v.total_inc_btw ?? v.amount ?? null,
+          rejected_vendor: v.vendor ?? null,
+          path: "intake",
+        },
+        ipAddress: getClientIP(req),
+      })
+      const nr = dup.match.invoice_number ? `factuur ${dup.match.invoice_number}` : "deze factuur"
+      return NextResponse.json(
+        {
+          error: `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
+          duplicate: true,
+          original_id: dup.match.id,
+        },
+        { status: 409 }
+      )
+    }
+    // tier 'none' (un-dedupable) → allow through; the human reviews in the queue.
+  }
 
   // ── Store the file in Storage (shared by all destinations) ──────────────────
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
