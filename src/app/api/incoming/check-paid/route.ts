@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       duplicate: true,
       match: {
+        id: m.id, // [PAY-SAFE] the original paid invoice — for "view original" deep-link
         invoice_number: m.invoice_number,
         client_name: m.client_name,
         total_inc_btw: m.total_inc_btw,

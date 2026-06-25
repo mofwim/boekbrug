@@ -135,7 +135,7 @@ export default function IncomingManageClient({
   // context + the matched already-paid invoice so the owner can decide.
   const [dupWarn, setDupWarn]           = useState<{
     ctx: PayCtx
-    match: { invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
+    match: { id?: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
   } | null>(null)
   const [checkingId, setCheckingId]     = useState<string | null>(null)
 
@@ -200,6 +200,47 @@ export default function IncomingManageClient({
       setPayCtx(ctx)
     } finally {
       setCheckingId(null)
+    }
+  }
+
+  // ── [PAY-SAFE] Duplicate warning actions ──
+  // viewOriginal: jump to the already-paid original and highlight it (same deep-
+  // link mechanism as a notification: expand + highlight + scroll). If it isn't
+  // in the current list (paid rows are), fall back to a focus URL.
+  function viewOriginal(originalId?: string) {
+    setDupWarn(null)
+    if (!originalId) return
+    if (invoices.some(i => i.id === originalId)) {
+      setExpandedId(originalId)
+      setHighlightId(originalId)
+      setTimeout(() => {
+        rowRefs.current[originalId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 60)
+      setTimeout(() => setHighlightId(null), 3200)
+    } else {
+      router.push(`/dashboard/incoming/manage?focus=${originalId}`)
+    }
+  }
+
+  // archiveDuplicate: the second copy is the SAME invoice re-uploaded. Remove it
+  // from the queue. Under the hood this ARCHIVES (status='archived') — never a
+  // physical delete (Bewaarplicht). Routes through the existing confirm DELETE
+  // (archive, recoverable). The original paid invoice is untouched.
+  async function archiveDuplicate(dupId: string) {
+    setDupWarn(null)
+    setProcessingId(dupId)
+    try {
+      const res = await fetch(`/api/email/confirm/${dupId}`, { method: 'DELETE' })
+      if (res.ok) {
+        setInvoices(prev => prev.filter(i => i.id !== dupId))
+        showToast('Dubbele factuur verwijderd')
+      } else {
+        showToast('Verwijderen mislukt — probeer opnieuw')
+      }
+    } catch {
+      showToast('Verwijderen mislukt — probeer opnieuw')
+    } finally {
+      setProcessingId(null)
     }
   }
 
@@ -488,7 +529,7 @@ export default function IncomingManageClient({
                           {processingId === inv.id || checkingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : isPrepared
-                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span> Ik heb betaald</>
+                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span> Markeer als betaald</>
                               : 'Betaald?'}
                         </button>
                       )}
@@ -633,12 +674,27 @@ export default function IncomingManageClient({
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
+              {/* [PAY-SAFE] Primary helpers: see the original, or remove this copy */}
+              {dupWarn.match.id && (
+                <button
+                  onClick={() => viewOriginal(dupWarn.match.id)}
+                  style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  Bekijk de betaalde factuur
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_forward</span>
+                </button>
+              )}
+              <button
+                onClick={() => archiveDuplicate(dupWarn.ctx.id)}
+                style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+                Deze dubbele verwijderen
+              </button>
+              {/* The owner can still insist this is a separate, genuinely-due invoice */}
               <button
                 onClick={() => { const c = dupWarn.ctx; setDupWarn(null); setPayCtx(c) }}
-                style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.warning, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+                style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.warning, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
                 Toch markeren als betaald
               </button>
-              <button onClick={() => setDupWarn(null)} style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+              <button onClick={() => setDupWarn(null)} style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
                 Annuleren
               </button>
             </div>
@@ -835,7 +891,7 @@ function PreparePaymentSheet({
           Sluiten
         </button>
         <p style={{ fontSize: 12, color: '#5F6368', textAlign: 'center', marginTop: 10, lineHeight: 1.4 }}>
-          Na betalen in je bank: bevestig met &quot;Ik heb betaald&quot; op de factuur.
+          Na betalen in je bank: bevestig met &quot;Markeer als betaald&quot; op de factuur.
         </p>
       </div>
     </div>
