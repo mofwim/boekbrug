@@ -1,0 +1,431 @@
+// src/lib/closing-package.ts
+// [CLOSING-PACKAGE] Build ONE ZIP per quarter for the accountant: original
+// invoices/receipts (PDF, not regenerated) + bank statement (passthrough) +
+// a RAW BTW overview. No UBL, no vat_due, only verified invoices, honest about
+// gaps. Grounded in a real accountant request (facturen/bonnen + MT940).
+//
+// Two PDF sources (Phase A finding):
+//   - OUTGOING (sales): the generated PDF lives at invoices.pdf_url (FACTUUR-A,
+//     best-effort — may be missing for failed renders / pre-FACTUUR-A invoices).
+//   - INCOMING (purchases) + bank statement: documents table (invoice_id link
+//     for invoices; doc_type='bankafschrift' for statements).
+//
+// Discipline:
+//   - Filter on STORED status, never recomputed overdue — a ZIP must freeze
+//     what was true, reproducible on every download (Edit 6).
+//   - Only verified invoices (no 'processing') — AI prepares, human confirms.
+//   - RAW BTW numbers only (turnover + BTW per rate, in/out separated). The
+//     accountant computes the aangifte; we never compute vat_due.
+//   - Every gap (missing PDF, missing bank statement) is a WARNING in the
+//     overview, never a silent omission (Edit 5 / trust rule 6).
+//
+// Mirrors account-export.ts: a pure assemble (node-testable) + an orchestrator
+// (fetch + parallel download, then assemble). Reuses quarterly.ts + export.ts.
+
+import JSZip from "jszip";
+import type { PipelineClient } from "./supabase-pipeline";
+import {
+  quarterStartDate,
+  quarterEndDate,
+  buildQuarterlySummary,
+  buildZzpSummary,
+  type InvoiceForQuarterly,
+} from "./quarterly";
+import { calcBtwRate } from "./export";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export type Quarter = 1 | 2 | 3 | 4;
+
+/** An invoice row as needed by the package (superset of InvoiceForQuarterly). */
+export interface PackageInvoice {
+  id: string;
+  invoice_number: string | null;
+  client_name: string | null;       // on incoming, this is the vendor
+  status: string | null;
+  direction: string;                 // 'outgoing' | 'incoming'
+  total_ex_btw: number | null;
+  btw_amount: number | null;
+  total_inc_btw: number | null;
+  invoice_date: string | null;
+  due_date: string | null;
+  pdf_url: string | null;            // outgoing PDF (FACTUUR-A)
+  document_id: string | null;        // link to documents (incoming original)
+}
+
+/** A file already downloaded from Storage, ready to drop into the ZIP. */
+export interface PackageFile {
+  path: string;                      // storage path
+  name: string;                      // display name
+  bytes: Uint8Array;
+}
+
+export interface ClosingPackageWarning {
+  code: string;                      // machine code
+  message: string;                   // Dutch, human-readable
+}
+
+export interface ClosingPackageSummary {
+  quarter: string;                   // "Q1 2026"
+  outgoingCount: number;
+  incomingCount: number;
+  filesIncluded: number;
+  bankStatementIncluded: boolean;
+  warnings: ClosingPackageWarning[];
+  generatedAt: string;               // ISO
+}
+
+export interface ClosingPackageResult {
+  zipBytes: Buffer;
+  summary: ClosingPackageSummary;
+}
+
+// Verified status sets (Phase A confirmed against the enum). 'processing'
+// excluded — unverified must not reach the accountant.
+const OUTGOING_VERIFIED = new Set(["sent", "paid", "overdue"]);
+const INCOMING_VERIFIED = new Set(["received", "paid"]);
+
+export function isVerifiedForPackage(inv: { direction: string; status: string | null }): boolean {
+  const s = inv.status ?? "";
+  if (inv.direction === "outgoing") return OUTGOING_VERIFIED.has(s);
+  if (inv.direction === "incoming") return INCOMING_VERIFIED.has(s);
+  return false;
+}
+
+// ─── Helpers (pure) ─────────────────────────────────────────────────────────────
+
+const EUR = (n: number) => n.toFixed(2).replace(".", ",");
+const safe = (s: string) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+/** CSV cell escaper (semicolon-separated, Excel NL). */
+function esc(v: string | number): string {
+  const s = String(v ?? "");
+  return s.includes(";") || s.includes("\n") || s.includes('"')
+    ? `"${s.replace(/"/g, '""')}"`
+    : s;
+}
+
+/** Map a PackageInvoice to the quarterly lib's shape (computes btw_rate). */
+function toQuarterly(inv: PackageInvoice): InvoiceForQuarterly {
+  return {
+    id: inv.id,
+    invoice_number: inv.invoice_number,
+    client_name: inv.client_name,
+    status: inv.status,
+    direction: inv.direction,
+    total_ex_btw: inv.total_ex_btw,
+    btw_amount: inv.btw_amount,
+    total_inc_btw: inv.total_inc_btw,
+    btw_rate: calcBtwRate(inv.btw_amount, inv.total_ex_btw),
+    invoice_date: inv.invoice_date,
+    due_date: inv.due_date ?? undefined,
+  };
+}
+
+/** Build the inhoudslijst + RAW BTW overview CSV. */
+export function buildOverviewCsv(
+  quarterLabel: string,
+  outgoing: PackageInvoice[],
+  incoming: PackageInvoice[],
+  warnings: ClosingPackageWarning[]
+): string {
+  const lines: string[] = [];
+
+  lines.push(`BoekBrug — Kwartaaloverzicht ${quarterLabel}`);
+  lines.push("");
+
+  // ── RAW BTW overview, per rate, in/out separated (NO vat_due) ──
+  lines.push("BTW-overzicht (ruwe cijfers — de boekhouder berekent de aangifte)");
+  lines.push(["Richting", "Tarief", "Omzet excl. BTW", "BTW-bedrag"].map(esc).join(";"));
+
+  for (const [label, set] of [["Uitgaand (verkoop)", outgoing], ["Inkomend (inkoop)", incoming]] as const) {
+    const byRate = new Map<number, { excl: number; btw: number }>();
+    for (const inv of set) {
+      const rate = calcBtwRate(inv.btw_amount, inv.total_ex_btw);
+      const cur = byRate.get(rate) ?? { excl: 0, btw: 0 };
+      cur.excl += inv.total_ex_btw ?? 0;
+      cur.btw += inv.btw_amount ?? 0;
+      byRate.set(rate, cur);
+    }
+    for (const rate of [21, 9, 0]) {
+      const v = byRate.get(rate);
+      if (v && (v.excl !== 0 || v.btw !== 0)) {
+        lines.push([label, `${rate}%`, EUR(v.excl), EUR(v.btw)].map(esc).join(";"));
+      }
+    }
+  }
+  lines.push("");
+
+  // ── Content list ──
+  lines.push("Inhoud van dit pakket");
+  lines.push(["Richting", "Factuurnummer", "Naam", "Datum", "Bedrag incl. BTW", "Status"].map(esc).join(";"));
+  for (const inv of [...outgoing, ...incoming]) {
+    lines.push([
+      inv.direction === "outgoing" ? "Uitgaand" : "Inkomend",
+      inv.invoice_number ?? "—",
+      inv.client_name ?? "—",
+      inv.invoice_date ?? "—",
+      EUR(inv.total_inc_btw ?? 0),
+      inv.status ?? "—",
+    ].map(esc).join(";"));
+  }
+  lines.push("");
+
+  // ── Warnings (honest about gaps) ──
+  if (warnings.length > 0) {
+    lines.push("Let op — ontbrekende of onvolledige onderdelen");
+    for (const w of warnings) lines.push(esc(w.message));
+  } else {
+    lines.push("Geen ontbrekende onderdelen gedetecteerd.");
+  }
+
+  return lines.join("\r\n");
+}
+
+// ─── Assembly (no network — fully node-testable) ────────────────────────────────
+
+interface AssembleInput {
+  year: number;
+  quarter: Quarter;
+  clientName: string;
+  outgoing: PackageInvoice[];
+  incoming: PackageInvoice[];
+  /** invoiceId → downloaded PDF (outgoing via pdf_url, incoming via documents) */
+  pdfByInvoice: Map<string, PackageFile>;
+  /** the bank statement file(s) for the quarter (passthrough), if any */
+  bankFiles: PackageFile[];
+  /** optional kilometer registration files the owner uploaded */
+  kilometerFiles: PackageFile[];
+  warnings: ClosingPackageWarning[];
+}
+
+export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles } = input;
+  const warnings = [...input.warnings];
+  const quarterLabel = `Q${quarter} ${year}`;
+  const zip = new JSZip();
+
+  let filesIncluded = 0;
+
+  // ── facturen-en-bonnen/uitgaand + inkomend ──
+  for (const [dir, set] of [["uitgaand", outgoing], ["inkomend", incoming]] as const) {
+    for (const inv of set) {
+      const file = pdfByInvoice.get(inv.id);
+      const baseName = `${safe(inv.client_name ?? "onbekend")}_${safe(inv.invoice_number ?? inv.id)}`;
+      if (file) {
+        zip.file(`facturen-en-bonnen/${dir}/${baseName}.pdf`, file.bytes);
+        filesIncluded++;
+      } else {
+        // Honest gap: a verified invoice with no stored PDF (outgoing render
+        // failed / pre-FACTUUR-A, or incoming without a linked document).
+        warnings.push({
+          code: "pdf_missing",
+          message: `Factuur ${inv.invoice_number ?? inv.id} (${dir}) — origineel PDF niet gevonden, niet bijgevoegd.`,
+        });
+      }
+    }
+  }
+
+  // ── bankafschrift/ (passthrough) ──
+  for (const bf of bankFiles) {
+    zip.file(`bankafschrift/${safe(bf.name)}`, bf.bytes);
+    filesIncluded++;
+  }
+  if (bankFiles.length === 0) {
+    warnings.push({
+      code: "bank_missing",
+      message: "Bankafschrift niet beschikbaar voor dit kwartaal — upload het (opnieuw) zodat het wordt meegeleverd.",
+    });
+  }
+
+  // ── kilometers/ (optional — not a BoekBrug feature; passthrough if present) ──
+  for (const kf of kilometerFiles) {
+    zip.file(`kilometers/${safe(kf.name)}`, kf.bytes);
+    filesIncluded++;
+  }
+  if (kilometerFiles.length === 0) {
+    warnings.push({
+      code: "kilometers_missing",
+      message: "Kilometerregistratie niet aangetroffen — voeg toe indien van toepassing.",
+    });
+  }
+
+  // ── overzicht.csv + overzicht.json ──
+  const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings);
+  zip.file("overzicht.csv", "\uFEFF" + overviewCsv);
+
+  // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
+  const allQuarterly = [...outgoing, ...incoming].map(toQuarterly);
+  const fullSummary = buildQuarterlySummary(allQuarterly, year, quarter);
+  const zzpSummary = buildZzpSummary(allQuarterly, year, quarter, "all");
+
+  const summary: ClosingPackageSummary = {
+    quarter: quarterLabel,
+    outgoingCount: outgoing.length,
+    incomingCount: incoming.length,
+    filesIncluded,
+    bankStatementIncluded: bankFiles.length > 0,
+    warnings,
+    generatedAt: new Date().toISOString(),
+  };
+
+  zip.file(
+    "overzicht.json",
+    JSON.stringify(
+      {
+        beschrijving: `BoekBrug kwartaalpakket ${quarterLabel} voor ${clientName}`,
+        kwartaal: quarterLabel,
+        gegenereerd_op: summary.generatedAt,
+        uitgaand_aantal: outgoing.length,
+        inkomend_aantal: incoming.length,
+        bestanden_bijgevoegd: filesIncluded,
+        bankafschrift_bijgevoegd: summary.bankStatementIncluded,
+        // RAW numbers only — accountant computes the aangifte.
+        btw_overzicht: {
+          omzet_per_tarief: fullSummary.btwBreakdown,
+          uitgaand_incl: zzpSummary.totalIn,
+          inkomend_incl: zzpSummary.totalOut,
+          btw_uitgaand: zzpSummary.totalBtwIn,
+          btw_inkomend: zzpSummary.totalBtwOut,
+        },
+        waarschuwingen: warnings,
+      },
+      null,
+      2
+    )
+  );
+
+  const zipBytes = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  return { zipBytes, summary };
+}
+
+// ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
+
+const INVOICE_FIELDS =
+  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id" as const;
+
+/**
+ * Build the closing package for one client + quarter. `supabase` must be a
+ * service_role pipeline client; every query is explicitly scoped to ownerId
+ * (service_role bypasses RLS). The caller (route) verifies authorization first.
+ */
+export async function buildClosingPackageZip(args: {
+  ownerId: string;
+  year: number;
+  quarter: Quarter;
+  supabase: PipelineClient;
+}): Promise<ClosingPackageResult> {
+  const { ownerId, year, quarter, supabase } = args;
+  const start = quarterStartDate(year, quarter);
+  const end = quarterEndDate(year, quarter);
+  const warnings: ClosingPackageWarning[] = [];
+
+  let clientName = "Onbekend";
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("company_name, full_name")
+    .eq("id", ownerId)
+    .maybeSingle();
+  if (profile) clientName = profile.company_name || profile.full_name || "Onbekend";
+
+  // Invoices of the quarter (both directions). Filter on STORED status only
+  // (verified sets), within the quarter date range.
+  const { data: invData, error: invErr } = await supabase
+    .from("invoices")
+    .select(INVOICE_FIELDS)
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+    .gte("invoice_date", start)
+    .lte("invoice_date", end)
+    .neq("status", "archived");
+  if (invErr) throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${invErr.message}`);
+
+  const all = (invData ?? []) as unknown as PackageInvoice[];
+  const verified = all.filter(isVerifiedForPackage);
+  const outgoing = verified.filter((i) => i.direction === "outgoing");
+  const incoming = verified.filter((i) => i.direction === "incoming");
+
+  // ── Resolve PDF storage paths ──
+  // outgoing → invoices.pdf_url ; incoming → documents.file_url via document_id.
+  const pathByInvoice = new Map<string, { path: string; name: string }>();
+
+  for (const inv of outgoing) {
+    if (inv.pdf_url) {
+      pathByInvoice.set(inv.id, { path: inv.pdf_url, name: `${inv.invoice_number ?? inv.id}.pdf` });
+    }
+  }
+
+  const incomingDocIds = incoming.map((i) => i.document_id).filter((x): x is string => !!x);
+  if (incomingDocIds.length > 0) {
+    const { data: docs } = await supabase
+      .from("documents")
+      .select("id, file_url, file_name")
+      .in("id", incomingDocIds);
+    const docRows = (docs ?? []) as unknown as Array<{
+      id: string;
+      file_url: string | null;
+      file_name: string | null;
+    }>;
+    const docById = new Map(docRows.map((d) => [d.id, d]));
+    for (const inv of incoming) {
+      const d = inv.document_id ? docById.get(inv.document_id) : null;
+      if (d?.file_url) {
+        pathByInvoice.set(inv.id, { path: d.file_url, name: d.file_name ?? `${inv.invoice_number ?? inv.id}` });
+      }
+    }
+  }
+
+  // ── Bank statement(s) for the quarter (BANK-RAW-STORE: doc_type='bankafschrift') ──
+  const { data: bankDocs } = await supabase
+    .from("documents")
+    .select("file_url, file_name, created_at")
+    .eq("user_id", ownerId)
+    .eq("doc_type", "bankafschrift")
+    .gte("created_at", start)
+    .lte("created_at", `${end}T23:59:59`);
+  const bankRows = (bankDocs ?? []) as unknown as Array<{
+    file_url: string | null;
+    file_name: string | null;
+    created_at: string | null;
+  }>;
+  const bankPaths = bankRows
+    .filter((d) => !!d.file_url)
+    .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "bankafschrift" }));
+
+  // ── Download everything in parallel; a failed file → warning, not a crash ──
+  async function dl(path: string, name: string): Promise<PackageFile | null> {
+    try {
+      const { data, error } = await supabase.storage.from("documents").download(path);
+      if (error || !data) return null;
+      const bytes = new Uint8Array(await data.arrayBuffer());
+      return { path, name, bytes };
+    } catch {
+      return null;
+    }
+  }
+
+  const pdfEntries = await Promise.all(
+    [...pathByInvoice.entries()].map(async ([invId, p]) => {
+      const f = await dl(p.path, p.name);
+      return [invId, f] as const;
+    })
+  );
+  const pdfByInvoice = new Map<string, PackageFile>();
+  for (const [invId, f] of pdfEntries) {
+    if (f) pdfByInvoice.set(invId, f);
+  }
+
+  const bankFilesRaw = await Promise.all(bankPaths.map((p) => dl(p.path, p.name)));
+  const bankFiles = bankFilesRaw.filter((f): f is PackageFile => f !== null);
+
+  return assembleClosingPackageZip({
+    year,
+    quarter,
+    clientName,
+    outgoing,
+    incoming,
+    pdfByInvoice,
+    bankFiles,
+    kilometerFiles: [], // not a feature yet; passthrough hook reserved
+    warnings,
+  });
+}
