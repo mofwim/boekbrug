@@ -11,6 +11,10 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { parseBankFile } from "@/lib/bank-parser";
 import { dedupTransactions, mapToRows, dateRange } from "@/lib/bank-import";
+// [BANK-RAW-STORE] store the original statement file so the closing package can
+// include it later (passthrough). Best-effort — never blocks the parse/insert.
+import { computeContentHash } from "@/lib/content-hash";
+import { resolveImportTarget } from "@/lib/bestanden";
 
 const MAX_BYTES = 5_000_000; // 5 MB — bank statements are small text/XML
 
@@ -28,6 +32,8 @@ export async function POST(req: NextRequest) {
   // 2. Read the uploaded file
   let content: string;
   let filename: string;
+  let fileBuffer: Buffer | null = null; // [BANK-RAW-STORE] keep raw bytes for storage
+  let fileType = "text/plain";
   try {
     const form = await req.formData();
     const file = form.get("file");
@@ -39,76 +45,147 @@ export async function POST(req: NextRequest) {
     }
     content = await file.text();
     filename = file.name || "afschrift";
+    fileType = file.type || "text/plain";
+    // [BANK-RAW-STORE] capture bytes for the passthrough copy (best-effort use later)
+    fileBuffer = Buffer.from(await file.arrayBuffer());
   } catch {
     return NextResponse.json({ error: "invalid_form_data" }, { status: 400 });
   }
 
-  // 3. Parse (format auto-detected: CAMT.053 / MT940). No AI — pure parsing.
-  const parsed = parseBankFile(content, filename);
-  if (parsed.transactions.length === 0) {
-    return NextResponse.json(
-      { error: "no_transactions", parseWarnings: parsed.parseErrors },
-      { status: 422 }
-    );
+  // 3. Parse — BEST-EFFORT. The statement is delivered to the accountant via
+  // passthrough (stored as-is) regardless of format. Parsing into
+  // bank_transactions only matters IF we later enable invoice↔bank matching;
+  // since we don't match today, an unparseable format (e.g. a bank CSV, a PDF
+  // statement) must NOT be rejected — we still store it for the accountant.
+  // parseBankFile understands MT940/CAMT; anything else → 0 transactions (or a
+  // throw), which we swallow and continue to storage.
+  let parsed: ReturnType<typeof parseBankFile> | null = null;
+  try {
+    parsed = parseBankFile(content, filename);
+  } catch (parseErr) {
+    console.error("[BANK-RAW-STORE] parse failed (non-fatal — storing anyway)", parseErr);
+    parsed = null;
   }
 
-  // 4. Dedup against what this user already has, scoped to the file's date range.
-  //    service_role (pipeline) is safe here: user_id is pinned to the authenticated user.
   const pipeline = createPipelineClient();
-  const { min, max } = dateRange(parsed.transactions);
 
-  let existing: {
-    date: string | null;
-    amount: number | null;
-    description: string | null;
-    counterpart_name: string | null;
-    reference: string | null;
-  }[] = [];
-
-  if (min && max) {
-    const { data, error } = await pipeline
-      .from("bank_transactions")
-      .select("date, amount, description, counterpart_name, reference")
-      .eq("user_id", user.id)
-      .gte("date", min)
-      .lte("date", max);
-    if (error) {
-      return NextResponse.json(
-        { error: "lookup_failed", detail: error.message },
-        { status: 500 }
-      );
-    }
-    existing = data ?? [];
-  }
-
-  const { toInsert, skipped } = dedupTransactions(parsed.transactions, existing);
-
-  // 5. Insert new transactions (status 'pending' — human confirms matches later).
+  // 4. Insert transactions — only when parsing actually yielded some. Dedup
+  // scoped to the file's date range. All best-effort: a DB hiccup here must not
+  // lose the passthrough copy below.
   let inserted = 0;
-  if (toInsert.length > 0) {
-    const rows = mapToRows(toInsert, user.id);
-    const { error } = await pipeline.from("bank_transactions").insert(rows);
-    if (error) {
-      return NextResponse.json(
-        { error: "insert_failed", detail: error.message },
-        { status: 500 }
-      );
+  let skipped = 0;
+  let min: string | null = null;
+  let max: string | null = null;
+
+  if (parsed && parsed.transactions.length > 0) {
+    const range = dateRange(parsed.transactions);
+    min = range.min;
+    max = range.max;
+
+    let existing: {
+      date: string | null;
+      amount: number | null;
+      description: string | null;
+      counterpart_name: string | null;
+      reference: string | null;
+    }[] = [];
+
+    if (min && max) {
+      const { data, error } = await pipeline
+        .from("bank_transactions")
+        .select("date, amount, description, counterpart_name, reference")
+        .eq("user_id", user.id)
+        .gte("date", min)
+        .lte("date", max);
+      if (!error) {
+        existing = data ?? [];
+      } else {
+        console.error("[BANK-RAW-STORE] tx lookup failed (non-fatal)", error);
+      }
     }
-    inserted = rows.length;
+
+    const dedupResult = dedupTransactions(parsed.transactions, existing);
+    skipped = dedupResult.skipped;
+    if (dedupResult.toInsert.length > 0) {
+      const rows = mapToRows(dedupResult.toInsert, user.id);
+      const { error } = await pipeline.from("bank_transactions").insert(rows);
+      if (!error) {
+        inserted = rows.length;
+      } else {
+        console.error("[BANK-RAW-STORE] tx insert failed (non-fatal)", error);
+      }
+    }
   }
 
-  // [BOEK-016 — OPTIONAL] audit + rate-limit hooks to match project conventions:
-  //   await logAuditAction(user.id, 'BANK_UPLOAD', 'bank_transactions', null,
-  //                        { format: parsed.format, inserted, skipped });
-  //   (and a RATE_LIMITS preset for /api/bank/upload via the atomic limiter).
+  // [BANK-RAW-STORE] Store the ORIGINAL statement file (passthrough) so the
+  // closing package can include it later. Best-effort — a failure here NEVER
+  // affects the parse/insert above (same discipline as FACTUUR-A's pdf_url).
+  // Storage: documents bucket; documents row with source='upload' (CHECK allows
+  // it — the statement IS uploaded) + doc_type='bankafschrift' (no CHECK on
+  // doc_type → free to use as the closing-package filter key).
+  let documentId: string | null = null;
+  if (fileBuffer) {
+    try {
+      const contentHash = computeContentHash(fileBuffer);
+
+      // Cross-path byte-hash dedup: don't store the exact same file twice.
+      const { data: existingDoc } = await pipeline
+        .from("documents")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("content_hash", contentHash)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingDoc) {
+        documentId = existingDoc.id;
+      } else {
+        const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const storagePath = `${user.id}/bank/${Date.now()}-${safeName}`;
+        const { error: uploadError } = await pipeline.storage
+          .from("documents")
+          .upload(storagePath, fileBuffer, { contentType: fileType, upsert: false });
+
+        if (!uploadError) {
+          // Folder: the bank folder for the statement's period (reuse existing
+          // resolver; falls back to a sensible target). min = earliest tx date.
+          const folderId = await resolveImportTarget(user.id, min ?? null, "bank", "pipeline");
+          const { data: doc } = await pipeline
+            .from("documents")
+            .insert({
+              user_id: user.id,
+              file_name: filename,
+              file_url: storagePath,
+              file_size: fileBuffer.length,
+              file_type: fileType,
+              doc_type: "bankafschrift",
+              folder_id: folderId,
+              source: "upload",
+              content_hash: contentHash,
+            })
+            .select("id")
+            .single();
+          documentId = doc?.id ?? null;
+        } else {
+          console.error("[BANK-RAW-STORE] statement storage upload failed", uploadError);
+        }
+      }
+    } catch (storeErr) {
+      // Best-effort — the bank statement is parsed and stored as transactions
+      // regardless; only the passthrough copy is missing. Surfaced later as a
+      // closing-package warning ("bankafschrift niet beschikbaar").
+      console.error("[BANK-RAW-STORE] statement storage block error", storeErr);
+    }
+  }
 
   return NextResponse.json({
     ok: true,
-    format: parsed.format,
-    accountIban: parsed.accountIban,
-    parsed: parsed.transactions.length,
+    format: parsed?.format ?? null,
+    accountIban: parsed?.accountIban ?? null,
+    parsed: parsed?.transactions.length ?? 0,
     inserted,
     skipped,
-    parseWarnings: parsed.parseErrors,
+    statementStored: documentId !== null, // [BANK-RAW-STORE]
+    parseWarnings: parsed?.parseErrors ?? [],
   });
 }
