@@ -76,6 +76,10 @@ interface SendCtx {
   clientEmail: string
   totalIncBtw: number
   invoiceType: string
+  // [BOEK-RESEND] the status to restore on failure (draft for first send,
+  // sent/overdue for a resend) — so a failed resend doesn't wrongly become draft.
+  prevStatus: string
+  isResend?: boolean
 }
 
 const FILTERS: { id: FilterTab; label: string }[] = [
@@ -268,11 +272,12 @@ export default function FacturenClient({ profile }: { profile: any }) {
   }
 
   // [BOEK-029] Versturen flow — open modal with client details
-  async function handleSendRequest(invoiceId: string) {
+  // [BOEK-RESEND] isResend=true when re-sending an already-sent invoice.
+  async function handleSendRequest(invoiceId: string, isResend = false) {
     // Fetch full data to verify required fields before showing modal
     const { data: inv } = await supabase
       .from('invoices')
-      .select('id, invoice_number, invoice_type, client_name, client_email, total_inc_btw')
+      .select('id, invoice_number, invoice_type, client_name, client_email, total_inc_btw, status')
       .eq('id', invoiceId)
       .single()
 
@@ -291,13 +296,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
       clientEmail: inv.client_email,
       totalIncBtw: inv.total_inc_btw ?? 0,
       invoiceType: inv.invoice_type ?? 'factuur',
+      prevStatus: inv.status ?? 'draft',
+      isResend,
     })
   }
 
   // [BOEK-029] Versturen execute — call /api/invoice/send
   async function executeSend(ctx: SendCtx) {
     setSendCtx(null); setProcessingId(ctx.id)
-    // Optimistic — flip status immediately
+    // Optimistic — flip status immediately (a resend stays/returns to 'sent')
     updateOptimistic(ctx.id, { status: 'sent' })
     try {
       const res = await fetch('/api/invoice/send', {
@@ -307,8 +314,9 @@ export default function FacturenClient({ profile }: { profile: any }) {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Verzenden mislukt' }))
-        // rollback
-        updateOptimistic(ctx.id, { status: 'draft' })
+        // [BOEK-RESEND] rollback to the ORIGINAL status (draft for a first send,
+        // sent/overdue for a resend) — never wrongly downgrade a sent invoice.
+        updateOptimistic(ctx.id, { status: ctx.prevStatus })
         showToast(err.error || 'Verzenden mislukt')
       } else {
         // [BOEK-031 FIX] Get generated invoice_number + invoice_type from API response
@@ -319,12 +327,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
           ...(result.invoice_type   ? { invoice_type: result.invoice_type }     : {}),
         })
         const displayNumber = result.invoice_number || ctx.number
-        showToast(displayNumber
-          ? `Factuur ${displayNumber} verzonden ✓`
-          : 'Factuur verzonden ✓')
+        showToast(
+          ctx.isResend
+            ? (displayNumber ? `Factuur ${displayNumber} opnieuw verzonden ✓` : 'Factuur opnieuw verzonden ✓')
+            : (displayNumber ? `Factuur ${displayNumber} verzonden ✓` : 'Factuur verzonden ✓')
+        )
       }
     } catch {
-      updateOptimistic(ctx.id, { status: 'draft' })
+      // [BOEK-RESEND] rollback to original status on network failure too
+      updateOptimistic(ctx.id, { status: ctx.prevStatus })
       showToast('Verzenden mislukt — controleer je verbinding')
     } finally {
       setProcessingId(null)
@@ -506,6 +517,21 @@ export default function FacturenClient({ profile }: { profile: any }) {
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> Versturen</>}
+                        </button>
+                      )}
+
+                      {/* [BOEK-RESEND] factuur + sent/overdue → Opnieuw versturen */}
+                      {!isCredit && !isOfferte && (inv.status === 'sent' || inv.status === 'overdue') && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (processingId === inv.id) return
+                            handleSendRequest(inv.id, true)
+                          }}
+                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {processingId === inv.id
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>forward_to_inbox</span> Opnieuw versturen</>}
                         </button>
                       )}
 
