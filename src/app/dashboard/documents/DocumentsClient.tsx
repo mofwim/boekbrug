@@ -253,6 +253,47 @@ function UploadZone({
   const [progress, setProgress] = useState<string>("");
   const [errors, setErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // [BESTANDEN-DUP] duplicate confirmation modal — Mijn bestanden is the user's
+  // own space; a duplicate is a "are you sure?" decision, not a hard block.
+  const [dupModal, setDupModal] = useState<{
+    file: File;
+    where: string;
+    folderPath: string[];
+  } | null>(null);
+
+  function emitUploaded(file: File, id: string) {
+    onUploaded({
+      id,
+      file_name: file.name,
+      file_url: "",
+      file_size: file.size,
+      file_type: file.type,
+      doc_type: inferDocType(file.type),
+      period: `${CURRENT_YEAR}-Q${CURRENT_QUARTER}`,
+      year: CURRENT_YEAR,
+      notes: null,
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  // Upload a single file. Returns 'duplicate' (with details) / 'ok' / 'error'.
+  async function uploadOne(
+    file: File,
+    allowDuplicate: boolean
+  ): Promise<{ status: "ok" | "duplicate" | "error"; json: Record<string, unknown> }> {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("year", String(CURRENT_YEAR));
+    form.append("quarter", String(CURRENT_QUARTER));
+    if (shared) form.append("shared", "true");
+    if (allowDuplicate) form.append("allowDuplicate", "true");
+
+    const res = await fetch("/api/files", { method: "POST", body: form });
+    const json = await res.json();
+    if (res.status === 409 && json.duplicate) return { status: "duplicate", json };
+    if (!res.ok) return { status: "error", json };
+    return { status: "ok", json };
+  }
 
   async function processFiles(files: File[]) {
     if (!files.length) return;
@@ -264,36 +305,42 @@ function UploadZone({
       const file = files[i];
       if (files.length > 1) setProgress(`${i + 1} / ${files.length}`);
 
-      const form = new FormData();
-      form.append("file", file);
-      form.append("year", String(CURRENT_YEAR));
-      form.append("quarter", String(CURRENT_QUARTER));
-      if (shared) form.append("shared", "true");
-
-      const res = await fetch("/api/files", { method: "POST", body: form });
-      const json = await res.json();
-
-      if (!res.ok) {
-        errs.push(`${file.name}: ${json.error ?? "Upload mislukt"}`);
-      } else {
-        onUploaded({
-          id: json.id,
-          file_name: file.name,
-          file_url: "",
-          file_size: file.size,
-          file_type: file.type,
-          doc_type: inferDocType(file.type),
-          period: `${CURRENT_YEAR}-Q${CURRENT_QUARTER}`,
-          year: CURRENT_YEAR,
-          notes: null,
-          created_at: new Date().toISOString(),
+      const r = await uploadOne(file, false);
+      if (r.status === "ok") {
+        emitUploaded(file, r.json.id as string);
+      } else if (r.status === "duplicate") {
+        // [BESTANDEN-DUP] Stop and ask — show where the file already lives. The
+        // user confirms (upload again) or cancels via the modal. We surface one
+        // at a time; remaining files in a multi-select aren't auto-forced.
+        const existing = (r.json.existing ?? {}) as { folder_path?: string[] };
+        setDupModal({
+          file,
+          where: (r.json.error as string) ?? "Dit bestand bestaat al",
+          folderPath: existing.folder_path ?? [],
         });
+      } else {
+        errs.push(`${file.name}: ${(r.json.error as string) ?? "Upload mislukt"}`);
       }
     }
 
     setErrors(errs);
     setProgress("");
     setUploading(false);
+  }
+
+  // [BESTANDEN-DUP] User confirmed "upload again" → re-send with allowDuplicate.
+  async function confirmUploadAgain() {
+    if (!dupModal) return;
+    const file = dupModal.file;
+    setDupModal(null);
+    setUploading(true);
+    try {
+      const r = await uploadOne(file, true);
+      if (r.status === "ok") emitUploaded(file, r.json.id as string);
+      else setErrors((e) => [...e, `${file.name}: ${(r.json.error as string) ?? "Upload mislukt"}`]);
+    } finally {
+      setUploading(false);
+    }
   }
 
   return (
@@ -352,6 +399,53 @@ function UploadZone({
           {errors.map((e, i) => (
             <p key={i} className="text-xs text-red-600 dark:text-red-400">{e}</p>
           ))}
+        </div>
+      )}
+
+      {/* [BESTANDEN-DUP] Duplicate confirmation — warn, don't block. Tells the
+          user WHERE the file already lives and lets them upload again anyway. */}
+      {dupModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-5"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={() => setDupModal(null)}
+        >
+          <div
+            className="bg-white dark:bg-zinc-900 rounded-3xl p-6 w-full max-w-sm shadow-2xl text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-14 h-14 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-7 h-7 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <p className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-2">
+              Dit bestand bestaat al
+            </p>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-1 leading-relaxed">
+              {dupModal.file.name}
+            </p>
+            {dupModal.folderPath.length > 0 ? (
+              <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-6 leading-relaxed">
+                Staat al in: <span className="font-medium">{dupModal.folderPath.join(" / ")}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-6">{dupModal.where}</p>
+            )}
+
+            <button
+              onClick={confirmUploadAgain}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-full py-3.5 font-semibold text-sm mb-2.5 transition-colors"
+            >
+              Toch opnieuw uploaden
+            </button>
+            <button
+              onClick={() => setDupModal(null)}
+              className="w-full text-zinc-500 dark:text-zinc-400 rounded-full py-3 font-semibold text-sm"
+            >
+              Annuleren
+            </button>
+          </div>
         </div>
       )}
     </div>

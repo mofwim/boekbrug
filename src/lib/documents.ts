@@ -99,6 +99,11 @@ export async function uploadDocument(
     year: number;
     quarter: number;
     shared?: boolean; // true = visible to linked accountant too
+    // [BESTANDEN-DUP] When true, skip the byte-hash duplicate gate and upload
+    // anyway. The personal file manager (Mijn bestanden) is the user's own
+    // space — after an explicit "upload again" confirmation, they may keep a
+    // second copy (e.g. archiving a file that also exists as an invoice).
+    allowDuplicate?: boolean;
   }
 ): Promise<{
   id: string;
@@ -127,50 +132,54 @@ export async function uploadDocument(
   // Reject (Layer 1: stop the bleeding) — references are Layer 2.
   const contentHash = await computeContentHashFromFile(file);
 
-  // [BRIDGE-EXTRACT] Fetch enough to tell the user WHERE the file already is.
-  const { data: existingDoc } = await supabase
-    .from("documents")
-    .select("id, file_name, folder_id")
-    .eq("user_id", userId)
-    .eq("content_hash", contentHash)
-    .limit(1)
-    .maybeSingle();
+  // [BESTANDEN-DUP] Skip the gate entirely when the user explicitly confirmed
+  // "upload again". We still store content_hash below so future dedup works.
+  if (!opts.allowDuplicate) {
+    // [BRIDGE-EXTRACT] Fetch enough to tell the user WHERE the file already is.
+    const { data: existingDoc } = await supabase
+      .from("documents")
+      .select("id, file_name, folder_id")
+      .eq("user_id", userId)
+      .eq("content_hash", contentHash)
+      .limit(1)
+      .maybeSingle();
 
-  if (existingDoc) {
-    // [BRIDGE-EXTRACT] Full folder path (root→leaf) — folders nest, so the leaf
-    // name alone ("Facturen") is ambiguous. Walk parent_id up the chain.
-    const folderPath = await buildFolderBreadcrumb(
-      supabase,
-      userId,
-      existingDoc.folder_id ?? null
-    );
-    const folderName = folderPath.length ? folderPath[folderPath.length - 1] : null;
+    if (existingDoc) {
+      // [BRIDGE-EXTRACT] Full folder path (root→leaf) — folders nest, so the leaf
+      // name alone ("Facturen") is ambiguous. Walk parent_id up the chain.
+      const folderPath = await buildFolderBreadcrumb(
+        supabase,
+        userId,
+        existingDoc.folder_id ?? null
+      );
+      const folderName = folderPath.length ? folderPath[folderPath.length - 1] : null;
 
-    // Non-fatal audit — never blocks the response
-    await logAuditAction({
-      userId,
-      action: "document.duplicate_blocked",
-      entityType: "document",
-      entityId: existingDoc.id,
-      newValue: { file_name: file.name, content_hash: contentHash, path: "mijn_bestanden" },
-    });
+      // Non-fatal audit — never blocks the response
+      await logAuditAction({
+        userId,
+        action: "document.duplicate_blocked",
+        entityType: "document",
+        entityId: existingDoc.id,
+        newValue: { file_name: file.name, content_hash: contentHash, path: "mijn_bestanden" },
+      });
 
-    // Build a Dutch message that points the user to the existing file.
-    const where = folderPath.length
-      ? `Dit bestand staat al in: ${folderPath.join(" / ")}`
-      : "Dit bestand is al toegevoegd";
+      // Build a Dutch message that points the user to the existing file.
+      const where = folderPath.length
+        ? `Dit bestand staat al in: ${folderPath.join(" / ")}`
+        : "Dit bestand is al toegevoegd";
 
-    return {
-      id: "",
-      error: where,
-      duplicate: true,
-      existing: {
-        id: existingDoc.id,
-        file_name: existingDoc.file_name,
-        folder_name: folderName,
-        folder_path: folderPath,
-      },
-    };
+      return {
+        id: "",
+        error: where,
+        duplicate: true,
+        existing: {
+          id: existingDoc.id,
+          file_name: existingDoc.file_name,
+          folder_name: folderName,
+          folder_path: folderPath,
+        },
+      };
+    }
   }
 
   const path = buildStoragePath(userId, file.name, opts.year, opts.quarter, shared);

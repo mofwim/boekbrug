@@ -91,6 +91,8 @@ export async function POST(req: NextRequest) {
   const invoiceId = (formData.get("invoice_id") as string | null) ?? undefined;
   const notes     = (formData.get("notes")     as string | null) ?? undefined;
   const shared    = formData.get("shared") === "true";
+  // [BESTANDEN-DUP] explicit "upload again" confirmation from the dup modal
+  const allowDuplicate = formData.get("allowDuplicate") === "true";
 
   const { id, error, duplicate, existing } = await uploadDocument(user.id, file, {
     year,
@@ -98,6 +100,7 @@ export async function POST(req: NextRequest) {
     invoiceId,
     notes,
     shared,
+    allowDuplicate,
   });
 
   // [BRIDGE-EXTRACT] Duplicate → 409 (consistent with /api/email/upload), and
