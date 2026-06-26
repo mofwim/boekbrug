@@ -259,6 +259,7 @@ function UploadZone({
     file: File;
     where: string;
     folderPath: string[];
+    folderId: string | null;
   } | null>(null);
 
   function emitUploaded(file: File, id: string) {
@@ -312,11 +313,12 @@ function UploadZone({
         // [BESTANDEN-DUP] Stop and ask — show where the file already lives. The
         // user confirms (upload again) or cancels via the modal. We surface one
         // at a time; remaining files in a multi-select aren't auto-forced.
-        const existing = (r.json.existing ?? {}) as { folder_path?: string[] };
+        const existing = (r.json.existing ?? {}) as { folder_path?: string[]; folder_id?: string | null };
         setDupModal({
           file,
           where: (r.json.error as string) ?? "Dit bestand bestaat al",
           folderPath: existing.folder_path ?? [],
+          folderId: existing.folder_id ?? null,
         });
       } else {
         errs.push(`${file.name}: ${(r.json.error as string) ?? "Upload mislukt"}`);
@@ -439,6 +441,14 @@ function UploadZone({
             >
               Toch opnieuw uploaden
             </button>
+            {/* [BESTANDEN-DUP] One link → open the folder that contains the file
+                (BestandenPage reads ?folder={id} from the URL on load). */}
+            <a
+              href={dupModal.folderId ? `/dashboard/bestanden?folder=${dupModal.folderId}` : `/dashboard/bestanden`}
+              className="block w-full text-blue-600 dark:text-blue-400 rounded-full py-3 font-semibold text-sm hover:underline"
+            >
+              Open de map
+            </a>
             <button
               onClick={() => setDupModal(null)}
               className="w-full text-zinc-500 dark:text-zinc-400 rounded-full py-3 font-semibold text-sm"

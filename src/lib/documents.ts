@@ -113,6 +113,7 @@ export async function uploadDocument(
   existing?: {
     id: string;
     file_name: string;
+    folder_id: string | null;       // [BESTANDEN-DUP] target for "open de map" (?folder={id})
     folder_name: string | null;
     folder_path: string[];          // root→leaf breadcrumb, e.g. ["2026","Q1","Facturen"]
   };
@@ -175,6 +176,7 @@ export async function uploadDocument(
         existing: {
           id: existingDoc.id,
           file_name: existingDoc.file_name,
+          folder_id: existingDoc.folder_id ?? null,
           folder_name: folderName,
           folder_path: folderPath,
         },
