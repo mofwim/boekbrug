@@ -2,7 +2,7 @@
 // src/app/dashboard/bestanden/components/DocCard.tsx
 // [BOEK-033] File card in grid view
 
-import { useState, DragEvent } from "react";
+import { useState, useEffect, DragEvent } from "react";
 import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { BestandRow } from "../types";
@@ -18,9 +18,38 @@ interface DocCardProps {
   cardRef: (el: HTMLDivElement | null) => void;
 }
 
+// [BESTANDEN-THUMB] Show the image itself as the card thumbnail (instead of a
+// generic icon) for image files only. PDFs/other types keep the icon — a PDF
+// first-page thumbnail is a separate, heavier feature (queued).
+function isImage(fileType: string | null): boolean {
+  return !!fileType && fileType.startsWith("image/");
+}
+
 export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, cardRef }: DocCardProps) {
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  // [BESTANDEN-THUMB] Lazily fetch a signed URL for image files (files are
+  // private). Only for images — never fetch for icons (keeps the grid fast).
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  useEffect(() => {
+    if (!isImage(doc.file_type)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/files/${doc.id}/url`);
+        const { url } = await r.json() as { url?: string };
+        if (!cancelled && url) setThumbUrl(url);
+        else if (!cancelled) setThumbFailed(true);
+      } catch {
+        if (!cancelled) setThumbFailed(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [doc.id, doc.file_type]);
+
+  const showThumb = isImage(doc.file_type) && thumbUrl && !thumbFailed;
 
   return (
     <div
@@ -72,9 +101,20 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
       <div style={{
         height: 96, background: selected ? T.primaryContainer : "#F8F9FA",
         display: "flex", alignItems: "center", justifyContent: "center",
-        position: "relative", transition: "background 0.15s",
+        position: "relative", transition: "background 0.15s", overflow: "hidden",
       }}>
-        <span style={{ fontSize: 30 }}>{fileEmoji(doc.file_type)}</span>
+        {showThumb ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={thumbUrl!}
+            alt={doc.file_name}
+            loading="lazy"
+            onError={() => setThumbFailed(true)}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <span style={{ fontSize: 30 }}>{fileEmoji(doc.file_type)}</span>
+        )}
 
         {/* More button */}
         {hovered && !selected && !isDragging && (

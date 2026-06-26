@@ -181,13 +181,21 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
-    const folderParam = params.get("folder");
-    if (folderParam) {
-      // Clean the URL so refresh/back behave normally
+    return params.get("folder");
+  });
+  // [BESTANDEN-FOCUS] Read ?focus={docId} once on first render — highlight + scroll
+  // to the file the user was pointed at (e.g. from the duplicate "map openen" link).
+  const [focusId, setFocusId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const focus = new URLSearchParams(window.location.search).get("focus");
+    // Both folder and focus are read above; now clean the URL once so
+    // refresh/back behave normally (don't re-trigger folder/focus).
+    if (window.location.search) {
       window.history.replaceState({}, "", "/dashboard/bestanden");
     }
-    return folderParam;
+    return focus;
   });
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [subFolders, setSubFolders] = useState<FolderRow[]>([]);
   const [docs, setDocs] = useState<BestandRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -304,6 +312,20 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     loadContents(currentFolderId);
     loadAllFolders();
   }, [currentFolderId]); // eslint-disable-line
+
+  // [BESTANDEN-FOCUS] Once the docs of the target folder are loaded, scroll to
+  // and highlight the focused file, then clear the highlight after a moment.
+  useEffect(() => {
+    if (!focusId || docs.length === 0) return;
+    if (!docs.some(d => d.id === focusId)) return;
+    const el = cardRefs.current.get(focusId) ?? rowRefs.current.get(focusId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(focusId);
+      const t = setTimeout(() => { setHighlightId(null); setFocusId(null); }, 2600);
+      return () => clearTimeout(t);
+    }
+  }, [docs, focusId]); // eslint-disable-line
 
   // [BOEK-011 — removed by BOEK-011, file owned by BOEK-033]
   // The previous useEffect that read ?folder={id} from the URL was removed
@@ -1206,15 +1228,25 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                         {viewMode === "grid" ? (
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
                             {docs.map(doc => (
-                              <DocCard
-                                key={doc.id} doc={doc}
-                                selected={selectedIds.has(`d:${doc.id}`)}
-                                onPreview={() => setPreview(doc)}
-                                onSelect={e => handleSelect(e, `d:${doc.id}`)}
-                                onContextMenu={e => openFileContextMenu(e, doc)}
-                                onDragStart={e => handleDocDragStart(e, doc.id)}
-                                cardRef={el => { if (el) cardRefs.current.set(doc.id, el); else cardRefs.current.delete(doc.id); }}
-                              />
+                              <div
+                                key={doc.id}
+                                style={{
+                                  borderRadius: T.lg,
+                                  outline: highlightId === doc.id ? `2px solid ${T.primary}` : "2px solid transparent",
+                                  outlineOffset: 2,
+                                  transition: "outline-color 0.3s ease",
+                                }}
+                              >
+                                <DocCard
+                                  doc={doc}
+                                  selected={selectedIds.has(`d:${doc.id}`)}
+                                  onPreview={() => setPreview(doc)}
+                                  onSelect={e => handleSelect(e, `d:${doc.id}`)}
+                                  onContextMenu={e => openFileContextMenu(e, doc)}
+                                  onDragStart={e => handleDocDragStart(e, doc.id)}
+                                  cardRef={el => { if (el) cardRefs.current.set(doc.id, el); else cardRefs.current.delete(doc.id); }}
+                                />
+                              </div>
                             ))}
                           </div>
                         ) : (

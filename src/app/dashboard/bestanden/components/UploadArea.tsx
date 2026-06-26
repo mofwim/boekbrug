@@ -137,13 +137,13 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
   // [BRIDGE-EXTRACT] Open the existing duplicate in a new tab via signed URL —
   // same mechanism as the file list's download/preview (/api/files/[id]/url).
   // [BESTANDEN-DUP] Open the FOLDER that contains the existing file (not the
-  // file itself) — BestandenPage reads ?folder={id} from the URL on load and
-  // opens that folder. folderId null → root (Hoofdmap).
-  const openExistingFolder = useCallback((folderId: string | null) => {
-    const url = folderId
+  // file itself) and FOCUS it — BestandenPage reads ?folder={id}&focus={docId}
+  // from the URL on load: opens the folder, scrolls to + highlights the file.
+  const openExistingFolder = useCallback((folderId: string | null, docId: string) => {
+    const base = folderId
       ? `/dashboard/bestanden?folder=${folderId}`
-      : `/dashboard/bestanden`;
-    window.location.href = url;
+      : `/dashboard/bestanden?folder=`;
+    window.location.href = `${base}&focus=${docId}`;
   }, []);
 
   return (
@@ -244,7 +244,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
                   // exactly where it lives.
                   <button
                     type="button"
-                    onClick={() => openExistingFolder(f.existing!.folder_id)}
+                    onClick={() => openExistingFolder(f.existing!.folder_id, f.existing!.id)}
                     style={{
                       background: "none", border: "none", padding: 0, cursor: "pointer",
                       textAlign: "left", display: "flex", alignItems: "center", gap: 4,
