@@ -38,6 +38,9 @@ export default function IntakeButton({
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
+  // (stays until dismissed) with a link to the existing invoice, not a toast.
+  const [dupModal, setDupModal] = useState<{ message: string; originalId?: string } | null>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -57,8 +60,14 @@ export default function IntakeButton({
       const data: IntakeResult = await res.json()
 
       if (!res.ok) {
-        // 409 duplicate or other error — show the server's Dutch message.
-        showToast(data.error || 'Toevoegen mislukt')
+        // [DUP-MODAL] A duplicate (409) is a decision point — show a persistent
+        // modal with a link to the existing invoice, not a fleeting toast.
+        // Other errors stay as a toast.
+        if (res.status === 409 && data.duplicate) {
+          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id })
+        } else {
+          showToast(data.error || 'Toevoegen mislukt')
+        }
         setBusy(false)
         return
       }
@@ -215,6 +224,39 @@ export default function IntakeButton({
         </div>
       )}
 
+      {/* [DUP-MODAL] Persistent duplicate dialog — stays until dismissed, with
+          a link to the existing invoice (same deep-link as notifications). */}
+      {dupModal && (
+        <div
+          onClick={() => setDupModal(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 24, padding: '28px 24px', width: '100%', maxWidth: 380, boxShadow: '0 12px 40px rgba(0,0,0,0.24)', fontFamily: FONT, textAlign: 'center' }}>
+            <div style={{ width: 56, height: 56, borderRadius: R.full, background: '#FEE8C4', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#7C5800' }}>content_copy</span>
+            </div>
+            <p style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>Deze factuur bestaat al</p>
+            <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 24, lineHeight: 1.5 }}>{dupModal.message}</p>
+
+            {dupModal.originalId && (
+              <button
+                onClick={() => { const id = dupModal.originalId; setDupModal(null); router.push(`/dashboard/incoming/manage?focus=${id}`) }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10 }}
+              >
+                Bekijk de bestaande factuur
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
+              </button>
+            )}
+            <button
+              onClick={() => setDupModal(null)}
+              style={{ width: '100%', background: 'transparent', color: M3.primary, borderRadius: R.full, padding: '12px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600 }}
+            >
+              Begrepen
+            </button>
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.md, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90%', textAlign: 'center', fontFamily: FONT }}>
           {toast}
@@ -232,5 +274,6 @@ export interface IntakeResult {
   error?: string
   duplicate?: boolean
   invoice_id?: string
+  original_id?: string  // [DUP-MODAL] the existing invoice this duplicates → deep-link
   suggest_paid?: boolean
 }
