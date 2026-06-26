@@ -21,6 +21,7 @@ interface FailedFile {
   existing?: {
     id: string;
     file_name: string;
+    folder_id: string | null;       // [BESTANDEN-DUP] target for "open de map"
     folder_name: string | null;
     folder_path: string[];
   };
@@ -135,14 +136,14 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
 
   // [BRIDGE-EXTRACT] Open the existing duplicate in a new tab via signed URL —
   // same mechanism as the file list's download/preview (/api/files/[id]/url).
-  const openExistingFile = useCallback(async (docId: string) => {
-    try {
-      const r = await fetch(`/api/files/${docId}/url`);
-      const { url } = await r.json() as { url?: string };
-      if (url) window.open(url, "_blank", "noopener,noreferrer");
-    } catch {
-      /* signed-url fetch failed — nothing to open */
-    }
+  // [BESTANDEN-DUP] Open the FOLDER that contains the existing file (not the
+  // file itself) — BestandenPage reads ?folder={id} from the URL on load and
+  // opens that folder. folderId null → root (Hoofdmap).
+  const openExistingFolder = useCallback((folderId: string | null) => {
+    const url = folderId
+      ? `/dashboard/bestanden?folder=${folderId}`
+      : `/dashboard/bestanden`;
+    window.location.href = url;
   }, []);
 
   return (
@@ -243,7 +244,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
                   // exactly where it lives.
                   <button
                     type="button"
-                    onClick={() => openExistingFile(f.existing!.id)}
+                    onClick={() => openExistingFolder(f.existing!.folder_id)}
                     style={{
                       background: "none", border: "none", padding: 0, cursor: "pointer",
                       textAlign: "left", display: "flex", alignItems: "center", gap: 4,
@@ -256,7 +257,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
                       {f.existing.folder_path.length
                         ? f.existing.folder_path.join(" / ")
                         : "Hoofdmap"}
-                      {" "}— openen
+                      {" "}— map openen
                     </span>
                   </button>
                 ) : (
