@@ -435,6 +435,15 @@ export function AccountantDashboard({ profile }: { profile: any }) {
                         }}>
                         {status === 'complete' ? 'Klaar' : status === 'partial' ? 'Gedeeltelijk' : 'Ontbreekt'}
                       </span>
+                      {/* [BRIDGE-QUARTER-ACC] Direct link to the client's quarter
+                          overview (the page that was unreachable for accountants). */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/quarterly?clientId=${client.id}`); }}
+                        title="Kwartaaloverzicht van deze klant"
+                        style={{ fontSize: 12, fontWeight: 500, color: '#1A73E8', background: '#E8F0FE', border: 'none', borderRadius: 8, padding: '4px 10px', cursor: 'pointer' }}
+                      >
+                        Kwartaal
+                      </button>
                       <span className="text-xs font-semibold" style={{ fontSize: 12, color: '#1A73E8', fontWeight: 600 }}>→</span>
                     </div>
                   </div>

@@ -317,11 +317,21 @@ function AccountantView({ role }: { role: Role }) {
 
   useEffect(() => {
     setClientsLoading(true);
+    // [BRIDGE-QUARTER-ACC] Honor ?clientId from the URL (e.g. the "Kwartaal"
+    // button on the accountant dashboard) so we open the RIGHT client, not just
+    // the first one. Falls back to the first client when no param is present.
+    const urlClientId =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("clientId")
+        : null;
     fetch("/api/quarterly/clients")
       .then((r) => r.json())
       .then((d) => {
         setClients(d ?? []);
-        if (d?.length > 0) setSelectedClientId(d[0].id);
+        if (d?.length > 0) {
+          const match = urlClientId && d.some((c: Client) => c.id === urlClientId);
+          setSelectedClientId(match ? urlClientId! : d[0].id);
+        }
       })
       .finally(() => setClientsLoading(false));
   }, []);

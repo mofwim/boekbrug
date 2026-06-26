@@ -52,9 +52,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Ongeldige parameters" }, { status: 400 });
   }
 
-  // ── Accountant mode (unchanged) ──────────────────────────────
-  // [BRIDGE-QUARTER] Intentionally untouched. Accountant sees their client's
-  // OUTGOING paid invoices (sender_id = clientId). This is correct by design.
+  // ── Accountant mode ──────────────────────────────────────────
+  // [BRIDGE-QUARTER-ACC] ROOT-CAUSE FIX for "accountant sees €0,00 / 0 facturen"
+  // while the owner sees 22 invoices.
+  //
+  // Before: .eq("sender_id", clientId).eq("status","paid") fetched ONLY the
+  // client's OUTGOING PAID invoices. But a client's quarter is mostly INCOMING
+  // (Crediteuren — supplier invoices where the client is the RECEIVER, not the
+  // sender) and includes non-paid verified states (sent/received/overdue). So
+  // the accountant saw almost nothing — the closing package would be empty.
+  //
+  // After: mirror the (already-fixed) ZZP path — fetch BOTH directions for the
+  // client, exclude unverified/draft, infer direction safely from ownership.
+  // The accountant must see the client's FULL quarter to close it.
   if (profile?.role === "accountant") {
     if (!clientId) return NextResponse.json({ error: "Geen klant geselecteerd" }, { status: 400 });
 
@@ -72,29 +82,47 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await supabase
       .from("invoices")
-      .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date")
-      .eq("sender_id", clientId)
-      .eq("status", "paid")
+      .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, sender_id, receiver_id")
+      .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
       .gte("invoice_date", start)
       .lte("invoice_date", end)
       .order("invoice_date", { ascending: true });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const invoices: InvoiceForQuarterly[] = (data ?? []).map((inv) => ({
-      id: inv.id,
-      invoice_number: inv.invoice_number,
-      client_name: inv.client_name,
-      status: inv.status,
-      direction: inv.direction ?? "outgoing",
-      total_ex_btw: inv.total_ex_btw,
-      btw_amount: inv.btw_amount,
-      total_inc_btw: inv.total_inc_btw,
-      invoice_date: inv.invoice_date,
-      due_date: inv.due_date ?? undefined,
-      // [BOEK-FOUNDATION-TYPES] Null-safe btw_rate calculation
-      btw_rate: calculateBtwRate(inv.total_ex_btw, inv.btw_amount),
-    }));
+    // [BRIDGE-QUARTER-ACC] Verified only — exclude unconfirmed (processing) and
+    // draft. Same boundary as the closing package: AI prepares, human confirms,
+    // the accountant only ever sees verified evidence.
+    const VERIFIED = new Set(["sent", "paid", "overdue", "received"]);
+
+    const invoices: InvoiceForQuarterly[] = (data ?? [])
+      .filter((inv) => VERIFIED.has(inv.status ?? ""))
+      .map((inv) => {
+        // [BRIDGE-QUARTER-ACC] Direction safety: with incoming rows in scope, a
+        // NULL direction must not default to "outgoing" (would miscount an
+        // expense as income). Infer from ownership relative to the CLIENT.
+        let direction = inv.direction;
+        if (!direction) {
+          if (inv.receiver_id === clientId) direction = "incoming";
+          else if (inv.sender_id === clientId) direction = "outgoing";
+          else direction = "outgoing";
+        }
+
+        return {
+          id: inv.id,
+          invoice_number: inv.invoice_number,
+          client_name: inv.client_name,
+          status: inv.status,
+          direction,
+          total_ex_btw: inv.total_ex_btw,
+          btw_amount: inv.btw_amount,
+          total_inc_btw: inv.total_inc_btw,
+          invoice_date: inv.invoice_date,
+          due_date: inv.due_date ?? undefined,
+          // [BOEK-FOUNDATION-TYPES] Null-safe btw_rate calculation
+          btw_rate: calculateBtwRate(inv.total_ex_btw, inv.btw_amount),
+        };
+      });
 
     return NextResponse.json(buildQuarterlySummary(invoices, year, quarter));
   }
