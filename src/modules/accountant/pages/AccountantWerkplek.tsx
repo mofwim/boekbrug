@@ -20,6 +20,16 @@ const TOOLS = [
     isNew: true,
   },
   {
+    // [BRIDGE-QUARTER-ACC] The quarter overview was unreachable for accountants
+    // (no link anywhere). This is where they see a client's full quarter and
+    // download the closing package.
+    icon: '📊',
+    label: 'Kwartaaloverzicht',
+    sub: 'Kwartaalcijfers en pakket per klant',
+    href: '/dashboard/quarterly',
+    isNew: true,
+  },
+  {
     // [BRIDGE-ACC-SURFACE] ACC-2: the Bridge is the accountant's lens on the
     // client's financial truth — the single channel for client documents.
     icon: '🌉',
