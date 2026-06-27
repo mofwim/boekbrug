@@ -11,6 +11,16 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
 
+// [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
+// in page.tsx — kept inline to avoid a cross-file import of a server module.
+interface ClientSummary {
+  id: string
+  label: string
+  verified: number
+  pending: number
+  status: 'ready' | 'review' | 'empty'
+}
+
 // ─── Design tokens — Material You (BoekBrug Design System v1.0) ───────────────
 const M3 = {
   primary:          '#1A73E8',
@@ -92,7 +102,7 @@ function hasHidden(nodes: TreeNode[]): boolean {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function BrugClient({ nodes, role }: { nodes: TreeNode[]; role: string | null }) {
+export default function BrugClient({ nodes, role, clientSummaries }: { nodes: TreeNode[]; role: string | null; clientSummaries?: ClientSummary[] }) {
   const [cwd, setCwd] = useState<string[]>([])
   const [showHidden, setShowHidden] = useState(false)
   const router = useRouter()
@@ -148,6 +158,21 @@ export default function BrugClient({ nodes, role }: { nodes: TreeNode[]; role: s
           </Link>
         </div>
       </div>
+
+      {/* [BRIDGE-HUB] Layer 1 — live client overview (accountant, root only).
+          Cards stay above the document tree; diving into a client hides them. */}
+      {role === 'accountant' && clientSummaries && clientSummaries.length > 0 && cwd.length === 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: M3.outline, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+            Mijn klanten — dit kwartaal
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {clientSummaries.map(c => (
+              <ClientCard key={c.id} summary={c} router={router} onOpenDocs={() => setCwd(['Klanten', c.label])} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 12, fontSize: 14 }}>
@@ -272,4 +297,66 @@ function FileRow({ node }: { node: TreeNode }) {
     )
   }
   return inner
+}
+// ─── [BRIDGE-HUB] Layer 1 — live client card ──────────────────────────────────
+const CARD_STATUS: Record<ClientSummary['status'], { label: string; bg: string; color: string; icon: string }> = {
+  ready:  { label: 'Klaar',          bg: '#CEEAD6', color: '#137333', icon: 'check_circle' },
+  review: { label: 'Te controleren', bg: '#FEE8C4', color: '#7C5800', icon: 'pending' },
+  empty:  { label: 'Leeg',           bg: '#E7E0EC', color: '#49454F', icon: 'inbox' },
+}
+
+function ClientCard({
+  summary,
+  router,
+  onOpenDocs,
+}: {
+  summary: ClientSummary
+  router: ReturnType<typeof useRouter>
+  onOpenDocs: () => void
+}) {
+  const st = CARD_STATUS[summary.status]
+  const countLabel =
+    summary.status === 'empty'
+      ? 'Geen facturen dit kwartaal'
+      : `${summary.verified} geverifieerd${summary.pending > 0 ? ` · ${summary.pending} te controleren` : ''}`
+
+  return (
+    <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', fontFamily: FONT }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {summary.label}
+          </div>
+          <div style={{ fontSize: 12.5, color: M3.outline, marginTop: 2 }}>{countLabel}</div>
+        </div>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, fontWeight: 700, padding: '4px 10px', borderRadius: R.full, background: st.bg, color: st.color, flexShrink: 0 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{st.icon}</span>
+          {st.label}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={() => router.push(`/dashboard/quarterly?clientId=${summary.id}`)}
+          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 12px', borderRadius: R.full, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>bar_chart</span>
+          Kwartaal
+        </button>
+        <a
+          href={`/api/closing-package?clientId=${summary.id}`}
+          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 12px', borderRadius: R.full, border: `1px solid ${M3.outline}`, background: 'transparent', color: M3.primary, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'none' }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>inventory_2</span>
+          Pakket
+        </a>
+        <button
+          onClick={onOpenDocs}
+          title="Documenten van deze klant"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 12px', borderRadius: R.full, border: `1px solid ${M3.outline}`, background: 'transparent', color: M3.outline, cursor: 'pointer', fontFamily: FONT }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>folder_open</span>
+        </button>
+      </div>
+    </div>
+  )
 }

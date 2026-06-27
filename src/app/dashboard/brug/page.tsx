@@ -124,5 +124,55 @@ export default async function BrugServerPage() {
     })
   )
 
-  return <BrugClient nodes={signedNodes} role={profile.role} />
+  // [BRIDGE-HUB] Layer 1 — per-client summaries for the accountant's overview.
+  // Computed from the invoices already fetched (no extra query). For each linked
+  // client: how many verified invoices this quarter, and whether anything is
+  // still pending (status 'processing') — which sets the readiness status.
+  //   Klaar          → has verified invoices, nothing pending
+  //   Te controleren → has pending (processing) invoices to confirm
+  //   Leeg           → no invoices this quarter
+  let clientSummaries: ClientSummary[] | undefined
+  if (isAccountant && clientNames) {
+    const now = new Date()
+    const q = (Math.floor(now.getMonth() / 3) + 1)
+    const qStart = new Date(now.getFullYear(), (q - 1) * 3, 1)
+    const qEnd = new Date(now.getFullYear(), q * 3, 0, 23, 59, 59)
+    const VERIFIED = new Set(['sent', 'paid', 'overdue', 'received'])
+
+    const acc = new Map<string, { verified: number; pending: number; total: number }>()
+    for (const id of clientNames.keys()) acc.set(id, { verified: 0, pending: 0, total: 0 })
+
+    for (const inv of invoices) {
+      const d = inv.invoice_date ? new Date(inv.invoice_date) : null
+      if (!d || d < qStart || d > qEnd) continue
+      // The invoice belongs to whichever linked client is sender or receiver.
+      const owner = (inv.sender_id && acc.has(inv.sender_id)) ? inv.sender_id
+                  : (inv.receiver_id && acc.has(inv.receiver_id)) ? inv.receiver_id
+                  : null
+      if (!owner) continue
+      const bucket = acc.get(owner)!
+      bucket.total++
+      const s = inv.status ?? ''
+      if (VERIFIED.has(s)) bucket.verified++
+      else if (s === 'processing') bucket.pending++
+    }
+
+    clientSummaries = [...clientNames.entries()].map(([id, label]) => {
+      const b = acc.get(id) ?? { verified: 0, pending: 0, total: 0 }
+      const status: ClientSummary['status'] =
+        b.pending > 0 ? 'review' : b.verified > 0 ? 'ready' : 'empty'
+      return { id, label, verified: b.verified, pending: b.pending, status }
+    }).sort((a, b) => a.label.localeCompare(b.label, 'nl'))
+  }
+
+  return <BrugClient nodes={signedNodes} role={profile.role} clientSummaries={clientSummaries} />
+}
+
+// [BRIDGE-HUB] Per-client readiness summary for the accountant overview (Layer 1).
+export interface ClientSummary {
+  id: string
+  label: string
+  verified: number
+  pending: number
+  status: 'ready' | 'review' | 'empty'
 }
