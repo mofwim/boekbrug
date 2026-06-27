@@ -315,6 +315,11 @@ function ClientCard({
   onOpenDocs: () => void
 }) {
   const st = CARD_STATUS[summary.status]
+  // [BRIDGE-HUB] The closing-package API requires year + quarter (400 without).
+  // Layer 1 cards summarize the CURRENT quarter, so pass that.
+  const now = new Date()
+  const curYear = now.getFullYear()
+  const curQuarter = Math.floor(now.getMonth() / 3) + 1
   const countLabel =
     summary.status === 'empty'
       ? 'Geen facturen dit kwartaal'
@@ -336,14 +341,14 @@ function ClientCard({
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <button
-          onClick={() => router.push(`/dashboard/quarterly?clientId=${summary.id}`)}
+          onClick={() => router.push(`/dashboard/quarterly?clientId=${summary.id}&year=${curYear}&quarter=${curQuarter}`)}
           style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 12px', borderRadius: R.full, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
         >
           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>bar_chart</span>
           Kwartaal
         </button>
         <a
-          href={`/api/closing-package?clientId=${summary.id}`}
+          href={`/api/closing-package?clientId=${summary.id}&year=${curYear}&quarter=${curQuarter}`}
           style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 12px', borderRadius: R.full, border: `1px solid ${M3.outline}`, background: 'transparent', color: M3.primary, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'none' }}
         >
           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>inventory_2</span>
