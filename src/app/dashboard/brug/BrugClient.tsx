@@ -107,6 +107,20 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
   const [showHidden, setShowHidden] = useState(false)
   const router = useRouter()
 
+  // [BRIDGE-HUB] Layer 2 — accountant control center: pick a client (dropdown),
+  // then switch tabs (Kwartaal / Documenten). The classic folder tree is reused
+  // for the Documenten tab, scoped to the selected client.
+  const isAccountant = role === 'accountant'
+  const [selectedClientId, setSelectedClientId] = useState<string>('')
+  const [hubTab, setHubTab] = useState<'overzicht' | 'kwartaal' | 'documenten'>('overzicht')
+  const selectedClient = useMemo(
+    () => clientSummaries?.find(c => c.id === selectedClientId) ?? null,
+    [clientSummaries, selectedClientId]
+  )
+  const now = new Date()
+  const curYear = now.getFullYear()
+  const curQuarter = Math.floor(now.getMonth() / 3) + 1
+
   // [BRIDGE-REFRESH] Re-fetch when the tab regains focus. The page is
   // force-dynamic server-side, but tab/folder navigation here is client-side
   // state (cwd) — it never re-runs the server fetch. So when the accountant
@@ -131,6 +145,20 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
   const homeHref = role === 'accountant' ? '/dashboard/accountant' : '/dashboard'
 
   const isEmpty = level.folders.length === 0 && level.files.length === 0
+
+  // [BRIDGE-HUB] When the accountant picks a client and opens the Documenten
+  // tab, scope the tree to that client by seeding cwd to ['Klanten', label].
+  // Selecting a different client resets the dive.
+  useEffect(() => {
+    if (isAccountant && selectedClient && hubTab === 'documenten') {
+      setCwd(prev => {
+        const root = ['Klanten', selectedClient.label]
+        // already inside this client → keep the deeper position
+        if (prev[0] === 'Klanten' && prev[1] === selectedClient.label) return prev
+        return root
+      })
+    }
+  }, [isAccountant, selectedClient, hubTab])
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
@@ -159,21 +187,75 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
         </div>
       </div>
 
-      {/* [BRIDGE-HUB] Layer 1 — live client overview (accountant, root only).
-          Cards stay above the document tree; diving into a client hides them. */}
-      {role === 'accountant' && clientSummaries && clientSummaries.length > 0 && cwd.length === 0 && (
+      {/* [BRIDGE-HUB] Layer 2 — accountant control center: client dropdown +
+          persistent Pakket action + tabs. ZZP keeps the classic tree below. */}
+      {isAccountant && clientSummaries && clientSummaries.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: M3.outline, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
-            Mijn klanten — dit kwartaal
+          {/* Client picker + Pakket */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <div style={{ flex: 1, position: 'relative' }}>
+              <select
+                value={selectedClientId}
+                onChange={e => { setSelectedClientId(e.target.value); setHubTab('overzicht') }}
+                style={{ width: '100%', appearance: 'none', padding: '12px 40px 12px 14px', borderRadius: R.md, border: `1px solid ${M3.outline}`, background: '#fff', fontSize: 15, fontWeight: 600, color: M3.onSurface, fontFamily: FONT, cursor: 'pointer' }}
+              >
+                <option value="">— Kies een klant —</option>
+                {clientSummaries.map(c => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
+              </select>
+              <span className="material-symbols-outlined" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }}>expand_more</span>
+            </div>
+            {selectedClient && (
+              <a
+                href={`/api/closing-package?clientId=${selectedClient.id}&year=${curYear}&quarter=${curQuarter}`}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'none', flexShrink: 0 }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>inventory_2</span>
+                Download kwartaal
+              </a>
+            )}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {clientSummaries.map(c => (
-              <ClientCard key={c.id} summary={c} router={router} onOpenDocs={() => setCwd(['Klanten', c.label])} />
-            ))}
-          </div>
+
+          {selectedClient ? (
+            <>
+              {/* Tabs */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 16, borderBottom: `1px solid ${M3.surfaceVariant}` }}>
+                {([['overzicht', 'Overzicht', 'fact_check'], ['kwartaal', 'Kwartaal', 'bar_chart'], ['documenten', 'Documenten', 'folder']] as const).map(([key, label, icon]) => (
+                  <button
+                    key={key}
+                    onClick={() => setHubTab(key)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, color: hubTab === key ? M3.primary : M3.outline, borderBottom: `2px solid ${hubTab === key ? M3.primary : 'transparent'}`, marginBottom: -1 }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{icon}</span>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Overzicht tab — readiness status + honest missing list */}
+              {hubTab === 'overzicht' && (
+                <OverzichtPanel clientId={selectedClient.id} year={curYear} quarter={curQuarter} />
+              )}
+
+              {/* Kwartaal tab — lazy-loaded quarter numbers */}
+              {hubTab === 'kwartaal' && (
+                <KwartaalPanel clientId={selectedClient.id} year={curYear} quarter={curQuarter} />
+              )}
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '40px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#C4C7C5', display: 'block', marginBottom: 8 }}>groups</span>
+              <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, margin: 0 }}>Kies een klant om te beginnen</p>
+              <p style={{ fontSize: 12.5, color: M3.outline, margin: '4px 0 0' }}>{clientSummaries.length} klanten gekoppeld</p>
+            </div>
+          )}
         </div>
       )}
 
+      {/* Document tree — for ZZP always; for accountant only inside Documenten tab */}
+      {(!isAccountant || (selectedClient && hubTab === 'documenten')) && (
+      <>
       {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 12, fontSize: 14 }}>
         <button
@@ -242,6 +324,8 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
           ))}
         </div>
       )}
+      </>
+      )}
     </div>
   )
 }
@@ -298,69 +382,210 @@ function FileRow({ node }: { node: TreeNode }) {
   }
   return inner
 }
-// ─── [BRIDGE-HUB] Layer 1 — live client card ──────────────────────────────────
-const CARD_STATUS: Record<ClientSummary['status'], { label: string; bg: string; color: string; icon: string }> = {
-  ready:  { label: 'Klaar',          bg: '#CEEAD6', color: '#137333', icon: 'check_circle' },
-  review: { label: 'Te controleren', bg: '#FEE8C4', color: '#7C5800', icon: 'pending' },
-  empty:  { label: 'Leeg',           bg: '#E7E0EC', color: '#49454F', icon: 'inbox' },
+// ─── [BRIDGE-HUB] Layer 2 — Overzicht panel (readiness, honest status) ────────
+interface PackageSummary {
+  quarter: string
+  outgoingCount: number
+  incomingCount: number
+  filesIncluded: number
+  bankStatementIncluded: boolean
+  warnings: { code: string; message: string }[]
+  generatedAt: string
 }
 
-function ClientCard({
-  summary,
-  router,
-  onOpenDocs,
-}: {
-  summary: ClientSummary
-  router: ReturnType<typeof useRouter>
-  onOpenDocs: () => void
-}) {
-  const st = CARD_STATUS[summary.status]
-  // [BRIDGE-HUB] The closing-package API requires year + quarter (400 without).
-  // Layer 1 cards summarize the CURRENT quarter, so pass that.
-  const now = new Date()
-  const curYear = now.getFullYear()
-  const curQuarter = Math.floor(now.getMonth() / 3) + 1
-  const countLabel =
-    summary.status === 'empty'
-      ? 'Geen facturen dit kwartaal'
-      : `${summary.verified} geverifieerd${summary.pending > 0 ? ` · ${summary.pending} te controleren` : ''}`
+function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
+  const [data, setData] = useState<PackageSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true); setError(false); setData(null)
+    const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
+    fetch(`/api/closing-package/summary?${params}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(j => { if (!cancelled) setData(j) })
+      .catch(() => { if (!cancelled) setError(true) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [clientId, year, quarter])
+
+  if (loading) {
+    return <div style={{ textAlign: 'center', padding: '40px 20px', color: M3.outline, fontFamily: FONT, fontSize: 14 }}>Overzicht laden…</div>
+  }
+  if (error || !data) {
+    return (
+      <div style={{ textAlign: 'center', padding: '32px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, fontFamily: FONT }}>
+        <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>Overzicht kon niet geladen worden</p>
+      </div>
+    )
+  }
+
+  const totalInvoices = data.outgoingCount + data.incomingCount
+  // Honest readiness: complete when there are verified invoices and no warnings.
+  const isComplete = data.warnings.length === 0 && totalInvoices > 0
 
   return (
-    <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', fontFamily: FONT }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {summary.label}
-          </div>
-          <div style={{ fontSize: 12.5, color: M3.outline, marginTop: 2 }}>{countLabel}</div>
-        </div>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, fontWeight: 700, padding: '4px 10px', borderRadius: R.full, background: st.bg, color: st.color, flexShrink: 0 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{st.icon}</span>
-          {st.label}
+    <div style={{ fontFamily: FONT }}>
+      {/* Status banner — the single most important line */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: R.lg, marginBottom: 14, background: isComplete ? '#CEEAD6' : '#FEE8C4' }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 24, color: isComplete ? '#137333' : '#7C5800' }}>
+          {isComplete ? 'verified' : 'warning'}
         </span>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: isComplete ? '#137333' : '#7C5800' }}>
+            {isComplete ? 'Compleet' : 'Nog niet compleet'}
+          </div>
+          <div style={{ fontSize: 12.5, color: isComplete ? '#137333' : '#7C5800', opacity: 0.85 }}>
+            {data.quarter} · {isComplete ? 'klaar om af te sluiten' : `${data.warnings.length} ${data.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}`}
+          </div>
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={() => router.push(`/dashboard/quarterly?clientId=${summary.id}&year=${curYear}&quarter=${curQuarter}`)}
-          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 12px', borderRadius: R.full, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>bar_chart</span>
-          Kwartaal
-        </button>
-        <a
-          href={`/api/closing-package?clientId=${summary.id}&year=${curYear}&quarter=${curQuarter}`}
-          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '9px 12px', borderRadius: R.full, border: `1px solid ${M3.outline}`, background: 'transparent', color: M3.primary, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'none' }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>inventory_2</span>
-          Pakket
-        </a>
-        <button
-          onClick={onOpenDocs}
-          title="Documenten van deze klant"
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 12px', borderRadius: R.full, border: `1px solid ${M3.outline}`, background: 'transparent', color: M3.outline, cursor: 'pointer', fontFamily: FONT }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>folder_open</span>
-        </button>
+
+      {/* What's inside — real counts only */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: M3.outline, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 12 }}>
+          Wat zit erin
+        </div>
+        <SummaryRow icon="receipt_long" label="Uitgaande facturen" value={String(data.outgoingCount)} />
+        <SummaryRow icon="receipt" label="Inkomende facturen" value={String(data.incomingCount)} />
+        <SummaryRow icon="picture_as_pdf" label="Facturen met PDF" value={`${data.filesIncluded} / ${totalInvoices}`} />
+        <SummaryRow
+          icon="account_balance"
+          label="Bankafschrift"
+          value={data.bankStatementIncluded ? 'Aanwezig' : 'Ontbreekt'}
+          valueColor={data.bankStatementIncluded ? '#137333' : M3.error}
+          last
+        />
+      </div>
+
+      {/* Honest missing list — specific, never a fake score */}
+      {data.warnings.length > 0 && (
+        <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', border: `1px solid #FEE8C4` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#7C5800', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
+            Aandachtspunten
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {data.warnings.map((w, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13.5, color: M3.onSurface }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.warning, flexShrink: 0 }}>error_outline</span>
+                <span>{w.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SummaryRow({ icon, label, value, valueColor, last }: { icon: string; label: string; value: string; valueColor?: string; last?: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: last ? 'none' : `1px solid #F1F1F1` }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.outline }}>{icon}</span>
+      <span style={{ flex: 1, fontSize: 14, color: M3.onSurface }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor ?? M3.onSurface }}>{value}</span>
+    </div>
+  )
+}
+
+// ─── [BRIDGE-HUB] Layer 2 — Kwartaal panel (lazy-loads quarter numbers) ────────
+interface ZzpSummary {
+  totalIn: number
+  totalOut: number
+  totalBtwIn: number
+  totalBtwOut: number
+}
+
+function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
+  const [data, setData] = useState<ZzpSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true); setError(false); setData(null)
+    const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
+    fetch(`/api/quarterly?${params}`)
+      .then(r => r.json())
+      .then(j => {
+        if (cancelled) return
+        // Accountant path returns a full QuarterlySummary; derive in/out from it.
+        // ZZP path returns totalIn/totalOut directly. Support both shapes.
+        if (j && typeof j === 'object') {
+          if ('totalIn' in j) {
+            setData({ totalIn: j.totalIn, totalOut: j.totalOut, totalBtwIn: j.totalBtwIn, totalBtwOut: j.totalBtwOut })
+          } else if ('totalIncl' in j) {
+            // QuarterlySummary: split incoming/outgoing from invoices array
+            const invs = Array.isArray(j.invoices) ? j.invoices : []
+            let tIn = 0, tOut = 0, bIn = 0, bOut = 0
+            for (const inv of invs) {
+              const inc = inv.total_inc_btw ?? 0, btw = inv.btw_amount ?? 0
+              if (inv.direction === 'incoming') { tOut += inc; bOut += btw }
+              else { tIn += inc; bIn += btw }
+            }
+            setData({ totalIn: tIn, totalOut: tOut, totalBtwIn: bIn, totalBtwOut: bOut })
+          } else {
+            setError(true)
+          }
+        } else setError(true)
+      })
+      .catch(() => { if (!cancelled) setError(true) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [clientId, year, quarter])
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 20px', color: M3.outline, fontFamily: FONT, fontSize: 14 }}>
+        Cijfers laden…
+      </div>
+    )
+  }
+  if (error || !data) {
+    return (
+      <div style={{ textAlign: 'center', padding: '32px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, fontFamily: FONT }}>
+        <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>Cijfers konden niet geladen worden</p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ fontFamily: FONT }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: M3.outline, marginBottom: 10 }}>
+        Q{quarter} {year}
+      </div>
+      {/* Inkomsten */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 10, border: `1px solid #CEEAD6` }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#137333', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+          Inkomsten — geverifieerd
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 11, color: M3.outline }}>Incl. BTW</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#137333' }}>{fmtEur(data.totalIn)}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 11, color: M3.outline }}>BTW</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#137333' }}>{fmtEur(data.totalBtwIn)}</div>
+          </div>
+        </div>
+      </div>
+      {/* Uitgaven */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', border: `1px solid #F9DEDC` }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#B3261E', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+          Uitgaven — geverifieerd
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 11, color: M3.outline }}>Incl. BTW</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#B3261E' }}>{fmtEur(data.totalOut)}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 11, color: M3.outline }}>BTW</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#B3261E' }}>{fmtEur(data.totalBtwOut)}</div>
+          </div>
+        </div>
       </div>
     </div>
   )

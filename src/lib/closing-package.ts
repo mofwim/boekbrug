@@ -305,10 +305,106 @@ const INVOICE_FIELDS =
   "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id" as const;
 
 /**
- * Build the closing package for one client + quarter. `supabase` must be a
- * service_role pipeline client; every query is explicitly scoped to ownerId
- * (service_role bypasses RLS). The caller (route) verifies authorization first.
+ * [BRIDGE-HUB Overzicht] Lightweight summary of a client's quarter — WITHOUT
+ * downloading any file or building the ZIP. Used by the Brug "Overzicht" tab to
+ * answer the accountant's real question ("is this quarter ready to close?")
+ * before they download. Same fetch + verify logic as buildClosingPackageZip,
+ * but it only checks whether evidence EXISTS (paths present), never fetches it.
+ *
+ * Honest by construction: counts come from verified invoices only; warnings are
+ * the real gaps (an invoice with no PDF path, no bank statement). No invented
+ * completeness score, no facturen-vs-bonnen split we don't track.
  */
+export async function summarizeClosingPackage(args: {
+  ownerId: string;
+  year: number;
+  quarter: Quarter;
+  supabase: PipelineClient;
+}): Promise<ClosingPackageSummary> {
+  const { ownerId, year, quarter, supabase } = args;
+  const start = quarterStartDate(year, quarter);
+  const end = quarterEndDate(year, quarter);
+  const warnings: ClosingPackageWarning[] = [];
+
+  const { data: invData, error: invErr } = await supabase
+    .from("invoices")
+    .select(INVOICE_FIELDS)
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+    .gte("invoice_date", start)
+    .lte("invoice_date", end)
+    .neq("status", "archived");
+  if (invErr) throw new Error(`[CLOSING-PACKAGE] summary query failed: ${invErr.message}`);
+
+  const all = (invData ?? []) as unknown as PackageInvoice[];
+  const verified = all.filter(isVerifiedForPackage);
+  const outgoing = verified.filter((i) => i.direction === "outgoing");
+  const incoming = verified.filter((i) => i.direction === "incoming");
+
+  // Count how many verified invoices actually have a retrievable PDF path.
+  // outgoing → pdf_url ; incoming → document_id (resolved to a file_url).
+  let withPdf = 0;
+  const missingPdf: string[] = [];
+
+  for (const inv of outgoing) {
+    if (inv.pdf_url) withPdf++;
+    else missingPdf.push(inv.invoice_number ?? inv.id);
+  }
+
+  const incomingDocIds = incoming.map((i) => i.document_id).filter((x): x is string => !!x);
+  let docUrlById = new Map<string, boolean>();
+  if (incomingDocIds.length > 0) {
+    const { data: docs } = await supabase
+      .from("documents")
+      .select("id, file_url")
+      .in("id", incomingDocIds);
+    const rows = (docs ?? []) as unknown as Array<{ id: string; file_url: string | null }>;
+    docUrlById = new Map(rows.map((d) => [d.id, !!d.file_url]));
+  }
+  for (const inv of incoming) {
+    const has = inv.document_id ? docUrlById.get(inv.document_id) === true : false;
+    if (has) withPdf++;
+    else missingPdf.push(inv.invoice_number ?? inv.id);
+  }
+
+  // Bank statement present for the quarter? (BANK-RAW-STORE: doc_type='bankafschrift')
+  const { data: bankDocs } = await supabase
+    .from("documents")
+    .select("id")
+    .eq("user_id", ownerId)
+    .eq("doc_type", "bankafschrift")
+    .gte("created_at", start)
+    .lte("created_at", `${end}T23:59:59`)
+    .limit(1);
+  const bankStatementIncluded = (bankDocs ?? []).length > 0;
+
+  // Honest warnings — the real gaps, listed specifically.
+  if (verified.length === 0) {
+    warnings.push({ code: "no_invoices", message: "Geen geverifieerde facturen in dit kwartaal." });
+  }
+  if (missingPdf.length > 0) {
+    warnings.push({
+      code: "missing_pdf",
+      message:
+        missingPdf.length === 1
+          ? `1 factuur zonder PDF (${missingPdf[0]}).`
+          : `${missingPdf.length} facturen zonder PDF.`,
+    });
+  }
+  if (!bankStatementIncluded) {
+    warnings.push({ code: "no_bank_statement", message: "Geen bankafschrift gevonden voor dit kwartaal." });
+  }
+
+  return {
+    quarter: `Q${quarter} ${year}`,
+    outgoingCount: outgoing.length,
+    incomingCount: incoming.length,
+    filesIncluded: withPdf,
+    bankStatementIncluded,
+    warnings,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export async function buildClosingPackageZip(args: {
   ownerId: string;
   year: number;
