@@ -199,6 +199,10 @@ export default function BankClient() {
 
       // Run matching (shared with initial load)
       await runMatch()
+      // [BANK-STATEMENT-DELETE] Refresh the uploaded-statements table so the file
+      // just uploaded appears immediately — without it the table only updated on a
+      // full page reload (it's populated by loadStatements on mount).
+      await loadStatements()
     } catch {
       showToast('Er ging iets mis.')
     } finally {
