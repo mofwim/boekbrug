@@ -188,7 +188,7 @@ export function nameSimilarity(a: string | null, b: string | null): number {
 
 // ─── Eligibility + scoring (pure) ─────────────────────────────────────────────
 
-/** Hard filters: direction/sign, excluded statuses, B.4 verwerkt guard. */
+/** Hard filters: direction/sign, excluded statuses, B.4 verwerkt guard, date sanity. */
 export function isEligible(
   tx: BankTransaction,
   inv: InvoiceForMatching
@@ -201,6 +201,20 @@ export function isEligible(
   const requiredDirection: "outgoing" | "incoming" =
     tx.amount > 0 ? "outgoing" : "incoming";
   if (inv.direction !== requiredDirection) return false;
+
+  // [BANK-MATCH-STRICT] Date sanity: a payment cannot happen meaningfully BEFORE
+  // the invoice was issued. A €323,68 monthly fee invoice dated 15-06 must NOT
+  // match a transaction from 30-05 or 17-04 (those paid EARLIER invoices, likely
+  // not in the system). Small grace window (3 days) for clock/booking skew.
+  // tx.date and invoice_date are ISO "YYYY-MM-DD"; skip the check if either missing.
+  if (tx.date && inv.invoice_date) {
+    const txT = Date.parse(tx.date);
+    const invT = Date.parse(inv.invoice_date);
+    if (!Number.isNaN(txT) && !Number.isNaN(invT)) {
+      const GRACE_MS = 3 * 86_400_000; // 3 days
+      if (txT < invT - GRACE_MS) return false; // payment predates the invoice
+    }
+  }
 
   return true;
 }
@@ -238,6 +252,11 @@ export function scorePair(
     }
   } else {
     // No reference → amount is the backbone; date + counterpart refine.
+    // [BANK-MATCH-STRICT] But amount+counterpart ALONE are dangerous for
+    // recurring fixed expenses (e.g. a €323,68 monthly accountant fee matches
+    // EVERY month's transaction). Without the invoice number in the payment we
+    // can never be CERTAIN this is THE invoice, so confidence is capped below
+    // the auto threshold — these become 'choice' (owner picks), never 'auto'.
     confidence = 0;
     if (amtOk) {
       confidence += 0.5;
@@ -256,6 +275,10 @@ export function scorePair(
     }
     // Without an exact amount and without a reference, a pair stays weak.
     if (!amtOk) confidence = Math.min(confidence, 0.35);
+    // [BANK-MATCH-STRICT] Hard ceiling without a reference: never auto-confirm a
+    // payment to an invoice on amount+name+date alone. 0.65 sits under the 0.7
+    // auto threshold → always 'choice', requiring a human pick.
+    confidence = Math.min(confidence, 0.65);
   }
 
   confidence = Math.min(1, Math.max(0, confidence));
@@ -314,6 +337,50 @@ export function matchTransactions(
     }
 
     matches.push({ transaction: tx, outcome, best, candidates: trimmed });
+  }
+
+  // [BANK-MATCH-STRICT] One-to-one guard: a single invoice must not be suggested
+  // as the match for several transactions (one invoice is paid once). Greedy
+  // assignment — process the strongest 'auto'/'choice' pairings first; once an
+  // invoice is claimed, remove it from every other transaction's candidates and
+  // re-evaluate that transaction's outcome. Prevents the "same invoice on three
+  // transactions" bug while keeping the most confident pairing intact.
+  const claimed = new Set<string>();
+  // Order transactions by their best candidate confidence, strongest first.
+  const order = matches
+    .map((m, i) => ({ i, c: m.best?.confidence ?? m.candidates[0]?.confidence ?? 0 }))
+    .sort((a, b) => b.c - a.c)
+    .map((o) => o.i);
+
+  for (const i of order) {
+    const m = matches[i];
+    // Drop any candidate whose invoice is already claimed by a stronger tx.
+    const free = m.candidates.filter((c) => !claimed.has(c.invoiceId));
+
+    if (free.length === 0) {
+      m.outcome = "none";
+      m.best = null;
+      m.candidates = [];
+      continue;
+    }
+
+    // Re-derive outcome from the remaining free candidates.
+    const top = free[0];
+    const second = free[1];
+    const strongLead = !second || top.confidence - second.confidence >= opts.autoMargin;
+
+    if (top.confidence >= opts.autoConfidence && strongLead) {
+      m.outcome = "auto";
+      m.best = top;
+      claimed.add(top.invoiceId); // auto → this invoice is taken
+    } else {
+      m.outcome = "choice";
+      m.best = null;
+      // For 'choice' we claim the TOP candidate so it can't auto-match elsewhere,
+      // but still show the full free list so the owner can pick.
+      claimed.add(top.invoiceId);
+    }
+    m.candidates = free;
   }
 
   const autoCount = matches.filter((m) => m.outcome === "auto").length;
