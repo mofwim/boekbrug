@@ -91,6 +91,10 @@ export default function BankClient() {
   // "refresh names" action that upgrades older rows' names from their description.
   const [statements, setStatements] = useState<{ id: string; name: string; uploadedAt: string; size: number }[] | null>(null)
   const [refreshingNames, setRefreshingNames] = useState(false)
+  // [BANK-STATEMENT-DELETE] The statement pending deletion (shown in a confirm
+  // dialog) and the id currently being deleted (to disable its row button).
+  const [statementToDelete, setStatementToDelete] = useState<{ id: string; name: string } | null>(null)
+  const [deletingStatementId, setDeletingStatementId] = useState<string | null>(null)
   const [data, setData] = useState<MatchResponse | null>(null)
   const [selected, setSelected] = useState<Record<string, string>>({}) // txId → invoiceId
   // [BANK-MULTI-CONFIRM] One transaction can cover several invoices, so we track
@@ -299,6 +303,38 @@ export default function BankClient() {
       setRefreshingNames(false)
     }
   }
+
+  // [BANK-STATEMENT-DELETE] Delete a bank statement file the owner uploaded by
+  // mistake (wrong file, or a period that overlaps an existing statement). This
+  // removes the documents row + the Storage file (server-side); bank_transactions
+  // are NEVER touched, so every linked invoice / confirmed payment / ignore is
+  // preserved. The statement disappears from the next closing-package ZIP because
+  // the package is built fresh from the documents query. Confirmation is required
+  // (the delete is permanent) — this runs only after the dialog is confirmed.
+  async function deleteStatement(documentId: string) {
+    setDeletingStatementId(documentId)
+    try {
+      const res = await fetch('/api/bank/delete-statement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId }),
+      })
+      const json = await res.json()
+      if (res.ok && json?.ok) {
+        // Drop the row from the list immediately.
+        setStatements((prev) => (prev ? prev.filter((st) => st.id !== documentId) : prev))
+        showToast('Bankafschrift verwijderd ✓')
+      } else {
+        showToast(json?.error || 'Verwijderen mislukt.')
+      }
+    } catch {
+      showToast('Er ging iets mis.')
+    } finally {
+      setDeletingStatementId(null)
+      setStatementToDelete(null)
+    }
+  }
+
 
   // [BANK-INVOICE-FILE] Open the actual PDF of a matched invoice in a new tab so
   // the owner can check it before confirming the payment. Fetches a short-lived
@@ -573,9 +609,29 @@ export default function BankClient() {
                   {st.name}
                 </span>
               </div>
-              <span style={{ fontSize: 11.5, color: '#9aa0a6', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                {fmtUploadDate(st.uploadedAt)}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <span style={{ fontSize: 11.5, color: '#9aa0a6', whiteSpace: 'nowrap' }}>
+                  {fmtUploadDate(st.uploadedAt)}
+                </span>
+                {/* [BANK-STATEMENT-DELETE] Delete this statement (replace a wrong
+                    upload). Opens a confirm dialog — never deletes on first click. */}
+                <button
+                  onClick={() => setStatementToDelete({ id: st.id, name: st.name })}
+                  disabled={deletingStatementId === st.id}
+                  aria-label="Bankafschrift verwijderen"
+                  title="Verwijderen"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 30, height: 30, borderRadius: R.full, border: 'none', background: 'transparent',
+                    cursor: deletingStatementId === st.id ? 'default' : 'pointer', color: M3.error,
+                    opacity: deletingStatementId === st.id ? 0.5 : 1,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                    {deletingStatementId === st.id ? 'hourglass_empty' : 'delete'}
+                  </span>
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -723,6 +779,59 @@ export default function BankClient() {
             >
               Sluiten
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* [BANK-STATEMENT-DELETE] Confirm dialog — the delete is permanent, so we
+          require an explicit confirmation and remind the owner to make sure they
+          have the correct version uploaded. */}
+      {statementToDelete && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => { if (!deletingStatementId) setStatementToDelete(null) }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.error }}>warning</span>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Bankafschrift verwijderen?</h3>
+            </div>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 6px' }}>
+              Weet je zeker dat je dit bankafschrift wilt verwijderen?
+            </p>
+            <p style={{ fontSize: 13, color: '#5F6368', lineHeight: 1.5, margin: '0 0 4px', wordBreak: 'break-word' }}>
+              <strong style={{ color: '#3c4043' }}>{statementToDelete.name}</strong>
+            </p>
+            <p style={{ fontSize: 13, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
+              Zorg dat je de juiste versie hebt geüpload. Dit kan niet ongedaan worden gemaakt. Je transacties blijven behouden.
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setStatementToDelete(null)}
+                disabled={!!deletingStatementId}
+                style={{
+                  flex: 1, padding: 12, borderRadius: R.full, background: '#fff', color: M3.primary,
+                  fontSize: 14, fontWeight: 600, border: `1.5px solid #E0E0E0`, cursor: deletingStatementId ? 'default' : 'pointer',
+                  fontFamily: FONT, opacity: deletingStatementId ? 0.6 : 1,
+                }}
+              >
+                Annuleren
+              </button>
+              <button
+                onClick={() => deleteStatement(statementToDelete.id)}
+                disabled={!!deletingStatementId}
+                style={{
+                  flex: 1, padding: 12, borderRadius: R.full, background: M3.error, color: '#fff',
+                  fontSize: 14, fontWeight: 600, border: 'none', cursor: deletingStatementId ? 'default' : 'pointer',
+                  fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  opacity: deletingStatementId ? 0.7 : 1,
+                }}
+              >
+                {deletingStatementId
+                  ? <span className="material-symbols-outlined" style={{ fontSize: 18 }}>hourglass_empty</span>
+                  : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>delete</span> Verwijderen</>}
+              </button>
+            </div>
           </div>
         </div>
       )}
