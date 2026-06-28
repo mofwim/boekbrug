@@ -181,8 +181,51 @@ function parseMT940Description(line86: string): {
     fields["NAME"] ?? fields["BENM"] ?? fields["ORDP"] ?? null;
   let counterpartIban =
     fields["IBAN"] ?? fields["BNAM"] ?? null;
-  const reference =
-    fields["REMI"] ?? fields["EREF"] ?? fields["KREF"] ?? null;
+
+  // [BANK-PARSE-CNTP] ING uses a composite /CNTP/ field (NOT /NAME/):
+  //   /CNTP/NL11INGB0398443327/INGBNL2A/Trimex//
+  // → IBAN / BIC / counterpart name. Parse it explicitly so ING statements get
+  // clean names + IBANs without relying on the looser fallback below.
+  if (fields["CNTP"]) {
+    const cntp = fields["CNTP"];
+    const m = cntp.match(/^([A-Z]{2}\d{2}[A-Z0-9]{4,})\/([A-Z0-9]+)\/(.+?)\/*$/);
+    if (m) {
+      if (!counterpartIban) counterpartIban = m[1].trim();
+      if (!counterpartName) counterpartName = m[3].trim();
+    } else if (!counterpartName) {
+      // No IBAN/BIC structure — take the CNTP content as the name.
+      counterpartName = cntp.replace(/\/+$/, "").trim() || null;
+    }
+  }
+
+  // [BANK-PARSE-REF] Invoice number extraction. ING puts the supplier invoice
+  // number inside REMI as:  USTD//29528/  (the bank's own UI shows just "29528").
+  // Pull the LAST numeric group out of REMI so referenceMatches() compares the
+  // real invoice number, and the owner sees it clean — not "USTD//29528/".
+  // Fall back to EREF/KREF, then to the raw REMI, then null.
+  let reference: string | null = null;
+  const remi = fields["REMI"] ?? null;
+  if (remi) {
+    // Last run of >=3 digits anywhere in REMI (supplier invoice numbers).
+    const nums = remi.match(/\d{3,}/g);
+    if (nums && nums.length > 0) {
+      reference = nums[nums.length - 1];
+    } else {
+      // No usable number → keep a cleaned REMI (strip USTD noise + slashes).
+      // "USTD" is an ING transaction-type marker, not a reference; if nothing
+      // meaningful remains, leave reference null rather than show "UST"/"US".
+      const cleaned = remi
+        .replace(/\bUSTD?\b/g, "")
+        .replace(/[/]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      reference = cleaned.length >= 3 ? cleaned : null;
+    }
+  }
+  if (!reference) {
+    const fb = fields["EREF"] ?? fields["KREF"] ?? null;
+    reference = fb ? fb.replace(/[/]+/g, "").trim() || null : null;
+  }
 
   // [BANK-PARSE-ING] Fallback for the common ING/Rabo/ABN :86: layout that is
   // NOT wrapped in /NAME/ markers but reads as:  IBAN/BIC/Counterpart name
@@ -206,8 +249,26 @@ function parseMT940Description(line86: string): {
       if (ibanName) {
         if (!counterpartIban) counterpartIban = ibanName[1].trim();
         if (!counterpartName) counterpartName = ibanName[2].trim();
+      } else {
+        // [BANK-PARSE-CLEAN] No IBAN at all, but the line often starts with the
+        // counterpart name BEFORE the field markers:
+        //   "Oz + Er Food B.V.///REMI/UST" → name = "Oz + Er Food B.V."
+        //   "Mohammad Ibrahim///REMI/UST"  → name = "Mohammad Ibrahim"
+        // Take everything up to the first slash, if it looks like a name.
+        const leading = line86.split("/")[0]?.trim() ?? "";
+        if (!counterpartName && leading.length >= 2 && /[A-Za-z]/.test(leading)) {
+          counterpartName = leading;
+        }
       }
     }
+  }
+
+  // [BANK-PARSE-CLEAN] Final cleanup: strip any trailing field-marker debris that
+  // leaked into the name (e.g. "Oz + Er Food B.V.//", "Jansen/REMI"). Cut at the
+  // first "/" and collapse whitespace, so the owner sees a clean vendor name.
+  if (counterpartName) {
+    counterpartName = counterpartName.split("/")[0].replace(/\s+/g, " ").trim();
+    if (counterpartName.length === 0) counterpartName = null;
   }
 
   // Description: use REMI or fall back to full line86 cleaned up
