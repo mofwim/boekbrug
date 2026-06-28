@@ -72,6 +72,10 @@ export default function BankClient() {
   const [selected, setSelected] = useState<Record<string, string>>({}) // txId → invoiceId
   const [confirmed, setConfirmed] = useState<Record<string, string>>({}) // txId → invoiceNumber
   const [processingId, setProcessingId] = useState<string | null>(null)
+  // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
+  // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
+  // dropdown of every counterpart. Matches counterpart name, reference, or date.
+  const [filterText, setFilterText] = useState('')
   const [toast, setToast] = useState<string | null>(null)
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
@@ -204,6 +208,28 @@ export default function BankClient() {
 
   // [BANK-ATTACH] Owner uploads the file that belongs to an unmatched expense
   // transaction → backend creates a paid incoming invoice from it and links it.
+  // [BANK-INVOICE-FILE] Open the actual PDF of a matched invoice in a new tab so
+  // the owner can check it before confirming the payment. Fetches a short-lived
+  // signed URL; opens the tab synchronously first (so the browser doesn't block
+  // the popup) and points it at the URL once it arrives.
+  async function openInvoiceFile(invoiceId: string) {
+    const tab = window.open('', '_blank')
+    try {
+      const res = await fetch(`/api/bank/invoice-file?invoiceId=${encodeURIComponent(invoiceId)}`)
+      const json = await res.json()
+      if (res.ok && json?.url) {
+        if (tab) tab.location.href = json.url
+        else window.open(json.url, '_blank')
+      } else {
+        if (tab) tab.close()
+        showToast(json?.detail || json?.error === 'no_file' ? 'Deze factuur heeft geen bestand.' : 'Kon de factuur niet openen.')
+      }
+    } catch {
+      if (tab) tab.close()
+      showToast('Kon de factuur niet openen.')
+    }
+  }
+
   async function attachFile(txId: string, files: File[], isCredit: boolean) {
     setProcessingId(txId)
     try {
@@ -351,12 +377,26 @@ export default function BankClient() {
     { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredList?.length ?? 0 },
     { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
   ]
-  const activeList =
+  const activeListRaw =
     bankTab === 'confirm' ? toConfirm
     : bankTab === 'none' ? noMatch
     : bankTab === 'pin' ? posList
     : bankTab === 'ignored' ? (ignoredList ?? [])
     : confirmedList
+
+  // [BANK-FILTER] Only the "Geen factuur" tab is filtered (the long one). The
+  // filter is a simple case-insensitive substring over name + reference + date.
+  const activeList =
+    bankTab === 'none' && filterText.trim()
+      ? activeListRaw.filter((s) => {
+          const q = filterText.trim().toLowerCase()
+          return (
+            (s.counterpart ?? '').toLowerCase().includes(q) ||
+            (s.reference ?? '').toLowerCase().includes(q) ||
+            (s.date ?? '').toLowerCase().includes(q)
+          )
+        })
+      : activeListRaw
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
@@ -446,6 +486,48 @@ export default function BankClient() {
             </p>
           )}
 
+          {/* [BANK-FILTER] Search field for the long "Geen factuur" list. */}
+          {bankTab === 'none' && noMatch.length > 0 && (
+            <div style={{ position: 'relative', marginTop: 12 }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#9aa0a6', pointerEvents: 'none' }}
+              >
+                search
+              </span>
+              <input
+                type="text"
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                placeholder="Zoek op naam, bedrag of datum"
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '10px 36px 10px 38px',
+                  borderRadius: R.full, border: `1px solid ${M3.surfaceVariant}`, background: '#fff',
+                  fontFamily: FONT, fontSize: 13.5, color: M3.onSurface, outline: 'none',
+                }}
+              />
+              {filterText && (
+                <button
+                  onClick={() => setFilterText('')}
+                  aria-label="Wis zoekopdracht"
+                  style={{
+                    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                    border: 'none', background: 'none', cursor: 'pointer', color: '#9aa0a6',
+                    display: 'flex', alignItems: 'center', padding: 4,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+                </button>
+              )}
+            </div>
+          )}
+          {/* Empty-filter hint */}
+          {bankTab === 'none' && filterText.trim() && activeList.length === 0 && (
+            <p style={{ fontSize: 13, color: '#9aa0a6', margin: '14px 2px 0' }}>
+              Geen transacties gevonden voor “{filterText.trim()}”.
+            </p>
+          )}
+
           {bankTab === 'pin' && posList.length > 0 && (
             <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
               Pinontvangsten via de betaalautomaat (ING DD&C). Deze hebben geen factuur — ze staan hier zodat ze je openstaande werk niet in de weg zitten.
@@ -466,6 +548,7 @@ export default function BankClient() {
                 onAttach={(files) => attachFile(s.transactionId, files, s.amount >= 0)}
                 onIgnore={() => ignoreTx(s.transactionId)}
                 onRestore={() => restoreTx(s.transactionId)}
+                onOpenFile={openInvoiceFile}
               />
             ))}
             {activeList.length === 0 && (
@@ -529,7 +612,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, onSelect, onConfirm, onAttach, onIgnore, onRestore,
+  s, selectedInvoiceId, processing, isIgnoredTab, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -540,6 +623,7 @@ function TxCard({
   onAttach: (files: File[]) => void
   onIgnore: () => void
   onRestore: () => void
+  onOpenFile: (invoiceId: string) => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
@@ -670,7 +754,7 @@ function TxCard({
       )}
 
       {s.outcome === 'auto' && s.best && (
-        <CandidateRow cand={s.best} selected emphasis />
+        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} />
       )}
 
       {s.outcome === 'choice' && (
@@ -714,7 +798,7 @@ function TxCard({
   )
 }
 
-function CandidateRow({ cand, selected, emphasis, inline }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean }) {
+function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void }) {
   return (
     <div style={{ marginTop: emphasis ? 12 : 0, padding: emphasis ? '10px 12px' : 0, borderRadius: R.md, background: emphasis ? M3.successContainer : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -725,12 +809,26 @@ function CandidateRow({ cand, selected, emphasis, inline }: { cand: Candidate; s
         <span style={{ fontSize: 11.5, fontWeight: 600, color: '#5F6368' }}>{Math.round(cand.confidence * 100)}%</span>
       </div>
       {!inline && (
-        <div style={{ marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+        <div style={{ marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
           {cand.signals.map((sig) => (
             <span key={sig} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: R.full, background: '#fff', color: '#5F6368', border: '1px solid #E0E0E0' }}>
               {SIGNAL_LABEL[sig] ?? sig}
             </span>
           ))}
+          {/* [BANK-INVOICE-FILE] Open the actual invoice PDF before confirming. */}
+          {onOpenFile && (
+            <button
+              onClick={() => onOpenFile(cand.invoiceId)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 'auto',
+                border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+                fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>description</span>
+              Bekijk factuur
+            </button>
+          )}
         </div>
       )}
     </div>
