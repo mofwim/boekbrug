@@ -177,9 +177,9 @@ function parseMT940Description(line86: string): {
   }
 
   // Extract known fields — varies per bank but common ones:
-  let counterpartName =
+  let counterpartName: string | null =
     fields["NAME"] ?? fields["BENM"] ?? fields["ORDP"] ?? null;
-  let counterpartIban =
+  let counterpartIban: string | null =
     fields["IBAN"] ?? fields["BNAM"] ?? null;
 
   // [BANK-PARSE-CNTP] ING uses a composite /CNTP/ field (NOT /NAME/):
