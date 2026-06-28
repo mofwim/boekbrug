@@ -95,6 +95,52 @@ function deriveReadableName(raw: string | null): string | null {
   return s.length >= 2 ? s : null;
 }
 
+// [BANK-PARSE-REF] Single source of truth for extracting invoice number(s) from a
+// REMI/Ustrd remittance string. BOTH the live parse (parseTransaction) and the
+// re-derive path (rederiveFromDescription) call this, so a rule added here can
+// never be forgotten in one place — the ONS IT Incasso bug was exactly that:
+// two copies of this logic, only one fixed.
+//
+// Returns the cleaned invoice number(s), comma-joined when a single transfer pays
+// several invoices ("26702781, 26703066"), or null when there is no usable number.
+// Callers decide their own fallback for the null case (EREF/KREF, cleaned REMI, …).
+//
+// Rules, in priority order:
+//   1. POS settlement (BETAALAUTOMAAT / Verzamelbetaling) → null (date + batch
+//      counter only, never an invoice number).
+//   2. Card terminal (TERMINALID / PASVOLGNR / CCV* / …) → null (terminal sequence
+//      numbers are not invoice references).
+//   3. SEPA Incasso (IncassobatchId / OpdrachtId present) → ONLY the number after
+//      "fact."/"factuur"; if absent → null (a batch/order id is NOT an invoice, and
+//      we never guess — honest: no explicit invoice number means no reference).
+//   4. Otherwise → every run of >=3 digits / alphanumeric ref, de-duplicated, in
+//      order, with bare years (2024–2029) dropped.
+export function extractInvoiceReference(
+  remi: string | null,
+  opts: { isPos: boolean; isCard: boolean }
+): string | null {
+  if (!remi) return null;
+  if (opts.isPos || opts.isCard) return null;
+
+  const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
+
+  // SEPA Incasso: take only the invoice number after a "fact."/"factuur" marker.
+  const isIncasso = /\b(Incassobatch|Opdracht)Id\b/i.test(remi);
+  if (isIncasso) {
+    const m = remi.match(/\bfact(?:uur)?\.?\s*(?:nr\.?\s*)?[:#]?\s*([A-Z]{0,3}\d{3,}[A-Z0-9]*)/i);
+    const num = m?.[1] ?? null;
+    return num && !isBareYear(num) ? num : null;
+  }
+
+  // General case: all meaningful invoice-number-like tokens, de-duplicated.
+  const tokens = remi.match(/\b[A-Z]{0,3}\d{3,}[A-Z0-9]*\b/g);
+  if (!tokens || tokens.length === 0) return null;
+  const meaningful = tokens.filter((t) => !isBareYear(t));
+  if (meaningful.length === 0) return null;
+  const seen = new Set<string>();
+  return meaningful.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
+}
+
 export function parseMT940(content: string): ParseResult {
   const errors: string[] = [];
   const transactions: BankTransaction[] = [];
@@ -274,37 +320,25 @@ function parseMT940Description(rawLine86: string): {
   // invoice — their REMI is "...DAT. 20260626/6177 AANT. 25..." where the only
   // digit runs are a date and a batch counter, NOT an invoice number. Matching
   // one of those (e.g. "6177") to an invoice would be wrong, so POS → null.
-  let reference: string | null = null;
+  // [BANK-PARSE-REF] Invoice number(s) via the shared extractor (single source of
+  // truth — same rules for the live parse and the re-derive path). Handles the
+  // Incasso, multi-invoice, bare-year and POS cases. isCard is checked separately
+  // below for the name; here we only need the POS flag (card terminals have no
+  // /CNTP/ and their reference is cleared in the card branch further down).
   const remi = fields["REMI"] ?? null;
   const isPos = /BETAALAUTOMAAT|AFREK\.|Verzamelbetaling/i.test(line86);
+  let reference: string | null = extractInvoiceReference(remi, { isPos, isCard: false });
 
-  if (remi && !isPos) {
-    // All runs of >=3 digits, plus alphanumeric refs (RE0801378, GCZ26381430),
-    // de-duplicated, in order. Drop bare years (2024–2029) from "voor juli 2026".
-    const tokens = remi.match(/\b[A-Z]{0,3}\d{3,}[A-Z0-9]*\b/g);
-    if (tokens && tokens.length > 0) {
-      const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
-      const meaningful = tokens.filter((t) => !isBareYear(t));
-      // If the only "numbers" are bare years (e.g. "deel salaris juni 2026"),
-      // there is no invoice reference — leave it null rather than show "2026" as
-      // if it were an invoice number.
-      if (meaningful.length === 0) {
-        reference = null;
-      } else {
-        const seen = new Set<string>();
-        reference = meaningful.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
-      }
-    } else {
-      // No usable number → keep a cleaned REMI (strip USTD noise + slashes).
-      // "USTD" is an ING transaction-type marker, not a reference; if nothing
-      // meaningful remains, leave reference null rather than show "UST"/"US".
-      const cleaned = remi
-        .replace(/\bUSTD?\b/g, "")
-        .replace(/[/]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      reference = cleaned.length >= 3 ? cleaned : null;
-    }
+  if (reference === null && remi && !isPos) {
+    // No invoice number found. Two ordered fallbacks for the live parse:
+    //   (a) a cleaned REMI (strip USTD noise + slashes) as a human reference, then
+    //   (b) the structured EREF/KREF field if even that is empty.
+    const cleaned = remi
+      .replace(/\bUSTD?\b/g, "")
+      .replace(/[/]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    reference = cleaned.length >= 3 ? cleaned : null;
   }
   if (!reference && !isPos) {
     const fb = fields["EREF"] ?? fields["KREF"] ?? null;
@@ -701,23 +735,10 @@ export function rederiveFromDescription(description: string | null): {
     if (!hasRealWords) name = null;
   }
 
-  // Reference — same logic as the MT940 path: meaningful invoice numbers only,
-  // bare years dropped, POS → null, card terminal noise → null.
-  let reference: string | null = null;
+  // Reference — via the shared extractor (single source of truth). This is how
+  // the re-derive path automatically inherits the Incasso fix and any future rule.
   const isCard = /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS/i.test(remi);
-  if (!isPos && !isCard) {
-    const tokens = remi.match(/\b[A-Z]{0,3}\d{3,}[A-Z0-9]*\b/g);
-    if (tokens && tokens.length > 0) {
-      const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
-      const meaningful = tokens.filter((t) => !isBareYear(t));
-      if (meaningful.length > 0) {
-        const seen = new Set<string>();
-        reference = meaningful
-          .filter((t) => (seen.has(t) ? false : (seen.add(t), true)))
-          .join(", ");
-      }
-    }
-  }
+  const reference = extractInvoiceReference(remi, { isPos, isCard });
 
   return { name, reference };
 }
