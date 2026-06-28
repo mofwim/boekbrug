@@ -80,7 +80,7 @@ export default function BankClient() {
   // component state and vanished on reload.
   const [initialLoading, setInitialLoading] = useState(true)
   // [BANK-TABS] Active tab — defaults to the one the owner acts on.
-  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'ignored' | 'done'>('confirm')
+  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'pin' | 'ignored' | 'done'>('confirm')
   // [BANK-IGNORE] Ignored transactions (status 'not_found'), loaded lazily when
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
@@ -255,7 +255,7 @@ export default function BankClient() {
       if (res.ok) {
         showToast('Transactie genegeerd')
         await runMatch()             // drops it from the active list
-        setIgnoredList(null)         // force a refresh next time Genegeerd opens
+        await loadIgnored()          // refresh Genegeerd immediately (counter stays correct)
       } else {
         showToast('Negeren mislukt.')
       }
@@ -298,25 +298,49 @@ export default function BankClient() {
 
   const pending = data?.suggestions.filter((s) => !confirmed[s.transactionId]) ?? []
 
-  // [BANK-TABS] Split the (often long) list into three purpose-driven groups so
-  // the owner isn't drowned in one endless list. The tab the owner cares about
-  // — transactions that need a confirmation — is first and default.
+  // [BANK-SORT] Stable order by date (newest first) so a restored transaction
+  // returns to its logical position instead of jumping to the bottom.
+  const byDateDesc = (a: Suggestion, b: Suggestion) =>
+    (b.date ?? '').localeCompare(a.date ?? '')
+
+  // [BANK-POS] Card-terminal settlements (ING DD&C / BETAALAUTOMAAT) arrive in
+  // bulk every day and never have a supplier invoice. Keeping them in "Geen
+  // factuur" buries the real work (actual supplier payments). Detect them and
+  // give them their own tab so the owner focuses on invoices that matter.
+  const isPosReceipt = (s: Suggestion) => {
+    const name = (s.counterpart ?? '').toLowerCase()
+    const desc = (s.description ?? '').toLowerCase()
+    return (
+      name.includes('ing dd&c') ||
+      desc.includes('betaalautomaat') ||
+      desc.includes('afrek. betaalautomaat')
+    )
+  }
+
+  // [BANK-TABS] Split the (often long) list into purpose-driven groups so the
+  // owner isn't drowned in one endless list. Order: the action tab first.
   //   Te bevestigen : auto + choice (a real candidate exists → owner confirms)
-  //   Geen factuur  : none (no candidate — POS card receipts live here; normal)
-  //   Gekoppeld     : already confirmed this session
-  const toConfirm = pending.filter((s) => s.outcome === 'auto' || s.outcome === 'choice')
-  const noMatch = pending.filter((s) => s.outcome === 'none')
-  const confirmedList = (data?.suggestions ?? []).filter((s) => confirmed[s.transactionId])
+  //   Geen factuur  : none, EXCLUDING POS receipts (real suppliers without invoice)
+  //   Pin           : POS card settlements (bulk, no invoice — normal)
+  //   Genegeerd     : owner-ignored (not_found)
+  //   Gekoppeld     : confirmed this session
+  const toConfirm = pending.filter((s) => s.outcome === 'auto' || s.outcome === 'choice').sort(byDateDesc)
+  const noneAll = pending.filter((s) => s.outcome === 'none')
+  const noMatch = noneAll.filter((s) => !isPosReceipt(s)).sort(byDateDesc)
+  const posList = noneAll.filter(isPosReceipt).sort(byDateDesc)
+  const confirmedList = (data?.suggestions ?? []).filter((s) => confirmed[s.transactionId]).sort(byDateDesc)
 
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
+    { key: 'pin' as const, label: 'Pinontvangsten', icon: 'point_of_sale', count: posList.length },
     { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredList?.length ?? 0 },
     { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
   ]
   const activeList =
     bankTab === 'confirm' ? toConfirm
     : bankTab === 'none' ? noMatch
+    : bankTab === 'pin' ? posList
     : bankTab === 'ignored' ? (ignoredList ?? [])
     : confirmedList
 
@@ -368,9 +392,9 @@ export default function BankClient() {
       )}
 
       {/* [BANK-TABS] Tabs — only once we have data with at least one transaction */}
-      {data && (toConfirm.length + noMatch.length + confirmedList.length + (ignoredList?.length ?? 0)) > 0 && (
+      {data && (toConfirm.length + noMatch.length + posList.length + confirmedList.length + (ignoredList?.length ?? 0)) > 0 && (
         <>
-          <div style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: `1px solid ${M3.surfaceVariant}` }}>
+          <div style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: `1px solid ${M3.surfaceVariant}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
             {tabs.map((t) => (
               <button
                 key={t.key}
@@ -380,6 +404,7 @@ export default function BankClient() {
                   background: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
                   color: bankTab === t.key ? M3.primary : '#5F6368',
                   borderBottom: `2px solid ${bankTab === t.key ? M3.primary : 'transparent'}`, marginBottom: -1,
+                  whiteSpace: 'nowrap', flexShrink: 0,
                 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
@@ -394,7 +419,13 @@ export default function BankClient() {
           {/* "Geen factuur" context — POS receipts naturally have no invoice */}
           {bankTab === 'none' && noMatch.length > 0 && (
             <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
-              Deze transacties konden niet aan een factuur gekoppeld worden. Pinontvangsten en kosten zonder factuur horen hier — dat is normaal.
+              Leveranciers zonder gevonden factuur. Koppel het bestand, of negeer de transactie als er geen factuur bij hoort (zoals huur of een lening).
+            </p>
+          )}
+
+          {bankTab === 'pin' && posList.length > 0 && (
+            <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
+              Pinontvangsten via de betaalautomaat (ING DD&C). Deze hebben geen factuur — ze staan hier zodat ze je openstaande werk niet in de weg zitten.
             </p>
           )}
 
@@ -418,6 +449,7 @@ export default function BankClient() {
               <div style={{ textAlign: 'center', padding: '32px 20px', color: '#9aa0a6', fontSize: 13.5 }}>
                 {bankTab === 'confirm' ? 'Niets te bevestigen.'
                   : bankTab === 'none' ? 'Geen openstaande transacties zonder factuur.'
+                  : bankTab === 'pin' ? 'Geen pinontvangsten.'
                   : bankTab === 'ignored' ? 'Niets genegeerd.'
                   : 'Nog niets gekoppeld.'}
               </div>
@@ -427,7 +459,7 @@ export default function BankClient() {
       )}
 
       {/* Empty (no transactions at all) */}
-      {!initialLoading && data && (toConfirm.length + noMatch.length + confirmedList.length + (ignoredList?.length ?? 0)) === 0 && (
+      {!initialLoading && data && (toConfirm.length + noMatch.length + posList.length + confirmedList.length + (ignoredList?.length ?? 0)) === 0 && (
         <Empty done={Object.keys(confirmed).length > 0} />
       )}
 
