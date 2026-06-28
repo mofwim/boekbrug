@@ -285,9 +285,15 @@ function parseMT940Description(rawLine86: string): {
     if (tokens && tokens.length > 0) {
       const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
       const meaningful = tokens.filter((t) => !isBareYear(t));
-      const pool = meaningful.length > 0 ? meaningful : tokens;
-      const seen = new Set<string>();
-      reference = pool.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
+      // If the only "numbers" are bare years (e.g. "deel salaris juni 2026"),
+      // there is no invoice reference — leave it null rather than show "2026" as
+      // if it were an invoice number.
+      if (meaningful.length === 0) {
+        reference = null;
+      } else {
+        const seen = new Set<string>();
+        reference = meaningful.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
+      }
     } else {
       // No usable number → keep a cleaned REMI (strip USTD noise + slashes).
       // "USTD" is an ING transaction-type marker, not a reference; if nothing
@@ -546,9 +552,12 @@ function parseCAMT053Entry(
     if (tokens && tokens.length > 0) {
       const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
       const meaningful = tokens.filter((t) => !isBareYear(t));
-      const pool = meaningful.length > 0 ? meaningful : tokens;
-      const seen = new Set<string>();
-      reference = pool.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
+      if (meaningful.length === 0) {
+        reference = null;
+      } else {
+        const seen = new Set<string>();
+        reference = meaningful.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
+      }
     }
   }
   if (!reference && !isPosEntry) {
