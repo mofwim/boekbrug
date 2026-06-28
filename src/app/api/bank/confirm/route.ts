@@ -1,9 +1,20 @@
 // src/app/api/bank/confirm/route.ts
 // [BOEK-016] Confirm a bank match (phase 4). The HUMAN confirms; this executes.
+// [BANK-MULTI-CONFIRM] One transaction can cover SEVERAL invoices (a supplier
+//   combines two invoices in one transfer; the bank's reference then lists both
+//   numbers, e.g. "26302050, 26302362"). Confirming ONE invoice must NOT hide the
+//   transaction while another listed invoice is still unpaid. So:
+//     - We always pay + link the confirmed invoice (as before).
+//     - We only flip the transaction to 'matched' when EVERY number in the
+//       reference has a paid invoice owned by this user in the right direction
+//       (allCovered). Otherwise the transaction stays 'pending' so it remains in
+//       "Te bevestigen" with the open numbers still actionable.
+//   No amount arithmetic gates the hide decision (decision: amount is for display
+//   confidence, never a subset-sum reconciliation). allCovered = presence check only.
 //
 // Writes two things, in legal-priority order:
 //   (a) invoice → status 'paid' + payment_method 'bank' + marked_paid_at   (reuses B.3 semantics)
-//   (b) bank_transactions → status 'matched' + invoice_id                  (new for B.16)
+//   (b) bank_transactions → status 'matched' + invoice_id                  (only when allCovered)
 //
 // Atomicity: Supabase has no REST transaction. We write (a) first (legally the important one).
 // If (b) fails, we DO NOT roll back (a) — same philosophy as B.11 ("email failure does not
@@ -18,7 +29,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { isEligible } from "@/lib/bank-matching";
+import { isEligible, normalizeRef } from "@/lib/bank-matching";
+
+// [BANK-MULTI-CONFIRM] Split a bank reference ("26302050, 26302362") into the
+// distinct invoice numbers it lists. Mirrors the parser/UI split: comma-separated,
+// trimmed, and short tokens dropped (a bare "263" or a year is not an invoice
+// number — same >=4 guard the matcher's referenceMatches uses). Returned values
+// are NORMALIZED (lowercase, [a-z0-9] only) for equality comparison against
+// normalized invoice numbers.
+function parseReferenceNumbers(reference: string | null): string[] {
+  if (!reference) return [];
+  const seen = new Set<string>();
+  for (const part of reference.split(",")) {
+    const norm = normalizeRef(part.trim());
+    if (norm.length >= 4) seen.add(norm);
+  }
+  return [...seen];
+}
 
 export async function POST(req: NextRequest) {
   // 1. Auth
@@ -47,9 +74,11 @@ export async function POST(req: NextRequest) {
   const pipeline = createPipelineClient();
 
   // 3. Ownership + state checks (point 3): the user must own BOTH rows.
+  //    [BANK-MULTI-CONFIRM] Also fetch `reference` (the expected invoice numbers)
+  //    so we can decide allCovered after the payment.
   const { data: tx, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, status, user_id, amount")
+    .select("id, status, user_id, amount, reference")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -141,21 +170,76 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "payment_failed", detail: payErr.message }, { status: 500 });
   }
 
-  // 5. Write (b): link the transaction. Pipeline (no trigger), user_id pinned.
+  // 5. [BANK-MULTI-CONFIRM] Decide allCovered: is EVERY invoice number listed in
+  //    the transaction's reference now backed by a PAID invoice this user owns, in
+  //    the direction the transaction's sign implies? Presence check only — no
+  //    amount arithmetic (decision: amount informs display, never the hide gate).
+  //
+  //    - 0 or 1 reference number → single-invoice case: this confirmation completes
+  //      it. allCovered = true (the existing single-invoice flow is unchanged).
+  //    - >1 reference number → multi case: fetch this user's PAID invoices in the
+  //      correct direction, normalize their numbers, and require that every
+  //      reference number maps to one. A number with no paid invoice (not uploaded
+  //      yet, or uploaded-but-unconfirmed) keeps allCovered=false → tx stays pending.
+  const refNumbers = parseReferenceNumbers(tx.reference);
+  let allCovered = true;
+
+  if (refNumbers.length > 1) {
+    // Direction the bank movement implies (mirrors isEligible's sign guard):
+    //   credit (amount > 0) → outgoing invoices (a customer paid us)
+    //   debit  (amount < 0) → incoming invoices (we paid a supplier)
+    const requiredDirection: "outgoing" | "incoming" =
+      (tx.amount ?? 0) > 0 ? "outgoing" : "incoming";
+
+    const { data: paidRows, error: paidErr } = await pipeline
+      .from("invoices")
+      .select("invoice_number")
+      .eq("status", "paid")
+      .eq("direction", requiredDirection)
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+
+    if (paidErr) {
+      // Don't fail the (completed) payment over a coverage read. Be conservative:
+      // treat as not fully covered so the tx STAYS visible — never hide on doubt.
+      console.error("[BANK-MULTI-CONFIRM] coverage lookup failed:", paidErr.message);
+      allCovered = false;
+    } else {
+      const paidSet = new Set(
+        (paidRows ?? [])
+          .map((r) => normalizeRef(r.invoice_number ?? ""))
+          .filter((n) => n.length > 0)
+      );
+      // Equality (not substring): a single split reference number is matched to an
+      // invoice whose normalized number EQUALS it — so "263" can't satisfy
+      // "26302050". This is the inverse of the matcher's referenceMatches (which
+      // searches the free-text reference for an invoice number); here we already
+      // hold isolated numbers and compare them one-to-one.
+      allCovered = refNumbers.every((n) => paidSet.has(n));
+    }
+  }
+
+  // 6. Write (b): link the transaction. Pipeline (no trigger), user_id pinned.
+  //    [BANK-MULTI-CONFIRM] Only flip to 'matched' when allCovered. Otherwise keep
+  //    it 'pending' and just record invoice_id (the most recent link) so the tx
+  //    remains in the active list with the open numbers still actionable.
   //    Failure here does NOT roll back the (legally complete) payment.
+  const linkUpdate = allCovered
+    ? { status: "matched" as const, invoice_id: invoiceId }
+    : { invoice_id: invoiceId };
+
   const { error: linkErr } = await pipeline
     .from("bank_transactions")
-    .update({ status: "matched", invoice_id: invoiceId })
+    .update(linkUpdate)
     .eq("id", transactionId)
     .eq("user_id", user.id)
-    .eq("status", "pending"); // only pending → matched; never overwrite an existing link
+    .eq("status", "pending"); // only touch a still-pending tx; never overwrite a matched link
 
   if (linkErr) {
     console.error("[BOEK-016] transaction link failed after payment:", linkErr.message);
-    return NextResponse.json({ ok: true, warning: "transaction_link_failed" });
+    return NextResponse.json({ ok: true, allCovered, warning: "transaction_link_failed" });
   }
 
-  // 6. Notification (non-blocking) — notifications inserts use service_role by rule.
+  // 7. Notification (non-blocking) — notifications inserts use service_role by rule.
   try {
     await pipeline.from("notifications").insert({
       user_id: user.id,
@@ -167,5 +251,7 @@ export async function POST(req: NextRequest) {
     /* non-blocking */
   }
 
-  return NextResponse.json({ ok: true });
+  // [BANK-MULTI-CONFIRM] Return allCovered so the UI knows whether this transaction
+  // is now fully done (→ Gekoppeld) or still has open numbers (→ stays in Te bevestigen).
+  return NextResponse.json({ ok: true, allCovered });
 }

@@ -93,7 +93,11 @@ export default function BankClient() {
   const [refreshingNames, setRefreshingNames] = useState(false)
   const [data, setData] = useState<MatchResponse | null>(null)
   const [selected, setSelected] = useState<Record<string, string>>({}) // txId → invoiceId
-  const [confirmed, setConfirmed] = useState<Record<string, string>>({}) // txId → invoiceNumber
+  // [BANK-MULTI-CONFIRM] One transaction can cover several invoices, so we track
+  // ALL invoice numbers confirmed this session per transaction, plus whether the
+  // backend reported every reference number as covered (allCovered). The tx only
+  // counts as "done" (→ Gekoppeld, leaves Te bevestigen) once allCovered is true.
+  const [confirmed, setConfirmed] = useState<Record<string, { numbers: string[]; allCovered: boolean }>>({}) // txId → confirmation state
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
   // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
@@ -199,8 +203,15 @@ export default function BankClient() {
   }
 
   // ── Confirm one match ─────────────────────────────────────────────────────────
-  async function confirm(txId: string, invoiceNumber: string | null) {
-    const invoiceId = selected[txId]
+  // [BANK-MULTI-CONFIRM] A transaction may list several invoice numbers. Confirming
+  // one pays + links it, but the transaction only leaves "Te bevestigen" when the
+  // backend reports allCovered (every reference number now has a paid invoice). We
+  // append the confirmed number to this tx's list and carry allCovered through.
+  // `explicitInvoiceId` lets the multi-invoice rows pass the invoice id directly,
+  // avoiding the setSelected→confirm race (state updates are async; reading
+  // selected[txId] right after onSelect would see the stale value).
+  async function confirm(txId: string, invoiceNumber: string | null, explicitInvoiceId?: string) {
+    const invoiceId = explicitInvoiceId ?? selected[txId]
     if (!invoiceId) return
     setProcessingId(txId)
     try {
@@ -211,10 +222,31 @@ export default function BankClient() {
       })
       const json = await res.json()
       if (res.ok) {
-        setConfirmed((c) => ({ ...c, [txId]: invoiceNumber ?? '' }))
-        showToast(json?.warning === 'transaction_link_failed'
-          ? 'Factuur betaald (koppeling volgt later).'
-          : 'Gekoppeld en gemarkeerd als betaald ✓')
+        const allCovered = json?.allCovered !== false // default true (single-invoice case)
+        setConfirmed((c) => {
+          const prev = c[txId]?.numbers ?? []
+          const num = invoiceNumber ?? ''
+          const numbers = num && !prev.includes(num) ? [...prev, num] : prev
+          return { ...c, [txId]: { numbers, allCovered } }
+        })
+        // Clear the selection so a multi-invoice tx doesn't keep the just-paid
+        // invoice pre-selected for the next open number.
+        setSelected((sel) => {
+          const next = { ...sel }
+          delete next[txId]
+          return next
+        })
+        showToast(
+          json?.warning === 'transaction_link_failed'
+            ? 'Factuur betaald (koppeling volgt later).'
+            : allCovered
+              ? 'Gekoppeld en gemarkeerd als betaald ✓'
+              : 'Factuur betaald ✓ · nog een factuur open'
+        )
+        // [BANK-MULTI-CONFIRM] Re-run matching so the just-paid invoice drops out of
+        // the candidate list and any remaining open number is re-evaluated. Without
+        // this the paid invoice would linger as a still-selectable candidate.
+        if (!allCovered) await runMatch()
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
       } else if (json?.error === 'invoice_already_paid') {
@@ -396,7 +428,11 @@ export default function BankClient() {
     }
   }, [bankTab, ignoredList, loadIgnored])
 
-  const pending = data?.suggestions.filter((s) => !confirmed[s.transactionId]) ?? []
+  // [BANK-MULTI-CONFIRM] A transaction stays "pending" in the UI until it is fully
+  // covered. Confirming one of several invoices keeps it visible (allCovered=false)
+  // with the open numbers still actionable; it only leaves once allCovered=true.
+  const isDone = (txId: string) => confirmed[txId]?.allCovered === true
+  const pending = data?.suggestions.filter((s) => !isDone(s.transactionId)) ?? []
 
   // [BANK-SORT] Stable order by date (newest first) so a restored transaction
   // returns to its logical position instead of jumping to the bottom.
@@ -428,7 +464,7 @@ export default function BankClient() {
   const noneAll = pending.filter((s) => s.outcome === 'none')
   const noMatch = noneAll.filter((s) => !isPosReceipt(s)).sort(byDateDesc)
   const posList = noneAll.filter(isPosReceipt).sort(byDateDesc)
-  const confirmedList = (data?.suggestions ?? []).filter((s) => confirmed[s.transactionId]).sort(byDateDesc)
+  const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s.transactionId)).sort(byDateDesc)
 
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
@@ -643,8 +679,9 @@ export default function BankClient() {
                 selectedInvoiceId={selected[s.transactionId]}
                 processing={processingId === s.transactionId}
                 isIgnoredTab={bankTab === 'ignored'}
+                confirmedNumbers={confirmed[s.transactionId]?.numbers ?? []}
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
-                onConfirm={(num) => confirm(s.transactionId, num)}
+                onConfirm={(num, invId) => confirm(s.transactionId, num, invId)}
                 onAttach={(files) => attachFile(s.transactionId, files, s.amount >= 0)}
                 onIgnore={() => ignoreTx(s.transactionId)}
                 onRestore={() => restoreTx(s.transactionId)}
@@ -666,7 +703,7 @@ export default function BankClient() {
 
       {/* Empty (no transactions at all) */}
       {!initialLoading && data && (toConfirm.length + noMatch.length + posList.length + confirmedList.length + (ignoredList?.length ?? 0)) === 0 && (
-        <Empty done={Object.keys(confirmed).length > 0} />
+        <Empty done={confirmedList.length > 0} />
       )}
 
       {/* B.4 verwerkt dialog */}
@@ -712,14 +749,15 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
   processing: boolean
   isIgnoredTab: boolean
+  confirmedNumbers: string[]
   onSelect: (invoiceId: string) => void
-  onConfirm: (invoiceNumber: string | null) => void
+  onConfirm: (invoiceNumber: string | null, invoiceId?: string) => void
   onAttach: (files: File[]) => void
   onIgnore: () => void
   onRestore: () => void
@@ -743,6 +781,28 @@ function TxCard({
     : `${refParts.length} facturen`
   const selectedCand =
     s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ?? (s.outcome === 'auto' ? s.best : null)
+
+  // [BANK-MULTI-CONFIRM] A transaction whose reference lists more than one invoice
+  // number covers several invoices. Instead of "pick ONE" (which silently drops the
+  // others), show a row PER reference number with its own state. Mirrors the
+  // backend's allCovered logic on the display side so the owner sees exactly what is
+  // confirmed and what is still open. Only relevant in the confirm flow (not the
+  // ignored tab, and not when there is no real candidate at all).
+  const isMulti = refParts.length > 1 && !isIgnoredTab
+  // Match a reference number to a candidate by normalized-equal invoice number
+  // (same normalization as the matcher: lowercase, keep [a-z0-9]). Equality — not
+  // substring — so "263" can't claim "26302050".
+  const normRef = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const confirmedSet = new Set(confirmedNumbers.map(normRef))
+  const slots = isMulti
+    ? refParts.map((refNum) => {
+        const key = normRef(refNum)
+        const cand = s.candidates.find((c) => normRef(c.invoiceNumber ?? '') === key) ?? null
+        const isConfirmed = confirmedSet.has(key)
+        return { refNum, cand, isConfirmed }
+      })
+    : []
+  const openCount = slots.filter((sl) => !sl.isConfirmed).length
 
   return (
     <div style={{ borderRadius: R.lg, background: M3.surface, boxShadow: EL1, padding: 14, border: `1px solid #EEE` }}>
@@ -804,8 +864,129 @@ function TxCard({
         </div>
       )}
 
-      {/* Match body */}
-      {s.outcome === 'none' && (
+      {/* [BANK-MULTI-CONFIRM] Multi-invoice transaction — one row per reference
+          number, each with its own state: confirmed (✓), confirmable (a candidate
+          exists → Bevestig), or missing (no invoice in the system → koppel het
+          bestand). The transaction stays here until every row is confirmed. */}
+      {isMulti && (
+        <div style={{ marginTop: 12 }}>
+          {/* Status banner: X/Y bevestigd + open numbers. Honest: we list the
+              numbers the BANK wrote in the reference, not an invented total. */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+            padding: '8px 10px', borderRadius: R.md,
+            background: openCount === 0 ? M3.successContainer : M3.primaryContainer,
+            color: openCount === 0 ? M3.success : M3.onPrimaryContainer,
+            fontSize: 12.5, fontWeight: 600, marginBottom: 10,
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+              {openCount === 0 ? 'task_alt' : 'receipt_long'}
+            </span>
+            {slots.length - openCount}/{slots.length} bevestigd
+            {openCount > 0 && (
+              <span style={{ fontWeight: 500, opacity: 0.9 }}>
+                · Nog open: {slots.filter((sl) => !sl.isConfirmed).map((sl) => sl.refNum).join(', ')}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {slots.map((sl) => (
+              <div
+                key={sl.refNum}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                  padding: '9px 10px', borderRadius: R.md,
+                  border: `1px solid ${sl.isConfirmed ? M3.successContainer : '#E0E0E0'}`,
+                  background: sl.isConfirmed ? M3.successContainer : '#fff',
+                }}
+              >
+                <span style={{
+                  fontSize: 13, fontWeight: 600, fontFamily: FONT_NUM,
+                  color: sl.isConfirmed ? M3.success : M3.onSurface,
+                  display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0 }}>
+                    {sl.isConfirmed ? 'check_circle' : sl.cand ? 'pending' : 'upload_file'}
+                  </span>
+                  {sl.refNum}
+                </span>
+
+                {sl.isConfirmed ? (
+                  <span style={{ fontSize: 12, fontWeight: 600, color: M3.success, flexShrink: 0 }}>
+                    Betaald
+                  </span>
+                ) : sl.cand ? (
+                  /* A matching invoice exists in the system → confirm this one. */
+                  <button
+                    disabled={processing}
+                    onClick={() => onConfirm(sl.cand!.invoiceNumber ?? sl.refNum, sl.cand!.invoiceId)}
+                    style={{
+                      flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '6px 12px', borderRadius: R.full, border: 'none', background: M3.primary,
+                      color: '#fff', fontSize: 12.5, fontWeight: 600, fontFamily: FONT,
+                      cursor: processing ? 'default' : 'pointer', opacity: processing ? 0.6 : 1,
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                      {processing ? 'hourglass_empty' : 'check'}
+                    </span>
+                    Bevestig
+                  </button>
+                ) : (
+                  /* No invoice with this number → upload its file (becomes a paid
+                     invoice linked to this transaction via the attach path). */
+                  <label
+                    style={{
+                      flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '6px 12px', borderRadius: R.full, border: `1.5px dashed ${M3.primary}`,
+                      background: M3.primaryContainer, color: M3.onPrimaryContainer,
+                      fontSize: 12.5, fontWeight: 600, fontFamily: FONT,
+                      cursor: processing ? 'default' : 'pointer', opacity: processing ? 0.6 : 1,
+                    }}
+                  >
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      disabled={processing}
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const files: File[] = e.target.files ? Array.from(e.target.files) : []
+                        e.target.value = ''
+                        if (files.length) onAttach(files)
+                      }}
+                    />
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                      {processing ? 'hourglass_empty' : 'attach_file'}
+                    </span>
+                    Koppelen
+                  </label>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Bekijk PDF for any candidate, plus the ignore escape hatch (the whole
+              transaction is not an invoice after all). */}
+          <button
+            disabled={processing}
+            onClick={onIgnore}
+            style={{
+              marginTop: 10, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
+              cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#9aa0a6',
+              fontFamily: FONT,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+            Negeren
+          </button>
+        </div>
+      )}
+
+      {/* Match body — single-invoice transactions (and the ignored tab). */}
+      {!isMulti && s.outcome === 'none' && (
         <div style={{ marginTop: 12 }}>
           {isIgnoredTab ? (
             /* [BANK-IGNORE] Genegeerd tab — show a restore action, nothing else. */
@@ -888,11 +1069,11 @@ function TxCard({
         </div>
       )}
 
-      {s.outcome === 'auto' && s.best && (
+      {!isMulti && s.outcome === 'auto' && s.best && (
         <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} />
       )}
 
-      {s.outcome === 'choice' && (
+      {!isMulti && s.outcome === 'choice' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2 }}>Kies de juiste factuur:</div>
           {s.candidates.map((c) => (
@@ -912,7 +1093,7 @@ function TxCard({
       )}
 
       {/* Confirm */}
-      {s.outcome !== 'none' && (
+      {!isMulti && s.outcome !== 'none' && (
         <button
           disabled={!selectedInvoiceId || processing}
           onClick={() => onConfirm(selectedCand?.invoiceNumber ?? null)}
