@@ -177,12 +177,38 @@ function parseMT940Description(line86: string): {
   }
 
   // Extract known fields — varies per bank but common ones:
-  const counterpartName =
+  let counterpartName =
     fields["NAME"] ?? fields["BENM"] ?? fields["ORDP"] ?? null;
-  const counterpartIban =
+  let counterpartIban =
     fields["IBAN"] ?? fields["BNAM"] ?? null;
   const reference =
     fields["REMI"] ?? fields["EREF"] ?? fields["KREF"] ?? null;
+
+  // [BANK-PARSE-ING] Fallback for the common ING/Rabo/ABN :86: layout that is
+  // NOT wrapped in /NAME/ markers but reads as:  IBAN/BIC/Counterpart name
+  //   e.g. "NL89RABO0131703501/RABONL2U/W ketels & zn eierhandel"
+  //        "NL54ABNA0100529224/ABNANL2A/CAN Vleesgroothandel B.V."
+  // The structured parser above misses these because there's no /FIELD/ key.
+  // Only fill what the structured pass didn't already find.
+  if (!counterpartName || !counterpartIban) {
+    const ibanBicName = line86.match(
+      /([A-Z]{2}\d{2}[A-Z]{4}\d{7,10})\/([A-Z]{6}[A-Z0-9]{2,5})\/(.+?)(?:\s{2,}|$)/
+    );
+    if (ibanBicName) {
+      if (!counterpartIban) counterpartIban = ibanBicName[1].trim();
+      if (!counterpartName) counterpartName = ibanBicName[3].trim();
+    } else {
+      // Looser fallback: an IBAN followed by a name (no BIC in between).
+      //   "NL12INGB0001234567 Jansen BV"  or  "NL12INGB0001234567/Jansen BV"
+      const ibanName = line86.match(
+        /([A-Z]{2}\d{2}[A-Z]{4}\d{7,10})[\s/]+([A-Za-z][^/]{2,})/
+      );
+      if (ibanName) {
+        if (!counterpartIban) counterpartIban = ibanName[1].trim();
+        if (!counterpartName) counterpartName = ibanName[2].trim();
+      }
+    }
+  }
 
   // Description: use REMI or fall back to full line86 cleaned up
   const description =
