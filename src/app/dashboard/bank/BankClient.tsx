@@ -79,6 +79,8 @@ export default function BankClient() {
   // returns fresh suggestions. Without this, suggestions only ever existed in
   // component state and vanished on reload.
   const [initialLoading, setInitialLoading] = useState(true)
+  // [BANK-TABS] Active tab — defaults to the one the owner acts on.
+  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'done'>('confirm')
 
   function showToast(msg: string) {
     setToast(msg)
@@ -191,8 +193,24 @@ export default function BankClient() {
     }
   }
 
-  const summary = data?.summary
   const pending = data?.suggestions.filter((s) => !confirmed[s.transactionId]) ?? []
+
+  // [BANK-TABS] Split the (often long) list into three purpose-driven groups so
+  // the owner isn't drowned in one endless list. The tab the owner cares about
+  // — transactions that need a confirmation — is first and default.
+  //   Te bevestigen : auto + choice (a real candidate exists → owner confirms)
+  //   Geen factuur  : none (no candidate — POS card receipts live here; normal)
+  //   Gekoppeld     : already confirmed this session
+  const toConfirm = pending.filter((s) => s.outcome === 'auto' || s.outcome === 'choice')
+  const noMatch = pending.filter((s) => s.outcome === 'none')
+  const confirmedList = (data?.suggestions ?? []).filter((s) => confirmed[s.transactionId])
+
+  const tabs = [
+    { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
+    { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
+    { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
+  ]
+  const activeList = bankTab === 'confirm' ? toConfirm : bankTab === 'none' ? noMatch : confirmedList
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
@@ -241,38 +259,61 @@ export default function BankClient() {
         </div>
       )}
 
-      {/* Summary chips */}
-      {summary && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
-          <Chip icon="task_alt" label={`${summary.auto} automatisch`} bg={M3.successContainer} color={M3.success} />
-          <Chip icon="rule" label={`${summary.choice} keuze`} bg="#FEF7E0" color={M3.warning} />
-          <Chip icon="help" label={`${summary.none} geen match`} bg={M3.surfaceVariant} color="#49454F" />
-        </div>
+      {/* [BANK-TABS] Tabs — only once we have data with at least one transaction */}
+      {data && (toConfirm.length + noMatch.length + confirmedList.length) > 0 && (
+        <>
+          <div style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: `1px solid ${M3.surfaceVariant}` }}>
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setBankTab(t.key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', border: 'none',
+                  background: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
+                  color: bankTab === t.key ? M3.primary : '#5F6368',
+                  borderBottom: `2px solid ${bankTab === t.key ? M3.primary : 'transparent'}`, marginBottom: -1,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
+                {t.label}
+                <span style={{ fontSize: 11.5, fontWeight: 700, padding: '1px 7px', borderRadius: R.full, background: bankTab === t.key ? M3.primaryContainer : M3.surfaceVariant, color: bankTab === t.key ? '#041E49' : '#5F6368' }}>
+                  {t.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* "Geen factuur" context — POS receipts naturally have no invoice */}
+          {bankTab === 'none' && noMatch.length > 0 && (
+            <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
+              Deze transacties konden niet aan een factuur gekoppeld worden. Pinontvangsten en kosten zonder factuur horen hier — dat is normaal.
+            </p>
+          )}
+
+          {/* Active group */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+            {activeList.map((s) => (
+              <TxCard
+                key={s.transactionId}
+                s={s}
+                selectedInvoiceId={selected[s.transactionId]}
+                processing={processingId === s.transactionId}
+                onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
+                onConfirm={(num) => confirm(s.transactionId, num)}
+              />
+            ))}
+            {activeList.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '32px 20px', color: '#9aa0a6', fontSize: 13.5 }}>
+                {bankTab === 'confirm' ? 'Niets te bevestigen.' : bankTab === 'none' ? 'Alles is gekoppeld.' : 'Nog niets gekoppeld.'}
+              </div>
+            )}
+          </div>
+        </>
       )}
 
-      {/* Suggestions */}
-      {!initialLoading && data && pending.length === 0 && (
+      {/* Empty (no transactions at all) */}
+      {!initialLoading && data && (toConfirm.length + noMatch.length + confirmedList.length) === 0 && (
         <Empty done={Object.keys(confirmed).length > 0} />
-      )}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
-        {pending.map((s) => (
-          <TxCard
-            key={s.transactionId}
-            s={s}
-            selectedInvoiceId={selected[s.transactionId]}
-            processing={processingId === s.transactionId}
-            onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
-            onConfirm={(num) => confirm(s.transactionId, num)}
-          />
-        ))}
-      </div>
-
-      {/* Confirmed list (collapsed feedback) */}
-      {Object.keys(confirmed).length > 0 && (
-        <div style={{ marginTop: 22, fontSize: 12.5, color: '#5F6368' }}>
-          {Object.keys(confirmed).length} gekoppeld in deze sessie ✓
-        </div>
       )}
 
       {/* B.4 verwerkt dialog */}
@@ -307,15 +348,6 @@ export default function BankClient() {
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
-
-function Chip({ icon, label, bg, color }: { icon: string; label: string; bg: string; color: string }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: R.full, background: bg, color, fontSize: 12.5, fontWeight: 600 }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{icon}</span>
-      {label}
-    </span>
-  )
-}
 
 function Empty({ done }: { done: boolean }) {
   return (
