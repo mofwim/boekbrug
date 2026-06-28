@@ -31,8 +31,8 @@ export interface ParseResult {
   transactions: BankTransaction[];
   parseErrors: string[];  // non-fatal warnings
 }
- 
-// ─── MT940 Parser ─── ──────────────────────────────────────────────────────────
+
+// ─── MT940 Parser ─────────────────────────────────────────────────────────────
 //
 // MT940 is a SWIFT format used by ING, ABN AMRO, Rabobank, SNS.
 // Structure: tag-based, each tag starts with :XX:
@@ -57,7 +57,12 @@ export function parseMT940(content: string): ParseResult {
   const text = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
   // Split into tag blocks — each tag starts with :XX: at line start
-  const tagPattern = /^:(\d{2}[A-Z]?):([\s\S]*?)(?=^:\d{2}[A-Z]?:|$)/gm;
+  // [BANK-PARSE-MULTILINE] The lookahead must end a tag block at the NEXT tag or
+  // at the true end of input — NOT at every end-of-line. With the /m flag, a bare
+  // `$` matches each line end, which truncated multi-line :86: blocks (a wrapped
+  // counterpart name like "Metr\no Markets GmbH" lost everything after the break).
+  // `(?![\s\S])` matches only the real end of the string.
+  const tagPattern = /^:(\d{2}[A-Z]?):([\s\S]*?)(?=^:\d{2}[A-Z]?:|(?![\s\S]))/gm;
   const tags: { tag: string; value: string }[] = [];
 
   let match: RegExpExecArray | null;
@@ -149,13 +154,13 @@ function parseMT940Transaction(
   };
 }
 
-function parseMT940Description(line86: string): {
+function parseMT940Description(rawLine86: string): {
   description: string;
   counterpartName: string | null;
   counterpartIban: string | null;
   reference: string | null;
 } {
-  if (!line86) {
+  if (!rawLine86) {
     return {
       description: "",
       counterpartName: null,
@@ -163,6 +168,13 @@ function parseMT940Description(line86: string): {
       reference: null,
     };
   }
+
+  // [BANK-PARSE-MULTILINE] MT940 wraps long :86: content across multiple lines
+  // (e.g. a counterpart name split as "Metr\no Markets GmbH"). These are
+  // logically ONE string — join the wrapped lines before parsing, otherwise the
+  // name/IBAN/REMI extraction stops at the line break ("Metr" instead of
+  // "Metro Markets GmbH"). Collapse newlines + surrounding spaces to a single space.
+  const line86 = rawLine86.replace(/\s*\r?\n\s*/g, "").replace(/\s{2,}/g, " ");
 
   // Structured format: /BENM//NAME/John Doe/IBAN/NL91.../REMI/invoice 123
   const fields: Record<string, string> = {};
@@ -194,7 +206,8 @@ function parseMT940Description(line86: string): {
       if (!counterpartName) counterpartName = m[3].trim();
     } else if (!counterpartName) {
       // No IBAN/BIC structure — take the CNTP content as the name.
-      counterpartName = cntp.replace(/\/+$/, "").trim() || null;
+      const cleaned = cntp.replace(/\/+$/, "").trim();
+      counterpartName = cleaned || null;
     }
   }
 
@@ -266,10 +279,9 @@ function parseMT940Description(line86: string): {
   // [BANK-PARSE-CLEAN] Final cleanup: strip any trailing field-marker debris that
   // leaked into the name (e.g. "Oz + Er Food B.V.//", "Jansen/REMI"). Cut at the
   // first "/" and collapse whitespace, so the owner sees a clean vendor name.
-  if (counterpartName) {
-    counterpartName = counterpartName.split("/")[0].replace(/\s+/g, " ").trim();
-    if (counterpartName.length === 0) counterpartName = null;
-  }
+  counterpartName = counterpartName
+    ? (counterpartName.split("/")[0].replace(/\s+/g, " ").trim() || null)
+    : null;
 
   // Description: use REMI or fall back to full line86 cleaned up
   const description =
