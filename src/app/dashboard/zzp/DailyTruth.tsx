@@ -48,7 +48,7 @@ interface TruthData {
   ok: boolean
   quarterLabel: string
   openBills: { count: number; total: number; overdue: number }
-  quarter: { income: number; expense: number; net: number }
+  quarter: { income: number; expense: number; net: number; posIncome: number }
   bank: { lastDate: string | null; undocumented: number }
 }
 

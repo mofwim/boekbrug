@@ -3,18 +3,18 @@
 //
 // The goal (decided this session): a LIVE, HONEST financial picture for the
 // owner — not matching for the accountant. For a shop like Kiwi (mostly POS, no
-// per-sale invoices), the useful daily facts are:
-//   - openBills      : confirmed incoming invoices still UNPAID (money the owner
-//                      must pay) — count + total. This is real and actionable.
-//   - quarterIn/Out  : this quarter's paid outgoing (income) and paid incoming
-//                      (expense) totals — the owner's "where am I this quarter".
-//   - lastBankDate   : the most recent bank transaction date, so the picture is
-//                      honest about HOW CURRENT it is (the statement is uploaded
-//                      manually — we never pretend it's live).
-//   - undocumented   : bank transactions with NO linked invoice (status pending,
-//                      invoice_id null) — the honest "still missing a document"
-//                      count. This is the same truth the Brug "Compleet" claim
-//                      should eventually reflect (BRUG-COMPLETE-HONEST in queue).
+// per-sale invoices), income arrives IN THE BANK as card takings, so the money
+// figures are derived from the bank statement (credit = in, debit = out), NOT
+// from invoices alone (which would show €0 income and make the shop look like a
+// loss). The honest facts:
+//   - openBills      : confirmed incoming invoices still UNPAID (what you owe)
+//   - quarter in/out : bank credits vs debits this quarter (POS-true income)
+//   - posIncome      : the POS card takings within that income (the shop's core)
+//   - undocumented   : DEBIT transactions still pending with no document — real
+//                      expenses missing a receipt. POS credits are excluded
+//                      (card takings never need a purchase document), so this is
+//                      the honest "still to do", not an inflated count.
+//   - lastBankDate   : how current the picture is (statement is uploaded, not live)
 //
 // Read-only. service_role, every query pinned to the authenticated user.
 
@@ -64,42 +64,70 @@ export async function GET() {
     (r) => r.due_date && r.due_date < todayIso
   ).length;
 
-  // 2. This quarter — paid outgoing (income) and paid incoming (expense).
-  const { data: qRows } = await pipeline
-    .from("invoices")
-    .select("total_inc_btw, direction, status, invoice_date")
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-    .eq("status", "paid")
-    .gte("invoice_date", start)
-    .lte("invoice_date", end);
-
-  let quarterIn = 0;
-  let quarterOut = 0;
-  for (const r of qRows ?? []) {
-    if (r.direction === "outgoing") quarterIn += r.total_inc_btw ?? 0;
-    else if (r.direction === "incoming") quarterOut += r.total_inc_btw ?? 0;
-  }
-
-  // 3. Bank freshness + undocumented count.
+  // 2 + 3. Bank-driven figures. For a shop (Kiwi) the real income is POS card
+  //   takings that arrive IN THE BANK with no outgoing invoice — so computing
+  //   income from invoices alone shows €0 income (wrong, makes a profitable shop
+  //   look like a loss). We derive income/expense from the bank statement
+  //   instead: credit = money in, debit = money out. This is the honest picture
+  //   for a POS business; it's bounded by what's been uploaded (we report the
+  //   freshness date separately so we never imply real-time data).
   const { data: txRows } = await pipeline
     .from("bank_transactions")
-    .select("date, status, invoice_id")
+    .select("date, amount, status, invoice_id, counterpart_name, description")
     .eq("user_id", user.id);
 
   const txs = txRows ?? [];
+
+  // POS card settlements (ING DD&C / BETAALAUTOMAAT) — the shop's daily takings.
+  // They are income but have NO supplier invoice, so they must NOT count toward
+  // "still to document" (that number should be real expenses missing a receipt,
+  // not card payouts). Same detection as the bank screen.
+  const isPos = (name: string | null, desc: string | null) => {
+    const n = (name ?? "").toLowerCase();
+    const d = (desc ?? "").toLowerCase();
+    return n.includes("ing dd&c") || d.includes("betaalautomaat") || d.includes("afrek.");
+  };
+
   let lastBankDate: string | null = null;
-  let undocumented = 0;
+  let undocumented = 0; // real expenses (debit) with no document, excluding POS
+  let posIncome = 0;    // this-quarter POS takings (the shop's core income)
+  let quarterIn = 0;    // this-quarter all credits (income)
+  let quarterOut = 0;   // this-quarter all debits (expense)
+
   for (const t of txs) {
-    if (t.date && (!lastBankDate || t.date > lastBankDate)) lastBankDate = t.date;
-    // pending + no linked invoice = still missing a document (and not ignored).
-    if (t.status === "pending" && !t.invoice_id) undocumented++;
+    const date = t.date ?? null;
+    if (date && (!lastBankDate || date > lastBankDate)) lastBankDate = date;
+
+    const amount = t.amount ?? 0;
+    const pos = isPos(t.counterpart_name, t.description);
+
+    // Undocumented = a debit (expense) still pending with no linked invoice.
+    // Credits (income) and POS never need a purchase document.
+    if (t.status === "pending" && !t.invoice_id && amount < 0 && !pos) {
+      undocumented++;
+    }
+
+    // Quarter income/expense from the bank, within the quarter window.
+    if (date && date >= start && date <= end) {
+      if (amount >= 0) {
+        quarterIn += amount;
+        if (pos) posIncome += amount;
+      } else {
+        quarterOut += Math.abs(amount);
+      }
+    }
   }
 
   return NextResponse.json({
     ok: true,
     quarterLabel: label,
     openBills: { count: openCount, total: openTotal, overdue: openOverdue },
-    quarter: { income: quarterIn, expense: quarterOut, net: quarterIn - quarterOut },
+    quarter: {
+      income: quarterIn,
+      expense: quarterOut,
+      net: quarterIn - quarterOut,
+      posIncome,
+    },
     bank: { lastDate: lastBankDate, undocumented },
   });
 }
