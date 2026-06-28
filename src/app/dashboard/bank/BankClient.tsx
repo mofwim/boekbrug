@@ -31,6 +31,16 @@ const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
+// [BANK-FORMAT-GUARD] File extensions we can actually parse into transactions.
+// MT940 (.940/.sta/.mt940/.txt) and CAMT.053 (.xml). A CSV or PDF is NOT readable
+// into bank_transactions — it can still be kept for the accountant, but the owner
+// must be told the transactions weren't imported (clear modal, not a quick toast).
+const READABLE_BANK_EXTS = ['.xml', '.940', '.sta', '.mt940', '.txt']
+function isReadableBankFile(name: string): boolean {
+  const lower = name.toLowerCase()
+  return READABLE_BANK_EXTS.some((ext) => lower.endsWith(ext))
+}
+
 // [BANK-STATEMENTS] Format an upload timestamp for the statements table.
 function fmtUploadDate(iso: string): string {
   const d = new Date(iso)
@@ -95,6 +105,12 @@ export default function BankClient() {
   // dialog) and the id currently being deleted (to disable its row button).
   const [statementToDelete, setStatementToDelete] = useState<{ id: string; name: string } | null>(null)
   const [deletingStatementId, setDeletingStatementId] = useState<string | null>(null)
+  // [BANK-FORMAT-GUARD] When the owner picks a file we can't read into transactions
+  // (CSV, PDF, or any non-MT940/CAMT file), we show a clear modal — not a quick
+  // toast — explaining what happened and which formats to use. `kept` distinguishes
+  // the two cases: rejected before upload (kept=false) vs stored for the accountant
+  // but unreadable as transactions (kept=true).
+  const [formatNotice, setFormatNotice] = useState<{ name: string; kept: boolean } | null>(null)
   const [data, setData] = useState<MatchResponse | null>(null)
   const [selected, setSelected] = useState<Record<string, string>>({}) // txId → invoiceId
   // [BANK-MULTI-CONFIRM] One transaction can cover several invoices, so we track
@@ -196,6 +212,17 @@ export default function BankClient() {
         return
       }
       setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped })
+
+      // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the
+      // server keeps a passthrough copy regardless of format). But a CSV/PDF — or
+      // any file that yielded no transactions — could NOT be read into the bank
+      // overview. Tell the owner clearly with a modal so they don't assume their
+      // transactions were imported, and point them to the readable formats. We
+      // still refresh the statements table below so the stored file appears.
+      const unreadable = !isReadableBankFile(file.name) || (upJson.parsed ?? 0) === 0
+      if (unreadable) {
+        setFormatNotice({ name: file.name, kept: true })
+      }
 
       // Run matching (shared with initial load)
       await runMatch()
@@ -569,8 +596,8 @@ export default function BankClient() {
         <span style={{ fontSize: 14.5, fontWeight: 600, color: M3.onPrimaryContainer }}>
           {busy ? 'Bezig…' : 'Kies bankafschrift'}
         </span>
-        <span style={{ fontSize: 12, color: '#41618a' }}>CAMT.053 (.xml) of MT940 (.sta / .txt)</span>
-        <input type="file" accept=".xml,.sta,.mt940,.txt" onChange={handleFile} disabled={busy} style={{ display: 'none' }} />
+        <span style={{ fontSize: 12, color: '#41618a' }}>CAMT.053 (.xml) of MT940 (.940 / .sta / .txt)</span>
+        <input type="file" accept=".xml,.940,.sta,.mt940,.txt" onChange={handleFile} disabled={busy} style={{ display: 'none' }} />
       </label>
 
       {/* Upload summary */}
@@ -834,6 +861,43 @@ export default function BankClient() {
                 {deletingStatementId
                   ? <span className="material-symbols-outlined" style={{ fontSize: 18 }}>hourglass_empty</span>
                   : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>delete</span> Verwijderen</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* [BANK-FORMAT-GUARD] Unreadable-format notice — a clear modal (not a toast)
+          telling the owner the file was kept for the accountant but its transactions
+          could not be read, and which formats to use for the bank overview. */}
+      {formatNotice && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => setFormatNotice(null)}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }}>info</span>
+              <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Transacties niet uitgelezen</h3>
+            </div>
+            <p style={{ fontSize: 13, color: '#5F6368', lineHeight: 1.5, margin: '0 0 4px', wordBreak: 'break-word' }}>
+              <strong style={{ color: '#3c4043' }}>{formatNotice.name}</strong>
+            </p>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 10px' }}>
+              Dit bestand is bewaard voor je boekhouder, maar de transacties konden niet worden uitgelezen voor het overzicht.
+            </p>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
+              Upload je afschrift als <strong style={{ color: '#3c4043' }}>CAMT.053 (.xml)</strong> of <strong style={{ color: '#3c4043' }}>MT940 (.940 / .sta / .txt)</strong> om de transacties te koppelen. CSV en PDF kunnen niet worden uitgelezen.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setFormatNotice(null)}
+                style={{
+                  padding: '12px 24px', borderRadius: R.full, background: M3.primary, color: '#fff',
+                  fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT,
+                }}
+              >
+                Begrepen
               </button>
             </div>
           </div>
