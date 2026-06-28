@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '../_shared'
 import { generateInvoiceFromPrompt } from '@/lib/ai'
 import IntakeButton from '@/components/intake/IntakeButton'
-
+import DailyTruth from './DailyTruth'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
   primary:           '#1A73E8',
@@ -116,7 +116,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         <h1 style={{ fontSize: 28, fontWeight: 700, color: M3.onSurface, marginBottom: 28, letterSpacing: -0.5 }}>
           {firstName} 👋
         </h1>
-
+        <DailyTruth />
         {/* ── 4 action cards — [BOEK-029] new order — May 2026 ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
