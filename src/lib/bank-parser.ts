@@ -213,16 +213,31 @@ function parseMT940Description(rawLine86: string): {
 
   // [BANK-PARSE-REF] Invoice number extraction. ING puts the supplier invoice
   // number inside REMI as:  USTD//29528/  (the bank's own UI shows just "29528").
-  // Pull the LAST numeric group out of REMI so referenceMatches() compares the
-  // real invoice number, and the owner sees it clean — not "USTD//29528/".
-  // Fall back to EREF/KREF, then to the raw REMI, then null.
+  // One transaction can pay SEVERAL invoices at once — the supplier groups them
+  // and the owner pays with a single transfer, e.g.
+  //   USTD//26702781 , 26703066/      (two invoices)
+  //   USTD//262430, 262469, 262494/   (four invoices)
+  // We extract ALL invoice numbers (comma-joined) so the owner sees every one
+  // and referenceMatches() can test each against an invoice.
+  //
+  // POS settlements (AFREK. BETAALAUTOMAAT / Verzamelbetaling) have NO supplier
+  // invoice — their REMI is "...DAT. 20260626/6177 AANT. 25..." where the only
+  // digit runs are a date and a batch counter, NOT an invoice number. Matching
+  // one of those (e.g. "6177") to an invoice would be wrong, so POS → null.
   let reference: string | null = null;
   const remi = fields["REMI"] ?? null;
-  if (remi) {
-    // Last run of >=3 digits anywhere in REMI (supplier invoice numbers).
-    const nums = remi.match(/\d{3,}/g);
-    if (nums && nums.length > 0) {
-      reference = nums[nums.length - 1];
+  const isPos = /BETAALAUTOMAAT|AFREK\.|Verzamelbetaling/i.test(line86);
+
+  if (remi && !isPos) {
+    // All runs of >=3 digits, plus alphanumeric refs (RE0801378, GCZ26381430),
+    // de-duplicated, in order. Drop bare years (2024–2029) from "voor juli 2026".
+    const tokens = remi.match(/\b[A-Z]{0,3}\d{3,}[A-Z0-9]*\b/g);
+    if (tokens && tokens.length > 0) {
+      const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
+      const meaningful = tokens.filter((t) => !isBareYear(t));
+      const pool = meaningful.length > 0 ? meaningful : tokens;
+      const seen = new Set<string>();
+      reference = pool.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
     } else {
       // No usable number → keep a cleaned REMI (strip USTD noise + slashes).
       // "USTD" is an ING transaction-type marker, not a reference; if nothing
@@ -235,7 +250,7 @@ function parseMT940Description(rawLine86: string): {
       reference = cleaned.length >= 3 ? cleaned : null;
     }
   }
-  if (!reference) {
+  if (!reference && !isPos) {
     const fb = fields["EREF"] ?? fields["KREF"] ?? null;
     reference = fb ? fb.replace(/[/]+/g, "").trim() || null : null;
   }
@@ -308,6 +323,20 @@ function parseMT940Description(rawLine86: string): {
 //   Ntry/NtryDtls/TxDtls  transaction details
 //   TxDtls/RmtInf/Ustrd   unstructured remittance info
 //   TxDtls/RltdPties      related parties (counterpart)
+
+// [BANK-PARSE-XMLENT] Decode the XML entities that appear in CAMT text nodes so
+// names/descriptions read correctly. Without this, "ING DD&amp;C" shows literally
+// as "ING DD&amp;C" instead of "ING DD&C" (and the POS filter could miss it).
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+}
 
 export function parseCAMT053(content: string): ParseResult {
   const errors: string[] = [];
@@ -383,7 +412,7 @@ function parseCAMT053Entry(
 
   // Unstructured remittance info
   const ustrdMatch = txDtls.match(/<Ustrd>([^<]+)<\/Ustrd>/);
-  const description = ustrdMatch ? ustrdMatch[1].trim() : "";
+  const description = ustrdMatch ? decodeXmlEntities(ustrdMatch[1].trim()) : "";
 
   // Counterpart — check both Dbtr (debtor = payer) and Cdtr (creditor = receiver)
   const counterpartBlock =
@@ -401,12 +430,31 @@ function parseCAMT053Entry(
     )
   );
 
-  const counterpartName = partyNameMatch ? partyNameMatch[1].trim() : null;
+  const counterpartName = partyNameMatch ? decodeXmlEntities(partyNameMatch[1].trim()) : null;
   const counterpartIban = partyIbanMatch ? partyIbanMatch[1].trim() : null;
 
-  // End-to-end reference
-  const e2eMatch = txDtls.match(/<EndToEndId>([^<]+)<\/EndToEndId>/);
-  const reference = e2eMatch ? e2eMatch[1].trim() : null;
+  // [BANK-PARSE-REF] Reference — unified with MT940. EndToEndId is the bank's own
+  // id and for ING POS rows holds the batch id (not an invoice). The supplier
+  // invoice number(s) live in <Ustrd> (= MT940's REMI), so derive the reference
+  // from `description` with the SAME rules (multi-invoice, POS→null) and fall
+  // back to EndToEndId only for a real, non-POS transfer.
+  const isPosEntry = /BETAALAUTOMAAT|AFREK\.|Verzamelbetaling/i.test(description);
+  let reference: string | null = null;
+  if (description && !isPosEntry) {
+    const tokens = description.match(/\b[A-Z]{0,3}\d{3,}[A-Z0-9]*\b/g);
+    if (tokens && tokens.length > 0) {
+      const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
+      const meaningful = tokens.filter((t) => !isBareYear(t));
+      const pool = meaningful.length > 0 ? meaningful : tokens;
+      const seen = new Set<string>();
+      reference = pool.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
+    }
+  }
+  if (!reference && !isPosEntry) {
+    const e2eMatch = txDtls.match(/<EndToEndId>([^<]+)<\/EndToEndId>/);
+    const e2e = e2eMatch ? e2eMatch[1].trim() : "";
+    reference = e2e && !/^NOTPROVIDED$/i.test(e2e) ? e2e : null;
+  }
 
   // Transaction ID
   const txIdMatch = block.match(/<NtryRef>([^<]+)<\/NtryRef>/);
