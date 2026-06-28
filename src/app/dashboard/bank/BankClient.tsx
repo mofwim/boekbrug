@@ -31,6 +31,13 @@ const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
+// [BANK-STATEMENTS] Format an upload timestamp for the statements table.
+function fmtUploadDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
 // [BANK-DETAILS] Tidy the raw bank description for display: drop the "USTD//"
 // remittance marker and the field-separator slashes ING leaves in, so the full
 // text reads cleanly ("Lidl 213 Tilburg TILBURG NLD Pasvolgnr: 900 ...").
@@ -80,6 +87,10 @@ interface MatchResponse {
 export default function BankClient() {
   const [busy, setBusy] = useState(false)
   const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number } | null>(null)
+  // [BANK-STATEMENTS] Uploaded statements (filename + upload time) and the
+  // "refresh names" action that upgrades older rows' names from their description.
+  const [statements, setStatements] = useState<{ id: string; name: string; uploadedAt: string; size: number }[] | null>(null)
+  const [refreshingNames, setRefreshingNames] = useState(false)
   const [data, setData] = useState<MatchResponse | null>(null)
   const [selected, setSelected] = useState<Record<string, string>>({}) // txId → invoiceId
   const [confirmed, setConfirmed] = useState<Record<string, string>>({}) // txId → invoiceNumber
@@ -220,6 +231,43 @@ export default function BankClient() {
 
   // [BANK-ATTACH] Owner uploads the file that belongs to an unmatched expense
   // transaction → backend creates a paid incoming invoice from it and links it.
+  // [BANK-STATEMENTS] Load the uploaded statements list.
+  const loadStatements = useCallback(async () => {
+    try {
+      const res = await fetch('/api/bank/statements')
+      const json = await res.json()
+      if (res.ok && json?.ok) setStatements(json.statements)
+    } catch {
+      /* silent — the table just stays hidden */
+    }
+  }, [])
+
+  useEffect(() => { loadStatements() }, [loadStatements])
+
+  // [BANK-REDERIVE] Upgrade older rows whose name is still "Onbekende" by
+  // re-deriving from their stored description. Refreshes the list afterwards.
+  async function refreshNames() {
+    setRefreshingNames(true)
+    try {
+      const res = await fetch('/api/bank/refresh-names', { method: 'POST' })
+      const json = await res.json()
+      if (res.ok && json?.ok) {
+        showToast(
+          json.updated > 0
+            ? `${json.updated} ${json.updated === 1 ? 'naam' : 'namen'} bijgewerkt ✓`
+            : 'Alle namen waren al up-to-date.'
+        )
+        await runMatch()
+      } else {
+        showToast('Bijwerken mislukt.')
+      }
+    } catch {
+      showToast('Er ging iets mis.')
+    } finally {
+      setRefreshingNames(false)
+    }
+  }
+
   // [BANK-INVOICE-FILE] Open the actual PDF of a matched invoice in a new tab so
   // the owner can check it before confirming the payment. Fetches a short-lived
   // signed URL; opens the tab synchronously first (so the browser doesn't block
@@ -454,6 +502,46 @@ export default function BankClient() {
         <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: R.md, background: M3.surface, boxShadow: EL1, fontSize: 13, color: '#3c4043' }}>
           <strong>{uploadInfo.format}</strong> · {uploadInfo.parsed} transacties gelezen ·{' '}
           {uploadInfo.inserted} nieuw{uploadInfo.skipped > 0 ? ` · ${uploadInfo.skipped} dubbel overgeslagen` : ''}
+        </div>
+      )}
+
+      {/* [BANK-STATEMENTS] Uploaded statements table — shows what the owner has
+          uploaded and when. Plus a "refresh names" action that upgrades older
+          rows whose name is still "Onbekende" (read from their description). */}
+      {statements && statements.length > 0 && (
+        <div style={{ marginTop: 16, borderRadius: R.lg, background: M3.surface, boxShadow: EL1, border: '1px solid #EEE', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '12px 14px', borderBottom: '1px solid #F0F0F0' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#3c4043', letterSpacing: 0.3 }}>
+              Geüploade afschriften
+            </span>
+            <button
+              onClick={refreshNames}
+              disabled={refreshingNames}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${M3.surfaceVariant}`,
+                background: '#fff', borderRadius: R.full, padding: '5px 11px', cursor: refreshingNames ? 'default' : 'pointer',
+                fontFamily: FONT, fontSize: 12, fontWeight: 600, color: M3.primary, opacity: refreshingNames ? 0.6 : 1,
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                {refreshingNames ? 'hourglass_empty' : 'refresh'}
+              </span>
+              {refreshingNames ? 'Bezig…' : 'Namen bijwerken'}
+            </button>
+          </div>
+          {statements.map((st) => (
+            <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #F7F7F7' }}>
+              <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#9aa0a6', flexShrink: 0 }}>description</span>
+                <span style={{ fontSize: 13, color: '#3c4043', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {st.name}
+                </span>
+              </div>
+              <span style={{ fontSize: 11.5, color: '#9aa0a6', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {fmtUploadDate(st.uploadedAt)}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 

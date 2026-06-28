@@ -666,3 +666,58 @@ export function summarizeParseResult(result: ParseResult): {
     dateTo: dates[dates.length - 1] ?? null,
   };
 }
+
+// [BANK-REDERIVE] Re-derive a transaction's display name + reference from its
+// STORED `description` (the REMI text), using the same rules as the live parser.
+// This lets us upgrade older rows that were imported before the parser learned
+// to read card-purchase store names — WITHOUT a re-upload or any deletion.
+//
+// Important scope: the stored description is the REMI only (e.g. "USTD//Lidl 213
+// Tilburg ... TRANSACTIENR: C00095" or "USTD//26023790 , 26026707"). It does NOT
+// contain the /CNTP/ party, so a vendor whose name lived in CNTP (Oz+Er, ATAPACK)
+// cannot be recovered here — but those already parsed correctly. This only helps
+// the rows whose name IS in the description (card purchases, salary, refunds),
+// which are exactly the ones that showed "Onbekende". Callers must therefore
+// only apply the new name when the existing one is weak/empty, never overwrite a
+// good CNTP name.
+export function rederiveFromDescription(description: string | null): {
+  name: string | null;
+  reference: string | null;
+} {
+  if (!description) return { name: null, reference: null };
+
+  const remi = description;
+  const isPos = /BETAALAUTOMAAT|AFREK\.|Verzamelbetaling/i.test(remi);
+
+  // Name — reuse the shared readable-name derivation.
+  let name = deriveReadableName(remi);
+  // The stored description is the REMI only. For a row whose real name lived in
+  // /CNTP/, the REMI is often just invoice numbers ("26023790 , 26026707") — a
+  // derived "name" made only of digits/punctuation is NOT a usable name and
+  // must be rejected, so we never overwrite a real vendor with a number string.
+  if (name) {
+    name = name.replace(/[\/\s]+$/, "").trim();
+    const hasRealWords = /[A-Za-z]{2,}/.test(name);
+    if (!hasRealWords) name = null;
+  }
+
+  // Reference — same logic as the MT940 path: meaningful invoice numbers only,
+  // bare years dropped, POS → null, card terminal noise → null.
+  let reference: string | null = null;
+  const isCard = /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS/i.test(remi);
+  if (!isPos && !isCard) {
+    const tokens = remi.match(/\b[A-Z]{0,3}\d{3,}[A-Z0-9]*\b/g);
+    if (tokens && tokens.length > 0) {
+      const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
+      const meaningful = tokens.filter((t) => !isBareYear(t));
+      if (meaningful.length > 0) {
+        const seen = new Set<string>();
+        reference = meaningful
+          .filter((t) => (seen.has(t) ? false : (seen.add(t), true)))
+          .join(", ");
+      }
+    }
+  }
+
+  return { name, reference };
+}
