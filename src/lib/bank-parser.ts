@@ -45,6 +45,56 @@ export interface ParseResult {
 //   :86:  transaction details (description, counterpart)
 //   :62F: closing balance
 
+// [BANK-PARSE-READABLE] What the OWNER wants to see on a transaction card is the
+// single most RECOGNISABLE thing — a name, an invoice number, or a meaningful
+// description — and nothing else. Bank descriptions are full of noise the owner
+// doesn't care about: terminal ids, sequence numbers (PASVOLGNR / TRANSACTIENR),
+// processor prefixes (CCV* / BCK*), timestamps, BICs. When the structured parse
+// found no counterpart name, derive a readable one from the free-text REMI by
+// stripping that noise and keeping the leading human-meaningful part:
+//   "CCV*ASM Supermarkt TILBURG NLD 29-05 ... TRANSACTIENR D00093" → "ASM Supermarkt"
+//   "TX696074680XT Refund makro.nl O26-784..."                     → "Refund makro.nl"
+//   "GCZ26327737 Termijnbedrag voor juni 2026"                     → "Termijnbedrag voor juni 2026"
+//   "Unive Premie 02-06-2026"                                      → "Unive Premie"
+// If the text is ONLY an opaque code (no real words), we still return it rather
+// than nothing — a code the owner can match against is better than "Onbekend".
+function deriveReadableName(raw: string | null): string | null {
+  if (!raw) return null;
+  let s = raw.replace(/\s+/g, " ").trim();
+  // Strip the "USTD//" / "USTD" unstructured-remittance marker and stray slashes
+  // that prefix the free text in ING's :86: block.
+  s = s.replace(/^\/*USTD\/*/i, "").replace(/^\/+/, "").trim();
+  if (!s) return null;
+
+  // 1. Drop card-processor prefixes ("CCV*", "BCK*", "BEA ", "GEA ").
+  s = s.replace(/^(CCV|BCK|BEA|GEA)\*?\s*/i, "");
+
+  // 2. Cut at the first piece of terminal/location noise, keeping what's before:
+  //    a date, a time, or the terminal keywords. Then separately strip a trailing
+  //    "<CITY> NLD" tail. Splitting on "<word> NLD" directly would wrongly cut a
+  //    multi-word store like "TAMOIL TILBURG TILBURG NLD" down to "TILBURG", so
+  //    we remove the country+city tail instead of splitting before it.
+  s = s.split(
+    /\s+TERMINALID|\s+PASVOLGNR|\s+TRANSACTIENR|\s+REFNR\.?|\s+\d{2}-\d{2}-\d{4}|\s+\d{2}:\d{2}\b/i
+  )[0].trim();
+  // Drop a trailing "  CITY NLD" (and anything after NLD): "TAMOIL TILBURG
+  // TILBURG NLD" → "TAMOIL TILBURG"; "ASM Supermarkt TILBURG NLD" → "ASM Supermarkt".
+  s = s.replace(/\s+[A-Z][A-Za-z]*\s+NLD\b.*$/i, "").trim();
+
+  // 3. A leading transaction CODE followed by real words ("TX696074680XT Refund
+  //    makro.nl", "GCZ26327737 Termijnbedrag...") — if dropping the code still
+  //    leaves meaningful words, prefer those. The code must contain a DIGIT;
+  //    an all-letter token like "TAMOIL" is a store name, not a code, and must
+  //    be kept (otherwise "TAMOIL TILBURG" wrongly becomes "TILBURG").
+  const codeThenWords = s.match(/^(?=[A-Z0-9]*\d)[A-Z0-9]{6,}\s+(.+)/);
+  if (codeThenWords && /[A-Za-z]{3,}/.test(codeThenWords[1])) {
+    s = codeThenWords[1].trim();
+  }
+
+  s = s.replace(/\s+/g, " ").trim();
+  return s.length >= 2 ? s : null;
+}
+
 export function parseMT940(content: string): ParseResult {
   const errors: string[] = [];
   const transactions: BankTransaction[] = [];
@@ -272,37 +322,16 @@ function parseMT940Description(rawLine86: string): {
   }
 
   // [BANK-PARSE-CARD] Card purchases (pinbetaling) at a shop have NO /CNTP/
-  // party — the bank only records the store name inside the free-text REMI, e.g.
-  //   "CCV*ASM Supermarkt TILBURG NLD 29-05-2026 16:54 TERMINALID: ... TRANSACTIENR: D00093"
-  //   "Lidl 213 Tilburg TILBURG NLD 18-06-2026 10:20 TERMINALID: ..."
-  //   "TAMOIL TILBURG TILBURG NLD 01-06-2026 ... TERMINALID: ..."
-  //   "Geldmaat Wagnerplein ..." (an ATM cash withdrawal)
-  // Without this the row shows "Onbekende tegenpartij" + a meaningless fragment
-  // like "00093" (the TRANSACTIENR), which tells the owner nothing. We recognise
-  // the card-terminal shape and pull the clean STORE NAME so the owner can
-  // actually recognise the payment ("ASM Supermarkt" instead of "00093").
-  if (!counterpartName && remi) {
-    const hasTerminal = /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BETAALPAS|\bNLD\b/i.test(remi);
-    if (hasTerminal) {
-      let store = remi
-        .replace(/\bUSTD?\b/gi, "") // drop the leading "USTD" token
-        .replace(/[/]+/g, " ")
-        .replace(/^\s*CCV\*/i, "") // drop the card-processor prefix
-        .trim()
-        // cut everything from the location/terminal noise onward:
-        //   "ASM Supermarkt TILBURG NLD 29-05-2026 ..." → "ASM Supermarkt"
-        .split(/\s+[A-Z]{2,}\s+NLD\b|\s+TERMINALID|\s+PASVOLGNR|\s+TRANSACTIENR|\s+\d{2}-\d{2}-\d{4}/i)[0]
-        .replace(/\s+/g, " ")
-        .trim();
-      // Guard: only use it if it still looks like a name (has letters, not just a code).
-      if (store.length >= 3 && /[A-Za-z]{2,}/.test(store)) {
-        counterpartName = store;
-        // Whatever the structured pass grabbed as the "reference" here is terminal
-        // noise (sequence numbers, terminal id, transactienr — e.g. "213, 900,
-        // D00093"), never a supplier invoice. Drop it so the card shows a clean
-        // store name with no confusing pseudo-invoice chip.
-        reference = null;
-      }
+  // party — the bank records only the store name inside the free-text REMI, and
+  // the "reference" the structured pass grabbed is terminal noise (PASVOLGNR /
+  // TRANSACTIENR), never an invoice. Detect the card-terminal shape, derive the
+  // readable store name via the shared helper, and drop the noisy reference so
+  // the card shows e.g. "ASM Supermarkt" with no confusing pseudo-invoice chip.
+  if ((!counterpartName || /^USTD$/i.test(counterpartName)) && remi && /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i.test(remi)) {
+    const store = deriveReadableName(remi);
+    if (store) {
+      counterpartName = store;
+      reference = null; // terminal sequence numbers are not invoice references
     }
   }
 
@@ -348,12 +377,22 @@ function parseMT940Description(rawLine86: string): {
   counterpartName = counterpartName
     ? (counterpartName.split("/")[0].replace(/\s+/g, " ").trim() || null)
     : null;
+  // A bare "USTD" (the remittance marker) is noise, not a name — treat as empty
+  // so the readable-name fallback below derives the real store/description.
+  if (counterpartName && /^USTD$/i.test(counterpartName)) counterpartName = null;
 
   // Description: use REMI or fall back to full line86 cleaned up
   const description =
     fields["REMI"] ??
     fields["OWNR"] ??
     line86.replace(/\/[A-Z]{2,4}\//g, " ").replace(/\s+/g, " ").trim();
+
+  // [BANK-PARSE-READABLE] Still no name? Derive the most recognisable thing from
+  // the description so the owner never sees a blank/"Onbekend" when the bank
+  // actually told us what the payment was (a shop, a refund, an instalment).
+  if (!counterpartName) {
+    counterpartName = deriveReadableName(fields["REMI"] ?? description);
+  }
 
   return { description, counterpartName, counterpartIban, reference };
 }
@@ -521,6 +560,21 @@ function parseCAMT053Entry(
   // Transaction ID
   const txIdMatch = block.match(/<NtryRef>([^<]+)<\/NtryRef>/);
   const transactionId = txIdMatch ? txIdMatch[1].trim() : null;
+
+  // [BANK-PARSE-CARD] Same as MT940: a card purchase has no related party, so
+  // derive the store name from the description and drop the terminal-noise ref.
+  if (!counterpartName && /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BCK\*|BETAALPAS|\bNLD\b/i.test(description)) {
+    const store = deriveReadableName(description);
+    if (store) {
+      counterpartName = store;
+      reference = null;
+    }
+  }
+  // [BANK-PARSE-READABLE] Still nothing? Derive the most recognisable text from
+  // the description so the owner never sees a blank counterpart.
+  if (!counterpartName) {
+    counterpartName = deriveReadableName(description);
+  }
 
   return {
     date,
