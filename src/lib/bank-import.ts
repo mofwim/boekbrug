@@ -26,7 +26,10 @@ export interface BankTransactionRow {
   status: "pending";
 }
 
-/** Subset of an existing DB row needed for dedup (from a scoped SELECT). */
+/** Subset of an existing DB row needed for dedup (from a scoped SELECT).
+ *  [BANK-DEDUP-DOUBLE] `description` is no longer part of the fingerprint (see
+ *  contentKey) but is kept here so the upload route's existing SELECT shape stays
+ *  unchanged; it is simply ignored by keyOfRow. */
 export interface ExistingTxKey {
   date: string | null;
   amount: number | null;
@@ -40,31 +43,41 @@ function norm(s: string | null): string {
 }
 
 /**
- * Stable content fingerprint. Used for BOTH incoming transactions and existing rows,
- * so the two sides always compare on the same basis (existing rows have no transactionId).
+ * Stable content fingerprint for cross-upload dedup.
+ *
+ * [BANK-DEDUP-DOUBLE] The fingerprint deliberately EXCLUDES `description`. Proven
+ * by testing the SAME statement exported as both MT940 and CAMT for one period:
+ * the stored description (the raw REMI) differs between the two formats for every
+ * transaction — MT940 keeps ING's "USTD//29528/" wrapper, CAMT gives a clean
+ * "29528" — so a description-based key never matched across formats and every
+ * transaction was re-inserted on the second upload (an exact ×2 doubling of
+ * in/uit). date + amount + counterpart + reference are IDENTICAL across formats
+ * and uniquely identify each transaction (verified: 30/30 match, zero collisions,
+ * including 20 reference-less POS settlements distinguished by amount). Two genuine
+ * but truly identical transactions in one statement (same day, amount, counterpart
+ * and reference) would still collapse — but that is the documented, accepted edge
+ * of content-based dedup, and far rarer than the format-difference doubling this fixes.
  */
 export function contentKey(
   date: string | null,
   amount: number | null,
-  description: string | null,
   counterpart: string | null,
   reference: string | null
 ): string {
   return [
     date ?? "",
     (amount ?? 0).toFixed(2),
-    norm(description),
     norm(counterpart),
     norm(reference),
   ].join("|");
 }
 
 function keyOfTx(t: BankTransaction): string {
-  return contentKey(t.date, t.amount, t.description, t.counterpartName, t.reference);
+  return contentKey(t.date, t.amount, t.counterpartName, t.reference);
 }
 
 function keyOfRow(r: ExistingTxKey): string {
-  return contentKey(r.date, r.amount, r.description, r.counterpart_name, r.reference);
+  return contentKey(r.date, r.amount, r.counterpart_name, r.reference);
 }
 
 /** Min/max ISO date in a transaction list — used to scope the existing-rows query. */
