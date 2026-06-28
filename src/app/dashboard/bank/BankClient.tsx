@@ -193,6 +193,35 @@ export default function BankClient() {
     }
   }
 
+  // [BANK-ATTACH] Owner uploads the file that belongs to an unmatched expense
+  // transaction → backend creates a paid incoming invoice from it and links it.
+  async function attachFile(txId: string, file: File) {
+    setProcessingId(txId)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('transactionId', txId)
+      const res = await fetch('/api/bank/attach-invoice', { method: 'POST', body: form })
+      const json = await res.json()
+      if (res.ok) {
+        showToast(
+          json?.amountWarning
+            ? 'Gekoppeld — controleer het bedrag op de factuur.'
+            : `Factuur gekoppeld${json?.vendor ? ` (${json.vendor})` : ''} ✓`
+        )
+        await runMatch() // refresh: the tx moves out of "Geen factuur"
+      } else if (json?.duplicate || json?.error) {
+        showToast(json.error || 'Koppelen mislukt.')
+      } else {
+        showToast('Koppelen mislukt.')
+      }
+    } catch {
+      showToast('Er ging iets mis.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
   const pending = data?.suggestions.filter((s) => !confirmed[s.transactionId]) ?? []
 
   // [BANK-TABS] Split the (often long) list into three purpose-driven groups so
@@ -300,6 +329,7 @@ export default function BankClient() {
                 processing={processingId === s.transactionId}
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
                 onConfirm={(num) => confirm(s.transactionId, num)}
+                onAttach={(file) => attachFile(s.transactionId, file)}
               />
             ))}
             {activeList.length === 0 && (
@@ -359,13 +389,14 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, onSelect, onConfirm,
+  s, selectedInvoiceId, processing, onSelect, onConfirm, onAttach,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
   processing: boolean
   onSelect: (invoiceId: string) => void
   onConfirm: (invoiceNumber: string | null) => void
+  onAttach: (file: File) => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
@@ -391,9 +422,39 @@ function TxCard({
 
       {/* Match body */}
       {s.outcome === 'none' && (
-        <div style={{ marginTop: 12, fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
-          Geen factuur gevonden voor deze transactie.
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
+            Geen factuur gevonden voor deze transactie.
+          </div>
+          {/* [BANK-ATTACH] Only for expenses (money out): attach the document that
+              belongs to this payment → backend creates a paid inkoopfactuur. */}
+          {!isCredit && (
+            <label
+              style={{
+                marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '9px', borderRadius: R.full, border: `1.5px dashed ${M3.primary}`,
+                background: M3.primaryContainer, cursor: processing ? 'default' : 'pointer',
+                fontSize: 13.5, fontWeight: 600, color: M3.onPrimaryContainer, opacity: processing ? 0.6 : 1,
+              }}
+            >
+              <input
+                type="file"
+                accept=".pdf,image/*"
+                disabled={processing}
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  e.target.value = ''
+                  if (f) onAttach(f)
+                }}
+              />
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                {processing ? 'hourglass_empty' : 'attach_file'}
+              </span>
+              {processing ? 'Verwerken…' : 'Factuur koppelen'}
+            </label>
+          )}
         </div>
       )}
 

@@ -31,8 +31,8 @@ export interface ParseResult {
   transactions: BankTransaction[];
   parseErrors: string[];  // non-fatal warnings
 }
-
-// ─── MT940 Parser ─────────────────────────────────────────────────────────────
+ 
+// ─── MT940 Parser ─── ──────────────────────────────────────────────────────────
 //
 // MT940 is a SWIFT format used by ING, ABN AMRO, Rabobank, SNS.
 // Structure: tag-based, each tag starts with :XX:
