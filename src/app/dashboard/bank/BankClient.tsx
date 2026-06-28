@@ -80,7 +80,10 @@ export default function BankClient() {
   // component state and vanished on reload.
   const [initialLoading, setInitialLoading] = useState(true)
   // [BANK-TABS] Active tab — defaults to the one the owner acts on.
-  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'done'>('confirm')
+  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'ignored' | 'done'>('confirm')
+  // [BANK-IGNORE] Ignored transactions (status 'not_found'), loaded lazily when
+  // the owner opens the "Genegeerd" tab.
+  const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
 
   function showToast(msg: string) {
     setToast(msg)
@@ -120,6 +123,11 @@ export default function BankClient() {
           }
           setSelected(pre)
         }
+        // [BANK-IGNORE] Also load ignored up front so the Genegeerd tab (and the
+        // tab bar) appears even when every transaction has been ignored.
+        const ig = await fetch('/api/bank/ignored')
+        const igJson = await ig.json()
+        if (!cancelled && ig.ok) setIgnoredList(igJson.suggestions ?? [])
       } catch {
         /* silent — empty state shows the upload card */
       } finally {
@@ -222,6 +230,72 @@ export default function BankClient() {
     }
   }
 
+  // [BANK-IGNORE] Fetch the ignored (not_found) transactions for the Genegeerd tab.
+  const loadIgnored = useCallback(async () => {
+    try {
+      const res = await fetch('/api/bank/ignored')
+      const json = await res.json()
+      if (res.ok) setIgnoredList(json.suggestions ?? [])
+      else setIgnoredList([])
+    } catch {
+      setIgnoredList([])
+    }
+  }, [])
+
+  // [BANK-IGNORE] Ignore a transaction: pending → not_found. It leaves the active
+  // list (match only reads pending) and appears under Genegeerd.
+  async function ignoreTx(txId: string) {
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/ignore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: txId, action: 'ignore' }),
+      })
+      if (res.ok) {
+        showToast('Transactie genegeerd')
+        await runMatch()             // drops it from the active list
+        setIgnoredList(null)         // force a refresh next time Genegeerd opens
+      } else {
+        showToast('Negeren mislukt.')
+      }
+    } catch {
+      showToast('Er ging iets mis.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // [BANK-IGNORE] Restore: not_found → pending. It returns to the active list.
+  async function restoreTx(txId: string) {
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/ignore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: txId, action: 'restore' }),
+      })
+      if (res.ok) {
+        showToast('Teruggezet')
+        setIgnoredList((prev) => (prev ? prev.filter((s) => s.transactionId !== txId) : prev))
+        await runMatch()             // reappears in the active list
+      } else {
+        showToast('Terugzetten mislukt.')
+      }
+    } catch {
+      showToast('Er ging iets mis.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // [BANK-IGNORE] Load ignored list the first time the Genegeerd tab is opened.
+  useEffect(() => {
+    if (bankTab === 'ignored' && ignoredList === null) {
+      loadIgnored()
+    }
+  }, [bankTab, ignoredList, loadIgnored])
+
   const pending = data?.suggestions.filter((s) => !confirmed[s.transactionId]) ?? []
 
   // [BANK-TABS] Split the (often long) list into three purpose-driven groups so
@@ -237,9 +311,14 @@ export default function BankClient() {
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
+    { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredList?.length ?? 0 },
     { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
   ]
-  const activeList = bankTab === 'confirm' ? toConfirm : bankTab === 'none' ? noMatch : confirmedList
+  const activeList =
+    bankTab === 'confirm' ? toConfirm
+    : bankTab === 'none' ? noMatch
+    : bankTab === 'ignored' ? (ignoredList ?? [])
+    : confirmedList
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
@@ -289,7 +368,7 @@ export default function BankClient() {
       )}
 
       {/* [BANK-TABS] Tabs — only once we have data with at least one transaction */}
-      {data && (toConfirm.length + noMatch.length + confirmedList.length) > 0 && (
+      {data && (toConfirm.length + noMatch.length + confirmedList.length + (ignoredList?.length ?? 0)) > 0 && (
         <>
           <div style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: `1px solid ${M3.surfaceVariant}` }}>
             {tabs.map((t) => (
@@ -327,14 +406,20 @@ export default function BankClient() {
                 s={s}
                 selectedInvoiceId={selected[s.transactionId]}
                 processing={processingId === s.transactionId}
+                isIgnoredTab={bankTab === 'ignored'}
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
                 onConfirm={(num) => confirm(s.transactionId, num)}
                 onAttach={(file) => attachFile(s.transactionId, file)}
+                onIgnore={() => ignoreTx(s.transactionId)}
+                onRestore={() => restoreTx(s.transactionId)}
               />
             ))}
             {activeList.length === 0 && (
               <div style={{ textAlign: 'center', padding: '32px 20px', color: '#9aa0a6', fontSize: 13.5 }}>
-                {bankTab === 'confirm' ? 'Niets te bevestigen.' : bankTab === 'none' ? 'Alles is gekoppeld.' : 'Nog niets gekoppeld.'}
+                {bankTab === 'confirm' ? 'Niets te bevestigen.'
+                  : bankTab === 'none' ? 'Geen openstaande transacties zonder factuur.'
+                  : bankTab === 'ignored' ? 'Niets genegeerd.'
+                  : 'Nog niets gekoppeld.'}
               </div>
             )}
           </div>
@@ -342,7 +427,7 @@ export default function BankClient() {
       )}
 
       {/* Empty (no transactions at all) */}
-      {!initialLoading && data && (toConfirm.length + noMatch.length + confirmedList.length) === 0 && (
+      {!initialLoading && data && (toConfirm.length + noMatch.length + confirmedList.length + (ignoredList?.length ?? 0)) === 0 && (
         <Empty done={Object.keys(confirmed).length > 0} />
       )}
 
@@ -389,14 +474,17 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, onSelect, onConfirm, onAttach,
+  s, selectedInvoiceId, processing, isIgnoredTab, onSelect, onConfirm, onAttach, onIgnore, onRestore,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
   processing: boolean
+  isIgnoredTab: boolean
   onSelect: (invoiceId: string) => void
   onConfirm: (invoiceNumber: string | null) => void
   onAttach: (file: File) => void
+  onIgnore: () => void
+  onRestore: () => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
@@ -423,37 +511,79 @@ function TxCard({
       {/* Match body */}
       {s.outcome === 'none' && (
         <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
-            Geen factuur gevonden voor deze transactie.
-          </div>
-          {/* [BANK-ATTACH] Only for expenses (money out): attach the document that
-              belongs to this payment → backend creates a paid inkoopfactuur. */}
-          {!isCredit && (
-            <label
-              style={{
-                marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                padding: '9px', borderRadius: R.full, border: `1.5px dashed ${M3.primary}`,
-                background: M3.primaryContainer, cursor: processing ? 'default' : 'pointer',
-                fontSize: 13.5, fontWeight: 600, color: M3.onPrimaryContainer, opacity: processing ? 0.6 : 1,
-              }}
-            >
-              <input
-                type="file"
-                accept=".pdf,image/*"
+          {isIgnoredTab ? (
+            /* [BANK-IGNORE] Genegeerd tab — show a restore action, nothing else. */
+            <>
+              <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+                Genegeerd — staat niet in de actieve lijst.
+              </div>
+              <button
                 disabled={processing}
-                style={{ display: 'none' }}
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  e.target.value = ''
-                  if (f) onAttach(f)
+                onClick={onRestore}
+                style={{
+                  marginTop: 10, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  padding: '9px', borderRadius: R.full, border: `1.5px solid #E0E0E0`, background: '#fff',
+                  cursor: processing ? 'default' : 'pointer', fontSize: 13.5, fontWeight: 600, color: M3.primary,
+                  fontFamily: FONT, opacity: processing ? 0.6 : 1,
                 }}
-              />
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                {processing ? 'hourglass_empty' : 'attach_file'}
-              </span>
-              {processing ? 'Verwerken…' : 'Factuur koppelen'}
-            </label>
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                  {processing ? 'hourglass_empty' : 'undo'}
+                </span>
+                {processing ? 'Bezig…' : 'Terugzetten'}
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
+                Geen factuur gevonden voor deze transactie.
+              </div>
+              {/* [BANK-ATTACH] Only for expenses (money out): attach the document
+                  that belongs to this payment → backend creates a paid inkoopfactuur. */}
+              {!isCredit && (
+                <label
+                  style={{
+                    marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    padding: '9px', borderRadius: R.full, border: `1.5px dashed ${M3.primary}`,
+                    background: M3.primaryContainer, cursor: processing ? 'default' : 'pointer',
+                    fontSize: 13.5, fontWeight: 600, color: M3.onPrimaryContainer, opacity: processing ? 0.6 : 1,
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    disabled={processing}
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      e.target.value = ''
+                      if (f) onAttach(f)
+                    }}
+                  />
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                    {processing ? 'hourglass_empty' : 'attach_file'}
+                  </span>
+                  {processing ? 'Verwerken…' : 'Factuur koppelen'}
+                </label>
+              )}
+              {/* [BANK-IGNORE] Hide a transaction that needs no invoice (rent, a
+                  loan instalment, a personal transfer). Goes to Genegeerd. */}
+              <button
+                disabled={processing}
+                onClick={onIgnore}
+                style={{
+                  marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
+                  cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#9aa0a6',
+                  fontFamily: FONT,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+                Negeren
+              </button>
+            </>
           )}
         </div>
       )}
