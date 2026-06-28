@@ -255,6 +255,57 @@ function parseMT940Description(rawLine86: string): {
     reference = fb ? fb.replace(/[/]+/g, "").trim() || null : null;
   }
 
+  // [BANK-PARSE-FEE] Bank's own charges have no counterpart party (no /CNTP/, no
+  // IBAN/BIC). Their REMI starts with the charge name and then runs into free
+  // text, e.g. "Kosten Zakelijk Betalingsverkeer   Factuurnr. 10003226631 ...
+  // Periode: 01-05-2026". Without this, the loose IBAN fallback below grabs a
+  // fragment like "Periode: 01-05-2026" as the name. Detect the charge and take
+  // the clean label that precedes the first free-text marker.
+  if (!counterpartName && remi && /Kosten|Betalingsverkeer/i.test(remi)) {
+    const label = remi
+      .split(/\s{2,}|Factuurnr\.|Betreft|Periode/i)[0]
+      .replace(/\bUSTD?\b/g, "")
+      .replace(/[/]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (label.length >= 3) counterpartName = label;
+  }
+
+  // [BANK-PARSE-CARD] Card purchases (pinbetaling) at a shop have NO /CNTP/
+  // party — the bank only records the store name inside the free-text REMI, e.g.
+  //   "CCV*ASM Supermarkt TILBURG NLD 29-05-2026 16:54 TERMINALID: ... TRANSACTIENR: D00093"
+  //   "Lidl 213 Tilburg TILBURG NLD 18-06-2026 10:20 TERMINALID: ..."
+  //   "TAMOIL TILBURG TILBURG NLD 01-06-2026 ... TERMINALID: ..."
+  //   "Geldmaat Wagnerplein ..." (an ATM cash withdrawal)
+  // Without this the row shows "Onbekende tegenpartij" + a meaningless fragment
+  // like "00093" (the TRANSACTIENR), which tells the owner nothing. We recognise
+  // the card-terminal shape and pull the clean STORE NAME so the owner can
+  // actually recognise the payment ("ASM Supermarkt" instead of "00093").
+  if (!counterpartName && remi) {
+    const hasTerminal = /TERMINALID|PASVOLGNR|TRANSACTIENR|CCV\*|BETAALPAS|\bNLD\b/i.test(remi);
+    if (hasTerminal) {
+      let store = remi
+        .replace(/\bUSTD?\b/gi, "") // drop the leading "USTD" token
+        .replace(/[/]+/g, " ")
+        .replace(/^\s*CCV\*/i, "") // drop the card-processor prefix
+        .trim()
+        // cut everything from the location/terminal noise onward:
+        //   "ASM Supermarkt TILBURG NLD 29-05-2026 ..." → "ASM Supermarkt"
+        .split(/\s+[A-Z]{2,}\s+NLD\b|\s+TERMINALID|\s+PASVOLGNR|\s+TRANSACTIENR|\s+\d{2}-\d{2}-\d{4}/i)[0]
+        .replace(/\s+/g, " ")
+        .trim();
+      // Guard: only use it if it still looks like a name (has letters, not just a code).
+      if (store.length >= 3 && /[A-Za-z]{2,}/.test(store)) {
+        counterpartName = store;
+        // Whatever the structured pass grabbed as the "reference" here is terminal
+        // noise (sequence numbers, terminal id, transactienr — e.g. "213, 900,
+        // D00093"), never a supplier invoice. Drop it so the card shows a clean
+        // store name with no confusing pseudo-invoice chip.
+        reference = null;
+      }
+    }
+  }
+
   // [BANK-PARSE-ING] Fallback for the common ING/Rabo/ABN :86: layout that is
   // NOT wrapped in /NAME/ markers but reads as:  IBAN/BIC/Counterpart name
   //   e.g. "NL89RABO0131703501/RABONL2U/W ketels & zn eierhandel"
@@ -430,8 +481,19 @@ function parseCAMT053Entry(
     )
   );
 
-  const counterpartName = partyNameMatch ? decodeXmlEntities(partyNameMatch[1].trim()) : null;
+  let counterpartName = partyNameMatch ? decodeXmlEntities(partyNameMatch[1].trim()) : null;
   const counterpartIban = partyIbanMatch ? partyIbanMatch[1].trim() : null;
+
+  // [BANK-PARSE-FEE] Bank charges have no related party in CAMT (no <Dbtr>/<Cdtr>),
+  // so counterpartName is null. Mirror the MT940 fix: pull the clean charge label
+  // from the start of the description ("Kosten Zakelijk Betalingsverkeer ...").
+  if (!counterpartName && /Kosten|Betalingsverkeer/i.test(description)) {
+    const label = description
+      .split(/\s{2,}|Factuurnr\.|Betreft|Periode/i)[0]
+      .replace(/\s+/g, " ")
+      .trim();
+    if (label.length >= 3) counterpartName = label;
+  }
 
   // [BANK-PARSE-REF] Reference — unified with MT940. EndToEndId is the bank's own
   // id and for ING POS rows holds the batch id (not an invoice). The supplier
