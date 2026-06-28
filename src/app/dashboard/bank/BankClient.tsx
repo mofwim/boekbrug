@@ -948,10 +948,26 @@ function TxCard({
   // counterpart even on older rows whose stored name is still "Onbekende".
   const [showDetails, setShowDetails] = useState(false)
   const hasDetails = !!(s.description && s.description.trim())
+  // [BANK-SLOT-DISMISS] The reference extractor (a regex) can grab numbers that
+  // are NOT invoices — a customer number after "Klant:", a postcode like "5049NM".
+  // The owner knows their own suppliers, so we let them remove a wrong number from
+  // this transaction's list with an ✗. This is a VIEW-only dismissal for the
+  // session: it never touches the stored reference (kept intact for the accountant
+  // and the matcher) or the DB. It doesn't need to persist — once the owner links
+  // the real invoice (or hits Negeren), the whole transaction leaves the list, so
+  // a dismissal is only ever needed once. The full raw description stays under
+  // "Details", so nothing is hidden and a mistaken ✗ is recoverable with a reload.
+  const [dismissedNumbers, setDismissedNumbers] = useState<Set<string>>(new Set())
   // [BANK-REF-DISPLAY] Build a compact label from the extracted reference. One
   // number → show it; several (comma-separated, a multi-invoice payment) → show
   // "N facturen" so the card stays clean and signals the multi-invoice case.
-  const refParts = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean)
+  // Normalize a reference number the same way the matcher does (lowercase, keep
+  // [a-z0-9]) — used for candidate matching AND for the dismiss set.
+  const normRef = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const allRefParts = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean)
+  // [BANK-SLOT-DISMISS] Hide any number the owner removed with ✗ (view-only). The
+  // raw reference is untouched; this only changes what THIS card shows this session.
+  const refParts = allRefParts.filter((r) => !dismissedNumbers.has(normRef(r)))
   const refLabel =
     refParts.length === 0 ? null
     : refParts.length === 1 ? refParts[0]
@@ -965,13 +981,20 @@ function TxCard({
   // backend's allCovered logic on the display side so the owner sees exactly what is
   // confirmed and what is still open. Only relevant in the confirm flow (not the
   // ignored tab, and not when there is no real candidate at all).
-  const isMulti = refParts.length > 1 && !isIgnoredTab
-  // Match a reference number to a candidate by normalized-equal invoice number
-  // (same normalization as the matcher: lowercase, keep [a-z0-9]). Equality — not
-  // substring — so "263" can't claim "26302050".
-  const normRef = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '')
+  //
+  // [BANK-SLOT-DISMISS] `wasMulti` is based on the ORIGINAL reference: once a
+  // transaction shows the multi-row UI, it keeps it even after the owner dismisses
+  // numbers down to one (or zero) — so the Negeren escape hatch stays available and
+  // a fully-dismissed transaction (e.g. Brabant Water, where every number was a
+  // customer/postcode, not an invoice) can still be cleared. Slots are built from
+  // the current refParts, so dismissed numbers simply disappear as rows.
+  const wasMulti = allRefParts.length > 1 && !isIgnoredTab
+  // Equality — not substring — so "263" can't claim "26302050".
   const confirmedSet = new Set(confirmedNumbers.map(normRef))
-  const slots = isMulti
+  // [BANK-SLOT-DISMISS] Build slots whenever the transaction STARTED multi, so a
+  // single remaining number (after others were dismissed) still shows its own
+  // linkable row — not just an empty banner. Driven by wasMulti, not isMulti.
+  const slots = wasMulti
     ? refParts.map((refNum) => {
         const key = normRef(refNum)
         const cand = s.candidates.find((c) => normRef(c.invoiceNumber ?? '') === key) ?? null
@@ -1044,9 +1067,25 @@ function TxCard({
       {/* [BANK-MULTI-CONFIRM] Multi-invoice transaction — one row per reference
           number, each with its own state: confirmed (✓), confirmable (a candidate
           exists → Bevestig), or missing (no invoice in the system → koppel het
-          bestand). The transaction stays here until every row is confirmed. */}
-      {isMulti && (
+          bestand). The transaction stays here until every row is confirmed.
+          [BANK-SLOT-DISMISS] Shown for any transaction that STARTED multi, so the
+          UI (and Negeren) persists even after numbers are dismissed down to ≤1. */}
+      {wasMulti && (
         <div style={{ marginTop: 12 }}>
+          {refParts.length === 0 ? (
+            /* Every number was dismissed as "not an invoice". Nothing left to link —
+               offer the clean exit. The raw description stays under Details. */
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+              padding: '8px 10px', borderRadius: R.md, background: '#F8F9FA',
+              color: '#5F6368', fontSize: 12.5, fontWeight: 600, marginBottom: 10,
+              border: '1px solid #EEE',
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>info</span>
+              Geen factuurnummers meer. Is dit geen factuur? Gebruik Negeren.
+            </div>
+          ) : (
+          <>
           {/* Status banner: X/Y bevestigd + open numbers. Honest: we list the
               numbers the BANK wrote in the reference, not an invented total. */}
           <div style={{
@@ -1089,6 +1128,27 @@ function TxCard({
                   </span>
                   {sl.refNum}
                 </span>
+
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                {/* [BANK-SLOT-DISMISS] Remove a number that isn't an invoice (a
+                    customer number, a postcode the regex mis-picked). View-only:
+                    hides this slot for the session; the stored reference and the
+                    raw description (under Details) are untouched. Hidden once a
+                    slot is confirmed — there's nothing to dismiss then. */}
+                {!sl.isConfirmed && !processing && (
+                  <button
+                    title="Geen factuurnummer — verbergen"
+                    aria-label="Dit nummer is geen factuur, verberg het"
+                    onClick={() => setDismissedNumbers((prev) => new Set(prev).add(normRef(sl.refNum)))}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 26, height: 26, borderRadius: R.full, border: '1px solid #E0E0E0',
+                      background: '#fff', color: '#9AA0A6', cursor: 'pointer', padding: 0,
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                  </button>
+                )}
 
                 {sl.isConfirmed ? (
                   <span style={{ fontSize: 12, fontWeight: 600, color: M3.success, flexShrink: 0 }}>
@@ -1140,9 +1200,12 @@ function TxCard({
                     Koppelen
                   </label>
                 )}
+                </div>
               </div>
             ))}
           </div>
+          </>
+          )}
 
           {/* Bekijk PDF for any candidate, plus the ignore escape hatch (the whole
               transaction is not an invoice after all). */}
@@ -1163,7 +1226,7 @@ function TxCard({
       )}
 
       {/* Match body — single-invoice transactions (and the ignored tab). */}
-      {!isMulti && s.outcome === 'none' && (
+      {!wasMulti && s.outcome === 'none' && (
         <div style={{ marginTop: 12 }}>
           {isIgnoredTab ? (
             /* [BANK-IGNORE] Genegeerd tab — show a restore action, nothing else. */
@@ -1246,11 +1309,11 @@ function TxCard({
         </div>
       )}
 
-      {!isMulti && s.outcome === 'auto' && s.best && (
+      {!wasMulti && s.outcome === 'auto' && s.best && (
         <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} />
       )}
 
-      {!isMulti && s.outcome === 'choice' && (
+      {!wasMulti && s.outcome === 'choice' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2 }}>Kies de juiste factuur:</div>
           {s.candidates.map((c) => (
@@ -1270,7 +1333,7 @@ function TxCard({
       )}
 
       {/* Confirm */}
-      {!isMulti && s.outcome !== 'none' && (
+      {!wasMulti && s.outcome !== 'none' && (
         <button
           disabled={!selectedInvoiceId || processing}
           onClick={() => onConfirm(selectedCand?.invoiceNumber ?? null)}
