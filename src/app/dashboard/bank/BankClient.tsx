@@ -5,7 +5,7 @@
 // Flow: upload bankafschrift → /api/bank/upload → /api/bank/match → review suggestions → confirm.
 // Philosophy: AI suggests, the human confirms. 'auto' = pre-filled (still one tap to confirm).
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
@@ -73,11 +73,59 @@ export default function BankClient() {
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
+  // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
+  // page refresh doesn't show an empty page. The transactions live in the DB
+  // (bank_transactions, status 'pending'); /api/bank/match reads them and
+  // returns fresh suggestions. Without this, suggestions only ever existed in
+  // component state and vanished on reload.
+  const [initialLoading, setInitialLoading] = useState(true)
 
   function showToast(msg: string) {
     setToast(msg)
     setTimeout(() => setToast(null), 2800)
   }
+
+  // Shared matcher call — used by both the initial load and after an upload.
+  const runMatch = useCallback(async () => {
+    const mr = await fetch('/api/bank/match')
+    const mrJson: MatchResponse = await mr.json()
+    if (!mr.ok) {
+      showToast('Matchen mislukt.')
+      return
+    }
+    setData(mrJson)
+    // Pre-fill 'auto' selections with their best candidate.
+    const pre: Record<string, string> = {}
+    for (const s of mrJson.suggestions) {
+      if (s.outcome === 'auto' && s.best) pre[s.transactionId] = s.best.invoiceId
+    }
+    setSelected(pre)
+  }, [])
+
+  // [BANK-PERSIST] Initial load — show stored pending transactions on refresh.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const mr = await fetch('/api/bank/match')
+        const mrJson: MatchResponse = await mr.json()
+        if (cancelled) return
+        if (mr.ok) {
+          setData(mrJson)
+          const pre: Record<string, string> = {}
+          for (const s of mrJson.suggestions) {
+            if (s.outcome === 'auto' && s.best) pre[s.transactionId] = s.best.invoiceId
+          }
+          setSelected(pre)
+        }
+      } catch {
+        /* silent — empty state shows the upload card */
+      } finally {
+        if (!cancelled) setInitialLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   // ── Upload → match ──────────────────────────────────────────────────────────
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -103,21 +151,8 @@ export default function BankClient() {
       }
       setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped })
 
-      // Run matching
-      const mr = await fetch('/api/bank/match')
-      const mrJson: MatchResponse = await mr.json()
-      if (!mr.ok) {
-        showToast('Matchen mislukt.')
-        setBusy(false)
-        return
-      }
-      setData(mrJson)
-      // Pre-fill 'auto' selections with their best candidate.
-      const pre: Record<string, string> = {}
-      for (const s of mrJson.suggestions) {
-        if (s.outcome === 'auto' && s.best) pre[s.transactionId] = s.best.invoiceId
-      }
-      setSelected(pre)
+      // Run matching (shared with initial load)
+      await runMatch()
     } catch {
       showToast('Er ging iets mis.')
     } finally {
@@ -216,7 +251,7 @@ export default function BankClient() {
       )}
 
       {/* Suggestions */}
-      {data && pending.length === 0 && (
+      {!initialLoading && data && pending.length === 0 && (
         <Empty done={Object.keys(confirmed).length > 0} />
       )}
 
