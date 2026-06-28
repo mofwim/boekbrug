@@ -54,6 +54,11 @@ export async function POST(req: NextRequest) {
 
   const file = formData.get("file") as File | null;
   const transactionId = (formData.get("transactionId") as string | null)?.trim();
+  // [BANK-ATTACH] Direction the owner is linking: 'incoming' (expense → debit) or
+  // 'outgoing' (income/refund → credit). The UI sends it based on the tx sign.
+  // Default to 'incoming' (the common case) if absent.
+  const direction =
+    (formData.get("direction") as string | null) === "outgoing" ? "outgoing" : "incoming";
   if (!file) {
     return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 });
   }
@@ -92,12 +97,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "transaction_already_processed" }, { status: 409 });
   }
 
-  // A debit (money out, negative) → incoming invoice (an expense). Attaching a
-  // file to a credit (money in) would mean an outgoing invoice, which this flow
-  // doesn't create — guard against it rather than produce a wrong record.
-  if ((tx.amount ?? 0) >= 0) {
+  // Direction must match the transaction sign: a debit (money out) is an expense
+  // (incoming invoice); a credit (money in) is income/refund (outgoing invoice).
+  // Both are now supported — income also has documents worth linking (a supplier
+  // refund, a B2B sale). Guard only against a mismatch (wrong direction for sign).
+  const txIsCredit = (tx.amount ?? 0) >= 0;
+  const expectedDirection = txIsCredit ? "outgoing" : "incoming";
+  if (direction !== expectedDirection) {
     return NextResponse.json(
-      { error: "only_expense_supported", detail: "Alleen uitgaande betalingen kunnen aan een inkoopfactuur worden gekoppeld." },
+      { error: "direction_mismatch", detail: "Richting komt niet overeen met de transactie." },
       { status: 422 }
     );
   }
@@ -201,21 +209,24 @@ export async function POST(req: NextRequest) {
     .single();
   const documentId = doc?.id ?? null;
 
-  // 8. Create the incoming invoice — already 'paid' (the owner attached the file
-  //    for a payment they SEE on the statement). Incoming → receiver_id = user,
-  //    sender_id = null. service_role required (RLS expects sender_id = auth.uid()).
-  //    payment_method 'bank' + marked_paid_at mirror api/bank/confirm.
+  // 8. Create the invoice — already 'paid' (the owner attached the file for a
+  //    payment they SEE on the statement). Direction-aware:
+  //      incoming (expense): receiver_id = user, sender_id = null  (vendor bill)
+  //      outgoing (income) : sender_id = user, receiver_id = null  (a sale/refund)
+  //    service_role required (incoming RLS expects sender_id = auth.uid(), which
+  //    is null here). payment_method 'bank' + marked_paid_at mirror api/bank/confirm.
+  const isOutgoing = direction === "outgoing";
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
-      sender_id: null,
-      receiver_id: user.id,
-      direction: "incoming",
+      sender_id: isOutgoing ? user.id : null,
+      receiver_id: isOutgoing ? null : user.id,
+      direction,
       status: "paid", // attached to a real, visible bank payment
       payment_method: "bank",
       marked_paid_at: new Date().toISOString(),
       source: "upload",
-      client_name: verification.vendor || "Onbekende afzender",
+      client_name: verification.vendor || (isOutgoing ? "Onbekende klant" : "Onbekende afzender"),
       invoice_date: invoiceDate,
       invoice_number: verification.invoice_number || `UPLOAD-${Date.now()}`,
       total_ex_btw: totalExBtw,
@@ -239,18 +250,28 @@ export async function POST(req: NextRequest) {
     await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId);
   }
 
-  // 10. Link the transaction → matched + invoice_id. Pipeline, user-pinned,
-  //     only pending → matched (never overwrite an existing link).
+  // 10. [BANK-ATTACH-MULTI] Do NOT mark the transaction 'matched' here. One
+  //     payment can cover SEVERAL invoices (a supplier groups them); marking it
+  //     matched after the FIRST file would hide the transaction while other
+  //     invoices are still unlinked — and lose them (the Oz+Er bug: paid 3,
+  //     linked 1, all disappeared). Instead the transaction STAYS 'pending'
+  //     (visible in "Geen factuur") and the owner dismisses it with "Negeren"
+  //     once they've attached everything they have for it. We only record the
+  //     latest linked invoice_id as a soft reference; status is untouched.
+  //
+  //     This is deliberate: matching is a LIGHT tool here, not a reconciliation
+  //     engine. We don't compute whether the linked invoices' total "covers" the
+  //     transaction (that would reintroduce amount-matching we chose not to
+  //     build). The owner decides when the transaction is dealt with.
   const { error: linkErr } = await pipeline
     .from("bank_transactions")
-    .update({ status: "matched", invoice_id: invoice.id })
+    .update({ invoice_id: invoice.id })
     .eq("id", transactionId)
     .eq("user_id", user.id)
-    .eq("status", "pending");
+    .eq("status", "pending"); // never touch an already-settled row
 
   if (linkErr) {
-    // The invoice is created + paid + shared regardless; only the tx link failed.
-    // Self-healing: re-running /api/bank/match surfaces the tx again.
+    // The invoice is created + paid + shared regardless; only the soft link failed.
     console.error("[BANK-ATTACH] transaction link failed:", linkErr.message);
     return NextResponse.json({
       ok: true,
@@ -265,7 +286,7 @@ export async function POST(req: NextRequest) {
     await pipeline.from("notifications").insert({
       user_id: user.id,
       title: "Factuur gekoppeld",
-      body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde inkoopfactuur (${verification.vendor || "onbekende leverancier"}).`,
+      body: `Een bestand is gekoppeld aan een banktransactie en opgeslagen als betaalde ${isOutgoing ? "verkoopfactuur" : "inkoopfactuur"} (${verification.vendor || "onbekend"}).`,
       type: "payment",
     });
   } catch {
