@@ -31,6 +31,18 @@ const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
+// [BANK-DETAILS] Tidy the raw bank description for display: drop the "USTD//"
+// remittance marker and the field-separator slashes ING leaves in, so the full
+// text reads cleanly ("Lidl 213 Tilburg TILBURG NLD Pasvolgnr: 900 ...").
+function cleanBankDescription(raw: string | null): string {
+  if (!raw) return ''
+  return raw
+    .replace(/\/*USTD\/*/gi, ' ')
+    .replace(/\s*\/\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 const SIGNAL_LABEL: Record<string, string> = {
   reference: 'Kenmerk',
   amount: 'Bedrag',
@@ -627,6 +639,12 @@ function TxCard({
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
+  // [BANK-DETAILS] Like the ING app, the card shows a clean name and lets the
+  // owner expand the FULL original description (Pasvolgnr, Transactienr, Google
+  // Pay, etc.) on demand — useful to verify a payment, and it reveals the real
+  // counterpart even on older rows whose stored name is still "Onbekende".
+  const [showDetails, setShowDetails] = useState(false)
+  const hasDetails = !!(s.description && s.description.trim())
   // [BANK-REF-DISPLAY] Build a compact label from the extracted reference. One
   // number → show it; several (comma-separated, a multi-invoice payment) → show
   // "N facturen" so the card stays clean and signals the multi-invoice case.
@@ -662,12 +680,41 @@ function TxCard({
                 {refLabel}
               </span>
             )}
+            {/* [BANK-DETAILS] Toggle the full original bank description. */}
+            {hasDetails && (
+              <button
+                onClick={() => setShowDetails((v) => !v)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 2, border: 'none', background: 'none',
+                  cursor: 'pointer', fontFamily: FONT, fontSize: 11.5, fontWeight: 600, color: M3.primary, padding: 0,
+                }}
+              >
+                Details
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                  {showDetails ? 'expand_less' : 'expand_more'}
+                </span>
+              </button>
+            )}
           </div>
         </div>
         <div style={{ fontFamily: FONT_NUM, fontSize: 14.5, fontWeight: 700, color: amountColor, whiteSpace: 'nowrap' }}>
           {isCredit ? '+' : '−'}{eur.format(Math.abs(s.amount))}
         </div>
       </div>
+
+      {/* [BANK-DETAILS] Full original description (as the bank recorded it). */}
+      {showDetails && hasDetails && (
+        <div style={{
+          marginTop: 10, padding: '8px 10px', borderRadius: R.md, background: '#F8F9FA',
+          fontSize: 12, color: '#5F6368', lineHeight: 1.5, wordBreak: 'break-word',
+          fontFamily: FONT, border: '1px solid #EEE',
+        }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9aa0a6', marginBottom: 3, letterSpacing: 0.4 }}>
+            OMSCHRIJVING
+          </div>
+          {cleanBankDescription(s.description)}
+        </div>
+      )}
 
       {/* Match body */}
       {s.outcome === 'none' && (
