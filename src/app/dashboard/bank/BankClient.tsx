@@ -54,6 +54,7 @@ interface Suggestion {
   amount: number
   description: string
   counterpart: string | null
+  reference: string | null
   outcome: Outcome
   best: Candidate | null
   candidates: Candidate[]
@@ -203,26 +204,39 @@ export default function BankClient() {
 
   // [BANK-ATTACH] Owner uploads the file that belongs to an unmatched expense
   // transaction → backend creates a paid incoming invoice from it and links it.
-  async function attachFile(txId: string, file: File) {
+  async function attachFile(txId: string, files: File[], isCredit: boolean) {
     setProcessingId(txId)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('transactionId', txId)
-      const res = await fetch('/api/bank/attach-invoice', { method: 'POST', body: form })
-      const json = await res.json()
-      if (res.ok) {
-        showToast(
-          json?.amountWarning
-            ? 'Gekoppeld — controleer het bedrag op de factuur.'
-            : `Factuur gekoppeld${json?.vendor ? ` (${json.vendor})` : ''} ✓`
-        )
-        await runMatch() // refresh: the tx moves out of "Geen factuur"
-      } else if (json?.duplicate || json?.error) {
-        showToast(json.error || 'Koppelen mislukt.')
-      } else {
-        showToast('Koppelen mislukt.')
+      let ok = 0
+      let lastMsg = ''
+      // Upload each file → each becomes one paid invoice linked to this tx. The
+      // backend only marks the transaction 'matched' once the linked invoices'
+      // total covers the transaction amount (fixes the multi-invoice disappear
+      // bug: confirming one of three must not hide the rest).
+      for (const file of files) {
+        const form = new FormData()
+        form.append('file', file)
+        form.append('transactionId', txId)
+        form.append('direction', isCredit ? 'outgoing' : 'incoming')
+        const res = await fetch('/api/bank/attach-invoice', { method: 'POST', body: form })
+        const json = await res.json()
+        if (res.ok) {
+          ok++
+          if (json?.amountWarning) lastMsg = 'Let op: controleer het bedrag.'
+        } else {
+          lastMsg = json?.error || 'Koppelen mislukt.'
+        }
       }
+      if (ok > 0) {
+        showToast(
+          ok === files.length
+            ? `${ok === 1 ? 'Factuur' : `${ok} facturen`} gekoppeld ✓${lastMsg ? ` ${lastMsg}` : ''}`
+            : `${ok}/${files.length} gekoppeld. ${lastMsg}`
+        )
+      } else {
+        showToast(lastMsg || 'Koppelen mislukt.')
+      }
+      await runMatch() // refresh: tx leaves "Geen factuur" only if fully accounted
     } catch {
       showToast('Er ging iets mis.')
     } finally {
@@ -394,26 +408,35 @@ export default function BankClient() {
       {/* [BANK-TABS] Tabs — only once we have data with at least one transaction */}
       {data && (toConfirm.length + noMatch.length + posList.length + confirmedList.length + (ignoredList?.length ?? 0)) > 0 && (
         <>
-          <div style={{ display: 'flex', gap: 4, marginTop: 18, borderBottom: `1px solid ${M3.surfaceVariant}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            {tabs.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setBankTab(t.key)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', border: 'none',
-                  background: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 13.5, fontWeight: 600,
-                  color: bankTab === t.key ? M3.primary : '#5F6368',
-                  borderBottom: `2px solid ${bankTab === t.key ? M3.primary : 'transparent'}`, marginBottom: -1,
-                  whiteSpace: 'nowrap', flexShrink: 0,
-                }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 17 }}>{t.icon}</span>
-                {t.label}
-                <span style={{ fontSize: 11.5, fontWeight: 700, padding: '1px 7px', borderRadius: R.full, background: bankTab === t.key ? M3.primaryContainer : M3.surfaceVariant, color: bankTab === t.key ? '#041E49' : '#5F6368' }}>
-                  {t.count}
-                </span>
-              </button>
-            ))}
+          {/* [BANK-CHIPS] Chips grid instead of a horizontal scroll bar: every tab
+              is visible at once and wraps to the next line on narrow screens — no
+              hidden horizontal scroll the owner can miss. */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 18 }}>
+            {tabs.map((t) => {
+              const active = bankTab === t.key
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setBankTab(t.key)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px',
+                    borderRadius: R.full, cursor: 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600,
+                    border: `1px solid ${active ? M3.primary : '#E0E0E0'}`,
+                    background: active ? M3.primaryContainer : '#fff',
+                    color: active ? M3.onPrimaryContainer : '#5F6368',
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{t.icon}</span>
+                  {t.label}
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, padding: '0px 6px', borderRadius: R.full, fontFamily: FONT_NUM,
+                    background: active ? '#fff' : M3.surfaceVariant, color: active ? M3.primary : '#5F6368',
+                  }}>
+                    {t.count}
+                  </span>
+                </button>
+              )
+            })}
           </div>
 
           {/* "Geen factuur" context — POS receipts naturally have no invoice */}
@@ -440,7 +463,7 @@ export default function BankClient() {
                 isIgnoredTab={bankTab === 'ignored'}
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
                 onConfirm={(num) => confirm(s.transactionId, num)}
-                onAttach={(file) => attachFile(s.transactionId, file)}
+                onAttach={(files) => attachFile(s.transactionId, files, s.amount >= 0)}
                 onIgnore={() => ignoreTx(s.transactionId)}
                 onRestore={() => restoreTx(s.transactionId)}
               />
@@ -514,12 +537,20 @@ function TxCard({
   isIgnoredTab: boolean
   onSelect: (invoiceId: string) => void
   onConfirm: (invoiceNumber: string | null) => void
-  onAttach: (file: File) => void
+  onAttach: (files: File[]) => void
   onIgnore: () => void
   onRestore: () => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
+  // [BANK-REF-DISPLAY] Build a compact label from the extracted reference. One
+  // number → show it; several (comma-separated, a multi-invoice payment) → show
+  // "N facturen" so the card stays clean and signals the multi-invoice case.
+  const refParts = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean)
+  const refLabel =
+    refParts.length === 0 ? null
+    : refParts.length === 1 ? refParts[0]
+    : `${refParts.length} facturen`
   const selectedCand =
     s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ?? (s.outcome === 'auto' ? s.best : null)
 
@@ -531,8 +562,22 @@ function TxCard({
           <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {s.counterpart || 'Onbekende tegenpartij'}
           </div>
-          <div style={{ fontSize: 12, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {s.date} · {s.description || '—'}
+          <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span>{s.date}</span>
+            {/* [BANK-REF-DISPLAY] Show the clean extracted invoice number(s) as a
+                chip — not the raw "USTD//..." description. Multiple invoices in one
+                payment render a count ("3 facturen") so the owner sees instantly
+                that this transaction covers several invoices. */}
+            {refLabel && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
+                borderRadius: R.full, background: M3.surfaceVariant, color: '#3c4043',
+                fontSize: 11.5, fontWeight: 600, fontFamily: FONT_NUM,
+              }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 13 }}>receipt_long</span>
+                {refLabel}
+              </span>
+            )}
           </div>
         </div>
         <div style={{ fontFamily: FONT_NUM, fontSize: 14.5, fontWeight: 700, color: amountColor, whiteSpace: 'nowrap' }}>
@@ -572,34 +617,38 @@ function TxCard({
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
                 Geen factuur gevonden voor deze transactie.
               </div>
-              {/* [BANK-ATTACH] Only for expenses (money out): attach the document
-                  that belongs to this payment → backend creates a paid inkoopfactuur. */}
-              {!isCredit && (
-                <label
-                  style={{
-                    marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    padding: '9px', borderRadius: R.full, border: `1.5px dashed ${M3.primary}`,
-                    background: M3.primaryContainer, cursor: processing ? 'default' : 'pointer',
-                    fontSize: 13.5, fontWeight: 600, color: M3.onPrimaryContainer, opacity: processing ? 0.6 : 1,
+              {/* [BANK-ATTACH] Attach the document(s) for this payment. Shown on
+                  BOTH debit (expense → inkoopfactuur) and credit (income/refund →
+                  verkoopfactuur) — income also has documents worth linking (a
+                  supplier refund, a B2B sale). One transaction can pay SEVERAL
+                  invoices, so the file picker accepts MULTIPLE files at once. */}
+              <label
+                style={{
+                  marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  padding: '9px', borderRadius: R.full, border: `1.5px dashed ${M3.primary}`,
+                  background: M3.primaryContainer, cursor: processing ? 'default' : 'pointer',
+                  fontSize: 13.5, fontWeight: 600, color: M3.onPrimaryContainer, opacity: processing ? 0.6 : 1,
+                }}
+              >
+                <input
+                  type="file"
+                  accept=".pdf,image/*"
+                  multiple
+                  disabled={processing}
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const files: File[] = e.target.files ? Array.from(e.target.files) : []
+                    e.target.value = ''
+                    if (files.length) onAttach(files)
                   }}
-                >
-                  <input
-                    type="file"
-                    accept=".pdf,image/*"
-                    disabled={processing}
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0]
-                      e.target.value = ''
-                      if (f) onAttach(f)
-                    }}
-                  />
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                    {processing ? 'hourglass_empty' : 'attach_file'}
-                  </span>
-                  {processing ? 'Verwerken…' : 'Factuur koppelen'}
-                </label>
-              )}
+                />
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                  {processing ? 'hourglass_empty' : 'attach_file'}
+                </span>
+                {processing
+                  ? 'Verwerken…'
+                  : refParts.length > 1 ? `Facturen koppelen (${refParts.length})` : 'Factuur koppelen'}
+              </label>
               {/* [BANK-IGNORE] Hide a transaction that needs no invoice (rent, a
                   loan instalment, a personal transfer). Goes to Genegeerd. */}
               <button

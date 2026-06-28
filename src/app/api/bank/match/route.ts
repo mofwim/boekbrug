@@ -83,6 +83,10 @@ export async function GET() {
     amount: m.transaction.amount,
     description: m.transaction.description,
     counterpart: m.transaction.counterpartName,
+    // [BANK-REF-DISPLAY] The cleaned invoice number(s) the parser extracted from
+    // REMI/Ustrd (e.g. "26702781, 26703066"). The UI shows this instead of the
+    // raw description so the owner sees the real reference, not "USTD//...".
+    reference: m.transaction.reference,
     outcome: m.outcome,
     best: m.best,
     candidates: m.candidates,
