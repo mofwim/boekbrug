@@ -252,11 +252,11 @@ export function scorePair(
     }
   } else {
     // No reference → amount is the backbone; date + counterpart refine.
-    // [BANK-MATCH-STRICT] But amount+counterpart ALONE are dangerous for
-    // recurring fixed expenses (e.g. a €323,68 monthly accountant fee matches
-    // EVERY month's transaction). Without the invoice number in the payment we
-    // can never be CERTAIN this is THE invoice, so confidence is capped below
-    // the auto threshold — these become 'choice' (owner picks), never 'auto'.
+    // A strong combination (exact amount + matching counterpart + close date)
+    // can still reach 'auto'; a weak one (amount only) stays 'choice'. The
+    // date-sanity and one-to-one guards below prevent the dangerous cases
+    // (paying before issue, one invoice on many transactions) without making
+    // every clean match a manual pick — that keeps confirmation low-effort.
     confidence = 0;
     if (amtOk) {
       confidence += 0.5;
@@ -275,10 +275,6 @@ export function scorePair(
     }
     // Without an exact amount and without a reference, a pair stays weak.
     if (!amtOk) confidence = Math.min(confidence, 0.35);
-    // [BANK-MATCH-STRICT] Hard ceiling without a reference: never auto-confirm a
-    // payment to an invoice on amount+name+date alone. 0.65 sits under the 0.7
-    // auto threshold → always 'choice', requiring a human pick.
-    confidence = Math.min(confidence, 0.65);
   }
 
   confidence = Math.min(1, Math.max(0, confidence));
