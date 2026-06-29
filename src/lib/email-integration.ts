@@ -17,6 +17,7 @@ import {
   evaluateArithmetic,
   isPlaceholderInvoiceNumber,
   isReliableVendor,
+  deriveDueDate,
 } from '@/lib/safecore'
 // [BOEK-SAFECORE] jsonb column type for invoices.field_confidence — mirrors the
 // audit.ts pattern (derive the Json type from generated types, cast at write).
@@ -581,6 +582,11 @@ export interface AttachmentClassification {
   amount?: number          // total incl. BTW
   invoiceDate?: string
   invoiceNumber?: string
+  // [EXTRACT-DUE-DATE] two raw signals from the AI (never computed by it):
+  // an explicit printed due date, and/or a "binnen X dagen" term in days.
+  // safecore.deriveDueDate() applies the priority + math at insert time.
+  dueDate?: string
+  paymentTermDays?: number
   // [BOEK-011] full BTW breakdown — extracted in the same Claude call
   totalExBtw?: number
   btwAmount?: number
@@ -622,6 +628,9 @@ export async function classifyAttachment(
     amount: result.amount,
     invoiceDate: result.invoice_date,
     invoiceNumber: result.invoice_number,
+    // [EXTRACT-DUE-DATE] carry the two raw due-date signals through the mapper.
+    dueDate: result.due_date,
+    paymentTermDays: result.payment_term_days,
     totalExBtw: result.total_ex_btw,
     btwAmount: result.btw_amount,
     totalIncBtw: result.total_inc_btw,
@@ -1149,6 +1158,13 @@ export async function syncUserEmails(userId: string): Promise<{
           client_name: classification.vendor || extractSenderName(attachment.from),
           client_email: extractEmail(attachment.from),
           invoice_date: invoiceDate,
+          // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null.
+          // Same single source of truth (safecore) as the intake path.
+          due_date: deriveDueDate(
+            invoiceDate,
+            classification.dueDate ?? null,
+            classification.paymentTermDays ?? null
+          ),
           invoice_number: classification.invoiceNumber || `EMAIL-${Date.now()}`,
           total_ex_btw: classification.totalExBtw ?? 0,
           btw_amount: classification.btwAmount ?? 0,

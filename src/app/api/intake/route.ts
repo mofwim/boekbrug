@@ -32,6 +32,9 @@ import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
 import { findSemanticDuplicate } from "@/lib/safecore"
+// [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
+// null). Same single source of truth as the email path; never duplicated.
+import { deriveDueDate } from "@/lib/safecore"
 // [SMART-INTAKE] jsonb column type for invoices.field_confidence — same pattern
 // as email-integration.ts / audit.ts: derive the Json type, cast at write.
 import type { Database } from "@/types/database.types"
@@ -289,6 +292,9 @@ export async function POST(req: NextRequest) {
       source: "camera",
       client_name: v.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
+      // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null. The
+      // backbone of the "Vandaag" screen; null is honest when nothing is stated.
+      due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
       invoice_number: v.invoice_number || `CAMERA-${Date.now()}`,
       total_ex_btw: v.total_ex_btw ?? 0,
       btw_amount: v.btw_amount ?? 0,

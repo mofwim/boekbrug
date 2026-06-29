@@ -62,6 +62,14 @@ export interface VerifyInvoiceResult {
   amount?: number;           // total amount including BTW (numeric) — alias of total_inc_btw
   invoice_number?: string;   // invoice number if found
   invoice_date?: string;     // DD-MM-YYYY
+  // [EXTRACT-DUE-DATE] Two SEPARATE raw signals — the AI never computes the due
+  // date itself (arithmetic stays in our code via safecore.deriveDueDate). It
+  // only reports what the invoice literally states:
+  //   due_date          → an EXPLICIT "Vervaldatum: 27-05-2026" if printed
+  //   payment_term_days → a payment TERM ("Betaling binnen 14 dagen") as a number
+  // Both null when absent; deriveDueDate() then applies the priority + math.
+  due_date?: string;         // explicit due date if stated, "YYYY-MM-DD"
+  payment_term_days?: number; // "binnen X dagen" term, in days
   // [PAY-SAFE-EXTRACT] Vendor payment details — the IBAN to PAY and the
   // payment reference (betalingskenmerk). Used later to PREPARE a payment
   // (EPC/SEPA QR or pre-filled details) the owner executes in their OWN bank.
@@ -444,6 +452,8 @@ Return only a JSON object with these exact keys:
   "vendor": string or null,
   "invoice_number": string or null,
   "invoice_date": "YYYY-MM-DD" or null,
+  "due_date": "YYYY-MM-DD" or null,
+  "payment_term_days": number or null,
   "vendor_iban": string or null,
   "payment_reference": string or null,
   "document_kind": "invoice" | "receipt" | "other",
@@ -552,6 +562,14 @@ Per-field confidence rules:
   like a page number, customer number, or date rather than a clear invoice number.
 - field_confidence.invoice_date: LOW if multiple dates were present (invoice / due / delivery)
   and it was unclear which is the invoice date.
+- due_date: the EXPLICIT due/expiry date if the invoice prints one ("Vervaldatum",
+  "Te betalen voor", "Uiterste betaaldatum", "Betalen voor"). Return it as
+  "YYYY-MM-DD". If no explicit due date is printed, set due_date to null — do NOT
+  compute it yourself.
+- payment_term_days: if the invoice states a payment TERM instead of (or besides) an
+  explicit date — "Betaling binnen 14 dagen", "Te voldoen binnen 30 dagen", "14 dagen
+  netto" — return the number of days as an integer (e.g. 14, 30). If no term is stated,
+  set payment_term_days to null. Never invent a default term.
 - Be honest. A low score is BETTER than a confident wrong answer — the user will be asked
   to confirm low-confidence fields. Do not inflate these scores.${receiverHint}`;
 
@@ -669,6 +687,28 @@ Return JSON only.`;
       parsed.payment_reference = ref.length ? ref : undefined;
     } else {
       parsed.payment_reference = undefined;
+    }
+
+    // [EXTRACT-DUE-DATE] Normalize the two raw due-date signals. We do NOT
+    // compute the due date here — safecore.deriveDueDate() does that at the
+    // write paths. Here we only sanitize: keep due_date as a trimmed string
+    // (deriveDueDate tolerates ISO or DD-MM-YYYY), and keep payment_term_days
+    // only when it is a sane positive integer-ish day count. Junk → undefined.
+    if (typeof parsed.due_date === 'string') {
+      const dd = parsed.due_date.trim();
+      parsed.due_date = dd.length ? dd : undefined;
+    } else {
+      parsed.due_date = undefined;
+    }
+    if (
+      typeof parsed.payment_term_days === 'number' &&
+      isFinite(parsed.payment_term_days) &&
+      parsed.payment_term_days > 0 &&
+      parsed.payment_term_days <= 365
+    ) {
+      parsed.payment_term_days = Math.round(parsed.payment_term_days);
+    } else {
+      parsed.payment_term_days = undefined;
     }
 
     // [SMART-INTAKE] Normalize the classification fields. Default to the safe

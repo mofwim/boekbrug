@@ -277,3 +277,108 @@ export async function findSemanticDuplicate(
       'geen betrouwbaar factuurnummer en geen betrouwbare afzender — duplicaatcontrole niet mogelijk',
   }
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// [EXTRACT-DUE-DATE] Shared due-date derivation (pure, no I/O)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// due_date is the backbone of the "Vandaag" screen and every future reminder.
+// Both ingestion paths (intake camera/file + email) must fill it identically,
+// so the priority logic lives HERE in ONE place — never duplicated (the lesson
+// from the reference-extraction duplication we paid for once).
+//
+// The AI extractor (ai.ts) returns TWO separate raw signals — it never computes
+// the date itself (arithmetic stays in our code, per SAFECORE):
+//   - dueDateRaw   : an EXPLICIT "Vervaldatum: 27-05-2026" if the invoice states one
+//   - termDays     : a payment TERM ("Betaling binnen 14 dagen") as a number of days
+//
+// Priority (truth over invention):
+//   1. explicit valid due date            → use it (normalized to ISO YYYY-MM-DD)
+//   2. else invoice_date + termDays        → compute it
+//   3. else                                → null (NEVER invent a date; an
+//      invoice without a stated term simply has no due_date, and that is honest.
+//      A fabricated 30-day default would wrongly show invoices as "overdue".)
+
+/**
+ * Derive an invoice's due_date from the AI's raw signals.
+ *
+ * @param invoiceDateIso  the already-normalized invoice date, ISO "YYYY-MM-DD"
+ *                        (both paths compute this before insert) — or null.
+ * @param dueDateRaw      explicit due date from the invoice, any of ISO
+ *                        "YYYY-MM-DD" or "DD-MM-YYYY", or null/undefined.
+ * @param termDays        payment term in days ("binnen X dagen"), or null/undefined.
+ * @returns ISO "YYYY-MM-DD" due date, or null when nothing reliable is known.
+ */
+export function deriveDueDate(
+  invoiceDateIso: string | null | undefined,
+  dueDateRaw: string | null | undefined,
+  termDays: number | null | undefined
+): string | null {
+  // 1. Explicit due date wins — normalize whatever shape the AI returned.
+  const explicit = normalizeToIso(dueDateRaw)
+  if (explicit) return explicit
+
+  // 2. Compute from invoice_date + term when both are usable.
+  const baseIso = normalizeToIso(invoiceDateIso)
+  if (
+    baseIso &&
+    typeof termDays === 'number' &&
+    Number.isFinite(termDays) &&
+    termDays > 0 &&
+    termDays <= 365 // sanity: a payment term beyond a year is not a real term
+  ) {
+    const base = new Date(`${baseIso}T00:00:00Z`)
+    if (!Number.isNaN(base.getTime())) {
+      base.setUTCDate(base.getUTCDate() + Math.round(termDays))
+      return base.toISOString().split('T')[0]
+    }
+  }
+
+  // 3. Nothing reliable → no due date. Honesty over a fabricated default.
+  return null
+}
+
+/**
+ * Normalize a date string to ISO "YYYY-MM-DD", accepting either ISO
+ * ("2026-05-27", optionally with a time part) or Dutch "DD-MM-YYYY"
+ * ("27-05-2026"). Returns null for empty/unparseable input. Pure.
+ */
+function normalizeToIso(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null
+  const s = raw.trim()
+  if (!s) return null
+
+  // ISO "YYYY-MM-DD" (optionally followed by time) → take the date part.
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) {
+    const [, y, m, d] = iso
+    return isValidYmd(+y, +m, +d) ? `${y}-${m}-${d}` : null
+  }
+
+  // Dutch "DD-MM-YYYY" (also tolerant of "/" or "." separators).
+  const nl = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/)
+  if (nl) {
+    const d = +nl[1]
+    const m = +nl[2]
+    const y = +nl[3]
+    if (!isValidYmd(y, m, d)) return null
+    const mm = String(m).padStart(2, '0')
+    const dd = String(d).padStart(2, '0')
+    return `${y}-${mm}-${dd}`
+  }
+
+  return null
+}
+
+/** Calendar sanity for a Y/M/D triple (no Date roll-over surprises). */
+function isValidYmd(y: number, m: number, d: number): boolean {
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false
+  if (y < 2020 || y > 2030) return false
+  if (m < 1 || m > 12) return false
+  if (d < 1 || d > 31) return false
+  const probe = new Date(Date.UTC(y, m - 1, d))
+  return (
+    probe.getUTCFullYear() === y &&
+    probe.getUTCMonth() === m - 1 &&
+    probe.getUTCDate() === d
+  )
+}
