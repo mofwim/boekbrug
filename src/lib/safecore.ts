@@ -108,7 +108,11 @@ export function evaluateArithmetic(c: ArithmeticInput): ArithmeticVerdict {
     // above already covers ex=0 cases meaningfully).
     if (ex > 0) {
       const rate = Math.round((btw / ex) * 100)
-      if (rate !== 0 && rate !== 9 && rate !== 21) {
+      // [BTW-MIXED-RATE] Any rate between 0 and 21 can be a legal blend of NL
+      // rates (0/9/21) — a food invoice mixing 9% and 21% blends to a value
+      // between them (e.g. 11%), which is valid. Only a rate below 0 or above
+      // 21 is truly impossible (no NL rate exceeds 21, so no blend can either).
+      if (rate < 0 || rate > 21) {
         flags.push('illegal_btw_rate')
         reasons.push(`ongeldig BTW-tarief (${rate}%)`)
       }

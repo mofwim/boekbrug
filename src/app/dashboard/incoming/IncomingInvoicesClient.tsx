@@ -302,8 +302,10 @@ function ConfirmPaidModal({
   const totalIncBtw = exBtw + btwAmount;
 
   // [BRIDGE-B] TRAIL 3 — legal BTW rate must round to 0 / 9 / 21. FLAG, never block.
+  // [BTW-MIXED-RATE] A blended rate (e.g. 9%+21% food invoice → ~11%) is valid:
+  // any value 0–21 can be a mix of legal NL rates. Only < 0 or > 21 is impossible.
   const btwRate = exBtw > 0 ? Math.round((btwAmount / exBtw) * 100) : null;
-  const rateFlag = btwRate !== null && btwRate !== 0 && btwRate !== 9 && btwRate !== 21;
+  const rateFlag = btwRate !== null && (btwRate < 0 || btwRate > 21);
 
   // [BRIDGE-EXTRACT] N-N page-number pattern in the invoice number → soft flag
   // (e.g. "1-1" likely a page indicator the AI mistook for a number). Never blocks.
