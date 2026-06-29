@@ -1362,7 +1362,19 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
           {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>task_alt</span>}
           Factuur {cand.invoiceNumber ?? '—'}
         </span>
-        <span style={{ fontSize: 11.5, fontWeight: 600, color: '#5F6368' }}>{Math.round(cand.confidence * 100)}%</span>
+        {/* [BANK-PROOF-ON-INVOICE] No confidence percentage in the owner UI: the
+            number leaks the algorithm's hesitation onto the owner, and 97% vs 60%
+            look alike while differing in safety. For a strong (auto/emphasis) match
+            we show a calm, non-assertive cue — "Waarschijnlijk" (likely), framed as
+            "check this", never "Betaald". The choice list shows no badge at all; the
+            owner picks there. The threshold logic in bank-matching.ts is untouched —
+            the number leaves the eye, not the logic. */}
+        {emphasis && (
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: M3.success, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>link</span>
+            Waarschijnlijk
+          </span>
+        )}
       </div>
       {!inline && (
         <div style={{ marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
