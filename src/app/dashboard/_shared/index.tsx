@@ -472,6 +472,50 @@ function AccountantNavLinks() {
   )
 }
 
+// ── ZzpNavLinks ───────────────────────────────────────────────────────────────
+// [TODAY-NAV-LINK] Owner-only nav link — "Vandaag" → /dashboard/vandaag.
+// Mirrors AccountantNavLinks exactly (same pattern, colors, hover). Shown only
+// for the ZZP'er in the header; does NOT change the default home (getHomePath
+// stays '/dashboard'). Adding more owner links later = append to `links`.
+
+function ZzpNavLinks() {
+  const router = useRouter()
+
+  const links = [
+    { label: 'Vandaag', href: '/dashboard/vandaag' },
+  ]
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+      {links.map(({ label, href }) => (
+        <button
+          key={href}
+          onClick={() => router.push(href)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            padding: '6px 10px', borderRadius: 6,
+            fontSize: 13, fontWeight: 500, color: '#5F6368',
+            transition: 'background 0.1s, color 0.1s',
+            whiteSpace: 'nowrap',
+          }}
+          onMouseEnter={e => {
+            const b = e.currentTarget as HTMLButtonElement
+            b.style.backgroundColor = '#F1F3F4'
+            b.style.color = '#1A73E8'
+          }}
+          onMouseLeave={e => {
+            const b = e.currentTarget as HTMLButtonElement
+            b.style.backgroundColor = 'transparent'
+            b.style.color = '#5F6368'
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── DashboardHeader ───────────────────────────────────────────────────────────
 // [BOEK-028] Responsive single-row header — no flex-wrap — May 2026
 // [INTEGRATION] role-based nav + Logo Universal (next/link, role-aware) — May 2026
@@ -542,6 +586,9 @@ export function DashboardHeader({
 
       {/* [INTEGRATION] Accountant nav links — only when role = accountant — May 2026 */}
       {isAccountant && <AccountantNavLinks />}
+
+      {/* [TODAY-NAV-LINK] Owner nav links — only when role = zzper */}
+      {!isAccountant && <ZzpNavLinks />}
 
       {/* Right icons */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
