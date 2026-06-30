@@ -116,6 +116,12 @@ export default function BankClient() {
   // counts as "done" (→ Gekoppeld, leaves Te bevestigen) once allCovered is true.
   const [confirmed, setConfirmed] = useState<Record<string, { numbers: string[]; allCovered: boolean }>>({}) // txId → confirmation state
   const [processingId, setProcessingId] = useState<string | null>(null)
+  // [BANK-BATCH-CONFIRM] Bulk-confirm only for strong 'auto' single-invoice matches
+  // (each already carries an unambiguous best candidate from the bank statement).
+  // 'choice' needs a human pick, multi-invoice needs per-number action — both stay
+  // single-confirm. selectedForBatch holds the txIds the owner ticked.
+  const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set())
+  const [batchRunning, setBatchRunning] = useState(false)
   // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
   // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
   // dropdown of every counterpart. Matches counterpart name, reference, or date.
@@ -293,7 +299,75 @@ export default function BankClient() {
     }
   }
 
-  // [BANK-ATTACH] Owner uploads the file that belongs to an unmatched expense
+  // [BANK-BATCH-CONFIRM] A transaction is batch-eligible only when it is a strong,
+  // single-invoice 'auto' match that already has a best candidate pre-selected and
+  // is not partially linked / not multi-number. These are the ones the owner can
+  // safely tick and confirm together; everything else keeps its single-confirm flow.
+  function isBatchEligible(s: Suggestion): boolean {
+    if (s.outcome !== 'auto' || !s.best) return false
+    if (isPartiallyLinked(s)) return false
+    // Multi-invoice (reference lists >1 number) → per-number action, never bulk.
+    // Count the same way the card does (comma-separated, trimmed, non-empty).
+    const refCount = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean).length
+    if (refCount > 1) return false
+    if (confirmed[s.transactionId]) return false // already acted on this session
+    return true
+  }
+
+  // [BANK-BATCH-CONFIRM] Confirm every ticked transaction, sequentially, reusing the
+  // SAME /api/bank/confirm endpoint (no batch endpoint, no backend change). Sequential
+  // (not Promise.all) keeps each payment's session-client auth + B.4 guard intact and
+  // makes partial failure easy to report. We do NOT call confirm() in the loop (it would
+  // run runMatch after each one and mutate the list mid-iteration); instead we POST
+  // directly, collect results, then refresh ONCE at the end.
+  async function confirmBatch() {
+    const targets = toConfirm.filter(
+      (s) => selectedForBatch.has(s.transactionId) && isBatchEligible(s)
+    )
+    if (targets.length === 0) return
+    setBatchRunning(true)
+    let ok = 0
+    let failed = 0
+    try {
+      for (const s of targets) {
+        const invoiceId = selected[s.transactionId] ?? s.best?.invoiceId
+        if (!invoiceId) {
+          failed++
+          continue
+        }
+        setProcessingId(s.transactionId)
+        try {
+          const res = await fetch('/api/bank/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transactionId: s.transactionId, invoiceId }),
+          })
+          const json = await res.json()
+          if (res.ok) {
+            ok++
+            const num = s.best?.invoiceNumber ?? ''
+            const allCovered = json?.allCovered !== false
+            setConfirmed((c) => ({ ...c, [s.transactionId]: { numbers: num ? [num] : [], allCovered } }))
+          } else {
+            failed++
+          }
+        } catch {
+          failed++
+        }
+      }
+    } finally {
+      setProcessingId(null)
+      setSelectedForBatch(new Set())
+      setBatchRunning(false)
+      // Refresh once: just-paid invoices drop out of candidates, lists re-derive.
+      await runMatch()
+      showToast(
+        failed === 0
+          ? `${ok} factuur/facturen bevestigd ✓`
+          : `${ok} bevestigd · ${failed} mislukt`
+      )
+    }
+  }
   // transaction → backend creates a paid incoming invoice from it and links it.
   // [BANK-STATEMENTS] Load the uploaded statements list.
   const loadStatements = useCallback(async () => {
@@ -546,6 +620,10 @@ export default function BankClient() {
   const noMatch = noneAll.filter((s) => !isPosReceipt(s)).sort(byDateDesc)
   const posList = noneAll.filter(isPosReceipt).sort(byDateDesc)
   const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).sort(byDateDesc)
+  // [BANK-BATCH-CONFIRM] The subset of "Te bevestigen" that can be bulk-confirmed
+  // (strong single-invoice auto matches), and how many of those are currently ticked.
+  const batchEligibleList = toConfirm.filter((s) => isBatchEligible(s))
+  const batchSelectedCount = batchEligibleList.filter((s) => selectedForBatch.has(s.transactionId)).length
 
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
@@ -773,6 +851,40 @@ export default function BankClient() {
 
           {/* Active group */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+            {/* [BANK-BATCH-CONFIRM] Bulk-confirm bar — only in "Te bevestigen", only
+                when there are strong 'auto' matches that can be safely ticked. */}
+            {bankTab === 'confirm' && batchEligibleList.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 14px', borderRadius: R.lg, background: M3.surfaceVariant, border: `1px solid ${M3.outline}` }}>
+                <button
+                  onClick={() => {
+                    const allTicked = batchEligibleList.every((s) => selectedForBatch.has(s.transactionId))
+                    setSelectedForBatch(
+                      allTicked ? new Set() : new Set(batchEligibleList.map((s) => s.transactionId))
+                    )
+                  }}
+                  disabled={batchRunning}
+                  style={{ border: 'none', background: 'none', cursor: batchRunning ? 'default' : 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600, color: M3.primary, padding: 0 }}
+                >
+                  {batchEligibleList.every((s) => selectedForBatch.has(s.transactionId)) && batchSelectedCount > 0
+                    ? 'Selectie wissen'
+                    : `Selecteer alle (${batchEligibleList.length})`}
+                </button>
+                <span style={{ fontSize: 12.5, color: '#5F6368', marginLeft: 'auto' }}>
+                  {batchSelectedCount > 0 ? `${batchSelectedCount} geselecteerd` : 'Vink sterke matches aan'}
+                </span>
+                <button
+                  onClick={confirmBatch}
+                  disabled={batchSelectedCount === 0 || batchRunning}
+                  style={{
+                    border: 'none', borderRadius: R.full, cursor: batchSelectedCount === 0 || batchRunning ? 'default' : 'pointer',
+                    fontFamily: FONT, fontSize: 13, fontWeight: 600, padding: '8px 16px',
+                    background: batchSelectedCount === 0 || batchRunning ? '#C7D0DB' : M3.primary, color: '#fff',
+                  }}
+                >
+                  {batchRunning ? 'Bezig…' : `Bevestig betaling (${batchSelectedCount})`}
+                </button>
+              </div>
+            )}
             {activeList.map((s) => (
               <TxCard
                 key={s.transactionId}
@@ -781,6 +893,16 @@ export default function BankClient() {
                 processing={processingId === s.transactionId}
                 isIgnoredTab={bankTab === 'ignored'}
                 confirmedNumbers={confirmed[s.transactionId]?.numbers ?? []}
+                batchEligible={bankTab === 'confirm' && isBatchEligible(s)}
+                batchChecked={selectedForBatch.has(s.transactionId)}
+                onBatchToggle={() =>
+                  setSelectedForBatch((set) => {
+                    const next = new Set(set)
+                    if (next.has(s.transactionId)) next.delete(s.transactionId)
+                    else next.add(s.transactionId)
+                    return next
+                  })
+                }
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
                 onConfirm={(num, invId) => confirm(s.transactionId, num, invId)}
                 onAttach={(files) => attachFile(s.transactionId, files, s.amount >= 0)}
@@ -940,13 +1062,16 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
   processing: boolean
   isIgnoredTab: boolean
   confirmedNumbers: string[]
+  batchEligible: boolean
+  batchChecked: boolean
+  onBatchToggle: () => void
   onSelect: (invoiceId: string) => void
   onConfirm: (invoiceNumber: string | null, invoiceId?: string) => void
   onAttach: (files: File[]) => void
@@ -1022,10 +1147,23 @@ function TxCard({
     <div style={{ borderRadius: R.lg, background: M3.surface, boxShadow: EL1, padding: 14, border: `1px solid #EEE` }}>
       {/* Transaction row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {s.counterpart || 'Onbekende tegenpartij'}
-          </div>
+        <div style={{ display: 'flex', gap: 10, minWidth: 0, alignItems: 'flex-start' }}>
+          {/* [BANK-BATCH-CONFIRM] Tick to include this strong match in a bulk confirm.
+              Only rendered for batch-eligible (auto, single-invoice) transactions. */}
+          {batchEligible && (
+            <input
+              type="checkbox"
+              checked={batchChecked}
+              onChange={onBatchToggle}
+              disabled={processing}
+              aria-label="Selecteer voor bevestigen"
+              style={{ marginTop: 2, width: 18, height: 18, accentColor: M3.primary, cursor: processing ? 'default' : 'pointer', flexShrink: 0 }}
+            />
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {s.counterpart || 'Onbekende tegenpartij'}
+            </div>
           <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span>{s.date}</span>
             {/* [BANK-REF-DISPLAY] Show the clean extracted invoice number(s) as a
@@ -1057,6 +1195,7 @@ function TxCard({
                 </span>
               </button>
             )}
+          </div>
           </div>
         </div>
         <div style={{ fontFamily: FONT_NUM, fontSize: 14.5, fontWeight: 700, color: amountColor, whiteSpace: 'nowrap' }}>
