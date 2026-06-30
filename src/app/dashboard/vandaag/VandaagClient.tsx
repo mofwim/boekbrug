@@ -94,7 +94,17 @@ export default function VandaagClient({ payable, remind }: Props) {
       return next;
     });
 
-  const open = (id: string) => router.push(`/dashboard/invoice/${id}`);
+  // [TODAY-ROUTE-FIX] Direction-aware navigation. An incoming invoice has its
+  // complete owner surface in IncomingManageClient (PDF, PAY-SAFE/QR, vendor
+  // details) and lands on the exact row via ?focus=. The single invoice page
+  // (/dashboard/invoice/[id]) is the outgoing surface (creditnota, actions) and
+  // renders an incoming invoice incompletely, so we never send incoming there.
+  const open = (id: string, direction: string) =>
+    router.push(
+      direction === "incoming"
+        ? `/dashboard/incoming/manage?focus=${id}`
+        : `/dashboard/invoice/${id}`
+    );
 
   // Apply the ≤3-day window + session dismissals, keep oldest-due first (already
   // sorted ascending server-side; we re-sort defensively after filtering).
@@ -189,7 +199,7 @@ function ListSection({
   title: string;
   subtitle: string;
   invoices: VandaagInvoice[];
-  onOpen: (id: string) => void;
+  onOpen: (id: string, direction: string) => void;
   onDismiss: (id: string) => void;
 }) {
   if (invoices.length === 0) return null;
@@ -233,7 +243,7 @@ function InvoiceCard({
   onDismiss,
 }: {
   invoice: VandaagInvoice;
-  onOpen: (id: string) => void;
+  onOpen: (id: string, direction: string) => void;
   onDismiss: (id: string) => void;
 }) {
   const due = invoice.due_date as string;
@@ -306,7 +316,7 @@ function InvoiceCard({
           amount, PDF, pay, mark-as-paid). "Vandaag" never duplicates that logic. */}
       <button
         type="button"
-        onClick={() => onOpen(invoice.id)}
+        onClick={() => onOpen(invoice.id, invoice.direction)}
         style={{
           width: "100%",
           padding: "10px 16px",
