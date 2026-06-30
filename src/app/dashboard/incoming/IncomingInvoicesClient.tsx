@@ -848,6 +848,9 @@ function InvoiceCard({
   onConfirmPaid,
   onIgnore,
   onRestore,
+  selectMode = false,
+  selected = false,
+  onSelect = () => {},
 }: {
   invoice: IncomingInvoice;
   mode: Tab;
@@ -856,6 +859,10 @@ function InvoiceCard({
   onConfirmPaid: () => void;
   onIgnore: () => void;
   onRestore: () => void;
+  // [INTAKE-VERIFY-BULK] selection (pending bulk-verify)
+  selectMode?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   const [loadingPdf, setLoadingPdf] = useState(false);
 
@@ -885,7 +892,7 @@ function InvoiceCard({
     >
       {/* Header — always visible, tappable */}
       <button
-        onClick={onToggle}
+        onClick={selectMode ? onSelect : onToggle}
         style={{
           width: "100%", padding: "16px", border: "none",
           background: "transparent", cursor: "pointer", textAlign: "left",
@@ -893,6 +900,20 @@ function InvoiceCard({
           gap: 12,
         }}
       >
+        {/* [INTAKE-VERIFY-BULK] selection checkbox — only in pending select mode */}
+        {selectMode && (
+          <span
+            style={{
+              flexShrink: 0, width: 22, height: 22, borderRadius: 11,
+              border: `2px solid ${selected ? "#34c759" : "#c7c7cc"}`,
+              background: selected ? "#34c759" : "transparent",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#fff", fontSize: 13, fontWeight: 700,
+            }}
+          >
+            {selected ? "✓" : ""}
+          </span>
+        )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
@@ -1418,6 +1439,76 @@ export default function IncomingInvoicesClient({
     []
   );
 
+  // ── [INTAKE-VERIFY-BULK] Bulk verify — select many → confirm via modal ──
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkRunning, setBulkRunning] = useState(false);
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+
+  // "Selecteer alle" picks only the READY ones (health ok); needs-review invoices
+  // stay out so they get individual attention.
+  const selectAllReady = () => {
+    setSelected(new Set(
+      pending.filter((p) => p.health.level !== "needs-review").map((p) => p.id)
+    ));
+  };
+
+  // Sequential batch verify — uses each invoice's extracted amounts as-is (no
+  // per-invoice review). Optimistic remove on success; partial failures reported.
+  const handleVerifyBatch = useCallback(async () => {
+    const targets = pending.filter((p) => selected.has(p.id));
+    if (targets.length === 0) return;
+    setBulkConfirmOpen(false);
+    setBulkRunning(true);
+
+    let ok = 0;
+    const failedNames: string[] = [];
+    for (const inv of targets) {
+      try {
+        const res = await fetch(`/api/email/confirm/${inv.id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "verify",
+            total_ex_btw: inv.total_ex_btw,
+            btw_amount: inv.btw_amount,
+            total_inc_btw: inv.total_inc_btw,
+            client_name: inv.client_name,
+            invoice_number: inv.invoice_number,
+            invoice_date: inv.invoice_date,
+          }),
+        });
+        if (res.ok) {
+          ok++;
+          setPending((prev) => prev.filter((p) => p.id !== inv.id));
+        } else {
+          failedNames.push(inv.client_name || inv.invoice_number);
+        }
+      } catch {
+        failedNames.push(inv.client_name || inv.invoice_number);
+      }
+    }
+
+    setBulkRunning(false);
+    setSelectMode(false);
+    setSelected(new Set());
+    if (failedNames.length === 0) {
+      showToast(`✓ ${ok} factuur${ok > 1 ? "en" : ""} geverifieerd`);
+    } else {
+      showToast(`${ok} geverifieerd · ${failedNames.length} mislukt — ververs de pagina`);
+    }
+  }, [pending, selected]);
+
   // ── [BRIDGE-B] Pay — → paid (requires payment_method: bank | kas) ──
   const handlePay = useCallback(
     async (
@@ -1639,6 +1730,38 @@ export default function IncomingInvoicesClient({
           ))}
         </div>
 
+        {/* [INTAKE-VERIFY-BULK] Bulk-select toolbar — pending tab only */}
+        {tab === "pending" && pending.length > 0 && (
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "0 4px", marginBottom: 10,
+          }}>
+            {!selectMode ? (
+              <button
+                onClick={() => setSelectMode(true)}
+                style={{ background: "none", border: "none", color: "#007aff", fontWeight: 600, fontSize: 14, cursor: "pointer", padding: "4px 0" }}
+              >
+                Selecteer
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={selectAllReady}
+                  style={{ background: "none", border: "none", color: "#007aff", fontWeight: 600, fontSize: 14, cursor: "pointer", padding: "4px 0" }}
+                >
+                  Selecteer alle (klaar)
+                </button>
+                <button
+                  onClick={exitSelectMode}
+                  style={{ background: "none", border: "none", color: "#8e8e93", fontWeight: 600, fontSize: 14, cursor: "pointer", padding: "4px 0" }}
+                >
+                  Annuleer
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Invoice list */}
         {list.length > 0 ? (
           <div style={{ marginBottom: 24 }}>
@@ -1652,6 +1775,9 @@ export default function IncomingInvoicesClient({
                 onConfirmPaid={() => setConfirmPaidFor(inv)}
                 onIgnore={() => setIgnoreFor(inv)}
                 onRestore={() => handleRestore(inv)}
+                selectMode={tab === "pending" && selectMode}
+                selected={selected.has(inv.id)}
+                onSelect={() => toggleSelect(inv.id)}
               />
             ))}
           </div>
@@ -1683,6 +1809,83 @@ export default function IncomingInvoicesClient({
           onPay={(amounts, method, paymentDate) => handlePay(confirmPaidFor, amounts, method, paymentDate)}
           onCancel={() => setConfirmPaidFor(null)}
         />
+      )}
+
+      {/* [INTAKE-VERIFY-BULK] Sticky action bar — select mode, ≥1 selected */}
+      {tab === "pending" && selectMode && selected.size > 0 && !bulkRunning && (
+        <div
+          style={{
+            position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1500,
+            padding: "12px 16px calc(12px + env(safe-area-inset-bottom))",
+            background: "rgba(255,255,255,0.96)", backdropFilter: "blur(8px)",
+            borderTop: "1px solid #e5e5ea",
+            display: "flex", justifyContent: "center",
+          }}
+        >
+          <button
+            onClick={() => setBulkConfirmOpen(true)}
+            style={{
+              width: "100%", maxWidth: 430, padding: "16px", borderRadius: 14,
+              background: "#34c759", color: "#fff", border: "none",
+              fontWeight: 700, fontSize: 16, cursor: "pointer",
+            }}
+          >
+            Bevestig {selected.size} factuur{selected.size > 1 ? "en" : ""}
+          </button>
+        </div>
+      )}
+
+      {/* [INTAKE-VERIFY-BULK] Running overlay */}
+      {bulkRunning && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#1c1c1e" }}>
+            Bezig met verifiëren…
+          </div>
+        </div>
+      )}
+
+      {/* [INTAKE-VERIFY-BULK] Confirmation modal before the batch runs */}
+      {bulkConfirmOpen && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 2000 }}
+          onClick={() => setBulkConfirmOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
+              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+              width: "100%", maxWidth: 430,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 19, color: "#1c1c1e", marginBottom: 4 }}>
+              {selected.size} factuur{selected.size > 1 ? "en" : ""} bevestigen?
+            </div>
+            <div style={{ fontSize: 14, color: "#8e8e93", marginBottom: 20 }}>
+              De geselecteerde facturen worden geverifieerd en als Crediteur naar je boekhouder gestuurd. De bedragen worden overgenomen zoals uitgelezen.
+            </div>
+            <button
+              onClick={handleVerifyBatch}
+              style={{
+                width: "100%", padding: "16px", borderRadius: 14,
+                background: "#34c759", color: "#fff", border: "none",
+                fontWeight: 700, fontSize: 16, cursor: "pointer", marginBottom: 8,
+              }}
+            >
+              Ja, bevestig {selected.size}
+            </button>
+            <button
+              onClick={() => setBulkConfirmOpen(false)}
+              style={{
+                width: "100%", padding: "14px", borderRadius: 14,
+                background: "#f2f2f7", color: "#1c1c1e", border: "none",
+                fontWeight: 600, fontSize: 15, cursor: "pointer",
+              }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Ignore confirmation */}
