@@ -9,7 +9,7 @@ import type { Database } from "@/types/database.types";
 
 type DocumentUpdate = Database["public"]["Tables"]["documents"]["Update"];
 const FOLDER_SELECT = "id, user_id, name, parent_id, color, created_at, starred, is_system, folder_type";
-const DOC_SELECT    = "id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, starred, trashed, trashed_at, source";
+const DOC_SELECT    = "id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, starred, trashed, trashed_at, source, shared";
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -85,6 +85,11 @@ export async function PATCH(req: NextRequest) {
     file_name?: string;
     starred?: boolean;
     trashed?: boolean;
+    // [BRUG-FILES-SHARED] Explicit share toggle (the "Delen met boekhouder" button).
+    // shared=true makes the file visible to the accountant WITHOUT moving it — the
+    // file stays in its original folder. shared=false un-shares it. period/year are
+    // set automatically when sharing so the closing-package ZIP can place it.
+    shared?: boolean;
   };
 
   const patch: DocumentUpdate = {};
@@ -95,12 +100,24 @@ export async function PATCH(req: NextRequest) {
     patch.trashed_at = body.trashed ? new Date().toISOString() : null;
   }
 
-  // [BRUG-FILES-SHARED] Magic shared folder. When a file is moved INTO a folder of
-  // type 'shared' (the "Gedeeld met boekhouder" folder), it is automatically shared
-  // with the accountant: shared=true is the field the accountant RLS reads, and
-  // period/year tie it to the CURRENT quarter so the closing-package ZIP can place
-  // it. Moving the file OUT of the shared folder un-shares it (shared=false).
-  // This is the explicit owner action: dropping a file in the accountant folder.
+  // [BRUG-FILES-SHARED] Explicit share toggle. A file can be shared (or un-shared)
+  // in place via the "Delen met boekhouder" / "Niet meer delen" button — no move.
+  // When sharing, stamp the current quarter so the ZIP can place it.
+  if (typeof body.shared === "boolean") {
+    patch.shared = body.shared;
+    if (body.shared) {
+      const now = new Date();
+      const y = now.getFullYear();
+      patch.period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+      patch.year   = y;
+    }
+  }
+
+  // [BRUG-FILES-SHARED] Magic shared folder. Moving a file INTO the "Gedeeld met
+  // boekhouder" folder (folder_type='shared') auto-shares it (shared=true + current
+  // quarter). Moving it elsewhere does NOT un-share — un-sharing is an explicit
+  // action (the toggle above), so an ordinary reorganizing move never silently
+  // removes the accountant's access.
   if ("folder_id" in body) {
     const newFolderId = body.folder_id ?? null;
     patch.folder_id = newFolderId;
@@ -122,10 +139,8 @@ export async function PATCH(req: NextRequest) {
       patch.shared = true;
       patch.period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
       patch.year   = y;
-    } else {
-      // Moved out of (or never into) the shared folder → not shared anymore.
-      patch.shared = false;
     }
+    // else: plain move — leave shared untouched.
   }
 
   if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });

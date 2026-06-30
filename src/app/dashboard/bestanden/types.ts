@@ -42,6 +42,10 @@ export interface BestandRow {
   starred?: boolean;
   trashed?: boolean;
   trashed_at?: string | null;
+  // [BRUG-FILES-SHARED] true = visible to the linked accountant (bridge + ZIP).
+  // The accountant RLS reads this flag; it is independent of folder_id, so a file
+  // can be shared while staying in its original folder.
+  shared?: boolean;
 }
 
 export interface SearchResult extends BestandRow {
