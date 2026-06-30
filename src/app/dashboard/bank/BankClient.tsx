@@ -60,14 +60,6 @@ function cleanBankDescription(raw: string | null): string {
     .trim()
 }
 
-const SIGNAL_LABEL: Record<string, string> = {
-  reference: 'Kenmerk',
-  amount: 'Bedrag',
-  date: 'Datum',
-  counterpart: 'Tegenpartij',
-  ai: 'AI',
-}
-
 // ─── Types (mirror the /api/bank/match DTO) ──────────────────────────────────
 type Outcome = 'auto' | 'choice' | 'none'
 interface Candidate {
@@ -1384,15 +1376,20 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
           {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>task_alt</span>}
           Factuur {cand.invoiceNumber ?? '—'}
         </span>
-        <span style={{ fontSize: 11.5, fontWeight: 600, color: '#5F6368' }}>{Math.round(cand.confidence * 100)}%</span>
       </div>
       {!inline && (
         <div style={{ marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-          {cand.signals.map((sig) => (
-            <span key={sig} style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: R.full, background: '#fff', color: '#5F6368', border: '1px solid #E0E0E0' }}>
-              {SIGNAL_LABEL[sig] ?? sig}
+          {/* [BANK-PROOF-LINE] Instead of an algorithmic "97%" + cryptic Kenmerk/Bedrag
+              chips, state in plain Dutch WHY this is a safe confirm: the amount and the
+              invoice number shown at the top of the card both come straight from the
+              owner's own bank statement. The owner verifies against a trusted source
+              (their bank), not the app's confidence score. Only on a strong (emphasis)
+              match; the choice list shows nothing extra. */}
+          {emphasis && (
+            <span style={{ fontSize: 11.5, color: M3.success, fontWeight: 500 }}>
+              Dit bedrag en factuurnummer staan in je bankafschrift
             </span>
-          ))}
+          )}
           {/* [BANK-INVOICE-FILE] Open the actual invoice PDF before confirming. */}
           {onOpenFile && (
             <button
