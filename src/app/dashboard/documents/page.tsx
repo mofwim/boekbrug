@@ -4,8 +4,9 @@
 // accountant RLS reads folder membership only -> its shares could silently never
 // reach the accountant. We do NOT delete; we redirect each role to its live system:
 //   - client (no clientId)      -> /dashboard/bestanden
-//   - accountant (?clientId=...) -> /dashboard/brug (clientId passed through; brug
-//                                   ignores it harmlessly if it selects clients another way)
+//   - accountant (?clientId=...) -> /dashboard/brug  (brug shows ALL linked clients'
+//                                   invoices + shared documents; it does not read
+//                                   clientId, so we drop it rather than pass it.)
 
 import { redirect } from "next/navigation";
 
@@ -16,11 +17,12 @@ interface Props {
 export default async function DocumentsPage({ searchParams }: Props) {
   const { clientId } = await searchParams;
 
-  // [DOCS-DISABLE-OLD] Accountant came here to view a specific client's files.
-  // Send them to the live accountant system (brug), forwarding clientId so brug
-  // can pre-select the client if it accepts that param.
+  // [DOCS-DISABLE-OLD] Accountant came here to view a client's files. The live
+  // accountant system (brug) lists every linked client's invoices AND shared
+  // documents in one tree, selecting clients itself (no clientId param), so we
+  // send them to brug without forwarding clientId.
   if (clientId) {
-    redirect(`/dashboard/brug?clientId=${encodeURIComponent(clientId)}`);
+    redirect("/dashboard/brug");
   }
 
   // [DOCS-DISABLE-OLD] Client (owner) -> live files system.
