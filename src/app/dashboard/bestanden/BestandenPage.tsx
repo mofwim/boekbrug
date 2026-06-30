@@ -28,7 +28,6 @@ import { Trash } from "./components/Trash";
 import { PreviewModal } from "./components/modals/PreviewModal";
 import { RenameModal } from "./components/modals/RenameModal";
 import { MoveModal } from "./components/modals/MoveModal";
-import { SharePopup } from "./components/modals/SharePopup";
 
 // ─── Breadcrumb ────────────────────────────────────────────────────────────────
 
@@ -212,7 +211,6 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [preview, setPreview] = useState<BestandRow | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: "file" | "folder" } | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ id: string; type: "file" | "folder"; excludeId?: string } | null>(null);
-  const [sharePopup, setSharePopup] = useState<{ doc: BestandRow } | null>(null);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: import("./types").ContextMenuItem[] } | null>(null);
 
@@ -530,20 +528,19 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // boekhouder" folder for the owner's own visual organization — but shared=true is
   // what makes the accountant see it. (Previously only folder_id was written, so the
   // accountant never saw shared files — that bug is fixed here.)
-  const handleShare = async (doc: BestandRow, period: string, year: number) => {
+  // [BRUG-FILES-SHARED] Sharing = moving the file into the magic "Gedeeld met
+  // boekhouder" folder. The bestanden PATCH route detects the shared folder and
+  // automatically sets shared=true + the current quarter, so the accountant sees
+  // it and it lands in the closing-package ZIP. No popup, no quarter picker —
+  // dropping it in the accountant folder IS the explicit share action.
+  const handleShareToFolder = async (docId: string) => {
     const sf = allFolders.find(f => f.name === "Gedeeld met boekhouder");
-    await fetch(`/api/bestanden?id=${doc.id}`, {
+    if (!sf) return;
+    await fetch(`/api/bestanden?id=${docId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        shared: true,
-        period,
-        year,
-        ...(sf ? { folder_id: sf.id } : {}),
-      }),
+      body: JSON.stringify({ folder_id: sf.id }),
     });
-    // Optimistic UI update — period/year only; `shared` is a backend flag not shown here.
-    setDocs(p => p.map(d => d.id === doc.id ? { ...d, period, year } : d));
-    setSharePopup(null);
+    setDocs(p => p.filter(d => d.id !== docId));
   };
 
   // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
@@ -591,14 +588,14 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // [BRUG-FILES-SHARED] Bulk share has no quarter picker, so it defaults to the
   // current quarter. Writes shared=true (+ period/year) so the accountant sees the
   // files; also moves them into "Gedeeld met boekhouder" for visual organization.
+  // [BRUG-FILES-SHARED] Bulk share = move selected files into the shared folder;
+  // the PATCH route auto-shares them (shared=true + current quarter).
   const handleBulkShare = async () => {
     const sf = allFolders.find(f => f.name === "Gedeeld met boekhouder");
-    const now = new Date();
-    const y = now.getFullYear();
-    const period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+    if (!sf) return;
     await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shared: true, period, year: y, ...(sf ? { folder_id: sf.id } : {}) }),
+      body: JSON.stringify({ folder_id: sf.id }),
     })));
     setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
     setSelectedIds(new Set());
@@ -624,7 +621,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         { label: "Naam wijzigen", icon: "edit", onClick: () => setRenameTarget({ id: doc.id, name: doc.file_name, type: "file" }) },
         { label: "Verplaatsen", icon: "drive_file_move", onClick: () => setMoveTarget({ id: doc.id, type: "file" }) },
         { label: doc.starred ? "Ster verwijderen" : "Markeren met ster", icon: "star", onClick: () => handleStar(doc.id, "file", !!doc.starred) },
-        { label: "Delen met boekhouder", icon: "share", onClick: () => setSharePopup({ doc }) },
+        { label: "Delen met boekhouder", icon: "share", onClick: () => handleShareToFolder(doc.id) },
         { label: "Naar prullenbak", icon: "delete", onClick: () => handleDelete(doc.id), danger: true, divider: true },
       ],
     });
@@ -714,7 +711,6 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       {renameTarget && <RenameModal currentName={renameTarget.name} type={renameTarget.type} onConfirm={handleRenameConfirm} onClose={() => setRenameTarget(null)} />}
       {moveTarget && <MoveModal folders={allFolders} excludeId={moveTarget.excludeId} onMove={fid => handleMove(moveTarget.id, moveTarget.type, fid)} onClose={() => setMoveTarget(null)} />}
       {bulkMoveOpen && <MoveModal folders={allFolders} onMove={handleBulkMove} onClose={() => setBulkMoveOpen(false)} />}
-      {sharePopup && <SharePopup fileName={sharePopup.doc.file_name} accountantName="uw boekhouder" onShare={(period, year) => handleShare(sharePopup.doc, period, year)} onKeepPrivate={() => setSharePopup(null)} />}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
 
       {/* ── Clipboard indicator ── */}
@@ -844,6 +840,19 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                   const r = await fetch("/api/files", { method: "POST", body: fd });
                   const j = await r.json() as { id?: string };
                   if (j.id) {
+                    // [BRUG-FILES-SHARED] Did the owner upload INTO the shared folder?
+                    // If so, that IS the share action: PATCH folder_id=shared so the
+                    // route auto-shares (shared=true + current quarter). Skip AI
+                    // re-placement, which would otherwise move it out of the folder.
+                    const sharedFolder = allFolders.find(f => f.name === "Gedeeld met boekhouder");
+                    const uploadedIntoShared = !!sharedFolder && currentFolderId === sharedFolder.id;
+
+                    if (uploadedIntoShared) {
+                      await fetch(`/api/bestanden?id=${j.id}`, {
+                        method: "PATCH", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ folder_id: sharedFolder!.id }),
+                      });
+                    } else {
                     // Silent AI classification
                     try {
                       const cr = await fetch("/api/bestanden/classify", {
@@ -860,6 +869,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                         }
                       }
                     } catch { /* silent */ }
+                    }
                     handleUploaded({
                       id: j.id, file_name: file.name, file_url: "", file_size: file.size,
                       file_type: file.type, doc_type: null, period: null, year: now.getFullYear(),

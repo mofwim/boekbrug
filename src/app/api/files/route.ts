@@ -1,18 +1,19 @@
 // app/api/files/route.ts
 // [BOEK-010] Document upload (POST) + list (GET)
 // [BOEK-010] Added ?clientId= support — accountant can view a linked client's shared folder
-// [DOCS-DISABLE-OLD] POST disabled (410 Gone) — this old file-system shared via the
-//   documents.shared flag, but accountant RLS reads folder membership only, so uploads
-//   here could silently never reach the accountant. GET is read-only and kept intact.
+// [BRUG-FILES-SHARED] POST restored. The live "Mijn bestanden" (BestandenPage) uploads
+//   through this route, so it must work. uploadDocument does NOT write documents.shared,
+//   so uploading here never silently shares — sharing is a separate, explicit step
+//   (moving/uploading into the "Gedeeld met boekhouder" folder, handled in the bestanden
+//   PATCH route). GET kept; DELETE on [id] stays disabled.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { listDocuments } from "@/lib/documents";
+import { uploadDocument, listDocuments } from "@/lib/documents";
 
 // GET /api/files
 //   ?year=2026&quarter=1&doc_type=pdf&shared=true            ← ZZP own files
 //   ?clientId=<uuid>&shared=true                             ← accountant viewing client's shared folder
-// [DOCS-DISABLE-OLD] GET kept — read-only, creates no share. Live reads may still rely on it.
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -41,7 +42,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Geen toegang tot deze klant" }, { status: 403 });
     }
 
-    // List only that client's shared documents
     try {
       const result = await listDocuments(clientId, {
         year,
@@ -76,17 +76,47 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/files — multipart/form-data
-// [DOCS-DISABLE-OLD] Disabled. Uploading here shared via documents.shared, which the
-//   accountant RLS does not read -> silent shares that never reach the accountant.
-//   The live owner system is /dashboard/bestanden. We return 410 Gone instead of
-//   writing anything, so even a programmatic call cannot create a hidden share.
-//   No code or data is deleted; uploadDocument stays available in @/lib/documents.
-export async function POST() {
-  return NextResponse.json(
-    {
-      error: "Deze uploadroute is uitgeschakeld. Gebruik 'Mijn bestanden' (/dashboard/bestanden).",
-      code: "DOCS_DISABLE_OLD",
-    },
-    { status: 410 }
-  );
+// Fields: file, year, quarter, invoice_id?, notes?
+// [BRUG-FILES-SHARED] Restored. Uploads a file via uploadDocument. Note that
+//   uploadDocument does not set documents.shared, so an upload is never a share by
+//   itself — the magic "Gedeeld met boekhouder" folder turns it into a share, in the
+//   bestanden PATCH route, when the file lands in that folder.
+export async function POST(req: NextRequest) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+
+  const formData  = await req.formData();
+  const file      = formData.get("file") as File | null;
+
+  if (!file) {
+    return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 });
+  }
+
+  const now       = new Date();
+  const year      = Number(formData.get("year")    ?? now.getFullYear());
+  const quarter   = Number(formData.get("quarter") ?? Math.ceil((now.getMonth() + 1) / 3));
+  const invoiceId = (formData.get("invoice_id") as string | null) ?? undefined;
+  const notes     = (formData.get("notes")     as string | null) ?? undefined;
+  // [BESTANDEN-DUP] explicit "upload again" confirmation from the dup modal
+  const allowDuplicate = formData.get("allowDuplicate") === "true";
+
+  const { id, error, duplicate, existing } = await uploadDocument(user.id, file, {
+    year,
+    quarter,
+    invoiceId,
+    notes,
+    allowDuplicate,
+  });
+
+  // [BRIDGE-EXTRACT] Duplicate → 409, surface WHERE the file already lives.
+  if (duplicate) {
+    return NextResponse.json(
+      { error, duplicate: true, existing },
+      { status: 409 }
+    );
+  }
+
+  if (error) return NextResponse.json({ error }, { status: 400 });
+  return NextResponse.json({ id }, { status: 201 });
 }

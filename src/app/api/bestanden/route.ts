@@ -85,27 +85,48 @@ export async function PATCH(req: NextRequest) {
     file_name?: string;
     starred?: boolean;
     trashed?: boolean;
-    // [BRUG-FILES-SHARED] sharing with the accountant. The accountant RLS
-    // (documents_accountant_read) reads shared=true, so this flag is what
-    // actually makes a file visible to the accountant. period/year tie the
-    // shared file to a quarter so the closing-package ZIP can place it.
-    shared?: boolean;
-    period?: string | null;
-    year?: number | null;
   };
 
   const patch: DocumentUpdate = {};
   if (typeof body.file_name === "string") patch.file_name = body.file_name.trim();
-  if ("folder_id" in body)                patch.folder_id = body.folder_id ?? null;
   if (typeof body.starred === "boolean")   patch.starred   = body.starred;
   if (typeof body.trashed === "boolean") {
     patch.trashed    = body.trashed;
     patch.trashed_at = body.trashed ? new Date().toISOString() : null;
   }
-  // [BRUG-FILES-SHARED] shared is the field the accountant RLS reads.
-  if (typeof body.shared === "boolean") patch.shared = body.shared;
-  if ("period" in body)                 patch.period = body.period ?? null;
-  if ("year" in body)                   patch.year   = body.year ?? null;
+
+  // [BRUG-FILES-SHARED] Magic shared folder. When a file is moved INTO a folder of
+  // type 'shared' (the "Gedeeld met boekhouder" folder), it is automatically shared
+  // with the accountant: shared=true is the field the accountant RLS reads, and
+  // period/year tie it to the CURRENT quarter so the closing-package ZIP can place
+  // it. Moving the file OUT of the shared folder un-shares it (shared=false).
+  // This is the explicit owner action: dropping a file in the accountant folder.
+  if ("folder_id" in body) {
+    const newFolderId = body.folder_id ?? null;
+    patch.folder_id = newFolderId;
+
+    let isSharedTarget = false;
+    if (newFolderId) {
+      const { data: folder } = await supabase
+        .from("folders")
+        .select("folder_type")
+        .eq("id", newFolderId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      isSharedTarget = folder?.folder_type === "shared";
+    }
+
+    if (isSharedTarget) {
+      const now = new Date();
+      const y = now.getFullYear();
+      patch.shared = true;
+      patch.period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+      patch.year   = y;
+    } else {
+      // Moved out of (or never into) the shared folder → not shared anymore.
+      patch.shared = false;
+    }
+  }
 
   if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
 
