@@ -1121,37 +1121,102 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const [dragOver, setDragOver] = useState(false);
   // [SMART-INTAKE-B] separate camera input (capture) alongside the file input
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  // [INTAKE-MULTI] batch progress + partial-failure summary
+  const [current, setCurrent] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [failed, setFailed] = useState<{ name: string; reason: string }[]>([]);
 
-  const handleFile = async (file: File) => {
-    if (uploading) return;
-    const okType =
-      file.type === "application/pdf" ||
-      file.type.startsWith("image/") ||
-      file.name.toLowerCase().endsWith(".pdf") ||
-      /\.(xml|mt940|sta|camt|053|txt)$/i.test(file.name);
-    if (!okType) {
-      alert("Alleen PDF, afbeelding of bankafschrift toegestaan");
+  // [INTAKE-MULTI] Max files per batch — protects the server / AI from a huge drop.
+  const MAX_BATCH = 20;
+
+  // [INTAKE-MULTI] After a reload-once, restore the failure summary that was
+  // stashed before reloading, so the user still sees what didn't go through.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("intakeFailed");
+      if (raw) {
+        setFailed(JSON.parse(raw));
+        sessionStorage.removeItem("intakeFailed");
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const isOkType = (file: File) =>
+    file.type === "application/pdf" ||
+    file.type.startsWith("image/") ||
+    file.name.toLowerCase().endsWith(".pdf") ||
+    /\.(xml|mt940|sta|camt|053|txt)$/i.test(file.name);
+
+  // [INTAKE-MULTI] Upload one file via the unified /api/intake router. Throws on
+  // failure so the batch loop records the reason and continues with the next file.
+  const uploadOne = async (file: File): Promise<void> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/intake", { method: "POST", body: formData });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((data && data.error) || "Upload mislukt");
+    }
+  };
+
+  // [INTAKE-MULTI] Sequential batch — safe on the server/AI (mirrors the proven
+  // bestanden UploadArea pattern). Partial failure: keep going, report at the end.
+  // Reload ONCE so every successful upload appears in the queue.
+  const handleFiles = async (fileList: FileList | null) => {
+    if (uploading || !fileList || fileList.length === 0) return;
+
+    const all = Array.from(fileList);
+    if (all.length > MAX_BATCH) {
+      alert(`Maximaal ${MAX_BATCH} bestanden per keer. Je koos er ${all.length}.`);
+      return;
+    }
+
+    // Pre-filter by type — unsupported files are reported, never sent.
+    const accepted: File[] = [];
+    const batchFailed: { name: string; reason: string }[] = [];
+    for (const f of all) {
+      if (isOkType(f)) accepted.push(f);
+      else batchFailed.push({ name: f.name, reason: "Niet ondersteund bestandstype" });
+    }
+
+    if (accepted.length === 0) {
+      setFailed(batchFailed);
       return;
     }
 
     setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      // [SMART-INTAKE-B] Unified router: classifies invoice / receipt / bank /
-      // document and routes accordingly (was /api/email/upload — invoice-only).
-      const res = await fetch("/api/intake", { method: "POST", body: formData });
-      const data = await res.json();
-      if (res.ok) {
-        onUploaded();
-        window.location.reload();
-      } else {
-        alert(data.error || "Upload mislukt");
+    setFailed([]);
+    setTotal(accepted.length);
+    let anySuccess = false;
+
+    for (let i = 0; i < accepted.length; i++) {
+      setCurrent(i + 1);
+      try {
+        await uploadOne(accepted[i]);
+        anySuccess = true;
+      } catch (err) {
+        batchFailed.push({
+          name: accepted[i].name,
+          reason: err instanceof Error ? err.message : "Onbekende fout",
+        });
       }
-    } catch {
-      alert("Upload mislukt — probeer opnieuw");
-    } finally {
-      setUploading(false);
+    }
+
+    setUploading(false);
+    setCurrent(0);
+    setTotal(0);
+
+    if (anySuccess) {
+      onUploaded();
+      // Stash failures so they survive the reload, then reload ONCE so all
+      // successful uploads show up in the queue.
+      if (batchFailed.length > 0) {
+        try { sessionStorage.setItem("intakeFailed", JSON.stringify(batchFailed)); } catch { /* ignore */ }
+      }
+      window.location.reload();
+    } else {
+      // Nothing succeeded — no reload, just show why.
+      setFailed(batchFailed);
     }
   };
 
@@ -1174,8 +1239,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         capture="environment"
         style={{ display: "none" }}
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
+          handleFiles(e.target.files);
           e.currentTarget.value = "";
         }}
       />
@@ -1194,7 +1258,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         {uploading ? "Verwerken…" : "Foto maken"}
       </button>
 
-      {/* File / drag-drop (PDF, image, bank statement) */}
+      {/* File / drag-drop (PDF, image, bank statement) — [INTAKE-MULTI] multiple */}
       <label
         style={{
           display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
@@ -1203,30 +1267,78 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           background: dragOver ? "#f0f7ff" : "#fafafa",
           cursor: uploading ? "not-allowed" : "pointer",
         }}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
           e.preventDefault();
           setDragOver(false);
-          const file = e.dataTransfer.files[0];
-          if (file) handleFile(file);
+          handleFiles(e.dataTransfer.files);
         }}
       >
         <input
           type="file"
+          multiple
           accept=".pdf,image/*,.xml,.mt940,.sta,.camt,.053,.txt"
           style={{ display: "none" }}
+          disabled={uploading}
           onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
+            handleFiles(e.target.files);
+            e.currentTarget.value = "";
           }}
         />
         <span style={{ fontSize: 28 }}>{uploading ? "⏳" : "📎"}</span>
         <span style={{ fontSize: 14, color: uploading ? "#8e8e93" : "#007aff", fontWeight: 600 }}>
-          {uploading ? "Verwerken…" : "Kies bestand of sleep hier naartoe"}
+          {uploading
+            ? (total > 1 ? `${current} van ${total} verwerkt…` : "Verwerken…")
+            : "Kies bestanden of sleep hier naartoe"}
         </span>
-        <span style={{ fontSize: 12, color: "#8e8e93" }}>PDF, afbeelding of bankafschrift</span>
+        <span style={{ fontSize: 12, color: "#8e8e93" }}>
+          PDF, afbeelding of bankafschrift — meerdere tegelijk
+        </span>
+
+        {/* [INTAKE-MULTI] Batch progress bar */}
+        {uploading && total > 1 && (
+          <div style={{ width: "100%", height: 4, background: "#e5e5ea", borderRadius: 9999, overflow: "hidden", marginTop: 4 }}>
+            <div style={{
+              width: `${Math.round((current / total) * 100)}%`,
+              height: "100%", background: "#007aff", borderRadius: 9999,
+              transition: "width 0.3s cubic-bezier(0.4,0,0.2,1)",
+            }} />
+          </div>
+        )}
       </label>
+
+      {/* [INTAKE-MULTI] Partial-failure summary — successes already uploaded */}
+      {failed.length > 0 && (
+        <div style={{ marginTop: 12, borderRadius: 12, overflow: "hidden", border: "1px solid #f9dedc" }}>
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 14px", background: "#fceeec",
+          }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#b3261e" }}>
+              {failed.length} bestand{failed.length > 1 ? "en" : ""} niet toegevoegd
+            </span>
+            <button
+              onClick={() => setFailed([])}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#b3261e", fontSize: 16, lineHeight: 1, padding: 2 }}
+              aria-label="Sluiten"
+            >
+              ×
+            </button>
+          </div>
+          {failed.map((f, i) => (
+            <div key={i} style={{
+              padding: "8px 14px", background: "#fff",
+              borderTop: "1px solid #f9dedc",
+            }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "#1c1c1e", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {f.name}
+              </p>
+              <p style={{ fontSize: 12, color: "#b3261e", margin: 0 }}>{f.reason}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
