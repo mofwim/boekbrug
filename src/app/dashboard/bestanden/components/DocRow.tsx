@@ -17,9 +17,13 @@ interface DocRowProps {
   onDragStart: (e: DragEvent<HTMLDivElement>) => void;
   // [BRUG-FILES-SHARED] one-click share toggle from the row's share badge.
   onToggleShare: (docId: string, currentlyShared: boolean) => void;
+  // [BESTANDEN-SEARCH] In search results, show an "open folder location" chip
+  // beneath the file name. Only passed in search mode; omitted in normal views.
+  onOpenLocation?: () => void;
+  folderLabel?: string;
 }
 
-export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, onToggleShare }: DocRowProps) {
+export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, onToggleShare, onOpenLocation, folderLabel }: DocRowProps) {
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -75,6 +79,24 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
         <p style={{ fontSize: 12, color: T.outline, margin: 0 }}>
           {formatDate(doc.created_at)} · {formatSize(doc.file_size)}
         </p>
+        {/* [BESTANDEN-SEARCH] Open the folder that contains this file (search mode). */}
+        {onOpenLocation && (
+          <button
+            onClick={e => { e.stopPropagation(); onOpenLocation(); }}
+            title={folderLabel ? `Open map: ${folderLabel}` : "Open in Mijn bestanden"}
+            style={{
+              marginTop: 4, display: "inline-flex", alignItems: "center", gap: 5,
+              border: "none", background: T.surfaceVariant, borderRadius: T.full,
+              padding: "3px 10px", fontSize: 12, color: T.primary, cursor: "pointer",
+              maxWidth: "100%", whiteSpace: "nowrap", overflow: "hidden",
+            }}
+          >
+            <Icon name="folder_open" size={13} color={T.primary} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              {folderLabel ?? "Mijn bestanden"}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* [BRUG-FILES-SHARED] Share badge — one click toggles sharing. Solid when

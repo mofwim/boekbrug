@@ -1214,32 +1214,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                           onContextMenu={e => openFileContextMenu(e, doc)}
                           onDragStart={e => handleDocDragStart(e, doc.id)}
                           onToggleShare={handleToggleShare}
-                        />
-                        {/* [BESTANDEN-SEARCH] Open the folder that contains this file.
-                            Clears the search and navigates to the file's folder (or the
-                            root when the file has no folder). */}
-                        <button
-                          onClick={e => {
-                            e.stopPropagation();
+                          folderLabel={doc.folder_name ?? undefined}
+                          onOpenLocation={() => {
                             setSearch("");
                             setSearchResults(null);
                             navigateTo(doc.folder_id ?? null);
                           }}
-                          title={doc.folder_name ? `Open map: ${doc.folder_name}` : "Open in Mijn bestanden"}
-                          style={{
-                            position: "absolute", right: 48, top: "50%", transform: "translateY(-50%)",
-                            display: "flex", alignItems: "center", gap: 5,
-                            border: "none", background: T.surfaceVariant,
-                            borderRadius: T.full, padding: "4px 10px",
-                            fontSize: 12, color: T.primary, cursor: "pointer",
-                            maxWidth: 180, whiteSpace: "nowrap", overflow: "hidden",
-                          }}
-                        >
-                          <Icon name="folder_open" size={14} color={T.primary} />
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {doc.folder_name ?? "Mijn bestanden"}
-                          </span>
-                        </button>
+                        />
                       </div>
                     ))}
                   </div>
