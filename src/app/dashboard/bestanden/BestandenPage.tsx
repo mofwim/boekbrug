@@ -537,14 +537,16 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // automatically sets shared=true + the current quarter, so the accountant sees
   // it and it lands in the closing-package ZIP. No popup, no quarter picker —
   // dropping it in the accountant folder IS the explicit share action.
-  const handleShareToFolder = async (docId: string) => {
-    const sf = allFolders.find(f => f.name === "Gedeeld met boekhouder");
-    if (!sf) return;
+  // [BRUG-FILES-SHARED] Share toggle — share or un-share IN PLACE. The file stays in
+  // its original folder; only the shared flag changes (the accountant RLS reads it).
+  // Sharing also stamps the current quarter server-side so the file lands in the ZIP.
+  const handleToggleShare = async (docId: string, currentlyShared: boolean) => {
+    const next = !currentlyShared;
     await fetch(`/api/bestanden?id=${docId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folder_id: sf.id }),
+      body: JSON.stringify({ shared: next }),
     });
-    setDocs(p => p.filter(d => d.id !== docId));
+    setDocs(p => p.map(d => d.id === docId ? { ...d, shared: next } : d));
   };
 
   // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
@@ -594,14 +596,15 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // files; also moves them into "Gedeeld met boekhouder" for visual organization.
   // [BRUG-FILES-SHARED] Bulk share = move selected files into the shared folder;
   // the PATCH route auto-shares them (shared=true + current quarter).
+  // [BRUG-FILES-SHARED] Bulk share IN PLACE — set shared=true on the selected files
+  // without moving them; the route stamps the current quarter. Files stay where they
+  // are and simply become visible to the accountant.
   const handleBulkShare = async () => {
-    const sf = allFolders.find(f => f.name === "Gedeeld met boekhouder");
-    if (!sf) return;
     await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folder_id: sf.id }),
+      body: JSON.stringify({ shared: true }),
     })));
-    setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
+    setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d));
     setSelectedIds(new Set());
   };
 
@@ -625,7 +628,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         { label: "Naam wijzigen", icon: "edit", onClick: () => setRenameTarget({ id: doc.id, name: doc.file_name, type: "file" }) },
         { label: "Verplaatsen", icon: "drive_file_move", onClick: () => setMoveTarget({ id: doc.id, type: "file" }) },
         { label: doc.starred ? "Ster verwijderen" : "Markeren met ster", icon: "star", onClick: () => handleStar(doc.id, "file", !!doc.starred) },
-        { label: "Delen met boekhouder", icon: "share", onClick: () => handleShareToFolder(doc.id) },
+        { label: doc.shared ? "Niet meer delen" : "Delen met boekhouder", icon: "share", onClick: () => handleToggleShare(doc.id, !!doc.shared) },
         { label: "Naar prullenbak", icon: "delete", onClick: () => handleDelete(doc.id), danger: true, divider: true },
       ],
     });
