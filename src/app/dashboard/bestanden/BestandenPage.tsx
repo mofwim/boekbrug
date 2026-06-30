@@ -1216,9 +1216,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                           onToggleShare={handleToggleShare}
                           folderLabel={doc.folder_name ?? undefined}
                           onOpenLocation={() => {
+                            // [BESTANDEN-SEARCH] Open the file's folder AND highlight the
+                            // file once it loads (reuses the existing focus/highlight
+                            // effect: scrollIntoView + outline, auto-clears after ~2.6s).
                             setSearch("");
                             setSearchResults(null);
                             navigateTo(doc.folder_id ?? null);
+                            setFocusId(doc.id);
                           }}
                         />
                       </div>
@@ -1345,7 +1349,14 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                                 key={doc.id}
                                 data-doc-row
                                 ref={el => { if (el) rowRefs.current.set(doc.id, el); else rowRefs.current.delete(doc.id); }}
-                                style={{ borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none" }}
+                                style={{
+                                  borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none",
+                                  // [BESTANDEN-FOCUS] highlight the focused row (list view).
+                                  outline: highlightId === doc.id ? `2px solid ${T.primary}` : "2px solid transparent",
+                                  outlineOffset: -2,
+                                  borderRadius: highlightId === doc.id ? T.sm : 0,
+                                  transition: "outline 0.2s",
+                                }}
                               >
                                 <DocRow
                                   doc={doc}
