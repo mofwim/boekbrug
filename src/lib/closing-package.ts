@@ -196,11 +196,15 @@ interface AssembleInput {
   bankFiles: PackageFile[];
   /** optional kilometer registration files the owner uploaded */
   kilometerFiles: PackageFile[];
+  /** [BRUG-FILES-SHARED] general docs the owner explicitly shared for this quarter
+   *  (kassa-reports, contracts, etc.) — shared=true, tied to the quarter via period.
+   *  Not invoices and not bank statements; passthrough into overige-documenten/. */
+  sharedFiles: PackageFile[];
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -248,6 +252,14 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
       code: "kilometers_missing",
       message: "Kilometerregistratie niet aangetroffen — voeg toe indien van toepassing.",
     });
+  }
+
+  // ── overige-documenten/ ([BRUG-FILES-SHARED] owner-shared general docs) ──
+  // Files the owner explicitly shared for this quarter that are not invoices or
+  // bank statements (e.g. kassa-reports). Passthrough, no AI, included raw.
+  for (const sf of sharedFiles) {
+    zip.file(`overige-documenten/${safe(sf.name)}`, sf.bytes);
+    filesIncluded++;
   }
 
   // ── overzicht.csv + overzicht.json ──
@@ -513,6 +525,31 @@ export async function buildClosingPackageZip(args: {
   const bankFilesRaw = await Promise.all(bankPaths.map((p) => dl(p.path, p.name)));
   const bankFiles = bankFilesRaw.filter((f): f is PackageFile => f !== null);
 
+  // ── [BRUG-FILES-SHARED] Owner-shared general docs for this quarter ──
+  // shared=true (the field the accountant RLS reads), tied to the quarter via
+  // period='{year}-Q{n}'. Exclude invoices (invoice_id set) and bank statements
+  // (doc_type='bankafschrift') — those already have their own ZIP sections.
+  const sharedPeriod = `${year}-Q${quarter}`;
+  const { data: sharedDocs } = await supabase
+    .from("documents")
+    .select("file_url, file_name, doc_type, invoice_id")
+    .eq("user_id", ownerId)
+    .eq("shared", true)
+    .eq("period", sharedPeriod)
+    .eq("trashed", false)
+    .is("invoice_id", null);
+  const sharedRows = (sharedDocs ?? []) as unknown as Array<{
+    file_url: string | null;
+    file_name: string | null;
+    doc_type: string | null;
+    invoice_id: string | null;
+  }>;
+  const sharedPaths = sharedRows
+    .filter((d) => !!d.file_url && d.doc_type !== "bankafschrift")
+    .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "document" }));
+  const sharedFilesRaw = await Promise.all(sharedPaths.map((p) => dl(p.path, p.name)));
+  const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
+
   return assembleClosingPackageZip({
     year,
     quarter,
@@ -522,6 +559,7 @@ export async function buildClosingPackageZip(args: {
     pdfByInvoice,
     bankFiles,
     kilometerFiles: [], // not a feature yet; passthrough hook reserved
+    sharedFiles,
     warnings,
   });
 }

@@ -524,14 +524,25 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     }
   };
 
-  const handleShare = async (doc: BestandRow) => {
+  // [BRUG-FILES-SHARED] Sharing = set shared=true (the field the accountant RLS
+  // documents_accountant_read actually reads) + period/year so the closing-package
+  // ZIP places the file in the right quarter. We ALSO move it into the "Gedeeld met
+  // boekhouder" folder for the owner's own visual organization — but shared=true is
+  // what makes the accountant see it. (Previously only folder_id was written, so the
+  // accountant never saw shared files — that bug is fixed here.)
+  const handleShare = async (doc: BestandRow, period: string, year: number) => {
     const sf = allFolders.find(f => f.name === "Gedeeld met boekhouder");
-    if (sf) {
-      await fetch(`/api/bestanden?id=${doc.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder_id: sf.id }),
-      });
-    }
+    await fetch(`/api/bestanden?id=${doc.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        shared: true,
+        period,
+        year,
+        ...(sf ? { folder_id: sf.id } : {}),
+      }),
+    });
+    // Optimistic UI update — period/year only; `shared` is a backend flag not shown here.
+    setDocs(p => p.map(d => d.id === doc.id ? { ...d, period, year } : d));
     setSharePopup(null);
   };
 
@@ -577,10 +588,18 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     loadAllFolders();
   };
 
+  // [BRUG-FILES-SHARED] Bulk share has no quarter picker, so it defaults to the
+  // current quarter. Writes shared=true (+ period/year) so the accountant sees the
+  // files; also moves them into "Gedeeld met boekhouder" for visual organization.
   const handleBulkShare = async () => {
     const sf = allFolders.find(f => f.name === "Gedeeld met boekhouder");
-    if (!sf) return;
-    await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder_id: sf.id }) })));
+    const now = new Date();
+    const y = now.getFullYear();
+    const period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+    await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shared: true, period, year: y, ...(sf ? { folder_id: sf.id } : {}) }),
+    })));
     setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
     setSelectedIds(new Set());
   };
@@ -695,7 +714,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       {renameTarget && <RenameModal currentName={renameTarget.name} type={renameTarget.type} onConfirm={handleRenameConfirm} onClose={() => setRenameTarget(null)} />}
       {moveTarget && <MoveModal folders={allFolders} excludeId={moveTarget.excludeId} onMove={fid => handleMove(moveTarget.id, moveTarget.type, fid)} onClose={() => setMoveTarget(null)} />}
       {bulkMoveOpen && <MoveModal folders={allFolders} onMove={handleBulkMove} onClose={() => setBulkMoveOpen(false)} />}
-      {sharePopup && <SharePopup fileName={sharePopup.doc.file_name} accountantName="uw boekhouder" onShare={() => handleShare(sharePopup.doc)} onKeepPrivate={() => setSharePopup(null)} />}
+      {sharePopup && <SharePopup fileName={sharePopup.doc.file_name} accountantName="uw boekhouder" onShare={(period, year) => handleShare(sharePopup.doc, period, year)} onKeepPrivate={() => setSharePopup(null)} />}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
 
       {/* ── Clipboard indicator ── */}

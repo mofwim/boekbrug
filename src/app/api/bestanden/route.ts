@@ -85,6 +85,13 @@ export async function PATCH(req: NextRequest) {
     file_name?: string;
     starred?: boolean;
     trashed?: boolean;
+    // [BRUG-FILES-SHARED] sharing with the accountant. The accountant RLS
+    // (documents_accountant_read) reads shared=true, so this flag is what
+    // actually makes a file visible to the accountant. period/year tie the
+    // shared file to a quarter so the closing-package ZIP can place it.
+    shared?: boolean;
+    period?: string | null;
+    year?: number | null;
   };
 
   const patch: DocumentUpdate = {};
@@ -95,6 +102,10 @@ export async function PATCH(req: NextRequest) {
     patch.trashed    = body.trashed;
     patch.trashed_at = body.trashed ? new Date().toISOString() : null;
   }
+  // [BRUG-FILES-SHARED] shared is the field the accountant RLS reads.
+  if (typeof body.shared === "boolean") patch.shared = body.shared;
+  if ("period" in body)                 patch.period = body.period ?? null;
+  if ("year" in body)                   patch.year   = body.year ?? null;
 
   if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
 
