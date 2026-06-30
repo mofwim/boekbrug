@@ -93,6 +93,8 @@ interface MatchResponse {
 
 export default function BankClient() {
   const [busy, setBusy] = useState(false)
+  // [BANK-DND] true while a file is being dragged over the upload zone.
+  const [dragActive, setDragActive] = useState(false)
   const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number } | null>(null)
   // [BANK-STATEMENTS] Uploaded statements (filename + upload time) and the
   // "refresh names" action that upgrades older rows' names from their description.
@@ -193,10 +195,18 @@ export default function BankClient() {
   }, [])
 
   // ── Upload → match ──────────────────────────────────────────────────────────
+  // [BANK-DND] handleFile is the <input onChange> wrapper; the real work lives in
+  // processFile(file) so the drag-and-drop path can reuse the exact same logic
+  // (upload → match → refresh) without duplication.
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = '' // allow re-selecting the same file
     if (!file) return
+    await processFile(file)
+  }
+
+  async function processFile(file: File) {
+    if (busy) return // ignore a second file while one is uploading
 
     setBusy(true)
     setUploadInfo(null)
@@ -238,6 +248,25 @@ export default function BankClient() {
     } finally {
       setBusy(false)
     }
+  }
+
+  // [BANK-DND] Drag-and-drop onto the upload zone. preventDefault on dragOver is
+  // required for the browser to fire a drop; without it the file just opens in a
+  // new tab. We take the first dropped file and run the same processFile path.
+  function onDropZone(e: React.DragEvent) {
+    e.preventDefault()
+    setDragActive(false)
+    if (busy) return
+    const file = e.dataTransfer.files?.[0]
+    if (file) void processFile(file)
+  }
+  function onDragOverZone(e: React.DragEvent) {
+    e.preventDefault()
+    if (!busy && !dragActive) setDragActive(true)
+  }
+  function onDragLeaveZone(e: React.DragEvent) {
+    e.preventDefault()
+    setDragActive(false)
   }
 
   // ── Confirm one match ─────────────────────────────────────────────────────────
@@ -675,10 +704,16 @@ export default function BankClient() {
 
       {/* Upload card */}
       <label
+        onDrop={onDropZone}
+        onDragOver={onDragOverZone}
+        onDragLeave={onDragLeaveZone}
         style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           gap: 8, padding: '28px 16px', borderRadius: R.lg, cursor: busy ? 'default' : 'pointer',
-          border: `1.5px dashed ${M3.primary}`, background: M3.primaryContainer, textAlign: 'center',
+          // [BANK-DND] Thicken + fill the border while a file is dragged over.
+          border: `${dragActive ? 2.5 : 1.5}px dashed ${M3.primary}`,
+          background: dragActive ? '#BBD4FB' : M3.primaryContainer,
+          textAlign: 'center',
           opacity: busy ? 0.7 : 1, transition: 'all 0.15s',
         }}
       >
@@ -686,9 +721,13 @@ export default function BankClient() {
           {busy ? 'hourglass_empty' : 'upload_file'}
         </span>
         <span style={{ fontSize: 14.5, fontWeight: 600, color: M3.onPrimaryContainer }}>
-          {busy ? 'Bezig…' : 'Kies bankafschrift'}
+          {busy ? 'Bezig…' : dragActive ? 'Laat los om te uploaden' : 'Kies bankafschrift'}
         </span>
         <span style={{ fontSize: 12, color: '#41618a' }}>CAMT.053 (.xml) of MT940 (.940 / .sta / .txt)</span>
+        {/* [BANK-DND] Tell the owner drag-and-drop is available. */}
+        {!busy && !dragActive && (
+          <span style={{ fontSize: 11.5, color: '#5b7aa8' }}>Sleep je bestand hierheen of klik om te kiezen</span>
+        )}
         <input type="file" accept=".xml,.940,.sta,.mt940,.txt" onChange={handleFile} disabled={busy} style={{ display: 'none' }} />
       </label>
 
