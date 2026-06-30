@@ -13,7 +13,12 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { matchTransactions, type InvoiceForMatching } from "@/lib/bank-matching";
+import {
+  matchTransactions,
+  isFullyCovered,
+  normalizeRef,
+  type InvoiceForMatching,
+} from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 
 export async function GET() {
@@ -30,9 +35,13 @@ export async function GET() {
   const pipeline = createPipelineClient();
 
   // 2. Pending transactions for this user.
+  //    [BANK-MULTI-LINK-PERSIST] Also select invoice_id so we can detect a
+  //    partially-linked multi-invoice tx (status still 'pending', but already
+  //    carries the last invoice paid against it). Without this the UI loses the
+  //    "partially done" state on reload and the tx wrongly falls into "Geen factuur".
   const { data: txRows, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, date, amount, description, counterpart_name, reference")
+    .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
     .eq("user_id", user.id)
     .eq("status", "pending");
   if (txErr) {
@@ -76,21 +85,68 @@ export async function GET() {
   // 4. Run the pure matcher.
   const result = matchTransactions(transactions, invoices);
 
+  // [BANK-MULTI-LINK-PERSIST] Partial-link coverage. A multi-invoice tx that has
+  // already had ONE invoice paid against it keeps status='pending' + an invoice_id.
+  // Its remaining candidates may now be zero (the only matching invoice is paid and
+  // excluded above) → the matcher would label it 'none' and the UI would bury it in
+  // "Geen factuur". To keep it in "Te bevestigen" until every reference number is
+  // paid, we compute allCovered here (server-side, so it survives a reload) and tell
+  // the UI which transactions are partially linked. Same shared rule as confirm.
+  //
+  // We only need paid invoice numbers when at least one pending tx is already linked.
+  const linkedTxRows = (txRows ?? []).filter(
+    (r) => (r as BankTransactionDbRow).invoice_id != null
+  );
+  const partialLink = new Map<string, boolean>(); // txId → allCovered
+
+  if (linkedTxRows.length > 0) {
+    // Paid invoice numbers for this user, both directions (cheap, single read).
+    // isFullyCovered does equality on normalized numbers; direction already fixed
+    // the candidate set when each link was confirmed, so a plain paid-number set is
+    // sufficient here for the presence check.
+    const { data: paidRows } = await pipeline
+      .from("invoices")
+      .select("invoice_number")
+      .eq("status", "paid")
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+
+    const paidSet = new Set(
+      (paidRows ?? [])
+        .map((r) => normalizeRef(r.invoice_number ?? ""))
+        .filter((n) => n.length > 0)
+    );
+
+    for (const r of linkedTxRows) {
+      const row = r as BankTransactionDbRow;
+      partialLink.set(row.id, isFullyCovered(row.reference, paidSet));
+    }
+  }
+
   // 5. Shape a lean DTO for the UI. transactionId === bank_transactions.id.
-  const suggestions = result.matches.map((m) => ({
-    transactionId: m.transaction.transactionId,
-    date: m.transaction.date,
-    amount: m.transaction.amount,
-    description: m.transaction.description,
-    counterpart: m.transaction.counterpartName,
-    // [BANK-REF-DISPLAY] The cleaned invoice number(s) the parser extracted from
-    // REMI/Ustrd (e.g. "26702781, 26703066"). The UI shows this instead of the
-    // raw description so the owner sees the real reference, not "USTD//...".
-    reference: m.transaction.reference,
-    outcome: m.outcome,
-    best: m.best,
-    candidates: m.candidates,
-  }));
+  const suggestions = result.matches.map((m) => {
+    const txId = m.transaction.transactionId;
+    const isLinked = txId != null && partialLink.has(txId);
+    return {
+      transactionId: txId,
+      date: m.transaction.date,
+      amount: m.transaction.amount,
+      description: m.transaction.description,
+      counterpart: m.transaction.counterpartName,
+      // [BANK-REF-DISPLAY] The cleaned invoice number(s) the parser extracted from
+      // REMI/Ustrd (e.g. "26702781, 26703066"). The UI shows this instead of the
+      // raw description so the owner sees the real reference, not "USTD//...".
+      reference: m.transaction.reference,
+      outcome: m.outcome,
+      best: m.best,
+      candidates: m.candidates,
+      // [BANK-MULTI-LINK-PERSIST] Persisted (reload-safe) link state. partiallyLinked
+      // = this pending tx already has an invoice paid against it; allCovered = every
+      // reference number is now paid. The UI keeps a partiallyLinked && !allCovered tx
+      // in "Te bevestigen" regardless of `outcome` (it may have no candidates left).
+      partiallyLinked: isLinked,
+      allCovered: isLinked ? partialLink.get(txId!) === true : false,
+    };
+  });
 
   return NextResponse.json({
     ok: true,

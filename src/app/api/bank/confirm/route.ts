@@ -29,23 +29,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { isEligible, normalizeRef } from "@/lib/bank-matching";
-
-// [BANK-MULTI-CONFIRM] Split a bank reference ("26302050, 26302362") into the
-// distinct invoice numbers it lists. Mirrors the parser/UI split: comma-separated,
-// trimmed, and short tokens dropped (a bare "263" or a year is not an invoice
-// number — same >=4 guard the matcher's referenceMatches uses). Returned values
-// are NORMALIZED (lowercase, [a-z0-9] only) for equality comparison against
-// normalized invoice numbers.
-function parseReferenceNumbers(reference: string | null): string[] {
-  if (!reference) return [];
-  const seen = new Set<string>();
-  for (const part of reference.split(",")) {
-    const norm = normalizeRef(part.trim());
-    if (norm.length >= 4) seen.add(norm);
-  }
-  return [...seen];
-}
+// [BANK-MULTI-LINK-PERSIST] Coverage logic (parseReferenceNumbers + isFullyCovered)
+// now lives in bank-matching.ts so this confirm path and the match path share ONE
+// definition — no drift between "is this tx done?" answered in two places.
+import { isEligible, normalizeRef, isFullyCovered, parseReferenceNumbers } from "@/lib/bank-matching";
 
 export async function POST(req: NextRequest) {
   // 1. Auth
@@ -209,12 +196,8 @@ export async function POST(req: NextRequest) {
           .map((r) => normalizeRef(r.invoice_number ?? ""))
           .filter((n) => n.length > 0)
       );
-      // Equality (not substring): a single split reference number is matched to an
-      // invoice whose normalized number EQUALS it — so "263" can't satisfy
-      // "26302050". This is the inverse of the matcher's referenceMatches (which
-      // searches the free-text reference for an invoice number); here we already
-      // hold isolated numbers and compare them one-to-one.
-      allCovered = refNumbers.every((n) => paidSet.has(n));
+      // [BANK-MULTI-LINK-PERSIST] Shared coverage rule (equality, not substring).
+      allCovered = isFullyCovered(tx.reference, paidSet);
     }
   }
 

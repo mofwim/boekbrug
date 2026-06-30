@@ -385,3 +385,58 @@ export function matchTransactions(
 
   return { matches, autoCount, choiceCount, noneCount };
 }
+// ─── [BANK-MULTI-LINK-PERSIST] Shared multi-invoice coverage (pure, no I/O) ──────
+//
+// A single bank transaction can settle SEVERAL invoices at once; the bank then
+// lists every invoice number in the reference, e.g. "26302050, 26302362". Paying
+// ONE of them must NOT make the transaction disappear while the others are still
+// open. Two endpoints need the SAME rule:
+//   - confirm/route.ts : after a payment, decide whether to flip the tx 'matched'
+//   - match/route.ts   : on (re)load, decide whether a partially-linked tx is done
+// Defining it ONCE here (the home of pure matching logic, already imported by both
+// routes) keeps the two answers identical — no duplicated coverage logic to drift.
+
+/**
+ * Split a bank reference ("26302050, 26302362") into the distinct invoice numbers
+ * it lists. Comma-separated, trimmed, NORMALIZED (lowercase, [a-z0-9] only), and
+ * short tokens (< 4 chars) dropped — a bare "263" or a year is not an invoice
+ * number (same >= 4 guard referenceMatches uses). The parser stores multi numbers
+ * exactly as "num1, num2" (see bank-parser.extractInvoiceReference), so a comma
+ * split recovers them. De-duplicated. Pure.
+ */
+export function parseReferenceNumbers(reference: string | null): string[] {
+  if (!reference) return [];
+  const seen = new Set<string>();
+  for (const part of reference.split(",")) {
+    const norm = normalizeRef(part.trim());
+    if (norm.length >= 4) seen.add(norm);
+  }
+  return [...seen];
+}
+
+/**
+ * Is every invoice number listed in this transaction's reference now backed by a
+ * PAID invoice? Presence check only — no amount arithmetic (decision: amount is
+ * for display confidence, never a subset-sum reconciliation).
+ *
+ *   - 0 or 1 reference number → single-invoice case: a confirmation completes it.
+ *     Returns true (the existing single-invoice flow is unchanged). A tx with one
+ *     reference number is fully covered the moment its one invoice is paid.
+ *   - > 1 reference number → multi case: require EVERY reference number to map
+ *     (by EQUALITY, not substring — so "263" can't satisfy "26302050") to a number
+ *     in paidNumbers. Any open number → false → the tx stays visible/actionable.
+ *
+ * @param reference     the transaction reference (raw, as stored).
+ * @param paidNumbers   normalized invoice numbers of THIS user's PAID invoices in
+ *                      the correct direction. The caller fetches them (this stays
+ *                      I/O-free); pass already-normalized values (normalizeRef).
+ */
+export function isFullyCovered(
+  reference: string | null,
+  paidNumbers: Iterable<string>
+): boolean {
+  const refNumbers = parseReferenceNumbers(reference);
+  if (refNumbers.length <= 1) return true; // single-invoice case — one link completes it
+  const paidSet = paidNumbers instanceof Set ? paidNumbers : new Set(paidNumbers);
+  return refNumbers.every((n) => paidSet.has(n));
+}

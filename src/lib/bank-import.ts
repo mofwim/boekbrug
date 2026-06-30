@@ -144,6 +144,12 @@ export interface BankTransactionDbRow {
   description: string | null;
   counterpart_name: string | null;
   reference: string | null;
+  // [BANK-MULTI-LINK-PERSIST] A partially-linked multi-invoice tx keeps
+  // status='pending' but already carries an invoice_id (the last invoice paid
+  // against it). The match route needs both to tell the UI "this one is partially
+  // done — keep it in Te bevestigen until allCovered", surviving a page reload.
+  invoice_id?: string | null;
+  status?: string | null;
 }
 
 /**

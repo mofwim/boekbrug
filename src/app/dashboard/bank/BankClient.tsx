@@ -87,6 +87,11 @@ interface Suggestion {
   outcome: Outcome
   best: Candidate | null
   candidates: Candidate[]
+  // [BANK-MULTI-LINK-PERSIST] Reload-safe link state from the match route.
+  // partiallyLinked: this pending tx already has an invoice paid against it.
+  // allCovered: every reference number is now paid (→ it's effectively done).
+  partiallyLinked?: boolean
+  allCovered?: boolean
 }
 interface MatchResponse {
   ok: boolean
@@ -498,8 +503,20 @@ export default function BankClient() {
   // [BANK-MULTI-CONFIRM] A transaction stays "pending" in the UI until it is fully
   // covered. Confirming one of several invoices keeps it visible (allCovered=false)
   // with the open numbers still actionable; it only leaves once allCovered=true.
-  const isDone = (txId: string) => confirmed[txId]?.allCovered === true
-  const pending = data?.suggestions.filter((s) => !isDone(s.transactionId)) ?? []
+  // [BANK-MULTI-LINK-PERSIST] "Done" is now reload-safe: the match route reports
+  // server-side allCovered (survives a reload), and the session `confirmed` state
+  // still covers the moment right after a confirm. Either source marking it covered
+  // means done.
+  const isDone = (s: Suggestion) =>
+    s.allCovered === true || confirmed[s.transactionId]?.allCovered === true
+  // A partially-linked tx (one invoice paid, others still open) is NOT done — it
+  // must stay actionable even when the matcher left it with zero fresh candidates
+  // (its only matching invoice is now paid and excluded from candidates).
+  const isPartiallyLinked = (s: Suggestion) =>
+    !isDone(s) &&
+    (s.partiallyLinked === true ||
+      (confirmed[s.transactionId] && confirmed[s.transactionId].allCovered === false))
+  const pending = data?.suggestions.filter((s) => !isDone(s)) ?? []
 
   // [BANK-SORT] Stable order by date (newest first) so a restored transaction
   // returns to its logical position instead of jumping to the bottom.
@@ -522,16 +539,21 @@ export default function BankClient() {
 
   // [BANK-TABS] Split the (often long) list into purpose-driven groups so the
   // owner isn't drowned in one endless list. Order: the action tab first.
-  //   Te bevestigen : auto + choice (a real candidate exists → owner confirms)
-  //   Geen factuur  : none, EXCLUDING POS receipts (real suppliers without invoice)
+  //   Te bevestigen : auto + choice (a real candidate exists → owner confirms),
+  //                   PLUS partially-linked multi-invoice tx (one paid, others open)
+  //                   even if the matcher left them with no fresh candidate — they
+  //                   still need the owner to link the remaining numbers.
+  //   Geen factuur  : none, EXCLUDING POS receipts AND partially-linked tx
   //   Pin           : POS card settlements (bulk, no invoice — normal)
   //   Genegeerd     : owner-ignored (not_found)
-  //   Gekoppeld     : confirmed this session
-  const toConfirm = pending.filter((s) => s.outcome === 'auto' || s.outcome === 'choice').sort(byDateDesc)
-  const noneAll = pending.filter((s) => s.outcome === 'none')
+  //   Gekoppeld     : confirmed / fully covered
+  const toConfirm = pending
+    .filter((s) => s.outcome === 'auto' || s.outcome === 'choice' || isPartiallyLinked(s))
+    .sort(byDateDesc)
+  const noneAll = pending.filter((s) => s.outcome === 'none' && !isPartiallyLinked(s))
   const noMatch = noneAll.filter((s) => !isPosReceipt(s)).sort(byDateDesc)
   const posList = noneAll.filter(isPosReceipt).sort(byDateDesc)
-  const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s.transactionId)).sort(byDateDesc)
+  const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).sort(byDateDesc)
 
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
