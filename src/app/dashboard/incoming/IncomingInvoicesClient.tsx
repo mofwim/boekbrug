@@ -1792,12 +1792,16 @@ export default function IncomingInvoicesClient({
         {tab === "pending" && pending.length > 0 && (
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "0 4px", marginBottom: 10,
+            padding: "0 4px", marginBottom: 12, gap: 8,
           }}>
             {!selectMode ? (
               <button
                 onClick={() => setSelectMode(true)}
-                style={{ background: "none", border: "none", color: "#007aff", fontWeight: 600, fontSize: 14, cursor: "pointer", padding: "4px 0" }}
+                style={{
+                  background: "#eef4ff", border: "none", color: "#007aff",
+                  fontWeight: 600, fontSize: 14, cursor: "pointer",
+                  padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
+                }}
               >
                 Selecteer
               </button>
@@ -1805,13 +1809,21 @@ export default function IncomingInvoicesClient({
               <>
                 <button
                   onClick={selectAllReady}
-                  style={{ background: "none", border: "none", color: "#007aff", fontWeight: 600, fontSize: 14, cursor: "pointer", padding: "4px 0" }}
+                  style={{
+                    background: "#eef4ff", border: "none", color: "#007aff",
+                    fontWeight: 700, fontSize: 14, cursor: "pointer",
+                    padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
+                  }}
                 >
-                  Selecteer alle (klaar)
+                  Selecteer klaar ({pending.filter((p) => p.health.level !== "needs-review").length})
                 </button>
                 <button
                   onClick={exitSelectMode}
-                  style={{ background: "none", border: "none", color: "#8e8e93", fontWeight: 600, fontSize: 14, cursor: "pointer", padding: "4px 0" }}
+                  style={{
+                    background: "#f2f2f7", border: "none", color: "#3c3c43",
+                    fontWeight: 600, fontSize: 14, cursor: "pointer",
+                    padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
+                  }}
                 >
                   Annuleer
                 </button>
