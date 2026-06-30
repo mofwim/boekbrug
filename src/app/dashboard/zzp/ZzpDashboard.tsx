@@ -9,7 +9,10 @@ import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '../_shared'
 import { generateInvoiceFromPrompt } from '@/lib/ai'
 import IntakeButton from '@/components/intake/IntakeButton'
-import DailyTruth from './DailyTruth'
+// [OVERVIEW-DISABLED] DailyTruth import kept but commented out alongside its
+// usage below — an unused import would fail a strict Next build. To restore the
+// overview: uncomment this import AND the <DailyTruth /> line further down.
+// import DailyTruth from './DailyTruth'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
   primary:           '#1A73E8',
@@ -116,7 +119,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         <h1 style={{ fontSize: 28, fontWeight: 700, color: M3.onSurface, marginBottom: 28, letterSpacing: -0.5 }}>
           {firstName} 👋
         </h1>
-        <DailyTruth />
+        {/* [OVERVIEW-DISABLED] DailyTruth (the "Openstaand te betalen" overview)
+            is hidden from the owner's home for now — it was info-only with no
+            useful action, and "Vandaag" already surfaces what needs attention.
+            TEMPORARY: code is intentionally kept (import + component) so this is a
+            one-line revert. Decision pending: remove permanently, restore, or
+            replace by routing this into Vandaag. To restore: uncomment the line.
+        */}
+        {/* <DailyTruth /> */}
         {/* ── 4 action cards — [BOEK-029] new order — May 2026 ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
