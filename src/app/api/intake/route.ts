@@ -120,7 +120,16 @@ export async function POST(req: NextRequest) {
     const where = folderPath.length
       ? `Dit bestand staat al in: ${folderPath.join(" / ")}`
       : "Dit bestand is al toegevoegd"
-    return NextResponse.json({ error: where, duplicate: true }, { status: 409 })
+    return NextResponse.json({
+      error: where,
+      duplicate: true,
+      // [INTAKE-FEEDBACK] structured target so the client can deep-link + focus
+      existing: {
+        id: existingDoc.id,
+        folder_id: existingDoc.folder_id ?? null,
+        folder_name: folderPath.length ? folderPath[folderPath.length - 1] : null,
+      },
+    }, { status: 409 })
   }
 
   // ── Stage 2: AI verify + classify ───────────────────────────────────────────
@@ -237,10 +246,15 @@ export async function POST(req: NextRequest) {
       })
       .select("id")
       .single()
+    // [INTAKE-FEEDBACK] resolve the folder name so the client can show "where"
+    // and deep-link to it (same breadcrumb helper as the duplicate path).
+    const docFolderPath = await buildFolderBreadcrumb(supabase, user.id, folderId)
     return NextResponse.json({
       ok: true,
       destination: "document",
       document_id: doc?.id ?? null,
+      folder_id: folderId,
+      folder_name: docFolderPath.length ? docFolderPath[docFolderPath.length - 1] : null,
       message: "Opgeslagen in je bestanden (geen factuur of bon herkend).",
     })
   }

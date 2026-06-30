@@ -1137,30 +1137,37 @@ function DetailRow({ label, value, bold }: { label: string; value: string; bold?
 
 // ── Manual upload ─────────────────────────────────────────────────────────────
 
+// [INTAKE-FEEDBACK] Per-file outcome shown in the results modal.
+type IntakeResult = {
+  name: string;
+  status: "invoice" | "document" | "bank" | "duplicate" | "error";
+  message: string;
+  // present for document / duplicate → deep-link + focus in Mijn bestanden
+  link?: { folderId: string | null; focusId: string };
+};
+
+const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string }> = {
+  invoice:   { icon: "✓",  color: "#34c759" },
+  document:  { icon: "📁", color: "#007aff" },
+  bank:      { icon: "🏦", color: "#007aff" },
+  duplicate: { icon: "ℹ️", color: "#8e8e93" },
+  error:     { icon: "⚠️", color: "#b3261e" },
+};
+
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   // [SMART-INTAKE-B] separate camera input (capture) alongside the file input
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  // [INTAKE-MULTI] batch progress + partial-failure summary
+  // [INTAKE-MULTI] batch progress
   const [current, setCurrent] = useState(0);
   const [total, setTotal] = useState(0);
-  const [failed, setFailed] = useState<{ name: string; reason: string }[]>([]);
+  // [INTAKE-FEEDBACK] results modal — tells the user WHERE each file landed
+  const [results, setResults] = useState<IntakeResult[]>([]);
+  const [showResults, setShowResults] = useState(false);
 
   // [INTAKE-MULTI] Max files per batch — protects the server / AI from a huge drop.
   const MAX_BATCH = 20;
-
-  // [INTAKE-MULTI] After a reload-once, restore the failure summary that was
-  // stashed before reloading, so the user still sees what didn't go through.
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem("intakeFailed");
-      if (raw) {
-        setFailed(JSON.parse(raw));
-        sessionStorage.removeItem("intakeFailed");
-      }
-    } catch { /* ignore */ }
-  }, []);
 
   const isOkType = (file: File) =>
     file.type === "application/pdf" ||
@@ -1168,21 +1175,50 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     file.name.toLowerCase().endsWith(".pdf") ||
     /\.(xml|mt940|sta|camt|053|txt)$/i.test(file.name);
 
-  // [INTAKE-MULTI] Upload one file via the unified /api/intake router. Throws on
-  // failure so the batch loop records the reason and continues with the next file.
-  const uploadOne = async (file: File): Promise<void> => {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await fetch("/api/intake", { method: "POST", body: formData });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error((data && data.error) || "Upload mislukt");
+  // [INTAKE-FEEDBACK] Upload one file via /api/intake and map the response to a
+  // structured outcome (never throws) — the modal renders the destination.
+  const uploadOne = async (file: File): Promise<IntakeResult> => {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/intake", { method: "POST", body: formData });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+
+      if (res.ok) {
+        const dest = (data as { destination?: string }).destination;
+        const message = (data as { message?: string }).message || "Toegevoegd";
+        if (dest === "document") {
+          const docId = (data as { document_id?: string }).document_id;
+          return {
+            name: file.name, status: "document", message,
+            link: docId ? { folderId: (data as { folder_id?: string }).folder_id ?? null, focusId: docId } : undefined,
+          };
+        }
+        if (dest === "bank") {
+          return { name: file.name, status: "bank", message };
+        }
+        // invoice | receipt → lives in this verify queue
+        return { name: file.name, status: "invoice", message };
+      }
+
+      // Not ok — duplicate is informative, not a failure.
+      if ((data as { duplicate?: boolean }).duplicate) {
+        const existing = (data as { existing?: { id: string; folder_id: string | null } }).existing;
+        return {
+          name: file.name, status: "duplicate",
+          message: (data as { error?: string }).error || "Al toegevoegd",
+          link: existing?.id ? { folderId: existing.folder_id ?? null, focusId: existing.id } : undefined,
+        };
+      }
+      return { name: file.name, status: "error", message: (data as { error?: string }).error || "Upload mislukt" };
+    } catch {
+      return { name: file.name, status: "error", message: "Upload mislukt — probeer opnieuw" };
     }
   };
 
-  // [INTAKE-MULTI] Sequential batch — safe on the server/AI (mirrors the proven
-  // bestanden UploadArea pattern). Partial failure: keep going, report at the end.
-  // Reload ONCE so every successful upload appears in the queue.
+  // [INTAKE-FEEDBACK] Sequential batch — collect every outcome, then show the
+  // results modal. No silent reload: the user sees where each file went, and
+  // reloads (to refresh the queue) only when they tap "Klaar".
   const handleFiles = async (fileList: FileList | null) => {
     if (uploading || !fileList || fileList.length === 0) return;
 
@@ -1192,54 +1228,45 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       return;
     }
 
-    // Pre-filter by type — unsupported files are reported, never sent.
     const accepted: File[] = [];
-    const batchFailed: { name: string; reason: string }[] = [];
+    const collected: IntakeResult[] = [];
     for (const f of all) {
       if (isOkType(f)) accepted.push(f);
-      else batchFailed.push({ name: f.name, reason: "Niet ondersteund bestandstype" });
+      else collected.push({ name: f.name, status: "error", message: "Niet ondersteund bestandstype" });
     }
 
     if (accepted.length === 0) {
-      setFailed(batchFailed);
+      setResults(collected);
+      setShowResults(true);
       return;
     }
 
     setUploading(true);
-    setFailed([]);
     setTotal(accepted.length);
-    let anySuccess = false;
-
     for (let i = 0; i < accepted.length; i++) {
       setCurrent(i + 1);
-      try {
-        await uploadOne(accepted[i]);
-        anySuccess = true;
-      } catch (err) {
-        batchFailed.push({
-          name: accepted[i].name,
-          reason: err instanceof Error ? err.message : "Onbekende fout",
-        });
-      }
+      collected.push(await uploadOne(accepted[i]));
     }
-
     setUploading(false);
     setCurrent(0);
     setTotal(0);
 
-    if (anySuccess) {
-      onUploaded();
-      // Stash failures so they survive the reload, then reload ONCE so all
-      // successful uploads show up in the queue.
-      if (batchFailed.length > 0) {
-        try { sessionStorage.setItem("intakeFailed", JSON.stringify(batchFailed)); } catch { /* ignore */ }
-      }
-      window.location.reload();
-    } else {
-      // Nothing succeeded — no reload, just show why.
-      setFailed(batchFailed);
-    }
+    onUploaded();
+    setResults(collected);
+    setShowResults(true);
   };
+
+  // [INTAKE-FEEDBACK] Close the modal AND refresh so new invoices show in the queue.
+  const closeResults = () => {
+    setShowResults(false);
+    window.location.reload();
+  };
+
+  const openInBestanden = (link: { folderId: string | null; focusId: string }) => {
+    window.location.href = `/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`;
+  };
+
+  const addedCount = results.filter((r) => r.status === "invoice" || r.status === "document" || r.status === "bank").length;
 
   return (
     <div style={{ marginBottom: 32 }}>
@@ -1329,35 +1356,66 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         )}
       </label>
 
-      {/* [INTAKE-MULTI] Partial-failure summary — successes already uploaded */}
-      {failed.length > 0 && (
-        <div style={{ marginTop: 12, borderRadius: 12, overflow: "hidden", border: "1px solid #f9dedc" }}>
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "8px 14px", background: "#fceeec",
-          }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "#b3261e" }}>
-              {failed.length} bestand{failed.length > 1 ? "en" : ""} niet toegevoegd
-            </span>
+      {/* [INTAKE-FEEDBACK] Results modal — where did each file go? */}
+      {showResults && results.length > 0 && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 2000 }}
+          onClick={closeResults}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
+              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+              width: "100%", maxWidth: 430, maxHeight: "80vh", overflowY: "auto",
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 19, color: "#1c1c1e", marginBottom: 4 }}>
+              {addedCount > 0
+                ? `${addedCount} bestand${addedCount > 1 ? "en" : ""} toegevoegd`
+                : "Klaar"}
+            </div>
+            <div style={{ fontSize: 14, color: "#8e8e93", marginBottom: 16 }}>
+              Dit is er met je {results.length > 1 ? "bestanden" : "bestand"} gebeurd:
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+              {results.map((r, i) => {
+                const meta = RESULT_META[r.status];
+                return (
+                  <div key={i} style={{ display: "flex", gap: 10, padding: "10px 12px", borderRadius: 12, background: "#f7f7f9" }}>
+                    <span style={{ fontSize: 16, lineHeight: "20px" }}>{meta.icon}</span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: "#1c1c1e", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.name}
+                      </p>
+                      <p style={{ fontSize: 12, color: meta.color, margin: 0 }}>{r.message}</p>
+                      {r.link && (
+                        <button
+                          type="button"
+                          onClick={() => openInBestanden(r.link!)}
+                          style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#007aff", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                        >
+                          Bekijk in bestanden →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
             <button
-              onClick={() => setFailed([])}
-              style={{ background: "none", border: "none", cursor: "pointer", color: "#b3261e", fontSize: 16, lineHeight: 1, padding: 2 }}
-              aria-label="Sluiten"
+              onClick={closeResults}
+              style={{
+                width: "100%", padding: "16px", borderRadius: 14,
+                background: "#34c759", color: "#fff", border: "none",
+                fontWeight: 700, fontSize: 16, cursor: "pointer",
+              }}
             >
-              ×
+              Klaar
             </button>
           </div>
-          {failed.map((f, i) => (
-            <div key={i} style={{
-              padding: "8px 14px", background: "#fff",
-              borderTop: "1px solid #f9dedc",
-            }}>
-              <p style={{ fontSize: 13, fontWeight: 600, color: "#1c1c1e", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {f.name}
-              </p>
-              <p style={{ fontSize: 12, color: "#b3261e", margin: 0 }}>{f.reason}</p>
-            </div>
-          ))}
         </div>
       )}
     </div>
