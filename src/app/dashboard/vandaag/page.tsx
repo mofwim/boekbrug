@@ -5,9 +5,12 @@
 //   1. Te betalen        — incoming invoices you must pay      (direction='incoming', status='received')
 //   2. Herinner je klant — outgoing invoices a client must pay (direction='outgoing', status IN ('sent','overdue'))
 //
-// GOVERNING PRINCIPLE (locked): we show actions + dates, NEVER computed
-// amounts/totals. A wrong task the owner ignores; a wrong NUMBER breaks trust in
-// the whole app. So "Vandaag" deliberately shows no money in v1.
+// GOVERNING PRINCIPLE (updated by owner decision — TODAY-UX-FIELDS): the card
+// now shows the stored total alongside dates + invoice number, to act as a real
+// daily control center. The amount is READ DIRECTLY from total_inc_btw — never
+// computed, summed, or derived in "Vandaag". This is the same trusted number the
+// invoices page shows; displaying a stored value is an honest read, not the kind
+// of arithmetic claim the no-amount rule originally guarded against.
 //
 // Payment state is defined by `status` ONLY — never payment_date/marked_paid_at
 // (the live data proved they disagree: paid invoices exist with no payment_date).
@@ -22,10 +25,12 @@ import VandaagClient, { type VandaagInvoice } from "./VandaagClient";
 
 export const dynamic = "force-dynamic";
 
-// Only the columns the cards need. No amounts are selected — by design, "Vandaag"
-// shows tasks + dates, never money. client_name covers both the supplier (incoming)
-// and the client (outgoing) party name.
-const SELECT = "id, client_name, due_date, status, direction";
+// [TODAY-UX-FIELDS] Per owner decision, the card now shows the invoice number,
+// invoice date, due date, and the STORED total (total_inc_btw). The amount is
+// READ DIRECTLY from the DB column — never computed/derived in "Vandaag" — so it
+// is the same trusted number shown on the invoices page, not an arithmetic claim.
+const SELECT =
+  "id, client_name, invoice_number, invoice_date, due_date, total_inc_btw, status, direction";
 
 export default async function VandaagPage() {
   const supabase = await createServerSupabaseClient();

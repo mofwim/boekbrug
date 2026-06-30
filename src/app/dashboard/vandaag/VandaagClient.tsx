@@ -25,6 +25,9 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+// [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
+// simply RENDERS a stored number; no arithmetic happens in "Vandaag".
+import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -47,7 +50,10 @@ const LONG_OPEN_DAYS = 30;
 export interface VandaagInvoice {
   id: string;
   client_name: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null; // ISO date
   due_date: string | null; // ISO date — page.tsx already filters out nulls
+  total_inc_btw: number | null; // STORED total — read-only, never computed here
   status: string;
   direction: string;
 }
@@ -345,7 +351,9 @@ function ListSection({
 }
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
-// No amount, no total — only party name + human due status + clear actions.
+// [TODAY-UX-FIELDS] Card shows party name, invoice number, dates, and the STORED
+// total (read directly from total_inc_btw — never computed here), plus the human
+// due status and the clear action buttons.
 
 function InvoiceCard({
   invoice,
@@ -399,11 +407,52 @@ function InvoiceCard({
           >
             {invoice.client_name?.trim() || "Onbekende partij"}
           </div>
+
+          {/* [TODAY-UX-FIELDS] Invoice number — quiet secondary line. */}
+          {invoice.invoice_number?.trim() && (
+            <div
+              style={{
+                fontSize: 13,
+                color: M3.onSurfaceVariant,
+                marginTop: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Factuur {invoice.invoice_number.trim()}
+            </div>
+          )}
+
           <div
-            style={{ fontSize: 14, color: accent, fontWeight: 500, marginTop: 2 }}
+            style={{ fontSize: 14, color: accent, fontWeight: 500, marginTop: 4 }}
           >
             {dueLabel(due)}
           </div>
+
+          {/* [TODAY-UX-FIELDS] Dates — factuurdatum + vervaldatum, via the shared
+              display formatter (DD-MM-YYYY, timezone-proof). */}
+          <div
+            style={{ fontSize: 12, color: M3.onSurfaceVariant, marginTop: 2 }}
+          >
+            Factuurdatum {formatDateNL(invoice.invoice_date)} · Vervalt{" "}
+            {formatDateNL(invoice.due_date)}
+          </div>
+
+          {/* [TODAY-UX-FIELDS] STORED total — read directly from total_inc_btw,
+              never computed here. null → no amount shown (we never invent one). */}
+          {typeof invoice.total_inc_btw === "number" && (
+            <div
+              style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: M3.onSurface,
+                marginTop: 6,
+              }}
+            >
+              {formatEuroNL(invoice.total_inc_btw)}
+            </div>
+          )}
         </div>
 
         {/* "Negeren" — session-only visual hide. No DB, no status change. */}
