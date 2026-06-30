@@ -551,8 +551,8 @@ export default function IncomingManageClient({
                           {processingId === inv.id || checkingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : isPrepared
-                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span> Markeer als betaald</>
-                              : 'Betaald?'}
+                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span> Heb je betaald?</>
+                              : 'Heb je betaald?'}
                         </button>
                       )}
 
@@ -669,6 +669,12 @@ export default function IncomingManageClient({
         <PreparePaymentSheet
           inv={prepareCtx}
           onClose={() => { markPrepared(prepareCtx); setPrepareCtx(null) }}
+          onConfirmPaid={() => {
+            const inv = prepareCtx
+            markPrepared(prepareCtx)
+            setPrepareCtx(null)
+            if (inv) requestPay(inv)
+          }}
           onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
         />
       )}
@@ -819,10 +825,12 @@ function EmptyState() {
 function PreparePaymentSheet({
   inv,
   onClose,
+  onConfirmPaid,
   onCopied,
 }: {
   inv: IncomingRow
   onClose: () => void
+  onConfirmPaid: () => void
   onCopied: (what: string) => void
 }) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
@@ -909,12 +917,18 @@ function PreparePaymentSheet({
           </div>
         )}
 
-        <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
-          Sluiten
-        </button>
-        <p style={{ fontSize: 12, color: '#5F6368', textAlign: 'center', marginTop: 10, lineHeight: 1.4 }}>
-          Na betalen in je bank: bevestig met &quot;Markeer als betaald&quot; op de factuur.
+        {/* [PAY-SAFE-CONFIRM] Closing the QR ≠ paid. Ask directly — "Ja" routes
+            to the Bank/Contant + date flow; "Nog niet" just closes (stays unpaid).
+            Wording = "verstuurd" (sent), not "aangekomen" — SEPA takes time. */}
+        <p style={{ fontSize: 15, fontWeight: 700, color: '#1C1B1F', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
+          Heb je de betaling verstuurd?
         </p>
+        <button onClick={onConfirmPaid} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+          Ja, ik heb betaald
+        </button>
+        <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.surfaceVariant, color: '#49454F', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
+          Nog niet
+        </button>
       </div>
     </div>
   )
