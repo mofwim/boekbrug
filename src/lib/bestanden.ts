@@ -72,6 +72,8 @@ export interface BestandRow {
   starred?: boolean;
   trashed?: boolean;
   trashed_at?: string | null;
+  // [BRUG-FILES-SHARED] visible to the linked accountant when true.
+  shared?: boolean;
 }
 
 export interface FolderContents {
@@ -158,7 +160,7 @@ export async function getFolderContents(
 
   let docQ = supabase
     .from("documents")
-    .select("id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, ai_suggested_folder, source, starred, trashed")
+    .select("id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, ai_suggested_folder, source, starred, trashed, shared")
     .eq("user_id", userId)
     .eq("trashed", false)
     .order("created_at", { ascending: false });
@@ -538,7 +540,7 @@ export async function searchBestanden(
 
   const { data, error } = await supabase
     .from("documents")
-    .select("id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, ai_suggested_folder, source, starred, trashed")
+    .select("id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, ai_suggested_folder, source, starred, trashed, shared")
     .eq("user_id", userId)
     .eq("trashed", false)
     .or(`file_name.ilike.%${q}%,notes.ilike.%${q}%,ai_doc_type.ilike.%${q}%,doc_type.ilike.%${q}%`)
