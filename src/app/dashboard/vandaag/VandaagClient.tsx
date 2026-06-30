@@ -373,8 +373,11 @@ function InvoiceCard({
   const accent = accentOf(due);
   const isIncoming = invoice.direction === "incoming";
 
-  // One clear verb per direction (clarity #3).
-  const primaryLabel = isIncoming ? "Betalen" : "Herinnering sturen";
+  // One clear verb per direction (clarity #3). Outgoing says "Bekijken" — NOT
+  // "Herinnering sturen" — because the button currently routes to the invoice
+  // page; there is no reminder-send logic yet, so the label must not promise an
+  // action we don't perform. When a real reminder flow is built, change this.
+  const primaryLabel = isIncoming ? "Betalen" : "Bekijken";
 
   return (
     <div

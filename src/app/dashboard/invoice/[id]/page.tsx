@@ -159,8 +159,17 @@ export default function InvoiceDetailPage() {
 
       setInvoice(invoiceData)
 
+      // [INVOICE-DETAIL-NULL-GUARD] On an incoming invoice the sender_id points
+      // at an external party with NO profiles row (often null) — querying
+      // profiles.eq('id', null) throws a Postgres 22P02 "invalid input syntax for
+      // uuid: null" and floods the console. Guard it: only fetch the sender
+      // profile when sender_id is a real value; otherwise resolve to null.
+      const senderProfilePromise = invoiceData.sender_id
+        ? supabase.from('profiles').select('*').eq('id', invoiceData.sender_id).single()
+        : Promise.resolve({ data: null })
+
       const [{ data: senderProfile }, { data: linesData }, { data: ownProfile }] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', invoiceData.sender_id).single(),
+        senderProfilePromise,
         supabase.from('invoice_lines').select('*').eq('invoice_id', invoiceId),
         supabase.from('profiles').select('*').eq('id', user.id).single(),
       ])
