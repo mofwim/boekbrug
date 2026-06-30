@@ -310,7 +310,9 @@ export default function FacturenClient({ profile }: { profile: any }) {
       const res = await fetch('/api/invoice/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoiceId: ctx.id }),
+        // [BOEK-RESEND-FIX] forward the resend flag — without it the route treats
+        // an already-sent invoice as a first send and 400s ("al verzonden").
+        body: JSON.stringify({ invoiceId: ctx.id, resend: ctx.isResend }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Verzenden mislukt' }))
