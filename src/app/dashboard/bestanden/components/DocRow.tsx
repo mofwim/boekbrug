@@ -15,9 +15,11 @@ interface DocRowProps {
   onSelect: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onDragStart: (e: DragEvent<HTMLDivElement>) => void;
+  // [BRUG-FILES-SHARED] one-click share toggle from the row's share badge.
+  onToggleShare: (docId: string, currentlyShared: boolean) => void;
 }
 
-export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart }: DocRowProps) {
+export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, onToggleShare }: DocRowProps) {
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -74,6 +76,25 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
           {formatDate(doc.created_at)} · {formatSize(doc.file_size)}
         </p>
       </div>
+
+      {/* [BRUG-FILES-SHARED] Share badge — one click toggles sharing. Solid when
+          shared (visible to the accountant); faint on hover when not, as an invite. */}
+      {(doc.shared || hovered) && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleShare(doc.id, !!doc.shared); }}
+          title={doc.shared ? "Gedeeld met boekhouder — tik om te stoppen" : "Delen met boekhouder"}
+          aria-label={doc.shared ? "Niet meer delen" : "Delen met boekhouder"}
+          style={{
+            width: 26, height: 26, border: "none", flexShrink: 0,
+            background: doc.shared ? T.primaryContainer : "transparent",
+            borderRadius: T.full, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            opacity: doc.shared ? 1 : 0.5, transition: "all 0.15s",
+          }}
+        >
+          <Icon name="share" size={15} color={doc.shared ? T.primary : T.outline} />
+        </button>
+      )}
 
       {doc.starred && <Icon name="star" size={16} color={T.star} style={{ flexShrink: 0 }} />}
       {doc.ai_processed && <span style={{ fontSize: 11, fontWeight: 600, color: T.success, flexShrink: 0 }}>AI ✓</span>}

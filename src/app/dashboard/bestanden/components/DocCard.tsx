@@ -16,6 +16,8 @@ interface DocCardProps {
   onContextMenu: (e: React.MouseEvent) => void;
   onDragStart: (e: DragEvent<HTMLDivElement>) => void;
   cardRef: (el: HTMLDivElement | null) => void;
+  // [BRUG-FILES-SHARED] one-click share toggle from the card's share badge.
+  onToggleShare: (docId: string, currentlyShared: boolean) => void;
 }
 
 // [BESTANDEN-THUMB] Show the image itself as the card thumbnail (instead of a
@@ -25,7 +27,7 @@ function isImage(fileType: string | null): boolean {
   return !!fileType && fileType.startsWith("image/");
 }
 
-export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, cardRef }: DocCardProps) {
+export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onDragStart, cardRef, onToggleShare }: DocCardProps) {
   const [hovered, setHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   // [BESTANDEN-THUMB] Lazily fetch a signed URL for image files (files are
@@ -148,6 +150,26 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
         {doc.starred && (
           <Icon name="star" size={14} color={T.star}
             style={{ position: "absolute", bottom: 6, right: 6 }} />
+        )}
+
+        {/* [BRUG-FILES-SHARED] Share badge — one click toggles sharing. Solid when
+            shared; faint on hover when not, inviting the owner to share. */}
+        {(doc.shared || hovered) && !isDragging && (
+          <button
+            onClick={e => { e.stopPropagation(); onToggleShare(doc.id, !!doc.shared); }}
+            title={doc.shared ? "Gedeeld met boekhouder — tik om te stoppen" : "Delen met boekhouder"}
+            aria-label={doc.shared ? "Niet meer delen" : "Delen met boekhouder"}
+            style={{
+              position: "absolute", bottom: 6, left: 6,
+              width: 24, height: 24, border: "none",
+              background: doc.shared ? T.primary : "rgba(255,255,255,0.92)",
+              borderRadius: T.full, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: T.elev1, opacity: doc.shared ? 1 : 0.85, transition: "all 0.15s",
+            }}
+          >
+            <Icon name="share" size={13} color={doc.shared ? T.onPrimary : T.outline} />
+          </button>
         )}
       </div>
 

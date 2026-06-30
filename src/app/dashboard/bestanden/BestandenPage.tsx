@@ -211,6 +211,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // ── Modals ──
   const [preview, setPreview] = useState<BestandRow | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: "file" | "folder" } | null>(null);
+  // [BRUG-FILES-SHARED] Lightweight toast for share confirmation (no library).
+  const [toast, setToast] = useState<string | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ id: string; type: "file" | "folder"; excludeId?: string } | null>(null);
   // [BRUG-FILES-SHARED / AI-SUGGEST] Pending AI placement suggestion for a file
   // uploaded at the root. We SUGGEST, the owner confirms — never a silent move.
@@ -547,6 +549,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       body: JSON.stringify({ shared: next }),
     });
     setDocs(p => p.map(d => d.id === docId ? { ...d, shared: next } : d));
+    setToast(next ? "Gedeeld met je boekhouder" : "Delen gestopt");
+    window.setTimeout(() => setToast(null), 2600);
   };
 
   // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
@@ -716,6 +720,20 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       {/* ── Modals ── */}
       {preview && <PreviewModal doc={preview} onClose={() => setPreview(null)} />}
       {renameTarget && <RenameModal currentName={renameTarget.name} type={renameTarget.type} onConfirm={handleRenameConfirm} onClose={() => setRenameTarget(null)} />}
+      {/* [BRUG-FILES-SHARED] Share confirmation toast — auto-dismisses. */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 96, left: "50%", transform: "translateX(-50%)",
+          zIndex: 500, background: "#323232", color: "#fff",
+          padding: "12px 20px", borderRadius: 24, fontSize: 14, fontWeight: 500,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.28)", display: "flex", alignItems: "center", gap: 8,
+          fontFamily: "'Google Sans','Roboto',sans-serif", whiteSpace: "nowrap",
+          pointerEvents: "none",
+        }}>
+          <Icon name="share" size={16} color="#fff" />
+          {toast}
+        </div>
+      )}
       {moveTarget && <MoveModal folders={allFolders} excludeId={moveTarget.excludeId} onMove={fid => handleMove(moveTarget.id, moveTarget.type, fid)} onClose={() => setMoveTarget(null)} />}
       {bulkMoveOpen && <MoveModal folders={allFolders} onMove={handleBulkMove} onClose={() => setBulkMoveOpen(false)} />}
       {/* [AI-SUGGEST] Root upload → AI suggests a folder; the owner confirms or picks. */}
@@ -1195,6 +1213,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                           onSelect={e => handleSelect(e, `d:${doc.id}`)}
                           onContextMenu={e => openFileContextMenu(e, doc)}
                           onDragStart={e => handleDocDragStart(e, doc.id)}
+                          onToggleShare={handleToggleShare}
                         />
                         {doc.folder_name && (
                           <span style={{ position: "absolute", right: 48, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: T.outline }}>
@@ -1313,6 +1332,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                                   onContextMenu={e => openFileContextMenu(e, doc)}
                                   onDragStart={e => handleDocDragStart(e, doc.id)}
                                   cardRef={el => { if (el) cardRefs.current.set(doc.id, el); else cardRefs.current.delete(doc.id); }}
+                                  onToggleShare={handleToggleShare}
                                 />
                               </div>
                             ))}
@@ -1333,6 +1353,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                                   onSelect={e => handleSelect(e, `d:${doc.id}`)}
                                   onContextMenu={e => openFileContextMenu(e, doc)}
                                   onDragStart={e => handleDocDragStart(e, doc.id)}
+                                  onToggleShare={handleToggleShare}
                                 />
                               </div>
                             ))}
