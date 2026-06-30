@@ -143,6 +143,12 @@ export default function IncomingManageClient({
   // Lands the user on the exact row: auto-expand, scroll into view, brief highlight.
   const searchParams = useSearchParams()
   const focusId = searchParams.get('focus')
+  // [TODAY-AL-BETAALD] patch note (cross-ticket: owned by TODAY-UX, lives here):
+  // Vandaag's "Al betaald?" routes here with ?action=pay to open the EXISTING
+  // mark-as-paid dialog directly. We do NOT add any new pay/write logic — we call
+  // the same requestPay() the in-row button uses, so the no-double-pay check and
+  // the single write path are fully preserved. Read-only intent passed via URL.
+  const actionParam = searchParams.get('action')
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
@@ -161,6 +167,22 @@ export default function IncomingManageClient({
     return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId])
+
+  // [TODAY-AL-BETAALD] When arriving with ?action=pay, open the mark-as-paid
+  // dialog for the focused invoice — but only if it is still 'received' (unpaid).
+  // Runs once the row is present in the list. Uses the SAME requestPay() as the
+  // manual button (no logic duplicated). Separate effect so the focus/scroll
+  // behaviour above is untouched.
+  useEffect(() => {
+    if (actionParam !== 'pay' || !focusId) return
+    const target = invoices.find(i => i.id === focusId)
+    if (!target) return
+    if (target.status !== 'received') return
+    // Small delay so the row is expanded/scrolled first, then the dialog opens.
+    const t = setTimeout(() => { requestPay(target) }, 150)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionParam, focusId, invoices.length])
 
   const displayed = invoices.filter(inv => {
     if (filter === 'all') return true

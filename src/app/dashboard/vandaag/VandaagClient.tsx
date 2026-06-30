@@ -155,9 +155,12 @@ export default function VandaagClient({ payable, remind }: Props) {
 
   // [TODAY-UX-CLARITY] "Al betaald?" — the owner confirms a payment they already
   // made (paid-but-unrecorded is the #1 cause of a scary "overdue"). Vandaag stays
-  // READ-ONLY: this routes to the manage surface where "Markeer als betaald" lives.
+  // READ-ONLY: this routes to the manage surface AND asks it to open the existing
+  // mark-as-paid dialog (?action=pay), so the owner lands directly on Bank/Contant
+  // + date. The write itself still happens only in IncomingManageClient (one
+  // source of truth) — Vandaag merely passes the intent via the URL.
   const confirmPaid = (id: string) =>
-    router.push(`/dashboard/incoming/manage?focus=${id}`);
+    router.push(`/dashboard/incoming/manage?focus=${id}&action=pay`);
 
   const visiblePayable = useMemo(
     () => filterWindow(payable, dismissed),
