@@ -1,14 +1,18 @@
 // app/api/files/route.ts
 // [BOEK-010] Document upload (POST) + list (GET)
 // [BOEK-010] Added ?clientId= support — accountant can view a linked client's shared folder
+// [DOCS-DISABLE-OLD] POST disabled (410 Gone) — this old file-system shared via the
+//   documents.shared flag, but accountant RLS reads folder membership only, so uploads
+//   here could silently never reach the accountant. GET is read-only and kept intact.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { uploadDocument, listDocuments } from "@/lib/documents";
+import { listDocuments } from "@/lib/documents";
 
 // GET /api/files
 //   ?year=2026&quarter=1&doc_type=pdf&shared=true            ← ZZP own files
 //   ?clientId=<uuid>&shared=true                             ← accountant viewing client's shared folder
+// [DOCS-DISABLE-OLD] GET kept — read-only, creates no share. Live reads may still rely on it.
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -72,46 +76,17 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/files — multipart/form-data
-// Fields: file, year, quarter, invoice_id?, notes?, shared?
-export async function POST(req: NextRequest) {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
-
-  const formData  = await req.formData();
-  const file      = formData.get("file") as File | null;
-
-  if (!file) {
-    return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 });
-  }
-
-  const now       = new Date();
-  const year      = Number(formData.get("year")    ?? now.getFullYear());
-  const quarter   = Number(formData.get("quarter") ?? Math.ceil((now.getMonth() + 1) / 3));
-  const invoiceId = (formData.get("invoice_id") as string | null) ?? undefined;
-  const notes     = (formData.get("notes")     as string | null) ?? undefined;
-  const shared    = formData.get("shared") === "true";
-  // [BESTANDEN-DUP] explicit "upload again" confirmation from the dup modal
-  const allowDuplicate = formData.get("allowDuplicate") === "true";
-
-  const { id, error, duplicate, existing } = await uploadDocument(user.id, file, {
-    year,
-    quarter,
-    invoiceId,
-    notes,
-    shared,
-    allowDuplicate,
-  });
-
-  // [BRIDGE-EXTRACT] Duplicate → 409 (consistent with /api/email/upload), and
-  // surface WHERE the file already lives so the UI can point the user to it.
-  if (duplicate) {
-    return NextResponse.json(
-      { error, duplicate: true, existing },
-      { status: 409 }
-    );
-  }
-
-  if (error) return NextResponse.json({ error }, { status: 400 });
-  return NextResponse.json({ id }, { status: 201 });
+// [DOCS-DISABLE-OLD] Disabled. Uploading here shared via documents.shared, which the
+//   accountant RLS does not read -> silent shares that never reach the accountant.
+//   The live owner system is /dashboard/bestanden. We return 410 Gone instead of
+//   writing anything, so even a programmatic call cannot create a hidden share.
+//   No code or data is deleted; uploadDocument stays available in @/lib/documents.
+export async function POST() {
+  return NextResponse.json(
+    {
+      error: "Deze uploadroute is uitgeschakeld. Gebruik 'Mijn bestanden' (/dashboard/bestanden).",
+      code: "DOCS_DISABLE_OLD",
+    },
+    { status: 410 }
+  );
 }

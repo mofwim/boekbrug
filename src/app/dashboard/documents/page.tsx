@@ -1,9 +1,13 @@
 // app/dashboard/documents/page.tsx
-// [BOEK-010] Documents page — supports ?clientId= for accountant mode
+// [DOCS-DISABLE-OLD] Deprecated documents page — access disabled, no code/data deleted.
+// The old documents file-system shared via the documents.shared flag, but the
+// accountant RLS reads folder membership only -> its shares could silently never
+// reach the accountant. We do NOT delete; we redirect each role to its live system:
+//   - client (no clientId)      -> /dashboard/bestanden
+//   - accountant (?clientId=...) -> /dashboard/brug (clientId passed through; brug
+//                                   ignores it harmlessly if it selects clients another way)
 
 import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { DocumentsClient } from "./DocumentsClient";
 
 interface Props {
   searchParams: Promise<{ clientId?: string }>;
@@ -12,27 +16,13 @@ interface Props {
 export default async function DocumentsPage({ searchParams }: Props) {
   const { clientId } = await searchParams;
 
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  // [BOEK-010] If clientId → resolve client name for the header
-  let clientName: string | undefined;
+  // [DOCS-DISABLE-OLD] Accountant came here to view a specific client's files.
+  // Send them to the live accountant system (brug), forwarding clientId so brug
+  // can pre-select the client if it accepts that param.
   if (clientId) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name, company_name")
-      .eq("id", clientId)
-      .single();
-
-    if (profile) {
-      clientName = profile.company_name || profile.full_name || undefined;
-    }
+    redirect(`/dashboard/brug?clientId=${encodeURIComponent(clientId)}`);
   }
 
-  return (
-    <main>
-      <DocumentsClient clientName={clientName} />
-    </main>
-  );
+  // [DOCS-DISABLE-OLD] Client (owner) -> live files system.
+  redirect("/dashboard/bestanden");
 }
