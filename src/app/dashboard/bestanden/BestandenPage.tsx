@@ -28,6 +28,7 @@ import { Trash } from "./components/Trash";
 import { PreviewModal } from "./components/modals/PreviewModal";
 import { RenameModal } from "./components/modals/RenameModal";
 import { MoveModal } from "./components/modals/MoveModal";
+import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
 
 // ─── Breadcrumb ────────────────────────────────────────────────────────────────
 
@@ -211,6 +212,9 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [preview, setPreview] = useState<BestandRow | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; type: "file" | "folder" } | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ id: string; type: "file" | "folder"; excludeId?: string } | null>(null);
+  // [BRUG-FILES-SHARED / AI-SUGGEST] Pending AI placement suggestion for a file
+  // uploaded at the root. We SUGGEST, the owner confirms — never a silent move.
+  const [aiSuggest, setAiSuggest] = useState<{ docId: string; fileName: string; folderId: string; path: string } | null>(null);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: import("./types").ContextMenuItem[] } | null>(null);
 
@@ -711,6 +715,27 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       {renameTarget && <RenameModal currentName={renameTarget.name} type={renameTarget.type} onConfirm={handleRenameConfirm} onClose={() => setRenameTarget(null)} />}
       {moveTarget && <MoveModal folders={allFolders} excludeId={moveTarget.excludeId} onMove={fid => handleMove(moveTarget.id, moveTarget.type, fid)} onClose={() => setMoveTarget(null)} />}
       {bulkMoveOpen && <MoveModal folders={allFolders} onMove={handleBulkMove} onClose={() => setBulkMoveOpen(false)} />}
+      {/* [AI-SUGGEST] Root upload → AI suggests a folder; the owner confirms or picks. */}
+      {aiSuggest && (
+        <AiSuggestionModal
+          fileName={aiSuggest.fileName}
+          suggestedPath={aiSuggest.path}
+          onAccept={async () => {
+            const { docId, folderId } = aiSuggest;
+            setAiSuggest(null);
+            await fetch(`/api/bestanden?id=${docId}`, {
+              method: "PATCH", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ folder_id: folderId }),
+            });
+            setDocs(p => p.filter(d => d.id !== docId));
+          }}
+          onChooseManually={() => {
+            const { docId } = aiSuggest;
+            setAiSuggest(null);
+            setMoveTarget({ id: docId, type: "file" });
+          }}
+        />
+      )}
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
 
       {/* ── Clipboard indicator ── */}
@@ -848,27 +873,38 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     const uploadedIntoShared = !!sharedFolder && currentFolderId === sharedFolder.id;
 
                     if (uploadedIntoShared) {
+                      // Uploaded into the shared folder → auto-share (route handles it).
                       await fetch(`/api/bestanden?id=${j.id}`, {
                         method: "PATCH", headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ folder_id: sharedFolder!.id }),
                       });
+                    } else if (currentFolderId) {
+                      // [AI-SUGGEST] Uploaded INTO a specific folder → the owner already
+                      // chose where it goes. Respect that: leave it here, AI does not
+                      // re-place it. The file was uploaded with folder_id=currentFolderId.
                     } else {
-                    // Silent AI classification
-                    try {
-                      const cr = await fetch("/api/bestanden/classify", {
-                        method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ documentId: j.id, fileName: file.name }),
-                      });
-                      if (cr.ok) {
-                        const result = await cr.json() as { folderId: string | null; confidence?: number; type: string };
-                        if (result.folderId && result.type !== "unknown" && (result.confidence ?? 1) >= 0.7) {
-                          await fetch(`/api/bestanden?id=${j.id}`, {
-                            method: "PATCH", headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ folder_id: result.folderId }),
-                          });
+                      // [AI-SUGGEST] Uploaded at the root (no folder chosen). Ask AI for a
+                      // suggestion and SHOW it — never move silently. The owner confirms
+                      // ("Ja, hier plaatsen") or picks a folder themselves.
+                      try {
+                        const cr = await fetch("/api/bestanden/classify", {
+                          method: "POST", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ documentId: j.id, fileName: file.name }),
+                        });
+                        if (cr.ok) {
+                          // The classify route returns a ready folderPath label
+                          // (e.g. "2026 / Q2 / Bank") and the resolved folderId.
+                          const result = await cr.json() as { folderId: string | null; folderPath?: string; type: string };
+                          if (result.folderId && result.type !== "unknown") {
+                            setAiSuggest({
+                              docId: j.id,
+                              fileName: file.name,
+                              folderId: result.folderId,
+                              path: result.folderPath || "Aanbevolen map",
+                            });
+                          }
                         }
-                      }
-                    } catch { /* silent */ }
+                      } catch { /* silent — file simply stays at the root */ }
                     }
                     handleUploaded({
                       id: j.id, file_name: file.name, file_url: "", file_size: file.size,
