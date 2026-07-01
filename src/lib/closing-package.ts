@@ -148,7 +148,8 @@ async function stampPaymentDate(
     const { width, height } = page.getSize();
     const font = await doc.embedFont(StandardFonts.Helvetica);
     const label = `Betaald op: ${formatNlDate(info.date)}${info.estimated ? " (geschat)" : ""}`;
-    const color = rgb(0.4, 0.4, 0.4);
+    const color = rgb(0, 0, 0);          // black text
+    const highlight = rgb(1, 1, 0);      // yellow background
     const margin = 24;
 
     // Target 24pt, but shrink to fit narrow pages (receipts, small scans) so the
@@ -159,24 +160,29 @@ async function stampPaymentDate(
       size -= 1;
     }
     const textWidth = font.widthOfTextAtSize(label, size);
+    const textHeight = font.heightAtSize(size);
+    const pad = size * 0.15; // small padding around the text inside the highlight
+
+    // Draw a yellow rectangle behind the text, then the black text on top —
+    // pdf-lib has no native highlight, so we emulate it. drawText's y is the
+    // baseline; the glyph box sits from (y - descender) up to (y + ascender),
+    // so we pad around textHeight for a clean band.
+    const drawStamp = (x: number, y: number) => {
+      page.drawRectangle({
+        x: x - pad,
+        y: y - pad,
+        width: textWidth + pad * 2,
+        height: textHeight + pad * 2,
+        color: highlight,
+      });
+      page.drawText(label, { x, y, size, font, color });
+    };
 
     // Bottom-right: right edge minus text width, small bottom margin.
-    page.drawText(label, {
-      x: Math.max(margin, width - textWidth - margin),
-      y: margin,
-      size,
-      font,
-      color,
-    });
+    drawStamp(Math.max(margin, width - textWidth - margin), margin + pad);
 
     // Top-center: horizontally centered, near the top edge.
-    page.drawText(label, {
-      x: Math.max(margin, (width - textWidth) / 2),
-      y: height - size - margin,
-      size,
-      font,
-      color,
-    });
+    drawStamp(Math.max(margin, (width - textWidth) / 2), height - size - margin);
 
     return await doc.save();
   } catch {
