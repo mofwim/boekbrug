@@ -127,11 +127,13 @@ function formatNlDate(iso: string | null): string {
 }
 
 /**
- * Stamp a small "Betaald op: DD-MM-YYYY[ (geschat)]" line at the bottom-left of
- * the FIRST page only. Best-effort: any failure (encrypted PDF, image-only
- * scan wrapped oddly, parse error) returns the ORIGINAL bytes unchanged so the
- * invoice is still included — a stamp must never drop a document. Pure-ish:
- * takes bytes + a date, returns bytes. No I/O, no DB.
+ * Stamp a "Betaald op: DD-MM-YYYY[ (geschat)]" line on the FIRST page in TWO
+ * places — bottom-right and top-center — at 24pt. Positions are computed from
+ * the actual text width (widthOfTextAtSize) so the label stays inside the page
+ * regardless of page size or date length. Best-effort: any failure (encrypted
+ * PDF, image-only scan wrapped oddly, parse error) returns the ORIGINAL bytes
+ * unchanged so the invoice is still included — a stamp must never drop a
+ * document. Pure-ish: takes bytes + a date, returns bytes. No I/O, no DB.
  */
 async function stampPaymentDate(
   pdfBytes: Uint8Array,
@@ -143,15 +145,39 @@ async function stampPaymentDate(
     const pages = doc.getPages();
     if (pages.length === 0) return pdfBytes;
     const page = pages[0];
+    const { width, height } = page.getSize();
     const font = await doc.embedFont(StandardFonts.Helvetica);
     const label = `Betaald op: ${formatNlDate(info.date)}${info.estimated ? " (geschat)" : ""}`;
+    const color = rgb(0.4, 0.4, 0.4);
+    const margin = 24;
+
+    // Target 24pt, but shrink to fit narrow pages (receipts, small scans) so the
+    // label never overflows the page edge. Never below 8pt (still legible).
+    const maxTextWidth = Math.max(1, width - 2 * margin);
+    let size = 24;
+    while (size > 8 && font.widthOfTextAtSize(label, size) > maxTextWidth) {
+      size -= 1;
+    }
+    const textWidth = font.widthOfTextAtSize(label, size);
+
+    // Bottom-right: right edge minus text width, small bottom margin.
     page.drawText(label, {
-      x: 24,
-      y: 16, // bottom-left margin, clear of most invoice tables
-      size: 8,
+      x: Math.max(margin, width - textWidth - margin),
+      y: margin,
+      size,
       font,
-      color: rgb(0.4, 0.4, 0.4),
+      color,
     });
+
+    // Top-center: horizontally centered, near the top edge.
+    page.drawText(label, {
+      x: Math.max(margin, (width - textWidth) / 2),
+      y: height - size - margin,
+      size,
+      font,
+      color,
+    });
+
     return await doc.save();
   } catch {
     return pdfBytes; // include the original rather than fail the package
