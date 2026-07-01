@@ -23,6 +23,10 @@
 // (fetch + parallel download, then assemble). Reuses quarterly.ts + export.ts.
 
 import JSZip from "jszip";
+// [CLOSING-PACKAGE-PAYDATE] pdf-lib stamps a small "Betaald op: DD-MM-YYYY" line
+// on the first page of each PAID invoice. Mechanical text-draw at fixed
+// coordinates — no content parsing, no AI. Requires `npm install pdf-lib`.
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import type { PipelineClient } from "./supabase-pipeline";
 import {
   quarterStartDate,
@@ -51,6 +55,20 @@ export interface PackageInvoice {
   due_date: string | null;
   pdf_url: string | null;            // outgoing PDF (FACTUUR-A)
   document_id: string | null;        // link to documents (incoming original)
+  marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
+}
+
+/**
+ * [CLOSING-PACKAGE-PAYDATE] Resolved payment date for one PAID invoice.
+ *   - date      : ISO "YYYY-MM-DD" (or null if we genuinely have none).
+ *   - estimated : false when it comes from a linked bank transaction (real
+ *                 settlement date); true when it falls back to marked_paid_at
+ *                 (the moment the human confirmed — an approximation).
+ * `null` stays `null`: we never invent a date. Honest fallback (SAFECORE).
+ */
+export interface PaymentDateInfo {
+  date: string | null;
+  estimated: boolean;
 }
 
 /** A file already downloaded from Storage, ready to drop into the ZIP. */
@@ -97,6 +115,92 @@ export function isVerifiedForPackage(inv: { direction: string; status: string | 
 const EUR = (n: number) => n.toFixed(2).replace(".", ",");
 const safe = (s: string) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
 
+// ─── [CLOSING-PACKAGE-PAYDATE] Payment-date helpers ─────────────────────────────
+
+/** ISO "YYYY-MM-DD" → Dutch "DD-MM-YYYY". Returns "" on malformed input. */
+function formatNlDate(iso: string | null): string {
+  if (!iso) return "";
+  const parts = iso.slice(0, 10).split("-");
+  if (parts.length !== 3) return "";
+  const [y, m, d] = parts;
+  return `${d}-${m}-${y}`;
+}
+
+/**
+ * Stamp a small "Betaald op: DD-MM-YYYY[ (geschat)]" line at the bottom-left of
+ * the FIRST page only. Best-effort: any failure (encrypted PDF, image-only
+ * scan wrapped oddly, parse error) returns the ORIGINAL bytes unchanged so the
+ * invoice is still included — a stamp must never drop a document. Pure-ish:
+ * takes bytes + a date, returns bytes. No I/O, no DB.
+ */
+async function stampPaymentDate(
+  pdfBytes: Uint8Array,
+  info: PaymentDateInfo
+): Promise<Uint8Array> {
+  if (!info.date) return pdfBytes; // nothing honest to write
+  try {
+    const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    const pages = doc.getPages();
+    if (pages.length === 0) return pdfBytes;
+    const page = pages[0];
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const label = `Betaald op: ${formatNlDate(info.date)}${info.estimated ? " (geschat)" : ""}`;
+    page.drawText(label, {
+      x: 24,
+      y: 16, // bottom-left margin, clear of most invoice tables
+      size: 8,
+      font,
+      color: rgb(0.4, 0.4, 0.4),
+    });
+    return await doc.save();
+  } catch {
+    return pdfBytes; // include the original rather than fail the package
+  }
+}
+
+/**
+ * For a set of PAID invoices, resolve each one's payment date in ONE query.
+ * Priority: linked bank transaction date (real) → marked_paid_at (estimate) →
+ * null (honest — never invented). A bank transaction is considered linked when
+ * its invoice_id points at the invoice, REGARDLESS of the transaction's own
+ * status: even a partially-linked multi-invoice transaction (status still
+ * 'pending') carries a genuine settlement date. When several transactions link
+ * the same invoice (rare), the latest date wins.
+ */
+async function resolvePaymentDates(
+  supabase: PipelineClient,
+  paidInvoices: PackageInvoice[]
+): Promise<Map<string, PaymentDateInfo>> {
+  const result = new Map<string, PaymentDateInfo>();
+  const ids = paidInvoices.map((i) => i.id);
+  if (ids.length === 0) return result;
+
+  const { data: txRows } = await supabase
+    .from("bank_transactions")
+    .select("invoice_id, date")
+    .in("invoice_id", ids);
+
+  const bankDateByInvoice = new Map<string, string>();
+  for (const row of (txRows ?? []) as Array<{ invoice_id: string | null; date: string | null }>) {
+    if (!row.invoice_id || !row.date) continue;
+    const prev = bankDateByInvoice.get(row.invoice_id);
+    // Keep the latest linked transaction date if an invoice has more than one.
+    if (!prev || row.date > prev) bankDateByInvoice.set(row.invoice_id, row.date);
+  }
+
+  for (const inv of paidInvoices) {
+    const bankDate = bankDateByInvoice.get(inv.id);
+    if (bankDate) {
+      result.set(inv.id, { date: bankDate.slice(0, 10), estimated: false });
+    } else if (inv.marked_paid_at) {
+      result.set(inv.id, { date: inv.marked_paid_at.slice(0, 10), estimated: true });
+    } else {
+      result.set(inv.id, { date: null, estimated: true });
+    }
+  }
+  return result;
+}
+
 /** CSV cell escaper (semicolon-separated, Excel NL). */
 function esc(v: string | number): string {
   const s = String(v ?? "");
@@ -127,7 +231,8 @@ export function buildOverviewCsv(
   quarterLabel: string,
   outgoing: PackageInvoice[],
   incoming: PackageInvoice[],
-  warnings: ClosingPackageWarning[]
+  warnings: ClosingPackageWarning[],
+  paymentDates: Map<string, PaymentDateInfo>
 ): string {
   const lines: string[] = [];
 
@@ -158,13 +263,19 @@ export function buildOverviewCsv(
 
   // ── Content list ──
   lines.push("Inhoud van dit pakket");
-  lines.push(["Richting", "Factuurnummer", "Naam", "Datum", "Bedrag incl. BTW", "Status"].map(esc).join(";"));
+  lines.push(["Richting", "Factuurnummer", "Naam", "Datum factuur", "Datum betaling", "Bedrag incl. BTW", "Status"].map(esc).join(";"));
   for (const inv of [...outgoing, ...incoming]) {
+    const pay = paymentDates.get(inv.id);
+    const payCell =
+      inv.status === "paid" && pay?.date
+        ? `${formatNlDate(pay.date)}${pay.estimated ? " (geschat)" : ""}`
+        : "—";
     lines.push([
       inv.direction === "outgoing" ? "Uitgaand" : "Inkomend",
       inv.invoice_number ?? "—",
       inv.client_name ?? "—",
       inv.invoice_date ?? "—",
+      payCell,
       EUR(inv.total_inc_btw ?? 0),
       inv.status ?? "—",
     ].map(esc).join(";"));
@@ -200,33 +311,78 @@ interface AssembleInput {
    *  (kassa-reports, contracts, etc.) — shared=true, tied to the quarter via period.
    *  Not invoices and not bank statements; passthrough into overige-documenten/. */
   sharedFiles: PackageFile[];
+  /** [CLOSING-PACKAGE-PAYDATE] invoiceId → resolved payment date, for PAID
+   *  invoices only. Drives the stamp, the date-prefixed filename, and the
+   *  betaald/ vs openstaand/ split. Absent id → treated as no payment date. */
+  paymentDates: Map<string, PaymentDateInfo>;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
 
   let filesIncluded = 0;
 
-  // ── facturen-en-bonnen/uitgaand + inkomend ──
-  for (const [dir, set] of [["uitgaand", outgoing], ["inkomend", incoming]] as const) {
-    for (const inv of set) {
+  // ── facturen-en-bonnen/{uitgaand,inkomend}/{betaald,openstaand}/ ──
+  // [CLOSING-PACKAGE-PAYDATE] Split each direction into paid vs open:
+  //   - betaald/    → PAID invoices, sorted by INVOICE date (tax period is set by
+  //                   invoice_date under factuurstelsel — payment date never moves
+  //                   an invoice to another quarter), filename PREFIXED with the
+  //                   invoice date, and the PAYMENT date STAMPED on page 1.
+  //   - openstaand/ → not-yet-paid invoices (sent/overdue/received), sorted by
+  //                   due_date, NO stamp (there is no payment to record).
+  // A verified invoice with no stored PDF stays an honest warning, as before.
+  const sections: Array<{
+    dir: "uitgaand" | "inkomend";
+    bucket: "betaald" | "openstaand";
+    set: PackageInvoice[];
+  }> = [
+    { dir: "uitgaand", bucket: "betaald", set: outgoing.filter((i) => i.status === "paid") },
+    { dir: "uitgaand", bucket: "openstaand", set: outgoing.filter((i) => i.status !== "paid") },
+    { dir: "inkomend", bucket: "betaald", set: incoming.filter((i) => i.status === "paid") },
+    { dir: "inkomend", bucket: "openstaand", set: incoming.filter((i) => i.status !== "paid") },
+  ];
+
+  for (const { dir, bucket, set } of sections) {
+    // Sort: betaald by invoice_date (tax order), openstaand by due_date.
+    const sortKey = (inv: PackageInvoice) =>
+      (bucket === "betaald" ? inv.invoice_date : inv.due_date) ?? "9999-99-99";
+    const ordered = [...set].sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+
+    for (const inv of ordered) {
       const file = pdfByInvoice.get(inv.id);
-      const baseName = `${safe(inv.client_name ?? "onbekend")}_${safe(inv.invoice_number ?? inv.id)}`;
-      if (file) {
-        zip.file(`facturen-en-bonnen/${dir}/${baseName}.pdf`, file.bytes);
-        filesIncluded++;
-      } else {
+      const datePrefix = (inv.invoice_date ?? "0000-00-00").slice(0, 10);
+      const baseName = `${datePrefix}_${safe(inv.client_name ?? "onbekend")}_${safe(inv.invoice_number ?? inv.id)}`;
+
+      if (!file) {
         // Honest gap: a verified invoice with no stored PDF (outgoing render
         // failed / pre-FACTUUR-A, or incoming without a linked document).
         warnings.push({
           code: "pdf_missing",
           message: `Factuur ${inv.invoice_number ?? inv.id} (${dir}) — origineel PDF niet gevonden, niet bijgevoegd.`,
         });
+        continue;
       }
+
+      let bytes = file.bytes;
+      if (bucket === "betaald") {
+        const info = paymentDates.get(inv.id);
+        if (info && info.date) {
+          bytes = await stampPaymentDate(bytes, info);
+        } else {
+          // Paid but no resolvable payment date — include unstamped, warn.
+          warnings.push({
+            code: "payment_date_missing",
+            message: `Factuur ${inv.invoice_number ?? inv.id} is betaald maar heeft geen betaaldatum — bijgevoegd zonder stempel.`,
+          });
+        }
+      }
+
+      zip.file(`facturen-en-bonnen/${dir}/${bucket}/${baseName}.pdf`, bytes);
+      filesIncluded++;
     }
   }
 
@@ -263,7 +419,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   }
 
   // ── overzicht.csv + overzicht.json ──
-  const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings);
+  const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates);
   zip.file("overzicht.csv", "\uFEFF" + overviewCsv);
 
   // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
@@ -314,7 +470,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id" as const;
+  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, marked_paid_at" as const;
 
 /**
  * [BRIDGE-HUB Overzicht] Lightweight summary of a client's quarter — WITHOUT
@@ -550,6 +706,10 @@ export async function buildClosingPackageZip(args: {
   const sharedFilesRaw = await Promise.all(sharedPaths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
 
+  // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──
+  const paidInvoices = [...outgoing, ...incoming].filter((i) => i.status === "paid");
+  const paymentDates = await resolvePaymentDates(supabase, paidInvoices);
+
   return assembleClosingPackageZip({
     year,
     quarter,
@@ -560,6 +720,7 @@ export async function buildClosingPackageZip(args: {
     bankFiles,
     kilometerFiles: [], // not a feature yet; passthrough hook reserved
     sharedFiles,
+    paymentDates,
     warnings,
   });
 }
