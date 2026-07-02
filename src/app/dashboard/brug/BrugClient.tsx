@@ -121,18 +121,6 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
   const curYear = now.getFullYear()
   const curQuarter = Math.floor(now.getMonth() / 3) + 1
 
-  // [BRIDGE-QUARTER-PICKER] The accountant works per quarter/year and can switch
-  // both (Q1–Q4 buttons + year arrows). Default lands on the LAST COMPLETED
-  // quarter — the one whose BTW is actually due to be closed — not the current
-  // (still-open) quarter. So on 1 Jan 2027 the accountant opens straight onto
-  // Q4 2026, exactly the quarter they need, with no extra click. Crossing the
-  // year boundary is handled: in Q1, last completed is Q4 of the previous year.
-  const lastCompleted = curQuarter === 1
-    ? { year: curYear - 1, quarter: 4 }
-    : { year: curYear, quarter: curQuarter - 1 }
-  const [selectedYear, setSelectedYear] = useState<number>(lastCompleted.year)
-  const [selectedQuarter, setSelectedQuarter] = useState<number>(lastCompleted.quarter)
-
   // [BRIDGE-REFRESH] Re-fetch when the tab regains focus. The page is
   // force-dynamic server-side, but tab/folder navigation here is client-side
   // state (cwd) — it never re-runs the server fetch. So when the accountant
@@ -220,7 +208,7 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
             </div>
             {selectedClient && (
               <a
-                href={`/api/closing-package?clientId=${selectedClient.id}&year=${selectedYear}&quarter=${selectedQuarter}`}
+                href={`/api/closing-package?clientId=${selectedClient.id}&year=${curYear}&quarter=${curQuarter}`}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT, textDecoration: 'none', flexShrink: 0 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>inventory_2</span>
@@ -231,51 +219,6 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
 
           {selectedClient ? (
             <>
-              {/* [BRIDGE-QUARTER-PICKER] Quarter selector (Q1–Q4) + year arrows.
-                  Shows all four quarters so an empty current quarter never hides
-                  a full earlier one. Defaults to the last completed quarter. */}
-              <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
-                {[1, 2, 3, 4].map(q => {
-                  const active = selectedQuarter === q
-                  return (
-                    <button
-                      key={q}
-                      onClick={() => setSelectedQuarter(q)}
-                      style={{
-                        flex: 1, padding: '10px 0', borderRadius: R.md, cursor: 'pointer',
-                        fontFamily: FONT, fontSize: 14, fontWeight: 600,
-                        border: `1px solid ${active ? M3.primary : M3.outline}`,
-                        background: active ? M3.primary : '#fff',
-                        color: active ? M3.onPrimary : M3.onSurface,
-                        transition: 'background 0.15s, border-color 0.15s',
-                      }}
-                    >
-                      Q{q}
-                    </button>
-                  )
-                })}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 8 }}>
-                  <button
-                    onClick={() => setSelectedYear(y => y - 1)}
-                    title="Vorig jaar"
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
-                  </button>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>
-                    {selectedYear}
-                  </span>
-                  <button
-                    onClick={() => setSelectedYear(y => Math.min(y + 1, curYear))}
-                    disabled={selectedYear >= curYear}
-                    title="Volgend jaar"
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: selectedYear >= curYear ? 'default' : 'pointer', color: selectedYear >= curYear ? M3.outline : M3.primary, opacity: selectedYear >= curYear ? 0.4 : 1 }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_right</span>
-                  </button>
-                </div>
-              </div>
-
               {/* Tabs */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, borderBottom: `1px solid ${M3.surfaceVariant}` }}>
                 {([['overzicht', 'Overzicht', 'fact_check'], ['kwartaal', 'Kwartaal', 'bar_chart'], ['documenten', 'Documenten', 'folder']] as const).map(([key, label, icon]) => (
@@ -292,12 +235,12 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
 
               {/* Overzicht tab — readiness status + honest missing list */}
               {hubTab === 'overzicht' && (
-                <OverzichtPanel clientId={selectedClient.id} year={selectedYear} quarter={selectedQuarter} />
+                <OverzichtPanel clientId={selectedClient.id} year={curYear} quarter={curQuarter} />
               )}
 
               {/* Kwartaal tab — lazy-loaded quarter numbers */}
               {hubTab === 'kwartaal' && (
-                <KwartaalPanel clientId={selectedClient.id} year={selectedYear} quarter={selectedQuarter} />
+                <KwartaalPanel clientId={selectedClient.id} year={curYear} quarter={curQuarter} />
               )}
             </>
           ) : (
@@ -484,20 +427,22 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
 
   return (
     <div style={{ fontFamily: FONT }}>
-      {/* Status banner — the single most important line */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: R.lg, marginBottom: 14, background: isComplete ? '#CEEAD6' : '#FEE8C4' }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 24, color: isComplete ? '#137333' : '#7C5800' }}>
-          {isComplete ? 'verified' : 'warning'}
-        </span>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: isComplete ? '#137333' : '#7C5800' }}>
-            {isComplete ? 'Compleet' : 'Nog niet compleet'}
-          </div>
-          <div style={{ fontSize: 12.5, color: isComplete ? '#137333' : '#7C5800', opacity: 0.85 }}>
-            {data.quarter} · {isComplete ? 'klaar om af te sluiten' : `${data.warnings.length} ${data.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}`}
+      {/* [BRUG-HONEST] Status banner — only for warnings; no "Compleet" boast when clean */}
+      {!isComplete && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: R.lg, marginBottom: 14, background: '#FEE8C4' }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7C5800' }}>
+            warning
+          </span>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#7C5800' }}>
+              Nog niet compleet
+            </div>
+            <div style={{ fontSize: 12.5, color: '#7C5800', opacity: 0.85 }}>
+              {data.quarter} · {data.warnings.length} {data.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* What's inside — real counts only */}
       <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 14 }}>
@@ -506,7 +451,7 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
         </div>
         <SummaryRow icon="receipt_long" label="Uitgaande facturen" value={String(data.outgoingCount)} />
         <SummaryRow icon="receipt" label="Inkomende facturen" value={String(data.incomingCount)} />
-        <SummaryRow icon="picture_as_pdf" label="Facturen met PDF" value={`${data.filesIncluded} / ${totalInvoices}`} />
+        <SummaryRow icon="picture_as_pdf" label="Facturen met PDF" value={String(data.filesIncluded)} />
         <SummaryRow
           icon="account_balance"
           label="Bankafschrift"
