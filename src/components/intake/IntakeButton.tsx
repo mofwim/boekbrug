@@ -41,6 +41,14 @@ export default function IntakeButton({
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
   const [dupModal, setDupModal] = useState<{ message: string; originalId?: string } | null>(null)
+  // [INTAKE-DEST-MODAL] When a file is NOT an invoice (destination 'document'),
+  // the owner needs to KNOW where it landed — a persistent modal (iOS-styled,
+  // matching /incoming) with the destination folder + a deep-link that
+  // highlights the file in Mijn bestanden. A fleeting toast is not enough: the
+  // owner uploads and wonders "where did that go?".
+  const [destModal, setDestModal] = useState<
+    { fileName: string; message: string; folderName: string | null; folderId: string | null; documentId: string | null } | null
+  >(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -73,17 +81,29 @@ export default function IntakeButton({
       }
 
       // Destination-aware feedback + navigation.
-      showToast(data.message || 'Toegevoegd ✓')
       onDone?.(data)
 
       // Route the owner to where the item landed, so they can confirm/see it.
       if (data.destination === 'invoice' || data.destination === 'receipt') {
+        showToast(data.message || 'Toegevoegd ✓')
         setTimeout(() => router.push('/dashboard/incoming'), 600)
       } else if (data.destination === 'bank') {
+        showToast(data.message || 'Toegevoegd ✓')
         setTimeout(() => router.push('/dashboard/bank'), 600)
       } else if (data.destination === 'document') {
-        setTimeout(() => router.push('/dashboard/bestanden'), 600)
+        // [INTAKE-DEST-MODAL] Not an invoice → the owner can't guess where it
+        // went. Show a persistent modal with the destination + a deep-link that
+        // highlights the file in Mijn bestanden. No auto-redirect: the owner
+        // decides whether to open it (tap the link) or stay (tap "Klaar").
+        setDestModal({
+          fileName: file.name,
+          message: data.message || 'Opgeslagen in je bestanden',
+          folderName: data.folder_name ?? null,
+          folderId: data.folder_id ?? null,
+          documentId: data.document_id ?? null,
+        })
       } else {
+        showToast(data.message || 'Toegevoegd ✓')
         router.refresh()
       }
     } catch {
@@ -257,6 +277,69 @@ export default function IntakeButton({
         </div>
       )}
 
+      {/* [INTAKE-DEST-MODAL] Non-invoice file → persistent modal telling the
+          owner WHERE it landed, with a deep-link that highlights it in Mijn
+          bestanden. iOS-styled to match the /incoming results modal. */}
+      {destModal && (
+        <div
+          onClick={() => setDestModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 400 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px',
+              paddingBottom: 'calc(24px + env(safe-area-inset-bottom))',
+              width: '100%', maxWidth: 430,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 19, color: '#1c1c1e', marginBottom: 4 }}>
+              Bestand toegevoegd
+            </div>
+            <div style={{ fontSize: 14, color: '#8e8e93', marginBottom: 16 }}>
+              Dit is er met je bestand gebeurd:
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: '#f7f7f9', marginBottom: 20 }}>
+              <span style={{ fontSize: 16, lineHeight: '20px' }}>📁</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#1c1c1e', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {destModal.fileName}
+                </p>
+                <p style={{ fontSize: 12, color: '#007aff', margin: 0 }}>
+                  {destModal.folderName ? `Dit bestand staat in: ${destModal.folderName}` : destModal.message}
+                </p>
+                {destModal.documentId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const folder = destModal.folderId ?? ''
+                      const focus = destModal.documentId
+                      setDestModal(null)
+                      router.push(`/dashboard/bestanden?folder=${folder}&focus=${focus}`)
+                    }}
+                    style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#007aff', fontSize: 12, fontWeight: 600, textDecoration: 'underline' }}
+                  >
+                    Bekijk in bestanden →
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setDestModal(null)}
+              style={{
+                width: '100%', padding: '16px', borderRadius: 14,
+                background: '#34c759', color: '#fff', border: 'none',
+                fontWeight: 700, fontSize: 16, cursor: 'pointer', fontFamily: FONT,
+              }}
+            >
+              Klaar
+            </button>
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.md, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90%', textAlign: 'center', fontFamily: FONT }}>
           {toast}
@@ -276,4 +359,8 @@ export interface IntakeResult {
   invoice_id?: string
   original_id?: string  // [DUP-MODAL] the existing invoice this duplicates → deep-link
   suggest_paid?: boolean
+  // [INTAKE-DEST-MODAL] present for destination 'document' → deep-link + highlight
+  document_id?: string
+  folder_id?: string | null
+  folder_name?: string | null
 }
