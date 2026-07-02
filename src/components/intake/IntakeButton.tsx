@@ -326,10 +326,16 @@ export default function IntakeButton({
                   <button
                     type="button"
                     onClick={() => {
-                      const folder = destModal.folderId ?? ''
+                      // [BESTANDEN-FOCUS] Root must be the ABSENCE of ?folder=, not an
+                      // empty string. BestandenPage inits currentFolderId directly from
+                      // params.get("folder"), so ?folder= (empty) becomes "" and breaks
+                      // navigation. Omit folder entirely when the file sits at the root.
                       const focus = destModal.documentId
+                      const url = destModal.folderId
+                        ? `/dashboard/bestanden?folder=${destModal.folderId}&focus=${focus}`
+                        : `/dashboard/bestanden?focus=${focus}`
                       setDestModal(null)
-                      router.push(`/dashboard/bestanden?folder=${folder}&focus=${focus}`)
+                      router.push(url)
                     }}
                     style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#007aff', fontSize: 12, fontWeight: 600, textDecoration: 'underline' }}
                   >
