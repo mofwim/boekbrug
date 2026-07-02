@@ -377,7 +377,7 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
       {level.files.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {level.files.map(file => (
-            <FileRow key={`${file.source}-${file.id}`} node={file} />
+            <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} />
           ))}
         </div>
       )}
@@ -388,7 +388,7 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
 }
 
 // ─── File / invoice row ────────────────────────────────────────────────────────
-function FileRow({ node }: { node: TreeNode }) {
+function FileRow({ node, isClient }: { node: TreeNode; isClient: boolean }) {
   const icon = node.source === 'invoice' ? 'receipt_long' : 'description'
 
   const inner = (
@@ -430,14 +430,51 @@ function FileRow({ node }: { node: TreeNode }) {
     </div>
   )
 
-  if (node.pdfUrl) {
-    return (
-      <a href={node.pdfUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+  // [BRIDGE-OPEN-LOCATION] For the owner (not the accountant), when this node has a
+  // real file in "Mijn bestanden", offer a button that opens that file's folder and
+  // highlights it. Uses the existing ?folder= & ?focus= handling in BestandenPage.
+  const locationBtn =
+    isClient && node.hasLocation && node.docId ? (
+      <a
+        href={
+          node.folderId
+            ? `/dashboard/bestanden?folder=${node.folderId}&focus=${node.docId}`
+            : `/dashboard/bestanden?focus=${node.docId}`
+        }
+        title="Open in Mijn bestanden"
+        aria-label="Open in Mijn bestanden"
+        onClick={e => e.stopPropagation()}
+        style={{
+          flexShrink: 0, width: 40, height: 40, borderRadius: R.full,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: M3.surfaceVariant ?? '#E7E8EC', textDecoration: 'none',
+        }}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.primary }}>
+          folder_open
+        </span>
+      </a>
+    ) : null
+
+  const openable =
+    node.pdfUrl ? (
+      <a href={node.pdfUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', flex: 1, minWidth: 0 }}>
         {inner}
       </a>
+    ) : (
+      <div style={{ flex: 1, minWidth: 0 }}>{inner}</div>
+    )
+
+  // Both actions have their own hit area; the location button never triggers the PDF.
+  if (locationBtn) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+        {openable}
+        {locationBtn}
+      </div>
     )
   }
-  return inner
+  return openable
 }
 // ─── [BRIDGE-HUB] Layer 2 — Overzicht panel (readiness, honest status) ────────
 interface PackageSummary {

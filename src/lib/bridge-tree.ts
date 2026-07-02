@@ -124,6 +124,17 @@ export interface TreeNode {
    * the supplier-vs-customer label. Documents leave this null (no marker).
    */
   direction: 'outgoing' | 'incoming' | null
+  /**
+   * [BRIDGE-OPEN-LOCATION] Where this file lives in the owner's "Mijn bestanden".
+   * hasLocation = true when there is a physical document behind this node (a
+   * document node, or an invoice with a linked document_id). folderId is that
+   * document's folder (null = root / Overig). When hasLocation is false (e.g. an
+   * app-created invoice with no uploaded file), there is nothing to open.
+   * docId is the document row id, used to highlight the file after navigating.
+   */
+  hasLocation: boolean
+  folderId: string | null
+  docId: string | null
 }
 
 // ============================================================================
@@ -423,6 +434,16 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
       pdfUrl = doc?.file_url ?? null
     }
 
+    // [BRIDGE-OPEN-LOCATION] Location in "Mijn bestanden" comes from the linked
+    // physical document (if any). An invoice with no document_id has no file to
+    // open, so hasLocation stays false.
+    const linkedDoc = inv.document_id
+      ? documents.find(d => d.id === inv.document_id)
+      : undefined
+    const invHasLocation = !!linkedDoc
+    const invFolderId = linkedDoc?.folder_id ?? null
+    const invDocId = linkedDoc?.id ?? null
+
     // Owning client for accountant grouping:
     // outgoing → sender_id is the ZZP'er; incoming → receiver_id.
     const clientId =
@@ -453,6 +474,10 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
       // [BRIDGE-POLISH 3a-1] counterparty + direction for the card UI
       partyName: inv.client_name?.trim() || null,
       direction: inv.direction,
+      // [BRIDGE-OPEN-LOCATION]
+      hasLocation: invHasLocation,
+      folderId: invFolderId,
+      docId: invDocId,
     })
   }
 
@@ -484,6 +509,10 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
       // [BRIDGE-POLISH 3a-1] documents have no counterparty/direction
       partyName: null,
       direction: null,
+      // [BRIDGE-OPEN-LOCATION] a document always has a real place in Mijn bestanden.
+      hasLocation: true,
+      folderId: doc.folder_id ?? null,
+      docId: doc.id,
     })
   }
 
