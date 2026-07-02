@@ -484,20 +484,22 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
 
   return (
     <div style={{ fontFamily: FONT }}>
-      {/* Status banner — the single most important line */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: R.lg, marginBottom: 14, background: isComplete ? '#CEEAD6' : '#FEE8C4' }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 24, color: isComplete ? '#137333' : '#7C5800' }}>
-          {isComplete ? 'verified' : 'warning'}
-        </span>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: isComplete ? '#137333' : '#7C5800' }}>
-            {isComplete ? 'Compleet' : 'Nog niet compleet'}
-          </div>
-          <div style={{ fontSize: 12.5, color: isComplete ? '#137333' : '#7C5800', opacity: 0.85 }}>
-            {data.quarter} · {isComplete ? 'klaar om af te sluiten' : `${data.warnings.length} ${data.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}`}
+      {/* [BRUG-HONEST] Status banner — only when NOT complete; no premature Compleet claim */}
+      {!isComplete && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: R.lg, marginBottom: 14, background: '#FEE8C4' }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7C5800' }}>
+            warning
+          </span>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#7C5800' }}>
+              Nog niet compleet
+            </div>
+            <div style={{ fontSize: 12.5, color: '#7C5800', opacity: 0.85 }}>
+              {data.quarter} · {data.warnings.length} {data.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* What's inside — real counts only */}
       <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 14 }}>
@@ -506,7 +508,7 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
         </div>
         <SummaryRow icon="receipt_long" label="Uitgaande facturen" value={String(data.outgoingCount)} />
         <SummaryRow icon="receipt" label="Inkomende facturen" value={String(data.incomingCount)} />
-        <SummaryRow icon="picture_as_pdf" label="Facturen met PDF" value={`${data.filesIncluded} / ${totalInvoices}`} />
+        <SummaryRow icon="picture_as_pdf" label="Facturen met PDF" value={String(data.filesIncluded)} />
         <SummaryRow
           icon="account_balance"
           label="Bankafschrift"
