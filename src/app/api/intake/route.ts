@@ -29,6 +29,10 @@ import { parseBankFile } from "@/lib/bank-parser"
 import { dedupTransactions, mapToRows, dateRange } from "@/lib/bank-import"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+// [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
+// ingest, so every invoice lives as a PDF from day one (opens uniformly, can be
+// stamped by the closing package with no download-time conversion).
+import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
 import { findSemanticDuplicate } from "@/lib/safecore"
@@ -216,12 +220,19 @@ export async function POST(req: NextRequest) {
     // tier 'none' (un-dedupable) → allow through; the human reviews in the queue.
   }
 
+  // ── [INTAKE-IMG-PDF] Convert image → PDF BEFORE storage ─────────────────────
+  // Runs AFTER the AI (the extractor reads the raw photo above) and AFTER dedup
+  // (so a duplicate costs no conversion). Wrapping only — full image fidelity,
+  // no re-compression. One file per request → peak memory is a single image.
+  // Best-effort: a failed conversion returns the original bytes unchanged.
+  const upload = await maybeImageToPdf(buffer, file.type, file.name)
+
   // ── Store the file in Storage (shared by all destinations) ──────────────────
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+  const safeName = upload.fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
   const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`
   const { error: uploadError } = await supabase.storage
     .from("documents")
-    .upload(storagePath, buffer, { contentType: file.type, upsert: false })
+    .upload(storagePath, upload.buffer, { contentType: upload.fileType, upsert: false })
   const pdfUrl = uploadError ? null : storagePath
 
   const pipeline = createPipelineClient()
@@ -233,10 +244,10 @@ export async function POST(req: NextRequest) {
       .from("documents")
       .insert({
         user_id: user.id,
-        file_name: file.name,
+        file_name: upload.fileName,
         file_url: storagePath,
-        file_size: file.size,
-        file_type: file.type,
+        file_size: upload.buffer.length,
+        file_type: upload.fileType,
         doc_type: "overig",
         folder_id: folderId,
         source: "camera",
@@ -270,10 +281,10 @@ export async function POST(req: NextRequest) {
     .from("documents")
     .insert({
       user_id: user.id,
-      file_name: file.name,
+      file_name: upload.fileName,
       file_url: storagePath,
-      file_size: file.size,
-      file_type: file.type,
+      file_size: upload.buffer.length,
+      file_type: upload.fileType,
       doc_type: "factuur",
       folder_id: folderId,
       year: new Date(invoiceDate).getFullYear(),
