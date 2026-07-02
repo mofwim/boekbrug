@@ -177,7 +177,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/werkplek')}
           />
 
-          {/* 4. Werken met AI */}
+          {/* 4. Werken met AI
           <ActionCard
             icon="star" iconBg={M3.tertiary} iconColor="#fff"
             label="Werken met AI" sub="Beschrijf je factuur, AI regelt de rest"
@@ -185,7 +185,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             active={showAiPanel}
             activeColor={M3.tertiary}
             activeBg={M3.tertiaryContainer}
-          />
+          /> */}
 
           {/* AI Panel */}
           {showAiPanel && (

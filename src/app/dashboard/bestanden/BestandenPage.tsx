@@ -4,7 +4,7 @@
 // Design: Material You (ZZP) — BoekBrug Design System v1.0
 
 import { useState, useEffect, useRef, useCallback, DragEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { useHomePath } from "@/lib/navigation-hooks";
@@ -178,22 +178,18 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // a race condition with loadContents — the root content was loaded first,
   // then setCurrentFolderId fired after, sometimes too late.
   // Initializing useState from URL avoids that entire ordering problem.
+  // [BESTANDEN-FOCUS] Initial ?folder=/?focus= are read on mount here, and the
+  // effect below also re-reads them after client-side navigation (router.push does
+  // NOT re-run these initializers, which is why deep-links used to need a manual
+  // refresh). Cleanup of the URL is owned by that effect, not here.
+  const searchParams = useSearchParams();
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    const params = new URLSearchParams(window.location.search);
-    return params.get("folder");
+    return new URLSearchParams(window.location.search).get("folder");
   });
-  // [BESTANDEN-FOCUS] Read ?focus={docId} once on first render — highlight + scroll
-  // to the file the user was pointed at (e.g. from the duplicate "map openen" link).
   const [focusId, setFocusId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    const focus = new URLSearchParams(window.location.search).get("focus");
-    // Both folder and focus are read above; now clean the URL once so
-    // refresh/back behave normally (don't re-trigger folder/focus).
-    if (window.location.search) {
-      window.history.replaceState({}, "", "/dashboard/bestanden");
-    }
-    return focus;
+    return new URLSearchParams(window.location.search).get("focus");
   });
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [subFolders, setSubFolders] = useState<FolderRow[]>([]);
@@ -272,6 +268,23 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     document.addEventListener("mousedown", fn);
     return () => document.removeEventListener("mousedown", fn);
   }, [showNewMenu]);
+
+  // [BESTANDEN-FOCUS] React to deep-links AFTER client-side navigation. router.push
+  // to /dashboard/bestanden?folder=..&focus=.. does not re-run the useState
+  // initializers above, so without this the folder/focus were ignored until a manual
+  // refresh. We read the params on every change, apply them, then clean the URL.
+  useEffect(() => {
+    const folder = searchParams.get("folder");
+    const focus = searchParams.get("focus");
+    if (folder === null && focus === null) return;
+    if (folder !== null) setCurrentFolderId(folder);
+    if (focus !== null) setFocusId(focus);
+    setShowTrash(false);
+    setSearch("");
+    setSearchResults(null);
+    // Clean the URL so refresh/back don't re-trigger the deep-link.
+    window.history.replaceState({}, "", "/dashboard/bestanden");
+  }, [searchParams]);
 
   // ── Escape = clear selection / close menu ──
   useEffect(() => {

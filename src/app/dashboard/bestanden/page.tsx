@@ -3,6 +3,7 @@
 // [BOEK-033] Reads profile.role server-side and passes it to the client component
 //            so the sidebar logo can link to the correct home (no client fetch).
 
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { ensureYearStructure } from "@/lib/bestanden";
@@ -30,4 +31,11 @@ export default async function BestandenServerPage() {
 
   // [BOEK-033] Pass role for the sidebar logo to point to the correct home
 // [BOEK-002] narrow role to BestandenPage's union (Supabase returns generic string after type regen)
-return <BestandenPage role={profile.role as 'zzper' | 'accountant' | 'client' | null} />;}
+// [BESTANDEN-FOCUS] BestandenPage uses useSearchParams (to react to ?folder=/?focus=
+  // deep-links after client-side navigation), which requires a Suspense boundary.
+  return (
+    <Suspense fallback={null}>
+      <BestandenPage role={profile.role as 'zzper' | 'accountant' | 'client' | null} />
+    </Suspense>
+  );
+}
