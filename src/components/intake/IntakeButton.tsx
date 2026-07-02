@@ -47,7 +47,7 @@ export default function IntakeButton({
   // highlights the file in Mijn bestanden. A fleeting toast is not enough: the
   // owner uploads and wonders "where did that go?".
   const [destModal, setDestModal] = useState<
-    { fileName: string; message: string; folderName: string | null; folderId: string | null; documentId: string | null } | null
+    { fileName: string; message: string; folderName: string | null; folderId: string | null; documentId: string | null; isDuplicate?: boolean } | null
   >(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -68,10 +68,23 @@ export default function IntakeButton({
       const data: IntakeResult = await res.json()
 
       if (!res.ok) {
-        // [DUP-MODAL] A duplicate (409) is a decision point — show a persistent
-        // modal with a link to the existing invoice, not a fleeting toast.
-        // Other errors stay as a toast.
-        if (res.status === 409 && data.duplicate) {
+        // A duplicate (409) is a decision point — show a persistent modal, not a
+        // fleeting toast. There are TWO kinds of duplicate:
+        //   - a file already in Mijn bestanden (data.existing) → reuse the
+        //     destination modal so the owner gets a link to WHERE it already is
+        //     (highlighted), consistent with a fresh non-invoice upload.
+        //   - an invoice duplicate (data.original_id) → link to the invoice in
+        //     the incoming manage view.
+        if (res.status === 409 && data.duplicate && data.existing?.id) {
+          setDestModal({
+            fileName: file.name,
+            message: data.error || 'Dit bestand is al toegevoegd',
+            folderName: data.existing.folder_name ?? null,
+            folderId: data.existing.folder_id ?? null,
+            documentId: data.existing.id,
+            isDuplicate: true,
+          })
+        } else if (res.status === 409 && data.duplicate) {
           setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id })
         } else {
           showToast(data.error || 'Toevoegen mislukt')
@@ -294,14 +307,14 @@ export default function IntakeButton({
             }}
           >
             <div style={{ fontWeight: 700, fontSize: 19, color: '#1c1c1e', marginBottom: 4 }}>
-              Bestand toegevoegd
+              {destModal.isDuplicate ? 'Dit bestand bestaat al' : 'Bestand toegevoegd'}
             </div>
             <div style={{ fontSize: 14, color: '#8e8e93', marginBottom: 16 }}>
-              Dit is er met je bestand gebeurd:
+              {destModal.isDuplicate ? 'Je hebt dit bestand al eerder toegevoegd:' : 'Dit is er met je bestand gebeurd:'}
             </div>
 
             <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: '#f7f7f9', marginBottom: 20 }}>
-              <span style={{ fontSize: 16, lineHeight: '20px' }}>📁</span>
+              <span style={{ fontSize: 16, lineHeight: '20px' }}>{destModal.isDuplicate ? 'ℹ️' : '📁'}</span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: '#1c1c1e', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {destModal.fileName}
@@ -363,4 +376,11 @@ export interface IntakeResult {
   document_id?: string
   folder_id?: string | null
   folder_name?: string | null
+  // [INTAKE-DEST-MODAL] present on a 409 duplicate of a general file → deep-link
+  // to where the file already lives in Mijn bestanden (highlighted).
+  existing?: {
+    id: string
+    folder_id?: string | null
+    folder_name?: string | null
+  }
 }
