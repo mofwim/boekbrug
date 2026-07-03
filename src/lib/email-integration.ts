@@ -984,9 +984,50 @@ export async function syncUserEmails(userId: string): Promise<{
     return results
   }
 
-  // PHASE 1 — classify all attachments in parallel (max 3 in flight)
+  // ── PHASE 0 — pre-AI dedup + chronological sort ────────────────────────────
+  //
+  // [BOEK-011 PERF] The dedup key (messageId:filename) is known BEFORE any AI
+  // call. Previously Check A ran in the save loop — AFTER classification — so
+  // every sync re-sent every attachment to Claude (~2s each) only for dedup to
+  // skip it. With pagination now covering the whole date range, a no-op sync
+  // cost dozens of wasted Claude calls. One DB query here removes them all:
+  // repeat syncs drop from ~40s to ~3s.
+  //
+  // Check A stays in the save loop too (cheap, belt-and-braces + the DB unique
+  // index); Check B (content match) must stay there — it needs AI output.
+  const allKeys = attachments.map((a) => `${a.messageId}:${a.filename}`)
+  const knownKeys = new Set<string>()
+  if (allKeys.length > 0) {
+    // Chunk the IN() to stay well under URL/param limits on big backfills.
+    for (const keyChunk of chunkArray(allKeys, 100)) {
+      const { data: existingRows } = await supabase
+        .from('invoices')
+        .select('source_message_id')
+        .eq('receiver_id', userId)
+        .eq('source', 'email')
+        .in('source_message_id', keyChunk)
+      for (const row of (existingRows ?? []) as Array<{ source_message_id: string | null }>) {
+        if (row.source_message_id) knownKeys.add(row.source_message_id)
+      }
+    }
+  }
+
+  const freshAttachments = attachments
+    .filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
+    // [BOEK-011] Oldest email first → save order (created_at) follows real
+    // chronology, so lists sorted on created_at read naturally. Graph returns
+    // newest-first; Gmail is unordered — this sort normalizes both providers.
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+  console.log('[BOEK-011] Sync scope', {
+    fetched: attachments.length,
+    alreadyImported: knownKeys.size,
+    toClassify: freshAttachments.length,
+  })
+
+  // PHASE 1 — classify only NEW attachments in parallel (max 3 in flight)
   const classified: Classified[] = await mapConcurrent(
-    attachments,
+    freshAttachments,
     3,
     async (attachment) => {
       try {

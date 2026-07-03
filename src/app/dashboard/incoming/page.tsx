@@ -74,13 +74,17 @@ export default async function IncomingPage() {
     .limit(1)
     .single();
 
-  // [BOEK-011] Pending invoices — status 'received', awaiting confirmation
+  // [BOEK-011] Pending invoices — status 'processing', awaiting confirmation.
+  // Sorted by invoice_date (newest first): created_at is the IMPORT moment,
+  // which for backfilled email syncs has nothing to do with the invoice's real
+  // date — sorting on it made the queue look shuffled.
   const { data: pendingRaw } = await supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
     .eq("status", "processing")
+    .order("invoice_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(100);
 
