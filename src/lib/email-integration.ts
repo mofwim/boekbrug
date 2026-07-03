@@ -30,11 +30,17 @@ type InvoiceFieldConfidence =
 /**
  * [BOEK-011 + BOEK-SECURITY] Read tokens for a user from Vault.
  * Returns null when no connection exists or Vault read fails.
- * The caller decides what "null" means (e.g. "reconnect Gmail").
+ *
+ * [BOEK-011] Provider-agnostic: a user has one email connection, and its
+ * provider (gmail | outlook) is read from the row — NOT assumed. Passing a
+ * `provider` still filters to that provider when needed (e.g. multi-account
+ * later), but the default is "whatever connection this user has". This is the
+ * fix for Outlook-only accounts: the old default 'gmail' filter returned null
+ * for a user whose only connection was Outlook, so sync 404'd.
  */
 export async function getEmailTokens(
   userId: string,
-  provider: 'gmail' | 'outlook' = 'gmail'
+  provider?: 'gmail' | 'outlook'
 ): Promise<{
   accessToken: string
   refreshToken: string
@@ -44,12 +50,17 @@ export async function getEmailTokens(
 } | null> {
   const supabase = createPipelineClient()
 
-  const { data: conn, error } = await supabase
+  let query = supabase
     .from('email_connections')
     .select('id, provider, email, access_token_secret_id, refresh_token_secret_id')
     .eq('user_id', userId)
-    .eq('provider', provider)
-    .maybeSingle()
+
+  // Only constrain by provider when the caller explicitly asked for one.
+  if (provider) {
+    query = query.eq('provider', provider)
+  }
+
+  const { data: conn, error } = await query.maybeSingle()
 
   if (error) {
     console.error('[BOEK-011] email_connections read failed', { userId, provider, error })
