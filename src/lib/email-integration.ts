@@ -1012,17 +1012,29 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   }
 
-  const freshAttachments = attachments
+  const freshAll = attachments
     .filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
     // [BOEK-011] Oldest email first → save order (created_at) follows real
     // chronology, so lists sorted on created_at read naturally. Graph returns
     // newest-first; Gmail is unordered — this sort normalizes both providers.
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
+  // [BOEK-011] Batch cap — at most 25 NEW classifications per sync.
+  // A 63-invoice backfill costs ~4 min (AI + storage + sequential save) and
+  // flirts with the 5-minute function ceiling. Capping keeps every sync
+  // comfortably inside the limit; because PHASE 0 skips everything already
+  // saved, pressing sync again simply continues where the last run stopped
+  // (oldest-first, so chronology is preserved across batches).
+  const SYNC_BATCH_MAX = 25
+  const freshAttachments = freshAll.slice(0, SYNC_BATCH_MAX)
+  const remainingAfterBatch = freshAll.length - freshAttachments.length
+
   console.log('[BOEK-011] Sync scope', {
     fetched: attachments.length,
     alreadyImported: knownKeys.size,
-    toClassify: freshAttachments.length,
+    newTotal: freshAll.length,
+    thisBatch: freshAttachments.length,
+    remainingForNextSync: remainingAfterBatch,
   })
 
   // PHASE 1 — classify only NEW attachments in parallel (max 3 in flight)
