@@ -573,6 +573,127 @@ export async function getOutlookUserEmail(accessToken: string): Promise<string> 
   return data.mail || data.userPrincipalName || ''
 }
 
+// ─── Outlook attachment fetching (Microsoft Graph) ──────────────────────────
+
+/**
+ * [BOEK-011] Fetch Outlook messages after syncAfter timestamp via Microsoft Graph.
+ * Returns the SAME GmailAttachment shape as the Gmail path, so the save loop in
+ * syncUserEmails is provider-agnostic — no downstream changes needed.
+ *
+ * Key differences from Gmail (all simpler):
+ *  - Graph returns attachment content as `contentBytes` in STANDARD base64,
+ *    not base64url. No -/_ → +/ conversion, no padding fix. cleanBase64 in ai.ts
+ *    still runs and is a safe no-op on already-standard base64.
+ *  - One list call returns messages; attachments come from a per-message call.
+ *  - $filter does date + hasAttachments server-side.
+ */
+export async function fetchOutlookAttachments(
+  accessToken: string,
+  syncAfterMs: number
+): Promise<GmailAttachment[]> {
+  // Graph wants an ISO 8601 timestamp for the date filter
+  const afterIso = new Date(syncAfterMs).toISOString()
+
+  // 1. List messages that have attachments, received after the boundary.
+  //    $select keeps the payload small; attachments are fetched separately.
+  const filter = `hasAttachments eq true and receivedDateTime ge ${afterIso}`
+  const listUrl =
+    `https://graph.microsoft.com/v1.0/me/messages` +
+    `?$filter=${encodeURIComponent(filter)}` +
+    `&$select=id,subject,from,receivedDateTime` +
+    `&$top=50` +
+    `&$orderby=receivedDateTime desc`
+
+  const listRes = await fetch(listUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+
+  if (!listRes.ok) {
+    const body = await listRes.text()
+    throw new Error(`Outlook list mislukt: ${body}`)
+  }
+
+  const listData = await listRes.json()
+  const messages: Array<{
+    id: string
+    subject?: string
+    from?: { emailAddress?: { name?: string; address?: string } }
+    receivedDateTime?: string
+  }> = listData.value || []
+
+  const results: GmailAttachment[] = []
+
+  // 2. Fetch attachments per message, in parallel chunks (max 10 at a time)
+  const chunks = chunkArray(messages, 10)
+  for (const chunk of chunks) {
+    const fetched = await Promise.all(
+      chunk.map((m) => fetchOutlookMessageAttachments(m, accessToken))
+    )
+    results.push(...fetched.flat())
+  }
+
+  return results
+}
+
+async function fetchOutlookMessageAttachments(
+  message: {
+    id: string
+    subject?: string
+    from?: { emailAddress?: { name?: string; address?: string } }
+    receivedDateTime?: string
+  },
+  accessToken: string
+): Promise<GmailAttachment[]> {
+  const attRes = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${message.id}/attachments`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  )
+
+  if (!attRes.ok) return []
+
+  const attData = await attRes.json()
+  const attachments: Array<{
+    '@odata.type'?: string
+    name?: string
+    contentType?: string
+    size?: number
+    contentBytes?: string // standard base64 (fileAttachment only)
+  }> = attData.value || []
+
+  // Build the "from" string in the same shape Gmail produces: "Name <email>"
+  const fromName = message.from?.emailAddress?.name || ''
+  const fromAddr = message.from?.emailAddress?.address || ''
+  const from = fromName && fromAddr ? `${fromName} <${fromAddr}>` : (fromAddr || fromName)
+
+  const out: GmailAttachment[] = []
+
+  for (const att of attachments) {
+    // Only file attachments carry contentBytes. Inline/item attachments (e.g.
+    // embedded emails) have no contentBytes → skip. Same intent as Gmail:
+    // PDFs and images only.
+    if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') continue
+    if (!att.contentBytes) continue
+
+    const mimeType = att.contentType || ''
+    const filename = att.name || ''
+    if (!filename) continue
+    if (mimeType !== 'application/pdf' && !mimeType.startsWith('image/')) continue
+
+    out.push({
+      messageId: message.id,
+      filename,
+      mimeType,
+      data: att.contentBytes, // already standard base64 — no conversion needed
+      subject: message.subject || '',
+      from,
+      date: message.receivedDateTime || new Date().toISOString(),
+      size: att.size || 0,
+    })
+  }
+
+  return out
+}
+
 // ─── AI Classification ────────────────────────────────────────────────────────
 
 export interface AttachmentClassification {
@@ -724,8 +845,11 @@ export async function syncUserEmails(userId: string): Promise<{
   try {
     if (tokens.provider === 'gmail') {
       attachments = await fetchGmailAttachments(accessToken, syncAfterMs)
+    } else if (tokens.provider === 'outlook') {
+      // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
+      // so the save loop below is unchanged and provider-agnostic.
+      attachments = await fetchOutlookAttachments(accessToken, syncAfterMs)
     }
-    // Outlook: same pattern — add fetchOutlookAttachments when needed
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
     return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1 }
