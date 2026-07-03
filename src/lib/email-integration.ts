@@ -869,6 +869,7 @@ export async function syncUserEmails(userId: string): Promise<{
   verified: number
   saved: number
   errors: number
+  remaining: number
 } | null> {
   const { createServerSupabaseClient } = await import('@/lib/supabase-server')
   const supabase = await createServerSupabaseClient()
@@ -916,7 +917,7 @@ export async function syncUserEmails(userId: string): Promise<{
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1 }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0 }
   }
 
   // Fetch attachments after registration date
@@ -931,7 +932,7 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1 }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0 }
   }
 
   let verified = 0
@@ -1542,6 +1543,10 @@ export async function syncUserEmails(userId: string): Promise<{
     verified,
     saved,
     errors,
+    // [BOEK-011] New attachments beyond this batch's cap — the client uses
+    // this to auto-continue syncing until the backlog is drained, showing
+    // progress instead of silently importing a fraction.
+    remaining: remainingAfterBatch,
   }
 }
 

@@ -113,22 +113,62 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
 
+  // [BOEK-011] One tap = full import. The server caps each call at 25 new
+  // invoices (function time limit); it reports `remaining` and we simply call
+  // again until the backlog is drained — with live progress so the user sees
+  // "Bezig… 25 van 61" instead of a silent partial import. MAX_ROUNDS guards
+  // against a server bug ever looping us forever.
   const handleSync = async () => {
     setSyncing(true);
     setSyncResult(null);
+
+    const MAX_ROUNDS = 12; // 12 × 25 = 300 invoices per tap — plenty
+    let totalSaved = 0;
+    let totalFound = 0;
+    let round = 0;
+
     try {
-      const res = await fetch("/api/email/sync", { method: "POST" });
-      const data = await res.json();
-      if (data.error) {
-        setSyncResult(`Fout: ${data.error}`);
-      } else {
+      while (round < MAX_ROUNDS) {
+        round++;
+        const res = await fetch("/api/email/sync", { method: "POST" });
+        const data = await res.json();
+
+        if (data.error) {
+          setSyncResult(`Fout: ${data.error}`);
+          setSyncing(false);
+          return;
+        }
+
+        totalSaved += data.saved ?? 0;
+        totalFound += data.verified ?? 0;
+        const remaining = data.remaining ?? 0;
+
+        if (remaining > 0) {
+          // Live progress — the denominator grows as we learn about the backlog
+          setSyncResult(
+            `Bezig met importeren… ${totalSaved} opgeslagen, nog ~${remaining} te gaan`
+          );
+          continue; // next batch immediately
+        }
+
+        // Done — final summary
         setSyncResult(
-          `${data.verified ?? 0} facturen gevonden, ${data.saved ?? 0} opgeslagen`
+          `${totalFound} facturen gevonden, ${totalSaved} opgeslagen`
         );
         setTimeout(() => window.location.reload(), 1500);
+        return;
       }
+
+      // MAX_ROUNDS hit — extremely large mailbox; be honest, let them tap again
+      setSyncResult(
+        `${totalSaved} opgeslagen — er staan er nog meer klaar, synchroniseer opnieuw`
+      );
     } catch {
-      setSyncResult("Sync mislukt — probeer opnieuw");
+      setSyncResult(
+        totalSaved > 0
+          ? `${totalSaved} opgeslagen — verbinding onderbroken, synchroniseer opnieuw voor de rest`
+          : "Sync mislukt — probeer opnieuw"
+      );
     } finally {
       setSyncing(false);
     }
