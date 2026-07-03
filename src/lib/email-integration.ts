@@ -329,7 +329,7 @@ export function buildGmailOAuthUrl(state: string): string {
 
 export function buildOutlookOAuthUrl(state: string): string {
   const params = new URLSearchParams({
-    client_id: process.env.OUTLOOK_CLIENT_ID!,
+    client_id: process.env.MICROSOFT_CLIENT_ID!,
     redirect_uri: `${process.env.NEXT_PUBLIC_BASE_URL}/api/email/callback/outlook`,
     response_type: 'code',
     scope: OUTLOOK_SCOPES,
