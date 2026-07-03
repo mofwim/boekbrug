@@ -624,40 +624,64 @@ export async function fetchOutlookAttachments(
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
 
-  // 1. List messages received after the boundary.
+  // 1. List messages received after the boundary — WITH pagination.
   //
-  // [BOEK-011] Microsoft Graph rejects "$filter on hasAttachments + $orderby on
-  // receivedDateTime" with InefficientFilter — you cannot filter on one field
-  // and sort on another (no composite index). The reliable pattern on personal
-  // (hotmail/live) accounts is: filter on receivedDateTime ONLY, order by that
-  // same field, and drop the hasAttachments check to code below. We request
-  // hasAttachments in $select so the per-message loop can skip empty ones
-  // cheaply (no attachment fetch when there's nothing to fetch).
+  // [BOEK-011] Graph returns pages of $top messages plus @odata.nextLink for
+  // the next page. Without following nextLink we only ever saw the newest 50
+  // messages (orderby desc) — attachments from earlier in the range (e.g.
+  // February–May when SYNC_START_DATE=2026-02-01) never arrived, and every
+  // sync surfaced a few "new" invoices as recent mail pushed older ones out
+  // of the window. Following nextLink covers the whole range.
+  //
+  // Safety cap: 10 pages × 50 = 500 messages per sync. A pilot inbox fits
+  // comfortably; if a mailbox is larger the next sync continues (dedup skips
+  // what's already imported).
+  //
+  // [BOEK-011] Graph rejects "$filter on hasAttachments + $orderby on
+  // receivedDateTime" (InefficientFilter) — filter on the date only, order by
+  // the same field, and check hasAttachments in code below.
   const filter = `receivedDateTime ge ${afterIso}`
-  const listUrl =
+  const firstUrl =
     `https://graph.microsoft.com/v1.0/me/messages` +
     `?$filter=${encodeURIComponent(filter)}` +
     `&$select=id,subject,from,receivedDateTime,hasAttachments` +
     `&$orderby=receivedDateTime desc` +
     `&$top=50`
 
-  const listRes = await fetch(listUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-
-  if (!listRes.ok) {
-    const body = await listRes.text()
-    throw new Error(`Outlook list mislukt: ${body}`)
-  }
-
-  const listData = await listRes.json()
-  const messages: Array<{
+  type OutlookMessage = {
     id: string
     subject?: string
     from?: { emailAddress?: { name?: string; address?: string } }
     receivedDateTime?: string
     hasAttachments?: boolean
-  }> = listData.value || []
+  }
+
+  const messages: OutlookMessage[] = []
+  let nextUrl: string | null = firstUrl
+  let page = 0
+  const MAX_PAGES = 10
+
+  while (nextUrl && page < MAX_PAGES) {
+    const listRes: Response = await fetch(nextUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+
+    if (!listRes.ok) {
+      const body = await listRes.text()
+      // First page failing is a real error; a later page failing shouldn't
+      // discard everything we already collected.
+      if (page === 0) {
+        throw new Error(`Outlook list mislukt: ${body}`)
+      }
+      console.error('[BOEK-011] Outlook pagination stopped early', { page, body })
+      break
+    }
+
+    const listData = await listRes.json()
+    messages.push(...((listData.value || []) as OutlookMessage[]))
+    nextUrl = (listData['@odata.nextLink'] as string | undefined) ?? null
+    page++
+  }
 
   const results: GmailAttachment[] = []
 
@@ -1322,8 +1346,16 @@ export async function syncUserEmails(userId: string): Promise<{
         }
       }
 
-      // Held in 'processing' on failure; normal 'received' on success.
-      const invoiceStatus = verdict.ok ? 'received' : 'processing'
+      // [BOEK-011] ALL email imports enter the verify queue ('processing') —
+      // the user reviews and confirms in /dashboard/incoming, and only then
+      // does the invoice become a Crediteur ('received' → /incoming/manage).
+      // This matches the intake (camera/upload) path and M's confirmed design:
+      // import → queue → human confirm → Crediteuren. Previously only
+      // SAFECORE-held invoices were queued (verdict.ok skipped straight to
+      // 'received'), which made email invoices bypass confirmation entirely.
+      // The _safecore hold data above is still recorded for problem invoices —
+      // the queue's health badge uses it to flag which ones need extra care.
+      const invoiceStatus = 'processing'
 
       const insertPipeline = createPipelineClient()
       const { data: insertedInvoice, error: dbError } = await insertPipeline
@@ -1416,6 +1448,8 @@ export async function syncUserEmails(userId: string): Promise<{
   // (`supabase`) stays for reads where RLS is the right boundary.
   if (saved > 0) {
     const pipeline = createPipelineClient()
+    // [BOEK-011] Provider-aware copy — Outlook users shouldn't read "Gmail".
+    const providerLabel = tokens.provider === 'outlook' ? 'Outlook' : 'Gmail'
     // [BOEK-SAFECORE] Honest copy: when some invoices are HELD for review, say
     // so — don't tell the user to confirm payment on an invoice we've flagged
     // as arithmetically wrong. We don't over-claim ("all checked"); we state
@@ -1424,15 +1458,15 @@ export async function syncUserEmails(userId: string): Promise<{
     let body: string
     if (held > 0 && cleanCount > 0) {
       body =
-        `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald. ` +
+        `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald. ` +
         `${held} ${held === 1 ? 'factuur staat' : 'facturen staan'} klaar ter controle ` +
         `(mogelijk een rekenfout). Bevestig de rest.`
     } else if (held > 0 && cleanCount === 0) {
       body =
-        `BoekBrug heeft ${held} ${held === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald die ` +
+        `BoekBrug heeft ${held} ${held === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald die ` +
         `${held === 1 ? 'controle nodig heeft' : 'controle nodig hebben'} (mogelijk een rekenfout).`
     } else {
-      body = `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je Gmail gehaald. Bevestig betalingsstatus.`
+      body = `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald. Bevestig ze in Inkomend.`
     }
 
     const { error: notifErr } = await pipeline.from('notifications').insert({
