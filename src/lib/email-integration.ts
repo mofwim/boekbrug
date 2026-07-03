@@ -614,7 +614,8 @@ export async function getOutlookUserEmail(accessToken: string): Promise<string> 
  *    not base64url. No -/_ → +/ conversion, no padding fix. cleanBase64 in ai.ts
  *    still runs and is a safe no-op on already-standard base64.
  *  - One list call returns messages; attachments come from a per-message call.
- *  - $filter does date + hasAttachments server-side.
+ *  - $filter is on receivedDateTime only; hasAttachments is checked in code
+ *    (Graph rejects filtering hasAttachments while ordering by date).
  */
 export async function fetchOutlookAttachments(
   accessToken: string,
@@ -623,15 +624,22 @@ export async function fetchOutlookAttachments(
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
 
-  // 1. List messages that have attachments, received after the boundary.
-  //    $select keeps the payload small; attachments are fetched separately.
-  const filter = `hasAttachments eq true and receivedDateTime ge ${afterIso}`
+  // 1. List messages received after the boundary.
+  //
+  // [BOEK-011] Microsoft Graph rejects "$filter on hasAttachments + $orderby on
+  // receivedDateTime" with InefficientFilter — you cannot filter on one field
+  // and sort on another (no composite index). The reliable pattern on personal
+  // (hotmail/live) accounts is: filter on receivedDateTime ONLY, order by that
+  // same field, and drop the hasAttachments check to code below. We request
+  // hasAttachments in $select so the per-message loop can skip empty ones
+  // cheaply (no attachment fetch when there's nothing to fetch).
+  const filter = `receivedDateTime ge ${afterIso}`
   const listUrl =
     `https://graph.microsoft.com/v1.0/me/messages` +
     `?$filter=${encodeURIComponent(filter)}` +
-    `&$select=id,subject,from,receivedDateTime` +
-    `&$top=50` +
-    `&$orderby=receivedDateTime desc`
+    `&$select=id,subject,from,receivedDateTime,hasAttachments` +
+    `&$orderby=receivedDateTime desc` +
+    `&$top=50`
 
   const listRes = await fetch(listUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -648,12 +656,17 @@ export async function fetchOutlookAttachments(
     subject?: string
     from?: { emailAddress?: { name?: string; address?: string } }
     receivedDateTime?: string
+    hasAttachments?: boolean
   }> = listData.value || []
 
   const results: GmailAttachment[] = []
 
+  // [BOEK-011] Only messages that actually have attachments — the check moved
+  // here from the $filter (see InefficientFilter note above).
+  const withAttachments = messages.filter((m) => m.hasAttachments)
+
   // 2. Fetch attachments per message, in parallel chunks (max 10 at a time)
-  const chunks = chunkArray(messages, 10)
+  const chunks = chunkArray(withAttachments, 10)
   for (const chunk of chunks) {
     const fetched = await Promise.all(
       chunk.map((m) => fetchOutlookMessageAttachments(m, accessToken))
@@ -670,6 +683,7 @@ async function fetchOutlookMessageAttachments(
     subject?: string
     from?: { emailAddress?: { name?: string; address?: string } }
     receivedDateTime?: string
+    hasAttachments?: boolean
   },
   accessToken: string
 ): Promise<GmailAttachment[]> {
