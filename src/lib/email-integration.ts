@@ -827,9 +827,21 @@ export async function syncUserEmails(userId: string): Promise<{
 
   const receiverName = profile?.company_name || profile?.full_name || null
 
-  const syncAfterMs = profile?.created_at
-    ? new Date(profile.created_at).getTime()
-    : Date.now() // fallback: now — fetches nothing from the past
+  // [BOEK-011] Sync start boundary.
+  //
+  // TESTING: set SYNC_START_DATE (e.g. "2026-02-01") in the environment to
+  // pull invoices from a fixed date regardless of when the user registered.
+  // Used now so the pilot (Kiwi) imports real historical invoices.
+  //
+  // PRODUCTION: leave SYNC_START_DATE unset → the boundary is the user's
+  // registration date (profile.created_at). Emails before signup are the
+  // user's responsibility to upload manually. Deleting the env var reverts
+  // to this behaviour with no code change.
+  const syncAfterMs = process.env.SYNC_START_DATE
+    ? new Date(process.env.SYNC_START_DATE).getTime()
+    : profile?.created_at
+      ? new Date(profile.created_at).getTime()
+      : Date.now() // fallback: now — fetches nothing from the past
 
   // [BOEK-011] Refresh access_token before every sync — they expire after 1h.
   // refreshAccessToken reads from Vault, hits the provider, writes back to Vault.
