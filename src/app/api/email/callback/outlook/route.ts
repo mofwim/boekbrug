@@ -57,7 +57,10 @@ export async function GET(req: NextRequest) {
   let tokens;
   try {
     tokens = await exchangeOutlookCode(code);
-  } catch {
+  } catch (err) {
+    // [BOEK-011 TEMP-LOG] Was an empty catch — the real error never surfaced.
+    // Log it so we can see Microsoft's rejection. Remove after confirmation.
+    console.error("[BOEK-011 TEMP] Outlook exchange threw in callback:", err);
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/incoming?error=token_exchange_failed`
     );

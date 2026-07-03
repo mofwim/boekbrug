@@ -545,6 +545,18 @@ export async function exchangeOutlookCode(
     grant_type: 'authorization_code',
   })
 
+  // [BOEK-011 TEMP-LOG] Diagnostic — remove after Outlook auth is confirmed.
+  // Logs which values are actually present (never the secret itself) so we can
+  // tell env/redirect problems from a genuine Microsoft rejection.
+  console.log('[BOEK-011 TEMP] Outlook token exchange attempt', {
+    hasClientId: !!process.env.MICROSOFT_CLIENT_ID,
+    clientIdPrefix: (process.env.MICROSOFT_CLIENT_ID || '').slice(0, 8),
+    hasClientSecret: !!process.env.MICROSOFT_CLIENT_SECRET,
+    secretLength: (process.env.MICROSOFT_CLIENT_SECRET || '').length,
+    redirectUri: `${process.env.NEXT_PUBLIC_BASE_URL}/api/email/callback/outlook`,
+    baseUrlPresent: !!process.env.NEXT_PUBLIC_BASE_URL,
+  })
+
   const res = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -553,6 +565,12 @@ export async function exchangeOutlookCode(
 
   if (!res.ok) {
     const body = await res.text()
+    // [BOEK-011 TEMP-LOG] The actual Microsoft error (AADSTS...) — this is what
+    // tells us secret vs redirect vs anything else. Remove after confirmation.
+    console.error('[BOEK-011 TEMP] Microsoft token endpoint rejected exchange', {
+      status: res.status,
+      body,
+    })
     throw new Error(`Outlook token exchange mislukt: ${body}`)
   }
 
