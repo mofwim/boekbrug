@@ -455,6 +455,33 @@ export type Database = {
           },
         ]
       }
+      email_skipped_attachments: {
+        Row: {
+          created_at: string
+          filename: string | null
+          id: string
+          reason: string
+          source_message_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          filename?: string | null
+          id?: string
+          reason?: string
+          source_message_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          filename?: string | null
+          id?: string
+          reason?: string
+          source_message_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       folders: {
         Row: {
           color: string | null

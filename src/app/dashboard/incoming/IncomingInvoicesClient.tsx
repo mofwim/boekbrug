@@ -126,6 +126,10 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     let totalSaved = 0;
     let totalFound = 0;
     let round = 0;
+    // [BOEK-011] No-progress guard: if a round saves nothing AND remaining
+    // didn't shrink, looping again would just repeat the same work. Stop and
+    // tell the user honestly instead of spinning.
+    let lastRemaining = Number.POSITIVE_INFINITY;
 
     try {
       while (round < MAX_ROUNDS) {
@@ -144,6 +148,17 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         const remaining = data.remaining ?? 0;
 
         if (remaining > 0) {
+          const noProgress = (data.saved ?? 0) === 0 && remaining >= lastRemaining;
+          if (noProgress) {
+            setSyncResult(
+              totalSaved > 0
+                ? `${totalSaved} opgeslagen — de rest kon nu niet verwerkt worden, probeer later opnieuw`
+                : "Er kon nu niets verwerkt worden — probeer het later opnieuw"
+            );
+            setSyncing(false);
+            return;
+          }
+          lastRemaining = remaining;
           // Live progress — the denominator grows as we learn about the backlog
           setSyncResult(
             `Bezig met importeren… ${totalSaved} opgeslagen, nog ~${remaining} te gaan`

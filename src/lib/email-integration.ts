@@ -962,6 +962,8 @@ export async function syncUserEmails(userId: string): Promise<{
   type Classified = {
     attachment: typeof attachments[number]
     classification: Awaited<ReturnType<typeof classifyAttachment>>
+    // [BOEK-011] true = transient error (retry next sync), never registry-skip
+    classifyFailed: boolean
   }
 
   // Mini concurrency limiter — no external dep. Inline so the helper stays
@@ -1010,6 +1012,18 @@ export async function syncUserEmails(userId: string): Promise<{
       for (const row of (existingRows ?? []) as Array<{ source_message_id: string | null }>) {
         if (row.source_message_id) knownKeys.add(row.source_message_id)
       }
+      // [BOEK-011] Also skip attachments we previously classified as NOT an
+      // invoice (logos, signatures, catalogs). Without this registry they left
+      // no DB trace → re-classified by Claude on every sync, and a batch full
+      // of them made the sync loop spin with zero progress.
+      const { data: skippedRows } = await supabase
+        .from('email_skipped_attachments')
+        .select('source_message_id')
+        .eq('user_id', userId)
+        .in('source_message_id', keyChunk)
+      for (const row of (skippedRows ?? []) as Array<{ source_message_id: string | null }>) {
+        if (row.source_message_id) knownKeys.add(row.source_message_id)
+      }
     }
   }
 
@@ -1050,23 +1064,52 @@ export async function syncUserEmails(userId: string): Promise<{
           attachment.filename,
           receiverName
         )
-        return { attachment, classification }
+        return { attachment, classification, classifyFailed: false }
       } catch (err) {
         console.error('[BOEK-011] Classification error', { filename: attachment.filename, err })
-        // Return a "not an invoice" placeholder — sequential phase will skip it
+        // [BOEK-011] Transient failure (rate limit, network) — NOT a verdict.
+        // classifyFailed=true tells PHASE 2 to skip WITHOUT registering in the
+        // skip registry, so the attachment is retried on the next sync. Only a
+        // genuine Claude "not an invoice" verdict may be registered permanently.
         return {
           attachment,
           classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
+          classifyFailed: true,
         }
       }
     }
   )
 
   // PHASE 2 — save loop, sequential by design (dedup correctness)
-  for (const { attachment, classification } of classified) {
+  for (const { attachment, classification, classifyFailed } of classified) {
     try {
-      // Not an invoice → discard, no trace in DB
-      if (!classification.isInvoice) continue
+      // Transient classification failure (rate limit / network) → skip WITHOUT
+      // registering; the next sync retries it. A real invoice must never be
+      // permanently skipped because of one bad network moment.
+      if (classifyFailed) {
+        errors++
+        continue
+      }
+
+      // Not an invoice → record in the skip registry, then discard.
+      // [BOEK-011] The registry entry is what stops this attachment from being
+      // re-sent to Claude on every future sync (PHASE 0 reads it). Idempotent:
+      // the unique index makes a repeat insert a harmless conflict.
+      if (!classification.isInvoice) {
+        const skipPipeline = createPipelineClient()
+        await skipPipeline
+          .from('email_skipped_attachments')
+          .upsert(
+            {
+              user_id: userId,
+              source_message_id: `${attachment.messageId}:${attachment.filename}`,
+              filename: attachment.filename,
+              reason: 'not_invoice',
+            },
+            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+          )
+        continue
+      }
       verified++
 
       // [BRIDGE-EXTRACT] Check 0 (PRIMARY) — byte-hash dedup.
