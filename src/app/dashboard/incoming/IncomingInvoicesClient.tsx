@@ -148,7 +148,12 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         const remaining = data.remaining ?? 0;
 
         if (remaining > 0) {
-          const noProgress = (data.saved ?? 0) === 0 && remaining >= lastRemaining;
+          // [BOEK-011] Progress = invoices saved OR non-invoices registered.
+          // A batch that's all logos saves 0 but still shrinks the backlog
+          // (those attachments are now in the skip registry). Only flag "no
+          // progress" when NOTHING advanced AND remaining didn't fall.
+          const advanced = (data.saved ?? 0) > 0 || (data.skipped ?? 0) > 0;
+          const noProgress = !advanced && remaining >= lastRemaining;
           if (noProgress) {
             setSyncResult(
               totalSaved > 0

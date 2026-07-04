@@ -132,7 +132,8 @@ export async function saveEmailTokens(params: {
   const { data: newAccessId, error: accErr } = await supabase.rpc(
     'vault_update_or_create_secret',
     {
-      p_secret_id: (existing?.access_token_secret_id ?? null) as unknown as string,      p_value: accessToken,
+      p_secret_id: (existing?.access_token_secret_id ?? null) as unknown as string,
+      p_value: accessToken,
       p_name: `oauth_access_${provider}_${namePrefix}`,
     }
   )
@@ -144,7 +145,8 @@ export async function saveEmailTokens(params: {
   const { data: newRefreshId, error: refErr } = await supabase.rpc(
     'vault_update_or_create_secret',
     {
-      p_secret_id: (existing?.refresh_token_secret_id ?? null) as unknown as string,      p_value: refreshToken,
+      p_secret_id: (existing?.refresh_token_secret_id ?? null) as unknown as string,
+      p_value: refreshToken,
       p_name: `oauth_refresh_${provider}_${namePrefix}`,
     }
   )
@@ -556,18 +558,6 @@ export async function exchangeOutlookCode(
     grant_type: 'authorization_code',
   })
 
-  // [BOEK-011 TEMP-LOG] Diagnostic — remove after Outlook auth is confirmed.
-  // Logs which values are actually present (never the secret itself) so we can
-  // tell env/redirect problems from a genuine Microsoft rejection.
-  console.log('[BOEK-011 TEMP] Outlook token exchange attempt', {
-    hasClientId: !!process.env.MICROSOFT_CLIENT_ID,
-    clientIdPrefix: (process.env.MICROSOFT_CLIENT_ID || '').slice(0, 8),
-    hasClientSecret: !!process.env.MICROSOFT_CLIENT_SECRET,
-    secretLength: (process.env.MICROSOFT_CLIENT_SECRET || '').length,
-    redirectUri: `${process.env.NEXT_PUBLIC_BASE_URL}/api/email/callback/outlook`,
-    baseUrlPresent: !!process.env.NEXT_PUBLIC_BASE_URL,
-  })
-
   const res = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -576,12 +566,6 @@ export async function exchangeOutlookCode(
 
   if (!res.ok) {
     const body = await res.text()
-    // [BOEK-011 TEMP-LOG] The actual Microsoft error (AADSTS...) — this is what
-    // tells us secret vs redirect vs anything else. Remove after confirmation.
-    console.error('[BOEK-011 TEMP] Microsoft token endpoint rejected exchange', {
-      status: res.status,
-      body,
-    })
     throw new Error(`Outlook token exchange mislukt: ${body}`)
   }
 
@@ -870,6 +854,7 @@ export async function syncUserEmails(userId: string): Promise<{
   saved: number
   errors: number
   remaining: number
+  skipped: number
 } | null> {
   const { createServerSupabaseClient } = await import('@/lib/supabase-server')
   const supabase = await createServerSupabaseClient()
@@ -917,7 +902,7 @@ export async function syncUserEmails(userId: string): Promise<{
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0 }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0 }
   }
 
   // Fetch attachments after registration date
@@ -932,12 +917,16 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0 }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0 }
   }
 
   let verified = 0
   let saved = 0
   let errors = 0
+  // [BOEK-011] Non-invoice attachments registered this run. Counts as PROGRESS
+  // for the client's auto-continue loop: a batch of pure logos saves 0 invoices
+  // but still moves the backlog forward (those attachments won't be re-scanned).
+  let skipped = 0
   // [BOEK-SAFECORE] Rule 1 — count of invoices HELD in 'processing' for an
   // arithmetic problem (subset of `saved`; they exist but aren't shared yet).
   let held = 0
@@ -1108,6 +1097,7 @@ export async function syncUserEmails(userId: string): Promise<{
             },
             { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
           )
+        skipped++
         continue
       }
       verified++
@@ -1590,6 +1580,10 @@ export async function syncUserEmails(userId: string): Promise<{
     // this to auto-continue syncing until the backlog is drained, showing
     // progress instead of silently importing a fraction.
     remaining: remainingAfterBatch,
+    // [BOEK-011] Attachments registered as non-invoice this run — the client
+    // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
+    // the no-progress guard.
+    skipped,
   }
 }
 
