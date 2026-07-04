@@ -488,6 +488,12 @@ async function fetchMessageAttachments(
       if (!filename || size === 0) continue
       if (mimeType !== 'application/pdf' && !mimeType.startsWith('image/')) continue
 
+      // [BOEK-011 PERF] Same signature/logo pre-filter as Outlook. Gmail's
+      // has:attachment already hides most inline images, so this rarely fires
+      // here — but keeping both paths identical means consistent behaviour and
+      // no surprise if Gmail starts surfacing inline parts.
+      if (!isLikelyInvoiceCandidate({ filename, mimeType, size })) continue
+
       // [BOEK-011] Store with explicit flag — never confuse ID with data
       if (p.body?.attachmentId) {
         pending.push({ filename, mimeType, size, attachmentId: p.body.attachmentId })
@@ -730,6 +736,12 @@ async function fetchOutlookMessageAttachments(
     if (!filename) continue
     if (mimeType !== 'application/pdf' && !mimeType.startsWith('image/')) continue
 
+    // [BOEK-011 PERF] Drop signature/logo images before they cost a Claude call.
+    // Conservative: PDFs always pass, only tiny/chrome-named images are dropped.
+    if (!isLikelyInvoiceCandidate({ filename, mimeType, size: att.size || 0 })) {
+      continue
+    }
+
     out.push({
       messageId: message.id,
       filename,
@@ -822,6 +834,66 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
     chunks.push(arr.slice(i, i + size))
   }
   return chunks
+}
+
+/**
+ * [BOEK-011 PERF] Pre-Claude filter — reject things that are obviously NOT
+ * invoices before they cost an AI call (~2s each) and a skip-registry row.
+ *
+ * WHY Outlook is slower than Gmail was: Gmail's `has:attachment` server filter
+ * returned only messages with real attachments, and inline signature images are
+ * usually not surfaced as attachments. Outlook/Graph returns EVERY file part —
+ * so a single email is "logo.png + signature.png + invoice.pdf" = 3 attachments,
+ * and all 3 were going to Claude. Result: 103 attachments where ~50 were tiny
+ * signature/logo images. That's the slowness — attachment COUNT, not per-call speed.
+ *
+ * This filter removes the obvious non-invoices cheaply. It is deliberately
+ * CONSERVATIVE — when unsure, it lets the attachment through to Claude. It must
+ * never drop a real invoice:
+ *   · Tiny images (< 25 KB) are signatures/logos/tracking pixels, never a
+ *     scanned or generated invoice. PDFs are NEVER size-filtered (a valid
+ *     invoice PDF can be small).
+ *   · Classic inline-image filenames (image001.png, ATT00001.png, logo.*,
+ *     signature.*) are email chrome. Again PDFs are exempt.
+ *
+ * Returns true = keep (send to Claude). false = drop (not even worth an AI call).
+ */
+export function isLikelyInvoiceCandidate(att: {
+  filename: string
+  mimeType: string
+  size: number
+}): boolean {
+  // PDFs always go through — the strongest invoice signal, never size/name filtered.
+  if (att.mimeType === 'application/pdf') return true
+
+  // Non-image, non-pdf shouldn't reach here (fetchers already filter), but be safe.
+  if (!att.mimeType.startsWith('image/')) return false
+
+  // From here: it's an image. Apply the cheap signature/logo heuristics.
+  const name = att.filename.toLowerCase()
+
+  // Tiny images are signatures / logos / tracking pixels — never an invoice scan.
+  // 25 KB is well below any legible full-page invoice photo or scan.
+  const TINY_IMAGE_BYTES = 25 * 1024
+  if (att.size > 0 && att.size < TINY_IMAGE_BYTES) return false
+
+  // Classic auto-generated inline-image names from mail clients.
+  // These are email chrome (embedded logos, signature blocks), not invoices.
+  const chromeNamePatterns = [
+    /^image\d{3,}\./,      // image001.png (Outlook inline)
+    /^att\d{3,}\./,        // ATT00001.png (Apple Mail / forwards)
+    /^oledata\./,          // ole objects
+    /logo/,                // *logo*.png
+    /signature/,           // *signature*.png
+    /icon/,                // *icon*.png
+    /banner/,              // marketing banners
+  ]
+  if (chromeNamePatterns.some((re) => re.test(name))) return false
+
+  // Unsure → keep. A larger, normally-named image could be a photographed
+  // invoice; we let Claude be the judge. Better a wasted AI call than a lost
+  // invoice.
+  return true
 }
 
 // ─── [IMPORT-MONITOR Part 0] SAFECORE primitives moved to src/lib/safecore.ts ──
