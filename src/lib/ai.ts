@@ -28,7 +28,13 @@
 // [BOEK-018] constants — May 2026
 //const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
-const MAX_TOKENS = 1000;
+// [BOEK-011 double-check m.1] Output token budget for Claude responses.
+// The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
+// At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)
+// could TRUNCATE mid-JSON → safeParseJSON fails → FALLBACK → the invoice is
+// silently classified "not an invoice" and lost. 2000 gives ample headroom;
+// the extra output tokens are a few cents and only billed when actually used.
+const MAX_TOKENS = 2000;
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
 // Base system prompt — shared by all functions
@@ -171,11 +177,55 @@ interface InvoiceInput {
 // Base caller — text only
 // [BOEK-018] core fetch wrapper — May 2026
 // ─────────────────────────────────────────────────────────
+
+// [BOEK-011 double-check m.3] Retry transient Claude failures once.
+// A single 429 (rate limit) or 5xx during a big backfill would otherwise cost a
+// whole sync round per invoice (the invoice isn't lost — email-integration
+// retries next sync — but it's wasteful). One short backoff retry absorbs the
+// common transient blips. We do NOT retry 4xx other than 429 (a 400 bad-PDF or
+// 401 bad-key won't fix itself), and we cap at 2 attempts total to stay well
+// inside the function time budget.
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  label: string
+): Promise<Response> {
+  const isRetryable = (status: number) => status === 429 || status >= 500;
+
+  let lastErr: unknown = null
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(url, init)
+      if (res.ok) return res
+      if (attempt < 2 && isRetryable(res.status)) {
+        // Respect Retry-After when present (seconds), else a short fixed backoff.
+        const retryAfter = Number(res.headers.get('retry-after'))
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, 5000)
+          : 1200
+        console.warn(`[BOEK-011] ${label} ${res.status} — retrying in ${waitMs}ms`)
+        await new Promise((r) => setTimeout(r, waitMs))
+        continue
+      }
+      return res // non-retryable, or out of attempts → let caller read the error
+    } catch (err) {
+      // Network-level throw (DNS, socket) — retry once, then rethrow.
+      lastErr = err
+      if (attempt < 2) {
+        console.warn(`[BOEK-011] ${label} network error — retrying`, err)
+        await new Promise((r) => setTimeout(r, 1200))
+        continue
+      }
+    }
+  }
+  throw lastErr ?? new Error(`${label}: request failed`)
+}
+
 async function callClaude(
   prompt: string,
   systemPrompt: string
 ): Promise<string> {
-  const response = await fetch(ANTHROPIC_API_URL, {
+  const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -188,7 +238,7 @@ async function callClaude(
       system: systemPrompt,
       messages: [{ role: 'user', content: prompt }],
     }),
-  });
+  }, 'Claude API')
 
   if (!response.ok) {
     const error = await response.text();
@@ -236,7 +286,7 @@ async function callClaudeWithPdf(
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(pdfBase64)
 
-  const response = await fetch(ANTHROPIC_API_URL, {
+  const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -268,7 +318,7 @@ async function callClaudeWithPdf(
         },
       ],
     }),
-  });
+  }, 'Claude PDF API');
 
   if (!response.ok) {
     const error = await response.text();
@@ -296,7 +346,7 @@ async function callClaudeWithImage(
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(imageBase64)
 
-  const response = await fetch(ANTHROPIC_API_URL, {
+  const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -327,7 +377,7 @@ async function callClaudeWithImage(
         },
       ],
     }),
-  });
+  }, 'Claude Image API');
 
   if (!response.ok) {
     const error = await response.text();
@@ -344,12 +394,42 @@ async function callClaudeWithImage(
 
 // Safe JSON parse — returns null on failure instead of throwing
 function safeParseJSON<T>(text: string): T | null {
-  try {
-    const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean) as T;
-  } catch {
-    return null;
+  // [BOEK-011 double-check m.2] Robust extraction. Claude is told to return
+  // JSON only, but occasionally wraps it in prose ("Here is the analysis: {…}
+  // Note: …") or adds a trailing comma. A naive JSON.parse then fails →
+  // FALLBACK → a real invoice is silently dropped. So:
+  //   1. strip code fences
+  //   2. if that doesn't parse, extract the widest {…} span and try that
+  //   3. as a last resort, remove trailing commas before } or ]
+  const stripped = text.replace(/```json|```/g, '').trim();
+
+  const tryParse = (s: string): T | null => {
+    try {
+      return JSON.parse(s) as T;
+    } catch {
+      return null;
+    }
+  };
+
+  // 1. Direct parse of the fence-stripped text.
+  let out = tryParse(stripped);
+  if (out) return out;
+
+  // 2. Widest {…} span — handles leading/trailing prose around the JSON.
+  const first = stripped.indexOf('{');
+  const last = stripped.lastIndexOf('}');
+  if (first !== -1 && last !== -1 && last > first) {
+    const span = stripped.slice(first, last + 1);
+    out = tryParse(span);
+    if (out) return out;
+
+    // 3. Last resort: drop trailing commas (",}" / ",]") then retry.
+    const noTrailingCommas = span.replace(/,(\s*[}\]])/g, '$1');
+    out = tryParse(noTrailingCommas);
+    if (out) return out;
   }
+
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -737,7 +817,14 @@ Return JSON only.`;
     parsed.total_ex_btw = num(parsed.total_ex_btw);
     parsed.btw_amount = num(parsed.btw_amount);
     parsed.total_inc_btw = num(parsed.total_inc_btw);
-    parsed.btw_rate = num(parsed.btw_rate);
+    // [BOEK-011 double-check m.5] btw_rate must be a real Dutch VAT rate.
+    // num() alone would accept e.g. 6 (old rate) or 121 (amount mistaken for a
+    // rate). Constrain to the three valid values; anything else → undefined so
+    // it's treated as "unknown" rather than persisting a bogus rate.
+    {
+      const r = num(parsed.btw_rate);
+      parsed.btw_rate = r !== undefined && [0, 9, 21].includes(r) ? r : undefined;
+    }
 
     // Reconcile: if total is missing but ex + btw exist → compute it
     if (parsed.total_inc_btw === undefined &&
