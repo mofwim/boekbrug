@@ -847,14 +847,18 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
  * and all 3 were going to Claude. Result: 103 attachments where ~50 were tiny
  * signature/logo images. That's the slowness — attachment COUNT, not per-call speed.
  *
- * This filter removes the obvious non-invoices cheaply. It is deliberately
- * CONSERVATIVE — when unsure, it lets the attachment through to Claude. It must
- * never drop a real invoice:
- *   · Tiny images (< 25 KB) are signatures/logos/tracking pixels, never a
- *     scanned or generated invoice. PDFs are NEVER size-filtered (a valid
- *     invoice PDF can be small).
- *   · Classic inline-image filenames (image001.png, ATT00001.png, logo.*,
- *     signature.*) are email chrome. Again PDFs are exempt.
+ * ── DESIGN RULE (financial app): FALSE-DROP is catastrophic, false-keep is cheap.
+ * Dropping a real invoice = a missing number in a tax return, silently. A wasted
+ * Claude call = a few cents and 2 seconds. So EVERY heuristic here is tuned to
+ * only drop things that are almost certainly email chrome, and to let anything
+ * ambiguous through to Claude. Reviewed cases that MUST still pass:
+ *   · Any PDF — never size/name filtered. A valid invoice PDF can be 8 KB.
+ *   · A vendor literally named "Iconic Foods" / "Banner Print" / "LogoMakers" —
+ *     their invoice image must NOT be dropped just because the vendor name
+ *     contains 'icon'/'banner'/'logo'. → patterns are ANCHORED to the whole
+ *     filename, not substring-matched anywhere in it.
+ *   · A small/compressed receipt photo (thermal, B/W) — the size threshold is
+ *     kept very low (12 KB) so a legible one-page receipt still passes.
  *
  * Returns true = keep (send to Claude). false = drop (not even worth an AI call).
  */
@@ -870,25 +874,40 @@ export function isLikelyInvoiceCandidate(att: {
   if (!att.mimeType.startsWith('image/')) return false
 
   // From here: it's an image. Apply the cheap signature/logo heuristics.
-  const name = att.filename.toLowerCase()
+  const name = att.filename.toLowerCase().trim()
 
   // Tiny images are signatures / logos / tracking pixels — never an invoice scan.
-  // 25 KB is well below any legible full-page invoice photo or scan.
-  const TINY_IMAGE_BYTES = 25 * 1024
+  // 12 KB: deliberately very low. A legible one-page receipt photo — even a
+  // compressed thermal/B&W scan — is comfortably larger. We'd rather send a
+  // borderline 15 KB image to Claude than risk dropping a real small receipt.
+  // (size===0 means "unknown" from the provider → do NOT size-filter → passes.)
+  const TINY_IMAGE_BYTES = 12 * 1024
   if (att.size > 0 && att.size < TINY_IMAGE_BYTES) return false
 
-  // Classic auto-generated inline-image names from mail clients.
-  // These are email chrome (embedded logos, signature blocks), not invoices.
-  const chromeNamePatterns = [
-    /^image\d{3,}\./,      // image001.png (Outlook inline)
-    /^att\d{3,}\./,        // ATT00001.png (Apple Mail / forwards)
-    /^oledata\./,          // ole objects
-    /logo/,                // *logo*.png
-    /signature/,           // *signature*.png
-    /icon/,                // *icon*.png
-    /banner/,              // marketing banners
+  // Auto-generated inline-image names from mail clients — email chrome.
+  //
+  // 🔴 ANCHORED, not substring. Each pattern matches the ENTIRE filename (^…$),
+  // so a vendor invoice named "iconic-foods-factuur.png" is NOT caught by the
+  // 'icon' rule, and "banner-print-invoice.png" is NOT caught by 'banner'.
+  // Only files whose WHOLE name is the chrome pattern are dropped.
+  const base = name.replace(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i, '')
+  const chromeExactPatterns = [
+    /^image\d{3,}$/,        // image001, image017  (Outlook inline)
+    /^att\d{5,}$/,          // ATT00001            (Apple Mail / forwards)
+    /^oledata$/,            // oledata.mso
+    /^logo$/,               // exactly "logo.png"
+    /^logo[-_]?\d*$/,       // logo, logo1, logo_2
+    /^signature$/,          // exactly "signature.png"
+    /^signature[-_]?\d*$/,  // signature, signature-1
+    /^sig$/,                // "sig.png"
+    /^icon$/,               // exactly "icon.png"
+    /^banner$/,             // exactly "banner.png"
+    /^footer$/,             // signature footers
+    /^header$/,             // letterhead headers (image, not the invoice)
+    /^spacer$/,             // layout spacers
+    /^pixel$/,              // tracking pixels
   ]
-  if (chromeNamePatterns.some((re) => re.test(name))) return false
+  if (chromeExactPatterns.some((re) => re.test(base))) return false
 
   // Unsure → keep. A larger, normally-named image could be a photographed
   // invoice; we let Claude be the judge. Better a wasted AI call than a lost
