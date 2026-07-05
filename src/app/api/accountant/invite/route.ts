@@ -35,6 +35,27 @@ export async function POST(req: NextRequest) {
     .from('invitations')
     .insert({ accountant_email: email, invited_by: 'accountant', status: 'pending' })
 
-  if (error) return NextResponse.json({ error: 'Uitnodiging versturen mislukt.' }, { status: 500 })
+  if (error) {
+    // [BOEK-028][DEBUG] temporary — surface the real Supabase error to diagnose the 500.
+    // Remove the console.error + debug fields once the root cause is fixed.
+    console.error('[BOEK-028] invitations insert failed:', {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    })
+    return NextResponse.json(
+      {
+        error: 'Uitnodiging versturen mislukt.',
+        debug: {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        },
+      },
+      { status: 500 }
+    )
+  }
   return NextResponse.json({ ok: true })
 }
