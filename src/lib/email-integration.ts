@@ -1027,17 +1027,24 @@ export async function syncUserEmails(userId: string): Promise<{
 
   // [BOEK-011] Two-phase processing to optimize duration without race conditions.
   //
-  // PHASE 1 — AI classification in parallel (the slow part: ~2s × N → ~2s total).
-  // Anthropic accepts well over 3 concurrent calls per account, but we cap at 3
-  // to stay polite and avoid rate-limit surprises during big syncs.
-  //
+  // PHASE 1 — AI classification in parallel (the slow part: ~2s × N).
   // PHASE 2 — Save loop runs sequentially over the classified results.
-  // Sequential is critical here: dedup queries the DB after every insert, so
+  // Sequential PHASE 2 is critical: dedup queries the DB after every insert, so
   // two attachments with the same content would both pass dedup if processed
-  // in parallel ("nothing exists yet"). Keep sequential, keep correctness.
+  // in parallel ("nothing exists yet"). Keep PHASE 2 sequential, keep correctness.
   //
-  // Result: total time drops from ~Σ(AI) + Σ(save) to ~max(AI) + Σ(save).
-  // For 14 PDFs: 42s → ~12-15s.
+  // [BOEK-011 PERF] Concurrency for PHASE 1 only (classification = read-only, no
+  // DB writes) — raising it does NOT touch the sequential save loop, so dedup is
+  // unaffected. 5 in flight (was 3): a backfill of ~70 attachments drops from
+  // ~24 to ~15 waves. Guarded by fetchWithRetry in ai.ts (retries 429/5xx), so a
+  // brief rate-limit blip self-heals instead of failing an invoice. Tunable via
+  // AI_CONCURRENCY if a specific account's tier wants higher/lower; clamped to a
+  // sane 1–10 so a typo can't fire hundreds of parallel calls.
+  const AI_CONCURRENCY = (() => {
+    const raw = Number(process.env.AI_CONCURRENCY)
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 10) return Math.round(raw)
+    return 5
+  })()
 
   type Classified = {
     attachment: typeof attachments[number]
@@ -1120,7 +1127,20 @@ export async function syncUserEmails(userId: string): Promise<{
   // comfortably inside the limit; because PHASE 0 skips everything already
   // saved, pressing sync again simply continues where the last run stopped
   // (oldest-first, so chronology is preserved across batches).
-  const SYNC_BATCH_MAX = 25
+  // [BOEK-011] Batch cap — max NEW classifications per sync.
+  // Raised 25→40: with AI_CONCURRENCY=5 a 40-attachment batch is ~32s
+  // (16s classify + ~16s sequential save), comfortably under the 5-minute
+  // function ceiling, and it halves the number of sync rounds a backfill needs.
+  // Not higher: PHASE 2 save is sequential (linear in batch size), and a smaller
+  // batch means more save checkpoints — if a run is interrupted (network,
+  // credit), less work is re-done. PHASE 0 skips everything already saved, so
+  // pressing sync again continues where the last run stopped (oldest-first, so
+  // chronology is preserved across batches). Tunable via SYNC_BATCH_MAX env.
+  const SYNC_BATCH_MAX = (() => {
+    const raw = Number(process.env.SYNC_BATCH_MAX)
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 100) return Math.round(raw)
+    return 40
+  })()
   const freshAttachments = freshAll.slice(0, SYNC_BATCH_MAX)
   const remainingAfterBatch = freshAll.length - freshAttachments.length
 
@@ -1132,10 +1152,10 @@ export async function syncUserEmails(userId: string): Promise<{
     remainingForNextSync: remainingAfterBatch,
   })
 
-  // PHASE 1 — classify only NEW attachments in parallel (max 3 in flight)
+  // PHASE 1 — classify only NEW attachments in parallel (AI_CONCURRENCY in flight)
   const classified: Classified[] = await mapConcurrent(
     freshAttachments,
-    3,
+    AI_CONCURRENCY,
     async (attachment) => {
       try {
         const classification = await classifyAttachment(
