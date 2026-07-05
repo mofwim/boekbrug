@@ -186,6 +186,10 @@ export async function saveEmailTokens(params: {
  * [BOEK-011 + BOEK-SECURITY] Disconnect: delete Vault secrets, then the row.
  * Replaces the previous "DELETE FROM email_connections" which left orphan
  * secrets in Vault forever.
+ *
+ * [BOEK-011 watermark] Deleting the row also deletes last_synced_email_at —
+ * so "Ontkoppel + reconnect" is the supported way to force a FULL re-import
+ * (e.g. after wiping test data). Dedup makes the re-import harmless.
  */
 export async function deleteEmailConnection(
   userId: string,
@@ -981,11 +985,53 @@ export async function syncUserEmails(userId: string): Promise<{
   // registration date (profile.created_at). Emails before signup are the
   // user's responsibility to upload manually. Deleting the env var reverts
   // to this behaviour with no code change.
-  const syncAfterMs = process.env.SYNC_START_DATE
+  const floorMs = process.env.SYNC_START_DATE
     ? new Date(process.env.SYNC_START_DATE).getTime()
     : profile?.created_at
       ? new Date(profile.created_at).getTime()
       : Date.now() // fallback: now — fetches nothing from the past
+
+  // ── [BOEK-011] High-water mark — incremental fetch window ──────────────────
+  //
+  // last_synced_email_at = receivedDateTime of the newest email whose
+  // attachments were ALL fully processed. When present, we fetch from there
+  // instead of from the floor — the daily sync lists hours of mail, not months.
+  //
+  // Double-checked safety rules (each maps to a failure case we analysed):
+  //   1. The mark is the EMAIL's receivedDateTime, never the invoice's own
+  //      date — an old invoice re-sent in a new email is still fetched.
+  //   2. OVERLAP: we rewind the mark by 24h when fetching and rely on PHASE 0
+  //      dedup to skip the re-fetched knowns. This makes ge/gt boundary
+  //      semantics, same-second ties, and minor server clock skew irrelevant.
+  //   3. The mark is only ADVANCED over complete emails (see end of PHASE 2) —
+  //      it stops at the first transient failure, so classifyFailed items are
+  //      re-fetched next sync instead of being silently skipped forever.
+  //   4. It never moves backward (guarded update).
+  //   5. First sync (NULL mark) = full backfill from the floor — unchanged.
+  //
+  // Read via pipeline (service) client — same context that writes it.
+  // [BOEK-011] Cast: column added by migration-sync-watermark.sql; remove the
+  // cast after `npx supabase gen types` regenerates database.types.ts.
+  const wmPipeline = createPipelineClient()
+  const { data: wmRow } = await (wmPipeline
+    .from('email_connections') as ReturnType<typeof wmPipeline.from>)
+    .select('last_synced_email_at')
+    .eq('id', tokens.connectionId)
+    .maybeSingle()
+  const watermarkIso: string | null =
+    (wmRow as { last_synced_email_at?: string | null } | null)
+      ?.last_synced_email_at ?? null
+
+  const WATERMARK_OVERLAP_MS = 24 * 60 * 60 * 1000 // 24h — cheap, bulletproof
+  const syncAfterMs = watermarkIso
+    ? Math.max(floorMs, new Date(watermarkIso).getTime() - WATERMARK_OVERLAP_MS)
+    : floorMs
+
+  console.log('[BOEK-011] Sync window', {
+    mode: watermarkIso ? 'incremental (watermark)' : 'full (floor)',
+    watermark: watermarkIso,
+    fetchFrom: new Date(syncAfterMs).toISOString(),
+  })
 
   // [BOEK-011] Refresh access_token before every sync — they expire after 1h.
   // refreshAccessToken reads from Vault, hits the provider, writes back to Vault.
@@ -1180,12 +1226,20 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   )
 
+  // [BOEK-011 watermark] Attachments that finished PHASE 2 COMPLETELY this run:
+  // saved as invoice, registered as non-invoice, or recognised as a duplicate.
+  // classifyFailed and save/processing errors are deliberately NOT in this set —
+  // the watermark must not advance past them (they need a re-fetch to retry).
+  const completedKeys = new Set<string>()
+
   // PHASE 2 — save loop, sequential by design (dedup correctness)
   for (const { attachment, classification, classifyFailed } of classified) {
+    const wmKey = `${attachment.messageId}:${attachment.filename}`
     try {
       // Transient classification failure (rate limit / network) → skip WITHOUT
       // registering; the next sync retries it. A real invoice must never be
       // permanently skipped because of one bad network moment.
+      // [watermark] NOT complete — the mark stops before this email.
       if (classifyFailed) {
         errors++
         continue
@@ -1209,6 +1263,7 @@ export async function syncUserEmails(userId: string): Promise<{
             { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
           )
         skipped++
+        completedKeys.add(wmKey) // [watermark] registered = complete
         continue
       }
       verified++
@@ -1238,6 +1293,7 @@ export async function syncUserEmails(userId: string): Promise<{
           entityId: existingByHash.id,
           newValue: { file_name: attachment.filename, content_hash: contentHash, path: 'email' },
         })
+        completedKeys.add(wmKey) // [watermark] duplicate = already complete
         continue
       }
 
@@ -1263,7 +1319,10 @@ export async function syncUserEmails(userId: string): Promise<{
         .eq('source_message_id', dedupKey)
         .limit(1)
 
-      if (existingByMessage && existingByMessage.length > 0) continue
+      if (existingByMessage && existingByMessage.length > 0) {
+        completedKeys.add(wmKey) // [watermark] duplicate = already complete
+        continue
+      }
 
       // ── [BOEK-SAFECORE] Rule 2 — semantic idempotency (no double financial effect) ──
       //
@@ -1427,6 +1486,7 @@ export async function syncUserEmails(userId: string): Promise<{
               existingMessageId: original.source_message_id,
               newMessageId: dedupKey,
             })
+            completedKeys.add(wmKey) // [watermark] duplicate = already complete
             continue
           }
         }
@@ -1597,8 +1657,11 @@ export async function syncUserEmails(userId: string): Promise<{
       if (dbError) {
         console.error('[BOEK-011] Save error:', dbError.message)
         errors++
+        // [watermark] NOT complete — a classified invoice failed to save; the
+        // mark stops here so the next sync re-fetches and retries this email.
       } else {
         saved++
+        completedKeys.add(wmKey) // [watermark] saved = complete
 
         // [BOEK-SAFECORE] When held for an arithmetic problem, audit it —
         // truth in the log. Non-fatal. (Only on a held invoice; a clean
@@ -1636,6 +1699,85 @@ export async function syncUserEmails(userId: string): Promise<{
     } catch (error) {
       console.error('[BOEK-011] Processing error:', error)
       errors++
+      // [watermark] NOT complete — unknown failure; the mark stops here.
+    }
+  }
+
+  // ── [BOEK-011] Advance the high-water mark ──────────────────────────────────
+  //
+  // Classic watermark walk: over ALL fetched attachments sorted by email date
+  // (oldest first), advance the candidate as long as every attachment is
+  // COMPLETE — either known before this run (PHASE 0: already an invoice or in
+  // the skip registry) or completed in this run's PHASE 2. Stop at the FIRST
+  // incomplete one (classifyFailed, save error, or beyond the batch cap).
+  //
+  // This single rule handles every case from the double-check:
+  //   · batch cap: items beyond the cap are incomplete → mark stops at the
+  //     batch boundary; the next sync fetches from there and continues.
+  //   · transient failure: the failed email blocks the mark → it is re-fetched
+  //     and retried next sync instead of being skipped forever.
+  //   · all-already-known repeat sync: every attachment is in knownKeys → the
+  //     mark jumps to the newest fetched email → the NEXT fetch window shrinks.
+  //   · multiple attachments in one email: they share a receivedDateTime; the
+  //     mark passes the email only when ALL of them are complete (any
+  //     incomplete one breaks the walk at that date).
+  //
+  // The update is guarded (only forward, never backward) and non-fatal — a
+  // failed watermark write just means the next sync re-fetches a bit more,
+  // which PHASE 0 absorbs.
+  {
+    const sortedAll = [...attachments].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    )
+    // [BOEK-011] Walk by TIMESTAMP GROUP, not per-attachment. Several
+    // attachments can share one email (same receivedDateTime); the mark may
+    // only advance over that timestamp when ALL of them are complete. A
+    // per-attachment walk had a boundary bug (caught by simulation): with
+    // "inv.pdf complete, scan.pdf failed" in the same email, it advanced the
+    // candidate to that email's timestamp before hitting the failure. The
+    // ge-fetch + 24h overlap would still have re-fetched it — but the primary
+    // logic must be correct on its own, not rescued by a secondary mechanism.
+    let candidateIso: string | null = null
+    let i = 0
+    while (i < sortedAll.length) {
+      const t = new Date(sortedAll[i].date).getTime()
+      let j = i
+      let groupComplete = true
+      while (j < sortedAll.length && new Date(sortedAll[j].date).getTime() === t) {
+        const key = `${sortedAll[j].messageId}:${sortedAll[j].filename}`
+        if (!(knownKeys.has(key) || completedKeys.has(key))) groupComplete = false
+        j++
+      }
+      if (!groupComplete) break
+      if (Number.isFinite(t)) candidateIso = new Date(t).toISOString()
+      i = j
+    }
+
+    if (candidateIso) {
+      const advances =
+        !watermarkIso || new Date(candidateIso) > new Date(watermarkIso)
+      if (advances) {
+        // [BOEK-011] Cast: column from migration-sync-watermark.sql; remove
+        // after type regeneration. Guarded server-side too (or-filter) so two
+        // overlapping syncs can never move the mark backwards.
+        const { error: wmErr } = await (wmPipeline
+          .from('email_connections') as ReturnType<typeof wmPipeline.from>)
+          .update({ last_synced_email_at: candidateIso } as Record<string, unknown>)
+          .eq('id', tokens.connectionId)
+          .or(`last_synced_email_at.is.null,last_synced_email_at.lt.${candidateIso}`)
+        if (wmErr) {
+          console.error('[BOEK-011] Watermark update failed (non-fatal)', wmErr)
+        } else {
+          console.log('[BOEK-011] Watermark advanced', {
+            from: watermarkIso,
+            to: candidateIso,
+          })
+        }
+      }
+    } else if (attachments.length > 0) {
+      console.log(
+        '[BOEK-011] Watermark held — oldest fetched email not yet complete (transient failure or batch boundary)'
+      )
     }
   }
 
