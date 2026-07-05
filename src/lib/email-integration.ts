@@ -409,7 +409,7 @@ export interface GmailAttachment {
 export async function fetchGmailAttachments(
   accessToken: string,
   syncAfterMs: number
-): Promise<GmailAttachment[]> {
+): Promise<{ attachments: GmailAttachment[]; complete: boolean }> {
   const afterDate = Math.floor(syncAfterMs / 1000)
   const query = `has:attachment after:${afterDate}`
 
@@ -427,28 +427,40 @@ export async function fetchGmailAttachments(
   const listData = await listRes.json()
   const messages: Array<{ id: string }> = listData.messages || []
 
+  // [BOEK-011 throttle×watermark] Completeness heuristic until Gmail gets real
+  // pagination (BOEK-TRUST A.1): exactly 50 results means "possibly more
+  // beyond the cap" → the window may be under-covered → the watermark must NOT
+  // advance. Fewer than 50 means the listing naturally ended → complete.
+  let listComplete = messages.length < 50
+
   const results: GmailAttachment[] = []
+  let attachmentsOk = true
 
   // 2. Fetch each message in parallel (max 10 at a time)
   const chunks = chunkArray(messages, 10)
   for (const chunk of chunks) {
     const fetched = await Promise.all(chunk.map(m => fetchMessageAttachments(m.id, accessToken)))
-    results.push(...fetched.flat())
+    for (const f of fetched) {
+      results.push(...f.items)
+      if (!f.ok) attachmentsOk = false
+    }
   }
 
-  return results
+  return { attachments: results, complete: listComplete && attachmentsOk }
 }
 
 async function fetchMessageAttachments(
   messageId: string,
   accessToken: string
-): Promise<GmailAttachment[]> {
+): Promise<{ items: GmailAttachment[]; ok: boolean }> {
   const res = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   )
 
-  if (!res.ok) return []
+  // [BOEK-011 throttle×watermark] ok:false = this email wasn't fully read; the
+  // caller marks the whole fetch incomplete so the watermark holds.
+  if (!res.ok) return { items: [], ok: false }
 
   const msg = await res.json()
   const headers: Array<{ name: string; value: string }> = msg.payload?.headers || []
@@ -550,7 +562,11 @@ async function fetchMessageAttachments(
     })
   )
 
-  return resolved.filter((a): a is GmailAttachment => a !== null)
+  // [BOEK-011 throttle×watermark] Every null in `resolved` is a failed
+  // attachment fetch (filters already ran in walkParts) — one failure marks
+  // this email incomplete so the watermark holds this round.
+  const items = resolved.filter((a): a is GmailAttachment => a !== null)
+  return { items, ok: items.length === resolved.length }
 }
 
 // ─── Outlook token exchange ──────────────────────────────────────────────────
@@ -598,6 +614,30 @@ export async function getOutlookUserEmail(accessToken: string): Promise<string> 
 
 // ─── Outlook attachment fetching (Microsoft Graph) ──────────────────────────
 
+// [BOEK-011 throttle] One retry that respects Retry-After. Microsoft Graph
+// throttles per-mailbox (MailboxConcurrency ≈ 4 concurrent; plus rate windows)
+// and answers 429/"ApplicationThrottled" with a Retry-After header. Seen in
+// production at pagination page 6. One polite wait-and-retry absorbs the
+// common case; a second failure returns the response so the caller can mark
+// the fetch INCOMPLETE (which holds the watermark — see fetchOutlookAttachments).
+async function graphFetch(url: string, accessToken: string): Promise<Response> {
+  const doFetch = () =>
+    fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+
+  let res = await doFetch()
+  if (res.status === 429 || res.status === 503) {
+    const retryAfter = Number(res.headers.get('retry-after'))
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 15000)
+        : 4000
+    console.warn(`[BOEK-011] Graph throttled (${res.status}) — waiting ${waitMs}ms`)
+    await new Promise((r) => setTimeout(r, waitMs))
+    res = await doFetch()
+  }
+  return res
+}
+
 /**
  * [BOEK-011] Fetch Outlook messages after syncAfter timestamp via Microsoft Graph.
  * Returns the SAME GmailAttachment shape as the Gmail path, so the save loop in
@@ -614,26 +654,10 @@ export async function getOutlookUserEmail(accessToken: string): Promise<string> 
 export async function fetchOutlookAttachments(
   accessToken: string,
   syncAfterMs: number
-): Promise<GmailAttachment[]> {
+): Promise<{ attachments: GmailAttachment[]; complete: boolean }> {
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
 
-  // 1. List messages received after the boundary — WITH pagination.
-  //
-  // [BOEK-011] Graph returns pages of $top messages plus @odata.nextLink for
-  // the next page. Without following nextLink we only ever saw the newest 50
-  // messages (orderby desc) — attachments from earlier in the range (e.g.
-  // February–May when SYNC_START_DATE=2026-02-01) never arrived, and every
-  // sync surfaced a few "new" invoices as recent mail pushed older ones out
-  // of the window. Following nextLink covers the whole range.
-  //
-  // Safety cap: 10 pages × 50 = 500 messages per sync. A pilot inbox fits
-  // comfortably; if a mailbox is larger the next sync continues (dedup skips
-  // what's already imported).
-  //
-  // [BOEK-011] Graph rejects "$filter on hasAttachments + $orderby on
-  // receivedDateTime" (InefficientFilter) — filter on the date only, order by
-  // the same field, and check hasAttachments in code below.
   const filter = `receivedDateTime ge ${afterIso}`
   const firstUrl =
     `https://graph.microsoft.com/v1.0/me/messages` +
@@ -655,19 +679,30 @@ export async function fetchOutlookAttachments(
   let page = 0
   const MAX_PAGES = 10
 
+  // [BOEK-011 throttle×watermark] `complete` = the listing reached its natural
+  // end AND every attachment fetch succeeded. Production showed Graph
+  // throttling can stop pagination mid-range (page 6, ApplicationThrottled).
+  // Because we list newest-first, a truncated listing means the OLDER tail was
+  // never fetched — if the watermark advanced anyway, that tail would fall
+  // outside every future fetch window: permanent silent loss. So any early
+  // stop (throttle, error, MAX_PAGES cut) marks the fetch incomplete, and the
+  // caller HOLDS the watermark for this round. Saved invoices keep their
+  // progress; only the window refuses to shrink until a fully-covered pass.
+  let listComplete = true
+
   while (nextUrl && page < MAX_PAGES) {
-    const listRes: Response = await fetch(nextUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
+    const listRes: Response = await graphFetch(nextUrl, accessToken)
 
     if (!listRes.ok) {
       const body = await listRes.text()
       // First page failing is a real error; a later page failing shouldn't
-      // discard everything we already collected.
+      // discard everything we already collected — but it DOES make the fetch
+      // incomplete (see note above).
       if (page === 0) {
         throw new Error(`Outlook list mislukt: ${body}`)
       }
       console.error('[BOEK-011] Outlook pagination stopped early', { page, body })
+      listComplete = false
       break
     }
 
@@ -677,22 +712,36 @@ export async function fetchOutlookAttachments(
     page++
   }
 
+  // MAX_PAGES cut with more pages remaining → the older tail wasn't listed.
+  if (nextUrl && page >= MAX_PAGES) {
+    console.warn('[BOEK-011] Outlook listing capped at MAX_PAGES — fetch incomplete')
+    listComplete = false
+  }
+
   const results: GmailAttachment[] = []
 
   // [BOEK-011] Only messages that actually have attachments — the check moved
   // here from the $filter (see InefficientFilter note above).
   const withAttachments = messages.filter((m) => m.hasAttachments)
 
-  // 2. Fetch attachments per message, in parallel chunks (max 10 at a time)
-  const chunks = chunkArray(withAttachments, 10)
+  // 2. Fetch attachments per message.
+  // [BOEK-011 throttle] Concurrency 3 (was 10): Microsoft Graph enforces
+  // MailboxConcurrency ≈ 4 concurrent requests per mailbox — 10 parallel
+  // attachment calls is a guaranteed violation and is what tripped the
+  // throttle seen in production. 3 stays under the limit with headroom.
+  let attachmentsOk = true
+  const chunks = chunkArray(withAttachments, 3)
   for (const chunk of chunks) {
     const fetched = await Promise.all(
       chunk.map((m) => fetchOutlookMessageAttachments(m, accessToken))
     )
-    results.push(...fetched.flat())
+    for (const f of fetched) {
+      results.push(...f.items)
+      if (!f.ok) attachmentsOk = false
+    }
   }
 
-  return results
+  return { attachments: results, complete: listComplete && attachmentsOk }
 }
 
 async function fetchOutlookMessageAttachments(
@@ -704,13 +753,23 @@ async function fetchOutlookMessageAttachments(
     hasAttachments?: boolean
   },
   accessToken: string
-): Promise<GmailAttachment[]> {
-  const attRes = await fetch(
+): Promise<{ items: GmailAttachment[]; ok: boolean }> {
+  const attRes = await graphFetch(
     `https://graph.microsoft.com/v1.0/me/messages/${message.id}/attachments`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
+    accessToken
   )
 
-  if (!attRes.ok) return []
+  // [BOEK-011 throttle×watermark] A failed attachment fetch used to return []
+  // silently — the email then simply didn't exist in the watermark walk, and
+  // the mark could advance past its timestamp via neighbours: permanent loss.
+  // ok:false bubbles up and marks the whole fetch incomplete instead.
+  if (!attRes.ok) {
+    console.error('[BOEK-011] Outlook attachment fetch failed', {
+      messageId: message.id,
+      status: attRes.status,
+    })
+    return { items: [], ok: false }
+  }
 
   const attData = await attRes.json()
   const attachments: Array<{
@@ -758,7 +817,7 @@ async function fetchOutlookMessageAttachments(
     })
   }
 
-  return out
+  return { items: out, ok: true }
 }
 
 // ─── AI Classification ────────────────────────────────────────────────────────
@@ -1043,14 +1102,24 @@ export async function syncUserEmails(userId: string): Promise<{
   }
 
   // Fetch attachments after registration date
+  // [BOEK-011 throttle×watermark] fetchComplete = the provider listing reached
+  // its natural end AND every attachment fetch succeeded. When false, the
+  // watermark is HELD this round (see the advance block after PHASE 2) —
+  // otherwise a throttled/truncated listing would let the mark jump past
+  // never-fetched older mail, losing it from every future window.
   let attachments: GmailAttachment[] = []
+  let fetchComplete = false
   try {
     if (tokens.provider === 'gmail') {
-      attachments = await fetchGmailAttachments(accessToken, syncAfterMs)
+      const r = await fetchGmailAttachments(accessToken, syncAfterMs)
+      attachments = r.attachments
+      fetchComplete = r.complete
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
-      attachments = await fetchOutlookAttachments(accessToken, syncAfterMs)
+      const r = await fetchOutlookAttachments(accessToken, syncAfterMs)
+      attachments = r.attachments
+      fetchComplete = r.complete
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
@@ -1726,6 +1795,17 @@ export async function syncUserEmails(userId: string): Promise<{
   // failed watermark write just means the next sync re-fetches a bit more,
   // which PHASE 0 absorbs.
   {
+    // [BOEK-011 throttle×watermark] HOLD the mark when the fetch didn't cover
+    // the whole window (throttled pagination, MAX_PAGES cut, or a failed
+    // attachment fetch). Advancing over a partially-listed range would push
+    // never-fetched older mail outside every future window — permanent loss.
+    // Progress already saved (invoices / skip registry) is untouched; only the
+    // window refuses to shrink until one fully-covered pass succeeds.
+    if (!fetchComplete) {
+      console.log(
+        '[BOEK-011] Watermark held — fetch incomplete (throttle/cap); window unchanged this round'
+      )
+    } else {
     const sortedAll = [...attachments].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     )
@@ -1778,6 +1858,7 @@ export async function syncUserEmails(userId: string): Promise<{
       console.log(
         '[BOEK-011] Watermark held — oldest fetched email not yet complete (transient failure or batch boundary)'
       )
+    }
     }
   }
 
