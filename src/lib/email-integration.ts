@@ -52,7 +52,7 @@ export async function getEmailTokens(
 
   let query = supabase
     .from('email_connections')
-    .select('id, provider, email, access_token_secret_id, refresh_token_secret_id')
+    .select('id, provider, email, access_token_secret_id, refresh_token_secret_id, connected_at')
     .eq('user_id', userId)
 
   // Only constrain by provider when the caller explicitly asked for one.
@@ -60,7 +60,17 @@ export async function getEmailTokens(
     query = query.eq('provider', provider)
   }
 
-  const { data: conn, error } = await query.maybeSingle()
+  // [BOEK-011] Robust against MULTIPLE connections. The product model is one
+  // ACTIVE connection per user (switching providers replaces the old one — see
+  // saveEmailTokens). But a stale row can exist transiently (e.g. a switch that
+  // half-completed). maybeSingle() would THROW on >1 row and break sync
+  // entirely. Instead we order by connected_at desc and take the newest — the
+  // one the user most recently authorised — so sync always works even mid-switch.
+  const { data: rows, error } = await query
+    .order('connected_at', { ascending: false })
+    .limit(1)
+
+  const conn = rows?.[0] ?? null
 
   if (error) {
     console.error('[BOEK-011] email_connections read failed', { userId, provider, error })
@@ -177,6 +187,62 @@ export async function saveEmailTokens(params: {
   if (upsertErr) {
     console.error('[BOEK-011] email_connections upsert failed', { userId, provider, upsertErr })
     return { success: false, error: upsertErr.message }
+  }
+
+  // [BOEK-011] Single active connection per user. If the user is SWITCHING
+  // providers (e.g. connected Gmail in May, now connects Outlook), remove the
+  // OTHER provider's connection so sync doesn't straddle two accounts and the
+  // watermark stays single. We purge the other provider's Vault secrets first,
+  // then delete its row (which also drops its watermark).
+  //
+  // IMPORTANT: this removes the CONNECTION only. Invoices already imported from
+  // the old provider are KEPT — bewaarplicht (7-year retention) forbids deleting
+  // financial records, and the user's history must survive a provider switch.
+  // This runs AFTER the new provider is safely saved, so a failure here leaves
+  // the user connected to the new provider (worst case: a harmless stale row,
+  // which getEmailTokens already tolerates by picking the newest).
+  {
+    const { data: others } = await supabase
+      .from('email_connections')
+      .select('id, provider, access_token_secret_id, refresh_token_secret_id')
+      .eq('user_id', userId)
+      .neq('provider', provider)
+
+    for (const other of (others ?? []) as Array<{
+      id: string
+      provider: string
+      access_token_secret_id: string | null
+      refresh_token_secret_id: string | null
+    }>) {
+      if (other.access_token_secret_id) {
+        const { error } = await supabase.rpc('vault_delete_secret', {
+          p_secret_id: other.access_token_secret_id,
+        })
+        if (error) console.warn('[BOEK-011] switch: Vault delete failed (access)', error)
+      }
+      if (other.refresh_token_secret_id) {
+        const { error } = await supabase.rpc('vault_delete_secret', {
+          p_secret_id: other.refresh_token_secret_id,
+        })
+        if (error) console.warn('[BOEK-011] switch: Vault delete failed (refresh)', error)
+      }
+      const { error: delErr } = await supabase
+        .from('email_connections')
+        .delete()
+        .eq('id', other.id)
+      if (delErr) {
+        console.warn('[BOEK-011] switch: old connection delete failed (non-fatal)', {
+          removedProvider: other.provider,
+          delErr,
+        })
+      } else {
+        console.log('[BOEK-011] Provider switched', {
+          from: other.provider,
+          to: provider,
+          note: 'old connection removed; imported invoices kept',
+        })
+      }
+    }
   }
 
   return { success: true }
