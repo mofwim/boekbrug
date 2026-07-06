@@ -20,6 +20,7 @@ function RegisterContent() {
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
+  const [emailSent, setEmailSent] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -111,9 +112,13 @@ function RegisterContent() {
       return
     }
 
+    // [BOEK-015] fix: the on_auth_user_created trigger already inserted a profile
+    // row (with default role='zzper'). Using UPSERT instead of INSERT so we
+    // UPDATE that trigger-created row with the real registration data instead
+    // of hitting a 23505 duplicate-key error → "Registratie mislukt".
     const { error: profileError } = await supabase
       .from('profiles')
-      .insert({
+      .upsert({
         id: data.user.id,
         role,
         full_name: fullName,
@@ -121,21 +126,60 @@ function RegisterContent() {
         kvk_number: kvk,
         btw_number: btw,
         email,
-      })
+        // [BOEK-015] P2: register already collected role + company + KVK + BTW.
+        // ZZP: skip to step 4 (Gmail) — no need to ask company data again.
+        // Accountant: step 4 is "invite client". Both land correctly.
+        // page.tsx roleWasSet reads step>=2 → true → Welcome+Role skipped.
+        onboarding_step: 4,
+      }, { onConflict: 'id' })
 
     if (profileError) {
-      // Likely duplicate profile (email already registered)
-      if (profileError.code === '23505') {
-        setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
-      } else {
-        setError('Profiel aanmaken mislukt')
-      }
+      console.error('[BOEK-015] register profile upsert failed:', profileError)
+      setError('Profiel aanmaken mislukt — probeer opnieuw')
+      setLoading(false)
+      return
+    }
+
+    // [BOEK-015] fix: if email confirmation is enabled, signUp returns a user
+    // but NO active session. Check and guide the user instead of a silent
+    // redirect to /dashboard that would just bounce back to /login.
+    const { data: sessionData } = await supabase.auth.getSession()
+    if (!sessionData.session) {
+      setEmailSent(true)
       setLoading(false)
       return
     }
 
     const redirectUrl = searchParams.get('redirect')
-    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/dashboard')
+    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/onboarding')
+  }
+
+  // [BOEK-015] email confirmation screen
+  if (emailSent) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
+          <div style={{ fontSize: "48px", marginBottom: "16px" }}>📧</div>
+          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#1c1c1e", margin: "0 0 8px" }}>
+            Controleer je e-mail
+          </h1>
+          <p style={{ fontSize: "15px", color: "#6b6b6e", margin: "0 0 24px" }}>
+            We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
+            Klik op de link om je account te activeren.
+          </p>
+          <a
+            href="/login"
+            style={{
+              display: "inline-block", padding: "14px 24px", borderRadius: "12px",
+              background: "#1A73E8", color: "#fff", textDecoration: "none",
+              fontSize: "15px", fontWeight: 600,
+            }}
+          >
+            Naar inloggen
+          </a>
+        </div>
+      </div>
+    )
   }
 
   return (
