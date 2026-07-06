@@ -34,6 +34,7 @@ interface OnboardingWizardProps {
   userEmail?: string;
   initialStep?: number;
   initialRole?: Role;
+  roleWasSet?: boolean; // [BOEK-015] P2: true if user already chose role (skip step 2)
 }
 
 // ── Progress mapping ─────────────────────────────────────
@@ -57,20 +58,16 @@ export function OnboardingWizard({
   userName,
   initialStep = 1,
   initialRole = "zzp",
+  roleWasSet = false,
 }: OnboardingWizardProps) {
   const firstName = userName.split(" ")[0] || "daar";
   // [BOEK-015] fix: DB default is 0 — clamp to 1 so Step 1 always renders
   const safeStep = Math.max(1, initialStep) as StepId;
   const [step, setStep] = useState<StepId>(safeStep);
   const [role, setRole] = useState<Role>(initialRole);
-  // Reset saving state whenever step changes — handles all transitions
-  useEffect(() => {
-    setSaving(false);
-  }, [step]);
-  // [BOEK-015] P2 fix: if role already set (from register page) skip step 2
-  // initialRole comes from profiles.role — if 'zzper' or 'accountant', user already chose
-  // [BOEK-015] P2: use initialStep (number) not safeStep (StepId = string|number)
-  const roleAlreadySet = initialRole !== "zzp" || (typeof initialStep === "number" && initialStep > 2);
+  // [BOEK-015] P2 fix: skip step 2 only when role was genuinely chosen before
+  // roleWasSet comes from page.tsx (checks profile.role + onboarding_step)
+  const roleAlreadySet = roleWasSet;
   const [company, setCompany] = useState<CompanyData>({
     company_name: "", kvk_number: "", btw_number: "", iban: "", address: "",
   });
@@ -78,6 +75,13 @@ export function OnboardingWizard({
   const [accountantEmail, setAccountantEmail] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // [BOEK-015] Reset saving state whenever step changes — safety net for all transitions
+  // Placed after useState declaration to avoid hoisting confusion
+  useEffect(() => {
+    setSaving(false);
+  }, [step]);
+
   // [FACTUUR-B] invoice numbering start (step 3C)
   const [invoiceStart, setInvoiceStart] = useState("");
   const [numberingError, setNumberingError] = useState("");
@@ -108,10 +112,16 @@ export function OnboardingWizard({
       setGmailConnected(true);
       if (stepParam === "4") setStep(4);
 
-      // Auto-advance to step 5 after 2 seconds — user sees the success state
-      const timer = setTimeout(async () => {
-        await persistStep(5);
-        setStep(5);
+      // [BOEK-015] Auto-advance after 2s — guarded so manual "Volgende" doesn't double-fire
+      // setStep uses functional form: only advances if still on step 4
+      const timer = setTimeout(() => {
+        setStep((cur) => {
+          if (cur === 4) {
+            void persistStep(5); // fire-and-forget; step guard prevents double
+            return 5;
+          }
+          return cur; // user already advanced manually — do nothing
+        });
       }, 2000);
 
       // Clean URL without reload

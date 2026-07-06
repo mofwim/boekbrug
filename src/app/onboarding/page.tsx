@@ -45,12 +45,18 @@ export default async function OnboardingPage() {
   const initialStep = Math.max(1, profile?.onboarding_step ?? 1);
   const initialRole = profile?.role === "accountant" ? "accountant" : "zzp";
 
+  // [BOEK-015] P2 fix: role was explicitly chosen if profile.role is a real role
+  // (not the auto-inserted default). We treat a saved 'accountant' OR a step > 1
+  // as evidence the user already passed the role choice.
+  const roleWasSet = profile?.role === "accountant" || (profile?.onboarding_step ?? 0) >= 2;
+
   return (
     <OnboardingWizard
       userName={userName}
       userEmail={user.email ?? ""}
       initialStep={initialStep}
       initialRole={initialRole}
+      roleWasSet={roleWasSet}
     />
   );
 }
