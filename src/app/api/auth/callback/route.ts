@@ -40,21 +40,35 @@ export async function GET(req: NextRequest) {
     .single()
 
   if (!existingProfile) {
-    // [Google-OAuth] New user — create profile from Google metadata
+    // [BOEK-015] fix: use UPSERT — the on_auth_user_created trigger may have
+    // already created a profile row. INSERT would 23505 and leave the user
+    // stuck. onboarding_step: 1 (not 0) so the wizard renders Step 1.
     const googleName = user.user_metadata?.full_name || user.user_metadata?.name || ''
     const googleEmail = user.email || ''
 
-    await supabase.from('profiles').insert({
+    await supabase.from('profiles').upsert({
       id: user.id,
       full_name: googleName,
       email: googleEmail,
       role: 'zzper', // default — user picks role during onboarding
       onboarding_done: false,
-      onboarding_step: 0,
-    })
+      onboarding_step: 1, // [BOEK-015] fix: was 0 → caused blank onboarding screen
+    }, { onConflict: 'id' })
 
     // Always send new users to onboarding
     return NextResponse.redirect(new URL('/onboarding', req.url))
+  }
+
+  // [BOEK-015] fix: the on_auth_user_created trigger creates a bare profile
+  // (email only, no full_name). On first Google login we backfill the name
+  // from Google metadata if it's still empty.
+  const googleName = user.user_metadata?.full_name || user.user_metadata?.name || ''
+  if (googleName) {
+    await supabase
+      .from('profiles')
+      .update({ full_name: googleName })
+      .eq('id', user.id)
+      .is('full_name', null)  // only fill if empty — don't overwrite user edits
   }
 
   // [Google-OAuth] Existing user — check onboarding
