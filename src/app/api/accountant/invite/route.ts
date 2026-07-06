@@ -17,6 +17,25 @@ export async function POST(req: NextRequest) {
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
   if (!emailOk) return NextResponse.json({ error: 'Ongeldig e-mailadres.' }, { status: 400 })
 
+  // [BOEK-028][DEBUG] Runtime probe — what does Postgres see under THIS session?
+  // getUser() above proved the JWT is valid at the Auth layer, but the RLS
+  // policy reads auth.uid() inside Postgres. If the JWT isn't reaching PostgREST,
+  // auth.uid() is null there and the EXISTS(profiles ...) check fails → 42501.
+  // This selects the caller's own profile row: it only returns a row if
+  // profiles_select_own (id = auth.uid()) passes, i.e. auth.uid() is populated.
+  const { data: selfProfile, error: selfErr } = await supabase
+    .from('profiles')
+    .select('id, role')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  console.error('[BOEK-028][DEBUG] runtime session probe:', {
+    getUser_id: user.id,
+    selfProfile_found: !!selfProfile,
+    selfProfile_role: selfProfile?.role ?? null,
+    selfProfile_error: selfErr?.message ?? null,
+  })
+
   const { data: existing } = await supabase
     .from('invitations')
     .select('id, status')
@@ -52,6 +71,9 @@ export async function POST(req: NextRequest) {
           details: error.details,
           hint: error.hint,
           code: error.code,
+          // runtime session probe — is auth.uid() reaching Postgres?
+          probe_selfProfile_found: !!selfProfile,
+          probe_selfProfile_role: selfProfile?.role ?? null,
         },
       },
       { status: 500 }
