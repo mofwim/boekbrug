@@ -132,13 +132,29 @@ export function OnboardingWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const [finishing, setFinishing] = useState(false);
+
   async function finish() {
-    await fetch("/api/onboarding", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ done: true, role }),
-    });
-    router.push("/dashboard");
+    // [BOEK-015] fix: explicit finishing state — separate from `saving` which
+    // the step-change effect resets. This one persists through navigation.
+    setFinishing(true);
+    try {
+      const res = await fetch("/api/onboarding", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ done: true, role }),
+      });
+      if (!res.ok) {
+        console.error("[BOEK-015] finish failed:", await res.text().catch(() => res.statusText));
+        setFinishing(false);
+        return; // stay on page — user can retry
+      }
+      // Use hard navigation to guarantee the redirect + fresh middleware check
+      window.location.href = "/dashboard";
+    } catch (err) {
+      console.error("[BOEK-015] finish error:", err);
+      setFinishing(false);
+    }
   }
 
   // ── "Volgende" logic per step ──
@@ -374,7 +390,7 @@ export function OnboardingWizard({
         {/* Buttons */}
         <div className="mt-8 space-y-3">
           {isDone ? (
-            <Btn onClick={finish} loading={saving}>Ga naar mijn dashboard →</Btn>
+            <Btn onClick={finish} loading={finishing}>Ga naar mijn dashboard →</Btn>
           ) : (
             !hideNextButton && <Btn onClick={handleNext} loading={saving} disabled={isNextDisabled}>Volgende</Btn>
           )}
