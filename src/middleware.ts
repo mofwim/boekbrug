@@ -1,7 +1,7 @@
 // middleware.ts
 // Auth guard + onboarding redirect (BOEK-015)
 // Runs on every request before the page renders
-
+// modified by 028 Accou Portal v2
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
@@ -31,6 +31,17 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
+  // [SESSION-REFRESH] API routes: getUser() above already refreshed the token
+  // (and wrote new cookies onto `response`) if it was expired-but-refreshable.
+  // We must NOT redirect API requests — a fetch() caller expects JSON, not an
+  // HTML login page. So for /api/*, return here: the session is refreshed, and
+  // if it was truly dead the route itself returns a proper 401 JSON. This is
+  // what fixes the intermittent 42501 on API writes (e.g. accountant invite),
+  // which previously never ran middleware at all (api was in the matcher exclude).
+  if (request.nextUrl.pathname.startsWith("/api")) {
+    return response;
+  }
+
   // Not logged in → send to login (except public paths)
   if (!user && !isPublic(request.nextUrl.pathname)) {
     return NextResponse.redirect(new URL("/login", request.url));
@@ -57,5 +68,10 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api).*)"],
+  // [SESSION-REFRESH] `api` removed from the exclude list so middleware runs on
+  // /api/* and refreshes the Supabase session before the route handler executes.
+  // (Previously `|api` here meant API routes never refreshed the token → an
+  // expired JWT reached Postgres → auth.uid() null → RLS 42501 on writes.)
+  // API requests are handled early above (session refreshed, never redirected).
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
