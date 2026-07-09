@@ -208,11 +208,64 @@ export async function POST(req: NextRequest) {
         ipAddress: getClientIP(req),
       })
       const nr = dup.match.invoice_number ? `factuur ${dup.match.invoice_number}` : "deze factuur"
+
+      // [INTAKE-FOCUS] Resolve the ORIGINAL invoice's file so the client can
+      // deep-link + highlight it in Mijn bestanden — the owner's natural
+      // question on "bestaat al" is "waar dan?". Same `existing` shape as the
+      // byte-hash duplicate above, so BOTH upload surfaces (results modal and
+      // IntakeButton) render their "Bekijk in bestanden →" link with zero
+      // client changes. Two-step lookup covers both linkage directions
+      // (documents.invoice_id → fallback invoices.document_id). Best-effort:
+      // a lookup hiccup must never turn a clean 409 into a 500 — on any
+      // failure we simply omit `existing` (today's behaviour, no link).
+      let existing:
+        | { id: string; folder_id: string | null; folder_name: string | null }
+        | undefined
+      try {
+        let doc: { id: string; folder_id: string | null } | null = null
+        const { data: byInvoice } = await supabase
+          .from("documents")
+          .select("id, folder_id")
+          .eq("user_id", user.id)
+          .eq("invoice_id", dup.match.id)
+          .limit(1)
+          .maybeSingle()
+        doc = byInvoice ?? null
+        if (!doc) {
+          const { data: inv } = await supabase
+            .from("invoices")
+            .select("document_id")
+            .eq("id", dup.match.id)
+            .eq("receiver_id", user.id)
+            .maybeSingle()
+          if (inv?.document_id) {
+            const { data: byId } = await supabase
+              .from("documents")
+              .select("id, folder_id")
+              .eq("user_id", user.id)
+              .eq("id", inv.document_id)
+              .maybeSingle()
+            doc = byId ?? null
+          }
+        }
+        if (doc) {
+          const path = await buildFolderBreadcrumb(supabase, user.id, doc.folder_id ?? null)
+          existing = {
+            id: doc.id,
+            folder_id: doc.folder_id ?? null,
+            folder_name: path.length ? path[path.length - 1] : null,
+          }
+        }
+      } catch {
+        // omit `existing` — the link simply doesn't render
+      }
+
       return NextResponse.json(
         {
           error: `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
           duplicate: true,
           original_id: dup.match.id,
+          ...(existing ? { existing } : {}),
         },
         { status: 409 }
       )
