@@ -740,10 +740,18 @@ export async function fetchOutlookAttachments(
     hasAttachments?: boolean
   }
 
-  const messages: OutlookMessage[] = []
+  const messagesRaw: OutlookMessage[] = []
   let nextUrl: string | null = firstUrl
   let page = 0
-  const MAX_PAGES = 10
+  // [BOEK-011] Raised 10→40 (2000 messages). Root cause found in production
+  // (2026-07-08): a ~250-message mailbox hit the old 500 cap and logged
+  // "capped at MAX_PAGES — fetch incomplete", so older invoices were never
+  // listed. Graph's /me/messages spans ALL folders and can return the SAME
+  // message multiple times (folder + AllItems views), inflating the effective
+  // count well beyond the real message total — so the cap must be generous.
+  // We de-duplicate by message id below, and the batch cap + watermark keep any
+  // single sync bounded in time regardless of how many pages we walk.
+  const MAX_PAGES = 40
 
   // [BOEK-011 throttle×watermark] `complete` = the listing reached its natural
   // end AND every attachment fetch succeeded. Production showed Graph
@@ -773,7 +781,7 @@ export async function fetchOutlookAttachments(
     }
 
     const listData = await listRes.json()
-    messages.push(...((listData.value || []) as OutlookMessage[]))
+    messagesRaw.push(...((listData.value || []) as OutlookMessage[]))
     nextUrl = (listData['@odata.nextLink'] as string | undefined) ?? null
     page++
   }
@@ -783,6 +791,25 @@ export async function fetchOutlookAttachments(
     console.warn('[BOEK-011] Outlook listing capped at MAX_PAGES — fetch incomplete')
     listComplete = false
   }
+
+  // [BOEK-011] De-duplicate by message id. Graph's /me/messages spans all
+  // folders and can return the same message more than once (folder view +
+  // AllItems view), which both wastes attachment fetches and inflates the page
+  // count against MAX_PAGES. Keep first occurrence of each id.
+  const seenIds = new Set<string>()
+  const messages: OutlookMessage[] = []
+  for (const m of messagesRaw) {
+    if (m.id && !seenIds.has(m.id)) {
+      seenIds.add(m.id)
+      messages.push(m)
+    }
+  }
+  console.log('[BOEK-011] Outlook listing', {
+    rawRows: messagesRaw.length,
+    uniqueMessages: messages.length,
+    pages: page,
+    complete: listComplete,
+  })
 
   const results: GmailAttachment[] = []
 

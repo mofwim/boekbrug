@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test';
+package.jsonimport { defineConfig, devices } from '@playwright/test';
 
 /**
  * Read environment variables from file.

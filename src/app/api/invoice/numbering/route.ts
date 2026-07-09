@@ -265,4 +265,4 @@ export async function GET() {
     console.error('[FACTUUR-B] /api/invoice/numbering GET fatal', err)
     return NextResponse.json({ ok: false, error: 'Onbekende fout' }, { status: 500 })
   }
-}
+} //
