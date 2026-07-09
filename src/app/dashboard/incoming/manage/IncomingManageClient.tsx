@@ -288,6 +288,33 @@ export default function IncomingManageClient({
     }
   }
 
+  // ── [PAY-NOT-YET] The owner's honest "no": clear the prepared marker ──
+  // Mirror of markPrepared. Invoked from the pay dialog's "Nee, nog niet
+  // betaald": the owner opened the QR/prepared a payment but did NOT send it.
+  // Effect: payment_prepared_at → null → the "Voorbereid" chip disappears and
+  // the card's button returns to its calm state. The invoice itself stays
+  // 'received' / te betalen — nothing financial changes (UI marker only,
+  // same non-financial write path as markPrepared; never status/amounts).
+  // ALWAYS clears (no state pre-check): if a slow markPrepared write lands
+  // after this clear, executePay wipes the field again on any later payment,
+  // so a ghost timestamp is harmless — and clearing unconditionally keeps
+  // this a safe answer even when nothing was prepared (no-op in the DB).
+  async function markNotPaid(inv: IncomingRow) {
+    patchLocal(inv.id, { payment_prepared_at: null })
+    const { error } = await supabase
+      .from('invoices')
+      .update({ payment_prepared_at: null })
+      .eq('id', inv.id)
+      .eq('receiver_id', profile.id)
+      .eq('direction', 'incoming')
+    if (error) {
+      // Non-fatal (same philosophy as markPrepared): restore the local flag so
+      // the UI doesn't claim a cleared state the DB still has.
+      patchLocal(inv.id, { payment_prepared_at: inv.payment_prepared_at })
+    }
+    showToast('Genoteerd — factuur blijft open als te betalen')
+  }
+
   // ── [PAY-SAFE-CONFIRM] Gate Betalen-action through the existing pay flow ──
 
   // ── Mark paid / undo — session client, PAYMENT FIELDS ONLY ──
@@ -634,6 +661,21 @@ export default function IncomingManageClient({
               ? (method, paymentDate) => executePay({ ...payCtx, paymentMethod: method, paymentDate })
               : undefined
           }
+          // [PAY-NOT-YET] Third answer on mark-paid only: "no, I have not paid".
+          // Clears the prepared marker (Voorbereid chip + nudge disappear); the
+          // invoice stays open as te betalen. Undo-paid keeps its two buttons.
+          secondaryAction={
+            payCtx.newStatus === 'paid'
+              ? {
+                  label: 'Nee, nog niet betaald',
+                  onClick: () => {
+                    const inv = invoices.find(i => i.id === payCtx.id)
+                    setPayCtx(null)
+                    if (inv) markNotPaid(inv)
+                  },
+                }
+              : undefined
+          }
         />
       )}
 
@@ -757,7 +799,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice }: {
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction }: {
   title: string
   body: string
   confirmLabel: string
@@ -765,6 +807,11 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   onConfirm: () => void
   onCancel: () => void
   paymentChoice?: (method: 'bank' | 'kas', paymentDate: string) => void
+  // [PAY-NOT-YET] Optional third answer between confirm and Annuleren — e.g.
+  // "Nee, nog niet betaald" (clears the prepared marker; invoice stays open).
+  // Distinct from Annuleren: this is an ANSWER (writes state), Annuleren is
+  // "ask me later" (keeps everything). Absent → sheet renders exactly as before.
+  secondaryAction?: { label: string; onClick: () => void }
 }) {
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
   return (
@@ -793,6 +840,17 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 Contant
               </button>
             </div>
+            {/* [PAY-NOT-YET] The third honest answer: "no, I have not paid".
+                An ANSWER (clears the prepared marker via secondaryAction), not
+                Annuleren ("ask me later", which keeps the marker + nudge). */}
+            {secondaryAction && (
+              <button
+                onClick={secondaryAction.onClick}
+                style={{ width: '100%', padding: '13px', borderRadius: R.full, background: '#fff', color: '#49454F', fontSize: 15, fontWeight: 600, border: '1px solid #DADCE0', cursor: 'pointer', fontFamily: FONT, marginBottom: 10 }}
+              >
+                {secondaryAction.label}
+              </button>
+            )}
             <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
           </>
         ) : (
