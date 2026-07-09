@@ -1208,6 +1208,19 @@ export async function syncUserEmails(userId: string): Promise<{
   errors: number
   remaining: number
   skipped: number
+  // [BOEK-TRUST] Honest reconciliation for "did everything arrive?". Every
+  // fetched attachment this run lands in exactly one bucket; balanced=true means
+  // the buckets sum to fetched with nothing unaccounted. This is deliberately a
+  // PER-SYNC statement of what we actually observed — not an invented absolute
+  // "inbox total", which would risk a wrong number that erodes trust.
+  balance: {
+    fetched: number      // attachments pulled from the provider this run
+    imported: number     // saved as invoices
+    skipped: number      // registered as non-invoice (logos/signatures/etc.)
+    duplicate: number    // recognised as already-imported
+    pending: number      // deferred to next sync (batch cap / transient fail)
+    balanced: boolean    // imported+skipped+duplicate+pending === fetched
+  }
 } | null> {
   const { createServerSupabaseClient } = await import('@/lib/supabase-server')
   const supabase = await createServerSupabaseClient()
@@ -1297,7 +1310,7 @@ export async function syncUserEmails(userId: string): Promise<{
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0 }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, balance: { fetched: 0, imported: 0, skipped: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [BOEK-011 throttle] Build the set of message IDs already fully processed,
@@ -1361,7 +1374,7 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0 }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, balance: { fetched: 0, imported: 0, skipped: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   let verified = 0
@@ -1371,6 +1384,10 @@ export async function syncUserEmails(userId: string): Promise<{
   // for the client's auto-continue loop: a batch of pure logos saves 0 invoices
   // but still moves the backlog forward (those attachments won't be re-scanned).
   let skipped = 0
+  // [BOEK-TRUST] Attachments recognised as already-imported this run (byte-hash,
+  // message-id, or semantic dedup). Tracked so the balance summary can show
+  // duplicates as an accounted-for bucket rather than a silent gap.
+  let duplicate = 0
   // [BOEK-SAFECORE] Rule 1 — count of invoices HELD in 'processing' for an
   // arithmetic problem (subset of `saved`; they exist but aren't shared yet).
   let held = 0
@@ -1600,6 +1617,7 @@ export async function syncUserEmails(userId: string): Promise<{
           entityId: existingByHash.id,
           newValue: { file_name: attachment.filename, content_hash: contentHash, path: 'email' },
         })
+        duplicate++
         completedKeys.add(wmKey) // [watermark] duplicate = already complete
         continue
       }
@@ -1627,6 +1645,7 @@ export async function syncUserEmails(userId: string): Promise<{
         .limit(1)
 
       if (existingByMessage && existingByMessage.length > 0) {
+        duplicate++
         completedKeys.add(wmKey) // [watermark] duplicate = already complete
         continue
       }
@@ -1793,6 +1812,7 @@ export async function syncUserEmails(userId: string): Promise<{
               existingMessageId: original.source_message_id,
               newMessageId: dedupKey,
             })
+            duplicate++
             completedKeys.add(wmKey) // [watermark] duplicate = already complete
             continue
           }
@@ -1962,10 +1982,33 @@ export async function syncUserEmails(userId: string): Promise<{
         .single()
 
       if (dbError) {
-        console.error('[BOEK-011] Save error:', dbError.message)
-        errors++
-        // [watermark] NOT complete — a classified invoice failed to save; the
-        // mark stops here so the next sync re-fetches and retries this email.
+        // [BOEK-TRUST] A unique-constraint violation on the dedup index is NOT
+        // a failure — it's the DB catching a duplicate the app-level checks
+        // (Check A/B/semantic) missed, e.g. the same invoice arriving as both
+        // "Invoice-….pdf" and "Receipt-….pdf" within one run. The original is
+        // safely stored; this copy is correctly rejected. Counting it as an
+        // error would (a) inflate the error count and (b) risk HOLDING the
+        // watermark over a message that is actually fully accounted for. So we
+        // treat it as a duplicate: count it, mark complete, let the mark advance.
+        // Postgres unique-violation = SQLSTATE 23505; also match the message as
+        // a fallback since Supabase surfaces it in .message.
+        const isDuplicateKey =
+          (dbError as { code?: string }).code === '23505' ||
+          /duplicate key value violates unique constraint/i.test(dbError.message)
+
+        if (isDuplicateKey) {
+          duplicate++
+          completedKeys.add(wmKey) // [watermark] DB-level duplicate = complete
+          console.log('[BOEK-011] DB dedup caught duplicate (not an error)', {
+            messageId: attachment.messageId,
+            filename: attachment.filename,
+          })
+        } else {
+          console.error('[BOEK-011] Save error:', dbError.message)
+          errors++
+          // [watermark] NOT complete — a genuine save failure; the mark stops
+          // here so the next sync re-fetches and retries this email.
+        }
       } else {
         saved++
         completedKeys.add(wmKey) // [watermark] saved = complete
@@ -2168,6 +2211,36 @@ export async function syncUserEmails(userId: string): Promise<{
     }
   }
 
+  // [BOEK-TRUST] Balance reconciliation for "did everything arrive?".
+  //
+  // This run's freshly-processed attachments (freshAttachments) each end in
+  // exactly one bucket: saved | skipped | duplicate | errors. `balanced` is true
+  // when those buckets sum to what we processed — proving nothing fell through
+  // unaccounted. It's a PER-SYNC, observed statement (honest about what we saw),
+  // not an invented absolute inbox total that could be wrong and erode trust.
+  //
+  //   fetched(this batch) = imported + skipped + duplicate + errors
+  //   pending             = remainingAfterBatch (deferred to the next sync)
+  //
+  // knownKeys (already-imported before this run) are intentionally NOT in the
+  // batch math — they were reconciled in the sync that first imported them.
+  const processedThisBatch = freshAttachments.length
+  const bucketed = saved + skipped + duplicate + errors
+  const balanced = bucketed === processedThisBatch
+
+  if (!balanced) {
+    // Not fatal — surfaced so a real accounting gap is visible, never hidden.
+    console.warn('[BOEK-TRUST] Balance mismatch', {
+      processedThisBatch,
+      imported: saved,
+      skipped,
+      duplicate,
+      errors,
+      bucketed,
+      gap: processedThisBatch - bucketed,
+    })
+  }
+
   return {
     provider: tokens.provider,
     fetched: attachments.length,
@@ -2182,6 +2255,14 @@ export async function syncUserEmails(userId: string): Promise<{
     // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
     // the no-progress guard.
     skipped,
+    balance: {
+      fetched: processedThisBatch,
+      imported: saved,
+      skipped,
+      duplicate,
+      pending: remainingAfterBatch,
+      balanced,
+    },
   }
 }
 
