@@ -844,6 +844,27 @@ Creditnota detection (ALWAYS set is_credit_note):
   for human review — that is correct).
 - A normal invoice → is_credit_note = false. When unsure → false.
 
+Statement / reminder detection (NOT an invoice — prevents double counting):
+- A "Rekeningoverzicht", "Aanmaning", "Betalingsherinnering", "Herinnering",
+  "Saldo-overzicht", "Openstaande posten" or any account statement / dunning
+  letter is NOT an invoice. It SUMMARIZES invoices that already exist as
+  separate documents — importing it as an invoice would count those amounts
+  TWICE and could make the owner pay twice. → is_invoice=false,
+  document_kind="other", and set reason to a short Dutch explanation, e.g.
+  "rekeningoverzicht — samenvatting van bestaande facturen, geen factuur".
+- Strong signals (require at least TWO before classifying as a statement):
+  · a table listing MULTIPLE different factuurnummers in one document
+  · columns like "Reeds betaald" / "Nog openstaand" / "Vervallen"
+  · a total labelled "openstaand" ("Totaal openstaand bedrag") instead of
+    "Totaal incl. BTW"
+  · no BTW breakdown anywhere on the document
+- EXCEPTION: a reminder that contains exactly ONE invoice WITH a full BTW
+  breakdown (excl + BTW + incl) is that invoice re-sent → treat it as a normal
+  invoice (the duplicate check catches the copy of the original).
+- When genuinely unsure whether it is a statement or an invoice →
+  is_invoice=true (the human verify queue is the safety gate; a silently
+  skipped real invoice costs money, a held statement only costs a review).
+
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
 - total_ex_btw: the subtotal before BTW (excl. BTW / netto)

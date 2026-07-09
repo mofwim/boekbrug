@@ -1024,6 +1024,11 @@ async function fetchOutlookMessageAttachments(
 export interface AttachmentClassification {
   isInvoice: boolean
   confidence: number
+  // [STATEMENT-SKIP] Claude's short Dutch reason when is_invoice=false (e.g.
+  // "rekeningoverzicht — samenvatting van bestaande facturen"). Stored in the
+  // skip registry so the owner/dev can audit WHAT was skipped and WHY, instead
+  // of a blanket 'not_invoice'.
+  reason?: string
   vendor?: string
   amount?: number          // total incl. BTW
   invoiceDate?: string
@@ -1074,6 +1079,8 @@ export async function classifyAttachment(
   return {
     isInvoice: result.is_invoice,
     confidence: result.confidence,
+    // [STATEMENT-SKIP] why Claude rejected it — surfaces in the skip registry
+    reason: result.reason,
     vendor: result.vendor,
     amount: result.amount,
     invoiceDate: result.invoice_date,
@@ -1588,7 +1595,11 @@ export async function syncUserEmails(userId: string): Promise<{
               user_id: userId,
               source_message_id: `${attachment.messageId}:${attachment.filename}`,
               filename: attachment.filename,
-              reason: 'not_invoice',
+              // [STATEMENT-SKIP] Claude's specific Dutch reason when available
+              // (e.g. "rekeningoverzicht — samenvatting van bestaande facturen")
+              // so the registry tells WHAT was skipped, not just that it was.
+              // Capped defensively; falls back to the old blanket value.
+              reason: (classification.reason || 'not_invoice').slice(0, 200),
             },
             { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
           )
