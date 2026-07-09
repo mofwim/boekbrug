@@ -221,6 +221,23 @@ async function fetchWithRetry(
   throw lastErr ?? new Error(`${label}: request failed`)
 }
 
+// [BOEK-COST] Prompt caching. The system prompt (the long extraction rules,
+// ~1.5k tokens) is identical on every invoice call, so we mark it cacheable:
+// the first call in a 5-minute window pays a small write premium (1.25×), every
+// subsequent call reads it at 0.1× — a 90% discount on that portion. During a
+// backfill (dozens of calls per minute) almost all calls are cache hits.
+// After image downscaling the system prompt is the LARGEST remaining input, so
+// this is where the second-biggest saving now lives. Structured as a
+// single-element array so a plain string can't accidentally lose the marker;
+// prompt caching is GA (no beta header needed).
+function cacheableSystem(systemPrompt: string): Array<{
+  type: 'text'
+  text: string
+  cache_control?: { type: 'ephemeral' }
+}> {
+  return [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }]
+}
+
 async function callClaude(
   prompt: string,
   systemPrompt: string
@@ -235,7 +252,7 @@ async function callClaude(
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: MAX_TOKENS,
-      system: systemPrompt,
+      system: cacheableSystem(systemPrompt),
       messages: [{ role: 'user', content: prompt }],
     }),
   }, 'Claude API')
@@ -297,7 +314,7 @@ async function callClaudeWithPdf(
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: MAX_TOKENS,
-      system: systemPrompt,
+      system: cacheableSystem(systemPrompt),
       messages: [
         {
           role: 'user',
@@ -334,6 +351,85 @@ async function callClaudeWithPdf(
 }
 
 // ─────────────────────────────────────────────────────────
+// [BOEK-COST] Image downscaling before Claude
+// ─────────────────────────────────────────────────────────
+//
+// WHY: real usage data (2026-07) showed ~21,000 tokens per attachment —
+// ~4× our estimate — because camera photos of invoices are sent at full
+// resolution. Claude charges (width × height) / 750 tokens for an image, so a
+// 12-megapixel phone photo is ~16,000 image tokens. Capping the long edge at
+// 1568px (Anthropic's recommended max) brings that to ~1,600 tokens: a ~90%
+// cut on image cost with NO provider change and NO accuracy loss — 1568px on
+// an A4 page is ~185 DPI, well above the ~150 DPI needed to read invoice
+// figures reliably.
+//
+// SAFETY (this decides whether Claude reads the amounts correctly):
+//   · Only DOWNSCALE, never upscale — a small image is left untouched.
+//   · 1568px long edge, JPEG quality 88 — deliberately conservative so digits
+//     stay crisp. We are NOT chasing the smallest file; we're removing waste.
+//   · FAIL-SAFE: any error (sharp missing, decode failure) returns the ORIGINAL
+//     base64 unchanged. Cost optimisation must never drop or corrupt an invoice.
+//   · SAFECORE downstream still validates ex+btw=total, so even in the unlikely
+//     event a resize hurt a digit, the arithmetic check is a second net.
+//
+// Returns { data, mimeType }. When resized, mimeType becomes image/jpeg.
+async function downscaleImageIfNeeded(
+  base64: string,
+  mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+): Promise<{ data: string; mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' }> {
+  const MAX_EDGE = 1568
+  const JPEG_QUALITY = 88
+
+  try {
+    // Dynamic import so a missing `sharp` can't break the module at load time —
+    // if it's unavailable we simply skip resizing (fail-safe below).
+    const sharpModule = await import('sharp').catch(() => null)
+    if (!sharpModule) {
+      console.warn('[BOEK-COST] sharp unavailable — sending image at original size')
+      return { data: base64, mimeType }
+    }
+    const sharp = sharpModule.default ?? sharpModule
+
+    const clean = base64.includes(',') ? base64.split(',')[1] : base64
+    const inputBuffer = Buffer.from(clean, 'base64')
+
+    const img = sharp(inputBuffer, { failOn: 'none' })
+    const meta = await img.metadata()
+    const w = meta.width ?? 0
+    const h = meta.height ?? 0
+
+    // Already within budget → don't touch it (no upscaling, no re-encode).
+    if (w > 0 && h > 0 && w <= MAX_EDGE && h <= MAX_EDGE) {
+      return { data: base64, mimeType }
+    }
+
+    const outBuffer = await img
+      .rotate() // respect EXIF orientation so text isn't sideways
+      .resize(MAX_EDGE, MAX_EDGE, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: JPEG_QUALITY })
+      .toBuffer()
+
+    const beforeKB = Math.round(inputBuffer.length / 1024)
+    const afterKB = Math.round(outBuffer.length / 1024)
+    // Rough token proxy: image tokens ≈ (w×h)/750. Log both for verification.
+    const beforeTok = w && h ? Math.round((w * h) / 750) : null
+    console.log('[BOEK-COST] Image downscaled', {
+      from: `${w}x${h}`,
+      to: `≤${MAX_EDGE}`,
+      beforeKB,
+      afterKB,
+      approxTokensBefore: beforeTok,
+    })
+
+    return { data: outBuffer.toString('base64'), mimeType: 'image/jpeg' }
+  } catch (err) {
+    // FAIL-SAFE: never let a resize error drop or corrupt an invoice image.
+    console.warn('[BOEK-COST] Image downscale failed — sending original', err)
+    return { data: base64, mimeType }
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 // Image caller — sends image to Claude (for scanned invoices)
 // [BOEK-011] handles image/jpeg, image/png, image/webp — May 2026
 // ─────────────────────────────────────────────────────────
@@ -346,6 +442,14 @@ async function callClaudeWithImage(
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(imageBase64)
 
+  // [BOEK-COST] Downscale oversized photos before Claude sees them — the single
+  // biggest cost lever (real data: ~21k → ~1.6k image tokens). Fail-safe:
+  // returns the original untouched on any error, so an invoice is never lost.
+  const { data: sendData, mimeType: sendMime } = await downscaleImageIfNeeded(
+    cleanData,
+    mimeType
+  )
+
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -356,7 +460,7 @@ async function callClaudeWithImage(
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: MAX_TOKENS,
-      system: systemPrompt,
+      system: cacheableSystem(systemPrompt),
       messages: [
         {
           role: 'user',
@@ -365,8 +469,8 @@ async function callClaudeWithImage(
               type: 'image',
               source: {
                 type: 'base64',
-                media_type: mimeType,
-                data: cleanData,
+                media_type: sendMime,
+                data: sendData,
               },
             },
             {
