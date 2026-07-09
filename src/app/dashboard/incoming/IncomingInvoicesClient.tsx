@@ -366,6 +366,10 @@ function ConfirmPaidModal({
   onVerify,
   onPay,
   onCancel,
+  // [QUEUE-EDIT-UX] When true, the modal opens with the edit fields already
+  // active — the card's "Bewerken" entry point skips the extra
+  // "Gegevens aanpassen" tap. Optional: the normal Verifiëren flow is unchanged.
+  startEditing = false,
 }: {
   invoice: IncomingInvoice;
   // [BRIDGE-B] verify → becomes a SHARED Crediteur (unpaid). pay → mark paid (needs method).
@@ -384,6 +388,8 @@ function ConfirmPaidModal({
     paymentDate: string
   ) => void;
   onCancel: () => void;
+  // [QUEUE-EDIT-UX] open with edit fields active (card "Bewerken" entry point)
+  startEditing?: boolean;
 }) {
   const [exBtw, setExBtw] = useState(invoice.total_ex_btw || 0);
   const [btwAmount, setBtwAmount] = useState(invoice.btw_amount || 0);
@@ -430,7 +436,8 @@ function ConfirmPaidModal({
 
   // Auto-open the edit fields when the AI flagged any field as uncertain, so the
   // user lands directly on what needs confirming instead of having to find it.
-  const [editing, setEditing] = useState(anyLow);
+  // [QUEUE-EDIT-UX] Also open when entered via the card's "Bewerken" button.
+  const [editing, setEditing] = useState(anyLow || startEditing);
 
   const amounts = {
     total_ex_btw: exBtw,
@@ -675,7 +682,10 @@ function ConfirmPaidModal({
                   />
                 ) : (
                   <span style={{ fontSize: 15, fontWeight: 600, color: "#1c1c1e" }}>
-                    {invoiceDate || "—"}
+                    {/* [QUEUE-EDIT-UX] NL format (19-05-2026), not raw ISO — the
+                        card already does this; the modal forgot. The edit
+                        <input type="date"> keeps ISO (browser requirement). */}
+                    {invoiceDate ? formatDate(invoiceDate) : "—"}
                   </span>
                 )}
               </div>
@@ -691,7 +701,9 @@ function ConfirmPaidModal({
                   color: "#007aff", fontWeight: 600, fontSize: 14, cursor: "pointer",
                 }}
               >
-                Bedragen aanpassen
+                {/* [QUEUE-EDIT-UX] "Gegevens" not "Bedragen" — the toggle also
+                    opens vendor / invoice number / date, not just amounts. */}
+                Gegevens aanpassen
               </button>
             )}
 
@@ -953,6 +965,8 @@ function InvoiceCard({
   expanded,
   onToggle,
   onConfirmPaid,
+  // [QUEUE-EDIT-UX] opens the same verify modal with edit fields active
+  onEdit,
   onIgnore,
   onRestore,
   selectMode = false,
@@ -964,6 +978,8 @@ function InvoiceCard({
   expanded: boolean;
   onToggle: () => void;
   onConfirmPaid: () => void;
+  // [QUEUE-EDIT-UX] card-level edit entry point (pending tab only)
+  onEdit: () => void;
   onIgnore: () => void;
   onRestore: () => void;
   // [INTAKE-VERIFY-BULK] selection (pending bulk-verify)
@@ -1213,6 +1229,19 @@ function InvoiceCard({
                 }}
               >
                 Negeer
+              </button>
+              {/* [QUEUE-EDIT-UX] Direct edit entry — same verify modal, edit
+                  fields already open. Saves the Verifiëren→Gegevens-aanpassen
+                  detour when the owner already knows something needs fixing. */}
+              <button
+                onClick={onEdit}
+                style={{
+                  flex: 1, padding: "13px 0", borderRadius: 12,
+                  background: "#eaf2ff", border: "none", color: "#007aff",
+                  fontWeight: 600, fontSize: 14, cursor: "pointer",
+                }}
+              >
+                Bewerken
               </button>
               <button
                 onClick={onConfirmPaid}
@@ -1569,6 +1598,8 @@ export default function IncomingInvoicesClient({
 
   // Modal state
   const [confirmPaidFor, setConfirmPaidFor] = useState<IncomingInvoice | null>(null);
+  // [QUEUE-EDIT-UX] card "Bewerken" → same verify modal, edit fields pre-opened.
+  const [editFor, setEditFor] = useState<IncomingInvoice | null>(null);
   const [ignoreFor, setIgnoreFor] = useState<IncomingInvoice | null>(null);
 
   // OAuth result toast
@@ -1602,6 +1633,7 @@ export default function IncomingInvoicesClient({
       // Optimistic — remove from pending
       setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
       setConfirmPaidFor(null);
+      setEditFor(null); // [QUEUE-EDIT-UX] close whichever entry point opened the modal
       setExpandedId(null);
 
       try {
@@ -1707,6 +1739,7 @@ export default function IncomingInvoicesClient({
       // Optimistic — remove from pending
       setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
       setConfirmPaidFor(null);
+      setEditFor(null); // [QUEUE-EDIT-UX] close whichever entry point opened the modal
       setExpandedId(null);
 
       try {
@@ -1968,6 +2001,7 @@ export default function IncomingInvoicesClient({
                 expanded={expandedId === inv.id}
                 onToggle={() => setExpandedId(expandedId === inv.id ? null : inv.id)}
                 onConfirmPaid={() => setConfirmPaidFor(inv)}
+                onEdit={() => setEditFor(inv)}
                 onIgnore={() => setIgnoreFor(inv)}
                 onRestore={() => handleRestore(inv)}
                 selectMode={tab === "pending" && selectMode}
@@ -2003,6 +2037,19 @@ export default function IncomingInvoicesClient({
           onVerify={(amounts) => handleVerify(confirmPaidFor, amounts)}
           onPay={(amounts, method, paymentDate) => handlePay(confirmPaidFor, amounts, method, paymentDate)}
           onCancel={() => setConfirmPaidFor(null)}
+        />
+      )}
+
+      {/* [QUEUE-EDIT-UX] Same modal, edit fields pre-opened — the card's
+          "Bewerken" entry point. Save = the normal Bevestig/verifieer flow
+          (whoever just corrected the data is ready to confirm it). */}
+      {editFor && (
+        <ConfirmPaidModal
+          invoice={editFor}
+          startEditing
+          onVerify={(amounts) => handleVerify(editFor, amounts)}
+          onPay={(amounts, method, paymentDate) => handlePay(editFor, amounts, method, paymentDate)}
+          onCancel={() => setEditFor(null)}
         />
       )}
 
