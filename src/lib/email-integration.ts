@@ -475,29 +475,88 @@ export interface GmailAttachment {
 export async function fetchGmailAttachments(
   accessToken: string,
   syncAfterMs: number
-): Promise<{ attachments: GmailAttachment[]; complete: boolean }> {
+): Promise<{
+  attachments: GmailAttachment[]
+  complete: boolean
+  messageIndex: Array<{ messageId: string; date: string }>
+}> {
   const afterDate = Math.floor(syncAfterMs / 1000)
   const query = `has:attachment after:${afterDate}`
 
-  // 1. List message IDs
-  const listRes = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=50`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  )
+  // 1. List message IDs — WITH pagination.
+  //
+  // [BOEK-TRUST A.1] This used to fetch a single page of maxResults=50 with no
+  // nextPageToken follow — the exact silent-loss bug we fixed in Outlook. A
+  // Gmail mailbox with more than 50 matching messages would only ever surface
+  // the newest 50; older invoices were never listed. Since most ZZP users are
+  // on Gmail, this was the highest-impact gap in the whole import path.
+  //
+  // Fix mirrors the Outlook fetcher: follow nextPageToken until Gmail returns
+  // none (natural end), capped at MAX_PAGES for safety. listComplete is now a
+  // FACT (did we reach the end?) instead of the old "< 50" heuristic — so the
+  // watermark advances only over a genuinely complete listing.
+  const GMAIL_PAGE_SIZE = 100 // Gmail allows up to 500; 100 keeps pages light
+  const MAX_PAGES = 40        // 40 × 100 = 4000 messages / sync, same ceiling as Outlook
 
-  if (!listRes.ok) {
-    const body = await listRes.text()
-    throw new Error(`Gmail list mislukt: ${body}`)
+  const messagesRaw: Array<{ id: string }> = []
+  let pageToken: string | null = null
+  let page = 0
+  let listComplete = true
+
+  do {
+    const url =
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages` +
+      `?q=${encodeURIComponent(query)}` +
+      `&maxResults=${GMAIL_PAGE_SIZE}` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '')
+
+    const listRes: Response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+
+    if (!listRes.ok) {
+      const body = await listRes.text()
+      // First page failing is a real error; a later page failing keeps what we
+      // have but marks the listing incomplete (watermark holds — see below).
+      if (page === 0) {
+        throw new Error(`Gmail list mislukt: ${body}`)
+      }
+      console.error('[BOEK-011] Gmail pagination stopped early', { page, body })
+      listComplete = false
+      break
+    }
+
+    // [BOEK-TRUST] Explicit type — the do/while condition depends on pageToken,
+    // which is derived from listData; without an annotation TypeScript reports a
+    // circular "implicitly has type any" on the loop variables.
+    const listData: { messages?: Array<{ id: string }>; nextPageToken?: string } =
+      await listRes.json()
+    messagesRaw.push(...(listData.messages ?? []))
+    pageToken = listData.nextPageToken ?? null
+    page++
+  } while (pageToken && page < MAX_PAGES)
+
+  // Hit the page cap with more still to list → older tail wasn't fetched.
+  if (pageToken && page >= MAX_PAGES) {
+    console.warn('[BOEK-011] Gmail listing capped at MAX_PAGES — fetch incomplete')
+    listComplete = false
   }
 
-  const listData = await listRes.json()
-  const messages: Array<{ id: string }> = listData.messages || []
-
-  // [BOEK-011 throttle×watermark] Completeness heuristic until Gmail gets real
-  // pagination (BOEK-TRUST A.1): exactly 50 results means "possibly more
-  // beyond the cap" → the window may be under-covered → the watermark must NOT
-  // advance. Fewer than 50 means the listing naturally ended → complete.
-  let listComplete = messages.length < 50
+  // De-dup by id (defensive; Gmail list is normally unique).
+  const seenIds = new Set<string>()
+  const messages: Array<{ id: string }> = []
+  for (const m of messagesRaw) {
+    if (m.id && !seenIds.has(m.id)) {
+      seenIds.add(m.id)
+      messages.push(m)
+    }
+  }
+  console.log('[BOEK-011] Gmail listing', {
+    rawRows: messagesRaw.length,
+    uniqueMessages: messages.length,
+    pages: page,
+    complete: listComplete,
+  })
 
   const results: GmailAttachment[] = []
   let attachmentsOk = true
@@ -512,7 +571,19 @@ export async function fetchGmailAttachments(
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk }
+  // [BOEK-011] messageIndex for the watermark walk. Gmail doesn't do done-skip
+  // (its list is IDs only, dates arrive with the message fetch), so the fetched
+  // attachments already carry every processed message's date. De-dup by id.
+  const miSeen = new Set<string>()
+  const messageIndex: Array<{ messageId: string; date: string }> = []
+  for (const a of results) {
+    if (!miSeen.has(a.messageId)) {
+      miSeen.add(a.messageId)
+      messageIndex.push({ messageId: a.messageId, date: a.date })
+    }
+  }
+
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex }
 }
 
 async function fetchMessageAttachments(
@@ -719,8 +790,22 @@ async function graphFetch(url: string, accessToken: string): Promise<Response> {
  */
 export async function fetchOutlookAttachments(
   accessToken: string,
-  syncAfterMs: number
-): Promise<{ attachments: GmailAttachment[]; complete: boolean }> {
+  syncAfterMs: number,
+  // [BOEK-011 throttle] Message IDs already fully processed (every attachment
+  // imported or skip-registered). We skip fetching their attachments entirely —
+  // the expensive per-message Graph call that trips throttling. Built cheaply
+  // from source_message_id in the DB before we get here. This is a PERFORMANCE
+  // skip only; correctness still rests on PHASE 0/2 dedup downstream.
+  alreadyDoneMessageIds?: Set<string>
+): Promise<{
+  attachments: GmailAttachment[]
+  complete: boolean
+  // [BOEK-011] Every LISTED message as {messageId, date} — including ones whose
+  // attachment fetch we skipped because they're already done. The watermark
+  // walk needs the full timeline, not just freshly-fetched attachments;
+  // otherwise skipping done-messages would empty the walk and freeze the mark.
+  messageIndex: Array<{ messageId: string; date: string }>
+}> {
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
 
@@ -815,7 +900,28 @@ export async function fetchOutlookAttachments(
 
   // [BOEK-011] Only messages that actually have attachments — the check moved
   // here from the $filter (see InefficientFilter note above).
-  const withAttachments = messages.filter((m) => m.hasAttachments)
+  // [BOEK-011 throttle] AND drop messages already fully processed — skipping
+  // their per-message attachment fetch is what keeps a 995-message backfill from
+  // re-hammering Graph (and tripping 429) on every sync. A message is only
+  // skipped when ALL its known keys are done; partially-done messages still get
+  // fetched so their remaining attachments import. `done` is prefix-matched on
+  // messageId because source_message_id = `${messageId}:${filename}`.
+  const withAttachments = messages.filter((m) => {
+    if (!m.hasAttachments) return false
+    if (alreadyDoneMessageIds && alreadyDoneMessageIds.has(m.id)) return false
+    return true
+  })
+  console.log('[BOEK-011] Outlook attachment fetch', {
+    messagesWithAttachments: messages.filter((m) => m.hasAttachments).length,
+    afterDoneSkip: withAttachments.length,
+  })
+
+  // [BOEK-011] Full message timeline for the watermark walk — every listed
+  // message with a valid date, regardless of whether we fetched its
+  // attachments. Built from the de-duplicated `messages` list.
+  const messageIndex: Array<{ messageId: string; date: string }> = messages
+    .filter((m) => m.id && m.receivedDateTime)
+    .map((m) => ({ messageId: m.id, date: m.receivedDateTime as string }))
 
   // 2. Fetch attachments per message.
   // [BOEK-011 throttle] Concurrency 3 (was 10): Microsoft Graph enforces
@@ -834,7 +940,7 @@ export async function fetchOutlookAttachments(
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex }
 }
 
 async function fetchOutlookMessageAttachments(
@@ -1194,6 +1300,42 @@ export async function syncUserEmails(userId: string): Promise<{
     return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0 }
   }
 
+  // [BOEK-011 throttle] Build the set of message IDs already fully processed,
+  // so the fetcher can skip their per-message attachment calls (the throttle
+  // hot spot on a large backfill). Cheap: two indexed reads of source_message_id
+  // scoped to this user. We extract the messageId prefix (before the last ':').
+  // NOTE: this is a PERFORMANCE skip; PHASE 0/2 dedup remains the correctness
+  // guarantee. A message with SOME attachments still pending won't be in this
+  // set only if none of its keys are stored yet — partially-imported messages
+  // are rare (usually all-or-nothing per email) and, if they occur, simply get
+  // re-fetched, which is safe.
+  const doneMessageIds = new Set<string>()
+  {
+    const extractMsgId = (smid: string | null): string | null => {
+      if (!smid) return null
+      const i = smid.lastIndexOf(':')
+      return i > 0 ? smid.slice(0, i) : smid
+    }
+    const { data: invRows } = await supabase
+      .from('invoices')
+      .select('source_message_id')
+      .eq('receiver_id', userId)
+      .eq('source', 'email')
+    for (const r of (invRows ?? []) as Array<{ source_message_id: string | null }>) {
+      const id = extractMsgId(r.source_message_id)
+      if (id) doneMessageIds.add(id)
+    }
+    const { data: skipRows } = await supabase
+      .from('email_skipped_attachments')
+      .select('source_message_id')
+      .eq('user_id', userId)
+    for (const r of (skipRows ?? []) as Array<{ source_message_id: string | null }>) {
+      const id = extractMsgId(r.source_message_id)
+      if (id) doneMessageIds.add(id)
+    }
+    console.log('[BOEK-011] Pre-fetch done-message skip set', { size: doneMessageIds.size })
+  }
+
   // Fetch attachments after registration date
   // [BOEK-011 throttle×watermark] fetchComplete = the provider listing reached
   // its natural end AND every attachment fetch succeeded. When false, the
@@ -1202,17 +1344,20 @@ export async function syncUserEmails(userId: string): Promise<{
   // never-fetched older mail, losing it from every future window.
   let attachments: GmailAttachment[] = []
   let fetchComplete = false
+  let messageIndex: Array<{ messageId: string; date: string }> = []
   try {
     if (tokens.provider === 'gmail') {
       const r = await fetchGmailAttachments(accessToken, syncAfterMs)
       attachments = r.attachments
       fetchComplete = r.complete
+      messageIndex = r.messageIndex
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
-      const r = await fetchOutlookAttachments(accessToken, syncAfterMs)
+      const r = await fetchOutlookAttachments(accessToken, syncAfterMs, doneMessageIds)
       attachments = r.attachments
       fetchComplete = r.complete
+      messageIndex = r.messageIndex
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
@@ -1899,26 +2044,52 @@ export async function syncUserEmails(userId: string): Promise<{
         '[BOEK-011] Watermark held — fetch incomplete (throttle/cap); window unchanged this round'
       )
     } else {
-    const sortedAll = [...attachments].sort(
+    // [BOEK-011] Walk the FULL message timeline (messageIndex), not just
+    // fetched attachments. When we skip done-messages' attachment fetches (the
+    // throttle optimisation), their attachments aren't in `attachments` — a
+    // walk over `attachments` alone would be empty on a fully-backfilled repeat
+    // sync and the mark would never advance. messageIndex lists every message
+    // (id + date) that was LISTED this round, so the timeline is complete.
+    //
+    // Per-message completeness:
+    //   · done-skipped (in doneMessageIds) → complete (already imported/skipped)
+    //   · otherwise → complete iff every fetched attachment of that messageId is
+    //     in knownKeys/completedKeys, AND at least one attachment was resolved
+    //     (a message we tried to fetch but got nothing for is treated as
+    //     incomplete → holds the mark, safe side).
+    //
+    // Walk by TIMESTAMP GROUP (emails sharing a receivedDateTime advance
+    // together, all-or-nothing) and stop at the first incomplete group.
+    const attsByMsg = new Map<string, GmailAttachment[]>()
+    for (const a of attachments) {
+      const arr = attsByMsg.get(a.messageId) ?? []
+      arr.push(a)
+      attsByMsg.set(a.messageId, arr)
+    }
+
+    const messageComplete = (messageId: string): boolean => {
+      if (doneMessageIds.has(messageId)) return true
+      const atts = attsByMsg.get(messageId)
+      if (!atts || atts.length === 0) return false // fetched nothing → hold
+      for (const a of atts) {
+        const key = `${a.messageId}:${a.filename}`
+        if (!(knownKeys.has(key) || completedKeys.has(key))) return false
+      }
+      return true
+    }
+
+    const sortedMsgs = [...messageIndex].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     )
-    // [BOEK-011] Walk by TIMESTAMP GROUP, not per-attachment. Several
-    // attachments can share one email (same receivedDateTime); the mark may
-    // only advance over that timestamp when ALL of them are complete. A
-    // per-attachment walk had a boundary bug (caught by simulation): with
-    // "inv.pdf complete, scan.pdf failed" in the same email, it advanced the
-    // candidate to that email's timestamp before hitting the failure. The
-    // ge-fetch + 24h overlap would still have re-fetched it — but the primary
-    // logic must be correct on its own, not rescued by a secondary mechanism.
+
     let candidateIso: string | null = null
     let i = 0
-    while (i < sortedAll.length) {
-      const t = new Date(sortedAll[i].date).getTime()
+    while (i < sortedMsgs.length) {
+      const t = new Date(sortedMsgs[i].date).getTime()
       let j = i
       let groupComplete = true
-      while (j < sortedAll.length && new Date(sortedAll[j].date).getTime() === t) {
-        const key = `${sortedAll[j].messageId}:${sortedAll[j].filename}`
-        if (!(knownKeys.has(key) || completedKeys.has(key))) groupComplete = false
+      while (j < sortedMsgs.length && new Date(sortedMsgs[j].date).getTime() === t) {
+        if (!messageComplete(sortedMsgs[j].messageId)) groupComplete = false
         j++
       }
       if (!groupComplete) break
