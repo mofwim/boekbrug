@@ -2096,10 +2096,15 @@ export async function syncUserEmails(userId: string): Promise<{
     //
     // Per-message completeness:
     //   · done-skipped (in doneMessageIds) → complete (already imported/skipped)
-    //   · otherwise → complete iff every fetched attachment of that messageId is
-    //     in knownKeys/completedKeys, AND at least one attachment was resolved
-    //     (a message we tried to fetch but got nothing for is treated as
-    //     incomplete → holds the mark, safe side).
+    //   · has fetched attachments → complete iff all are known/completed
+    //   · NO fetched attachments → complete. We only reach this walk when
+    //     fetchComplete===true (every attachment fetch succeeded), so a listed
+    //     message contributing zero attachments means its parts were filtered
+    //     out before Claude (logo/signature/too-small) — there is no invoice to
+    //     wait for. Treating it as incomplete was a BUG: such a message (e.g. an
+    //     email whose only attachment is a signature image) permanently blocked
+    //     the walk, freezing the watermark at that timestamp every sync.
+    //     [Fixed 2026-07-09 after the mark stuck at 2026-07-08.]
     //
     // Walk by TIMESTAMP GROUP (emails sharing a receivedDateTime advance
     // together, all-or-nothing) and stop at the first incomplete group.
@@ -2113,7 +2118,10 @@ export async function syncUserEmails(userId: string): Promise<{
     const messageComplete = (messageId: string): boolean => {
       if (doneMessageIds.has(messageId)) return true
       const atts = attsByMsg.get(messageId)
-      if (!atts || atts.length === 0) return false // fetched nothing → hold
+      // No fetched attachments for this listed message → its parts were filtered
+      // out (not a failed fetch — we're inside fetchComplete===true). Nothing to
+      // wait for → complete. (This is the fix for the frozen-watermark bug.)
+      if (!atts || atts.length === 0) return true
       for (const a of atts) {
         const key = `${a.messageId}:${a.filename}`
         if (!(knownKeys.has(key) || completedKeys.has(key))) return false
