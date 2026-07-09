@@ -335,33 +335,24 @@ async function extractPdfTextIfTextLayer(pdfBase64: string): Promise<string | nu
     const clean = cleanBase64(pdfBase64);
     const bytes = Buffer.from(clean, 'base64');
 
-    // [PDF-OPTIMIZE] Dynamic import of the LEGACY build via .mjs — required for
-    // pdfjs v4+ on the Node/serverless runtime (the direct `pdfjs-dist` import
-    // breaks under ESM top-level await; the legacy build is the supported path).
-    // Verified on pdfjs-dist 6.1.200. Text extraction needs NO `canvas` native
-    // dep (canvas is only for rendering pages to images — which we do NOT do).
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs').catch(() => null);
-    if (!pdfjs) {
-      console.warn('[PDF-OPTIMIZE] pdfjs unavailable — using raw PDF path');
+    // [PDF-OPTIMIZE] Use `unpdf` for text extraction. It bundles a serverless
+    // build of pdf.js that MOCKS the canvas dependency, so it works on Vercel
+    // without @napi-rs/canvas — unlike importing pdfjs-dist/legacy directly,
+    // which tries to load @napi-rs/canvas at import time and FAILS on serverless
+    // (observed in prod: "Cannot find module '@napi-rs/canvas'" → import returns
+    // null → we silently fell back to raw for EVERY PDF, i.e. zero saving).
+    // Verified: unpdf extracts byte-identical text to pdfjs v6 on real Kiwi data
+    // (same char/digit counts, all critical amounts + the "Nieuwe schuld" trap
+    // separation preserved), so SAFECORE parity holds.
+    const unpdf = await import('unpdf').catch(() => null);
+    if (!unpdf) {
+      console.warn('[PDF-OPTIMIZE] unpdf unavailable — using raw PDF path');
       return null;
     }
 
-    const doc = await pdfjs.getDocument({
-      data: new Uint8Array(bytes),
-      useSystemFonts: true,
-    }).promise;
-
-    let text = '';
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
-      text += content.items
-        .map((it: unknown) =>
-          typeof it === 'object' && it && 'str' in it ? String((it as { str: unknown }).str) : ''
-        )
-        .join(' ') + '\n';
-    }
-    text = text.trim();
+    const doc = await unpdf.getDocumentProxy(new Uint8Array(bytes));
+    const { text: extracted } = await unpdf.extractText(doc, { mergePages: true });
+    const text = (extracted ?? '').trim();
 
     // Confidence gate — strong evidence this is a genuine text PDF, not a scan
     // with a few stray characters. Both conditions must hold.

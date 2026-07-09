@@ -7,8 +7,7 @@ const nextConfig: NextConfig = {
   // pulled into some client components, so without this Next.js tries to bundle
   // sharp for the browser and the build fails with "module not found". Marking it
   // here keeps sharp server-only (Node runtime), out of the client bundle.
-  serverExternalPackages: ["sharp"],
-};
+serverExternalPackages: ["sharp", "unpdf"],};
 
 export default withSentryConfig(nextConfig, {
   // For all available options, see:
