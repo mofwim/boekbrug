@@ -126,6 +126,13 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     let totalSaved = 0;
     let totalFound = 0;
     let round = 0;
+    // [BOEK-TRUST] Accumulate the balance buckets across all rounds so the final
+    // message can reassure honestly: everything fetched this session landed in a
+    // known bucket (imported / skipped / duplicate), or is being retried.
+    let totalSkipped = 0;
+    let totalDuplicate = 0;
+    let totalErrors = 0;
+    let anyUnbalanced = false;
     // [BOEK-011] No-progress guard: if a round saves nothing AND remaining
     // didn't shrink, looping again would just repeat the same work. Stop and
     // tell the user honestly instead of spinning.
@@ -145,6 +152,13 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
         totalSaved += data.saved ?? 0;
         totalFound += data.verified ?? 0;
+        // [BOEK-TRUST] Roll up the reconciliation buckets.
+        if (data.balance) {
+          totalSkipped += data.balance.skipped ?? 0;
+          totalDuplicate += data.balance.duplicate ?? 0;
+          if (data.balance.balanced === false) anyUnbalanced = true;
+        }
+        totalErrors += data.errors ?? 0;
         const remaining = data.remaining ?? 0;
 
         if (remaining > 0) {
@@ -171,10 +185,25 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           continue; // next batch immediately
         }
 
-        // Done — final summary
-        setSyncResult(
-          `${totalFound} facturen gevonden, ${totalSaved} opgeslagen`
-        );
+        // [BOEK-TRUST] Done — honest, reassuring summary built from the balance.
+        // The reassurance the owner opens the app for: everything that arrived
+        // is accounted for. We keep it to one calm line; details stay implicit.
+        //   · normal case → "X geïmporteerd. Alles is verwerkt."
+        //   · some retried → name it plainly, it's not a loss (next sync retries)
+        //   · rare gap    → "even controleren" without alarm
+        let message: string;
+        if (anyUnbalanced) {
+          message = `${totalSaved} geïmporteerd — we controleren nog een paar items`;
+        } else if (totalErrors > 0) {
+          message = `${totalSaved} geïmporteerd. ${totalErrors} worden zo opnieuw geprobeerd.`;
+        } else {
+          const extra = totalSkipped + totalDuplicate;
+          message =
+            extra > 0
+              ? `${totalSaved} geïmporteerd. Alles is verwerkt (${extra} overgeslagen of al aanwezig).`
+              : `${totalSaved} geïmporteerd. Alles is verwerkt.`;
+        }
+        setSyncResult(message);
         setTimeout(() => window.location.reload(), 1500);
         return;
       }
