@@ -972,6 +972,9 @@ function InvoiceCard({
   selectMode = false,
   selected = false,
   onSelect = () => {},
+  // [INTAKE-FOCUS] deep-link target: element id for scrollIntoView + brief ring
+  domId,
+  highlighted = false,
 }: {
   invoice: IncomingInvoice;
   mode: Tab;
@@ -986,6 +989,9 @@ function InvoiceCard({
   selectMode?: boolean;
   selected?: boolean;
   onSelect?: () => void;
+  // [INTAKE-FOCUS]
+  domId?: string;
+  highlighted?: boolean;
 }) {
   const [loadingPdf, setLoadingPdf] = useState(false);
 
@@ -1008,9 +1014,17 @@ function InvoiceCard({
 
   return (
     <div
+      id={domId}
       style={{
         background: "#fff", borderRadius: 16, marginBottom: 12,
-        overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+        overflow: "hidden",
+        // [INTAKE-FOCUS] brief ring when deep-linked from the upload results
+        // modal; scrollMarginTop keeps the card clear of the sticky header.
+        boxShadow: highlighted
+          ? "0 1px 4px rgba(0,0,0,0.08), 0 0 0 3px rgba(0,122,255,0.35)"
+          : "0 1px 4px rgba(0,0,0,0.08)",
+        transition: "box-shadow 0.5s ease",
+        scrollMarginTop: 96,
       }}
     >
       {/* Header — always visible, tappable */}
@@ -1298,6 +1312,11 @@ type IntakeResult = {
   message: string;
   // present for document / duplicate → deep-link + focus in Mijn bestanden
   link?: { folderId: string | null; focusId: string };
+  // [INTAKE-FOCUS] present for invoice/receipt → "Naar controle →" deep-links to
+  // this card in the verify queue (?focus=). The API always returned invoice_id;
+  // the modal just never used it — the owner was told "controleer en bevestig"
+  // without a path to the invoice.
+  invoiceId?: string;
 };
 
 const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string }> = {
@@ -1352,7 +1371,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           return { name: file.name, status: "bank", message };
         }
         // invoice | receipt → lives in this verify queue
-        return { name: file.name, status: "invoice", message };
+        // [INTAKE-FOCUS] keep invoice_id so the row can deep-link to the card
+        return {
+          name: file.name, status: "invoice", message,
+          invoiceId: (data as { invoice_id?: string }).invoice_id,
+        };
       }
 
       // Not ok — duplicate is informative, not a failure.
@@ -1418,6 +1441,13 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
 
   const openInBestanden = (link: { folderId: string | null; focusId: string }) => {
     window.location.href = `/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`;
+  };
+
+  // [INTAKE-FOCUS] "Naar controle →" — same full-navigation pattern as
+  // openInBestanden/closeResults (this page reloads anyway to refresh the
+  // queue); ?focus= makes the main component expand + scroll + ring the card.
+  const goToInvoice = (invoiceId: string) => {
+    window.location.href = `/dashboard/incoming?focus=${invoiceId}`;
   };
 
   const addedCount = results.filter((r) => r.status === "invoice" || r.status === "document" || r.status === "bank").length;
@@ -1553,6 +1583,18 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                           Bekijk in bestanden →
                         </button>
                       )}
+                      {/* [INTAKE-FOCUS] Invoice/receipt landed in THIS queue,
+                          hidden behind this modal — give the owner the path to
+                          it instead of just "controleer en bevestig". */}
+                      {r.status === "invoice" && r.invoiceId && (
+                        <button
+                          type="button"
+                          onClick={() => goToInvoice(r.invoiceId!)}
+                          style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#007aff", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                        >
+                          Naar controle →
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1595,6 +1637,33 @@ export default function IncomingInvoicesClient({
   const [tab, setTab] = useState<Tab>("pending");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // [INTAKE-FOCUS] Deep-link target from the upload results modal
+  // ("Naar controle →" navigates to /dashboard/incoming?focus={invoiceId}).
+  // On mount: expand the card, scroll it into view, show a brief ring, then
+  // clean the param so a later manual refresh doesn't re-trigger. Reading
+  // window.location (client-only) avoids the useSearchParams Suspense
+  // requirement — this effect never runs on the server.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("focus");
+    if (!id) return;
+    setFocusId(id);
+    setExpandedId(id);
+    window.history.replaceState({}, "", window.location.pathname);
+    const t = setTimeout(() => setFocusId(null), 2600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!focusId) return;
+    // rAF: let the (possibly expanded) card lay out before we scroll to it.
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`incoming-card-${focusId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [focusId, pending]);
 
   // Modal state
   const [confirmPaidFor, setConfirmPaidFor] = useState<IncomingInvoice | null>(null);
@@ -2007,6 +2076,8 @@ export default function IncomingInvoicesClient({
                 selectMode={tab === "pending" && selectMode}
                 selected={selected.has(inv.id)}
                 onSelect={() => toggleSelect(inv.id)}
+                domId={`incoming-card-${inv.id}`}
+                highlighted={focusId === inv.id}
               />
             ))}
           </div>
