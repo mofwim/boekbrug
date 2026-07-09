@@ -381,6 +381,17 @@ async function downscaleImageIfNeeded(
   const JPEG_QUALITY = 88
 
   try {
+    // [BOEK-COST] sharp is a native, server-only module. ai.ts is (currently)
+    // imported by some client components too, so we must ensure sharp is never
+    // pulled into the browser bundle. Two defences:
+    //   1. next.config: serverExternalPackages: ['sharp'] (the official fix)
+    //   2. this runtime guard — if we're somehow on the client, skip resizing.
+    // Either alone prevents the "module not found" build error; together they're
+    // safe. On the client we just send the original (fail-safe path).
+    if (typeof window !== 'undefined') {
+      return { data: base64, mimeType }
+    }
+
     // Dynamic import so a missing `sharp` can't break the module at load time —
     // if it's unavailable we simply skip resizing (fail-safe below).
     const sharpModule = await import('sharp').catch(() => null)

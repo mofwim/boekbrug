@@ -2,7 +2,12 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // [BOEK-COST] sharp is a native, server-only image library used in src/lib/ai.ts
+  // to downscale invoice photos before sending them to Claude. ai.ts is also
+  // pulled into some client components, so without this Next.js tries to bundle
+  // sharp for the browser and the build fails with "module not found". Marking it
+  // here keeps sharp server-only (Node runtime), out of the client bundle.
+  serverExternalPackages: ["sharp"],
 };
 
 export default withSentryConfig(nextConfig, {
