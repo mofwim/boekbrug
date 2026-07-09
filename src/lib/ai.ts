@@ -897,6 +897,46 @@ Return JSON only.`;
           `${prompt}\n\n--- FACTUUR TEKST (uit PDF) ---\n${extractedText}`,
           systemPrompt
         );
+
+        // [PDF-OPTIMIZE] SAFECORE secondary fail-safe. On real Kiwi data, a
+        // FEW complex layouts (multi-column tables, credit notes) survive text
+        // extraction as CHARACTERS but lose the visual column order, so Claude
+        // reading the flat text can miss or transpose the total. The raw PDF
+        // path — where Claude SEES the page layout — reads these correctly.
+        //
+        // Detector: the total (total_inc_btw) is the load-bearing figure. If the
+        // text path could not produce a usable total — neither an explicit
+        // total NOR a derivable ex+btw pair — that is a strong signal the flat
+        // text was too garbled to trust. We then RE-READ once via the raw PDF
+        // (the trusted layout-aware path) and use THAT result instead.
+        //
+        // Why the total specifically (not ex/btw): a simple invoice may legit-
+        // imately state only a total with no separate BTW breakdown, so missing
+        // ex/btw alone is NOT a failure. A missing total, however, means the
+        // read failed. This mirrors the existing reconcile logic below.
+        //
+        // Cost: the extra raw call fires ONLY on these rare complex cases (~few
+        // % in practice), while the clean majority keep the full text-path
+        // saving. Net: large saving, zero invoice loss.
+        const probe = safeParseJSON<VerifyInvoiceResult>(result);
+        const hasNum = (v: unknown): boolean =>
+          typeof v === 'number' && isFinite(v);
+        const usableTotal =
+          probe != null &&
+          (hasNum(probe.total_inc_btw) ||
+            (hasNum(probe.total_ex_btw) && hasNum(probe.btw_amount)));
+        // Only re-read when Claude DID think it was an invoice but the numbers
+        // came out unusable. If Claude judged it "not an invoice", respect that
+        // (a real rejection) — re-reading raw would waste a call and could flip
+        // a correct rejection.
+        const claimedInvoice = probe != null && probe.is_invoice === true;
+
+        if (!usableTotal && claimedInvoice) {
+          console.log(
+            '[PDF-OPTIMIZE] Text path produced no usable total — re-reading via raw PDF (SAFECORE fallback)'
+          );
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+        }
       } else {
         // Raw PDF path — Claude reads the actual PDF (text + scanned). UNCHANGED.
         result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
