@@ -91,6 +91,14 @@ export interface VerifyInvoiceResult {
   // kassabon / pin-receipt (paid at the counter). The router uses this to
   // pre-suggest "paid" in the verify queue — the human still confirms (Pillar ⑤).
   is_paid?: boolean;
+  // [BRIDGE-CREDITNOTA-SIGN] Is this a CREDITNOTA (credit note)? True only on
+  // explicit evidence: a "Creditnota"/"Credit note" title, a CR-prefixed
+  // number, or amounts printed negative. Routing is unaffected (a creditnota
+  // still goes to the verify queue like any invoice — document_kind stays
+  // 'invoice'); this flag drives invoice_type='creditnota' at storage and the
+  // sign-inverted SAFECORE gate. Amounts on a creditnota are kept NEGATIVE as
+  // printed — matching the outgoing creditnota route [BOEK-031].
+  is_credit_note?: boolean;
   reason?: string;           // why it was rejected (if is_invoice = false)
   // [BOEK-011] detailed BTW breakdown — extracted in the same call, zero extra cost
   total_ex_btw?: number;     // amount excluding BTW
@@ -734,6 +742,7 @@ Return only a JSON object with these exact keys:
   "payment_reference": string or null,
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
+  "is_credit_note": boolean,
   "total_ex_btw": number or null,
   "btw_amount": number or null,
   "total_inc_btw": number or null,
@@ -820,6 +829,20 @@ Document kind + paid status (ALWAYS set these):
   mark something paid that is not.
 - A receipt is still a real financial document: keep is_invoice=true for both
   "invoice" and "receipt" (both enter the pipeline); only "other" is false.
+
+Creditnota detection (ALWAYS set is_credit_note):
+- "is_credit_note" = true ONLY on explicit evidence this is a CREDIT NOTE:
+  a title like "Creditnota", "Credit note", "Creditfactuur", "Credit invoice";
+  an invoice number with a credit prefix (e.g. "CR-…"); or the amounts printed
+  as NEGATIVE / explicitly marked as credit ("te ontvangen", "credit").
+- A creditnota is still a real financial document: is_invoice=true and
+  document_kind="invoice" (it enters the same verify queue).
+- On a creditnota, return the amounts EXACTLY as printed — NEGATIVE when the
+  document shows them negative (e.g. total_inc_btw: -4.84). NEVER flip a sign
+  yourself: report what the document states. If a document is titled creditnota
+  but prints positive amounts, return them positive (the system will hold it
+  for human review — that is correct).
+- A normal invoice → is_credit_note = false. When unsure → false.
 
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
@@ -1047,6 +1070,10 @@ Return JSON only.`;
         ? parsed.document_kind
         : "invoice";
     parsed.is_paid = parsed.is_paid === true;
+    // [BRIDGE-CREDITNOTA-SIGN] Strict boolean; unknown → false (safe side:
+    // a normal invoice with a stray negative stays blocked by num() below +
+    // the SAFECORE gate — never silently treated as a creditnota).
+    parsed.is_credit_note = parsed.is_credit_note === true;
 
     // Enforce minimum confidence threshold
     // Below 0.6 → treat as not an invoice to avoid false positives
@@ -1061,10 +1088,19 @@ Return JSON only.`;
     // [BOEK-011] Normalize and reconcile amounts — never let bad numbers reach DB
     const num = (v: unknown): number | undefined =>
       typeof v === 'number' && isFinite(v) && v >= 0 ? v : undefined;
+    // [BRIDGE-CREDITNOTA-SIGN] On a creditnota the amounts are legitimately
+    // NEGATIVE (matching the paper + the outgoing creditnota route [BOEK-031],
+    // which stores -(original.x)). numSigned accepts any finite number; it is
+    // used ONLY when is_credit_note=true. Normal invoices keep num() exactly
+    // as before — a stray negative there is an extraction error and stays
+    // filtered (conditional, never permissive).
+    const numSigned = (v: unknown): number | undefined =>
+      typeof v === 'number' && isFinite(v) ? v : undefined;
+    const pickNum = parsed.is_credit_note === true ? numSigned : num;
 
-    parsed.total_ex_btw = num(parsed.total_ex_btw);
-    parsed.btw_amount = num(parsed.btw_amount);
-    parsed.total_inc_btw = num(parsed.total_inc_btw);
+    parsed.total_ex_btw = pickNum(parsed.total_ex_btw);
+    parsed.btw_amount = pickNum(parsed.btw_amount);
+    parsed.total_inc_btw = pickNum(parsed.total_inc_btw);
     // [BOEK-011 double-check m.5] btw_rate must be a real Dutch VAT rate.
     // num() alone would accept e.g. 6 (old rate) or 121 (amount mistaken for a
     // rate). Constrain to the three valid values; anything else → undefined so

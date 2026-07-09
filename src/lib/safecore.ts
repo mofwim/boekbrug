@@ -64,7 +64,28 @@ export interface ArithmeticInput {
  * (incl ≤ 0) — an incoming invoice with no amount is not a valid financial
  * record and must not reach the accountant unreviewed.
  */
-export function evaluateArithmetic(c: ArithmeticInput): ArithmeticVerdict {
+/**
+ * [BRIDGE-CREDITNOTA-SIGN] Options for the arithmetic gate.
+ * `isCreditNote` routes to the creditnota branch, where amounts must be
+ * NEGATIVE and consistent. Optional — every existing call site keeps its
+ * exact current behaviour (additive, never permissive).
+ */
+export interface ArithmeticOptions {
+  isCreditNote?: boolean
+}
+
+export function evaluateArithmetic(
+  c: ArithmeticInput,
+  opts?: ArithmeticOptions
+): ArithmeticVerdict {
+  // [BRIDGE-CREDITNOTA-SIGN] Creditnota → its own explicit branch. The standard
+  // path below is UNCHANGED (additive, not permissive): we never relax the
+  // positive-amount guards for normal invoices; a creditnota simply takes a
+  // parallel gate where the sign expectation is inverted.
+  if (opts?.isCreditNote === true) {
+    return evaluateCreditnotaArithmetic(c)
+  }
+
   const flags: string[] = []
   const reasons: string[] = []
 
@@ -76,7 +97,19 @@ export function evaluateArithmetic(c: ArithmeticInput): ArithmeticVerdict {
   const finiteNonNeg = (v: number) => Number.isFinite(v) && v >= 0
   if (!finiteNonNeg(ex) || !finiteNonNeg(btw) || !finiteNonNeg(incl)) {
     flags.push('non_finite_or_negative')
-    reasons.push('ongeldige bedragen (NaN/∞/negatief)')
+    // [BRIDGE-CREDITNOTA-SIGN] Smarter reason: when the numbers are FINITE but
+    // negative, the document is very likely a creditnota that the AI labelled
+    // as a normal invoice. Hint the owner instead of a generic error, so the
+    // verify queue tells them WHAT to fix. Flag unchanged (consumers keep
+    // matching 'non_finite_or_negative'); only the human-readable reason improves.
+    const allFinite =
+      Number.isFinite(ex) && Number.isFinite(btw) && Number.isFinite(incl)
+    const anyNegative = ex < 0 || btw < 0 || incl < 0
+    reasons.push(
+      allFinite && anyNegative
+        ? 'bedragen zijn negatief — is dit een creditnota?'
+        : 'ongeldige bedragen (NaN/∞/negatief)'
+    )
   }
 
   // incl must be a real positive total — a 0/blank invoice is not bookable.
@@ -112,6 +145,78 @@ export function evaluateArithmetic(c: ArithmeticInput): ArithmeticVerdict {
       // rates (0/9/21) — a food invoice mixing 9% and 21% blends to a value
       // between them (e.g. 11%), which is valid. Only a rate below 0 or above
       // 21 is truly impossible (no NL rate exceeds 21, so no blend can either).
+      if (rate < 0 || rate > 21) {
+        flags.push('illegal_btw_rate')
+        reasons.push(`ongeldig BTW-tarief (${rate}%)`)
+      }
+    }
+  }
+
+  if (flags.length === 0) return { ok: true }
+  return { ok: false, reason: reasons.join('; '), flags }
+}
+
+/**
+ * [BRIDGE-CREDITNOTA-SIGN] Arithmetic gate for a CREDITNOTA.
+ *
+ * Mirror of the standard gate with the sign expectation inverted:
+ *   Structural (impossible values) → blocked:
+ *     - any of ex/btw/incl is NaN, ±Infinity, or > 0 (a creditnota's amounts
+ *       are NEGATIVE — matching the outgoing creditnota route [BOEK-031],
+ *       which stores -(original.x), and the paper document itself)
+ *     - incl >= 0 (a creditnota with no negative total is not bookable)
+ *     - invoice year outside 2020–2030 (same business range)
+ *   Consistency (internally wrong) → blocked:
+ *     - |ex + btw − incl| > 0.02 (the sum identity holds with negatives:
+ *       -4.00 + -0.84 = -4.84 — verified on real CR-002-2026)
+ *     - rate ∉ [0..21]: computed with Math.abs guard on ex (neg/neg gives a
+ *       positive rate; |ex| > 0.005 avoids the sign-flipped `ex > 0` trap
+ *       that would silently skip the rate check for every creditnota)
+ *
+ * btw = 0 is allowed (a 0%-BTW creditnota is legal — ex = incl, both negative).
+ */
+function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
+  const flags: string[] = []
+  const reasons: string[] = []
+
+  const ex = c.totalExBtw ?? 0
+  const btw = c.btwAmount ?? 0
+  const incl = c.totalIncBtw ?? c.amount ?? 0
+
+  // ── Structural: a creditnota's amounts must be finite and non-positive ──
+  const finiteNonPos = (v: number) => Number.isFinite(v) && v <= 0
+  if (!finiteNonPos(ex) || !finiteNonPos(btw) || !finiteNonPos(incl)) {
+    flags.push('creditnota_not_negative')
+    reasons.push('creditnota-bedragen moeten negatief zijn')
+  }
+
+  // incl must be strictly negative — a 0/blank creditnota is not bookable.
+  if (Number.isFinite(incl) && incl >= 0) {
+    flags.push('non_negative_creditnota_total')
+    reasons.push('totaalbedrag van creditnota ontbreekt of is 0')
+  }
+
+  // ── Structural: date sanity (same 2020–2030 range as the standard path) ──
+  if (typeof c.invoiceDate === 'string' && c.invoiceDate.trim()) {
+    const d = new Date(c.invoiceDate)
+    const year = d.getFullYear()
+    if (Number.isNaN(d.getTime()) || year < 2020 || year > 2030) {
+      flags.push('date_out_of_range')
+      reasons.push('factuurdatum buiten geldig bereik (2020–2030)')
+    }
+  }
+
+  // ── Consistency: only when the numbers are structurally sane ──
+  if (finiteNonPos(ex) && finiteNonPos(btw) && Number.isFinite(incl) && incl < 0) {
+    // excl + BTW must equal incl — the identity holds with negatives.
+    if (Math.abs(ex + btw - incl) > 0.02) {
+      flags.push('sum_mismatch')
+      reasons.push('excl + BTW ≠ totaal')
+    }
+    // Legal BTW rate — |btw/ex| with an abs-guard on ex. (neg ÷ neg = positive,
+    // so the rate itself is positive; [BTW-MIXED-RATE] blend logic applies.)
+    if (Math.abs(ex) > 0.005) {
+      const rate = Math.round((btw / ex) * 100)
       if (rate < 0 || rate > 21) {
         flags.push('illegal_btw_rate')
         reasons.push(`ongeldig BTW-tarief (${rate}%)`)

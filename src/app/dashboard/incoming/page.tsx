@@ -19,6 +19,9 @@ interface IncomingInvoiceRow {
   id: string;
   client_name: string;
   client_email: string | null;
+  // [BRIDGE-CREDITNOTA-SIGN] 'creditnota' → negative amounts by design; drives
+  // the queue badge + the sign-inverted read-time health gate below.
+  invoice_type: string | null;
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
@@ -42,8 +45,9 @@ interface IncomingInvoiceRow {
 }
 
 // Plain column list — no join. The join broke the query and emptied the page.
+// [BRIDGE-CREDITNOTA-SIGN] + invoice_type (badge + sign-inverted health gate).
 const INVOICE_COLUMNS =
-  "id, client_name, client_email, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
+  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();
@@ -180,11 +184,14 @@ export default async function IncomingPage() {
         // [IMPORT-MONITOR] Part 1 — health from existing signals only (reads the
         // stored _safecore, else recomputes via the shared arithmetic gate; plus
         // the AI per-field confidence). Pure, read-time, no writes.
+        // [BRIDGE-CREDITNOTA-SIGN] invoice_type routes a creditnota to the
+        // sign-inverted gate — a clean negative creditnota reads "ready".
         health: classifyImportHealth({
           total_ex_btw: inv.total_ex_btw,
           btw_amount: inv.btw_amount,
           total_inc_btw: inv.total_inc_btw,
           invoice_date: inv.invoice_date,
+          invoice_type: inv.invoice_type,
           field_confidence: inv.field_confidence,
         }),
       };

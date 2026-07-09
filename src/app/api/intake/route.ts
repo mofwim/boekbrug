@@ -321,6 +321,11 @@ export async function POST(req: NextRequest) {
       // backbone of the "Vandaag" screen; null is honest when nothing is stated.
       due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
       invoice_number: v.invoice_number || `CAMERA-${Date.now()}`,
+      // [BRIDGE-CREDITNOTA-SIGN] mark the type; amounts stay NEGATIVE as
+      // extracted for a creditnota (one sign convention with [BOEK-031]).
+      // The read-time health classifier (import-health) applies the
+      // sign-inverted gate for this row via invoice_type.
+      invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
       total_ex_btw: v.total_ex_btw ?? 0,
       btw_amount: v.btw_amount ?? 0,
       total_inc_btw: v.total_inc_btw ?? v.amount ?? 0,

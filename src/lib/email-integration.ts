@@ -1041,6 +1041,10 @@ export interface AttachmentClassification {
   // [PAY-SAFE-EXTRACT] vendor payment details (IBAN to pay + betalingskenmerk)
   vendorIban?: string
   paymentReference?: string
+  // [BRIDGE-CREDITNOTA-SIGN] Is this a creditnota? Drives the sign-inverted
+  // SAFECORE gate + invoice_type='creditnota' at insert. Amounts stay NEGATIVE
+  // as printed (matching outgoing creditnota [BOEK-031]).
+  isCreditNote?: boolean
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -1084,6 +1088,8 @@ export async function classifyAttachment(
     // [PAY-SAFE-EXTRACT] vendor payment details from the same Claude call
     vendorIban: result.vendor_iban,
     paymentReference: result.payment_reference,
+    // [BRIDGE-CREDITNOTA-SIGN] creditnota signal from the same Claude call
+    isCreditNote: result.is_credit_note,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -1904,7 +1910,12 @@ export async function syncUserEmails(userId: string): Promise<{
       // `shared`) instead of going straight to 'received' → shared → accountant.
       // The reason is MERGED into field_confidence (never overwriting the AI's
       // per-field confidence) under a _safecore key.
-      const verdict = evaluateArithmetic(classification)
+      // [BRIDGE-CREDITNOTA-SIGN] A creditnota takes the sign-inverted branch
+      // (amounts must be NEGATIVE + consistent); normal invoices keep the
+      // exact original gate.
+      const verdict = evaluateArithmetic(classification, {
+        isCreditNote: classification.isCreditNote === true,
+      })
 
       // Merge, don't overwrite: keep the AI's fieldConfidence, add _safecore
       // only when held. When there's nothing at all, keep null (parity with the
@@ -1962,6 +1973,11 @@ export async function syncUserEmails(userId: string): Promise<{
             classification.paymentTermDays ?? null
           ),
           invoice_number: classification.invoiceNumber || `EMAIL-${Date.now()}`,
+          // [BRIDGE-CREDITNOTA-SIGN] mark the type so every surface (queue
+          // badge, bridge, quarterly) can tell a creditnota from a factuur.
+          // Amounts below stay NEGATIVE as extracted — matching the outgoing
+          // creditnota route [BOEK-031] (one sign convention in the table).
+          invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
           total_ex_btw: classification.totalExBtw ?? 0,
           btw_amount: classification.btwAmount ?? 0,
           total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,

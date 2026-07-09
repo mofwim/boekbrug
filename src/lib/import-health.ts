@@ -56,6 +56,10 @@ export interface HealthInput {
   btw_amount: number | null
   total_inc_btw: number | null
   invoice_date: string | null
+  // [BRIDGE-CREDITNOTA-SIGN] 'creditnota' → the recompute below takes the
+  // sign-inverted gate (amounts must be NEGATIVE + consistent). Optional so
+  // existing call sites keep compiling; absent/other → the standard gate.
+  invoice_type?: string | null
   // field_confidence is jsonb: AI per-field scores PLUS an optional nested
   // _safecore object (present only when the email path held the invoice).
   field_confidence: FieldConfidence | null
@@ -107,12 +111,18 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     else reasons.push('mogelijke rekenfout in de bedragen')
   } else if (!storedSafecore) {
     // No stored verdict → recompute (covers the upload path + any legacy row).
-    const verdict = evaluateArithmetic({
-      totalExBtw: inv.total_ex_btw,
-      btwAmount: inv.btw_amount,
-      totalIncBtw: inv.total_inc_btw,
-      invoiceDate: inv.invoice_date,
-    })
+    // [BRIDGE-CREDITNOTA-SIGN] Same gate, same branch selection as write time:
+    // a creditnota row (invoice_type) takes the sign-inverted gate, so a clean
+    // negative creditnota reads "ready" here instead of a false "Aandacht nodig".
+    const verdict = evaluateArithmetic(
+      {
+        totalExBtw: inv.total_ex_btw,
+        btwAmount: inv.btw_amount,
+        totalIncBtw: inv.total_inc_btw,
+        invoiceDate: inv.invoice_date,
+      },
+      { isCreditNote: inv.invoice_type === 'creditnota' }
+    )
     if (!verdict.ok) {
       flags.arithmetic = true
       if (verdict.reason) reasons.push(verdict.reason)

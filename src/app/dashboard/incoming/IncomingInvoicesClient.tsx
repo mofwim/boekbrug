@@ -38,6 +38,11 @@ interface IncomingInvoice {
   id: string;
   client_name: string;
   client_email: string | null;
+  // [BRIDGE-CREDITNOTA-SIGN] 'creditnota' → amounts are NEGATIVE by design
+  // (matching the paper + outgoing creditnota [BOEK-031]); drives the badge
+  // and the signed amount display. Optional: the page select must include it
+  // (patch note) — absent means 'factuur' (default).
+  invoice_type?: string | null;
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
@@ -105,6 +110,16 @@ function formatDate(dateStr: string): string {
 
 function formatAmount(amount: number): string {
   return NL_CURRENCY.format(amount);
+}
+
+// [BRIDGE-CREDITNOTA-SIGN] Amount display that keeps the SIGN. The old
+// `x > 0 ? format : "—"` guard rendered every creditnota amount (negative by
+// design, matching [BOEK-031] outgoing) as "—" — the bug in the screenshot.
+// Now: 0/absent/non-finite → "—" (unchanged for empty invoices); any other
+// finite value (positive OR negative) → formatted with its sign.
+// NL_CURRENCY renders negatives natively (e.g. "€ -4,84").
+function formatSignedAmount(amount: number): string {
+  return Number.isFinite(amount) && amount !== 0 ? NL_CURRENCY.format(amount) : "—";
 }
 
 // ── Email connect card ────────────────────────────────────────────────────────
@@ -393,7 +408,10 @@ function ConfirmPaidModal({
   // [BRIDGE-B] TRAIL 3 — legal BTW rate must round to 0 / 9 / 21. FLAG, never block.
   // [BTW-MIXED-RATE] A blended rate (e.g. 9%+21% food invoice → ~11%) is valid:
   // any value 0–21 can be a mix of legal NL rates. Only < 0 or > 21 is impossible.
-  const btwRate = exBtw > 0 ? Math.round((btwAmount / exBtw) * 100) : null;
+  // [BRIDGE-CREDITNOTA-SIGN] abs-guard instead of `exBtw > 0`: on a creditnota
+  // both values are negative (neg ÷ neg = a positive rate), so the check now
+  // runs there too instead of being silently skipped.
+  const btwRate = Math.abs(exBtw) > 0.005 ? Math.round((btwAmount / exBtw) * 100) : null;
   const rateFlag = btwRate !== null && (btwRate < 0 || btwRate > 21);
 
   // [BRIDGE-EXTRACT] N-N page-number pattern in the invoice number → soft flag
@@ -1015,6 +1033,24 @@ function InvoiceCard({
           <div style={{ fontSize: 13, color: "#8e8e93" }}>
             {formatDate(invoice.invoice_date)}
           </div>
+          {/* [BRIDGE-CREDITNOTA-SIGN] Creditnota badge — a credit note is a
+              DIFFERENT financial animal (negative amounts by design), so the
+              owner must see it at a glance. Independent of the health badge:
+              a clean creditnota shows Creditnota + "ready", a broken one shows
+              Creditnota + "Aandacht nodig". */}
+          {invoice.invoice_type === "creditnota" && (
+            <div
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 5,
+                marginTop: 6, marginRight: 6, padding: "3px 9px", borderRadius: 8,
+                background: "#fdecea", border: "1px solid #f5b5ae",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 600 }}>
+                Creditnota
+              </span>
+            </div>
+          )}
           {/* [IMPORT-MONITOR] Health badge — only in the pending queue. Flagged
               invoices get a calm-but-clear attention pill; clean invoices get a
               quiet "ready to confirm" hint (calm, never the alarming "review").
@@ -1051,7 +1087,7 @@ function InvoiceCard({
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontWeight: 700, fontSize: 18, color: "#1c1c1e", whiteSpace: "nowrap" }}>
-            {invoice.total_inc_btw > 0 ? formatAmount(invoice.total_inc_btw) : "—"}
+            {formatSignedAmount(invoice.total_inc_btw)}
           </span>
           <span
             style={{
@@ -1109,15 +1145,15 @@ function InvoiceCard({
             <DetailRow label="Afzender" value={invoice.client_email || "—"} />
             <DetailRow
               label="Bedrag excl. BTW"
-              value={invoice.total_ex_btw > 0 ? formatAmount(invoice.total_ex_btw) : "—"}
+              value={formatSignedAmount(invoice.total_ex_btw)}
             />
             <DetailRow
               label="BTW"
-              value={invoice.btw_amount > 0 ? formatAmount(invoice.btw_amount) : "—"}
+              value={formatSignedAmount(invoice.btw_amount)}
             />
             <DetailRow
               label="Totaal"
-              value={invoice.total_inc_btw > 0 ? formatAmount(invoice.total_inc_btw) : "—"}
+              value={formatSignedAmount(invoice.total_inc_btw)}
               bold
             />
             <DetailRow
