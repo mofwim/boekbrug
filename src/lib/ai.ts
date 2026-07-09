@@ -900,40 +900,38 @@ Return JSON only.`;
 
         // [PDF-OPTIMIZE] SAFECORE secondary fail-safe. On real Kiwi data, a
         // FEW complex layouts (multi-column tables, credit notes) survive text
-        // extraction as CHARACTERS but lose the visual column order, so Claude
-        // reading the flat text can miss or transpose the total. The raw PDF
-        // path — where Claude SEES the page layout — reads these correctly.
+        // extraction as CHARACTERS but lose the visual column order. Reading the
+        // flat text, Claude then either (a) returns an invoice with an unusable
+        // total, or (b) fails to recognise it as an invoice at all — while the
+        // RAW PDF path, where Claude SEES the page layout, reads it correctly.
         //
-        // Detector: the total (total_inc_btw) is the load-bearing figure. If the
-        // text path could not produce a usable total — neither an explicit
-        // total NOR a derivable ex+btw pair — that is a strong signal the flat
-        // text was too garbled to trust. We then RE-READ once via the raw PDF
-        // (the trusted layout-aware path) and use THAT result instead.
+        // Rule: the text path is TRUSTED only when it yields a real invoice with
+        // a usable total. ANY weaker outcome — parse failure, "not an invoice",
+        // or a missing/underivable total — means we CANNOT trust the flat text,
+        // so we RE-READ once via the raw PDF and use THAT result. The raw path is
+        // exactly the pre-PDF-OPTIMIZE behaviour, so a re-read can never do worse
+        // than production already did: zero degradation, zero invoice loss.
         //
-        // Why the total specifically (not ex/btw): a simple invoice may legit-
-        // imately state only a total with no separate BTW breakdown, so missing
-        // ex/btw alone is NOT a failure. A missing total, however, means the
-        // read failed. This mirrors the existing reconcile logic below.
+        // Why not just check is_invoice=true+total: because a garbled layout can
+        // ALSO make Claude reject a genuine invoice (case b, seen on Ketels). We
+        // must catch that too, and the raw path is the trustworthy arbiter.
         //
-        // Cost: the extra raw call fires ONLY on these rare complex cases (~few
-        // % in practice), while the clean majority keep the full text-path
-        // saving. Net: large saving, zero invoice loss.
+        // Cost: the extra raw call fires only when the cheap text path did not
+        // produce a solid invoice. Real PDF attachments are overwhelmingly
+        // invoices, and a rejected non-invoice text call is tiny, so the rare
+        // double-read is dwarfed by the saving on the clean majority.
         const probe = safeParseJSON<VerifyInvoiceResult>(result);
         const hasNum = (v: unknown): boolean =>
           typeof v === 'number' && isFinite(v);
-        const usableTotal =
+        const textPathTrusted =
           probe != null &&
+          probe.is_invoice === true &&
           (hasNum(probe.total_inc_btw) ||
             (hasNum(probe.total_ex_btw) && hasNum(probe.btw_amount)));
-        // Only re-read when Claude DID think it was an invoice but the numbers
-        // came out unusable. If Claude judged it "not an invoice", respect that
-        // (a real rejection) — re-reading raw would waste a call and could flip
-        // a correct rejection.
-        const claimedInvoice = probe != null && probe.is_invoice === true;
 
-        if (!usableTotal && claimedInvoice) {
+        if (!textPathTrusted) {
           console.log(
-            '[PDF-OPTIMIZE] Text path produced no usable total — re-reading via raw PDF (SAFECORE fallback)'
+            '[PDF-OPTIMIZE] Text path not conclusive — re-reading via raw PDF (SAFECORE fallback)'
           );
           result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
         }
