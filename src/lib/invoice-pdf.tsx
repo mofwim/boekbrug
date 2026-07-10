@@ -45,7 +45,9 @@ const styles = StyleSheet.create({
     marginBottom: 36,
   },
   klantBlock: { width: '48%' },
-  afzenderBlock: { width: '48%', alignItems: 'flex-end' },
+  // Afzender sits in the right half of the page, but its text reads
+  // LEFT-aligned like the reference — only the logo hugs the right edge.
+  afzenderBlock: { width: '48%' },
   logo: {
     width: 60,
     height: 60,
@@ -54,6 +56,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
+    alignSelf: 'flex-end',
   },
   logoText: {
     color: '#ffffff',
@@ -63,7 +66,6 @@ const styles = StyleSheet.create({
   },
   partyName: { fontSize: 11, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
   partyText: { fontSize: 10, color: '#3c3c43', marginBottom: 1 },
-  partyTextRight: { fontSize: 10, color: '#3c3c43', marginBottom: 1, textAlign: 'right' },
 
   // Heading + meta
   heading: { fontSize: 18, fontFamily: 'Helvetica-Bold', marginBottom: 10 },
@@ -243,14 +245,14 @@ export function InvoicePDF({
             <View style={styles.logo}>
               <Text style={styles.logoText}>{initials}</Text>
             </View>
-            <Text style={[styles.partyName, { textAlign: 'right' }]}>{afzenderName}</Text>
-            <Text style={styles.partyTextRight}>{profile.address}</Text>
-            <Text style={styles.partyTextRight}>
+            <Text style={styles.partyName}>{afzenderName}</Text>
+            <Text style={styles.partyText}>{profile.address}</Text>
+            <Text style={styles.partyText}>
               {profile.postal_code} {profile.city}
             </Text>
-            <Text style={styles.partyTextRight}>BTW nr.: {senderBtw}</Text>
-            <Text style={styles.partyTextRight}>KvK nr.: {profile.kvk_number || '—'}</Text>
-            <Text style={styles.partyTextRight}>IBAN: {profile.iban || '—'}</Text>
+            <Text style={styles.partyText}>BTW nr.: {senderBtw}</Text>
+            <Text style={styles.partyText}>KvK nr.: {profile.kvk_number || '—'}</Text>
+            <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
           </View>
         </View>
 
