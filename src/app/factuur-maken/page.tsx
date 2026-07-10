@@ -70,6 +70,11 @@ const DOC_LABELS: Record<InvoiceType, string> = {
 
 const NL_BTW_RE = /^NL\d{9}B\d{2}$/i
 
+// Round to whole cents (half-up, EPSILON-guarded against float noise).
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
 // Timezone-proof today (Europe/Amsterdam) as ISO yyyy-mm-dd, no Date math traps.
 function todayISO(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -201,22 +206,24 @@ const s = {
 export default function GratisFactuurPage() {
   const [hydrated, setHydrated] = useState(false)
   const [invoiceType, setInvoiceType] = useState<InvoiceType>('factuur')
-  const [invoiceNumber, setInvoiceNumber] = useState('')
-  const [invoiceDate, setInvoiceDate] = useState('')
-  const [dueDate, setDueDate] = useState('')
+  // Date/number defaults are deterministic (pinned to Europe/Amsterdam), so a
+  // lazy initializer yields the SAME value on server and client — no effect,
+  // no hydration mismatch.
+  const [invoiceNumber, setInvoiceNumber] = useState(() => `${todayISO().slice(0, 4)}-001`)
+  const [invoiceDate, setInvoiceDate] = useState(todayISO)
+  const [dueDate, setDueDate] = useState(() => addDaysISO(todayISO(), 14))
   const [deliveryDate, setDeliveryDate] = useState('')
   const [sender, setSender] = useState<Sender>(emptySender())
   const [client, setClient] = useState<Client>(emptyClient())
   const [lines, setLines] = useState<Line[]>([emptyLine()])
 
-  // Hydrate defaults + restore saved sender (client-only, avoids SSR mismatch).
+  // localStorage is client-only, so the saved sender is read AFTER mount (a
+  // genuine external-store sync). Starting empty on both server and first
+  // client render keeps hydration clean; the effect then fills it in.
   useEffect(() => {
-    const today = todayISO()
-    setInvoiceDate(today)
-    setDueDate(addDaysISO(today, 14))
-    setInvoiceNumber(`${today.slice(0, 4)}-001`)
     try {
       const raw = localStorage.getItem(SENDER_KEY)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (raw) setSender({ ...emptySender(), ...JSON.parse(raw) })
     } catch {
       /* ignore corrupt storage */
@@ -237,27 +244,39 @@ export default function GratisFactuurPage() {
   const sign = invoiceType === 'creditnota' ? -1 : 1
 
   // Derived numeric lines (empty/NaN treated as 0) + running totals.
+  // line_total is rounded to whole cents so the amounts printed per line sum
+  // EXACTLY to the subtotal shown below — a legal invoice must be internally
+  // consistent (no visible 1-cent drift between the lines and the subtotal).
   const numericLines = useMemo(
     () =>
       lines.map((l) => {
         const qty = parseFloat(l.quantity.replace(',', '.')) || 0
         const price = parseFloat(l.unit_price.replace(',', '.')) || 0
-        const lineEx = qty * price * sign
         return {
           description: l.description,
           quantity: qty,
           unit_price: price * sign,
           btw_rate: l.btw_rate,
-          line_total: lineEx,
+          line_total: round2(qty * price * sign),
         }
       }),
     [lines, sign]
   )
 
   const totals = useMemo(() => {
-    const ex = numericLines.reduce((a, l) => a + l.line_total, 0)
-    const btw = numericLines.reduce((a, l) => a + (l.line_total * l.btw_rate) / 100, 0)
-    return { ex, btw, inc: ex + btw }
+    // Belastingdienst rule: VAT is computed per rate on the summed base and
+    // rounded ONCE per rate — not per line — then those are added. This keeps
+    // subtotal, BTW and total mutually consistent for both single- and
+    // mixed-rate invoices (and matches InvoicePDF's own per-rate breakdown).
+    const baseByRate = new Map<number, number>()
+    for (const l of numericLines) {
+      baseByRate.set(l.btw_rate, (baseByRate.get(l.btw_rate) ?? 0) + l.line_total)
+    }
+    const ex = round2([...baseByRate.values()].reduce((a, v) => a + v, 0))
+    const btw = round2(
+      [...baseByRate.entries()].reduce((a, [rate, base]) => a + round2((base * rate) / 100), 0)
+    )
+    return { ex, btw, inc: round2(ex + btw) }
   }, [numericLines])
 
   // Shapes InvoicePDF expects — identical to the full app's DB rows.
