@@ -5,7 +5,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/register", "/invite", "/pay"];
+// [GRATIS-FACTUUR] /factuur-maken is the login-free standalone invoice
+// generator — reachable by anyone, no session required.
+const PUBLIC_PATHS = ["/login", "/register", "/invite", "/pay", "/factuur-maken"];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
