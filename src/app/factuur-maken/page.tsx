@@ -285,7 +285,10 @@ export default function GratisFactuurPage() {
     invoice_number: invoiceNumber || 'CONCEPT',
     invoice_date: invoiceDate,
     due_date: dueDate,
-    delivery_date: deliveryDate || null,
+    // Leverdatum is factuureis #6 — always print one. If the user leaves it
+    // empty we default it to the invoice date (the common case) so the
+    // requirement is met without them having to think about it.
+    delivery_date: deliveryDate || invoiceDate || null,
     client_name: client.client_name,
     client_address: client.client_address,
     client_postal_code: client.client_postal_code,
@@ -377,7 +380,7 @@ export default function GratisFactuurPage() {
               />
             </div>
             <div style={s.field}>
-              <label style={s.label}>Leverdatum (optioneel)</label>
+              <label style={s.label}>Leverdatum (standaard = factuurdatum)</label>
               <input
                 type="date"
                 style={s.input}
