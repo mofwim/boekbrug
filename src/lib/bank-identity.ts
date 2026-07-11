@@ -81,3 +81,60 @@ export function needsDocument(
   if (amount >= 0) return false; // income / payouts never need a purchase document
   return classifyBankTransaction(counterpartName, description, amount) === 'unknown';
 }
+
+// ─── Counterpart memory ───────────────────────────────────────────────────────
+// Normalized key so the SAME shop is recognised across statements regardless of the
+// processor prefix / punctuation the bank attaches ("SUMUP *JANSEN", "Jansen B.V.",
+// "JANSEN" all collapse to "jansen"). Shares the noise vocabulary with the matcher.
+
+const KEY_NOISE = new Set([
+  // legal suffixes
+  'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'maatschap', 'holding', 'inzake',
+  // payment processors / methods
+  'sumup', 'ccv', 'mollie', 'adyen', 'stripe', 'zettle', 'izettle', 'paypal',
+  'payout', 'buckaroo', 'sisow', 'klarna', 'ideal', 'pin', 'pos', 'bea', 'gea',
+  'betaalautomaat', 'geldautomaat',
+]);
+
+/**
+ * A stable memory key for a counterpart, or null when there's no usable name
+ * (e.g. a line that is only a processor tag). Pure.
+ */
+export function counterpartKey(counterpartName: string | null): string | null {
+  if (!counterpartName) return null;
+  const tokens = counterpartName
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 2 && !KEY_NOISE.has(t));
+  if (tokens.length === 0) return null;
+  return tokens.join(' ');
+}
+
+// The category vocabulary stored on a transaction (and in memory):
+//   transfer | tax | prive | pos_income | fee   (auto-detectable identities)
+//   kosten | omzet                              (the business classification of the rest)
+export type Category = TxIdentity | 'kosten' | 'omzet';
+
+export interface IdentitySuggestion {
+  category: Category;
+  source: 'memory' | 'ai';
+}
+
+/**
+ * Suggest a category for a transaction. Memory (a category the owner confirmed for
+ * this counterpart before) always wins — that's how the system gets smarter. Else the
+ * pure classifier; and an otherwise-unexplained line is most likely a business cost
+ * (debit) or revenue (credit). Pure — the caller does the memory lookup and the write.
+ */
+export function suggestIdentity(
+  counterpartName: string | null,
+  description: string | null,
+  amount: number,
+  memoryCategory?: string | null,
+): IdentitySuggestion {
+  if (memoryCategory) return { category: memoryCategory as Category, source: 'memory' };
+  const id = classifyBankTransaction(counterpartName, description, amount);
+  if (id !== 'unknown') return { category: id, source: 'ai' };
+  return { category: amount < 0 ? 'kosten' : 'omzet', source: 'ai' };
+}

@@ -1,5 +1,11 @@
 // [BANK-IDENTITY] Pure node test — run: npx tsx src/lib/bank-identity.test.ts
-import { classifyBankTransaction, needsDocument, type TxIdentity } from "./bank-identity";
+import {
+  classifyBankTransaction,
+  needsDocument,
+  counterpartKey,
+  suggestIdentity,
+  type TxIdentity,
+} from "./bank-identity";
 
 let passed = 0;
 let failed = 0;
@@ -51,6 +57,28 @@ check("any income (credit) → never needs a bon",
   needsDocument("Klant BV", "betaling", 500) === false);
 check("POS payout credit → never needs a bon",
   needsDocument("ING DD&C", "Afrek.", 842.15) === false);
+
+console.log("\n— counterpartKey (memory key) —");
+check("strips PSP prefix + suffix (SUMUP *JANSEN → jansen)", counterpartKey("SUMUP *JANSEN") === "jansen");
+check("strips legal suffix (KPN B.V. → kpn)", counterpartKey("KPN B.V.") === "kpn");
+check("multi-word merchant kept (Albert Heijn 1456 → albert heijn 1456)", counterpartKey("Albert Heijn 1456") === "albert heijn 1456");
+check("null name → null key", counterpartKey(null) === null);
+check("noise-only name → null key", counterpartKey("CCV*") === null);
+
+console.log("\n— suggestIdentity —");
+check("memory always wins",
+  suggestIdentity("Shell", "brandstof", -60, "kosten").source === "memory");
+check("memory category is returned",
+  suggestIdentity("Shell", "brandstof", -60, "prive").category === "prive");
+check("classifier used when no memory (Belastingdienst → tax)",
+  suggestIdentity("Belastingdienst", "BTW", -1200).category === "tax");
+check("unexplained debit → kosten",
+  suggestIdentity("Bol.com", "iDEAL", -49.99).category === "kosten" &&
+  suggestIdentity("Bol.com", "iDEAL", -49.99).source === "ai");
+check("unexplained credit → omzet",
+  suggestIdentity("Onbekend", "overboeking", 250).category === "omzet");
+check("transfer beats the kosten fallback",
+  suggestIdentity(null, "Opname Geldautomaat", -100).category === "transfer");
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

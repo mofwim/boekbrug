@@ -141,6 +141,9 @@ export type Database = {
       bank_transactions: {
         Row: {
           amount: number | null
+          category: string | null
+          category_confirmed: boolean
+          category_source: string | null
           counterpart_name: string | null
           created_at: string | null
           date: string | null
@@ -153,6 +156,9 @@ export type Database = {
         }
         Insert: {
           amount?: number | null
+          category?: string | null
+          category_confirmed?: boolean
+          category_source?: string | null
           counterpart_name?: string | null
           created_at?: string | null
           date?: string | null
@@ -165,6 +171,9 @@ export type Database = {
         }
         Update: {
           amount?: number | null
+          category?: string | null
+          category_confirmed?: boolean
+          category_source?: string | null
           counterpart_name?: string | null
           created_at?: string | null
           date?: string | null
@@ -185,6 +194,44 @@ export type Database = {
           },
           {
             foreignKeyName: "bank_transactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      counterpart_memory: {
+        Row: {
+          category: string
+          counterpart_key: string
+          created_at: string | null
+          id: string
+          last_used_at: string | null
+          times_seen: number
+          user_id: string
+        }
+        Insert: {
+          category: string
+          counterpart_key: string
+          created_at?: string | null
+          id?: string
+          last_used_at?: string | null
+          times_seen?: number
+          user_id: string
+        }
+        Update: {
+          category?: string
+          counterpart_key?: string
+          created_at?: string | null
+          id?: string
+          last_used_at?: string | null
+          times_seen?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "counterpart_memory_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
