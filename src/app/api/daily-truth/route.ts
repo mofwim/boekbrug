@@ -21,6 +21,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { needsDocument } from "@/lib/bank-identity";
 
 // Days-until-due window that counts as "needs attention now" (mirrors the Vandaag
 // page). Overdue (negative) always qualifies; so does anything due within 3 days.
@@ -90,20 +91,20 @@ export async function GET() {
     overdue: recv.filter((r) => r.due_date && r.due_date < todayIso).length,
   };
 
-  // 3. Nog te documenteren — bank debits still pending with no linked document.
-  //    POS card settlements (income) never need a purchase document, so exclude
-  //    them. This is a COUNT of open tasks, never a money figure.
+  // 3. Nog te documenteren — bank debits still pending with no linked document that
+  //    we can't otherwise explain. [BANK-IDENTITY] needsDocument() excludes income,
+  //    transfers (savings/cash/own account/ATM), tax, private withdrawals and bank
+  //    fees — none of those need a purchase document. What remains is an unexplained
+  //    outgoing payment, i.e. probably a real cost still missing its bon. This is a
+  //    COUNT of open tasks, never a money figure. (It also fixes the old heuristic,
+  //    which wrongly treated a "betaalautomaat" card PURCHASE as takings and skipped
+  //    it — a purchase does need a receipt.)
   const { data: txRows } = await pipeline
     .from("bank_transactions")
     .select("date, amount, status, invoice_id, counterpart_name, description")
     .eq("user_id", user.id);
 
   const txs = txRows ?? [];
-  const isPos = (name: string | null, desc: string | null) => {
-    const n = (name ?? "").toLowerCase();
-    const d = (desc ?? "").toLowerCase();
-    return n.includes("ing dd&c") || d.includes("betaalautomaat") || d.includes("afrek.");
-  };
 
   let lastBankDate: string | null = null;
   let undocumented = 0;
@@ -113,8 +114,7 @@ export async function GET() {
     if (
       t.status === "pending" &&
       !t.invoice_id &&
-      (t.amount ?? 0) < 0 &&
-      !isPos(t.counterpart_name, t.description)
+      needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
     ) {
       undocumented++;
     }

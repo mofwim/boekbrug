@@ -1,0 +1,83 @@
+// src/lib/bank-identity.ts
+// [BANK-IDENTITY] Pure classification of a bank line's financial identity — the
+// "what is this?" for transactions that are NOT an invoice payment. No I/O, fully
+// testable (run: npx tsx src/lib/bank-identity.test.ts).
+//
+// Why this exists: most bank lines are not invoice settlements — they are transfers
+// between your own ledgers, tax payments, private withdrawals, ATM cash, card
+// takings, or bank fees. Giving each an identity keeps the honest picture correct:
+//   - a transfer / tax / private debit is NOT a missing receipt → it must not
+//     inflate "nog te documenteren";
+//   - it is NOT a cost or revenue → it must never reach the P&L / BTW.
+//
+// Conservative by design: when unsure → 'unknown'. For a DEBIT, 'unknown' means
+// "probably a real expense that still needs a receipt" — we would rather ask for a
+// bon than silently drop a cost. This mirrors the app's locked principle: a wrong
+// task (asking for a receipt you already have) is just ignored; a wrong number is
+// what breaks trust.
+
+export type TxIdentity =
+  | 'transfer'   // between your own ledgers (savings / cash-drawer / own account / ATM)
+  | 'tax'        // Belastingdienst (BTW / IB) — a settlement, not a deductible cost
+  | 'prive'      // private withdrawal / deposit — no business P&L impact
+  | 'pos_income' // card-terminal / PSP takings (income, no supplier invoice)
+  | 'fee'        // bank costs / interest
+  | 'unknown'    // not otherwise explained
+
+// ─── Patterns (Dutch bank statements) ─────────────────────────────────────────
+// Kept deliberately specific to avoid mislabelling a real purchase as "not a cost".
+
+const TAX_RE = /\bbelastingdienst\b|belasting dienst/;
+const PRIVE_RE = /\bpriv[eé]\b|priv[eé][- ]?opname|priv[eé][- ]?storting/;
+const TRANSFER_RE =
+  /\bspaar-?rekening\b|oranje spaar|\beigen rekening\b|kruispost|naar (?:mijn )?spaar|van (?:mijn )?spaar/;
+const ATM_RE = /geldautomaat|\bopname\b|\bgea\b|\bcash opname\b|geldopname/;
+const FEE_RE =
+  /\bbankkosten\b|kosten (?:betaal|zakelijke)?rekening|maandpakket|\bpakketkosten\b|debetrente|creditrente|\brente\b/;
+// PSP / card-terminal SETTLEMENT credits (money paid out TO you). NOT the same as a
+// "betaalautomaat" DEBIT, which is you paying at a terminal — that is a purchase.
+const POS_PAYOUT_RE =
+  /ing dd&c|afrek\.|geldservice|\bccv\b.*afrek|stripe(?:\s+payout)?|mollie(?:\s+payout)?|adyen|sumup|zettle/;
+
+function hay(counterpartName: string | null, description: string | null): string {
+  return `${counterpartName ?? ''} ${description ?? ''}`.toLowerCase();
+}
+
+/**
+ * Classify a single bank line. `amount`: positive = credit (in), negative = debit (out).
+ * Order matters: the most specific / highest-consequence identities are checked first.
+ */
+export function classifyBankTransaction(
+  counterpartName: string | null,
+  description: string | null,
+  amount: number,
+): TxIdentity {
+  const h = hay(counterpartName, description);
+
+  if (TAX_RE.test(h)) return 'tax';
+  if (PRIVE_RE.test(h)) return 'prive';
+  if (TRANSFER_RE.test(h) || ATM_RE.test(h)) return 'transfer';
+
+  // Card/PSP takings are income and only make sense as a credit. A terminal DEBIT
+  // ("betaalautomaat …") is a purchase, so it must fall through to 'unknown'.
+  if (amount >= 0 && POS_PAYOUT_RE.test(h)) return 'pos_income';
+
+  if (FEE_RE.test(h)) return 'fee';
+
+  return 'unknown';
+}
+
+/**
+ * Does this DEBIT still need a purchase document (bon)? The only thing "nog te
+ * documenteren" should count. Income never needs one; transfers, tax, private and
+ * fees are not deductible costs, so they don't either. Everything else (an
+ * unexplained outgoing payment) probably does.
+ */
+export function needsDocument(
+  counterpartName: string | null,
+  description: string | null,
+  amount: number,
+): boolean {
+  if (amount >= 0) return false; // income / payouts never need a purchase document
+  return classifyBankTransaction(counterpartName, description, amount) === 'unknown';
+}
