@@ -1,6 +1,7 @@
 // [Design System] Roboto via next/font/google + Material Symbols CDN
 import type { Metadata } from "next";
 import { Roboto } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
@@ -39,7 +40,12 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        {/* [ANALYTICS] Vercel Web Analytics — cookieless & privacy-friendly, so
+            no consent banner is required. Only reports on Vercel deploys. */}
+        <Analytics />
+      </body>
     </html>
   );
 }

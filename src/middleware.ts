@@ -95,9 +95,10 @@ export const config = {
   // (Previously `|api` here meant API routes never refreshed the token → an
   // expired JWT reached Postgres → auth.uid() null → RLS 42501 on writes.)
   // API requests are handled early above (session refreshed, never redirected).
-  // [SEO] sitemap.xml and robots.txt must be crawlable without a session, so
+  // [SEO] sitemap.xml, robots.txt and the generated social images
+  // (opengraph-image / twitter-image) must be fetchable without a session, so
   // exclude them from the matcher entirely — otherwise the auth guard below
-  // redirects an unauthenticated crawler to /login and search engines never
-  // see them.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)"],
+  // redirects an unauthenticated crawler to /login and search engines / social
+  // scrapers never see them.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|opengraph-image|twitter-image).*)"],
 };
