@@ -17,6 +17,8 @@ const PUBLIC_PATHS = [
   "/btw-berekenen",
   "/kilometervergoeding",
   "/uurtarief-berekenen",
+  "/btw-aangifte-berekenen",
+  "/netto-inkomen-zzp",
 ];
 
 function isPublic(pathname: string): boolean {
