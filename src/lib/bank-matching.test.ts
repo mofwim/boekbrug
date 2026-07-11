@@ -70,6 +70,15 @@ check("nameSimilarity containment (extra words still match)",
   nameSimilarity("JANSEN BV INZAKE FACTUUR", "Jansen BV") >= 0.85);
 check("nameSimilarity unrelated names ~ low",
   nameSimilarity("De Vries Bouw", "Pietersen Transport") < 0.2);
+// [BANK-MATCH-PSP] processor prefixes are stripped so the merchant still matches
+check("nameSimilarity strips SumUp prefix (SUMUP *JANSEN ~ Jansen BV)",
+  nameSimilarity("SUMUP *JANSEN", "Jansen BV") >= 0.85);
+check("nameSimilarity strips CCV prefix (CCV*De Vries ~ De Vries)",
+  nameSimilarity("CCV*De Vries", "De Vries") >= 0.85);
+check("nameSimilarity strips iDEAL prefix (iDEAL Bol.com ~ Bol.com)",
+  nameSimilarity("iDEAL Bol.com", "Bol.com") >= 0.85);
+check("nameSimilarity PSP noise doesn't fabricate a match",
+  nameSimilarity("SUMUP *JANSEN", "Pietersen Transport") < 0.2);
 
 console.log("\n— eligibility (direction / status / B.4) —");
 check("credit (+) excludes incoming invoice",

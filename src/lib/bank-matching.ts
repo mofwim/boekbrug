@@ -158,12 +158,25 @@ const LEGAL_SUFFIXES = new Set([
   "inzake",
 ]);
 
+// [BANK-MATCH-PSP] Payment-processor / method tokens that bank statements bolt onto
+// a counterpart name ("SUMUP *JANSEN", "CCV*STORE", "iDEAL Bol.com", "Betaalautomaat
+// …"). They are pure noise for name matching — stripping them reveals the real
+// merchant/customer so it can match the invoice's client_name. Removing tokens can
+// only sharpen the match; the "unrelated names ~ low" test guards against drift.
+const PAYMENT_NOISE = new Set([
+  "sumup", "ccv", "mollie", "adyen", "stripe", "zettle", "izettle", "paypal",
+  "payout", "buckaroo", "sisow", "klarna", "ideal", "pin", "pos", "bea", "gea",
+  "betaalautomaat", "geldautomaat",
+]);
+
 function nameTokens(s: string): Set<string> {
   const tokens = s
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length >= 2 && !LEGAL_SUFFIXES.has(t));
+    .filter(
+      (t) => t.length >= 2 && !LEGAL_SUFFIXES.has(t) && !PAYMENT_NOISE.has(t)
+    );
   return new Set(tokens);
 }
 
