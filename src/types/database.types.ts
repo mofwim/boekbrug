@@ -239,6 +239,60 @@ export type Database = {
           },
         ]
       }
+      cash_entries: {
+        Row: {
+          amount: number
+          btw_rate: number | null
+          category: string
+          created_at: string | null
+          description: string | null
+          direction: string
+          document_id: string | null
+          entry_date: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          btw_rate?: number | null
+          category: string
+          created_at?: string | null
+          description?: string | null
+          direction: string
+          document_id?: string | null
+          entry_date?: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          btw_rate?: number | null
+          category?: string
+          created_at?: string | null
+          description?: string | null
+          direction?: string
+          document_id?: string | null
+          entry_date?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_entries_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_entries_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           address: string | null
