@@ -40,15 +40,15 @@ function LoginContent() {
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
+    // [AUTH-FRONTDOOR] Basic identity scopes only — see register/page.tsx. Gmail
+    // import is a separate, in-context consent (/api/email/connect); requesting
+    // gmail.readonly here triggered Google's "unverified app" warning at the front
+    // door and never fed this flow (the callback discards the Google token).
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly',
+        scopes: 'openid email profile',
         redirectTo: `${window.location.origin}/api/auth/callback`,
-        queryParams: {
-          prompt: 'consent',
-          access_type: 'offline',
-        },
       },
     })
 

@@ -53,18 +53,18 @@ function RegisterContent() {
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
-    const redirectUrl = searchParams.get('redirect')
-    const state = encodeURIComponent(JSON.stringify({ role, redirect: redirectUrl || '/dashboard' }))
-
+    // [AUTH-FRONTDOOR] Sign-in needs only basic identity scopes. Gmail import is a
+    // SEPARATE, in-context consent (/api/email/connect) — requesting gmail.readonly
+    // here made Google warn "this app wants to read your email" for every visitor
+    // and forced the whole OAuth client into restricted-scope (CASA) review. The
+    // role the user picked in step 1 is re-confirmed in onboarding, so it need not
+    // ride along here. offline/consent params are dropped: they only fetch a Google
+    // refresh token for Gmail API access, which this login flow never uses.
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly',
+        scopes: 'openid email profile',
         redirectTo: `${window.location.origin}/api/auth/callback`,
-        queryParams: {
-          prompt: 'consent',
-          access_type: 'offline',
-        },
       },
     })
 
@@ -85,7 +85,27 @@ function RegisterContent() {
     setLoading(true)
     setError('')
 
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        // [AUTH-FRONTDOOR] The confirmation link must return through our PKCE
+        // callback so the code is exchanged for a session. Landing on the site
+        // root would drop the code and leave the user unauthenticated.
+        emailRedirectTo: `${window.location.origin}/api/auth/callback`,
+        // [AUTH-FRONTDOOR] Carry the registration data as user metadata. When email
+        // confirmation is ON there is NO session after signUp, so a direct,
+        // RLS-protected profile write is impossible here; the callback applies this
+        // metadata once the user confirms and a real session exists.
+        data: {
+          full_name: fullName,
+          company_name: companyName,
+          kvk_number: kvk,
+          btw_number: btw,
+          role,
+        },
+      },
+    })
 
     if (signUpError) {
       if (signUpError.status === 422 || signUpError.message?.toLowerCase().includes('already')) {
@@ -112,10 +132,24 @@ function RegisterContent() {
       return
     }
 
-    // [BOEK-015] fix: the on_auth_user_created trigger already inserted a profile
-    // row (with default role='zzper'). Using UPSERT instead of INSERT so we
-    // UPDATE that trigger-created row with the real registration data instead
-    // of hitting a 23505 duplicate-key error → "Registratie mislukt".
+    // [AUTH-FRONTDOOR] Decide on the SESSION before any profile write. When email
+    // confirmation is enabled, signUp returns a user but NO session — the account
+    // exists and the mail is sent, but auth.uid() is null, so an RLS-protected
+    // profile write would fail and surface a FALSE "Profiel aanmaken mislukt" error
+    // even though registration succeeded. The data is safely in user metadata; the
+    // callback enriches the profile after the user confirms.
+    const { data: sessionData } = await supabase.auth.getSession()
+    if (!sessionData.session) {
+      setEmailSent(true)
+      setLoading(false)
+      return
+    }
+
+    // [BOEK-015] Confirmation disabled → we have a session now. The
+    // on_auth_user_created trigger already inserted a bare profile row; UPSERT
+    // enriches it with the real registration data (avoids a 23505 on INSERT).
+    // onboarding_step 4: register already collected role + company + KVK + BTW,
+    // so the wizard skips Welcome/Role (page.tsx roleWasSet reads step>=2).
     const { error: profileError } = await supabase
       .from('profiles')
       .upsert({
@@ -126,26 +160,12 @@ function RegisterContent() {
         kvk_number: kvk,
         btw_number: btw,
         email,
-        // [BOEK-015] P2: register already collected role + company + KVK + BTW.
-        // ZZP: skip to step 4 (Gmail) — no need to ask company data again.
-        // Accountant: step 4 is "invite client". Both land correctly.
-        // page.tsx roleWasSet reads step>=2 → true → Welcome+Role skipped.
         onboarding_step: 4,
       }, { onConflict: 'id' })
 
     if (profileError) {
-      console.error('[BOEK-015] register profile upsert failed:', profileError)
+      console.error('[AUTH-FRONTDOOR] register profile upsert failed:', profileError)
       setError('Profiel aanmaken mislukt — probeer opnieuw')
-      setLoading(false)
-      return
-    }
-
-    // [BOEK-015] fix: if email confirmation is enabled, signUp returns a user
-    // but NO active session. Check and guide the user instead of a silent
-    // redirect to /dashboard that would just bounce back to /login.
-    const { data: sessionData } = await supabase.auth.getSession()
-    if (!sessionData.session) {
-      setEmailSent(true)
       setLoading(false)
       return
     }
