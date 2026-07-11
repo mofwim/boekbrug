@@ -1,0 +1,61 @@
+<!--
+  BoekBrug — Supabase template: "Confirm signup"
+  Plak in: Authentication → Emails → Templates → Confirm signup
+  Variabelen ({{ .ConfirmationURL }} enz.) niet aanpassen — Supabase vult ze in.
+-->
+<div style="display:none;max-height:0;overflow:hidden;opacity:0">Bevestig je e-mailadres om je BoekBrug-account te activeren.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6f8;margin:0;padding:24px 0;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06)">
+        <tr>
+          <td style="padding:32px 32px 8px;text-align:center">
+            <span style="font-size:22px;font-weight:700;color:#1A73E8;letter-spacing:-0.3px">BoekBrug</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 32px 0;text-align:center">
+            <h1 style="font-size:20px;font-weight:700;color:#1c1b1f;margin:12px 0 8px">Welkom bij BoekBrug</h1>
+            <p style="font-size:15px;line-height:1.5;color:#5f6368;margin:0 0 24px">
+              Bevestig je e-mailadres om je account te activeren en aan de slag te gaan.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 32px" align="center">
+            <table role="presentation" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="border-radius:24px;background:#1A73E8">
+                  <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:24px">
+                    E-mailadres bevestigen
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px 32px 8px">
+            <p style="font-size:13px;line-height:1.5;color:#9aa0a6;margin:0 0 6px">
+              Werkt de knop niet? Kopieer deze link naar je browser:
+            </p>
+            <p style="font-size:13px;line-height:1.4;color:#1A73E8;word-break:break-all;margin:0">
+              {{ .ConfirmationURL }}
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 32px 32px;border-top:1px solid #eceff1;margin-top:16px">
+            <p style="font-size:12px;line-height:1.5;color:#9aa0a6;margin:16px 0 0">
+              Heb je dit account niet aangemaakt? Dan kun je deze e-mail negeren — er
+              gebeurt niets.
+            </p>
+            <p style="font-size:12px;color:#c4c7c5;margin:12px 0 0">
+              BoekBrug · De brug tussen jou en je boekhouder
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
