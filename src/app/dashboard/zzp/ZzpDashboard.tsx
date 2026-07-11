@@ -122,50 +122,46 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         {/* [HONEST-HOME] Snapshot: "waar sta ik?" answered with certain facts only,
             each a button to the action that resolves it. */}
         <DailyTruth />
-        {/* ── 4 action cards — [BOEK-029] new order — May 2026 ── */}
+        {/* [HONEST-HOME] Simplified home — one curated menu, no duplicated doors.
+            Removed: the "Nieuwe factuur" card (the FAB below covers it) and the
+            "Inkoopfacturen" card (reachable via the "Te betalen" snapshot and from
+            within "Inkomende facturen"). Order: daily add → sales → purchases →
+            bank → BTW → workspace. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-          {/* 1. Nieuwe factuur */}
-          <ActionCard
-            icon="receipt_long" iconBg={M3.primary} iconColor={M3.onPrimary}
-            label="Nieuwe factuur" sub="Maak en verstuur direct"
-            onClick={() => router.push('/dashboard/invoice/new')}
-          />
-
-          {/* [SMART-INTAKE-B] Bon/factuur toevoegen — foto of bestand → AI sorteert */}
+          {/* Bon/factuur toevoegen — foto of bestand → AI sorteert (daily add). */}
           <IntakeButton variant="card" />
 
-          {/* 2. Mijn facturen */}
+          {/* Mijn facturen — your outgoing invoices. */}
           <ActionCard
             icon="description" iconBg="#00897B" iconColor="#fff"
             label="Mijn facturen" sub="Bekijk en beheer je facturen"
             onClick={() => router.push('/dashboard/facturen')}
           />
 
-          {/* 3. Inkomend — [BOEK-029] BOEK-011 integration */}
+          {/* Inkomende facturen — supplier invoices: verify queue + manage. */}
           <ActionCardBadge
             icon="mark_email_unread" iconBg="#0288D1" iconColor="#fff"
-            label="Inkomend" sub="Facturen van leveranciers"
+            label="Inkomende facturen" sub="Facturen van leveranciers"
             badge={pendingCount}
             onClick={() => router.push('/dashboard/incoming')}
           />
 
-          {/* [BRIDGE-POLISH 3b] Inkoopfacturen — manage confirmed incoming
-              (received/paid): mark paid, undo, see accountant 'Verwerkt' status */}
-          <ActionCard
-            icon="payments" iconBg="#7C5800" iconColor="#fff"
-            label="Inkoopfacturen" sub="Betaal en beheer bevestigde inkoop"
-            onClick={() => router.push('/dashboard/incoming/manage')}
-          />
-
-          {/* 4. Bank — [BOEK-029] BOEK-016 integration */}
+          {/* Bank — statements + reconciliation. */}
           <ActionCard
             icon="account_balance" iconBg="#1A73E8" iconColor="#fff"
             label="Bank" sub="Koppel je afschrift"
             onClick={() => router.push('/dashboard/bank')}
           />
 
-          {/* 5. Mijn werkplek */}
+          {/* Financieel overzicht — BTW, omzet, cashflow (moved up: it matters). */}
+          <ActionCard
+            icon="bar_chart" iconBg={M3.warning} iconColor="#fff"
+            label="Financieel overzicht" sub="BTW, omzet en cashflow"
+            onClick={() => router.push('/dashboard/quarterly')}
+          />
+
+          {/* Mijn werkplek — clients, files, company data (secondary). */}
           <ActionCard
             icon="work" iconBg={M3.success} iconColor="#fff"
             label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
@@ -223,20 +219,12 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             </div>
           )}
 
-          {/* [BOEK-029] Financieel overzicht — replaces stats cards */}
-          <ActionCard
-            icon="bar_chart" iconBg={M3.warning} iconColor="#fff"
-            label="Financieel overzicht" sub="BTW, omzet en cashflow"
-            onClick={() => router.push('/dashboard/quarterly')}
-          />
-
         </div>
       </main>
 
-      {/* [BOEK-029] FAB — + Nieuwe factuur — Material You */}
+      {/* [BOEK-029] FAB — + Nieuwe factuur — the single primary create action.
+          (The second, Intake FAB was removed — "Bon toevoegen" is the first card.) */}
       <Fab onClick={() => router.push('/dashboard/invoice/new')} />
-      {/* [SMART-INTAKE-B] FAB — Bon/factuur fotograferen of uploaden (above) */}
-      <IntakeButton variant="fab" />
     </div>
   )
 }
