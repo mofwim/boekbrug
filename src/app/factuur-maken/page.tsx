@@ -94,6 +94,17 @@ function addDaysISO(iso: string, days: number): string {
   return dt.toISOString().slice(0, 10)
 }
 
+// A YYYY-MM-DD string with a plausible year (2000–2100), else '' — guards
+// against native date inputs emitting things like "0002-01-02".
+const MIN_DATE = '2000-01-01'
+const MAX_DATE = '2100-12-31'
+function sanitizeISODate(s: string | null | undefined): string {
+  const m = s ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(s) : null
+  if (!m) return ''
+  const year = Number(m[1])
+  return year >= 2000 && year <= 2100 ? (s as string) : ''
+}
+
 // ─── Invoice numbering: YEAR + zero-padded sequence, e.g. 20260327 (#327) ────
 const currentYear = () => todayISO().slice(0, 4)
 function firstNumberOfYear(year: string): string {
@@ -237,7 +248,9 @@ export default function GratisFactuurPage() {
   const [invoiceNumber, setInvoiceNumber] = useState(() => firstNumberOfYear(currentYear()))
   const [invoiceDate, setInvoiceDate] = useState(todayISO)
   const [dueDate, setDueDate] = useState(() => addDaysISO(todayISO(), 14))
-  const [deliveryDate, setDeliveryDate] = useState('')
+  // Pre-filled to today (= the factuurdatum default) so eis #6 is visibly set
+  // and the user doesn't fumble an empty native date field.
+  const [deliveryDate, setDeliveryDate] = useState(todayISO)
   const [sender, setSender] = useState<Sender>(emptySender())
   const [client, setClient] = useState<Client>(emptyClient())
   const [lines, setLines] = useState<Line[]>([emptyLine()])
@@ -312,16 +325,20 @@ export default function GratisFactuurPage() {
     return { ex, btw, inc: round2(ex + btw) }
   }, [numericLines])
 
+  // A native date input can yield an absurd year (typing "2" → 0002). Never let
+  // that reach the PDF: sanitize to a plausible year, else fall back sanely.
+  const safeInvoiceDate = sanitizeISODate(invoiceDate) || todayISO()
+
   // Shapes InvoicePDF expects — identical to the full app's DB rows.
   const invoice = {
     invoice_type: invoiceType,
     invoice_number: invoiceNumber || 'CONCEPT',
-    invoice_date: invoiceDate,
-    due_date: dueDate,
+    invoice_date: safeInvoiceDate,
+    due_date: sanitizeISODate(dueDate) || addDaysISO(safeInvoiceDate, 14),
     // Leverdatum is factuureis #6 — always print one. If the user leaves it
-    // empty we default it to the invoice date (the common case) so the
+    // empty (or enters a garbage date) we default it to the invoice date so the
     // requirement is met without them having to think about it.
-    delivery_date: deliveryDate || invoiceDate || null,
+    delivery_date: sanitizeISODate(deliveryDate) || safeInvoiceDate,
     client_name: client.client_name,
     client_address: client.client_address,
     client_postal_code: client.client_postal_code,
@@ -412,6 +429,8 @@ export default function GratisFactuurPage() {
               <label style={s.label}>Factuurdatum</label>
               <input
                 type="date"
+                min={MIN_DATE}
+                max={MAX_DATE}
                 style={s.input}
                 value={invoiceDate}
                 onChange={(e) => setInvoiceDate(e.target.value)}
@@ -421,6 +440,8 @@ export default function GratisFactuurPage() {
               <label style={s.label}>Vervaldatum</label>
               <input
                 type="date"
+                min={MIN_DATE}
+                max={MAX_DATE}
                 style={s.input}
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
@@ -430,6 +451,8 @@ export default function GratisFactuurPage() {
               <label style={s.label}>Leverdatum (standaard = factuurdatum)</label>
               <input
                 type="date"
+                min={MIN_DATE}
+                max={MAX_DATE}
                 style={s.input}
                 value={deliveryDate}
                 onChange={(e) => setDeliveryDate(e.target.value)}
