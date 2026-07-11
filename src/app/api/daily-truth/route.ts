@@ -1,36 +1,24 @@
 // src/app/api/daily-truth/route.ts
-// [DAILY-TRUTH] Honest operational snapshot for the owner's home screen.
+// [HONEST-HOME] Certainty-only snapshot for the owner's home screen.
 //
-// The goal (decided this session): a LIVE, HONEST financial picture for the
-// owner — not matching for the accountant. For a shop like Kiwi (mostly POS, no
-// per-sale invoices), income arrives IN THE BANK as card takings, so the money
-// figures are derived from the bank statement (credit = in, debit = out), NOT
-// from invoices alone (which would show €0 income and make the shop look like a
-// loss). The honest facts:
-//   - openBills      : confirmed incoming invoices still UNPAID (what you owe)
-//   - quarter in/out : bank credits vs debits this quarter (POS-true income)
-//   - posIncome      : the POS card takings within that income (the shop's core)
-//   - undocumented   : DEBIT transactions still pending with no document — real
-//                      expenses missing a receipt. POS credits are excluded
-//                      (card takings never need a purchase document), so this is
-//                      the honest "still to do", not an inflated count.
-//   - lastBankDate   : how current the picture is (statement is uploaded, not live)
+// We show ONLY facts the system can PROVE:
+//   - toPay      : confirmed incoming invoices still unpaid — sum of STORED totals
+//   - toReceive  : your sent invoices still unpaid — sum of STORED totals
+//   - undocumented: bank debits still pending with no document — a COUNT of tasks
+//   - lastBankDate: how current the bank picture is (statements are uploaded)
+//
+// We deliberately DO NOT compute income / expense / net / BTW. The previous version
+// derived those from the bank statement (credit = in, debit = out), which mixes real
+// revenue with transfers, tax payments and private withdrawals — wrong for normal
+// banking, which is exactly why the panel was turned off. Locked principle: a wrong
+// number breaks trust; a wrong task is just ignored. Sums of stored invoice totals
+// are exact; the undocumented figure is a task count, not a money figure.
 //
 // Read-only. service_role, every query pinned to the authenticated user.
 
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-
-function quarterRange(now: Date): { start: string; end: string; label: string } {
-  const y = now.getFullYear();
-  const q = Math.floor(now.getMonth() / 3); // 0..3
-  const startMonth = q * 3;
-  const start = new Date(Date.UTC(y, startMonth, 1));
-  const end = new Date(Date.UTC(y, startMonth + 3, 0)); // last day of quarter
-  const iso = (d: Date) => d.toISOString().split("T")[0];
-  return { start: iso(start), end: iso(end), label: `Q${q + 1} ${y}` };
-}
 
 export async function GET() {
   const supabase = await createServerSupabaseClient();
@@ -42,46 +30,49 @@ export async function GET() {
   }
 
   const pipeline = createPipelineClient();
-  const now = new Date();
-  const { start, end, label } = quarterRange(now);
+  const todayIso = new Date().toISOString().split("T")[0];
 
-  // 1. Open bills — confirmed incoming invoices not yet paid. 'processing'/'draft'
-  //    are NOT yet confirmed by the owner, so exclude them; count what the owner
-  //    has accepted as a real bill but hasn't paid.
-  const { data: openRows } = await pipeline
+  // 1. Te betalen — confirmed incoming invoices, not yet paid. 'processing'/'draft'
+  //    are not yet confirmed by the owner, so excluded. Sum of stored totals = exact.
+  const { data: payRows } = await pipeline
     .from("invoices")
-    .select("total_inc_btw, due_date, status")
+    .select("total_inc_btw, due_date")
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .in("status", ["received", "sent", "overdue"]); // confirmed, unpaid states
+    .in("status", ["received", "sent", "overdue"]);
 
-  const openBills = openRows ?? [];
-  const openCount = openBills.length;
-  const openTotal = openBills.reduce((s, r) => s + (r.total_inc_btw ?? 0), 0);
-  // How many are past their due date (overdue to pay) — a gentle, honest nudge.
-  const todayIso = now.toISOString().split("T")[0];
-  const openOverdue = openBills.filter(
-    (r) => r.due_date && r.due_date < todayIso
-  ).length;
+  const pay = payRows ?? [];
+  const toPay = {
+    count: pay.length,
+    total: pay.reduce((s, r) => s + (r.total_inc_btw ?? 0), 0),
+    overdue: pay.filter((r) => r.due_date && r.due_date < todayIso).length,
+  };
 
-  // 2 + 3. Bank-driven figures. For a shop (Kiwi) the real income is POS card
-  //   takings that arrive IN THE BANK with no outgoing invoice — so computing
-  //   income from invoices alone shows €0 income (wrong, makes a profitable shop
-  //   look like a loss). We derive income/expense from the bank statement
-  //   instead: credit = money in, debit = money out. This is the honest picture
-  //   for a POS business; it's bounded by what's been uploaded (we report the
-  //   freshness date separately so we never imply real-time data).
+  // 2. Te ontvangen — your OWN sent invoices still unpaid (money owed TO you).
+  //    Sum of stored totals = exact. A POS-only shop simply has none of these.
+  const { data: recvRows } = await pipeline
+    .from("invoices")
+    .select("total_inc_btw, due_date")
+    .eq("sender_id", user.id)
+    .eq("direction", "outgoing")
+    .in("status", ["sent", "overdue"]);
+
+  const recv = recvRows ?? [];
+  const toReceive = {
+    count: recv.length,
+    total: recv.reduce((s, r) => s + (r.total_inc_btw ?? 0), 0),
+    overdue: recv.filter((r) => r.due_date && r.due_date < todayIso).length,
+  };
+
+  // 3. Nog te documenteren — bank debits still pending with no linked document.
+  //    POS card settlements (income) never need a purchase document, so exclude
+  //    them. This is a COUNT of open tasks, never a money figure.
   const { data: txRows } = await pipeline
     .from("bank_transactions")
     .select("date, amount, status, invoice_id, counterpart_name, description")
     .eq("user_id", user.id);
 
   const txs = txRows ?? [];
-
-  // POS card settlements (ING DD&C / BETAALAUTOMAAT) — the shop's daily takings.
-  // They are income but have NO supplier invoice, so they must NOT count toward
-  // "still to document" (that number should be real expenses missing a receipt,
-  // not card payouts). Same detection as the bank screen.
   const isPos = (name: string | null, desc: string | null) => {
     const n = (name ?? "").toLowerCase();
     const d = (desc ?? "").toLowerCase();
@@ -89,45 +80,24 @@ export async function GET() {
   };
 
   let lastBankDate: string | null = null;
-  let undocumented = 0; // real expenses (debit) with no document, excluding POS
-  let posIncome = 0;    // this-quarter POS takings (the shop's core income)
-  let quarterIn = 0;    // this-quarter all credits (income)
-  let quarterOut = 0;   // this-quarter all debits (expense)
-
+  let undocumented = 0;
   for (const t of txs) {
     const date = t.date ?? null;
     if (date && (!lastBankDate || date > lastBankDate)) lastBankDate = date;
-
-    const amount = t.amount ?? 0;
-    const pos = isPos(t.counterpart_name, t.description);
-
-    // Undocumented = a debit (expense) still pending with no linked invoice.
-    // Credits (income) and POS never need a purchase document.
-    if (t.status === "pending" && !t.invoice_id && amount < 0 && !pos) {
+    if (
+      t.status === "pending" &&
+      !t.invoice_id &&
+      (t.amount ?? 0) < 0 &&
+      !isPos(t.counterpart_name, t.description)
+    ) {
       undocumented++;
-    }
-
-    // Quarter income/expense from the bank, within the quarter window.
-    if (date && date >= start && date <= end) {
-      if (amount >= 0) {
-        quarterIn += amount;
-        if (pos) posIncome += amount;
-      } else {
-        quarterOut += Math.abs(amount);
-      }
     }
   }
 
   return NextResponse.json({
     ok: true,
-    quarterLabel: label,
-    openBills: { count: openCount, total: openTotal, overdue: openOverdue },
-    quarter: {
-      income: quarterIn,
-      expense: quarterOut,
-      net: quarterIn - quarterOut,
-      posIncome,
-    },
+    toPay,
+    toReceive,
     bank: { lastDate: lastBankDate, undocumented },
   });
 }
