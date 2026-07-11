@@ -268,6 +268,14 @@ function AttentionRow({ item, onClick, divider }: {
 }) {
   const isCredit = item.direction === 'incoming' && item.total < 0
   const accent = item.dueDate ? dueAccent(item.dueDate) : M3.neutral
+
+  // [HONEST-HOME] Make money-out vs money-in unmistakable at a glance — the same
+  // vocabulary as the totals above ("Te betalen" / "Te ontvangen"), so a daily user
+  // never has to wonder "is this a bill I owe or an invoice owed to me?".
+  const kind = isCredit ? 'Creditnota' : item.direction === 'incoming' ? 'Te betalen' : 'Te ontvangen'
+  const kindColor = item.direction === 'incoming' ? '#8A4B00' : M3.primary
+  const dueText = !isCredit && item.dueDate ? dueLabel(item.dueDate) : ''
+
   return (
     <button
       onClick={onClick}
@@ -282,9 +290,9 @@ function AttentionRow({ item, onClick, divider }: {
         <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {item.party?.trim() || 'Onbekende partij'}
         </div>
-        <div style={{ fontSize: 12.5, color: accent, fontWeight: 500, marginTop: 2 }}>
-          {isCredit ? 'Creditnota' : item.dueDate ? dueLabel(item.dueDate) : ''}
-          {item.direction === 'outgoing' ? ' · wacht op betaling' : ''}
+        <div style={{ fontSize: 12.5, marginTop: 2 }}>
+          <span style={{ color: kindColor, fontWeight: 600 }}>{kind}</span>
+          {dueText && <span style={{ color: accent, fontWeight: 500 }}> · {dueText}</span>}
         </div>
       </div>
       <div style={{ textAlign: 'right', flexShrink: 0 }}>
