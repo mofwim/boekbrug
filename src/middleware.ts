@@ -5,9 +5,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// [GRATIS-FACTUUR] /factuur-maken is the login-free standalone invoice
-// generator — reachable by anyone, no session required.
-const PUBLIC_PATHS = ["/login", "/register", "/invite", "/pay", "/factuur-maken"];
+// [GRATIS-FACTUUR] /factuur-maken (invoice generator) and [BTW-TOOL]
+// /btw-berekenen (VAT calculator) are login-free public lead-gen tools —
+// reachable by anyone, no session required.
+const PUBLIC_PATHS = ["/login", "/register", "/invite", "/pay", "/factuur-maken", "/btw-berekenen"];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
