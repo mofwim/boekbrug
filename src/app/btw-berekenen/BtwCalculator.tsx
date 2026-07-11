@@ -8,17 +8,9 @@
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { formatEuroNL } from '@/lib/format-nl'
+import { parseAmountNL as parseNum } from '@/lib/parse-nl'
 
 type Mode = 'excl' | 'incl'
-
-// Tolerant Dutch amount parse: "1.250,00" → 1250, "1,5" → 1.5, "1250.00" → 1250.
-function parseNum(s: string): number {
-  const t = String(s ?? '').trim()
-  if (!t) return 0
-  const normalized = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t
-  const n = parseFloat(normalized)
-  return isFinite(n) && n >= 0 ? n : 0
-}
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100

@@ -19,6 +19,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { formatEuroNL } from '@/lib/format-nl'
+import { parseAmountNL as parseNum } from '@/lib/parse-nl'
 
 // react-pdf touches browser APIs — load the link client-side only (same
 // pattern as dashboard/invoice/[id]).
@@ -79,17 +80,8 @@ function round2(n: number): number {
   return (v < 0 ? -1 : 1) * (Math.round(Math.abs(v) * 100 + 1e-9) / 100)
 }
 
-// Parse a user-typed amount, tolerant of Dutch formatting:
-//   "1.250,00" → 1250.00   "1,5" → 1.5   "1250.00"/"1250" → 1250
-// A comma means Dutch decimals (dots are thousands separators); with no comma a
-// dot is treated as the decimal point (English-style input).
-function parseNum(s: string): number {
-  const t = String(s ?? '').trim()
-  if (!t) return 0
-  const normalized = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t
-  const n = parseFloat(normalized)
-  return isFinite(n) ? n : 0
-}
+// Dutch amount parsing lives in lib/parse-nl (parseAmountNL, imported as
+// parseNum) — shared with the BTW/km/uurtarief tools so "1.000" is 1000, not 1.
 
 // Timezone-proof today (Europe/Amsterdam) as ISO yyyy-mm-dd, no Date math traps.
 function todayISO(): string {
