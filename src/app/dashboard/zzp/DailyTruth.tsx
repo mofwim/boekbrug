@@ -1,18 +1,15 @@
 'use client'
 
 // src/app/dashboard/zzp/DailyTruth.tsx
-// [HONEST-HOME] The owner's home snapshot — answers one question: "waar sta ik?"
+// [HONEST-HOME] The owner's home snapshot — two layers of one question:
+//   A. "Waar sta ik?"  — certain TOTALS (exact sums of STORED invoice totals + a
+//      task count). Each is a button to the surface that manages it.
+//   B. "Wat nu?"       — a PREVIEW of the items that need action now (overdue or due
+//      ≤ 3 days), the same to-do the Vandaag page lists, with "Alle N bekijken →".
 //
-// It shows ONLY facts the system can PROVE, and each fact is a BUTTON to the one
-// place that resolves it:
-//   1. Te betalen     — confirmed unpaid supplier bills (exact stored total) → manage
-//   2. Te ontvangen   — your unpaid sent invoices (exact stored total)       → facturen
-//   3. Nog te documenteren — bank debits without a document (a COUNT)        → bank
-//
-// It never shows a computed income/expense/net figure. The earlier version did, from
-// the bank statement, and it was wrong for normal banking (transfers, tax, private
-// mixed in) — which is why it was disabled. Numbers here are sums of STORED invoice
-// totals (exact) or plain task counts. Freshness ("bank bijgewerkt tot …") is shown
+// It never shows a computed income/expense/net figure (the earlier version did, from
+// the bank statement, and it was wrong for normal banking — which is why it was
+// disabled). Numbers here are exact stored totals or plain counts. Freshness is shown
 // honestly so we never imply real-time data.
 
 import { useEffect, useState } from 'react'
@@ -28,24 +25,64 @@ const M3 = {
   successContainer:   '#CEEAD6',
   warning:            '#7C5800',
   warningContainer:   '#FEE8C4',
+  error:              '#B3261E',
   neutral:            '#5F6368',
   outlineVariant:     '#E0E0E0',
+  hairline:           '#ECEFF1',
 }
 const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
 const R = { lg: 16, full: 999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
+const LONG_OPEN_DAYS = 30
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 interface Bucket { count: number; total: number; overdue: number }
+interface AttentionItem {
+  id: string
+  party: string | null
+  invoiceNumber: string | null
+  dueDate: string | null
+  total: number
+  direction: 'incoming' | 'outgoing'
+}
 interface TruthData {
   ok: boolean
   toPay: Bucket
   toReceive: Bucket
   bank: { lastDate: string | null; undocumented: number }
+  attention: AttentionItem[]
+  attentionCount: number
 }
 
+// ── Date helpers (timezone-proof, mirrors VandaagClient) ──────────────────────
+function dayNumberFromIso(iso: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  if (!m) return NaN
+  return Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12) / 86_400_000)
+}
+function todayDayNumber(): number {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+  return dayNumberFromIso(parts)
+}
+function daysUntilDue(dueIso: string): number {
+  return dayNumberFromIso(dueIso) - todayDayNumber()
+}
+function dueLabel(dueIso: string): string {
+  const d = daysUntilDue(dueIso)
+  if (d <= -LONG_OPEN_DAYS) return 'Al lang open'
+  if (d < 0) return Math.abs(d) === 1 ? '1 dag te laat' : `${Math.abs(d)} dagen te laat`
+  if (d === 0) return 'Vervalt vandaag'
+  if (d === 1) return 'Vervalt morgen'
+  return `Vervalt over ${d} dagen`
+}
+function dueAccent(dueIso: string): string {
+  const d = daysUntilDue(dueIso)
+  return d < 0 && d > -LONG_OPEN_DAYS ? M3.error : M3.warning
+}
 function formatDate(iso: string | null): string | null {
   if (!iso) return null
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
@@ -80,13 +117,21 @@ export default function DailyTruth() {
   }
   if (!data?.ok) return null
 
-  const { toPay, toReceive, bank } = data
+  const { toPay, toReceive, bank, attention, attentionCount } = data
   const lastDate = formatDate(bank.lastDate)
   const allClear = toPay.count === 0 && toReceive.count === 0 && bank.undocumented === 0
 
+  // incoming → the manage surface (pay / mark paid); outgoing → the invoice detail.
+  const openItem = (it: AttentionItem) =>
+    router.push(
+      it.direction === 'incoming'
+        ? `/dashboard/incoming/manage?focus=${it.id}`
+        : `/dashboard/invoice/${it.id}`
+    )
+
   return (
     <div style={{ marginBottom: 20, fontFamily: FONT }}>
-      {/* Header + honest freshness note */}
+      {/* ── Layer A: WAAR JE STAAT (certain totals) ── */}
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '0 2px 10px' }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>
           WAAR JE STAAT
@@ -111,25 +156,13 @@ export default function DailyTruth() {
         </div>
       ) : (
         <>
-          {/* Two money facts — sums of STORED totals (exact). Side by side. */}
           <div style={{ display: 'flex', gap: 10 }}>
-            <MoneyCard
-              label="Te betalen"
-              bucket={toPay}
-              emptyText="Niets te betalen"
-              subject="inkoopfactuur"
-              onClick={() => router.push('/dashboard/incoming/manage')}
-            />
-            <MoneyCard
-              label="Te ontvangen"
-              bucket={toReceive}
-              emptyText="Niets openstaand"
-              subject="factuur"
-              onClick={() => router.push('/dashboard/facturen')}
-            />
+            <MoneyCard label="Te betalen" bucket={toPay} emptyText="Niets te betalen"
+              subject="inkoopfactuur" onClick={() => router.push('/dashboard/incoming/manage')} />
+            <MoneyCard label="Te ontvangen" bucket={toReceive} emptyText="Niets openstaand"
+              subject="factuur" onClick={() => router.push('/dashboard/facturen')} />
           </div>
 
-          {/* One task count — never a money figure. */}
           <button
             onClick={() => router.push('/dashboard/bank')}
             style={{
@@ -156,6 +189,37 @@ export default function DailyTruth() {
             </span>
           </button>
         </>
+      )}
+
+      {/* ── Layer B: DIT HEEFT JE AANDACHT NODIG (item preview → Vandaag) ── */}
+      {attention.length > 0 && (
+        <div style={{ marginTop: 22 }}>
+          <div style={{ margin: '0 2px 10px' }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>
+              DIT HEEFT JE AANDACHT NODIG
+            </span>
+          </div>
+
+          <div style={{ background: M3.surface, borderRadius: R.lg, boxShadow: EL1, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
+            {attention.map((it, i) => (
+              <AttentionRow key={it.id} item={it} onClick={() => openItem(it)} divider={i > 0} />
+            ))}
+
+            {/* "Alle N bekijken →" — the full list lives on Vandaag. */}
+            <button
+              onClick={() => router.push('/dashboard/vandaag')}
+              style={{
+                width: '100%', textAlign: 'center', cursor: 'pointer', fontFamily: FONT,
+                padding: '12px', border: 'none', borderTop: `1px solid ${M3.hairline}`,
+                background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600,
+              }}
+            >
+              {attentionCount > attention.length
+                ? `Alle ${attentionCount} bekijken →`
+                : 'Alles bekijken →'}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -193,6 +257,42 @@ function MoneyCard({ label, bucket, emptyText, subject, onClick }: {
       ) : (
         <div style={{ fontSize: 13, color: M3.neutral, marginTop: 6 }}>{emptyText}</div>
       )}
+    </button>
+  )
+}
+
+// A compact preview row for one item that needs action. One tap → its resolve surface.
+// A negative incoming total is a creditnota (it REDUCES what you owe) — never "pay".
+function AttentionRow({ item, onClick, divider }: {
+  item: AttentionItem; onClick: () => void; divider: boolean
+}) {
+  const isCredit = item.direction === 'incoming' && item.total < 0
+  const accent = item.dueDate ? dueAccent(item.dueDate) : M3.neutral
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+        display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px',
+        border: 'none', background: 'transparent',
+        borderTop: divider ? `1px solid ${M3.hairline}` : 'none',
+      }}
+    >
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {item.party?.trim() || 'Onbekende partij'}
+        </div>
+        <div style={{ fontSize: 12.5, color: accent, fontWeight: 500, marginTop: 2 }}>
+          {isCredit ? 'Creditnota' : item.dueDate ? dueLabel(item.dueDate) : ''}
+          {item.direction === 'outgoing' ? ' · wacht op betaling' : ''}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: isCredit ? M3.success : M3.onSurface, whiteSpace: 'nowrap' }}>
+          {eur.format(item.total)}
+        </div>
+      </div>
+      <span className="material-symbols-outlined" style={{ color: '#9aa0a6', fontSize: 20, flexShrink: 0 }}>chevron_right</span>
     </button>
   )
 }
