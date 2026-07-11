@@ -138,16 +138,36 @@ const DOC_TITLES: Record<string, string> = {
   offerte: 'Offerte',
 }
 
+// Symmetric round-to-cents (magnitude-based, so a creditnota's -2.105 mirrors a
+// factuur's 2.105 exactly). Used for on-document total reconciliation.
+function round2(n: number): number {
+  const v = Number(n) || 0
+  return (v < 0 ? -1 : 1) * (Math.round(Math.abs(v) * 100 + 1e-9) / 100)
+}
+
+// Quantity for display: Dutch decimal comma, integers stay bare (2 → "2").
+function formatQtyNL(q: number | null | undefined): string {
+  const v = Number(q)
+  if (!isFinite(v)) return String(q ?? '')
+  return (Number.isInteger(v) ? String(v) : String(v)).replace('.', ',')
+}
+
 // ─── Auto logo: initials from the company (or personal) name ─────────────────
 // Fills the "Jouw eigen logo" slot without an upload — up to two initials.
+// Helvetica has no non-Latin/emoji glyphs, so we keep only A–Z/0–9 and fall
+// back to a dot rather than render a blank or a lone surrogate.
 function deriveInitials(name: string | null | undefined): string {
   const words = String(name ?? '')
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-  if (words.length === 0) return '•'
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
-  return (words[0][0] + words[words.length - 1][0]).toUpperCase()
+  const raw =
+    words.length === 0
+      ? ''
+      : words.length === 1
+        ? words[0].slice(0, 2)
+        : words[0][0] + words[words.length - 1][0]
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '') || '•'
 }
 
 // ─── BTW breakdown per rate, derived from lines ──────────────────────────────
@@ -198,8 +218,22 @@ export function InvoicePDF({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   profile: any
 }) {
-  const docTitle = DOC_TITLES[invoice.invoice_type as string] ?? 'Factuur'
-  const isCreditnota = invoice.invoice_type === 'creditnota'
+  const type = (invoice.invoice_type as string) || 'factuur'
+  const docTitle = DOC_TITLES[type] ?? 'Factuur'
+  const isCreditnota = type === 'creditnota'
+  const isOfferte = type === 'offerte'
+  const isProForma = type === 'pro_forma'
+  // Only a factuur (or a creditnota, which reverses one) is a legal payment
+  // document. Offerte/pro forma must NOT demand payment or call their number a
+  // "factuurnummer".
+  const isLegalInvoice = type === 'factuur' || isCreditnota
+
+  // Per-type meta labels.
+  const numberLabel = isOfferte ? 'Offertenummer:' : isCreditnota ? 'Creditnotanummer:' : 'Factuurnummer:'
+  const dateLabel = isOfferte ? 'Offertedatum:' : 'Factuurdatum:'
+  // Leverdatum only makes sense for something actually delivered (factuur /
+  // creditnota); a quote delivers nothing.
+  const showLeverdatum = isLegalInvoice && !!invoice.delivery_date
 
   const afzenderName = profile.company_name || profile.full_name || ''
   const initials = deriveInitials(profile.company_name || profile.full_name)
@@ -221,8 +255,16 @@ export function InvoicePDF({
           },
         ]
 
+  // Reconcile the totals FROM the rate rows so the printed document always adds
+  // up: Subtotaal + Σ(per-rate BTW) === Totaal, to the cent, for single- and
+  // mixed-rate alike. (Previously Subtotaal/Totaal came from stored fields while
+  // the BTW rows were re-derived, which could disagree by a cent.)
+  const displaySubtotal = round2(rateLines.reduce((a, g) => a + g.ex, 0))
+  const displayBtwTotal = round2(rateLines.reduce((a, g) => a + round2(g.btw), 0))
+  const displayTotal = round2(displaySubtotal + displayBtwTotal)
+
   const paymentText = `Wij verzoeken u vriendelijk het bovenstaande bedrag van ${formatEuroNL(
-    invoice.total_inc_btw
+    displayTotal
   )} voor ${formatDateNL(invoice.due_date)} ${
     profile.iban ? `op onze bankrekening ${profile.iban} ` : ''
   }te voldoen, onder vermelding van het factuurnummer ${invoice.invoice_number}.`
@@ -255,10 +297,10 @@ export function InvoicePDF({
 
           {/* Afzender — Art. 35a sub a/b: name+address, BTW-id, KVK */}
           <View style={styles.afzenderBlock}>
-            <Text style={styles.partyName}>{afzenderName}</Text>
-            <Text style={styles.partyText}>{profile.address}</Text>
+            <Text style={styles.partyName}>{afzenderName || '—'}</Text>
+            <Text style={styles.partyText}>{profile.address || '—'}</Text>
             <Text style={styles.partyText}>
-              {profile.postal_code} {profile.city}
+              {(profile.postal_code || profile.city) ? `${profile.postal_code || ''} ${profile.city || ''}`.trim() : '—'}
             </Text>
             <Text style={styles.partyText}>BTW nr.: {senderBtw}</Text>
             <Text style={styles.partyText}>KvK nr.: {profile.kvk_number || '—'}</Text>
@@ -269,22 +311,29 @@ export function InvoicePDF({
         {/* Heading + meta */}
         <Text style={styles.heading}>{docTitle}</Text>
         <View style={styles.metaRow}>
-          <Text style={styles.metaLabel}>Factuurnummer:</Text>
+          <Text style={styles.metaLabel}>{numberLabel}</Text>
           <Text style={styles.metaValue}>{invoice.invoice_number}</Text>
         </View>
         <View style={styles.metaRow}>
-          <Text style={styles.metaLabel}>Factuurdatum:</Text>
+          <Text style={styles.metaLabel}>{dateLabel}</Text>
           <Text style={styles.metaValue}>{formatDateNL(invoice.invoice_date)}</Text>
         </View>
-        {invoice.delivery_date && (
+        {showLeverdatum && (
           <View style={styles.metaRow}>
             <Text style={styles.metaLabel}>Leverdatum:</Text>
             <Text style={styles.metaValue}>{formatDateNL(invoice.delivery_date)}</Text>
           </View>
         )}
-        {!isCreditnota && (
+        {/* Vervaldatum only on a real factuur; an offerte shows "Geldig tot". */}
+        {type === 'factuur' && (
           <View style={styles.metaRow}>
             <Text style={styles.metaLabel}>Vervaldatum:</Text>
+            <Text style={styles.metaValue}>{formatDateNL(invoice.due_date)}</Text>
+          </View>
+        )}
+        {isOfferte && invoice.due_date && (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaLabel}>Geldig tot:</Text>
             <Text style={styles.metaValue}>{formatDateNL(invoice.due_date)}</Text>
           </View>
         )}
@@ -302,7 +351,7 @@ export function InvoicePDF({
               line.line_total ?? Number(line.quantity ?? 0) * Number(line.unit_price ?? 0)
             return (
               <View key={index} style={styles.tableRow}>
-                <Text style={styles.colAantal}>{line.quantity}</Text>
+                <Text style={styles.colAantal}>{formatQtyNL(line.quantity)}</Text>
                 <Text style={styles.colOmschrijving}>{line.description}</Text>
                 <Text style={styles.colPrijs}>{formatEuroNL(line.unit_price)}</Text>
                 <Text style={styles.colTotaal}>{formatEuroNL(lineTotal)}</Text>
@@ -316,31 +365,44 @@ export function InvoicePDF({
           <View style={styles.totalsBlock}>
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Subtotaal</Text>
-              <Text style={styles.totalValue}>{formatEuroNL(invoice.total_ex_btw)}</Text>
+              <Text style={styles.totalValue}>{formatEuroNL(displaySubtotal)}</Text>
             </View>
             {rateLines.map((g, i) => (
               <View key={i} style={styles.totalRow}>
                 <Text style={styles.totalLabel}>{rateLabel(g.rate, g.ex)}</Text>
-                <Text style={styles.totalValue}>{formatEuroNL(g.btw)}</Text>
+                <Text style={styles.totalValue}>{formatEuroNL(round2(g.btw))}</Text>
               </View>
             ))}
             <View style={styles.totalFinalRow}>
               <Text style={styles.totalFinalLabel}>Totaal</Text>
-              <Text style={styles.totalFinalValue}>{formatEuroNL(invoice.total_inc_btw)}</Text>
+              <Text style={styles.totalFinalValue}>{formatEuroNL(displayTotal)}</Text>
             </View>
           </View>
         </View>
 
-        {/* Payment — full sentence (hidden for creditnota) */}
-        {!isCreditnota ? (
-          <Text style={styles.payment}>{paymentText}</Text>
-        ) : (
+        {/* Closing note — depends on the document type. A quote / pro forma
+            must NOT demand payment or reference a "factuurnummer". */}
+        {type === 'factuur' && <Text style={styles.payment}>{paymentText}</Text>}
+        {isCreditnota && (
           <Text style={styles.payment}>
             Deze creditnota crediteert het bovenstaande bedrag. Er is geen betaling vereist.
           </Text>
         )}
+        {isOfferte && (
+          <Text style={styles.payment}>
+            Deze offerte is vrijblijvend{invoice.due_date ? ` en geldig tot ${formatDateNL(invoice.due_date)}` : ''}.
+          </Text>
+        )}
+        {isProForma && (
+          <Text style={styles.payment}>
+            Dit is een pro-formafactuur en geen geldige btw-factuur; er kunnen geen rechten aan
+            worden ontleend.
+          </Text>
+        )}
 
-        <Text style={styles.footer}>BoekBrug — De brug tussen jou en je boekhouder</Text>
+        <Text style={styles.footer} fixed>
+          BoekBrug — De brug tussen jou en je boekhouder
+        </Text>
       </Page>
     </Document>
   )
