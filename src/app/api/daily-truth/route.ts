@@ -101,7 +101,7 @@ export async function GET() {
   //    it — a purchase does need a receipt.)
   const { data: txRows } = await pipeline
     .from("bank_transactions")
-    .select("date, amount, status, invoice_id, counterpart_name, description")
+    .select("date, amount, status, invoice_id, counterpart_name, description, category")
     .eq("user_id", user.id);
 
   const txs = txRows ?? [];
@@ -111,12 +111,15 @@ export async function GET() {
   for (const t of txs) {
     const date = t.date ?? null;
     if (date && (!lastBankDate || date > lastBankDate)) lastBankDate = date;
-    if (
-      t.status === "pending" &&
-      !t.invoice_id &&
-      needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
-    ) {
-      undocumented++;
+    if (t.status === "pending" && !t.invoice_id) {
+      // Once the owner has given a line an identity, only a confirmed business cost
+      // ('kosten') still awaits its bon — prive/transfer/tax/fee/omzet don't. While a
+      // line is still uncategorized, fall back to the classifier's best guess.
+      const stillOpen =
+        t.category == null
+          ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
+          : t.category === "kosten";
+      if (stillOpen) undocumented++;
     }
   }
 

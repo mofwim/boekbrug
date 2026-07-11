@@ -164,7 +164,7 @@ export default function DailyTruth() {
           </div>
 
           <button
-            onClick={() => router.push('/dashboard/bank')}
+            onClick={() => router.push('/dashboard/bank/categoriseren')}
             style={{
               width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
               marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
