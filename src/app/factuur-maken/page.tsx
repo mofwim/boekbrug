@@ -15,7 +15,7 @@
 // This page is added to middleware PUBLIC_PATHS so it is reachable logged-out.
 // =====================================================
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { formatEuroNL } from '@/lib/format-nl'
@@ -60,6 +60,8 @@ type Line = {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const SENDER_KEY = 'boekbrug.gratis-factuur.sender'
+// Last invoice number the user actually downloaded — the seed for the next one.
+const NR_KEY = 'boekbrug.gratis-factuur.lastnr'
 
 const DOC_LABELS: Record<InvoiceType, string> = {
   factuur: 'Factuur',
@@ -90,6 +92,27 @@ function addDaysISO(iso: string, days: number): string {
   const dt = new Date(Date.UTC(y, m - 1, d))
   dt.setUTCDate(dt.getUTCDate() + days)
   return dt.toISOString().slice(0, 10)
+}
+
+// ─── Invoice numbering: YEAR + zero-padded sequence, e.g. 20260327 (#327) ────
+const currentYear = () => todayISO().slice(0, 4)
+function firstNumberOfYear(year: string): string {
+  return `${year}0001`
+}
+// Increment the trailing counter of a "YYYY####" number, keeping its width.
+// A non-standard number (manually edited to something else) is left untouched.
+function nextInvoiceNumber(n: string): string {
+  const m = /^(\d{4})(\d+)$/.exec(n.trim())
+  if (!m) return n
+  const seq = String(Number(m[2]) + 1).padStart(m[2].length, '0')
+  return m[1] + seq
+}
+// What to suggest on load, given the last DOWNLOADED number: the next in
+// sequence within the same year, else a fresh 0001 when the year rolled over.
+function suggestFromLast(last: string | null, year: string): string {
+  const m = last ? /^(\d{4})(\d+)$/.exec(last.trim()) : null
+  if (m && m[1] === year) return nextInvoiceNumber(last as string)
+  return firstNumberOfYear(year)
 }
 
 function emptySender(): Sender {
@@ -209,13 +232,17 @@ export default function GratisFactuurPage() {
   // Date/number defaults are deterministic (pinned to Europe/Amsterdam), so a
   // lazy initializer yields the SAME value on server and client — no effect,
   // no hydration mismatch.
-  const [invoiceNumber, setInvoiceNumber] = useState(() => `${todayISO().slice(0, 4)}-001`)
+  // Default number = YEAR + 0001 (e.g. 20260001). The mount effect overrides
+  // this with the next number in sequence once localStorage is available.
+  const [invoiceNumber, setInvoiceNumber] = useState(() => firstNumberOfYear(currentYear()))
   const [invoiceDate, setInvoiceDate] = useState(todayISO)
   const [dueDate, setDueDate] = useState(() => addDaysISO(todayISO(), 14))
   const [deliveryDate, setDeliveryDate] = useState('')
   const [sender, setSender] = useState<Sender>(emptySender())
   const [client, setClient] = useState<Client>(emptyClient())
   const [lines, setLines] = useState<Line[]>([emptyLine()])
+  // Mirrors the PDF link's loading flag so handleDownload can ignore early clicks.
+  const pdfLoadingRef = useRef(false)
 
   // localStorage is client-only, so the saved sender is read AFTER mount (a
   // genuine external-store sync). Starting empty on both server and first
@@ -225,6 +252,12 @@ export default function GratisFactuurPage() {
       const raw = localStorage.getItem(SENDER_KEY)
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (raw) setSender({ ...emptySender(), ...JSON.parse(raw) })
+    } catch {
+      /* ignore corrupt storage */
+    }
+    try {
+      // Suggest the number that follows the last one the user downloaded.
+      setInvoiceNumber(suggestFromLast(localStorage.getItem(NR_KEY), currentYear()))
     } catch {
       /* ignore corrupt storage */
     }
@@ -285,7 +318,10 @@ export default function GratisFactuurPage() {
     invoice_number: invoiceNumber || 'CONCEPT',
     invoice_date: invoiceDate,
     due_date: dueDate,
-    delivery_date: deliveryDate || null,
+    // Leverdatum is factuureis #6 — always print one. If the user leaves it
+    // empty we default it to the invoice date (the common case) so the
+    // requirement is met without them having to think about it.
+    delivery_date: deliveryDate || invoiceDate || null,
     client_name: client.client_name,
     client_address: client.client_address,
     client_postal_code: client.client_postal_code,
@@ -319,6 +355,20 @@ export default function GratisFactuurPage() {
   }
   function removeLine(i: number) {
     setLines((p) => (p.length === 1 ? p : p.filter((_, idx) => idx !== i)))
+  }
+
+  // On download: remember the number just used, then advance the field to the
+  // next one so the following invoice is pre-numbered without any user effort.
+  function handleDownload() {
+    // Ignore clicks while the PDF is still rendering — the browser has nothing
+    // to download yet, so advancing would skip a number.
+    if (pdfLoadingRef.current) return
+    try {
+      localStorage.setItem(NR_KEY, invoiceNumber)
+    } catch {
+      /* storage blocked — the advance below still works for this session */
+    }
+    setInvoiceNumber((n) => nextInvoiceNumber(n))
   }
 
   const fileName = `${invoiceNumber || 'concept'}.pdf`
@@ -355,7 +405,7 @@ export default function GratisFactuurPage() {
                 style={s.input}
                 value={invoiceNumber}
                 onChange={(e) => setInvoiceNumber(e.target.value)}
-                placeholder="2026-001"
+                placeholder="20260001"
               />
             </div>
             <div style={s.field}>
@@ -377,7 +427,7 @@ export default function GratisFactuurPage() {
               />
             </div>
             <div style={s.field}>
-              <label style={s.label}>Leverdatum (optioneel)</label>
+              <label style={s.label}>Leverdatum (standaard = factuurdatum)</label>
               <input
                 type="date"
                 style={s.input}
@@ -576,10 +626,12 @@ export default function GratisFactuurPage() {
               document={<InvoicePDF invoice={invoice} lines={numericLines} profile={sender} />}
               fileName={fileName}
               style={s.btnPrimary}
+              onClick={handleDownload}
             >
-              {({ loading }: { loading: boolean }) =>
-                loading ? 'PDF wordt gemaakt…' : '↓ Download PDF'
-              }
+              {({ loading }: { loading: boolean }) => {
+                pdfLoadingRef.current = loading
+                return loading ? 'PDF wordt gemaakt…' : '↓ Download PDF'
+              }}
             </PDFDownloadLink>
           ) : (
             <button style={{ ...s.btnPrimary, opacity: 0.4, cursor: 'not-allowed' }} disabled>

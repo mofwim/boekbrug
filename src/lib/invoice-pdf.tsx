@@ -1,22 +1,24 @@
 // src/lib/invoice-pdf.tsx
-// [FACTUUR-A] Legal rebuild — Art. 35a Wet OB 1968 compliant — June 2026
+// [FACTUUR-LAYOUT] Reference-matched layout — July 2026
 // =====================================================
-// Changes vs previous version:
-//   * All amounts via formatEuroNL (Dutch comma) — toFixed(2) eliminated.
-//   * All dates via formatDateNL (DD-MM-YYYY) — raw ISO eliminated.
-//   * Leverdatum (Art. 35a sub f) shown when invoice.delivery_date is set.
-//   * BTW summary states the rate ("BTW 21%") and splits per rate when
-//     multiple rates are present: Subtotaal 9% / BTW 9% / Subtotaal 21% / BTW 21%.
-//   * Line column "Totaal" → "Totaal excl." — kills the ambiguity with
-//     "Totaal incl. BTW".
-//   * Document title follows invoice_type: FACTUUR / CREDITNOTA /
-//     PRO FORMA / OFFERTE — a creditnota no longer masquerades as FACTUUR.
-//   * Payment text computed from the actual due_date ("vóór 12-07-2026")
-//     instead of the hardcoded lie "binnen 30 dagen".
-//   * Payment block hidden for creditnota (mirrors the create page).
+// Layout now mirrors the Belastingdienst "12 factuureisen" reference invoice
+// (InformerOnline standard) exactly:
+//   * Klant top-LEFT, afzender top-RIGHT with an auto-generated logo monogram
+//     above it (initials derived from the company name — no upload).
+//   * "Factuur" heading + Factuurnummer / Factuurdatum / Vervaldatum
+//     (+ Leverdatum — eis #6, printed whenever a delivery date is present).
+//   * Table columns: Aantal · Omschrijving · Prijs · Totaal (no separate BTW
+//     column — the rate is stated in the totals, as on the reference).
+//   * Totals read "21,00% BTW over € 100,00 → € 21,00" per rate.
+//   * Full payment sentence instead of a boxed note.
 //
-// Consumed by BOTH:
-//   * client: dashboard/invoice/[id] via <PDFDownloadLink> (signature kept)
+// LEGAL LOGIC PRESERVED verbatim from the previous (Art. 35a Wet OB 1968)
+// build: per-rate BTW breakdown from the lines, single-rate fallback for
+// legacy invoices, creditnota title + sign + no-payment text, all amounts via
+// formatEuroNL (Dutch comma) and all dates via formatDateNL (DD-MM-YYYY).
+//
+// Consumed by BOTH (signature unchanged — no call-site edits):
+//   * client: dashboard/invoice/[id] + factuur-maken via <PDFDownloadLink>
 //   * server: lib/invoice-pdf-server.tsx → renderToBuffer (e-mail attachment)
 // Keep this module free of server-only imports.
 // =====================================================
@@ -24,170 +26,126 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 
-// ─── Styles (visual language unchanged) ──────────────────────────────────────
+// ─── Styles ──────────────────────────────────────────────────────────────────
+const NAVY = '#16324f'
 const styles = StyleSheet.create({
   page: {
     fontFamily: 'Helvetica',
     fontSize: 10,
-    padding: 40,
+    padding: 44,
+    color: '#1c1c1e',
     backgroundColor: '#ffffff',
+    lineHeight: 1.4,
   },
-  header: {
+
+  // Top: klant (left) · afzender + logo (right)
+  topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 40,
+    marginBottom: 36,
   },
-  companyName: {
-    fontSize: 20,
+  klantBlock: { width: '48%' },
+  // Afzender sits in the right half of the page, but its text reads
+  // LEFT-aligned like the reference — only the logo hugs the right edge.
+  afzenderBlock: { width: '48%' },
+  logo: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    backgroundColor: NAVY,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+    alignSelf: 'flex-end',
+  },
+  logoText: {
+    color: '#ffffff',
+    fontSize: 22,
     fontFamily: 'Helvetica-Bold',
-    color: '#1c1c1e',
-  },
-  invoiceTitle: {
-    fontSize: 24,
-    fontFamily: 'Helvetica-Bold',
-    color: '#1c1c1e',
-    textAlign: 'right',
-  },
-  invoiceNumber: {
-    fontSize: 12,
-    color: '#6b7280',
-    textAlign: 'right',
-    marginTop: 4,
-  },
-  partiesRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 30,
-  },
-  partyBlock: {
-    width: '45%',
-  },
-  partyLabel: {
-    fontSize: 9,
-    fontFamily: 'Helvetica-Bold',
-    color: '#9ca3af',
-    textTransform: 'uppercase',
     letterSpacing: 1,
-    marginBottom: 6,
   },
-  partyName: {
-    fontSize: 11,
-    fontFamily: 'Helvetica-Bold',
-    color: '#1c1c1e',
-    marginBottom: 3,
-  },
-  partyText: {
-    fontSize: 10,
-    color: '#6b7280',
-    marginBottom: 2,
-  },
-  datesRow: {
-    flexDirection: 'row',
-    gap: 20,
-    marginBottom: 30,
-    padding: 12,
-    backgroundColor: '#f9fafb',
-    borderRadius: 6,
-  },
-  dateBlock: {
-    flex: 1,
-  },
-  dateLabel: {
-    fontSize: 9,
-    color: '#9ca3af',
-    marginBottom: 3,
-  },
-  dateValue: {
-    fontSize: 10,
-    fontFamily: 'Helvetica-Bold',
-    color: '#1c1c1e',
-  },
+  partyName: { fontSize: 11, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
+  partyText: { fontSize: 10, color: '#3c3c43', marginBottom: 1 },
+
+  // Heading + meta
+  heading: { fontSize: 18, fontFamily: 'Helvetica-Bold', marginBottom: 10 },
+  metaRow: { flexDirection: 'row', marginBottom: 2 },
+  metaLabel: { width: 96, fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#1c1c1e' },
+  metaValue: { fontSize: 10, color: '#3c3c43' },
+
+  // Table
+  table: { marginTop: 26 },
   tableHeader: {
     flexDirection: 'row',
-    backgroundColor: '#f3f4f6',
-    padding: 8,
-    borderRadius: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#c8c8cd',
+    paddingBottom: 6,
     marginBottom: 4,
   },
   tableRow: {
     flexDirection: 'row',
-    padding: 8,
+    paddingVertical: 5,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#eeeeef',
   },
-  colDescription: { flex: 3, color: '#1c1c1e' },
-  colQty: { flex: 1, textAlign: 'center', color: '#1c1c1e' },
-  colPrice: { flex: 1, textAlign: 'right', color: '#1c1c1e' },
-  colBtw: { flex: 1, textAlign: 'center', color: '#1c1c1e' },
-  colTotal: { flex: 1.2, textAlign: 'right', color: '#1c1c1e' },
-  headerText: {
-    fontSize: 9,
-    fontFamily: 'Helvetica-Bold',
-    color: '#6b7280',
-  },
-  totalsBlock: {
-    marginTop: 20,
-    alignItems: 'flex-end',
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: 220,
-    marginBottom: 4,
-  },
-  totalLabel: { fontSize: 10, color: '#6b7280' },
+  colAantal: { width: 44, fontSize: 10 },
+  colOmschrijving: { flex: 1, fontSize: 10, paddingRight: 8 },
+  colPrijs: { width: 78, fontSize: 10, textAlign: 'right' },
+  colTotaal: { width: 84, fontSize: 10, textAlign: 'right' },
+  headerText: { fontFamily: 'Helvetica-Bold', color: '#1c1c1e' },
+
+  // Totals
+  totalsWrap: { alignItems: 'flex-end', marginTop: 14 },
+  totalsBlock: { width: 300 },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
+  totalLabel: { fontSize: 10, color: '#3c3c43', flexShrink: 1, paddingRight: 12 },
   totalValue: { fontSize: 10, color: '#1c1c1e' },
   totalFinalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    width: 220,
     marginTop: 6,
     paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+    borderTopColor: '#c8c8cd',
   },
-  totalFinalLabel: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: '#1c1c1e' },
-  totalFinalValue: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: '#1c1c1e' },
-  paymentBlock: {
-    marginTop: 30,
-    padding: 12,
-    backgroundColor: '#f9fafb',
-    borderRadius: 6,
-  },
-  paymentLabel: {
-    fontSize: 9,
-    fontFamily: 'Helvetica-Bold',
-    color: '#9ca3af',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  paymentText: {
-    fontSize: 10,
-    color: '#6b7280',
-    lineHeight: 1.5,
-  },
+  totalFinalLabel: { fontSize: 12, fontFamily: 'Helvetica-Bold' },
+  totalFinalValue: { fontSize: 12, fontFamily: 'Helvetica-Bold' },
+
+  // Payment
+  payment: { marginTop: 34, fontSize: 10, color: '#3c3c43', lineHeight: 1.5 },
+
   footer: {
     position: 'absolute',
-    bottom: 30,
-    left: 40,
-    right: 40,
+    bottom: 28,
+    left: 44,
+    right: 44,
     textAlign: 'center',
-    fontSize: 9,
-    color: '#d1d5db',
+    fontSize: 8,
+    color: '#c8c8cd',
   },
 })
 
-// ─── [FACTUUR-A] Document title per invoice_type ─────────────────────────────
-// A creditnota carrying the title FACTUUR is legally misleading — fixed.
+// ─── Document title per invoice_type (title-case, matches the reference) ─────
 const DOC_TITLES: Record<string, string> = {
-  factuur: 'FACTUUR',
-  creditnota: 'CREDITNOTA',
-  pro_forma: 'PRO FORMA',
-  offerte: 'OFFERTE',
+  factuur: 'Factuur',
+  creditnota: 'Creditnota',
+  pro_forma: 'Pro forma',
+  offerte: 'Offerte',
 }
 
-// ─── [FACTUUR-A] BTW breakdown per rate, derived from lines ──────────────────
+// ─── Auto logo: initials from the company (or personal) name ─────────────────
+// Fills the "Jouw eigen logo" slot without an upload — up to two initials.
+function deriveInitials(name: string | null | undefined): string {
+  const words = String(name ?? '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (words.length === 0) return '•'
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase()
+}
+
+// ─── BTW breakdown per rate, derived from lines ──────────────────────────────
 // Lines are the source of truth for the per-rate split (btw_rate exists on
 // invoice_lines — NOT on invoices). For legacy invoices without lines we fall
 // back to the derived single rate from the stored totals.
@@ -216,6 +174,12 @@ function btwBreakdown(lines: LineLike[]): { rate: number; ex: number; btw: numbe
     .sort((a, b) => a.rate - b.rate)
 }
 
+// "21,00% BTW over € 100,00" — rate with two decimals and a Dutch comma.
+function rateLabel(rate: number, ex: number): string {
+  const r = rate.toFixed(2).replace('.', ',')
+  return `${r}% BTW over ${formatEuroNL(ex)}`
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export function InvoicePDF({
   invoice,
@@ -229,167 +193,144 @@ export function InvoicePDF({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   profile: any
 }) {
-  const docTitle = DOC_TITLES[invoice.invoice_type as string] ?? 'FACTUUR'
+  const docTitle = DOC_TITLES[invoice.invoice_type as string] ?? 'Factuur'
   const isCreditnota = invoice.invoice_type === 'creditnota'
 
-  // [FACTUUR-A] Normalize BTW-id casing on a legal document: NL...B01 reads
-  // correctly even if the profile stored it lower-case (e.g. nl123456789b01).
+  const afzenderName = profile.company_name || profile.full_name || ''
+  const initials = deriveInitials(profile.company_name || profile.full_name)
+
+  // [FACTUUR-A] Normalize BTW-id casing on a legal document.
   const senderBtw = profile.btw_number ? String(profile.btw_number).toUpperCase() : '—'
   const clientBtw = invoice.client_btw_number ? String(invoice.client_btw_number).toUpperCase() : ''
 
   const groups = btwBreakdown(lines ?? [])
-  const multiRate = groups.length > 1
-  // Fallback for legacy invoices without lines: derive the single rate.
-  const fallbackRate = deriveBtwRate(invoice.btw_amount, invoice.total_ex_btw)
+  // Fallback for legacy invoices without lines: one derived rate from totals.
+  const rateLines =
+    groups.length > 0
+      ? groups
+      : [
+          {
+            rate: deriveBtwRate(invoice.btw_amount, invoice.total_ex_btw),
+            ex: Number(invoice.total_ex_btw ?? 0),
+            btw: Number(invoice.btw_amount ?? 0),
+          },
+        ]
+
+  const paymentText = `Wij verzoeken u vriendelijk het bovenstaande bedrag van ${formatEuroNL(
+    invoice.total_inc_btw
+  )} voor ${formatDateNL(invoice.due_date)} ${
+    profile.iban ? `op onze bankrekening ${profile.iban} ` : ''
+  }te voldoen, onder vermelding van het factuurnummer ${invoice.invoice_number}.`
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.companyName}>
-              {profile.company_name || profile.full_name}
-            </Text>
-          </View>
-          <View>
-            <Text style={styles.invoiceTitle}>{docTitle}</Text>
-            <Text style={styles.invoiceNumber}>{invoice.invoice_number}</Text>
-          </View>
-        </View>
-
-        {/* Parties */}
-        <View style={styles.partiesRow}>
-          {/* Van — Art. 35a sub a/b: full name+address, KVK, BTW-id */}
-          <View style={styles.partyBlock}>
-            <Text style={styles.partyLabel}>Van</Text>
-            <Text style={styles.partyName}>{profile.company_name || profile.full_name}</Text>
-            <Text style={styles.partyText}>{profile.address}</Text>
-            <Text style={styles.partyText}>{profile.postal_code} {profile.city}</Text>
-            <Text style={styles.partyText}>KVK: {profile.kvk_number || '—'}</Text>
-            <Text style={styles.partyText}>BTW: {senderBtw}</Text>
-            <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
-          </View>
-
-          {/* Aan — Art. 35a sub c: name AND address of the customer */}
-          <View style={styles.partyBlock}>
-            <Text style={styles.partyLabel}>Aan</Text>
+        {/* Top — klant (left) · afzender + logo (right) */}
+        <View style={styles.topRow}>
+          {/* Klant — Art. 35a sub c: name AND address of the customer */}
+          <View style={styles.klantBlock}>
             <Text style={styles.partyName}>{invoice.client_name || '—'}</Text>
             <Text style={styles.partyText}>{invoice.client_address || ''}</Text>
             <Text style={styles.partyText}>
               {invoice.client_postal_code || ''} {invoice.client_city || ''}
             </Text>
-            {clientBtw !== '' && (
-              <Text style={styles.partyText}>BTW: {clientBtw}</Text>
-            )}
-            <Text style={styles.partyText}>{invoice.client_email || ''}</Text>
+            {clientBtw !== '' && <Text style={styles.partyText}>BTW nr.: {clientBtw}</Text>}
+            {invoice.client_email ? (
+              <Text style={styles.partyText}>{invoice.client_email}</Text>
+            ) : null}
           </View>
-        </View>
 
-        {/* Dates — [FACTUUR-A] DD-MM-YYYY everywhere; Leverdatum added (sub f) */}
-        <View style={styles.datesRow}>
-          <View style={styles.dateBlock}>
-            <Text style={styles.dateLabel}>Factuurdatum</Text>
-            <Text style={styles.dateValue}>{formatDateNL(invoice.invoice_date)}</Text>
-          </View>
-          {invoice.delivery_date && (
-            <View style={styles.dateBlock}>
-              <Text style={styles.dateLabel}>Leverdatum</Text>
-              <Text style={styles.dateValue}>{formatDateNL(invoice.delivery_date)}</Text>
+          {/* Afzender — Art. 35a sub a/b: name+address, BTW-id, KVK + auto logo */}
+          <View style={styles.afzenderBlock}>
+            <View style={styles.logo}>
+              <Text style={styles.logoText}>{initials}</Text>
             </View>
-          )}
-          <View style={styles.dateBlock}>
-            <Text style={styles.dateLabel}>Vervaldatum</Text>
-            <Text style={styles.dateValue}>{formatDateNL(invoice.due_date)}</Text>
-          </View>
-        </View>
-
-        {/* Line table — [FACTUUR-A] "Totaal" → "Totaal excl." */}
-        <View style={styles.tableHeader}>
-          <Text style={[styles.colDescription, styles.headerText]}>Omschrijving</Text>
-          <Text style={[styles.colQty, styles.headerText]}>Aantal</Text>
-          <Text style={[styles.colPrice, styles.headerText]}>Prijs</Text>
-          <Text style={[styles.colBtw, styles.headerText]}>BTW</Text>
-          <Text style={[styles.colTotal, styles.headerText]}>Totaal excl.</Text>
-        </View>
-
-        {(lines ?? []).map((line, index) => (
-          <View key={index} style={styles.tableRow}>
-            <Text style={styles.colDescription}>{line.description}</Text>
-            <Text style={styles.colQty}>{line.quantity}</Text>
-            <Text style={styles.colPrice}>{formatEuroNL(line.unit_price)}</Text>
-            <Text style={styles.colBtw}>{line.btw_rate}%</Text>
-            <Text style={styles.colTotal}>
-              {formatEuroNL(
-                line.line_total ?? Number(line.quantity ?? 0) * Number(line.unit_price ?? 0)
-              )}
+            <Text style={styles.partyName}>{afzenderName}</Text>
+            <Text style={styles.partyText}>{profile.address}</Text>
+            <Text style={styles.partyText}>
+              {profile.postal_code} {profile.city}
             </Text>
-          </View>
-        ))}
-
-        {/* Totals — [FACTUUR-A] rate always stated; per-rate split when mixed */}
-        <View style={styles.totalsBlock}>
-          {multiRate ? (
-            <>
-              {groups.map((g) => (
-                <View key={g.rate}>
-                  <View style={styles.totalRow}>
-                    <Text style={styles.totalLabel}>Subtotaal {g.rate}%</Text>
-                    <Text style={styles.totalValue}>{formatEuroNL(g.ex)}</Text>
-                  </View>
-                  <View style={styles.totalRow}>
-                    <Text style={styles.totalLabel}>BTW {g.rate}%</Text>
-                    <Text style={styles.totalValue}>{formatEuroNL(g.btw)}</Text>
-                  </View>
-                </View>
-              ))}
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Subtotaal excl. BTW</Text>
-                <Text style={styles.totalValue}>{formatEuroNL(invoice.total_ex_btw)}</Text>
-              </View>
-            </>
-          ) : (
-            <>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Subtotaal excl. BTW</Text>
-                <Text style={styles.totalValue}>{formatEuroNL(invoice.total_ex_btw)}</Text>
-              </View>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>
-                  BTW {groups[0]?.rate ?? fallbackRate}%
-                </Text>
-                <Text style={styles.totalValue}>{formatEuroNL(invoice.btw_amount)}</Text>
-              </View>
-            </>
-          )}
-          <View style={styles.totalFinalRow}>
-            <Text style={styles.totalFinalLabel}>Totaal incl. BTW</Text>
-            <Text style={styles.totalFinalValue}>{formatEuroNL(invoice.total_inc_btw)}</Text>
+            <Text style={styles.partyText}>BTW nr.: {senderBtw}</Text>
+            <Text style={styles.partyText}>KvK nr.: {profile.kvk_number || '—'}</Text>
+            <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
           </View>
         </View>
 
-        {/* Payment — [FACTUUR-A] real due date, hidden for creditnota */}
-        {profile.iban && !isCreditnota && (
-          <View style={styles.paymentBlock}>
-            <Text style={styles.paymentLabel}>Betalingsinformatie</Text>
-            <Text style={styles.paymentText}>
-              Gelieve te betalen vóór {formatDateNL(invoice.due_date)} op {profile.iban} o.v.v. {invoice.invoice_number}
-            </Text>
+        {/* Heading + meta */}
+        <Text style={styles.heading}>{docTitle}</Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.metaLabel}>Factuurnummer:</Text>
+          <Text style={styles.metaValue}>{invoice.invoice_number}</Text>
+        </View>
+        <View style={styles.metaRow}>
+          <Text style={styles.metaLabel}>Factuurdatum:</Text>
+          <Text style={styles.metaValue}>{formatDateNL(invoice.invoice_date)}</Text>
+        </View>
+        {invoice.delivery_date && (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaLabel}>Leverdatum:</Text>
+            <Text style={styles.metaValue}>{formatDateNL(invoice.delivery_date)}</Text>
           </View>
         )}
-        {isCreditnota && (
-          <View style={styles.paymentBlock}>
-            <Text style={styles.paymentLabel}>Creditnota</Text>
-            <Text style={styles.paymentText}>
-              Deze creditnota crediteert het bovenstaande bedrag. Er is geen betaling vereist.
-            </Text>
+        {!isCreditnota && (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaLabel}>Vervaldatum:</Text>
+            <Text style={styles.metaValue}>{formatDateNL(invoice.due_date)}</Text>
           </View>
         )}
 
-        {/* Footer */}
-        <Text style={styles.footer}>
-          BoekBrug — De brug tussen jou en je boekhouder
-        </Text>
+        {/* Line table — Aantal · Omschrijving · Prijs · Totaal */}
+        <View style={styles.table}>
+          <View style={styles.tableHeader}>
+            <Text style={[styles.colAantal, styles.headerText]}>Aantal</Text>
+            <Text style={[styles.colOmschrijving, styles.headerText]}>Omschrijving</Text>
+            <Text style={[styles.colPrijs, styles.headerText]}>Prijs</Text>
+            <Text style={[styles.colTotaal, styles.headerText]}>Totaal</Text>
+          </View>
+          {(lines ?? []).map((line, index) => {
+            const lineTotal =
+              line.line_total ?? Number(line.quantity ?? 0) * Number(line.unit_price ?? 0)
+            return (
+              <View key={index} style={styles.tableRow}>
+                <Text style={styles.colAantal}>{line.quantity}</Text>
+                <Text style={styles.colOmschrijving}>{line.description}</Text>
+                <Text style={styles.colPrijs}>{formatEuroNL(line.unit_price)}</Text>
+                <Text style={styles.colTotaal}>{formatEuroNL(lineTotal)}</Text>
+              </View>
+            )
+          })}
+        </View>
+
+        {/* Totals — Subtotaal / per-rate BTW / Totaal */}
+        <View style={styles.totalsWrap}>
+          <View style={styles.totalsBlock}>
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Subtotaal</Text>
+              <Text style={styles.totalValue}>{formatEuroNL(invoice.total_ex_btw)}</Text>
+            </View>
+            {rateLines.map((g, i) => (
+              <View key={i} style={styles.totalRow}>
+                <Text style={styles.totalLabel}>{rateLabel(g.rate, g.ex)}</Text>
+                <Text style={styles.totalValue}>{formatEuroNL(g.btw)}</Text>
+              </View>
+            ))}
+            <View style={styles.totalFinalRow}>
+              <Text style={styles.totalFinalLabel}>Totaal</Text>
+              <Text style={styles.totalFinalValue}>{formatEuroNL(invoice.total_inc_btw)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Payment — full sentence (hidden for creditnota) */}
+        {!isCreditnota ? (
+          <Text style={styles.payment}>{paymentText}</Text>
+        ) : (
+          <Text style={styles.payment}>
+            Deze creditnota crediteert het bovenstaande bedrag. Er is geen betaling vereist.
+          </Text>
+        )}
+
+        <Text style={styles.footer}>BoekBrug — De brug tussen jou en je boekhouder</Text>
       </Page>
     </Document>
   )
