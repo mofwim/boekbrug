@@ -58,8 +58,8 @@ export default function LegalArticle({ markdown }: { markdown: string }) {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '32px 20px 72px' }}>
-        <Link href="/tools" style={{ display: 'inline-block', fontSize: 14, color: '#007aff', textDecoration: 'none', marginBottom: 20 }}>
-          ← Terug
+        <Link href="/" style={{ display: 'inline-block', fontSize: 14, color: '#007aff', textDecoration: 'none', marginBottom: 20 }}>
+          ← Terug naar home
         </Link>
         <article style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: '32px 28px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>

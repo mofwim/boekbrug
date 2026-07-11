@@ -27,6 +27,9 @@ const PUBLIC_PATHS = [
 ];
 
 function isPublic(pathname: string): boolean {
+  // The homepage is a public landing page. Match it EXACTLY — never via the
+  // prefix rule below, or "/" would make every route public.
+  if (pathname === "/") return true;
   return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 }
 
