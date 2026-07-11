@@ -28,7 +28,9 @@ const PDFDownloadLink = dynamic(
 )
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-type InvoiceType = 'factuur' | 'creditnota' | 'offerte' | 'pro_forma'
+// The free tool stays deliberately simple: only a factuur and its creditnota.
+// Offerte / pro forma live in the full product.
+type InvoiceType = 'factuur' | 'creditnota'
 
 type Sender = {
   company_name: string
@@ -66,15 +68,27 @@ const NR_KEY = 'boekbrug.gratis-factuur.lastnr'
 const DOC_LABELS: Record<InvoiceType, string> = {
   factuur: 'Factuur',
   creditnota: 'Creditnota',
-  offerte: 'Offerte',
-  pro_forma: 'Pro forma',
 }
 
 const NL_BTW_RE = /^NL\d{9}B\d{2}$/i
 
-// Round to whole cents (half-up, EPSILON-guarded against float noise).
+// Round to whole cents, symmetric around zero so a creditnota's -2.105 mirrors
+// a factuur's 2.105 exactly (Math.round alone rounds halves toward +∞).
 function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100
+  const v = Number(n) || 0
+  return (v < 0 ? -1 : 1) * (Math.round(Math.abs(v) * 100 + 1e-9) / 100)
+}
+
+// Parse a user-typed amount, tolerant of Dutch formatting:
+//   "1.250,00" → 1250.00   "1,5" → 1.5   "1250.00"/"1250" → 1250
+// A comma means Dutch decimals (dots are thousands separators); with no comma a
+// dot is treated as the decimal point (English-style input).
+function parseNum(s: string): number {
+  const t = String(s ?? '').trim()
+  if (!t) return 0
+  const normalized = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t
+  const n = parseFloat(normalized)
+  return isFinite(n) ? n : 0
 }
 
 // Timezone-proof today (Europe/Amsterdam) as ISO yyyy-mm-dd, no Date math traps.
@@ -92,6 +106,17 @@ function addDaysISO(iso: string, days: number): string {
   const dt = new Date(Date.UTC(y, m - 1, d))
   dt.setUTCDate(dt.getUTCDate() + days)
   return dt.toISOString().slice(0, 10)
+}
+
+// A YYYY-MM-DD string with a plausible year (2000–2100), else '' — guards
+// against native date inputs emitting things like "0002-01-02".
+const MIN_DATE = '2000-01-01'
+const MAX_DATE = '2100-12-31'
+function sanitizeISODate(s: string | null | undefined): string {
+  const m = s ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(s) : null
+  if (!m) return ''
+  const year = Number(m[1])
+  return year >= 2000 && year <= 2100 ? (s as string) : ''
 }
 
 // ─── Invoice numbering: YEAR + zero-padded sequence, e.g. 20260327 (#327) ────
@@ -237,7 +262,9 @@ export default function GratisFactuurPage() {
   const [invoiceNumber, setInvoiceNumber] = useState(() => firstNumberOfYear(currentYear()))
   const [invoiceDate, setInvoiceDate] = useState(todayISO)
   const [dueDate, setDueDate] = useState(() => addDaysISO(todayISO(), 14))
-  const [deliveryDate, setDeliveryDate] = useState('')
+  // Pre-filled to today (= the factuurdatum default) so eis #6 is visibly set
+  // and the user doesn't fumble an empty native date field.
+  const [deliveryDate, setDeliveryDate] = useState(todayISO)
   const [sender, setSender] = useState<Sender>(emptySender())
   const [client, setClient] = useState<Client>(emptyClient())
   const [lines, setLines] = useState<Line[]>([emptyLine()])
@@ -283,8 +310,8 @@ export default function GratisFactuurPage() {
   const numericLines = useMemo(
     () =>
       lines.map((l) => {
-        const qty = parseFloat(l.quantity.replace(',', '.')) || 0
-        const price = parseFloat(l.unit_price.replace(',', '.')) || 0
+        const qty = parseNum(l.quantity)
+        const price = parseNum(l.unit_price)
         return {
           description: l.description,
           quantity: qty,
@@ -312,16 +339,20 @@ export default function GratisFactuurPage() {
     return { ex, btw, inc: round2(ex + btw) }
   }, [numericLines])
 
+  // A native date input can yield an absurd year (typing "2" → 0002). Never let
+  // that reach the PDF: sanitize to a plausible year, else fall back sanely.
+  const safeInvoiceDate = sanitizeISODate(invoiceDate) || todayISO()
+
   // Shapes InvoicePDF expects — identical to the full app's DB rows.
   const invoice = {
     invoice_type: invoiceType,
     invoice_number: invoiceNumber || 'CONCEPT',
-    invoice_date: invoiceDate,
-    due_date: dueDate,
+    invoice_date: safeInvoiceDate,
+    due_date: sanitizeISODate(dueDate) || addDaysISO(safeInvoiceDate, 14),
     // Leverdatum is factuureis #6 — always print one. If the user leaves it
-    // empty we default it to the invoice date (the common case) so the
+    // empty (or enters a garbage date) we default it to the invoice date so the
     // requirement is met without them having to think about it.
-    delivery_date: deliveryDate || invoiceDate || null,
+    delivery_date: sanitizeISODate(deliveryDate) || safeInvoiceDate,
     client_name: client.client_name,
     client_address: client.client_address,
     client_postal_code: client.client_postal_code,
@@ -359,10 +390,14 @@ export default function GratisFactuurPage() {
 
   // On download: remember the number just used, then advance the field to the
   // next one so the following invoice is pre-numbered without any user effort.
+  // ONLY the factuur series is auto-managed — a creditnota carries its own
+  // reference (usually the original factuur's), so it must not consume or
+  // advance the factuur sequence (Belastingdienst: gapless invoice numbering).
   function handleDownload() {
     // Ignore clicks while the PDF is still rendering — the browser has nothing
     // to download yet, so advancing would skip a number.
     if (pdfLoadingRef.current) return
+    if (invoiceType !== 'factuur') return
     try {
       localStorage.setItem(NR_KEY, invoiceNumber)
     } catch {
@@ -412,6 +447,8 @@ export default function GratisFactuurPage() {
               <label style={s.label}>Factuurdatum</label>
               <input
                 type="date"
+                min={MIN_DATE}
+                max={MAX_DATE}
                 style={s.input}
                 value={invoiceDate}
                 onChange={(e) => setInvoiceDate(e.target.value)}
@@ -421,6 +458,8 @@ export default function GratisFactuurPage() {
               <label style={s.label}>Vervaldatum</label>
               <input
                 type="date"
+                min={MIN_DATE}
+                max={MAX_DATE}
                 style={s.input}
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
@@ -430,6 +469,8 @@ export default function GratisFactuurPage() {
               <label style={s.label}>Leverdatum (standaard = factuurdatum)</label>
               <input
                 type="date"
+                min={MIN_DATE}
+                max={MAX_DATE}
                 style={s.input}
                 value={deliveryDate}
                 onChange={(e) => setDeliveryDate(e.target.value)}
@@ -547,8 +588,8 @@ export default function GratisFactuurPage() {
             <span />
           </div>
           {lines.map((l, i) => {
-            const qty = parseFloat(l.quantity.replace(',', '.')) || 0
-            const price = parseFloat(l.unit_price.replace(',', '.')) || 0
+            const qty = parseNum(l.quantity)
+            const price = parseNum(l.unit_price)
             return (
               <div key={i} style={s.lineRow}>
                 <input

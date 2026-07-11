@@ -111,7 +111,23 @@ export function extractInvoiceTemplate(raw: string): ExtractResult {
   let yearIdx = -1
 
   if (numIdx.length === 1) {
-    // A sole numeric run is always the counter (even if it looks like a year).
+    // [FACTUUR-UNIFY] Recognize the product's own YYYY#### format: a single
+    // 8-digit run with a plausible year prefix is {year}{seq} with yearly
+    // reset (e.g. 20260001 → year 2026, seq 0001, pad 4). Without this, typing
+    // back the default number shown in Settings would silently become a
+    // continuous 8-digit counter that never rolls over to the next year.
+    const sole = toks[numIdx[0]].text
+    if (sole.length === 8 && isYearLike(sole.slice(0, 4))) {
+      const seqText = sole.slice(4)
+      const seq = parseInt(seqText, 10)
+      if (Number.isFinite(seq) && seq >= SEQ_MIN && seq <= SEQ_MAX) {
+        const template = toks
+          .map((t, i) => (i === numIdx[0] ? '{year}{seq}' : t.text))
+          .join('')
+        return { ok: true, template, padding: seqText.length, startSeq: seq, yearlyReset: true }
+      }
+    }
+    // Otherwise a sole numeric run is the counter (even if it looks like a year).
     counterIdx = numIdx[0]
   } else {
     const yearIdxs = numIdx.filter((i) => isYearLike(toks[i].text))
