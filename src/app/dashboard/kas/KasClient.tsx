@@ -52,6 +52,7 @@ export default function KasClient() {
   const [direction, setDirection] = useState<'in' | 'out'>('in')
   const [amount, setAmount] = useState('')
   const [category, setCategory] = useState('omzet')
+  const [btwRate, setBtwRate] = useState(21)
   const [date, setDate] = useState(todayIso())
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
@@ -90,7 +91,7 @@ export default function KasClient() {
     try {
       const res = await fetch('/api/cash', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entry_date: date, direction, amount: val, category, description }),
+        body: JSON.stringify({ entry_date: date, direction, amount: val, category, description, btw_rate: category === 'omzet' ? btwRate : undefined }),
       })
       if (res.ok) { setAmount(''); setDescription(''); await load() }
       else { setError('Kon de boeking niet opslaan. Probeer opnieuw.') }
@@ -151,6 +152,24 @@ export default function KasClient() {
               )
             })}
           </div>
+
+          {/* BTW rate — only for a cash sale, so verschuldigde BTW is exact. */}
+          {category === 'omzet' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 13, color: M3.neutral }}>BTW:</span>
+              {[21, 9, 0].map((r) => {
+                const active = btwRate === r
+                return (
+                  <button key={r} onClick={() => setBtwRate(r)}
+                    style={{ padding: '6px 12px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: FONT,
+                      background: active ? M3.primaryContainer : '#F1F3F4', color: active ? '#041E49' : M3.neutral,
+                      border: active ? `1px solid ${M3.primary}` : '1px solid transparent' }}>
+                    {r}%
+                  </button>
+                )
+              })}
+            </div>
+          )}
 
           <input
             value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Omschrijving (optioneel)"

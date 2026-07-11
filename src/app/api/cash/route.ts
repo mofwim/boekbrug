@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   let body: {
-    entry_date?: string; direction?: string; amount?: number; category?: string; description?: string;
+    entry_date?: string; direction?: string; amount?: number; category?: string; description?: string; btw_rate?: number;
   };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid body" }, { status: 400 }); }
 
@@ -59,6 +59,11 @@ export async function POST(req: NextRequest) {
     ? body.entry_date
     : undefined;
 
+  // BTW rate only makes sense on a cash sale (omzet); accept a valid Dutch rate.
+  const btwRate = category === "omzet" && [0, 9, 21].includes(Number(body.btw_rate))
+    ? Number(body.btw_rate)
+    : null;
+
   const { data, error } = await supabase
     .from("cash_entries")
     .insert({
@@ -67,6 +72,7 @@ export async function POST(req: NextRequest) {
       amount,
       category,
       description: body.description?.trim() || null,
+      btw_rate: btwRate,
       ...(entryDate ? { entry_date: entryDate } : {}),
     })
     .select("id, entry_date, direction, amount, category, description")

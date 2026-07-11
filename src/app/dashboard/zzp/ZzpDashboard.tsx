@@ -161,11 +161,13 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/kas')}
           />
 
-          {/* Financieel overzicht — BTW, omzet, cashflow (moved up: it matters). */}
+          {/* [RESULT] Financieel overzicht → the combined cross-channel result (BTW,
+              omzet, kosten from invoices + bank + kas); it links on to the detailed
+              per-invoice BTW-aangifte. */}
           <ActionCard
             icon="bar_chart" iconBg={M3.warning} iconColor="#fff"
-            label="Financieel overzicht" sub="BTW, omzet en cashflow"
-            onClick={() => router.push('/dashboard/quarterly')}
+            label="Financieel overzicht" sub="Resultaat en BTW dit kwartaal"
+            onClick={() => router.push('/dashboard/resultaat')}
           />
 
           {/* Mijn werkplek — clients, files, company data (secondary). */}
