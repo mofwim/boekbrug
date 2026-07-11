@@ -181,7 +181,7 @@ export function OnboardingWizard({
         return;
       }
       if (step === "3C") {
-        // [FACTUUR-B] save numbering (skippable). Empty = default 001-{year}.
+        // [FACTUUR-B] save numbering (skippable). Empty = default {year}0001 (20260001).
         if (invoiceStart.trim()) {
           const res = await fetch("/api/invoice/numbering", {
             method: "POST",
@@ -672,7 +672,7 @@ function StepInvoiceStart({ value, onChange, error }: {
       {/* live confirmation — the "understanding loop" */}
       {!trimmed && (
         <div style={{ fontSize: "14px", color: "#8e8e93" }}>
-          Laat leeg om bij <strong>001-{year}</strong> te beginnen.
+          Laat leeg om bij <strong>{year}0001</strong> te beginnen.
         </div>
       )}
       {trimmed && preview && preview.ok && (

@@ -44,8 +44,10 @@ import {
 } from '@/lib/invoice-template'
 import * as Sentry from '@sentry/nextjs'
 
-const DEFAULT_TEMPLATE = '{seq}-{year}'
-const DEFAULT_PADDING = 3
+// [FACTUUR-UNIFY] Unified product-wide default: YEAR+sequence, padding 4
+// (e.g. 20260001) — matches lib/invoice-numbering and the free generator.
+const DEFAULT_TEMPLATE = '{year}{seq}'
+const DEFAULT_PADDING = 4
 
 interface DesiredConfig {
   template: string | null // null = system default

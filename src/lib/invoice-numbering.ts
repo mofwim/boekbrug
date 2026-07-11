@@ -2,7 +2,7 @@
 // [BOEK-031] Shared invoice number generator — May 2026
 // [FACTUUR-B] Atomic + customizable numbering — June 2026
 // =====================================================
-// Format (default):  "001-2026" / "CR-001-2026" / "PF-001-2026"
+// Format (default):  "20260001" / "CR-20260001" / "PF-20260001"
 // Custom (factuur):   driven by profiles.invoice_number_template, e.g.
 //                     "045-2026", "2026-045", "045/2026", "INV-045-2026",
 //                     "2764283" (continuous). creditnota / pro_forma always
@@ -21,10 +21,10 @@
 // -- same signature, same return shape -- so the two call sites
 // (api/invoice/send/route.ts, api/invoice/creditnota/route.ts) are untouched.
 //
-// SAFE TO SHIP STANDALONE: while profiles.invoice_number_template is NULL for
-// everyone (no onboarding template written yet), behavior is byte-for-byte the
-// old default ({seq}-{year}, padding 3) — the only change is that the race is
-// closed. Customization activates per-user the moment a template is stored.
+// When profiles.invoice_number_template is NULL (no onboarding template
+// written yet), the system default {year}{seq} padding 4 applies (e.g.
+// 20260001) — the unified product-wide format. Customization activates
+// per-user the moment a template is stored.
 // =====================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -34,9 +34,9 @@ export type InvoiceNumberType = 'factuur' | 'creditnota' | 'pro_forma'
 
 /**
  * Resolves the effective template + padding for a (user, type).
- *  - creditnota / pro_forma : always the system format (CR-/PF-){seq}-{year}.
+ *  - creditnota / pro_forma : always the system format (CR-/PF-){year}{seq}.
  *  - factuur                : the user's custom template if configured,
- *                             otherwise the default {seq}-{year}.
+ *                             otherwise the default {year}{seq}.
  */
 async function resolveFormat(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -46,8 +46,10 @@ async function resolveFormat(
 ): Promise<{ template: string; padding: number }> {
   const prefix = type === 'creditnota' ? 'CR-' : type === 'pro_forma' ? 'PF-' : ''
   // System default for every type (the factuur prefix is empty).
-  let template = `${prefix}{seq}-{year}`
-  let padding = 3
+  // [FACTUUR-UNIFY] YEAR+sequence, padding 4 — one format across the whole
+  // product (matches the free /factuur-maken generator, e.g. 20260001).
+  let template = `${prefix}{year}{seq}`
+  let padding = 4
 
   // Customization applies to factuur only (decision: factuur-only).
   if (type === 'factuur') {
@@ -61,7 +63,7 @@ async function resolveFormat(
     if (typeof custom === 'string' && custom.trim() !== '') {
       template = custom
       const p = prof?.invoice_number_padding
-      padding = typeof p === 'number' && p > 0 ? p : 3
+      padding = typeof p === 'number' && p > 0 ? p : 4
     }
   }
 
@@ -74,7 +76,7 @@ async function resolveFormat(
  * @param supabase — authenticated session client (carries auth.uid())
  * @param userId — sender_id (the freelancer); MUST equal auth.uid()
  * @param type — invoice type (prefix / customization selection)
- * @returns formatted invoice number, e.g. "045-2026", "CR-003-2026".
+ * @returns formatted invoice number, e.g. "20260045", "CR-20260003".
  *          Returns '' on allocation failure — the callers already guard with
  *          `if (!generated)` and return a clean 500. We NEVER fabricate a
  *          number on error (that would risk a duplicate or a gap).
