@@ -4,6 +4,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import NettoCalculator from './NettoCalculator'
+import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 
 export const metadata: Metadata = {
   title: 'Netto inkomen ZZP berekenen 2026 — hoeveel houd ik over? | BoekBrug',
@@ -106,6 +107,8 @@ export default function NettoInkomenPage() {
           geen fiscaal advies. Controleer bij twijfel de Belastingdienst.
         </p>
       </div>
+
+      <ToolsCrossLinks currentSlug="/netto-inkomen-zzp" />
     </div>
   )
 }

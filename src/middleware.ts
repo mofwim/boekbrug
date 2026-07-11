@@ -20,6 +20,7 @@ const PUBLIC_PATHS = [
   "/btw-aangifte-berekenen",
   "/netto-inkomen-zzp",
   "/factuur-scannen",
+  "/tools",
 ];
 
 function isPublic(pathname: string): boolean {
@@ -88,5 +89,9 @@ export const config = {
   // (Previously `|api` here meant API routes never refreshed the token → an
   // expired JWT reached Postgres → auth.uid() null → RLS 42501 on writes.)
   // API requests are handled early above (session refreshed, never redirected).
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // [SEO] sitemap.xml and robots.txt must be crawlable without a session, so
+  // exclude them from the matcher entirely — otherwise the auth guard below
+  // redirects an unauthenticated crawler to /login and search engines never
+  // see them.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)"],
 };

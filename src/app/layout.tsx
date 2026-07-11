@@ -1,6 +1,7 @@
 // [Design System] Roboto via next/font/google + Material Symbols CDN
 import type { Metadata } from "next";
 import { Roboto } from "next/font/google";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 const roboto = Roboto({
@@ -11,6 +12,7 @@ const roboto = Roboto({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "BoekBrug — Financieel Command Center",
   description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
   icons: {

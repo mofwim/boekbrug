@@ -4,6 +4,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import FactuurScanner from './FactuurScanner'
+import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 
 export const metadata: Metadata = {
   title: 'Factuur scannen met AI — gegevens automatisch uitlezen | BoekBrug',
@@ -112,6 +113,8 @@ export default function FactuurScannenPage() {
           uitgelezen bedragen en het BTW-tarief.
         </p>
       </div>
+
+      <ToolsCrossLinks currentSlug="/factuur-scannen" />
     </div>
   )
 }

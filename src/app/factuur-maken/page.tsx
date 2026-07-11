@@ -20,6 +20,7 @@ import dynamic from 'next/dynamic'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { formatEuroNL } from '@/lib/format-nl'
 import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 
 // react-pdf touches browser APIs — load the link client-side only (same
 // pattern as dashboard/invoice/[id]).
@@ -681,6 +682,8 @@ export default function GratisFactuurPage() {
         <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
           Gemaakt met BoekBrug — de brug tussen jou en je boekhouder.
         </p>
+
+        <ToolsCrossLinks currentSlug="/factuur-maken" />
       </div>
     </div>
   )

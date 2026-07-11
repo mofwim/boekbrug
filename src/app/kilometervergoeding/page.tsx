@@ -5,6 +5,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import KmCalculator from './KmCalculator'
+import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 
 export const metadata: Metadata = {
   title: 'Kilometervergoeding berekenen 2026 (€0,25/km) — gratis | BoekBrug',
@@ -141,6 +142,8 @@ export default function KilometervergoedingPage() {
           Belastingdienst.
         </p>
       </div>
+
+      <ToolsCrossLinks currentSlug="/kilometervergoeding" />
     </div>
   )
 }
