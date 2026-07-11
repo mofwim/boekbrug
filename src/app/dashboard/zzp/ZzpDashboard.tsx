@@ -154,6 +154,13 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/bank')}
           />
 
+          {/* [CASH-LEDGER] Kas — contante ontvangsten en uitgaven. */}
+          <ActionCard
+            icon="payments" iconBg="#00897B" iconColor="#fff"
+            label="Kas" sub="Contante ontvangsten en uitgaven"
+            onClick={() => router.push('/dashboard/kas')}
+          />
+
           {/* Financieel overzicht — BTW, omzet, cashflow (moved up: it matters). */}
           <ActionCard
             icon="bar_chart" iconBg={M3.warning} iconColor="#fff"

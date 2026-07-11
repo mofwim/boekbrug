@@ -144,11 +144,25 @@ export async function GET() {
     .filter((it) => it.dueDate && dayNumberFromIso(it.dueDate) - todayNum <= ATTENTION_WINDOW_DAYS)
     .sort((a, b) => dayNumberFromIso(a.dueDate as string) - dayNumberFromIso(b.dueDate as string));
 
+  // [CASH-LEDGER] Kas — opt-in by use. Only surfaced when the owner records cash, so a
+  // bank-only owner never sees it. Balance = money in − money out (transfers included:
+  // they change the drawer, just not the P&L).
+  const { data: cashRows } = await pipeline
+    .from("cash_entries")
+    .select("direction, amount")
+    .eq("user_id", user.id);
+  const cash = cashRows ?? [];
+  const kasBalance = cash.reduce(
+    (s, e) => s + (e.direction === "in" ? e.amount ?? 0 : -(e.amount ?? 0)),
+    0,
+  );
+
   return NextResponse.json({
     ok: true,
     toPay,
     toReceive,
     bank: { lastDate: lastBankDate, undocumented },
+    kas: { used: cash.length > 0, balance: kasBalance },
     attention: attentionAll.slice(0, 3),
     attentionCount: attentionAll.length,
   });

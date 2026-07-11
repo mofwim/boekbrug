@@ -52,6 +52,7 @@ interface TruthData {
   toPay: Bucket
   toReceive: Bucket
   bank: { lastDate: string | null; undocumented: number }
+  kas?: { used: boolean; balance: number }
   attention: AttentionItem[]
   attentionCount: number
 }
@@ -189,6 +190,24 @@ export default function DailyTruth() {
             </span>
           </button>
         </>
+      )}
+
+      {/* [CASH-LEDGER] Kas line — only when the owner actually uses cash. */}
+      {data.kas?.used && (
+        <button
+          onClick={() => router.push('/dashboard/kas')}
+          style={{
+            width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+            marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
+            background: M3.surface, boxShadow: EL1, border: `1px solid ${M3.outlineVariant}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>Kas — in kassa</div>
+          <span style={{ fontFamily: FONT_NUM, fontSize: 18, fontWeight: 700, color: data.kas.balance < 0 ? '#B3261E' : M3.onSurface }}>
+            {eur.format(data.kas.balance)}
+          </span>
+        </button>
       )}
 
       {/* ── Layer B: DIT HEEFT JE AANDACHT NODIG (item preview → Vandaag) ── */}
