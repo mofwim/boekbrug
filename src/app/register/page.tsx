@@ -1,7 +1,11 @@
 'use client'
 
 // src/app/register/page.tsx
-// [Google-OAuth] Add Google OAuth registration — May 2026
+// [COLD-START] Registration = identity only. Name + email + password (or Google).
+// Role and company details are collected in onboarding, which is purpose-built for
+// it (AI reads your details from an invoice, or a two-field manual form). Keeping
+// the very first screen light is the single biggest reduction in first-run friction
+// — and it removes the old duplication (company asked at register AND onboarding).
 
 import { Suspense, useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -9,14 +13,9 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
 
 function RegisterContent() {
-  const [step, setStep] = useState(1)
-  const [role, setRole] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
-  const [companyName, setCompanyName] = useState('')
-  const [kvk, setKvk] = useState('')
-  const [btw, setBtw] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
@@ -38,28 +37,13 @@ function RegisterContent() {
     }
   }, [])
 
-  // [Google-OAuth] Google register/login via Supabase OAuth
-  // Role is stored in step 1 — passed as state through OAuth so callback can save it
+  // [AUTH-FRONTDOOR] Google sign-up — basic identity scopes only. Gmail import is a
+  // separate, in-context consent (/api/email/connect). Role is chosen in onboarding.
   async function handleGoogleRegister() {
-    if (!role) {
-      // Step 1 not done yet — show role picker first
-      setStep(1)
-      return
-    }
-
     setGoogleLoading(true)
     setError('')
-
-    // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
-    // [AUTH-FRONTDOOR] Sign-in needs only basic identity scopes. Gmail import is a
-    // SEPARATE, in-context consent (/api/email/connect) — requesting gmail.readonly
-    // here made Google warn "this app wants to read your email" for every visitor
-    // and forced the whole OAuth client into restricted-scope (CASA) review. The
-    // role the user picked in step 1 is re-confirmed in onboarding, so it need not
-    // ride along here. offline/consent params are dropped: they only fetch a Google
-    // refresh token for Gmail API access, which this login flow never uses.
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -69,7 +53,6 @@ function RegisterContent() {
     })
 
     clearTimeout(resetTimer)
-
     if (error) {
       setError('Google registratie mislukt — probeer opnieuw')
       setGoogleLoading(false)
@@ -90,20 +73,12 @@ function RegisterContent() {
       password,
       options: {
         // [AUTH-FRONTDOOR] The confirmation link must return through our PKCE
-        // callback so the code is exchanged for a session. Landing on the site
-        // root would drop the code and leave the user unauthenticated.
+        // callback so the code is exchanged for a session (landing on the site root
+        // would drop the code and leave the user unauthenticated).
         emailRedirectTo: `${window.location.origin}/api/auth/callback`,
-        // [AUTH-FRONTDOOR] Carry the registration data as user metadata. When email
-        // confirmation is ON there is NO session after signUp, so a direct,
-        // RLS-protected profile write is impossible here; the callback applies this
-        // metadata once the user confirms and a real session exists.
-        data: {
-          full_name: fullName,
-          company_name: companyName,
-          kvk_number: kvk,
-          btw_number: btw,
-          role,
-        },
+        // Only the name — the on_auth_user_created trigger reads full_name from here,
+        // so it is set even before the user confirms. Role/company come in onboarding.
+        data: { full_name: fullName },
       },
     })
 
@@ -124,20 +99,17 @@ function RegisterContent() {
     }
 
     // Supabase returns a user with EMPTY identities[] when the email already exists
-    // (security measure to avoid leaking which emails are registered).
-    // Detect this and show the correct message instead of failing on profile insert.
+    // (a privacy measure that avoids leaking which addresses are registered).
     if (data.user.identities && data.user.identities.length === 0) {
       setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
       setLoading(false)
       return
     }
 
-    // [AUTH-FRONTDOOR] Decide on the SESSION before any profile write. When email
-    // confirmation is enabled, signUp returns a user but NO session — the account
-    // exists and the mail is sent, but auth.uid() is null, so an RLS-protected
-    // profile write would fail and surface a FALSE "Profiel aanmaken mislukt" error
-    // even though registration succeeded. The data is safely in user metadata; the
-    // callback enriches the profile after the user confirms.
+    // [AUTH-FRONTDOOR] With email confirmation ON, signUp returns a user but NO
+    // session. The account exists and the mail is sent; the trigger already created
+    // the profile (with the name from metadata). Nothing to write here — just guide
+    // the user to their inbox. (A profile write now would fail RLS: auth.uid() null.)
     const { data: sessionData } = await supabase.auth.getSession()
     if (!sessionData.session) {
       setEmailSent(true)
@@ -145,31 +117,9 @@ function RegisterContent() {
       return
     }
 
-    // [BOEK-015] Confirmation disabled → we have a session now. The
-    // on_auth_user_created trigger already inserted a bare profile row; UPSERT
-    // enriches it with the real registration data (avoids a 23505 on INSERT).
-    // onboarding_step 4: register already collected role + company + KVK + BTW,
-    // so the wizard skips Welcome/Role (page.tsx roleWasSet reads step>=2).
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: data.user.id,
-        role,
-        full_name: fullName,
-        company_name: companyName,
-        kvk_number: kvk,
-        btw_number: btw,
-        email,
-        onboarding_step: 4,
-      }, { onConflict: 'id' })
-
-    if (profileError) {
-      console.error('[AUTH-FRONTDOOR] register profile upsert failed:', profileError)
-      setError('Profiel aanmaken mislukt — probeer opnieuw')
-      setLoading(false)
-      return
-    }
-
+    // Confirmation disabled → we have a session. The trigger-created profile is
+    // already complete for onboarding (role/company are collected there), so we just
+    // move on. Full onboarding starts at the welcome screen.
     const redirectUrl = searchParams.get('redirect')
     router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/onboarding')
   }
@@ -179,20 +129,20 @@ function RegisterContent() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
         <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
-          <div style={{ fontSize: "48px", marginBottom: "16px" }}>📧</div>
-          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#1c1c1e", margin: "0 0 8px" }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📧</div>
+          <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1c1c1e', margin: '0 0 8px' }}>
             Controleer je e-mail
           </h1>
-          <p style={{ fontSize: "15px", color: "#6b6b6e", margin: "0 0 24px" }}>
+          <p style={{ fontSize: '15px', color: '#6b6b6e', margin: '0 0 24px' }}>
             We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
             Klik op de link om je account te activeren.
           </p>
           <a
             href="/login"
             style={{
-              display: "inline-block", padding: "14px 24px", borderRadius: "12px",
-              background: "#1A73E8", color: "#fff", textDecoration: "none",
-              fontSize: "15px", fontWeight: 600,
+              display: 'inline-block', padding: '14px 24px', borderRadius: '12px',
+              background: '#1A73E8', color: '#fff', textDecoration: 'none',
+              fontSize: '15px', fontWeight: 600,
             }}
           >
             Naar inloggen
@@ -208,116 +158,81 @@ function RegisterContent() {
 
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-gray-900">BoekBrug</h1>
-          <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
+          <p className="text-gray-500 text-sm mt-1">Account aanmaken — in één minuut</p>
         </div>
 
-        {/* Stap 1 — Rol kiezen */}
-        {step === 1 && (
-          <div className="space-y-4">
-            <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
-            <button
-              onClick={() => { setRole('zzper'); setStep(2) }}
-              className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
-            >
-              <p className="font-medium text-gray-900">ZZP'er</p>
-              <p className="text-sm text-gray-500">Ik stuur en ontvang facturen</p>
-            </button>
-            <button
-              onClick={() => { setRole('accountant'); setStep(2) }}
-              className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
-            >
-              <p className="font-medium text-gray-900">Boekhouder</p>
-              <p className="text-sm text-gray-500">Ik beheer facturen van mijn klanten</p>
-            </button>
+        {/* Google sign-up */}
+        <button
+          onClick={handleGoogleRegister}
+          disabled={googleLoading || loading}
+          className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50 mb-6"
+        >
+          {googleLoading ? (
+            <span className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+          ) : (
+            <GoogleIcon />
+          )}
+          {googleLoading ? 'Bezig met verbinden...' : 'Registreren met Google'}
+        </button>
+
+        {/* Divider */}
+        <div className="flex items-center gap-3 mb-6">
+          <div className="flex-1 h-px bg-gray-100" />
+          <span className="text-xs text-gray-400">of met e-mail</span>
+          <div className="flex-1 h-px bg-gray-100" />
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
+            <input
+              type="text" value={fullName} onChange={e => setFullName(e.target.value)}
+              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Jan de Vries"
+              style={{ fontSize: '16px' }}
+            />
           </div>
-        )}
-
-        {/* Stap 2 — Kies methode */}
-        {step === 2 && (
-          <div className="space-y-4">
-
-            {/* [Google-OAuth] Google register button — shown prominently in step 2 */}
-            <button
-              onClick={handleGoogleRegister}
-              disabled={googleLoading || loading}
-              className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50"
-            >
-              {googleLoading ? (
-                <span className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
-              ) : (
-                <GoogleIcon />
-              )}
-              {googleLoading ? 'Bezig met verbinden...' : 'Registreren met Google'}
-            </button>
-
-            {/* Divider */}
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-gray-100" />
-              <span className="text-xs text-gray-400">of met e-mail</span>
-              <div className="flex-1 h-px bg-gray-100" />
-            </div>
-
-            {/* Email + password fields */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
-              <input type="text" value={fullName} onChange={e => setFullName(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Jan de Vries"
-                style={{ fontSize: '16px' }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Bedrijfsnaam</label>
-              <input type="text" value={companyName} onChange={e => setCompanyName(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Jouw Bedrijf BV"
-                style={{ fontSize: '16px' }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">KVK-nummer</label>
-              <input type="text" value={kvk} onChange={e => setKvk(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="12345678"
-                style={{ fontSize: '16px' }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">BTW-nummer</label>
-              <input type="text" value={btw} onChange={e => setBtw(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="NL123456789B01"
-                style={{ fontSize: '16px' }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="jouw@email.nl"
-                style={{ fontSize: '16px' }} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleRegister()}
-                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="••••••••"
-                style={{ fontSize: '16px' }} />
-            </div>
-
-            <ErrorMessage message={error} />
-
-            <button onClick={handleRegister} disabled={loading || googleLoading}
-              className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50">
-              {loading ? 'Bezig...' : 'Account aanmaken'}
-            </button>
-
-            <button onClick={() => setStep(1)}
-              className="w-full text-gray-500 text-sm hover:text-gray-700">
-              ← Terug
-            </button>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+            <input
+              type="email" value={email} onChange={e => setEmail(e.target.value)}
+              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="jouw@email.nl"
+              style={{ fontSize: '16px' }}
+            />
           </div>
-        )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
+            <input
+              type="password" value={password} onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleRegister()}
+              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Minimaal 6 tekens"
+              style={{ fontSize: '16px' }}
+            />
+          </div>
+
+          <ErrorMessage message={error} />
+
+          <button
+            onClick={handleRegister}
+            disabled={loading || googleLoading}
+            className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
+          >
+            {loading ? 'Bezig...' : 'Account aanmaken'}
+          </button>
+
+          <button
+            onClick={() => {
+              const redirectUrl = searchParams.get('redirect')
+              router.push(redirectUrl ? `/login?redirect=${encodeURIComponent(redirectUrl)}` : '/login')
+            }}
+            disabled={loading || googleLoading}
+            className="w-full border border-gray-200 text-gray-700 rounded-xl py-2.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            Al een account? Inloggen
+          </button>
+        </div>
 
       </div>
     </div>
