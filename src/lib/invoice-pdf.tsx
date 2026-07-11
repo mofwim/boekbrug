@@ -38,7 +38,14 @@ const styles = StyleSheet.create({
     lineHeight: 1.4,
   },
 
-  // Top: klant (left) · afzender + logo (right)
+  // Logo sits in its own top-right row, so the two party blocks below it start
+  // on the SAME line (klant and afzender aligned, like the reference).
+  logoRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 14,
+  },
+  // Top: klant (left) · afzender (right) — aligned, below the logo row.
   topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -46,7 +53,7 @@ const styles = StyleSheet.create({
   },
   klantBlock: { width: '48%' },
   // Afzender sits in the right half of the page, but its text reads
-  // LEFT-aligned like the reference — only the logo hugs the right edge.
+  // LEFT-aligned like the reference.
   afzenderBlock: { width: '48%' },
   logo: {
     width: 60,
@@ -55,8 +62,6 @@ const styles = StyleSheet.create({
     backgroundColor: NAVY,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
-    alignSelf: 'flex-end',
   },
   logoText: {
     color: '#ffffff',
@@ -225,7 +230,15 @@ export function InvoicePDF({
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        {/* Top — klant (left) · afzender + logo (right) */}
+        {/* Auto logo — its own top-right row, so klant and afzender below it
+            start on the same line (aligned, like the reference). */}
+        <View style={styles.logoRow}>
+          <View style={styles.logo}>
+            <Text style={styles.logoText}>{initials}</Text>
+          </View>
+        </View>
+
+        {/* Parties — klant (left) · afzender (right), aligned */}
         <View style={styles.topRow}>
           {/* Klant — Art. 35a sub c: name AND address of the customer */}
           <View style={styles.klantBlock}>
@@ -240,11 +253,8 @@ export function InvoicePDF({
             ) : null}
           </View>
 
-          {/* Afzender — Art. 35a sub a/b: name+address, BTW-id, KVK + auto logo */}
+          {/* Afzender — Art. 35a sub a/b: name+address, BTW-id, KVK */}
           <View style={styles.afzenderBlock}>
-            <View style={styles.logo}>
-              <Text style={styles.logoText}>{initials}</Text>
-            </View>
             <Text style={styles.partyName}>{afzenderName}</Text>
             <Text style={styles.partyText}>{profile.address}</Text>
             <Text style={styles.partyText}>
