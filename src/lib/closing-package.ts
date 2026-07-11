@@ -284,7 +284,17 @@ export function buildOverviewCsv(
       cur.btw += inv.btw_amount ?? 0;
       byRate.set(rate, cur);
     }
-    for (const rate of [21, 9, 0]) {
+    // [BTW-RATE-GUARD] Print the standard NL rates first (21/9/0), then ANY
+    // other rate present — e.g. a blended rate from a mixed-rate invoice whose
+    // btw_amount/total_ex_btw derive to something like 17%. Previously the loop
+    // only printed [21,9,0], so such an invoice's turnover + BTW vanished from
+    // this overview (a silent omission). Now an unexpected % row surfaces it so
+    // the accountant checks the source invoice instead of the amount being lost.
+    const knownRates = [21, 9, 0];
+    const otherRates = [...byRate.keys()]
+      .filter((r) => !knownRates.includes(r))
+      .sort((a, b) => b - a);
+    for (const rate of [...knownRates, ...otherRates]) {
       const v = byRate.get(rate);
       if (v && (v.excl !== 0 || v.btw !== 0)) {
         lines.push([label, `${rate}%`, EUR(v.excl), EUR(v.btw)].map(esc).join(";"));
@@ -347,11 +357,15 @@ interface AssembleInput {
    *  invoices only. Drives the stamp, the date-prefixed filename, and the
    *  betaald/ vs openstaand/ split. Absent id → treated as no payment date. */
   paymentDates: Map<string, PaymentDateInfo>;
+  /** [BANK-COVERAGE] true when bank_transactions exist for this quarter — the
+   *  honest "do we have bank data" signal (statement files upload after the
+   *  quarter closes, so their presence alone under-reports coverage). */
+  hasBankData: boolean;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -423,10 +437,21 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     zip.file(`bankafschrift/${safe(bf.name)}`, bf.bytes);
     filesIncluded++;
   }
-  if (bankFiles.length === 0) {
+  // [BANK-COVERAGE] Distinguish "no bank data at all" from "data present but the
+  // original file wasn't attached". The old code warned on bankFiles.length===0,
+  // which fired on nearly every package: the statement is uploaded AFTER the
+  // quarter closes, so it was rarely matched — a false "missing" that trained
+  // the accountant to ignore warnings. hasBankData (transactions dated in the
+  // quarter) is the real coverage signal.
+  if (!hasBankData) {
     warnings.push({
       code: "bank_missing",
-      message: "Bankafschrift niet beschikbaar voor dit kwartaal — upload het (opnieuw) zodat het wordt meegeleverd.",
+      message: "Geen banktransacties of bankafschrift gevonden voor dit kwartaal — upload het bankafschrift zodat het wordt meegeleverd.",
+    });
+  } else if (bankFiles.length === 0) {
+    warnings.push({
+      code: "bank_file_missing",
+      message: "Banktransacties zijn aanwezig, maar het originele bankafschrift-bestand kon niet automatisch worden bijgevoegd.",
     });
   }
 
@@ -566,16 +591,20 @@ export async function summarizeClosingPackage(args: {
     else missingPdf.push(inv.invoice_number ?? inv.id);
   }
 
-  // Bank statement present for the quarter? (BANK-RAW-STORE: doc_type='bankafschrift')
-  const { data: bankDocs } = await supabase
-    .from("documents")
+  // [BANK-COVERAGE] "Do we have bank data for this quarter?" is answered by the
+  // bank TRANSACTIONS dated in the quarter — NOT the statement file's upload
+  // time. A Q1 statement is uploaded in Q2 (after the quarter closes), so the
+  // old created_at filter almost always missed it and falsely reported "geen
+  // bankafschrift" in the readiness panel. Parsed transactions are the honest
+  // coverage signal.
+  const { data: bankTx } = await supabase
+    .from("bank_transactions")
     .select("id")
     .eq("user_id", ownerId)
-    .eq("doc_type", "bankafschrift")
-    .gte("created_at", start)
-    .lte("created_at", `${end}T23:59:59`)
+    .gte("date", start)
+    .lte("date", end)
     .limit(1);
-  const bankStatementIncluded = (bankDocs ?? []).length > 0;
+  const bankStatementIncluded = (bankTx ?? []).length > 0;
 
   // Honest warnings — the real gaps, listed specifically.
   if (verified.length === 0) {
@@ -591,7 +620,7 @@ export async function summarizeClosingPackage(args: {
     });
   }
   if (!bankStatementIncluded) {
-    warnings.push({ code: "no_bank_statement", message: "Geen bankafschrift gevonden voor dit kwartaal." });
+    warnings.push({ code: "no_bank_statement", message: "Geen banktransacties gevonden voor dit kwartaal — upload het bankafschrift." });
   }
 
   return {
@@ -713,6 +742,19 @@ export async function buildClosingPackageZip(args: {
   const bankFilesRaw = await Promise.all(bankPaths.map((p) => dl(p.path, p.name)));
   const bankFiles = bankFilesRaw.filter((f): f is PackageFile => f !== null);
 
+  // [BANK-COVERAGE] Real coverage signal: bank transactions DATED in the quarter,
+  // not the statement file's upload time. Statements are uploaded after the
+  // quarter closes (aangifte deadline is the month after), so a created_at-based
+  // check falsely reported "geen bankafschrift" on almost every package.
+  const { data: bankTxRows } = await supabase
+    .from("bank_transactions")
+    .select("id")
+    .eq("user_id", ownerId)
+    .gte("date", start)
+    .lte("date", end)
+    .limit(1);
+  const hasBankData = (bankTxRows ?? []).length > 0;
+
   // ── [BRUG-FILES-SHARED] Owner-shared general docs for this quarter ──
   // shared=true (the field the accountant RLS reads), tied to the quarter via
   // period='{year}-Q{n}'. Exclude invoices (invoice_id set) and bank statements
@@ -753,6 +795,7 @@ export async function buildClosingPackageZip(args: {
     kilometerFiles: [], // not a feature yet; passthrough hook reserved
     sharedFiles,
     paymentDates,
+    hasBankData,
     warnings,
   });
 }
