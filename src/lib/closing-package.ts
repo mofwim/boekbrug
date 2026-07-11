@@ -456,15 +456,14 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   }
 
   // ── kilometers/ (optional — not a BoekBrug feature; passthrough if present) ──
+  // No "missing" warning: BoekBrug doesn't track kilometer registration and it
+  // only applies to owners who drive a business car, so an unconditional warning
+  // fired on 100% of packages — pure noise that trained the accountant to ignore
+  // warnings. When a real kilometer feature exists, add a conditional warning
+  // that fires only when it actually applies. Passthrough hook kept for that day.
   for (const kf of kilometerFiles) {
     zip.file(`kilometers/${safe(kf.name)}`, kf.bytes);
     filesIncluded++;
-  }
-  if (kilometerFiles.length === 0) {
-    warnings.push({
-      code: "kilometers_missing",
-      message: "Kilometerregistratie niet aangetroffen — voeg toe indien van toepassing.",
-    });
   }
 
   // ── overige-documenten/ ([BRUG-FILES-SHARED] owner-shared general docs) ──

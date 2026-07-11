@@ -101,3 +101,16 @@ test("bank file attached → no bank warning at all", async () => {
   assert.ok(!codes.includes("bank_missing"), "no bank_missing");
   assert.ok(!codes.includes("bank_file_missing"), "no bank_file_missing");
 });
+
+// ─── Kilometers is not a tracked feature → never warn (was 100%-fire noise) ────
+
+test("kilometers_missing is never warned", async () => {
+  // Every combination — there is no kilometer feature, so the package must not
+  // claim a kilometer registration is "missing" on any package.
+  for (const hasBankData of [true, false]) {
+    for (const withFile of [true, false]) {
+      const codes = await warningsFor({ hasBankData, withFile });
+      assert.ok(!codes.includes("kilometers_missing"), "no kilometers_missing warning");
+    }
+  }
+});
