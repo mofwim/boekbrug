@@ -28,7 +28,9 @@ const PDFDownloadLink = dynamic(
 )
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-type InvoiceType = 'factuur' | 'creditnota' | 'offerte' | 'pro_forma'
+// The free tool stays deliberately simple: only a factuur and its creditnota.
+// Offerte / pro forma live in the full product.
+type InvoiceType = 'factuur' | 'creditnota'
 
 type Sender = {
   company_name: string
@@ -66,15 +68,27 @@ const NR_KEY = 'boekbrug.gratis-factuur.lastnr'
 const DOC_LABELS: Record<InvoiceType, string> = {
   factuur: 'Factuur',
   creditnota: 'Creditnota',
-  offerte: 'Offerte',
-  pro_forma: 'Pro forma',
 }
 
 const NL_BTW_RE = /^NL\d{9}B\d{2}$/i
 
-// Round to whole cents (half-up, EPSILON-guarded against float noise).
+// Round to whole cents, symmetric around zero so a creditnota's -2.105 mirrors
+// a factuur's 2.105 exactly (Math.round alone rounds halves toward +∞).
 function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100
+  const v = Number(n) || 0
+  return (v < 0 ? -1 : 1) * (Math.round(Math.abs(v) * 100 + 1e-9) / 100)
+}
+
+// Parse a user-typed amount, tolerant of Dutch formatting:
+//   "1.250,00" → 1250.00   "1,5" → 1.5   "1250.00"/"1250" → 1250
+// A comma means Dutch decimals (dots are thousands separators); with no comma a
+// dot is treated as the decimal point (English-style input).
+function parseNum(s: string): number {
+  const t = String(s ?? '').trim()
+  if (!t) return 0
+  const normalized = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t
+  const n = parseFloat(normalized)
+  return isFinite(n) ? n : 0
 }
 
 // Timezone-proof today (Europe/Amsterdam) as ISO yyyy-mm-dd, no Date math traps.
@@ -296,8 +310,8 @@ export default function GratisFactuurPage() {
   const numericLines = useMemo(
     () =>
       lines.map((l) => {
-        const qty = parseFloat(l.quantity.replace(',', '.')) || 0
-        const price = parseFloat(l.unit_price.replace(',', '.')) || 0
+        const qty = parseNum(l.quantity)
+        const price = parseNum(l.unit_price)
         return {
           description: l.description,
           quantity: qty,
@@ -376,10 +390,14 @@ export default function GratisFactuurPage() {
 
   // On download: remember the number just used, then advance the field to the
   // next one so the following invoice is pre-numbered without any user effort.
+  // ONLY the factuur series is auto-managed — a creditnota carries its own
+  // reference (usually the original factuur's), so it must not consume or
+  // advance the factuur sequence (Belastingdienst: gapless invoice numbering).
   function handleDownload() {
     // Ignore clicks while the PDF is still rendering — the browser has nothing
     // to download yet, so advancing would skip a number.
     if (pdfLoadingRef.current) return
+    if (invoiceType !== 'factuur') return
     try {
       localStorage.setItem(NR_KEY, invoiceNumber)
     } catch {
@@ -570,8 +588,8 @@ export default function GratisFactuurPage() {
             <span />
           </div>
           {lines.map((l, i) => {
-            const qty = parseFloat(l.quantity.replace(',', '.')) || 0
-            const price = parseFloat(l.unit_price.replace(',', '.')) || 0
+            const qty = parseNum(l.quantity)
+            const price = parseNum(l.unit_price)
             return (
               <div key={i} style={s.lineRow}>
                 <input
