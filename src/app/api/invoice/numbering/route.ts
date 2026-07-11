@@ -89,8 +89,12 @@ export async function POST(req: NextRequest) {
       .eq('id', user.id)
       .single()
     const currentTemplate = (prof?.invoice_number_template ?? null) as string | null
+    // Default template ⇒ DEFAULT_PADDING (mirror resolveFormat); stored padding
+    // only meaningful for a custom template.
     const currentPadding =
-      typeof prof?.invoice_number_padding === 'number' ? prof.invoice_number_padding : DEFAULT_PADDING
+      currentTemplate !== null && typeof prof?.invoice_number_padding === 'number'
+        ? prof.invoice_number_padding
+        : DEFAULT_PADDING
 
     // 2. lock (date-based, reliable — no invoice_number string parsing)
     let lockQ = supabase
@@ -227,7 +231,14 @@ export async function GET() {
       .eq('id', user.id)
       .single()
     const template = (prof?.invoice_number_template ?? null) as string | null
-    const padding = typeof prof?.invoice_number_padding === 'number' ? prof.invoice_number_padding : DEFAULT_PADDING
+    // Mirror resolveFormat: the stored padding only applies to a CUSTOM
+    // template. The default template always uses DEFAULT_PADDING, regardless of
+    // the DB column (whose historical default is 3, not 4) — otherwise the
+    // preview shows "2026001" while the real first invoice is "20260001".
+    const padding =
+      template !== null && typeof prof?.invoice_number_padding === 'number'
+        ? prof.invoice_number_padding
+        : DEFAULT_PADDING
     const effTemplate = template ?? DEFAULT_TEMPLATE
     const yearlyReset = effTemplate.includes('{year}')
     const counterYear = yearlyReset ? year : 0
