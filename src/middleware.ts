@@ -21,6 +21,9 @@ const PUBLIC_PATHS = [
   "/netto-inkomen-zzp",
   "/factuur-scannen",
   "/tools",
+  "/privacy",
+  "/voorwaarden",
+  "/cookies",
 ];
 
 function isPublic(pathname: string): boolean {
