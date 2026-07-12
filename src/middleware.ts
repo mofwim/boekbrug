@@ -5,11 +5,33 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// [GRATIS-FACTUUR] /factuur-maken is the login-free standalone invoice
-// generator — reachable by anyone, no session required.
-const PUBLIC_PATHS = ["/login", "/register", "/invite", "/pay", "/factuur-maken"];
+// Login-free public lead-gen tools — reachable by anyone, no session required:
+// /factuur-maken (invoice generator), /btw-berekenen (VAT calculator),
+// /kilometervergoeding (mileage), /uurtarief-berekenen (ZZP hourly rate).
+const PUBLIC_PATHS = [
+  "/login",
+  "/register",
+  "/wachtwoord-vergeten",
+  "/wachtwoord-herstellen",
+  "/invite",
+  "/pay",
+  "/factuur-maken",
+  "/btw-berekenen",
+  "/kilometervergoeding",
+  "/uurtarief-berekenen",
+  "/btw-aangifte-berekenen",
+  "/netto-inkomen-zzp",
+  "/factuur-scannen",
+  "/tools",
+  "/privacy",
+  "/voorwaarden",
+  "/cookies",
+];
 
 function isPublic(pathname: string): boolean {
+  // The homepage is a public landing page. Match it EXACTLY — never via the
+  // prefix rule below, or "/" would make every route public.
+  if (pathname === "/") return true;
   return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 }
 
@@ -75,5 +97,10 @@ export const config = {
   // (Previously `|api` here meant API routes never refreshed the token → an
   // expired JWT reached Postgres → auth.uid() null → RLS 42501 on writes.)
   // API requests are handled early above (session refreshed, never redirected).
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // [SEO] sitemap.xml, robots.txt and the generated social images
+  // (opengraph-image / twitter-image) must be fetchable without a session, so
+  // exclude them from the matcher entirely — otherwise the auth guard below
+  // redirects an unauthenticated crawler to /login and search engines / social
+  // scrapers never see them.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|opengraph-image|twitter-image).*)"],
 };

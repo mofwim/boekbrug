@@ -4,7 +4,7 @@
 // BOEK-004: Global Error Boundary — يمسك أي خطأ غير متوقع
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 export default function GlobalError({
   error,
@@ -13,8 +13,6 @@ export default function GlobalError({
   error: Error & { digest?: string }
   reset: () => void
 }) {
-  const router = useRouter()
-
   useEffect(() => {
     // يمكن إضافة error logging هنا لاحقاً
     console.error('Global error:', error)
@@ -24,28 +22,28 @@ export default function GlobalError({
     <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center px-6">
       <div className="text-center space-y-4 max-w-sm">
 
-        <p className="text-5xl font-bold text-gray-200">!</p>
+        <p className="text-5xl font-bold text-[#c7c7cc]">!</p>
 
         <div className="space-y-1">
-          <h1 className="text-lg font-bold text-gray-900">Er is iets misgegaan</h1>
-          <p className="text-sm text-gray-400">
+          <h1 className="text-lg font-bold text-[#1c1c1e]">Er is iets misgegaan</h1>
+          <p className="text-sm text-[#8a8a8e]">
             Er is een onverwachte fout opgetreden. Probeer het opnieuw.
           </p>
         </div>
 
-        <div className="flex gap-3 justify-center pt-2">
+        <div className="flex flex-wrap gap-3 justify-center pt-2">
           <button
             onClick={reset}
-            className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
+            className="bg-[#007aff] text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity"
           >
             Opnieuw proberen
           </button>
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors"
+          <Link
+            href="/"
+            className="border border-[#e5e5ea] text-[#007aff] px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-[#f9f9fb] transition-colors"
           >
-            Naar dashboard
-          </button>
+            Terug naar de startpagina
+          </Link>
         </div>
 
       </div>
