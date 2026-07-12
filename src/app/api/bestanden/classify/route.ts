@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { classifyDocument } from "@/lib/ai";
 import { findFolderByPath } from "@/lib/bestanden";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 const NL_MONTHS: Record<number, string> = {
   1: "januari", 2: "februari", 3: "maart",
@@ -31,6 +32,13 @@ export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+
+  const limit = await checkRateLimit({
+    userId: user.id,
+    endpoint: "/api/bestanden/classify",
+    ...RATE_LIMITS.DOCUMENT_CLASSIFY,
+  });
+  if (!limit.allowed) return rateLimitResponse(limit);
 
   const body = await req.json() as { documentId: string; fileName: string };
   if (!body.documentId) return NextResponse.json({ error: "documentId vereist" }, { status: 400 });

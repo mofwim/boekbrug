@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { sendClientInvite } from '@/lib/email'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 // المحاسب يدعو عميله
 export async function POST(request: NextRequest) {
@@ -10,6 +11,13 @@ export async function POST(request: NextRequest) {
     // تحقق من المستخدم
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const limit = await checkRateLimit({
+      userId: user.id,
+      endpoint: '/api/invite/client',
+      ...RATE_LIMITS.ACCOUNTANT_INVITE,
+    })
+    if (!limit.allowed) return rateLimitResponse(limit)
 
     const body = await request.json()
     const clientEmail = (body.clientEmail ?? '').trim().toLowerCase()

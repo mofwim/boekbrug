@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { syncUserEmails, deleteEmailConnection } from '@/lib/email-integration'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 // ── POST — run sync ───────────────────────────────────────────────────────────
 
@@ -17,6 +18,13 @@ export async function POST(_req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
   }
+
+  const limit = await checkRateLimit({
+    userId: user.id,
+    endpoint: '/api/email/sync',
+    ...RATE_LIMITS.EMAIL_SYNC,
+  })
+  if (!limit.allowed) return rateLimitResponse(limit)
 
   // syncUserEmails handles everything:
   // 1. get connection + refresh token
