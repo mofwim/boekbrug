@@ -16,11 +16,11 @@ import PublicFooter from '@/components/public-footer'
 export const metadata: Metadata = {
   title: 'BoekBrug — facturen, BTW en boekhouding voor ZZP’ers',
   description:
-    'BoekBrug is de brug tussen ZZP’ers en hun boekhouder. Maak en scan facturen, houd je BTW bij en werk samen met je accountant. Plus gratis tools zonder account.',
+    'BoekBrug is de brug tussen jou en je boekhouder. Maak en scan facturen, houd je BTW bij en werk samen met je boekhouder. Plus gratis tools, zonder account.',
   alternates: { canonical: '/' },
   openGraph: {
     title: 'BoekBrug — de brug tussen jou en je boekhouder',
-    description: 'Facturen maken en scannen, BTW bijhouden en samenwerken met je accountant. Gratis tools zonder account.',
+    description: 'Maak en scan facturen, houd je BTW bij en werk samen met je boekhouder. Gratis tools, zonder account.',
     type: 'website',
   },
 }
@@ -30,10 +30,10 @@ const btnPrimary: React.CSSProperties = { backgroundColor: '#007aff', color: '#f
 const btnGhost: React.CSSProperties = { backgroundColor: '#fff', color: '#007aff', fontSize: 15, fontWeight: 600, padding: '13px 24px', borderRadius: 9999, border: '1.5px solid #007aff', textDecoration: 'none', display: 'inline-block' }
 
 const features = [
-  { emoji: '🧾', title: 'Facturen die kloppen', body: 'Maak in seconden een factuur die aan alle Nederlandse eisen voldoet, en download hem als PDF.' },
-  { emoji: '📄', title: 'Scan en klaar', body: 'Upload een foto of PDF; de AI leest leverancier, bedrag en BTW automatisch uit.' },
-  { emoji: '📊', title: 'BTW altijd bij', body: 'Je omzet en kosten worden per kwartaal opgeteld — klaar voor de aangifte, zonder gepuzzel.' },
-  { emoji: '🤝', title: 'Eén lijn met je boekhouder', body: 'Deel je administratie met je accountant zonder mappen vol PDF’s heen en weer te mailen.' },
+  { emoji: '🧾', title: 'Facturen die kloppen', body: 'Maak snel een factuur die klopt met de Nederlandse regels. Download hem als PDF.' },
+  { emoji: '📄', title: 'Scan en klaar', body: 'Upload een foto of PDF. De AI leest de leverancier, het bedrag en de BTW voor je uit.' },
+  { emoji: '📊', title: 'BTW altijd bij', body: 'Je omzet en BTW worden per kwartaal opgeteld. Zo is je aangifte zo klaar.' },
+  { emoji: '🤝', title: 'Eén lijn met je boekhouder', body: 'Deel je facturen met je boekhouder. Geen mappen vol PDF’s meer mailen.' },
 ]
 
 export default async function Home() {
@@ -64,7 +64,7 @@ export default async function Home() {
           De brug tussen jou en je boekhouder
         </h1>
         <p style={{ fontSize: 19, color: '#6b6b6e', lineHeight: 1.6, margin: '0 auto 32px', maxWidth: 560 }}>
-          Maak en scan facturen, houd je BTW moeiteloos bij en werk soepel samen met je accountant — alles op één plek.
+          Maak en scan facturen, houd je BTW makkelijk bij en werk samen met je boekhouder. Alles op één plek.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Link href="/register" style={btnPrimary}>Gratis beginnen</Link>
@@ -106,7 +106,7 @@ export default async function Home() {
       {/* CTA band */}
       <section style={{ ...wrap, paddingBottom: 72 }}>
         <div style={{ background: 'linear-gradient(135deg, #007aff, #0056d6)', borderRadius: 24, padding: '48px 32px', textAlign: 'center', color: '#fff' }}>
-          <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: -0.5, margin: '0 0 10px' }}>Klaar om je administratie los te laten?</h2>
+          <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: -0.5, margin: '0 0 10px' }}>Minder tijd kwijt aan je administratie?</h2>
           <p style={{ fontSize: 17, opacity: 0.92, margin: '0 auto 24px', maxWidth: 480 }}>
             Zet vandaag de eerste stap. Gratis account, in een minuut geregeld.
           </p>

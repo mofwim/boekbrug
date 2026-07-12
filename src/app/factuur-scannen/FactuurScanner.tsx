@@ -258,7 +258,7 @@ export default function FactuurScanner() {
 
       <div style={{ marginTop: 22, background: '#f9f9fb', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c3c43' }}>
-          Onbeperkt scannen én automatisch boeken?{' '}
+          Onbeperkt scannen en alles op één plek?{' '}
           <strong style={{ color: '#1c1c1e' }}>BoekBrug doet het voor je.</strong>
         </div>
         <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>

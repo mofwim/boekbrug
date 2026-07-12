@@ -24,7 +24,7 @@ export const metadata: Metadata = {
 const faq = [
   {
     q: 'Hoeveel is de kilometervergoeding in 2026?',
-    a: 'De onbelaste kilometervergoeding is in 2026 € 0,25 per kilometer (verhoogd van € 0,23). Je mag dit bedrag belastingvrij vergoeden of, als ondernemer, per zakelijke kilometer van je winst aftrekken.',
+    a: 'De onbelaste kilometervergoeding is in 2026 € 0,25 per kilometer (was € 0,23). Je mag dit bedrag belastingvrij geven. Als ondernemer trek je het per zakelijke kilometer van je winst af.',
   },
   {
     q: 'Hoe bereken ik mijn reiskostenvergoeding?',
@@ -85,13 +85,13 @@ export default function KilometervergoedingPage() {
         <section style={{ marginTop: 24 }}>
           <h2 style={h2}>Kilometervergoeding 2026</h2>
           <p style={p}>
-            De onbelaste kilometervergoeding is per 1 januari 2026 verhoogd naar <strong>€ 0,25 per
-            kilometer</strong> (was € 0,23). Werkgevers mogen dit belastingvrij vergoeden; als ZZP’er trek je
+            De onbelaste kilometervergoeding is sinds 1 januari 2026 <strong>€ 0,25 per
+            kilometer</strong> (was € 0,23). Werkgevers mogen dit belastingvrij geven. Als ZZP’er trek je
             € 0,25 per zakelijke kilometer af van je winst.
           </p>
           <p style={p}>
-            Reken je vergoeding uit door de kilometers met het tarief te vermenigvuldigen. Voor een retourrit
-            tel je de afstand twee keer; rijd je de rit vaker, gebruik dan het aantal ritten.
+            Reken je vergoeding uit: kilometers × tarief. Rijd je heen en terug? Tel de afstand dan twee
+            keer. Rijd je de rit vaker? Vul dan het aantal ritten in.
           </p>
         </section>
 
@@ -119,8 +119,7 @@ export default function KilometervergoedingPage() {
             Reiskosten netjes op je factuur?
           </div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 16 }}>
-            Met BoekBrug zet je reiskosten als aparte regel op een professionele factuur — inclusief de juiste
-            BTW.
+            Met BoekBrug zet je reiskosten als aparte regel op een nette factuur. Met de juiste BTW erbij.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
@@ -139,7 +138,7 @@ export default function KilometervergoedingPage() {
         </section>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
-          BoekBrug — de brug tussen jou en je boekhouder. Tarief onder voorbehoud; controleer bij twijfel de
+          BoekBrug — de brug tussen jou en je boekhouder. Het tarief kan veranderen. Twijfel je? Kijk bij de
           Belastingdienst.
         </p>
       </div>

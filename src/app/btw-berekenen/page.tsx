@@ -34,7 +34,7 @@ const faq = [
   },
   {
     q: 'Welke BTW-tarieven zijn er in Nederland?',
-    a: 'Het algemene tarief is 21%, het lage tarief 9% (o.a. voeding, boeken, kappers) en 0% voor bepaalde goederen en diensten (o.a. export binnen de EU).',
+    a: 'Het algemene tarief is 21%. Het lage tarief is 9% (bijvoorbeeld voeding, boeken, kappers). En 0% voor sommige goederen en diensten (bijvoorbeeld export binnen de EU).',
   },
 ]
 
@@ -102,10 +102,11 @@ export default function BtwBerekenenPage() {
           <p style={p}>
             <strong>21% — algemeen tarief:</strong> geldt voor de meeste goederen en diensten.
             <br />
-            <strong>9% — laag tarief:</strong> o.a. voeding, medicijnen, boeken, kappers, fietsreparatie.
+            <strong>9% — laag tarief:</strong> bijvoorbeeld voeding, medicijnen, boeken, kappers,
+            fietsreparatie.
             <br />
-            <strong>0% — nultarief:</strong> o.a. leveringen naar het buitenland en intracommunautaire
-            leveringen binnen de EU.
+            <strong>0% — nultarief:</strong> bijvoorbeeld leveringen naar het buitenland en leveringen naar
+            andere EU-landen.
           </p>
         </section>
 
@@ -131,11 +132,11 @@ export default function BtwBerekenenPage() {
           }}
         >
           <div style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>
-            Facturen met automatische BTW-berekening?
+            Facturen met de BTW er al bij?
           </div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 16 }}>
-            Met BoekBrug maak je in seconden een nette factuur — de BTW wordt automatisch berekend en
-            gesplitst per tarief.
+            Met BoekBrug maak je snel een nette factuur. De BTW wordt automatisch berekend en per tarief
+            gesplitst.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
@@ -171,8 +172,8 @@ export default function BtwBerekenenPage() {
         </section>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
-          BoekBrug — de brug tussen jou en je boekhouder. Tarieven onder voorbehoud; controleer bij twijfel
-          de Belastingdienst.
+          BoekBrug — de brug tussen jou en je boekhouder. Tarieven kunnen veranderen. Twijfel je? Kijk bij de
+          Belastingdienst.
         </p>
       </div>
 

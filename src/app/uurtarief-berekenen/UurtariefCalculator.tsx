@@ -107,7 +107,7 @@ export default function UurtariefCalculator() {
       </div>
 
       <div style={s.label}>Declarabele uren per jaar</div>
-      <div style={s.hint}>Factureerbare uren — vaak ~1.200 van ~1.800 gewerkte uren</div>
+      <div style={s.hint}>Uren die je kunt factureren — vaak ongeveer 1.200 van 1.800 gewerkte uren</div>
       <div style={s.field}>
         <input style={s.input} value={hours} onChange={(e) => setHours(e.target.value)} inputMode="numeric" aria-label="Declarabele uren" />
         <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>uur</span>
@@ -115,7 +115,7 @@ export default function UurtariefCalculator() {
 
       <div style={s.toggleRow}>
         <div>
-          <span style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>Buffer voor belasting, pensioen & leegloop</span>
+          <span style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>Buffer voor belasting, pensioen en lege uren</span>
           {useBuffer && (
             <input
               value={buffer}

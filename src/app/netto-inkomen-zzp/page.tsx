@@ -10,12 +10,12 @@ import PublicFooter from '@/components/public-footer'
 export const metadata: Metadata = {
   title: 'Netto inkomen ZZP berekenen 2026 — hoeveel houd ik over? | BoekBrug',
   description:
-    'Bereken indicatief wat je als ZZP’er netto overhoudt in 2026: inkomstenbelasting, zelfstandigenaftrek, MKB-winstvrijstelling, heffingskortingen en Zvw. Gratis.',
+    'Reken uit wat je als ZZP’er netto overhoudt in 2026: inkomstenbelasting, zelfstandigenaftrek, MKB-winstvrijstelling, heffingskortingen en Zvw. Het is een schatting. Gratis.',
   keywords: ['netto inkomen zzp', 'zzp belasting berekenen', 'hoeveel houd ik over zzp', 'bruto netto zzp 2026'],
   alternates: { canonical: '/netto-inkomen-zzp' },
   openGraph: {
     title: 'Netto inkomen ZZP berekenen (2026)',
-    description: 'Hoeveel houd je over? Indicatie met belasting, aftrek, heffingskortingen en Zvw.',
+    description: 'Hoeveel houd je over? Een schatting met belasting, aftrek, heffingskortingen en Zvw.',
     type: 'website',
   },
 }
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 const faq = [
   {
     q: 'Hoeveel houd ik netto over als ZZP’er?',
-    a: 'Dat hangt af van je winst en aftrekposten. Van je winst gaan de zelfstandigenaftrek en de MKB-winstvrijstelling (12,7%) af; over de belastbare winst betaal je inkomstenbelasting (min heffingskortingen) en de inkomensafhankelijke bijdrage Zvw. Wat overblijft is je netto.',
+    a: 'Dat hangt af van je winst en je aftrekposten. Van je winst gaan eerst de zelfstandigenaftrek en de MKB-winstvrijstelling (12,7%) af. Over de rest betaal je inkomstenbelasting (min heffingskortingen) en de Zvw-bijdrage. Wat overblijft, is je netto.',
   },
   {
     q: 'Wat is de zelfstandigenaftrek in 2026?',
@@ -31,7 +31,7 @@ const faq = [
   },
   {
     q: 'Is deze berekening exact?',
-    a: 'Nee, het is een indicatie op basis van de 2026-tarieven. Je persoonlijke situatie (partner, andere inkomsten, toeslagen, exacte arbeidskorting) kan afwijken. Geen fiscaal advies.',
+    a: 'Nee, het is een schatting op basis van de tarieven van 2026. Jouw situatie (partner, ander inkomen, toeslagen, exacte arbeidskorting) kan anders zijn. Dit is geen fiscaal advies.',
   },
 ]
 
@@ -57,7 +57,7 @@ export default function NettoInkomenPage() {
           Netto inkomen ZZP berekenen
         </h1>
         <p style={{ fontSize: 16, color: '#6b6b6e', margin: '0 0 28px' }}>
-          Hoeveel houd je in 2026 netto over van je winst? Reken het indicatief uit.
+          Hoeveel houd je in 2026 netto over van je winst? Reken het uit. Het is een schatting.
         </p>
       </div>
 
@@ -69,15 +69,15 @@ export default function NettoInkomenPage() {
         <section style={{ marginTop: 24 }}>
           <h2 style={h2}>Van winst naar netto</h2>
           <p style={p}>
-            Als ZZP’er reken je van je <strong>winst</strong> eerst de zelfstandigenaftrek af (bij het
-            urencriterium), daarna de <strong>MKB-winstvrijstelling</strong> van 12,7%. Over de belastbare
-            winst betaal je inkomstenbelasting in box 1, verminderd met de algemene heffingskorting en
-            arbeidskorting. Tot slot komt de inkomensafhankelijke bijdrage <strong>Zvw</strong> (4,85% in
-            2026) erbij. Wat overblijft, houd je netto over.
+            Van je <strong>winst</strong> gaat eerst de zelfstandigenaftrek af (als je aan het urencriterium
+            voldoet). Daarna gaat de <strong>MKB-winstvrijstelling</strong> van 12,7% eraf. Over de rest
+            betaal je inkomstenbelasting in box 1. Daar gaan de algemene heffingskorting en de arbeidskorting
+            weer vanaf. Tot slot komt de <strong>Zvw</strong>-bijdrage erbij (4,85% in 2026). Wat overblijft,
+            houd je netto over.
           </p>
           <p style={p}>
-            Deze tool gebruikt de 2026-tarieven en toont elke stap. Het is een indicatie — je persoonlijke
-            situatie kan afwijken, en het is geen fiscaal advies.
+            Deze tool gebruikt de tarieven van 2026 en laat elke stap zien. Het is een schatting. Jouw
+            situatie kan anders zijn, en het is geen fiscaal advies.
           </p>
         </section>
 
@@ -94,8 +94,7 @@ export default function NettoInkomenPage() {
         <section style={{ marginTop: 32, background: '#ffffff', border: '1px solid #ececf1', borderRadius: 16, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>Weet het hele jaar waar je staat</div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 16 }}>
-            BoekBrug houdt je omzet, kosten en winst live bij — zodat je nooit voor verrassingen staat bij de
-            aangifte.
+            BoekBrug houdt je omzet en BTW per kwartaal bij. Zo is je BTW-aangifte zo klaar.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}>Gratis account</Link>
@@ -104,8 +103,8 @@ export default function NettoInkomenPage() {
         </section>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
-          BoekBrug — de brug tussen jou en je boekhouder. Indicatieve schatting op basis van 2026-tarieven;
-          geen fiscaal advies. Controleer bij twijfel de Belastingdienst.
+          BoekBrug — de brug tussen jou en je boekhouder. Een schatting op basis van de tarieven van 2026.
+          Geen fiscaal advies. Twijfel je? Kijk bij de Belastingdienst.
         </p>
       </div>
 

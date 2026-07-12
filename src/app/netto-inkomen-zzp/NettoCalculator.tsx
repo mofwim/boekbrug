@@ -141,7 +141,7 @@ export default function NettoCalculator() {
       </div>
 
       <div style={{ marginTop: 12, background: 'linear-gradient(135deg, #34c759, #1e9e4a)', borderRadius: 16, padding: '22px 24px', color: '#fff' }}>
-        <div style={{ fontSize: 13, opacity: 0.92, fontWeight: 500 }}>Netto over per jaar (indicatie)</div>
+        <div style={{ fontSize: 13, opacity: 0.92, fontWeight: 500 }}>Netto over per jaar (schatting)</div>
         <div style={{ fontSize: 36, fontWeight: 800, letterSpacing: -0.5, margin: '2px 0 0' }}>{formatEuroNL(r.netto)}</div>
         <div style={{ fontSize: 14, opacity: 0.95, marginTop: 4 }}>
           ≈ {formatEuroNL(r.nettoMaand)} per maand · effectieve druk {String(r.druk).replace('.', ',')}%
@@ -161,8 +161,8 @@ export default function NettoCalculator() {
 
       <div style={{ marginTop: 22, background: '#f9f9fb', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c3c43' }}>
-          Grip op je winst het hele jaar?{' '}
-          <strong style={{ color: '#1c1c1e' }}>BoekBrug rekent live mee.</strong>
+          Je omzet en BTW altijd bij de hand?{' '}
+          <strong style={{ color: '#1c1c1e' }}>BoekBrug houdt het per kwartaal bij.</strong>
         </div>
         <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>Gratis proberen →</Link>
       </div>

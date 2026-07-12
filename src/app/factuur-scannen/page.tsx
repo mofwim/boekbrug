@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 const faq = [
   {
     q: 'Hoe werkt het scannen van een factuur?',
-    a: 'Je uploadt een PDF of foto van je factuur. Onze AI leest de belangrijkste velden uit — leverancier, factuurnummer, datum, bedragen en BTW — en toont ze overzichtelijk. Je hoeft niets over te typen.',
+    a: 'Je uploadt een PDF of foto van je factuur. De AI leest de belangrijkste velden uit: leverancier, factuurnummer, datum, bedragen en BTW. Je hoeft niets over te typen.',
   },
   {
     q: 'Welke bestanden kan ik uploaden?',
@@ -31,11 +31,11 @@ const faq = [
   },
   {
     q: 'Worden mijn facturen opgeslagen?',
-    a: 'Nee. In deze gratis tool wordt je bestand alleen gebruikt om de gegevens uit te lezen en daarna niet bewaard. Wil je facturen wél beheren en bewaren? Maak dan een gratis BoekBrug-account.',
+    a: 'Nee. In deze gratis tool gebruiken we je bestand alleen om de gegevens uit te lezen. Daarna bewaren we het niet. Wil je facturen wél bewaren en beheren? Maak dan een gratis BoekBrug-account.',
   },
   {
     q: 'Is de herkenning altijd 100% correct?',
-    a: 'Bij een duidelijke factuur is de herkenning erg goed, maar controleer altijd de bedragen en het BTW-tarief voordat je ze gebruikt. Het is een hulpmiddel, geen vervanging voor je eigen controle.',
+    a: 'Bij een duidelijke factuur is de herkenning erg goed. Controleer toch altijd zelf de bedragen en de BTW. Het is een hulpmiddel, geen vervanging voor je eigen controle.',
   },
 ]
 
@@ -80,10 +80,10 @@ export default function FactuurScannenPage() {
         <section style={{ marginTop: 24 }}>
           <h2 style={h2}>Nooit meer overtypen</h2>
           <p style={p}>
-            Facturen overtypen is saai en foutgevoelig. Upload je factuur als PDF of maak er een foto van, en
-            onze AI haalt er automatisch de <strong>leverancier</strong>, het <strong>factuurnummer</strong>,
-            de <strong>datum</strong>, de <strong>bedragen</strong> en de <strong>BTW</strong> uit. Controleer,
-            en je bent klaar.
+            Facturen overtypen is saai en je maakt snel fouten. Upload je factuur als PDF of maak er een foto
+            van. De AI haalt de <strong>leverancier</strong>, het <strong>factuurnummer</strong>, de{' '}
+            <strong>datum</strong>, de <strong>bedragen</strong> en de <strong>BTW</strong> eruit. Even
+            controleren en je bent klaar.
           </p>
         </section>
 
@@ -100,7 +100,7 @@ export default function FactuurScannenPage() {
         <section style={{ marginTop: 32, background: '#ffffff', border: '1px solid #ececf1', borderRadius: 16, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>Al je facturen op één plek</div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 16 }}>
-            BoekBrug scant, bewaart en boekt je facturen automatisch — klaar voor je BTW-aangifte en je
+            BoekBrug scant je facturen, bewaart ze en zet ze op een rij — klaar voor je BTW-aangifte en je
             boekhouder.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>

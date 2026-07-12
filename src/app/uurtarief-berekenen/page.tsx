@@ -11,12 +11,12 @@ import PublicFooter from '@/components/public-footer'
 export const metadata: Metadata = {
   title: 'Uurtarief berekenen als ZZP’er — gratis uurtarief-calculator | BoekBrug',
   description:
-    'Bereken je uurtarief als ZZP’er: gewenst jaarinkomen, zakelijke kosten en declarabele uren, met buffer voor belasting en pensioen. Gratis, geen account nodig.',
+    'Bereken je uurtarief als ZZP’er: gewenst jaarinkomen, zakelijke kosten en factureerbare uren, met buffer voor belasting en pensioen. Gratis, geen account nodig.',
   keywords: ['uurtarief berekenen', 'uurtarief zzp', 'wat moet ik vragen per uur', 'tarief freelancer'],
   alternates: { canonical: '/uurtarief-berekenen' },
   openGraph: {
     title: 'Uurtarief berekenen als ZZP’er',
-    description: 'Gewenst inkomen + kosten ÷ declarabele uren, met buffer. Gratis uurtarief-calculator.',
+    description: 'Gewenst inkomen + kosten ÷ factureerbare uren, met buffer. Gratis uurtarief-calculator.',
     type: 'website',
   },
 }
@@ -24,15 +24,15 @@ export const metadata: Metadata = {
 const faq = [
   {
     q: 'Hoe bereken ik mijn uurtarief als ZZP’er?',
-    a: 'Tel je gewenste jaarinkomen op bij je zakelijke kosten en deel dat door je declarabele uren per jaar. Reken daar een buffer bovenop voor belasting, pensioen en leegloop.',
+    a: 'Tel je gewenste jaarinkomen op bij je zakelijke kosten. Deel dat door de uren die je per jaar kunt factureren. Reken daar een buffer bovenop voor belasting, pensioen en lege uren.',
   },
   {
     q: 'Hoeveel declarabele uren heeft een ZZP’er per jaar?',
-    a: 'Van een fulltime jaar van circa 1.800 werkuren is vaak maar ~1.200 uur echt factureerbaar; de rest gaat naar acquisitie, administratie en vrije dagen.',
+    a: 'Van een fulltime jaar van ongeveer 1.800 werkuren kun je vaak maar ongeveer 1.200 uur echt factureren. De rest gaat naar klanten zoeken, administratie en vrije dagen.',
   },
   {
     q: 'Waarom een buffer bovenop mijn tarief?',
-    a: 'Als ZZP’er betaal je zelf inkomstenbelasting, pensioen en verzekeringen, en heb je niet-declarabele uren. Een buffer van bijvoorbeeld 30% houdt hier rekening mee.',
+    a: 'Als ZZP’er betaal je zelf inkomstenbelasting, pensioen en verzekeringen. Ook heb je uren die je niet kunt factureren. Een buffer van bijvoorbeeld 30% houdt hier rekening mee.',
   },
 ]
 
@@ -84,13 +84,15 @@ export default function UurtariefBerekenenPage() {
         <section style={{ marginTop: 24 }}>
           <h2 style={h2}>Hoe bepaal je je uurtarief?</h2>
           <p style={p}>
-            Een gezond uurtarief dekt méér dan alleen je gewenste inkomen. De formule:{' '}
-            <strong>(gewenst jaarinkomen + zakelijke kosten) ÷ declarabele uren</strong>. Daar reken je een
-            buffer bovenop voor belasting, pensioen, verzekeringen en niet-factureerbare uren.
+            Een goed uurtarief dekt meer dan alleen je gewenste inkomen. De formule:{' '}
+            <strong>(gewenst jaarinkomen + zakelijke kosten) ÷ de uren die je kunt factureren</strong>. Daar
+            reken je een buffer bovenop voor belasting, pensioen, verzekeringen en uren die je niet kunt
+            factureren.
           </p>
           <p style={p}>
-            Onderschat het aantal niet-declarabele uren niet: acquisitie, administratie, ziekte en vakantie
-            gaan van je factureerbare tijd af. Reken daarom eerder met ~1.200 dan met 1.800 uur.
+            Vergeet de uren niet die je niet kunt factureren. Klanten zoeken, administratie, ziekte en
+            vakantie gaan van je factureerbare tijd af. Reken daarom eerder met ongeveer 1.200 dan met 1.800
+            uur.
           </p>
         </section>
 
@@ -109,7 +111,7 @@ export default function UurtariefBerekenenPage() {
             Je tarief factureren?
           </div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 16 }}>
-            Zet je uurtarief meteen op een professionele factuur met BoekBrug — BTW automatisch berekend.
+            Zet je uurtarief meteen op een nette factuur met BoekBrug. De BTW wordt automatisch berekend.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link href="/factuur-maken" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}>
@@ -122,7 +124,7 @@ export default function UurtariefBerekenenPage() {
         </section>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
-          BoekBrug — de brug tussen jou en je boekhouder. Indicatief; geen fiscaal advies.
+          BoekBrug — de brug tussen jou en je boekhouder. Dit is een schatting; geen fiscaal advies.
         </p>
       </div>
 

@@ -67,10 +67,10 @@ export default function ToolsHubPage() {
         </div>
 
         <section style={{ marginTop: 40, background: '#ffffff', border: '1px solid #ececf1', borderRadius: 18, padding: 28, textAlign: 'center' }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: '#1c1c1e', marginBottom: 8 }}>Alles automatisch met BoekBrug</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: '#1c1c1e', marginBottom: 8 }}>Alles op één plek met BoekBrug</div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 18, maxWidth: 520, margin: '0 auto 18px' }}>
-            Deze tools zijn een voorproefje. In BoekBrug lopen je facturen, BTW en boekhouding vanzelf door —
-            klaar voor de aangifte en voor je boekhouder.
+            Deze tools zijn een voorproefje. In BoekBrug staan je facturen, BTW en documenten bij elkaar.
+            Klaar voor je aangifte en je boekhouder.
           </div>
           <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '13px 26px', borderRadius: 9999, textDecoration: 'none', display: 'inline-block' }}>
             Gratis account maken

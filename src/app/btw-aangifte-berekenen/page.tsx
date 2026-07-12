@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 const faq = [
   {
     q: 'Hoe bereken ik hoeveel BTW ik moet betalen?',
-    a: 'Tel de BTW over je omzet op (21% en 9%) en trek daar de voorbelasting af — de BTW die je zelf op zakelijke kosten betaalde. Wat overblijft betaal je; is het negatief, dan krijg je BTW terug.',
+    a: 'Tel de BTW over je omzet op (21% en 9%). Trek daar de voorbelasting af: de BTW die je zelf op je kosten betaalde. Wat overblijft betaal je. Is het bedrag negatief? Dan krijg je BTW terug.',
   },
   {
     q: 'Wat is voorbelasting?',
@@ -31,7 +31,7 @@ const faq = [
   },
   {
     q: 'Wanneer moet ik BTW-aangifte doen?',
-    a: 'De meeste ZZP’ers doen per kwartaal aangifte, uiterlijk de laatste dag van de maand na het kwartaal (bijv. Q1 vóór 30 april). BoekBrug houdt de bedragen en deadlines voor je bij.',
+    a: 'De meeste ZZP’ers doen elk kwartaal aangifte. Dat doe je vóór de laatste dag van de maand na het kwartaal (bijvoorbeeld Q1 vóór 30 april). BoekBrug houdt je BTW per kwartaal bij.',
   },
 ]
 
@@ -69,9 +69,9 @@ export default function BtwAangiftePage() {
         <section style={{ marginTop: 24 }}>
           <h2 style={h2}>Hoe werkt de BTW-aangifte?</h2>
           <p style={p}>
-            Je draagt de BTW af die je over je omzet in rekening bracht (21% en 9%), en trekt daar de{' '}
-            <strong>voorbelasting</strong> van af — de BTW die je zelf op zakelijke kosten betaalde. Het saldo
-            (rubriek 5c) is wat je betaalt; is het negatief, dan krijg je BTW terug.
+            Je betaalt de BTW die je over je omzet rekende (21% en 9%). Daar trek je de{' '}
+            <strong>voorbelasting</strong> van af: de BTW die je zelf op je kosten betaalde. Het saldo
+            (rubriek 5c) betaal je. Is het negatief? Dan krijg je BTW terug.
           </p>
         </section>
 
@@ -88,7 +88,7 @@ export default function BtwAangiftePage() {
         <section style={{ marginTop: 32, background: '#ffffff', border: '1px solid #ececf1', borderRadius: 16, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>Je BTW automatisch bijgehouden?</div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 16 }}>
-            BoekBrug telt je BTW per kwartaal op uit je facturen en kosten — klaar voor de aangifte.
+            BoekBrug telt je BTW per kwartaal op uit je facturen en kosten. Klaar voor de aangifte.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}>Gratis account</Link>
@@ -97,8 +97,8 @@ export default function BtwAangiftePage() {
         </section>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
-          BoekBrug — de brug tussen jou en je boekhouder. Indicatief; bij vrijstellingen, ICP of verlegde BTW
-          gelden extra regels.
+          BoekBrug — de brug tussen jou en je boekhouder. Dit is een schatting. Bij vrijstellingen, ICP of
+          verlegde BTW gelden extra regels.
         </p>
       </div>
 
