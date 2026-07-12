@@ -127,6 +127,23 @@ export async function POST(
     updatePatch.invoice_date = body.invoice_date;
   }
 
+  // [DATE-GATE] An incoming invoice may not be confirmed (verified or paid)
+  // without a real invoice date. The date sets the tax period (factuurstelsel),
+  // so confirming a dateless invoice would silently book it in the wrong
+  // quarter. Ingestion now stores null when the AI could not read the date; the
+  // reviewer enters it in the modal, which sends it here. Block when neither the
+  // reviewed value nor the stored value is a real date.
+  const effectiveDate =
+    typeof body.invoice_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.invoice_date)
+      ? body.invoice_date
+      : invoice.invoice_date;
+  if (!effectiveDate) {
+    return NextResponse.json(
+      { error: "Factuurdatum ontbreekt — voer eerst de factuurdatum in voordat je de factuur bevestigt." },
+      { status: 400 }
+    );
+  }
+
   if (action === "pay") {
     // DB constraint invoices_paid_requires_method: paid REQUIRES a method.
     if (body.payment_method !== "bank" && body.payment_method !== "kas") {

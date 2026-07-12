@@ -18,7 +18,11 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '@/app/dashboard/_shared'
 import { composeDraftEmail } from '@/lib/ai'
-import DraftQueue from '@/components/draft-queue/DraftQueue'
+// [DRAFT-QUEUE-HIDDEN] Draft Queue is hidden from the UI for now (decision deferred).
+// Component + /api/draft-queue + the draft_queue table are intentionally kept intact;
+// only the render below is disabled. Re-enable by restoring the import and the
+// <DraftQueue /> mount at the bottom of this file.
+// import DraftQueue from '@/components/draft-queue/DraftQueue'
 import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.types'
 
 // ─────────────────────────────────────────────────────────
@@ -389,7 +393,10 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
       </main>
 
       {/* ── Draft Queue (extracted to /components/draft-queue) ── */}
-      <DraftQueue clients={clients} />
+      {/* [DRAFT-QUEUE-HIDDEN] Temporarily hidden from the UI — see import note above.
+          Kept in the codebase (component + API + table) for a future decision.
+          Restore this mount to bring it back:
+          <DraftQueue clients={clients} /> */}
 
     </div>
   )
