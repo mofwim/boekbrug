@@ -55,6 +55,19 @@ const features = [
   { emoji: '🤝', title: 'Eén lijn met je boekhouder', body: 'Deel je facturen met je boekhouder. Geen mappen vol PDF’s meer mailen.' },
 ]
 
+// A real 3-step flow, so the numbering carries meaning.
+const steps = [
+  { n: '1', title: 'Maak of scan je factuur', body: 'Maak een factuur of scan een bon. De AI leest de gegevens voor je uit.' },
+  { n: '2', title: 'Je BTW loopt mee', body: 'Je omzet en BTW worden per kwartaal opgeteld. Zo is je aangifte bijna klaar.' },
+  { n: '3', title: 'Deel met je boekhouder', body: 'Deel je administratie met één klik. Geen mappen vol PDF’s meer mailen.' },
+]
+
+const segments = [
+  { emoji: '🧑‍💻', title: 'Boekhouden ZZP', body: 'Alles voor je eigen administratie, simpel gehouden.', href: '/boekhouden-zzp' },
+  { emoji: '🌱', title: 'Net begonnen?', body: 'Start simpel, ook zonder boekhoudkennis.', href: '/voor-starters' },
+  { emoji: '🤝', title: 'Voor boekhouders', body: 'Werk samen met je ZZP-klanten op één plek.', href: '/voor-boekhouders' },
+]
+
 export default async function Home() {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -92,6 +105,39 @@ export default async function Home() {
               <div style={{ fontSize: 17, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>{f.title}</div>
               <div style={{ fontSize: 14, lineHeight: 1.6, color: '#6b6b6e' }}>{f.body}</div>
             </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Hoe het werkt */}
+      <section style={{ ...wrap, paddingBottom: 56 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <h2 style={{ fontSize: 28, fontWeight: 800, color: '#1c1c1e', letterSpacing: -0.5, margin: '0 0 8px' }}>Zo werkt het</h2>
+          <p style={{ fontSize: 16, color: '#6b6b6e', margin: 0 }}>In drie stappen van bon naar een nette administratie.</p>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+          {steps.map((s) => (
+            <div key={s.n} style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: 24 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, background: '#eaf3ff', color: '#007aff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 16, marginBottom: 12 }}>{s.n}</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>{s.title}</div>
+              <div style={{ fontSize: 14, lineHeight: 1.6, color: '#6b6b6e' }}>{s.body}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Voor wie */}
+      <section style={{ ...wrap, paddingBottom: 56 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <h2 style={{ fontSize: 28, fontWeight: 800, color: '#1c1c1e', letterSpacing: -0.5, margin: '0 0 8px' }}>Voor wie is BoekBrug?</h2>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
+          {segments.map((sg) => (
+            <Link key={sg.href} href={sg.href} style={{ display: 'block', background: '#fff', border: '1px solid #ececf1', borderRadius: 16, padding: 20, textDecoration: 'none' }}>
+              <div style={{ fontSize: 26, marginBottom: 8 }} aria-hidden>{sg.emoji}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#1c1c1e', marginBottom: 4 }}>{sg.title}</div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, color: '#6b6b6e' }}>{sg.body}</div>
+            </Link>
           ))}
         </div>
       </section>

@@ -30,6 +30,13 @@ export default function PublicFooter() {
         </div>
 
         <div style={col}>
+          <div style={head}>Voor wie</div>
+          <Link href="/boekhouden-zzp" style={link}>Boekhouden ZZP</Link>
+          <Link href="/voor-starters" style={link}>Voor starters</Link>
+          <Link href="/voor-boekhouders" style={link}>Voor boekhouders</Link>
+        </div>
+
+        <div style={col}>
           <div style={head}>BoekBrug</div>
           <Link href="/register" style={link}>Gratis account</Link>
           <Link href="/login" style={link}>Inloggen</Link>
