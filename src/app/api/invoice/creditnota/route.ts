@@ -31,6 +31,12 @@ import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { sendInvoiceToClient } from '@/lib/email'
 import * as Sentry from '@sentry/nextjs'
 
+// [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
+// use. A creditnota's PDF MUST be stored here and its path written to
+// invoices.pdf_url, or the correction document is missing from the accountant's
+// closing package (the package resolves an outgoing invoice's PDF via pdf_url).
+const PDF_BUCKET = 'documents'
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()
@@ -179,51 +185,100 @@ export async function POST(request: NextRequest) {
       ipAddress: getClientIP(request),
     })
 
-    // ── [FACTUUR-A] Deliver the creditnota — PDF + e-mail, best-effort ──
-    // A creditnota is a legal invoice (Art. 35); the recipient needs the
-    // document for their own administration. Delivery failure NEVER rolls
-    // back the creditnota (number consumed) — response carries a warning,
-    // recovery via the send route's resend mode.
+    // ── [FACTUUR-A] Render + store the creditnota PDF, then deliver ──
+    // A creditnota is a legal invoice (Art. 35). Render the PDF and store it
+    // UNCONDITIONALLY — not only when the customer has an e-mail — so it reaches
+    // the accountant's closing package via invoices.pdf_url. Previously the PDF
+    // was rendered only inside the e-mail branch and never stored, so every
+    // creditnota showed up in the package as "pdf_missing" (a correction with no
+    // document). Storage + delivery are both best-effort; neither rolls back the
+    // creditnota (number already consumed). [CREDITNOTA-PDF]
     let warning: string | undefined
-    if (original.client_email) {
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single()
+
+    const { data: creditLines } = await supabase
+      .from('invoice_lines')
+      .select('*')
+      .eq('invoice_id', creditnota.id)
+
+    let pdfBuffer: Buffer | null = null
+    try {
+      pdfBuffer = await renderInvoicePdf(creditnota, creditLines ?? [], profile ?? {})
+    } catch (pdfErr) {
+      console.error('[FACTUUR-A] Creditnota PDF render failed', {
+        creditnota_id: creditnota.id,
+        error: pdfErr,
+      })
+      Sentry.captureException(pdfErr, {
+        tags: { feature: 'creditnota', severity: 'medium' },
+        extra: { creditnota_id: creditnota.id, userId: user.id },
+      })
+    }
+
+    // Store the PDF (raw path; signed on read) so it lands in the closing
+    // package — mirrors the send route's storage step. Best-effort.
+    if (pdfBuffer) {
       try {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single()
-
-        const { data: creditLines } = await supabase
-          .from('invoice_lines')
-          .select('*')
-          .eq('invoice_id', creditnota.id)
-
-        const pdfBuffer = await renderInvoicePdf(creditnota, creditLines ?? [], profile ?? {})
-
-        await sendInvoiceToClient({
-          toEmail: original.client_email,
-          clientName: original.client_name ?? '',
-          zzperName: profile?.company_name || profile?.full_name || 'Onbekend',
-          // [FACTUUR-A] use the locally generated number (guaranteed non-null —
-          // we returned 500 above if generation failed). creditnota.invoice_number
-          // is typed string|null by the DB schema, which the e-mail signature rejects.
-          invoiceNumber: creditnotaNumber,
-          totalInc: creditnota.total_inc_btw ?? 0,
-          dueDate: creditnota.due_date ?? '',
-          invoiceDate: creditnota.invoice_date ?? undefined,
-          pdfBuffer,
-          isCreditnota: true,
-        })
-      } catch (deliveryErr) {
-        warning = 'delivery_failed'
-        console.error('[FACTUUR-A] Creditnota delivery failed', {
+        const pdfPath = `${user.id}/facturen/${creditnotaNumber}.pdf`
+        const { error: uploadError } = await supabase.storage
+          .from(PDF_BUCKET)
+          .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: true })
+        if (!uploadError) {
+          await supabase
+            .from('invoices')
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .update({ pdf_url: pdfPath, updated_at: new Date().toISOString() } as any)
+            .eq('id', creditnota.id)
+        } else {
+          console.error('[CREDITNOTA-PDF] storage upload failed', {
+            creditnota_id: creditnota.id,
+            uploadError,
+          })
+        }
+      } catch (storageErr) {
+        console.error('[CREDITNOTA-PDF] storage block error', {
           creditnota_id: creditnota.id,
-          error: deliveryErr,
+          storageErr,
         })
-        Sentry.captureException(deliveryErr, {
-          tags: { feature: 'creditnota', severity: 'medium' },
-          extra: { creditnota_id: creditnota.id, userId: user.id },
-        })
+      }
+    }
+
+    // Deliver by e-mail if the customer has one — reuse the same rendered PDF.
+    if (original.client_email) {
+      if (!pdfBuffer) {
+        warning = 'delivery_failed'
+      } else {
+        try {
+          await sendInvoiceToClient({
+            toEmail: original.client_email,
+            clientName: original.client_name ?? '',
+            zzperName: profile?.company_name || profile?.full_name || 'Onbekend',
+            // [FACTUUR-A] use the locally generated number (guaranteed non-null —
+            // we returned 500 above if generation failed). creditnota.invoice_number
+            // is typed string|null by the DB schema, which the e-mail signature rejects.
+            invoiceNumber: creditnotaNumber,
+            totalInc: creditnota.total_inc_btw ?? 0,
+            dueDate: creditnota.due_date ?? '',
+            invoiceDate: creditnota.invoice_date ?? undefined,
+            pdfBuffer,
+            isCreditnota: true,
+          })
+        } catch (deliveryErr) {
+          warning = 'delivery_failed'
+          console.error('[FACTUUR-A] Creditnota delivery failed', {
+            creditnota_id: creditnota.id,
+            error: deliveryErr,
+          })
+          Sentry.captureException(deliveryErr, {
+            tags: { feature: 'creditnota', severity: 'medium' },
+            extra: { creditnota_id: creditnota.id, userId: user.id },
+          })
+        }
       }
     }
 
