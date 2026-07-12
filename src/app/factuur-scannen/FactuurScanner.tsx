@@ -6,7 +6,7 @@
 // invoice generator / register. A 3-scans-per-day cap lives in localStorage as
 // UX friction; the real cost/abuse guard is the per-IP rate limit on the API.
 
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { formatEuroNL } from '@/lib/format-nl'
 
@@ -98,6 +98,16 @@ export default function FactuurScanner() {
   const [used, setUsed] = useState<number | null>(null) // null until first client read
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Read today's usage on mount (client-only) so the counter is correct on load,
+  // not only after the user tries to scan.
+  useEffect(() => {
+    // localStorage is client-only, so usage is read AFTER mount (a genuine
+    // external-store sync). Starting null on server + first client render keeps
+    // hydration clean; the effect then fills in the real count.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUsed(readUsage())
+  }, [])
+
   const remaining = useMemo(() => (used === null ? DAILY_CAP : Math.max(0, DAILY_CAP - used)), [used])
 
   async function handleFile(file: File) {
@@ -173,7 +183,7 @@ export default function FactuurScanner() {
               </>
             ) : (
               <>
-                <div style={{ fontSize: 40, marginBottom: 8 }}>📄</div>
+                <div style={{ fontSize: 40, marginBottom: 8 }} aria-hidden="true">📄</div>
                 <div style={{ fontSize: 16, fontWeight: 600, color: '#1c1c1e' }}>Sleep je factuur hierheen of klik om te uploaden</div>
                 <div style={{ fontSize: 13, color: '#aeaeb2', marginTop: 6 }}>PDF, JPG, PNG of WebP · max 8 MB</div>
               </>
