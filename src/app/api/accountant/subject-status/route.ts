@@ -1,0 +1,130 @@
+// src/app/api/accountant/subject-status/route.ts
+// [READINESS-P3] Accountant sets the processing status of a CLIENT DOCUMENT.
+//
+// This closes the gap that invoices already have (invoices.accountant_status):
+// physical documents had NO status column. Statuses live in
+// accountant_subject_status (subject_type='document' here — invoices are NOT
+// touched by this route).
+//
+// Honesty model: a status is an ACCOUNTANT ASSERTION about a specific document.
+// We never write one without proving (a) the caller can even see the document
+// under RLS and (b) the accountant↔client link exists.
+//
+// Security:
+//   1. Caller must be authenticated.
+//   2. Document must be readable by the caller (documents_accountant_read only
+//      returns shared docs of linked clients) → null = 403.
+//   3. Accountant↔client link (accountant_clients) must exist → else 403.
+//   4. UPSERT via the ACCOUNTANT SESSION (RLS acc_status_owner_all: accountant_id
+//      = auth.uid()) — no service_role needed for the status write itself.
+//   5. status==='vraag' → notify the client (service_role, notifications has no
+//      authenticated INSERT policy). Best-effort: never fails the status write.
+
+import { NextRequest, NextResponse } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
+
+const VALID_STATUS = ['te_verwerken', 'in_behandeling', 'verwerkt', 'vraag'] as const
+type Status = (typeof VALID_STATUS)[number]
+
+export async function POST(req: NextRequest) {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  let body: { subjectId?: string; status?: string; vraagText?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Ongeldige gegevens' }, { status: 400 })
+  }
+
+  const { subjectId, vraagText } = body
+  const status = body.status as Status | undefined
+
+  if (!subjectId || !status || !VALID_STATUS.includes(status)) {
+    return NextResponse.json({ error: 'Ongeldige gegevens' }, { status: 400 })
+  }
+
+  // ── (2) Document must be visible to the caller under RLS ──
+  // documents_accountant_read only returns it if the doc is shared AND the
+  // caller is a linked accountant → a null row means "not allowed" → 403.
+  const { data: doc, error: docErr } = await supabase
+    .from('documents')
+    .select('user_id')
+    .eq('id', subjectId)
+    .single()
+
+  if (docErr || !doc) {
+    return NextResponse.json({ error: 'Geen toegang tot dit document' }, { status: 403 })
+  }
+
+  // ── (3) Accountant↔client link must exist ──
+  const { data: link } = await supabase
+    .from('accountant_clients')
+    .select('id')
+    .eq('accountant_id', user.id)
+    .eq('zzper_id', doc.user_id)
+    .maybeSingle()
+
+  if (!link) {
+    return NextResponse.json({ error: 'Geen toegang tot deze klant' }, { status: 403 })
+  }
+
+  // ── (4) Write the status row (accountant session, RLS owner_all) ──
+  // Read-then-write (NOT upsert-onConflict): the prod table has no unique index on
+  // (accountant_id, subject_type, subject_id) yet — the migration adds it, but
+  // until it's applied an onConflict would 42P10. This works regardless; one
+  // accountant + one document is a single row in practice.
+  const now = new Date().toISOString()
+  const row = {
+    status,
+    verwerkt_at: status === 'verwerkt' ? now : null,
+    vraag_text: status === 'vraag' ? (vraagText || null) : null,
+    updated_at: now,
+  }
+
+  const { data: existing } = await supabase
+    .from('accountant_subject_status')
+    .select('id')
+    .eq('accountant_id', user.id)
+    .eq('subject_type', 'document')
+    .eq('subject_id', subjectId)
+    .maybeSingle()
+
+  const { error: writeErr } = existing
+    ? await supabase.from('accountant_subject_status').update(row).eq('id', existing.id)
+    : await supabase.from('accountant_subject_status').insert({
+        accountant_id: user.id,
+        subject_type: 'document',
+        subject_id: subjectId,
+        ...row,
+      })
+
+  if (writeErr) {
+    console.error('[subject-status] write failed:', writeErr)
+    return NextResponse.json({ error: 'Opslaan mislukt' }, { status: 500 })
+  }
+
+  // ── (5) [READINESS-P3 vraag loop] Notify the client on a question ──
+  // Best-effort — a notification failure must not undo the saved status.
+  if (status === 'vraag') {
+    try {
+      const pipeline = createPipelineClient()
+      await pipeline.from('notifications').insert({
+        user_id: doc.user_id,
+        title: 'Vraag van je boekhouder',
+        body: vraagText
+          ? vraagText.slice(0, 120)
+          : 'Je boekhouder heeft een vraag over een document.',
+        type: 'status',
+        read: false,
+        link: '/dashboard/bestanden',
+      })
+    } catch (err) {
+      console.error('[subject-status] vraag notification failed:', err)
+    }
+  }
+
+  return NextResponse.json({ ok: true, status })
+}

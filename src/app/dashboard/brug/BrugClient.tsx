@@ -21,6 +21,19 @@ interface ClientSummary {
   status: 'ready' | 'review' | 'empty'
 }
 
+// [READINESS-P3] Accountant-asserted per-document status, keyed by document id.
+// Empty map / missing key = no status claim (honest default — never invented).
+type DocStatusMap = Record<string, { status: string; vraag_text: string | null }>
+
+// Document status → badge label + tone. 'te_verwerken' is the neutral default;
+// the three action buttons drive verwerkt / in_behandeling / vraag.
+const DOC_STATUS_META: Record<string, { label: string; tone: NodeBadge['tone'] }> = {
+  verwerkt:       { label: 'Verwerkt',       tone: 'success' },
+  in_behandeling: { label: 'In behandeling', tone: 'warning' },
+  vraag:          { label: 'Vraag',          tone: 'error' },
+  te_verwerken:   { label: 'Te verwerken',   tone: 'neutral' },
+}
+
 // ─── Design tokens — Material You (BoekBrug Design System v1.0) ───────────────
 const M3 = {
   primary:          '#1A73E8',
@@ -102,7 +115,7 @@ function hasHidden(nodes: TreeNode[]): boolean {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function BrugClient({ nodes, role, clientSummaries }: { nodes: TreeNode[]; role: string | null; clientSummaries?: ClientSummary[] }) {
+export default function BrugClient({ nodes, role, clientSummaries, docStatus }: { nodes: TreeNode[]; role: string | null; clientSummaries?: ClientSummary[]; docStatus: DocStatusMap }) {
   const [cwd, setCwd] = useState<string[]>([])
   const [showHidden, setShowHidden] = useState(false)
   const router = useRouter()
@@ -377,7 +390,7 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
       {level.files.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {level.files.map(file => (
-            <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} />
+            <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} />
           ))}
         </div>
       )}
@@ -388,8 +401,42 @@ export default function BrugClient({ nodes, role, clientSummaries }: { nodes: Tr
 }
 
 // ─── File / invoice row ────────────────────────────────────────────────────────
-function FileRow({ node, isClient }: { node: TreeNode; isClient: boolean }) {
+function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: boolean; docStatus: DocStatusMap }) {
   const icon = node.source === 'invoice' ? 'receipt_long' : 'description'
+
+  // [READINESS-P3] Document processing status (accountant assertion). Only meaningful
+  // for document nodes; invoices carry their own badges from bridge-tree. Local state
+  // so an accountant's click reflects immediately without a full reload. Honest
+  // default: a document with no row is `null` → no status badge is ever shown.
+  const isDoc = node.source === 'document'
+  const [status, setStatus] = useState<string | null>(
+    isDoc ? (docStatus[node.id]?.status ?? null) : null
+  )
+  const [busy, setBusy] = useState(false)
+
+  async function applyStatus(next: 'verwerkt' | 'in_behandeling' | 'vraag') {
+    let vraagText: string | undefined
+    if (next === 'vraag') {
+      const answer = window.prompt('Vraag over dit document (optioneel):')
+      if (answer === null) return // cancelled — assert nothing
+      vraagText = answer.trim() || undefined
+    }
+    setBusy(true)
+    try {
+      const res = await fetch('/api/accountant/subject-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectId: node.id, status: next, vraagText }),
+      })
+      if (res.ok) setStatus(next)
+    } catch {
+      // leave the previous (truthful) status in place on failure
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const statusMeta = isDoc && status ? DOC_STATUS_META[status] : undefined
 
   const inner = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, background: '#fff', boxShadow: EL1, width: '100%' }}>
@@ -410,6 +457,13 @@ function FileRow({ node, isClient }: { node: TreeNode; isClient: boolean }) {
               {b.label}
             </span>
           ))}
+          {/* [READINESS-P3] Document status badge — read-only claim, shown to both
+              accountant and client. Only rendered when a status row exists. */}
+          {statusMeta && (
+            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: R.full, background: TONE[statusMeta.tone].bg, color: TONE[statusMeta.tone].color }}>
+              {statusMeta.label}
+            </span>
+          )}
         </div>
         {/* [BRIDGE-POLISH 3a-1] counterparty name (invoices only) */}
         {node.partyName && (
@@ -466,15 +520,49 @@ function FileRow({ node, isClient }: { node: TreeNode; isClient: boolean }) {
     )
 
   // Both actions have their own hit area; the location button never triggers the PDF.
-  if (locationBtn) {
+  const row = locationBtn ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+      {openable}
+      {locationBtn}
+    </div>
+  ) : (
+    openable
+  )
+
+  // [READINESS-P3] Accountant-only document actions. The buttons live OUTSIDE the
+  // openable anchor so clicking one never opens the PDF. Clients (isClient) get the
+  // read-only badge above but no buttons — they cannot assert a status.
+  if (!isClient && isDoc) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-        {openable}
-        {locationBtn}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+        {row}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingLeft: 4 }}>
+          {([['verwerkt', 'Verwerkt'], ['in_behandeling', 'In behandeling'], ['vraag', 'Vraag']] as const).map(([key, label]) => {
+            const active = status === key
+            const meta = DOC_STATUS_META[key]
+            return (
+              <button
+                key={key}
+                onClick={() => applyStatus(key)}
+                disabled={busy}
+                style={{
+                  fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: R.full,
+                  border: `1px solid ${active ? TONE[meta.tone].color : M3.outline}`,
+                  background: active ? TONE[meta.tone].bg : '#fff',
+                  color: active ? TONE[meta.tone].color : M3.outline,
+                  cursor: busy ? 'default' : 'pointer', fontFamily: FONT, opacity: busy ? 0.6 : 1,
+                }}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </div>
     )
   }
-  return openable
+
+  return row
 }
 // ─── [BRIDGE-HUB] Layer 2 — Overzicht panel (readiness, honest status) ────────
 interface PackageSummary {
