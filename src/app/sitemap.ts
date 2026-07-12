@@ -6,6 +6,7 @@
 import type { MetadataRoute } from 'next'
 import { SITE_URL } from '@/lib/site'
 import { TOOLS } from '@/lib/tools'
+import { LOCALES, getPublishedPosts, articlePath } from '@/lib/blog'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = new Date()
@@ -13,6 +14,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const staticPages: MetadataRoute.Sitemap = [
     { url: `${SITE_URL}/`, lastModified, changeFrequency: 'weekly', priority: 1 },
     { url: `${SITE_URL}/tools`, lastModified, changeFrequency: 'weekly', priority: 0.9 },
+    { url: `${SITE_URL}/blog`, lastModified, changeFrequency: 'weekly', priority: 0.8 },
+    { url: `${SITE_URL}/en/blog`, lastModified, changeFrequency: 'weekly', priority: 0.5 },
     { url: `${SITE_URL}/register`, lastModified, changeFrequency: 'monthly', priority: 0.6 },
     { url: `${SITE_URL}/privacy`, lastModified, changeFrequency: 'yearly', priority: 0.2 },
     { url: `${SITE_URL}/voorwaarden`, lastModified, changeFrequency: 'yearly', priority: 0.2 },
@@ -26,5 +29,17 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: t.priority,
   }))
 
-  return [...staticPages, ...toolPages]
+  // [BLOG] Every published article, in both locales. NL is primary (0.7); EN
+  // serves expats (0.5). Uses the article's updatedAt/publishedAt as lastmod so
+  // crawlers see genuine freshness.
+  const blogPages: MetadataRoute.Sitemap = LOCALES.flatMap((locale) =>
+    getPublishedPosts(locale).map((post) => ({
+      url: `${SITE_URL}${articlePath(locale, post.frontmatter.slug)}`,
+      lastModified: new Date(post.frontmatter.updatedAt || post.frontmatter.publishedAt || lastModified),
+      changeFrequency: 'monthly' as const,
+      priority: locale === 'nl' ? 0.7 : 0.5,
+    })),
+  )
+
+  return [...staticPages, ...toolPages, ...blogPages]
 }
