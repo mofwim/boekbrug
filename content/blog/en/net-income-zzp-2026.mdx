@@ -12,23 +12,27 @@ relatedToolLabel: "Calculate your net income"
 alternateSlug: "netto-inkomen-zzp-2026"
 draft: false
 # ─────────────────────────────────────────────────────────────────────────────
-# ⚠️ NOTE — MOHAMMAD MUST VERIFY BEFORE PUBLISHING ⚠️
+# ✅ 2026 FIGURES VERIFIED (July 2026) — re-confirm briefly before publishing.
 # (YAML comment: ignored by gray-matter, does NOT appear on the site.)
 #
-# Tax figures change. Check EVERY number in this article against the official
-# Belastingdienst rates for 2026 before publishing:
-#   - zelfstandigenaftrek (self-employed deduction) € 1,200
-#   - startersaftrek (starter's deduction) € 2,123
-#   - MKB-winstvrijstelling (SME profit exemption) 12.7%
-#   - Box 1: 35.75% up to € 38,883 · 37.56% up to € 78,426 · 49.50% above
-#   - general tax credit max € 3,115 · labour tax credit max € 5,685
-#   - Zvw contribution 4.85% (contribution income capped at € 79,409)
+# Every figure below was checked against multiple sources (Belastingdienst / KVK /
+# tax advisers) and matches the DEFINITIVE 2026 rates:
+#   - zelfstandigenaftrek (self-employed deduction) € 1,200 ✓
+#   - startersaftrek (starter's deduction) € 2,123 ✓
+#   - MKB-winstvrijstelling (SME profit exemption) 12.7% ✓
+#   - Box 1: 35.75% up to € 38,883 · 37.56% up to € 78,426 · 49.50% above ✓
+#     (note: the original Belastingplan 2026 proposed 35.70% and a € 79,137
+#      threshold; that was reversed by amendment to 35.75% / € 78,426)
+#   - general tax credit max € 3,115 · labour tax credit max € 5,685 ✓
+#   - Zvw contribution 4.85% (contribution income capped at € 79,409) ✓
+#     → The build spec said ~5.32%; that is WRONG. The official 2026 rate is
+#       4.85% (was 5.26% in 2025). Both the article and the net-income tool use
+#       4.85% and reconcile exactly.
 #
-# The figures are taken from the existing net-income tool
+# The figures match the existing net-income tool
 # (src/app/netto-inkomen-zzp/NettoCalculator.tsx) so the article and the
-# calculator produce identical results. The build spec mentioned a Zvw
-# contribution of ~5.32%; the tool uses 4.85%. Those differ — verify which rate
-# is correct for 2026 and keep the article and the tool in sync.
+# calculator produce identical results. Rates can change — re-check just before
+# publishing.
 # ─────────────────────────────────────────────────────────────────────────────
 ---
 

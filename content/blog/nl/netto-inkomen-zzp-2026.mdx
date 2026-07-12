@@ -12,23 +12,27 @@ relatedToolLabel: "Bereken je netto inkomen"
 alternateSlug: "net-income-zzp-2026"
 draft: false
 # ─────────────────────────────────────────────────────────────────────────────
-# ⚠️ LET OP — MOHAMMAD MOET DIT CONTROLEREN VOOR PUBLICATIE ⚠️
+# ✅ CIJFERS 2026 GEVERIFIEERD (juli 2026) — herbevestig kort vóór publicatie.
 # (YAML-commentaar: wordt door gray-matter genegeerd, verschijnt NIET op de site.)
 #
-# Belastingtarieven veranderen. Controleer ALLE cijfers in dit artikel tegen de
-# officiële Belastingdienst-tarieven voor 2026 voordat je publiceert:
-#   - zelfstandigenaftrek € 1.200
-#   - startersaftrek € 2.123
-#   - MKB-winstvrijstelling 12,7%
-#   - Box 1: 35,75% t/m € 38.883 · 37,56% t/m € 78.426 · 49,50% daarboven
-#   - algemene heffingskorting max € 3.115 · arbeidskorting max € 5.685
-#   - Zvw-bijdrage 4,85% (bijdrage-inkomen max € 79.409)
+# Alle onderstaande cijfers zijn tegen meerdere bronnen (Belastingdienst / KVK /
+# fiscale adviseurs) gecontroleerd en komen overeen met de DEFINITIEVE tarieven
+# van 2026:
+#   - zelfstandigenaftrek € 1.200 ✓
+#   - startersaftrek € 2.123 ✓
+#   - MKB-winstvrijstelling 12,7% ✓
+#   - Box 1: 35,75% t/m € 38.883 · 37,56% t/m € 78.426 · 49,50% daarboven ✓
+#     (let op: het oorspronkelijke Belastingplan 2026 noemde 35,70% en grens
+#      € 79.137; dat is bij amendement teruggedraaid naar 35,75% / € 78.426)
+#   - algemene heffingskorting max € 3.115 · arbeidskorting max € 5.685 ✓
+#   - Zvw-bijdrage 4,85% (bijdrage-inkomen max € 79.409) ✓
+#     → De build-spec noemde ~5,32%; dat is ONJUIST. Het officiële tarief 2026 is
+#       4,85% (was 5,26% in 2025). Artikel en de netto-inkomen-tool gebruiken
+#       beide 4,85% en komen exact overeen.
 #
-# De cijfers zijn overgenomen uit de bestaande netto-inkomen-tool
-# (src/app/netto-inkomen-zzp/NettoCalculator.tsx), zodat het artikel en de
-# rekentool exact hetzelfde uitkomen. De build-spec noemde een Zvw-bijdrage van
-# ~5,32%; de tool gebruikt 4,85%. Die twee verschillen — verifieer welk tarief
-# klopt voor 2026 en houd artikel + tool gelijk.
+# De cijfers zijn gelijk aan de bestaande netto-inkomen-tool
+# (src/app/netto-inkomen-zzp/NettoCalculator.tsx), zodat artikel en rekentool
+# exact hetzelfde uitkomen. Tarieven kunnen wijzigen — check kort vóór publicatie.
 # ─────────────────────────────────────────────────────────────────────────────
 ---
 
