@@ -34,6 +34,23 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
       )
     }
 
+    // [SEC-INVITE] Verify the accepting user IS the invitee. Possessing the token
+    // is NOT enough: invitation rows (incl. token + e-mail) are world-readable via
+    // RLS, so without this check any logged-in user holding a token could accept
+    // and — in the zzper→accountant direction — become another ZZP'er's accountant,
+    // gaining RLS read-access to their invoices (horizontal privilege escalation).
+    // `accountant_email` holds the invitee's e-mail in BOTH directions (the
+    // accountant for zzper→accountant, the client for accountant→client), so one
+    // case-insensitive match is correct for both.
+    const inviteeEmail = (invitation.accountant_email ?? '').trim().toLowerCase()
+    const userEmail = (user.email ?? '').trim().toLowerCase()
+    if (!userEmail || userEmail !== inviteeEmail) {
+      return NextResponse.json(
+        { error: 'Deze uitnodiging is voor een ander e-mailadres. Log in met het uitgenodigde adres om te accepteren.' },
+        { status: 403 }
+      )
+    }
+
     // [BOEK-FOUNDATION-TYPES] zzper_id is nullable in DB schema
     if (!invitation.zzper_id) {
       return NextResponse.json(
