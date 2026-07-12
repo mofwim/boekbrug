@@ -163,34 +163,37 @@ export default function DailyTruth() {
             <MoneyCard label="Te ontvangen" bucket={toReceive} emptyText="Niets openstaand"
               subject="factuur" onClick={() => router.push('/dashboard/facturen')} />
           </div>
-
-          <button
-            onClick={() => router.push('/dashboard/bank/categoriseren')}
-            style={{
-              width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
-              marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
-              background: bank.undocumented > 0 ? M3.warningContainer : M3.surface,
-              boxShadow: EL1,
-              border: `1px solid ${bank.undocumented > 0 ? 'transparent' : M3.outlineVariant}`,
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: bank.undocumented > 0 ? M3.warning : M3.onSurface }}>
-                Nog te documenteren
-              </div>
-              <div style={{ fontSize: 12.5, color: bank.undocumented > 0 ? M3.warning : M3.neutral, marginTop: 2 }}>
-                {bank.undocumented > 0
-                  ? `${bank.undocumented} ${bank.undocumented === 1 ? 'transactie zonder bon' : 'transacties zonder bon'}`
-                  : 'Alle uitgaven hebben een bon'}
-              </div>
-            </div>
-            <span style={{ fontFamily: FONT_NUM, fontSize: 20, fontWeight: 700, color: bank.undocumented > 0 ? M3.warning : M3.success }}>
-              {bank.undocumented > 0 ? bank.undocumented : '✓'}
-            </span>
-          </button>
         </>
       )}
+
+      {/* [BANK-IDENTITY] Durable categorize entry — rendered ALWAYS (outside allClear),
+          so uncategorized transactions (incl. income that would otherwise understate
+          omzet) are reachable even when nothing is "undocumented". */}
+      <button
+        onClick={() => router.push('/dashboard/bank/categoriseren')}
+        style={{
+          width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
+          marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
+          background: bank.undocumented > 0 ? M3.warningContainer : M3.surface,
+          boxShadow: EL1,
+          border: `1px solid ${bank.undocumented > 0 ? 'transparent' : M3.outlineVariant}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: bank.undocumented > 0 ? M3.warning : M3.onSurface }}>
+            Nog te documenteren
+          </div>
+          <div style={{ fontSize: 12.5, color: bank.undocumented > 0 ? M3.warning : M3.neutral, marginTop: 2 }}>
+            {bank.undocumented > 0
+              ? `${bank.undocumented} ${bank.undocumented === 1 ? 'transactie zonder bon' : 'transacties categoriseren'}`
+              : 'Transacties bekijken en categoriseren'}
+          </div>
+        </div>
+        <span style={{ fontFamily: FONT_NUM, fontSize: 20, fontWeight: 700, color: bank.undocumented > 0 ? M3.warning : M3.neutral }}>
+          {bank.undocumented > 0 ? bank.undocumented : '›'}
+        </span>
+      </button>
 
       {/* [CASH-LEDGER] Kas line — only when the owner actually uses cash. */}
       {data.kas?.used && (
