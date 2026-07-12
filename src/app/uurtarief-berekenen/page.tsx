@@ -7,9 +7,11 @@ import Link from 'next/link'
 import UurtariefCalculator from './UurtariefCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 import PublicFooter from '@/components/public-footer'
+import PublicHeader from '@/components/public-header'
+import { absoluteUrl } from '@/lib/site'
 
 export const metadata: Metadata = {
-  title: 'Uurtarief berekenen als ZZP’er — gratis uurtarief-calculator | BoekBrug',
+  title: 'Uurtarief berekenen ZZP — gratis calculator | BoekBrug',
   description:
     'Bereken je uurtarief als ZZP’er: gewenst jaarinkomen, zakelijke kosten en factureerbare uren, met buffer voor belasting en pensioen. Gratis, geen account nodig.',
   keywords: ['uurtarief berekenen', 'uurtarief zzp', 'wat moet ik vragen per uur', 'tarief freelancer'],
@@ -55,6 +57,14 @@ const jsonLd = {
         acceptedAnswer: { '@type': 'Answer', text: f.a },
       })),
     },
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: absoluteUrl('/') },
+        { '@type': 'ListItem', position: 2, name: 'Gratis tools', item: absoluteUrl('/tools') },
+        { '@type': 'ListItem', position: 3, name: 'Uurtarief berekenen', item: absoluteUrl('/uurtarief-berekenen') },
+      ],
+    },
   ],
 }
 
@@ -66,6 +76,7 @@ export default function UurtariefBerekenenPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <PublicHeader />
 
       <div style={{ ...wrap, paddingTop: 40, textAlign: 'center' }}>
         <h1 style={{ fontSize: 32, fontWeight: 800, color: '#1c1c1e', margin: '0 0 8px', letterSpacing: -0.5 }}>
@@ -114,8 +125,8 @@ export default function UurtariefBerekenenPage() {
             Zet je uurtarief meteen op een nette factuur met BoekBrug. De BTW wordt automatisch berekend.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href="/factuur-maken" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}>
-              Gratis factuur maken
+            <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}>
+              Gratis account maken
             </Link>
             <Link href="/btw-berekenen" style={{ backgroundColor: '#fff', color: '#007aff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, border: '1.5px solid #007aff', textDecoration: 'none' }}>
               BTW berekenen

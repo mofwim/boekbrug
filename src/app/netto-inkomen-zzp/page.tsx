@@ -6,9 +6,11 @@ import Link from 'next/link'
 import NettoCalculator from './NettoCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 import PublicFooter from '@/components/public-footer'
+import PublicHeader from '@/components/public-header'
+import { absoluteUrl } from '@/lib/site'
 
 export const metadata: Metadata = {
-  title: 'Netto inkomen ZZP berekenen 2026 — hoeveel houd ik over? | BoekBrug',
+  title: 'Netto inkomen ZZP 2026 — wat houd je over? | BoekBrug',
   description:
     'Reken uit wat je als ZZP’er netto overhoudt in 2026: inkomstenbelasting, zelfstandigenaftrek, MKB-winstvrijstelling, heffingskortingen en Zvw. Het is een schatting. Gratis.',
   keywords: ['netto inkomen zzp', 'zzp belasting berekenen', 'hoeveel houd ik over zzp', 'bruto netto zzp 2026'],
@@ -40,6 +42,14 @@ const jsonLd = {
   '@graph': [
     { '@type': 'WebApplication', name: 'Netto-inkomen ZZP calculator', applicationCategory: 'FinanceApplication', operatingSystem: 'Web', offers: { '@type': 'Offer', price: '0', priceCurrency: 'EUR' }, description: 'Indicatieve netto-inkomen calculator voor ZZP’ers (2026).' },
     { '@type': 'FAQPage', mainEntity: faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) },
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: absoluteUrl('/') },
+        { '@type': 'ListItem', position: 2, name: 'Gratis tools', item: absoluteUrl('/tools') },
+        { '@type': 'ListItem', position: 3, name: 'Netto inkomen ZZP', item: absoluteUrl('/netto-inkomen-zzp') },
+      ],
+    },
   ],
 }
 
@@ -51,6 +61,7 @@ export default function NettoInkomenPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <PublicHeader />
 
       <div style={{ ...wrap, paddingTop: 40, textAlign: 'center' }}>
         <h1 style={{ fontSize: 32, fontWeight: 800, color: '#1c1c1e', margin: '0 0 8px', letterSpacing: -0.5 }}>
@@ -97,7 +108,7 @@ export default function NettoInkomenPage() {
             BoekBrug houdt je omzet en BTW per kwartaal bij. Zo is je BTW-aangifte zo klaar.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}>Gratis account</Link>
+            <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}>Gratis account maken</Link>
             <Link href="/uurtarief-berekenen" style={{ backgroundColor: '#fff', color: '#007aff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, border: '1.5px solid #007aff', textDecoration: 'none' }}>Uurtarief berekenen</Link>
           </div>
         </section>

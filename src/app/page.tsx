@@ -12,6 +12,8 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { TOOLS } from '@/lib/tools'
 import PublicFooter from '@/components/public-footer'
+import PublicHeader from '@/components/public-header'
+import { SITE_URL, absoluteUrl } from '@/lib/site'
 
 export const metadata: Metadata = {
   title: 'BoekBrug — facturen, BTW en boekhouding voor ZZP’ers',
@@ -29,6 +31,23 @@ const wrap: React.CSSProperties = { maxWidth: 980, margin: '0 auto', padding: '0
 const btnPrimary: React.CSSProperties = { backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '13px 24px', borderRadius: 9999, textDecoration: 'none', display: 'inline-block' }
 const btnGhost: React.CSSProperties = { backgroundColor: '#fff', color: '#007aff', fontSize: 15, fontWeight: 600, padding: '13px 24px', borderRadius: 9999, border: '1.5px solid #007aff', textDecoration: 'none', display: 'inline-block' }
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      name: 'BoekBrug',
+      url: SITE_URL,
+      logo: absoluteUrl('/opengraph-image'),
+    },
+    {
+      '@type': 'WebSite',
+      name: 'BoekBrug',
+      url: SITE_URL,
+    },
+  ],
+}
+
 const features = [
   { emoji: '🧾', title: 'Facturen die kloppen', body: 'Maak snel een factuur die klopt met de Nederlandse regels. Download hem als PDF.' },
   { emoji: '📄', title: 'Scan en klaar', body: 'Upload een foto of PDF. De AI leest de leverancier, het bedrag en de BTW voor je uit.' },
@@ -43,17 +62,8 @@ export default async function Home() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
-      {/* Nav */}
-      <header style={{ background: 'rgba(242,242,247,0.8)', backdropFilter: 'saturate(180%) blur(20px)', borderBottom: '1px solid #ececf1', position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ ...wrap, display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 60 }}>
-          <Link href="/" style={{ fontSize: 20, fontWeight: 800, color: '#1c1c1e', textDecoration: 'none', letterSpacing: -0.5 }}>BoekBrug</Link>
-          <nav style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Link href="/tools" style={{ fontSize: 15, color: '#1c1c1e', textDecoration: 'none', padding: '8px 12px', fontWeight: 500 }}>Gratis tools</Link>
-            <Link href="/login" style={{ fontSize: 15, color: '#1c1c1e', textDecoration: 'none', padding: '8px 12px', fontWeight: 500 }}>Inloggen</Link>
-            <Link href="/register" style={{ ...btnPrimary, padding: '9px 18px', fontSize: 14 }}>Gratis account</Link>
-          </nav>
-        </div>
-      </header>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <PublicHeader />
 
       {/* Hero */}
       <section style={{ ...wrap, textAlign: 'center', paddingTop: 72, paddingBottom: 48 }}>
@@ -67,7 +77,7 @@ export default async function Home() {
           Maak en scan facturen, houd je BTW makkelijk bij en werk samen met je boekhouder. Alles op één plek.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Link href="/register" style={btnPrimary}>Gratis beginnen</Link>
+          <Link href="/register" style={btnPrimary}>Gratis account maken</Link>
           <Link href="/factuur-maken" style={btnGhost}>Direct een factuur maken</Link>
         </div>
         <div style={{ fontSize: 13, color: '#aeaeb2', marginTop: 16 }}>Geen creditcard nodig · AVG-proof · Nederlandse facturen</div>

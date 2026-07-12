@@ -6,6 +6,8 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { TOOLS } from '@/lib/tools'
 import PublicFooter from '@/components/public-footer'
+import PublicHeader from '@/components/public-header'
+import { absoluteUrl } from '@/lib/site'
 
 export const metadata: Metadata = {
   title: 'Gratis tools voor ZZP’ers — facturen, BTW en inkomen | BoekBrug',
@@ -28,7 +30,7 @@ const jsonLd = {
     '@type': 'ListItem',
     position: i + 1,
     name: t.title,
-    url: t.slug,
+    url: absoluteUrl(t.slug),
   })),
 }
 
@@ -38,6 +40,7 @@ export default function ToolsHubPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <PublicHeader />
 
       <div style={{ ...wrap, paddingTop: 48, textAlign: 'center' }}>
         <h1 style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', margin: '0 0 10px', letterSpacing: -0.5 }}>

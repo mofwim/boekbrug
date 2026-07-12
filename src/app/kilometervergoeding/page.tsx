@@ -7,6 +7,8 @@ import Link from 'next/link'
 import KmCalculator from './KmCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 import PublicFooter from '@/components/public-footer'
+import PublicHeader from '@/components/public-header'
+import { absoluteUrl } from '@/lib/site'
 
 export const metadata: Metadata = {
   title: 'Kilometervergoeding berekenen 2026 (€0,25/km) — gratis | BoekBrug',
@@ -55,6 +57,14 @@ const jsonLd = {
         acceptedAnswer: { '@type': 'Answer', text: f.a },
       })),
     },
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: absoluteUrl('/') },
+        { '@type': 'ListItem', position: 2, name: 'Gratis tools', item: absoluteUrl('/tools') },
+        { '@type': 'ListItem', position: 3, name: 'Kilometervergoeding', item: absoluteUrl('/kilometervergoeding') },
+      ],
+    },
   ],
 }
 
@@ -66,6 +76,7 @@ export default function KilometervergoedingPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <PublicHeader />
 
       <div style={{ ...wrap, paddingTop: 40, textAlign: 'center' }}>
         <h1 style={{ fontSize: 32, fontWeight: 800, color: '#1c1c1e', margin: '0 0 8px', letterSpacing: -0.5 }}>
@@ -123,10 +134,10 @@ export default function KilometervergoedingPage() {
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
-              href="/factuur-maken"
+              href="/register"
               style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, textDecoration: 'none' }}
             >
-              Gratis factuur maken
+              Gratis account maken
             </Link>
             <Link
               href="/btw-berekenen"
