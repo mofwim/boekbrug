@@ -10,22 +10,25 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useParentPath } from '@/lib/navigation-hooks'
-import type { ClientSummary } from '../accountant.types'
+import type { ClientSummary, ClientReadiness } from '../accountant.types'
 
 // ─────────────────────────────────────────────────────────
-// Constants
+// [READINESS] Honest, fact-only client summary. No "Klaar"/"ready" verdict — the
+// system can't know a quarter is complete (a bon the client never uploaded is
+// invisible), so we show what arrived + what the accountant has processed, and let
+// the human conclude. The dot reflects the ACCOUNTANT's own worklist, not a claim
+// about the client being "done".
 // ─────────────────────────────────────────────────────────
 
-const STATUS_COLOR: Record<string, string> = {
-  klaar:       '#34A853',
-  bijna_klaar: '#FBBC04',
-  wacht:       '#EA4335',
+function attentionColor(r: ClientReadiness): string {
+  if (r.openQuestions > 0) return '#EA4335'                     // an open question — act
+  if (r.sharedInvoices > r.processedInvoices) return '#FBBC04'  // items still to process
+  return '#DADCE0'                                              // nothing pending (neutral)
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  klaar:       'Klaar',
-  bijna_klaar: 'Bijna klaar',
-  wacht:       'Wacht',
+function readinessLine(r: ClientReadiness): string {
+  if (r.sharedInvoices === 0) return 'Geen facturen dit kwartaal'
+  return `${r.processedInvoices}/${r.sharedInvoices} verwerkt · Bank ${r.hasBankData ? '✓' : '—'}`
 }
 
 // ─────────────────────────────────────────────────────────
@@ -234,10 +237,10 @@ export default function KlantenBeheer({ initialClients }: Props) {
                     minHeight: 60,
                   }}
                 >
-                  {/* Status dot */}
+                  {/* [READINESS] attention dot — the accountant's own worklist state */}
                   <div style={{
                     width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-                    backgroundColor: STATUS_COLOR[client.status] ?? '#E0E0E0',
+                    backgroundColor: attentionColor(client.readiness),
                   }} />
 
                   {/* Name + email — clickable to client page */}
@@ -253,14 +256,18 @@ export default function KlantenBeheer({ initialClients }: Props) {
                     </p>
                   </button>
 
-                  {/* Status chip */}
-                  <span style={{
-                    fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 4, flexShrink: 0,
-                    backgroundColor: client.status === 'klaar' ? '#CEEAD6' : client.status === 'bijna_klaar' ? '#FEF7E0' : '#FCE8E6',
-                    color: client.status === 'klaar' ? '#137333' : client.status === 'bijna_klaar' ? '#EA8600' : '#C5221F',
-                  }}>
-                    {STATUS_LABEL[client.status]}
+                  {/* [READINESS] honest facts, not a verdict */}
+                  <span style={{ fontSize: 11, color: '#5F6368', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    {readinessLine(client.readiness)}
                   </span>
+                  {client.readiness.openQuestions > 0 && (
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4, flexShrink: 0,
+                      backgroundColor: '#FCE8E6', color: '#C5221F',
+                    }}>
+                      {client.readiness.openQuestions} vraag
+                    </span>
+                  )}
 
                   {/* Unlink button */}
                   <button
