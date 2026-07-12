@@ -437,7 +437,9 @@ function ConfirmPaidModal({
   // Auto-open the edit fields when the AI flagged any field as uncertain, so the
   // user lands directly on what needs confirming instead of having to find it.
   // [QUEUE-EDIT-UX] Also open when entered via the card's "Bewerken" button.
-  const [editing, setEditing] = useState(anyLow || startEditing);
+  // [DATE-GATE] Open the editor whenever the invoice date is missing so the
+  // reviewer immediately sees the (required) date input.
+  const [editing, setEditing] = useState(anyLow || startEditing || !invoiceDate);
 
   const amounts = {
     total_ex_btw: exBtw,
@@ -449,11 +451,17 @@ function ConfirmPaidModal({
     invoice_date: invoiceDate.trim(),
   };
 
+  // [DATE-GATE] An incoming invoice may not be confirmed without a real invoice
+  // date (the date sets the tax period). Mirror of the server gate: nudge inline
+  // and open the editor instead of firing a raw server error.
+  const dateMissing = !invoiceDate.trim();
   const handleVerify = () => {
+    if (dateMissing) { setEditing(true); return; }
     setSubmitting(true);
     onVerify(amounts);
   };
   const handlePay = (method: "bank" | "kas") => {
+    if (dateMissing) { setEditing(true); return; }
     setSubmitting(true);
     onPay(amounts, method, paymentDate);
   };
@@ -666,8 +674,8 @@ function ConfirmPaidModal({
 
               {/* Invoice date */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14, color: dateLow ? "#EA8600" : "#6b6b6e", flexShrink: 0, fontWeight: dateLow ? 600 : 400 }}>
-                  Factuurdatum {dateLow && "⚠️"}
+                <span style={{ fontSize: 14, color: (dateLow || dateMissing) ? "#EA8600" : "#6b6b6e", flexShrink: 0, fontWeight: (dateLow || dateMissing) ? 600 : 400 }}>
+                  Factuurdatum {(dateLow || dateMissing) && "⚠️"}
                 </span>
                 {editing ? (
                   <input
@@ -689,6 +697,11 @@ function ConfirmPaidModal({
                   </span>
                 )}
               </div>
+              {dateMissing && (
+                <div style={{ fontSize: 12.5, color: "#EA4335", textAlign: "right", marginTop: 6 }}>
+                  Factuurdatum ontbreekt — verplicht om te bevestigen.
+                </div>
+              )}
             </div>
 
             {/* Edit toggle */}

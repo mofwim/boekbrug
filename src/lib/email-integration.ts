@@ -1836,9 +1836,13 @@ export async function syncUserEmails(userId: string): Promise<{
         }
       }
 
+      // [DATE-GATE] Honest date: null when the AI could not read one — do NOT
+      // fall back to the e-mail's received date. A substituted date looks
+      // confident and misfiles the expense's quarter; the verify queue forces
+      // the human to enter the real date before confirming.
       const invoiceDate = classification.invoiceDate
         ? new Date(classification.invoiceDate).toISOString().split('T')[0]
-        : new Date(attachment.date).toISOString().split('T')[0]
+        : null
 
       // [BOEK-011] Step 1: store the PDF/image in Supabase Storage
       let documentId: string | null = null
@@ -1878,7 +1882,7 @@ export async function syncUserEmails(userId: string): Promise<{
               file_type: attachment.mimeType,
               doc_type: 'factuur',
               folder_id: folderId,
-              year: new Date(invoiceDate).getFullYear(),
+              year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
               source: 'email',
               ai_processed: true,
               ai_doc_type: 'invoice',

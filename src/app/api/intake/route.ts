@@ -324,9 +324,13 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Destination: invoice or receipt → documents + invoices (verify queue) ───
+  // [DATE-GATE] Honest date: null when the AI could not read one. Never
+  // substitute today — a fabricated date would look confident and land the
+  // expense in the wrong quarter. The verify queue forces the human to enter it
+  // before confirming (the confirm route blocks a null date).
   const invoiceDate = v.invoice_date
     ? new Date(v.invoice_date).toISOString().split("T")[0]
-    : new Date().toISOString().split("T")[0]
+    : null
 
   const folderId = await resolveImportTarget(user.id, v.invoice_date ?? null, "facturen", "pipeline")
 
@@ -340,7 +344,7 @@ export async function POST(req: NextRequest) {
       file_type: upload.fileType,
       doc_type: "factuur",
       folder_id: folderId,
-      year: new Date(invoiceDate).getFullYear(),
+      year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
       source: "camera",
       ai_processed: true,
       ai_doc_type: decision.destination === "receipt" ? "receipt" : "invoice",

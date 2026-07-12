@@ -147,9 +147,11 @@ export async function POST(req: NextRequest) {
   let documentId: string | null = null;
   let pdfUrl: string | null = null;
 
+  // [DATE-GATE] Honest date: null when none was extracted — no today fallback.
+  // The confirm route blocks a null date until the reviewer enters it.
   const invoiceDate = verification.invoice_date
     ? new Date(verification.invoice_date).toISOString().split("T")[0]
-    : new Date().toISOString().split("T")[0];
+    : null;
 
   if (!uploadError) {
     pdfUrl = storagePath;
@@ -173,7 +175,7 @@ export async function POST(req: NextRequest) {
         file_type: file.type,
         doc_type: "factuur",
         folder_id: folderId,
-        year: new Date(invoiceDate).getFullYear(),
+        year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
         source: "upload",
         ai_processed: true,
         ai_doc_type: "invoice",
