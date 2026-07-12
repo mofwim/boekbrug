@@ -6,6 +6,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import UurtariefCalculator from './UurtariefCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import PublicFooter from '@/components/public-footer'
 
 export const metadata: Metadata = {
   title: 'Uurtarief berekenen als ZZP’er — gratis uurtarief-calculator | BoekBrug',
@@ -126,6 +127,7 @@ export default function UurtariefBerekenenPage() {
       </div>
 
       <ToolsCrossLinks currentSlug="/uurtarief-berekenen" />
+      <PublicFooter />
     </div>
   )
 }

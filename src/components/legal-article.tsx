@@ -6,6 +6,7 @@
 import Link from 'next/link'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import PublicFooter from '@/components/public-footer'
 
 const text: React.CSSProperties = { color: '#3c3c43', fontSize: 15, lineHeight: 1.7 }
 
@@ -70,6 +71,7 @@ export default function LegalArticle({ markdown }: { markdown: string }) {
           BoekBrug — de brug tussen jou en je boekhouder.
         </p>
       </div>
+      <PublicFooter />
     </div>
   )
 }

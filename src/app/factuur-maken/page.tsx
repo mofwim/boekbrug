@@ -21,6 +21,7 @@ import { InvoicePDF } from '@/lib/invoice-pdf'
 import { formatEuroNL } from '@/lib/format-nl'
 import { parseAmountNL as parseNum } from '@/lib/parse-nl'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import PublicFooter from '@/components/public-footer'
 
 // react-pdf touches browser APIs — load the link client-side only (same
 // pattern as dashboard/invoice/[id]).
@@ -685,6 +686,7 @@ export default function GratisFactuurPage() {
 
         <ToolsCrossLinks currentSlug="/factuur-maken" />
       </div>
+      <PublicFooter />
     </div>
   )
 }

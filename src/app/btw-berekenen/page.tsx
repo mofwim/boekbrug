@@ -8,6 +8,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import BtwCalculator from './BtwCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import PublicFooter from '@/components/public-footer'
 
 export const metadata: Metadata = {
   title: 'BTW berekenen (21%, 9% of 0%) — gratis BTW-calculator | BoekBrug',
@@ -176,6 +177,7 @@ export default function BtwBerekenenPage() {
       </div>
 
       <ToolsCrossLinks currentSlug="/btw-berekenen" />
+      <PublicFooter />
     </div>
   )
 }

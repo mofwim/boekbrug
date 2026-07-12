@@ -5,6 +5,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { TOOLS } from '@/lib/tools'
+import PublicFooter from '@/components/public-footer'
 
 export const metadata: Metadata = {
   title: 'Gratis tools voor ZZP’ers — facturen, BTW en inkomen | BoekBrug',
@@ -80,6 +81,7 @@ export default function ToolsHubPage() {
           BoekBrug — de brug tussen jou en je boekhouder.
         </p>
       </div>
+      <PublicFooter />
     </div>
   )
 }

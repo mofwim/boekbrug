@@ -15,7 +15,7 @@ export default function PublicFooter() {
     <footer style={{ background: '#fff', borderTop: '1px solid #ececf1', marginTop: 'auto' }}>
       <div style={{ maxWidth: 980, margin: '0 auto', padding: '40px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 28 }}>
         <div style={col}>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#1c1c1e' }}>BoekBrug</div>
+          <Link href="/" style={{ fontSize: 17, fontWeight: 800, color: '#1c1c1e', textDecoration: 'none' }}>BoekBrug</Link>
           <div style={{ fontSize: 13, color: '#aeaeb2', lineHeight: 1.6 }}>
             De brug tussen jou en je boekhouder.
           </div>
