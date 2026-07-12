@@ -292,6 +292,14 @@ function RegisterContent() {
               {loading ? 'Bezig...' : 'Account aanmaken'}
             </button>
 
+            {/* [AVG] Consent — a reachable link to the terms/privacy at sign-up. */}
+            <p className="text-xs text-gray-400 text-center leading-relaxed">
+              Als je een account maakt, ga je akkoord met onze{' '}
+              <a href="/voorwaarden" className="text-blue-600 underline">Voorwaarden</a>{' '}
+              en de{' '}
+              <a href="/privacy" className="text-blue-600 underline">Privacyverklaring</a>.
+            </p>
+
             <button onClick={() => setStep(1)}
               className="w-full text-gray-500 text-sm hover:text-gray-700">
               ← Terug
