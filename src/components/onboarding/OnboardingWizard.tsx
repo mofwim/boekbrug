@@ -50,6 +50,17 @@ function stepToProgress(step: StepId, role: Role): number {
     return map[String(step)] ?? 5;
 }
 
+// Human "Stap X van Y" counter that NEVER skips a number. The setup sub-steps
+// (3A/3B/3C) collapse into one "Stap 3", and when the role step is skipped
+// (already chosen at registration) the later numbers shift down by one — so the
+// user never sees "Stap 1" jump to "Stap 3", and the denominator stays honest.
+function stepCounter(step: StepId, role: Role, roleSkipped: boolean): { n: number; total: number } {
+  const base = typeof step === "string" ? 3 : step; // 3A/3B/3C → 3 (the setup step)
+  const total = role === "accountant" ? (roleSkipped ? 4 : 5) : (roleSkipped ? 5 : 6);
+  const n = roleSkipped && base >= 3 ? base - 1 : base;
+  return { n: Math.min(n, total), total };
+}
+
 const KVK_REGEX = /^\d{8}$/;
 
 // ── Main component ──────────────────────────────────────
@@ -94,6 +105,7 @@ export function OnboardingWizard({
   const router = useRouter();
 
   const progress = stepToProgress(step, role);
+  const counter = stepCounter(step, role, roleAlreadySet);
 
   async function persistStep(nextStep: number, extra?: Record<string, unknown>) {
     await fetch("/api/onboarding", {
@@ -215,7 +227,12 @@ export function OnboardingWizard({
     }
 
     if (role === "accountant") {
-      if (step === 1) { await persistStep(2); setStep(2); return; }
+      if (step === 1) {
+        // [COLD-START] Mirror the ZZP branch: skip the role step when the role was
+        // already chosen at registration, so we never show it twice.
+        if (roleAlreadySet) { await persistStep(3); setStep(3); } else { await persistStep(2); setStep(2); }
+        return;
+      }
       if (step === 2) { await persistStep(3); setStep(3); return; }
       if (step === 3) {
         const kvk = company.kvk_number.trim();
@@ -251,7 +268,11 @@ export function OnboardingWizard({
 
   async function handleSkip() {
     if (role === "zzp") {
-      if (step === 3) { setStep("3B"); return; }
+      // [COLD-START] "Sla over" on "Hoe wil je beginnen?" means SKIP the setup —
+      // go straight to Gmail (step 4). It used to silently drop the user into the
+      // manual form (3B), which is the opposite of skipping. Company data can be
+      // added later in Instellingen.
+      if (step === 3) { await persistStep(4); setStep(4); return; }
       if (step === "3A" || step === "3B") { await persistStep(4); setStep(4); return; }
       if (step === "3C") { await persistStep(4); setStep(4); return; } // [FACTUUR-B]
       if (step === 4) { await persistStep(5); setStep(5); return; }
@@ -314,7 +335,7 @@ export function OnboardingWizard({
           </span>
         </a>
         <span style={{ fontSize: "13px", color: "#aeaeb2" }}>
-          Stap {typeof step === "string" ? step.replace("3A","3").replace("3B","3").replace("3C","3") : step} van {role === "accountant" ? 5 : 6}
+          Stap {counter.n} van {counter.total}
         </span>
       </div>
 
@@ -862,10 +883,17 @@ function StepManual({ company, setCompany, kvkError, setKvkError }: {
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <Input label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
           onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
-        <Input label="Wat is je KVK-nummer?" placeholder="12345678" value={company.kvk_number}
+        <Input label="Wat is je KVK-nummer? (optioneel)" placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
       </div>
+      {/* [COLD-START] Explain WHY "Volgende" is greyed out — a disabled button with
+          no reason reads as "broken" to a first-time user. */}
+      {!company.company_name.trim() && (
+        <p style={{ margin: 0, fontSize: "13px", color: "#8e8e93" }}>
+          Vul je bedrijfsnaam in om verder te gaan.
+        </p>
+      )}
     </div>
   );
 }
@@ -878,15 +906,21 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Jouw kantoor</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Optioneel — je kunt dit later aanpassen.</p>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Alleen de naam is nodig — de rest kun je later aanpassen.</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <Input label="Naam van je kantoor" placeholder="Bakker Boekhouders" value={company.company_name}
           onChange={(v) => setCompany((p) => ({ ...p, company_name: v }))} />
-        <Input label="KVK-nummer van je kantoor" placeholder="12345678" value={company.kvk_number}
+        <Input label="KVK-nummer van je kantoor (optioneel)" placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
       </div>
+      {/* [COLD-START] Explain WHY "Volgende" is greyed out (name is required). */}
+      {!company.company_name.trim() && (
+        <p style={{ margin: 0, fontSize: "13px", color: "#8e8e93" }}>
+          Vul de naam van je kantoor in om verder te gaan.
+        </p>
+      )}
     </div>
   );
 }

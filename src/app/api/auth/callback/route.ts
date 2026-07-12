@@ -32,10 +32,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/login?error=auth_failed', req.url))
   }
 
+  // [AUTH-FRONTDOOR] The only metadata we carry is the display name — from the
+  // email signup (register/page.tsx passes data.full_name) or from Google. Role and
+  // company are collected in onboarding, so there is nothing else to enrich here.
+  const metaName = user.user_metadata?.full_name || user.user_metadata?.name || ''
+
   // [Google-OAuth] Check if this user already has a profile
   const { data: existingProfile } = await supabase
     .from('profiles')
-    .select('id, onboarding_done')
+    .select('id, onboarding_done, full_name')
     .eq('id', user.id)
     .single()
 
@@ -43,32 +48,28 @@ export async function GET(req: NextRequest) {
     // [BOEK-015] fix: use UPSERT — the on_auth_user_created trigger may have
     // already created a profile row. INSERT would 23505 and leave the user
     // stuck. onboarding_step: 1 (not 0) so the wizard renders Step 1.
-    const googleName = user.user_metadata?.full_name || user.user_metadata?.name || ''
-    const googleEmail = user.email || ''
-
     await supabase.from('profiles').upsert({
       id: user.id,
-      full_name: googleName,
-      email: googleEmail,
-      role: 'zzper', // default — user picks role during onboarding
+      full_name: metaName,
+      email: user.email || '',
+      role: 'zzper', // default — the real role is chosen during onboarding
       onboarding_done: false,
-      onboarding_step: 1, // [BOEK-015] fix: was 0 → caused blank onboarding screen
+      onboarding_step: 1,
     }, { onConflict: 'id' })
 
     // Always send new users to onboarding
     return NextResponse.redirect(new URL('/onboarding', req.url))
   }
 
-  // [BOEK-015] fix: the on_auth_user_created trigger creates a bare profile
-  // (email only, no full_name). On first Google login we backfill the name
-  // from Google metadata if it's still empty.
-  const googleName = user.user_metadata?.full_name || user.user_metadata?.name || ''
-  if (googleName) {
+  // [BOEK-015] The trigger creates a bare profile (email only). Backfill the name
+  // from metadata on first sign-in, but only if it is still empty — never overwrite
+  // a name the user has since edited.
+  if (metaName) {
     await supabase
       .from('profiles')
-      .update({ full_name: googleName })
+      .update({ full_name: metaName })
       .eq('id', user.id)
-      .is('full_name', null)  // only fill if empty — don't overwrite user edits
+      .is('full_name', null)
   }
 
   // [Google-OAuth] Existing user — check onboarding

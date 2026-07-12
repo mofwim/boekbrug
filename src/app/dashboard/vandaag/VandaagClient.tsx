@@ -373,11 +373,16 @@ function InvoiceCard({
   const accent = accentOf(due);
   const isIncoming = invoice.direction === "incoming";
 
+  // [HONEST-HOME] A negative incoming total is a creditnota: it REDUCES what you
+  // owe, it is not something you "pay". So it must not offer "Betalen" / "Al
+  // betaald?" — only "Bekijken". (This is the same rule the home snapshot uses.)
+  const isCredit = isIncoming && (invoice.total_inc_btw ?? 0) < 0;
+
   // One clear verb per direction (clarity #3). Outgoing says "Bekijken" — NOT
   // "Herinnering sturen" — because the button currently routes to the invoice
   // page; there is no reminder-send logic yet, so the label must not promise an
   // action we don't perform. When a real reminder flow is built, change this.
-  const primaryLabel = isIncoming ? "Betalen" : "Bekijken";
+  const primaryLabel = isCredit ? "Bekijken" : isIncoming ? "Betalen" : "Bekijken";
 
   return (
     <div
@@ -510,7 +515,7 @@ function InvoiceCard({
           {primaryLabel}
         </button>
 
-        {isIncoming && onConfirmPaid && (
+        {isIncoming && !isCredit && onConfirmPaid && (
           <button
             type="button"
             onClick={() => onConfirmPaid(invoice.id)}
