@@ -1,12 +1,16 @@
 // src/lib/notifications.ts
-// Helper لكتابة notifications في DB — يُستخدم من أي API route
+// [CONTROL] Canonical notification writer. The `notifications` table has NO
+// authenticated INSERT policy (verified via live pg_policies), so every write
+// MUST go through service_role. This helper self-creates the pipeline client so a
+// caller can no longer pass an anon client by mistake — the previous signature
+// took a `supabase` param, which silently 42501'd when handed
+// createServerSupabaseClient(). Server-only — never import in a client component.
 
-import { SupabaseClient } from '@supabase/supabase-js'
+import { createPipelineClient } from './supabase-pipeline'
 
 type NotifType = 'invoice' | 'payment' | 'message' | 'invite' | 'status'
 
 interface CreateNotifOptions {
-  supabase: SupabaseClient
   userId: string
   title: string
   body?: string
@@ -14,16 +18,16 @@ interface CreateNotifOptions {
   link?: string
 }
 
-/** كتابة إشعار واحد للمستخدم */
+/** كتابة إشعار واحد للمستخدم — عبر service_role دائماً */
 export async function createNotification({
-  supabase,
   userId,
   title,
   body,
   type,
   link,
 }: CreateNotifOptions): Promise<void> {
-  await supabase.from('notifications').insert({
+  const pipeline = createPipelineClient()
+  await pipeline.from('notifications').insert({
     user_id: userId,
     title,
     body: body ?? null,
