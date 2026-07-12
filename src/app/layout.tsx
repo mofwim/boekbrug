@@ -1,5 +1,5 @@
 // [Design System] Roboto via next/font/google + Material Symbols CDN
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Roboto } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
@@ -19,6 +19,20 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.ico",
   },
+  // [SEO] Twitter/X card — makes shared links render a large image card on
+  // X, Slack, WhatsApp, etc. Image comes from the site-wide opengraph-image.
+  twitter: {
+    card: "summary_large_image",
+    title: "BoekBrug — Financieel Command Center",
+    description: "Al je facturen, documenten en klanten op één plek. Voor ZZP'ers en boekhouders.",
+    images: ["/opengraph-image"],
+  },
+};
+
+// [Design System] theme-color drives the browser UI tint (mobile address bar,
+// PWA chrome). Uses the BoekBrug blue accent.
+export const viewport: Viewport = {
+  themeColor: "#007aff",
 };
 
 export default function RootLayout({
