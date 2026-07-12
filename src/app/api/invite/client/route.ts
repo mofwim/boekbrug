@@ -11,12 +11,33 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { clientEmail } = await request.json()
+    const body = await request.json()
+    const clientEmail = (body.clientEmail ?? '').trim().toLowerCase()
     if (!clientEmail) return NextResponse.json({ error: 'Email verplicht' }, { status: 400 })
 
+    // [CONTROL] validate format — dropped when KlantenBeheer was rewired here from
+    // /api/accountant/invite; without it a garbage address gets stored + mailed.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
+      return NextResponse.json({ error: 'Ongeldig e-mailadres.' }, { status: 400 })
+    }
+
     // منع المحاسب من دعوة نفسه
-    if (clientEmail.toLowerCase() === user.email?.toLowerCase()) {
+    if (clientEmail === user.email?.toLowerCase()) {
       return NextResponse.json({ error: 'Je kunt jezelf niet uitnodigen' }, { status: 400 })
+    }
+
+    // [CONTROL] block a duplicate pending invite — no DB uniqueness on
+    // (accountant_email, invited_by), so a double click would otherwise create
+    // duplicate rows AND send duplicate emails.
+    const { data: existingInvites } = await supabase
+      .from('invitations')
+      .select('id')
+      .eq('accountant_email', clientEmail)
+      .eq('invited_by', 'accountant')
+      .eq('status', 'pending')
+      .limit(1)
+    if (existingInvites && existingInvites.length > 0) {
+      return NextResponse.json({ error: 'Er is al een uitnodiging verstuurd naar dit adres.' }, { status: 400 })
     }
 
     // جلب بيانات المحاسب

@@ -65,10 +65,14 @@ export default function KlantenBeheer({ initialClients }: Props) {
     setInviteSuccess(false)
 
     try {
-      const res = await fetch('/api/accountant/invite', {
+      // [CONTROL] Canonical invite path — /api/invite/client stashes
+      // zzper_id=user.id (so the RLS insert passes) AND actually sends the email.
+      // The old /api/accountant/invite sent no email and wrote zzper_id=NULL,
+      // which the accept endpoint hard-rejects (invite could never be accepted).
+      const res = await fetch('/api/invite/client', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ clientEmail: email }),
       })
       const json = await res.json()
       if (!res.ok) {

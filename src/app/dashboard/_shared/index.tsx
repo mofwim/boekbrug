@@ -437,7 +437,9 @@ function AccountantNavLinks() {
   const router = useRouter()
 
   const links = [
-    { label: 'Werkplek', href: '/dashboard/werkplek' },
+    // [CONTROL] was '/dashboard/werkplek' — the ZZP werkplek, dropping accountants
+    // onto a wrong-role screen. Point at the real (role-guarded) accountant werkplek.
+    { label: 'Werkplek', href: '/dashboard/accountant/werkplek' },
     { label: 'Klanten',  href: '/dashboard/clients/beheer' },
   ]
 

@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { logAuditAction } from '@/lib/audit'
 
 export async function POST(
   request: NextRequest,
@@ -75,12 +76,14 @@ export async function POST(
       )
     }
 
-    await supabase.from('audit_logs').insert({
-      user_id: user.id,
+    // [CONTROL] audit_logs has NO authenticated INSERT policy (service_role only)
+    // → an anon insert 42501s silently. logAuditAction writes via service_role.
+    await logAuditAction({
+      userId: user.id,
       action: 'invoice.duplicated',
-      entity_type: 'invoice',
-      entity_id: newInvoice.id,
-      old_value: JSON.stringify({ source_invoice_id: id })
+      entityType: 'invoice',
+      entityId: newInvoice.id,
+      oldValue: { source_invoice_id: id },
     })
 
     return NextResponse.json({ success: true, invoiceId: newInvoice.id })
