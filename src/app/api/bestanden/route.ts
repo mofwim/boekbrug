@@ -90,6 +90,10 @@ export async function PATCH(req: NextRequest) {
     // file stays in its original folder. shared=false un-shares it. period/year are
     // set automatically when sharing so the closing-package ZIP can place it.
     shared?: boolean;
+    // [FIN-9] Optional quarter the owner is sharing FOR ('YYYY-Qn'). When present
+    // it overrides the current-quarter default so a receipt shared after its
+    // quarter closes still lands in the right closing package.
+    period?: string;
   };
 
   const patch: DocumentUpdate = {};
@@ -106,10 +110,25 @@ export async function PATCH(req: NextRequest) {
   if (typeof body.shared === "boolean") {
     patch.shared = body.shared;
     if (body.shared) {
-      const now = new Date();
-      const y = now.getFullYear();
-      patch.period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
-      patch.year   = y;
+      // [FIN-9] Prefer the quarter the owner explicitly chose: a Q1 receipt is
+      // usually shared AFTER Q1 closes (in Q2), so stamping the *current* quarter
+      // made the file miss the Q1 closing package and wrongly land in Q2's. When
+      // the client sends a validated 'YYYY-Qn' we honour it; otherwise we fall
+      // back to the current quarter (unchanged legacy behaviour). Backward-
+      // compatible: callers sending only { shared: true } are unaffected.
+      const chosen =
+        typeof body.period === "string" && /^\d{4}-Q[1-4]$/.test(body.period)
+          ? body.period
+          : null;
+      if (chosen) {
+        patch.period = chosen;
+        patch.year = Number(chosen.slice(0, 4));
+      } else {
+        const now = new Date();
+        const y = now.getFullYear();
+        patch.period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+        patch.year = y;
+      }
     }
   }
 
