@@ -11,6 +11,8 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC_PATHS = [
   "/login",
   "/register",
+  "/wachtwoord-vergeten",
+  "/wachtwoord-herstellen",
   "/invite",
   "/pay",
   "/factuur-maken",
@@ -100,5 +102,5 @@ export const config = {
   // exclude them from the matcher entirely — otherwise the auth guard below
   // redirects an unauthenticated crawler to /login and search engines / social
   // scrapers never see them.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|opengraph-image|twitter-image).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|opengraph-image|twitter-image).*)"],
 };
