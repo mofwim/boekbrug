@@ -11,27 +11,26 @@ relatedTool: "/netto-inkomen-zzp"
 relatedToolLabel: "Calculate your net income"
 alternateSlug: "netto-inkomen-zzp-2026"
 draft: false
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ NOTE — MOHAMMAD MUST VERIFY BEFORE PUBLISHING ⚠️
+# (YAML comment: ignored by gray-matter, does NOT appear on the site.)
+#
+# Tax figures change. Check EVERY number in this article against the official
+# Belastingdienst rates for 2026 before publishing:
+#   - zelfstandigenaftrek (self-employed deduction) € 1,200
+#   - startersaftrek (starter's deduction) € 2,123
+#   - MKB-winstvrijstelling (SME profit exemption) 12.7%
+#   - Box 1: 35.75% up to € 38,883 · 37.56% up to € 78,426 · 49.50% above
+#   - general tax credit max € 3,115 · labour tax credit max € 5,685
+#   - Zvw contribution 4.85% (contribution income capped at € 79,409)
+#
+# The figures are taken from the existing net-income tool
+# (src/app/netto-inkomen-zzp/NettoCalculator.tsx) so the article and the
+# calculator produce identical results. The build spec mentioned a Zvw
+# contribution of ~5.32%; the tool uses 4.85%. Those differ — verify which rate
+# is correct for 2026 and keep the article and the tool in sync.
+# ─────────────────────────────────────────────────────────────────────────────
 ---
-
-<!--
-  ⚠️ NOTE — MOHAMMAD MUST VERIFY BEFORE PUBLISHING ⚠️
-
-  Tax figures change. Check EVERY number in this article against the official
-  Belastingdienst rates for 2026 before publishing:
-
-    - zelfstandigenaftrek (self-employed deduction) € 1,200
-    - startersaftrek (starter's deduction) € 2,123
-    - MKB-winstvrijstelling (SME profit exemption) 12.7%
-    - Box 1: 35.75% up to € 38,883 · 37.56% up to € 78,426 · 49.50% above
-    - general tax credit max € 3,115 · labour tax credit max € 5,685
-    - Zvw contribution 4.85% (contribution income capped at € 79,409)
-
-  The figures above are taken from the existing net-income tool
-  (src/app/netto-inkomen-zzp/NettoCalculator.tsx) so the article and the
-  calculator produce identical results. The build spec mentioned a Zvw
-  contribution of ~5.32%; the tool uses 4.85%. Those differ — verify which rate
-  is correct for 2026 and keep the article and the tool in sync.
--->
 
 As a freelancer in the Netherlands (a **ZZP'er**), you don't pay tax on your revenue — you pay it on your **profit**. And thanks to deductions and tax credits, you keep more of that profit than you might expect. Still, 2026 is a tighter year: the self-employed deduction (*zelfstandigenaftrek*) has been cut again, to **€ 1,200**. So plenty of freelancers are wondering what's actually left at the end.
 

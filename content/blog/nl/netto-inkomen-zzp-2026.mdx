@@ -11,27 +11,26 @@ relatedTool: "/netto-inkomen-zzp"
 relatedToolLabel: "Bereken je netto inkomen"
 alternateSlug: "net-income-zzp-2026"
 draft: false
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ LET OP — MOHAMMAD MOET DIT CONTROLEREN VOOR PUBLICATIE ⚠️
+# (YAML-commentaar: wordt door gray-matter genegeerd, verschijnt NIET op de site.)
+#
+# Belastingtarieven veranderen. Controleer ALLE cijfers in dit artikel tegen de
+# officiële Belastingdienst-tarieven voor 2026 voordat je publiceert:
+#   - zelfstandigenaftrek € 1.200
+#   - startersaftrek € 2.123
+#   - MKB-winstvrijstelling 12,7%
+#   - Box 1: 35,75% t/m € 38.883 · 37,56% t/m € 78.426 · 49,50% daarboven
+#   - algemene heffingskorting max € 3.115 · arbeidskorting max € 5.685
+#   - Zvw-bijdrage 4,85% (bijdrage-inkomen max € 79.409)
+#
+# De cijfers zijn overgenomen uit de bestaande netto-inkomen-tool
+# (src/app/netto-inkomen-zzp/NettoCalculator.tsx), zodat het artikel en de
+# rekentool exact hetzelfde uitkomen. De build-spec noemde een Zvw-bijdrage van
+# ~5,32%; de tool gebruikt 4,85%. Die twee verschillen — verifieer welk tarief
+# klopt voor 2026 en houd artikel + tool gelijk.
+# ─────────────────────────────────────────────────────────────────────────────
 ---
-
-<!--
-  ⚠️ LET OP — MOHAMMAD MOET DIT CONTROLEREN VOOR PUBLICATIE ⚠️
-
-  Belastingtarieven veranderen. Controleer ALLE cijfers in dit artikel tegen de
-  officiële Belastingdienst-tarieven voor 2026 voordat je publiceert:
-
-    - zelfstandigenaftrek € 1.200
-    - startersaftrek € 2.123
-    - MKB-winstvrijstelling 12,7%
-    - Box 1: 35,75% t/m € 38.883 · 37,56% t/m € 78.426 · 49,50% daarboven
-    - algemene heffingskorting max € 3.115 · arbeidskorting max € 5.685
-    - Zvw-bijdrage 4,85% (bijdrage-inkomen max € 79.409)
-
-  De cijfers hierboven zijn overgenomen uit de bestaande netto-inkomen-tool
-  (src/app/netto-inkomen-zzp/NettoCalculator.tsx), zodat het artikel en de
-  rekentool exact hetzelfde uitkomen. De build-spec noemde een Zvw-bijdrage van
-  ~5,32%; de tool gebruikt 4,85%. Die twee verschillen — verifieer welk tarief
-  klopt voor 2026 en houd artikel + tool gelijk.
--->
 
 Als ZZP'er reken je niet af over je omzet, maar over je **winst** — en zelfs daarvan houd je door aftrekposten en heffingskortingen meer over dan je misschien denkt. Toch is 2026 een lastiger jaar: de zelfstandigenaftrek is verder afgebouwd naar **€ 1.200**. Veel zelfstandigen vragen zich daardoor af wat ze onder de streep nog overhouden.
 
