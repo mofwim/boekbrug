@@ -14,6 +14,8 @@ function LoginContent() {
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
+  const [needsConfirm, setNeedsConfirm] = useState(false)
+  const [resendMsg, setResendMsg] = useState('')
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -40,14 +42,12 @@ function LoginContent() {
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
-    // [AUTH-FRONTDOOR] Basic identity scopes only — see register/page.tsx. Gmail
-    // import is a separate, in-context consent (/api/email/connect); requesting
-    // gmail.readonly here triggered Google's "unverified app" warning at the front
-    // door and never fed this flow (the callback discards the Google token).
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        scopes: 'openid email profile',
+        // Basic sign-in only — we no longer request Gmail inbox access here.
+        // Gmail connecting is a separate, opt-in step during onboarding.
+        scopes: 'email profile',
         redirectTo: `${window.location.origin}/api/auth/callback`,
       },
     })
@@ -63,17 +63,33 @@ function LoginContent() {
   async function handleLogin() {
     setLoading(true)
     setError('')
+    setNeedsConfirm(false)
+    setResendMsg('')
 
     const { error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      setError('Email of wachtwoord is onjuist')
+      // Distinguish "not confirmed yet" from a real wrong password/e-mail.
+      const code = (error as { code?: string }).code
+      const msg = error.message?.toLowerCase() ?? ''
+      if (code === 'email_not_confirmed' || msg.includes('confirm')) {
+        setNeedsConfirm(true)
+      } else {
+        setError('E-mail of wachtwoord is onjuist')
+      }
       setLoading(false)
       return
     }
 
     const redirectUrl = searchParams.get('redirect')
     router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/dashboard')
+  }
+
+  // Re-send the confirmation e-mail for an unconfirmed account.
+  async function handleResend() {
+    setResendMsg('')
+    const { error } = await supabase.auth.resend({ type: 'signup', email })
+    setResendMsg(error ? 'Versturen mislukt — probeer opnieuw.' : 'We hebben de mail opnieuw gestuurd.')
   }
 
   function goToRegister() {
@@ -116,11 +132,13 @@ function LoginContent() {
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+            <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
+              autoComplete="email"
               className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="jouw@email.nl"
               style={{ fontSize: '16px' }} // prevent iOS zoom
@@ -128,19 +146,41 @@ function LoginContent() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
+            <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleLogin()}
+              autoComplete="current-password"
               className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="••••••••"
               style={{ fontSize: '16px' }} // prevent iOS zoom
             />
+            <div className="text-right mt-1">
+              <a href="/wachtwoord-vergeten" className="text-sm text-blue-600 hover:underline">
+                Wachtwoord vergeten?
+              </a>
+            </div>
           </div>
 
           <ErrorMessage message={error} />
+
+          {/* Unconfirmed e-mail — offer to re-send the confirmation link. */}
+          {needsConfirm && (
+            <div className="flex flex-col gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+              <p className="text-sm text-amber-700">Je moet eerst je e-mail bevestigen.</p>
+              <button
+                type="button"
+                onClick={handleResend}
+                className="self-start text-sm font-medium text-blue-600 hover:underline"
+              >
+                Stuur de mail opnieuw
+              </button>
+              {resendMsg && <p className="text-sm text-amber-700">{resendMsg}</p>}
+            </div>
+          )}
 
           <button
             onClick={handleLogin}

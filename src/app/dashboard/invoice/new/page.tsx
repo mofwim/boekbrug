@@ -947,7 +947,7 @@ function NewInvoicePageContent() {
     invoiceType === 'offerte' ? 'Nieuwe offerte' :
     invoiceType === 'creditnota'  ? 'Creditnota'     : 'Nieuwe factuur'
 
-  // [BOEK-031] Number already in correct format: 001-2026 / CR-001-2026 / PF-001-2026
+  // [BOEK-031] Number already in correct format: 20260001 / CR-20260001 / PF-20260001
   const displayNumber =
     invoiceType === 'offerte' ? '—' :   // Pro forma: geen nummer in UI
     invoiceNumber || 'Concept'

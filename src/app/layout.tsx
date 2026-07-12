@@ -1,6 +1,8 @@
 // [Design System] Roboto via next/font/google + Material Symbols CDN
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Roboto } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 const roboto = Roboto({
@@ -11,11 +13,26 @@ const roboto = Roboto({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "BoekBrug — Financieel Command Center",
   description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
   icons: {
     icon: "/favicon.ico",
   },
+  // [SEO] Twitter/X card — makes shared links render a large image card on
+  // X, Slack, WhatsApp, etc. Image comes from the site-wide opengraph-image.
+  twitter: {
+    card: "summary_large_image",
+    title: "BoekBrug — Financieel Command Center",
+    description: "Al je facturen, documenten en klanten op één plek. Voor ZZP'ers en boekhouders.",
+    images: ["/opengraph-image"],
+  },
+};
+
+// [Design System] theme-color drives the browser UI tint (mobile address bar,
+// PWA chrome). Uses the BoekBrug blue accent.
+export const viewport: Viewport = {
+  themeColor: "#007aff",
 };
 
 export default function RootLayout({
@@ -37,7 +54,12 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        {/* [ANALYTICS] Vercel Web Analytics — cookieless & privacy-friendly, so
+            no consent banner is required. Only reports on Vercel deploys. */}
+        <Analytics />
+      </body>
     </html>
   );
 }

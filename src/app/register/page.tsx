@@ -1,11 +1,7 @@
 'use client'
 
 // src/app/register/page.tsx
-// [COLD-START] Registration = identity only. Name + email + password (or Google).
-// Role and company details are collected in onboarding, which is purpose-built for
-// it (AI reads your details from an invoice, or a two-field manual form). Keeping
-// the very first screen light is the single biggest reduction in first-run friction
-// — and it removes the old duplication (company asked at register AND onboarding).
+// [Google-OAuth] Add Google OAuth registration — May 2026
 
 import { Suspense, useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -13,16 +9,29 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
 
 function RegisterContent() {
+  const [step, setStep] = useState(1)
+  const [role, setRole] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
+  const [companyName, setCompanyName] = useState('')
+  const [kvk, setKvk] = useState('')
+  const [btw, setBtw] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; password?: string }>({})
+  const [emailTaken, setEmailTaken] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
+
+  // Keep any ?redirect= when we link over to /login.
+  const redirectParam = searchParams.get('redirect')
+  const loginHref = redirectParam
+    ? `/login?redirect=${encodeURIComponent(redirectParam)}`
+    : '/login'
 
   // [Google-OAuth] Reset loading when user returns via browser back button
   useEffect(() => {
@@ -37,22 +46,36 @@ function RegisterContent() {
     }
   }, [])
 
-  // [AUTH-FRONTDOOR] Google sign-up — basic identity scopes only. Gmail import is a
-  // separate, in-context consent (/api/email/connect). Role is chosen in onboarding.
+  // [Google-OAuth] Google register/login via Supabase OAuth
+  // Role is stored in step 1 — passed as state through OAuth so callback can save it
   async function handleGoogleRegister() {
+    if (!role) {
+      // Step 1 not done yet — show role picker first
+      setStep(1)
+      return
+    }
+
     setGoogleLoading(true)
     setError('')
+
+    // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
+
+    const redirectUrl = searchParams.get('redirect')
+    const state = encodeURIComponent(JSON.stringify({ role, redirect: redirectUrl || '/dashboard' }))
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        scopes: 'openid email profile',
+        // Basic sign-in only — we no longer request Gmail inbox access here.
+        // Gmail connecting is a separate, opt-in step during onboarding.
+        scopes: 'email profile',
         redirectTo: `${window.location.origin}/api/auth/callback`,
       },
     })
 
     clearTimeout(resetTimer)
+
     if (error) {
       setError('Google registratie mislukt — probeer opnieuw')
       setGoogleLoading(false)
@@ -60,31 +83,28 @@ function RegisterContent() {
   }
 
   async function handleRegister() {
-    if (password.length < 6) {
-      setError('Wachtwoord moet minimaal 6 tekens zijn')
+    // Client-side check before we call Supabase, with simple field messages.
+    const errs: { name?: string; email?: string; password?: string } = {}
+    if (!fullName.trim()) errs.name = 'Vul je naam in'
+    if (!email.trim()) errs.email = 'Vul je e-mailadres in'
+    else if (!(email.includes('@') && email.includes('.'))) errs.email = 'Dit e-mailadres klopt niet'
+    if (password.length < 6) errs.password = 'Kies een wachtwoord van minstens 6 tekens'
+
+    if (Object.keys(errs).length > 0) {
+      setFieldErrors(errs)
       return
     }
 
+    setFieldErrors({})
+    setEmailTaken(false)
     setLoading(true)
     setError('')
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        // [AUTH-FRONTDOOR] The confirmation link must return through our PKCE
-        // callback so the code is exchanged for a session (landing on the site root
-        // would drop the code and leave the user unauthenticated).
-        emailRedirectTo: `${window.location.origin}/api/auth/callback`,
-        // Only the name — the on_auth_user_created trigger reads full_name from here,
-        // so it is set even before the user confirms. Role/company come in onboarding.
-        data: { full_name: fullName },
-      },
-    })
+    const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
 
     if (signUpError) {
       if (signUpError.status === 422 || signUpError.message?.toLowerCase().includes('already')) {
-        setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
+        setEmailTaken(true)
       } else {
         setError('Registratie mislukt — probeer opnieuw')
       }
@@ -99,17 +119,45 @@ function RegisterContent() {
     }
 
     // Supabase returns a user with EMPTY identities[] when the email already exists
-    // (a privacy measure that avoids leaking which addresses are registered).
+    // (security measure to avoid leaking which emails are registered).
+    // Detect this and show the correct message instead of failing on profile insert.
     if (data.user.identities && data.user.identities.length === 0) {
-      setError('Dit e-mailadres is al geregistreerd — log in in plaats daarvan')
+      setEmailTaken(true)
       setLoading(false)
       return
     }
 
-    // [AUTH-FRONTDOOR] With email confirmation ON, signUp returns a user but NO
-    // session. The account exists and the mail is sent; the trigger already created
-    // the profile (with the name from metadata). Nothing to write here — just guide
-    // the user to their inbox. (A profile write now would fail RLS: auth.uid() null.)
+    // [BOEK-015] fix: the on_auth_user_created trigger already inserted a profile
+    // row (with default role='zzper'). Using UPSERT instead of INSERT so we
+    // UPDATE that trigger-created row with the real registration data instead
+    // of hitting a 23505 duplicate-key error → "Registratie mislukt".
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: data.user.id,
+        role,
+        full_name: fullName,
+        company_name: companyName,
+        kvk_number: kvk,
+        btw_number: btw,
+        email,
+        // [BOEK-015] P2: register already collected role + company + KVK + BTW.
+        // ZZP: skip to step 4 (Gmail) — no need to ask company data again.
+        // Accountant: step 4 is "invite client". Both land correctly.
+        // page.tsx roleWasSet reads step>=2 → true → Welcome+Role skipped.
+        onboarding_step: 4,
+      }, { onConflict: 'id' })
+
+    if (profileError) {
+      console.error('[BOEK-015] register profile upsert failed:', profileError)
+      setError('Profiel aanmaken mislukt — probeer opnieuw')
+      setLoading(false)
+      return
+    }
+
+    // [BOEK-015] fix: if email confirmation is enabled, signUp returns a user
+    // but NO active session. Check and guide the user instead of a silent
+    // redirect to /dashboard that would just bounce back to /login.
     const { data: sessionData } = await supabase.auth.getSession()
     if (!sessionData.session) {
       setEmailSent(true)
@@ -117,9 +165,6 @@ function RegisterContent() {
       return
     }
 
-    // Confirmation disabled → we have a session. The trigger-created profile is
-    // already complete for onboarding (role/company are collected there), so we just
-    // move on. Full onboarding starts at the welcome screen.
     const redirectUrl = searchParams.get('redirect')
     router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/onboarding')
   }
@@ -129,20 +174,20 @@ function RegisterContent() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
         <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📧</div>
-          <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1c1c1e', margin: '0 0 8px' }}>
+          <div aria-hidden="true" style={{ fontSize: "48px", marginBottom: "16px" }}>📧</div>
+          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#1c1c1e", margin: "0 0 8px" }}>
             Controleer je e-mail
           </h1>
-          <p style={{ fontSize: '15px', color: '#6b6b6e', margin: '0 0 24px' }}>
+          <p style={{ fontSize: "15px", color: "#6b6b6e", margin: "0 0 24px" }}>
             We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
             Klik op de link om je account te activeren.
           </p>
           <a
             href="/login"
             style={{
-              display: 'inline-block', padding: '14px 24px', borderRadius: '12px',
-              background: '#1A73E8', color: '#fff', textDecoration: 'none',
-              fontSize: '15px', fontWeight: 600,
+              display: "inline-block", padding: "14px 24px", borderRadius: "12px",
+              background: "#1A73E8", color: "#fff", textDecoration: "none",
+              fontSize: "15px", fontWeight: 600,
             }}
           >
             Naar inloggen
@@ -158,81 +203,154 @@ function RegisterContent() {
 
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-gray-900">BoekBrug</h1>
-          <p className="text-gray-500 text-sm mt-1">Account aanmaken — in één minuut</p>
+          <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
+          <p className="text-gray-600 text-sm mt-3">Maak facturen, scan bonnen en houd je BTW bij. Gratis.</p>
+          <p className="text-gray-400 text-xs mt-1">Geen creditcard nodig · AVG-proof</p>
         </div>
 
-        {/* Google sign-up */}
-        <button
-          onClick={handleGoogleRegister}
-          disabled={googleLoading || loading}
-          className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50 mb-6"
-        >
-          {googleLoading ? (
-            <span className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
-          ) : (
-            <GoogleIcon />
-          )}
-          {googleLoading ? 'Bezig met verbinden...' : 'Registreren met Google'}
-        </button>
-
-        {/* Divider */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="flex-1 h-px bg-gray-100" />
-          <span className="text-xs text-gray-400">of met e-mail</span>
-          <div className="flex-1 h-px bg-gray-100" />
-        </div>
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
-            <input
-              type="text" value={fullName} onChange={e => setFullName(e.target.value)}
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Jan de Vries"
-              style={{ fontSize: '16px' }}
-            />
+        {/* Stap 1 — Rol kiezen */}
+        {step === 1 && (
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
+            <button
+              onClick={() => { setRole('zzper'); setStep(2) }}
+              className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
+            >
+              <p className="font-medium text-gray-900">ZZP'er</p>
+              <p className="text-sm text-gray-500">Ik stuur en ontvang facturen</p>
+            </button>
+            <button
+              onClick={() => { setRole('accountant'); setStep(2) }}
+              className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
+            >
+              <p className="font-medium text-gray-900">Boekhouder</p>
+              <p className="text-sm text-gray-500">Ik beheer facturen van mijn klanten</p>
+            </button>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
-            <input
-              type="email" value={email} onChange={e => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="jouw@email.nl"
-              style={{ fontSize: '16px' }}
-            />
+        )}
+
+        {/* Stap 2 — Kies methode */}
+        {step === 2 && (
+          <div className="space-y-4">
+
+            {/* [Google-OAuth] Google register button — shown prominently in step 2 */}
+            <button
+              onClick={handleGoogleRegister}
+              disabled={googleLoading || loading}
+              className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50"
+            >
+              {googleLoading ? (
+                <span className="w-5 h-5 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+              ) : (
+                <GoogleIcon />
+              )}
+              {googleLoading ? 'Bezig met verbinden...' : 'Registreren met Google'}
+            </button>
+
+            {/* Divider */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-gray-100" />
+              <span className="text-xs text-gray-400">of met e-mail</span>
+              <div className="flex-1 h-px bg-gray-100" />
+            </div>
+
+            {/* Email + password fields */}
+            <div>
+              <label htmlFor="reg-name" className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
+              <input id="reg-name" type="text" value={fullName} onChange={e => setFullName(e.target.value)}
+                autoComplete="name"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Jan de Vries"
+                style={{ fontSize: '16px' }} />
+              {fieldErrors.name && <p className="text-xs text-red-600 mt-1">{fieldErrors.name}</p>}
+            </div>
+            <div>
+              <label htmlFor="reg-company" className="block text-sm font-medium text-gray-700 mb-1">Bedrijfsnaam (optioneel)</label>
+              <input id="reg-company" type="text" value={companyName} onChange={e => setCompanyName(e.target.value)}
+                autoComplete="organization"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Jouw Bedrijf BV"
+                style={{ fontSize: '16px' }} />
+              <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+            </div>
+            <div>
+              <label htmlFor="reg-kvk" className="block text-sm font-medium text-gray-700 mb-1">KVK-nummer (optioneel)</label>
+              <input id="reg-kvk" type="text" value={kvk} onChange={e => setKvk(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="12345678"
+                style={{ fontSize: '16px' }} />
+              <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+            </div>
+            <div>
+              <label htmlFor="reg-btw" className="block text-sm font-medium text-gray-700 mb-1">BTW-nummer (optioneel)</label>
+              <input id="reg-btw" type="text" value={btw} onChange={e => setBtw(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="NL123456789B01"
+                style={{ fontSize: '16px' }} />
+              <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+            </div>
+            <div>
+              <label htmlFor="reg-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+              <input id="reg-email" type="email" value={email} onChange={e => setEmail(e.target.value)}
+                autoComplete="email"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="jouw@email.nl"
+                style={{ fontSize: '16px' }} />
+              {fieldErrors.email && <p className="text-xs text-red-600 mt-1">{fieldErrors.email}</p>}
+            </div>
+            <div>
+              <label htmlFor="reg-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
+              <input
+                id="reg-password"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleRegister()}
+                autoComplete="new-password"
+                className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="••••••••"
+                style={{ fontSize: '16px' }} />
+              {fieldErrors.password && <p className="text-xs text-red-600 mt-1">{fieldErrors.password}</p>}
+            </div>
+
+            <ErrorMessage message={error} />
+
+            {/* Duplicate e-mail — clickable link to log in instead. */}
+            {emailTaken && (
+              <div className="flex items-start gap-2.5 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                <span className="text-red-400 text-sm mt-0.5 flex-shrink-0">✕</span>
+                <p className="text-sm text-red-600">
+                  Dit e-mailadres is al geregistreerd.{' '}
+                  <a href={loginHref} className="font-semibold underline">Inloggen</a>
+                </p>
+              </div>
+            )}
+
+            <button onClick={handleRegister} disabled={loading || googleLoading || !email || !password}
+              className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50">
+              {loading ? 'Bezig...' : 'Account aanmaken'}
+            </button>
+
+            {/* [AVG] Consent — a reachable link to the terms/privacy at sign-up. */}
+            <p className="text-xs text-gray-400 text-center leading-relaxed">
+              Als je een account maakt, ga je akkoord met onze{' '}
+              <a href="/voorwaarden" className="text-blue-600 underline">Voorwaarden</a>{' '}
+              en de{' '}
+              <a href="/privacy" className="text-blue-600 underline">Privacyverklaring</a>.
+            </p>
+
+            {/* Permanent cross-link to login (keeps ?redirect=). */}
+            <p className="text-sm text-gray-500 text-center">
+              Al een account?{' '}
+              <a href={loginHref} className="text-blue-600 font-medium underline">Inloggen</a>
+            </p>
+
+            <button onClick={() => setStep(1)}
+              className="w-full text-gray-500 text-sm hover:text-gray-700">
+              ← Terug
+            </button>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
-            <input
-              type="password" value={password} onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleRegister()}
-              className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Minimaal 6 tekens"
-              style={{ fontSize: '16px' }}
-            />
-          </div>
-
-          <ErrorMessage message={error} />
-
-          <button
-            onClick={handleRegister}
-            disabled={loading || googleLoading}
-            className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
-          >
-            {loading ? 'Bezig...' : 'Account aanmaken'}
-          </button>
-
-          <button
-            onClick={() => {
-              const redirectUrl = searchParams.get('redirect')
-              router.push(redirectUrl ? `/login?redirect=${encodeURIComponent(redirectUrl)}` : '/login')
-            }}
-            disabled={loading || googleLoading}
-            className="w-full border border-gray-200 text-gray-700 rounded-xl py-2.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-          >
-            Al een account? Inloggen
-          </button>
-        </div>
+        )}
 
       </div>
     </div>

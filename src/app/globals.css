@@ -12,7 +12,7 @@
 
   --color-text-primary:  #1c1c1e;
   --color-text-secondary:#6b6b6e;
-  --color-text-tertiary: #aeaeb2;
+  --color-text-tertiary: #8a8a8e;
   --color-separator:     #e5e5ea;
 
   --color-blue:          #007aff;
@@ -110,12 +110,16 @@ button:disabled {
 /* ── Inputs ─────────────────────────────────────────────────────────────────── */
 
 input, select, textarea {
-  border: 1.5px solid var(--color-separator) !important;
+  /* border and background-color are intentionally NOT !important so that inline
+     styles on the public tools (calculators, factuur-maken BTW warning border)
+     win via inline-style specificity. Dashboard forms that don't set their own
+     border/background still inherit these defaults. */
+  border: 1.5px solid var(--color-separator);
   color: var(--color-text-primary) !important;
   font-size: 15px !important;
   font-weight: 500 !important;
   border-radius: var(--radius-input) !important;
-  background-color: var(--color-surface) !important;
+  background-color: var(--color-surface);
   transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
   font-family: var(--font-sans) !important;
 }
@@ -246,4 +250,20 @@ input::placeholder, textarea::placeholder {
   line-height: 1.4;
   -webkit-appearance: none;
   appearance: none;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Neutralize the global button press transform */
+  button:active:not(:disabled) {
+    transform: none !important;
+  }
 }

@@ -243,10 +243,23 @@ export function buildInvoiceUbl(
   const dueDate = toUblDate(header.due_date);
 
   // Use real line items, or a synthesized summary line for header-only invoices.
-  const effLines = effectiveLines(header, lines);
-  if (lines.length === 0 && effLines.length > 0) {
+  const effLinesRaw = effectiveLines(header, lines);
+  if (lines.length === 0 && effLinesRaw.length > 0) {
     warnings.push("No invoice_lines — synthesized a single summary line from header totals.");
   }
+  // [UBL-CREDIT] A creditnota (UBL type 381) must carry POSITIVE amounts; the
+  // stored line/header values are negative, so normalize every amount to its
+  // magnitude. All downstream totals/tax groups derive from effLines, so this
+  // single normalization makes the whole document positive and consistent.
+  const isCredit = header.invoice_type === "creditnota";
+  const effLines = isCredit
+    ? effLinesRaw.map((l) => ({
+        ...l,
+        quantity: Math.abs(Number(l.quantity ?? 1)),
+        unit_price: Math.abs(Number(l.unit_price ?? 0)),
+        line_total: Math.abs(Number(l.line_total ?? 0)),
+      }))
+    : effLinesRaw;
 
   // Derive totals from lines (internal consistency over stored header).
   const groups = groupByRate(effLines);
@@ -254,9 +267,10 @@ export function buildInvoiceUbl(
   const totalTax = round2(groups.reduce((s, g) => s + g.tax, 0));
   const taxInclusive = round2(lineExtensionTotal + totalTax);
 
-  // Cross-check against stored header totals (warn only).
-  const storedEx = Number(header.total_ex_btw ?? 0);
-  const storedInc = Number(header.total_inc_btw ?? 0);
+  // Cross-check against stored header totals (warn only). Compare magnitudes so
+  // a creditnota's negative header doesn't false-alarm against positive lines.
+  const storedEx = Math.abs(Number(header.total_ex_btw ?? 0));
+  const storedInc = Math.abs(Number(header.total_inc_btw ?? 0));
   if (storedEx && Math.abs(storedEx - lineExtensionTotal) > 0.01) {
     warnings.push(
       `Header total_ex_btw (${money(storedEx)}) differs from line sum (${money(lineExtensionTotal)}).`

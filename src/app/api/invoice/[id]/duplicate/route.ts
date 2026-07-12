@@ -35,8 +35,15 @@ export async function POST(
       .insert({
         sender_id: user.id,
         invoice_number: null,
+        // [DUP-TYPE] Preserve the document type — otherwise a duplicated
+        // creditnota/pro_forma silently became a 'factuur' (DB default) carrying
+        // the original's negative amounts, and on send minted a factuur number.
+        invoice_type: original.invoice_type,
         invoice_date: today,
         due_date: dueDate.toISOString().split('T')[0],
+        // [DUP-TYPE] Carry Leverdatum (Art. 35a sub f) so a duplicated factuur
+        // doesn't ship without a delivery date.
+        delivery_date: original.delivery_date,
         status: 'draft',
         direction: original.direction,
         total_ex_btw: original.total_ex_btw,
