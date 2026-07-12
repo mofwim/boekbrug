@@ -94,7 +94,15 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
     }
 
     // ربط ZZP'er بالمحاسب
-    const { error: linkError } = await supabase
+    // [SEC-INVITE] Insert via service_role. The accountant_clients INSERT policy
+    // is WITH CHECK (accountant_id = auth.uid()); in the accountant→client
+    // direction the ACCEPTING user is the client (auth.uid() = zzperId, not
+    // accountantId), so a session-client insert is rejected by RLS and the link
+    // could never complete. By this point the user is authenticated, verified as
+    // the invitee (e-mail match above), and the invitation is valid + unexpired,
+    // so a service_role insert is authorized. Reversible: swap back to `supabase`.
+    const linkPipeline = createPipelineClient()
+    const { error: linkError } = await linkPipeline
       .from('accountant_clients')
       .insert({ accountant_id: accountantId, zzper_id: zzperId })
 

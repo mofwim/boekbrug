@@ -508,10 +508,14 @@ export async function inviteClient(
     return { error: 'Er is al een uitnodiging verstuurd naar dit adres.' }
   }
 
+  // [SEC-INVITE] zzper_id MUST be the inviting accountant's id: the invitations
+  // INSERT policy is WITH CHECK (auth.uid() = zzper_id), and on accept the
+  // accountant→client branch reads accountantId from zzper_id. A NULL here was
+  // rejected by RLS (invite never saved) and would have broken accept.
   const { error } = await supabase
     .from('invitations')
     .insert({
-      zzper_id: null,
+      zzper_id: accountantId,
       accountant_email: clientEmail,
       invited_by: 'accountant',
       status: 'pending',
