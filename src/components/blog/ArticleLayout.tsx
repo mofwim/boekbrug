@@ -14,7 +14,7 @@ import rehypeSlug from 'rehype-slug'
 import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
 import ToolCTA from '@/components/blog/ToolCTA'
-import { indexPath, type Locale, type Post } from '@/lib/blog'
+import { indexPath, articlePath, type Locale, type Post } from '@/lib/blog'
 
 // react-markdown injects an internal `node` prop into every custom component;
 // strip it so it never leaks onto the DOM.
@@ -59,9 +59,9 @@ const components: Components = {
   ),
 }
 
-const COPY: Record<Locale, { blog: string; by: string; readTime: string; back: string; switchTo: string }> = {
-  nl: { blog: 'Blog', by: 'door', readTime: 'min leestijd', back: '← Terug naar blog', switchTo: 'Read in English' },
-  en: { blog: 'Blog', by: 'by', readTime: 'min read', back: '← Back to blog', switchTo: 'Lees in het Nederlands' },
+const COPY: Record<Locale, { blog: string; by: string; readTime: string; back: string; switchTo: string; partOf: string }> = {
+  nl: { blog: 'Blog', by: 'door', readTime: 'min leestijd', back: '← Terug naar blog', switchTo: 'Read in English', partOf: 'Onderdeel van de gids' },
+  en: { blog: 'Blog', by: 'by', readTime: 'min read', back: '← Back to blog', switchTo: 'Lees in het Nederlands', partOf: 'Part of the guide' },
 }
 
 function formatDate(iso: string, locale: Locale): string {
@@ -111,6 +111,18 @@ export default function ArticleLayout({
             {' · '}{readingMinutes} {t.readTime}
             {' · '}{t.by} {frontmatter.author}
           </div>
+
+          {/* Topic-cluster up-link: "part of the guide: [pillar]" */}
+          {frontmatter.pillarSlug && frontmatter.pillarTitle && (
+            <div style={{ marginBottom: 16 }}>
+              <Link
+                href={articlePath(locale, frontmatter.pillarSlug)}
+                style={{ display: 'inline-block', fontSize: 12, fontWeight: 600, color: '#007aff', background: '#e8f1ff', border: '1px solid #cfe1ff', borderRadius: 9999, padding: '5px 12px', textDecoration: 'none' }}
+              >
+                {t.partOf}: {frontmatter.pillarTitle} →
+              </Link>
+            </div>
+          )}
 
           {/* Language switch (also emitted as hreflang in <head>) */}
           {alternatePath && (

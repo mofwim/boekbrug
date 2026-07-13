@@ -32,6 +32,10 @@ export interface PostFrontmatter {
   relatedToolLabel: string // button label for the tool CTA
   coverImage?: string
   alternateSlug?: string // slug of this article in the other locale
+  // Topic-cluster link: a supporting article points UP to its pillar/guide.
+  // ArticleLayout renders "part of the guide: [pillarTitle]" from these two.
+  pillarSlug?: string // slug (same locale) of the pillar this article belongs to
+  pillarTitle?: string // display title of that pillar
   draft?: boolean
 }
 
@@ -94,6 +98,8 @@ function readPost(locale: Locale, slug: string): Post | null {
     relatedToolLabel: String(data.relatedToolLabel ?? ''),
     coverImage: data.coverImage ? String(data.coverImage) : undefined,
     alternateSlug: data.alternateSlug ? String(data.alternateSlug) : undefined,
+    pillarSlug: data.pillarSlug ? String(data.pillarSlug) : undefined,
+    pillarTitle: data.pillarTitle ? String(data.pillarTitle) : undefined,
     draft: data.draft === true,
   }
 
