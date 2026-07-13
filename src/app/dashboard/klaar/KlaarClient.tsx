@@ -55,7 +55,8 @@ const DIM_ICON: Record<DimensionKey, string> = {
 export default function KlaarClient() {
   const init = lastCompletedQuarter()
   const [year, setYear] = useState(init.year)
-  const [quarter, setQuarter] = useState(init.quarter)
+  // Typed number (not the lib's 1|2|3|4) so the quarter picker's setQuarter(q) accepts it.
+  const [quarter, setQuarter] = useState<number>(init.quarter)
   const [data, setData] = useState<ApiResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
