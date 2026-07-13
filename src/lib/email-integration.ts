@@ -1872,7 +1872,7 @@ export async function syncUserEmails(userId: string): Promise<{
           )
 
           // [BOEK-011] Step 2: create the documents record with correct folder_id
-          const { data: doc } = await supabase
+          const { data: doc, error: docErr } = await supabase
             .from('documents')
             .insert({
               user_id: userId,
@@ -1891,8 +1891,19 @@ export async function syncUserEmails(userId: string): Promise<{
             .select('id')
             .single()
 
-          documentId = doc?.id ?? null
-          pdfUrl = storagePath
+          if (docErr || !doc) {
+            // [R7] The documents insert failed. Don't leave an orphan storage object nor an
+            // invoice claiming a pdf_url whose documents row doesn't exist (unreachable in
+            // the closing package). Remove the file; the invoice still saves (the sync
+            // deliberately never loses extracted invoice data), but without a broken link.
+            console.error('[BOEK-011] Document insert failed:', docErr?.message)
+            await supabase.storage.from('documents').remove([storagePath])
+            documentId = null
+            pdfUrl = null
+          } else {
+            documentId = doc.id
+            pdfUrl = storagePath
+          }
         } else {
           console.error('[BOEK-011] Storage upload failed:', uploadErr.message)
         }
@@ -2036,6 +2047,18 @@ export async function syncUserEmails(userId: string): Promise<{
           })
         } else {
           console.error('[BOEK-011] Save error:', dbError.message)
+          // [R7] Roll back the orphan document + storage object. Otherwise its content_hash
+          // makes the NEXT sync's byte-hash Check 0 treat this attachment as "already
+          // imported" → the watermark advances past the email and the incoming invoice is
+          // PERMANENTLY, silently lost (never reaches Crediteuren / voorbelasting / aangifte
+          // / the closing package). Mirrors the intake + email-upload rollback. Best-effort;
+          // the watermark still holds so the email is re-fetched and retried cleanly.
+          if (documentId) {
+            await insertPipeline.from('documents').delete().eq('id', documentId)
+          }
+          if (pdfUrl) {
+            await supabase.storage.from('documents').remove([pdfUrl])
+          }
           errors++
           // [watermark] NOT complete — a genuine save failure; the mark stops
           // here so the next sync re-fetches and retries this email.
