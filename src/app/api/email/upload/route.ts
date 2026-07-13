@@ -143,9 +143,17 @@ export async function POST(req: NextRequest) {
   const { error: uploadError } = await supabase.storage
     .from("documents")
     .upload(storagePath, buffer, { contentType: file.type, upsert: false });
-
-  let documentId: string | null = null;
-  let pdfUrl: string | null = null;
+  // [R7] A swallowed upload error used to let the flow insert an invoice with
+  // pdf_url/document_id = null — a counted invoice whose evidence is UNRETRIEVABLE (the
+  // closing package resolves an incoming invoice's PDF via document_id). Fail loudly so
+  // the owner retries, instead of reporting "ok" over lost evidence. (Mirrors intake R1.)
+  if (uploadError) {
+    return NextResponse.json(
+      { error: "Bestand kon niet worden opgeslagen — probeer het opnieuw." },
+      { status: 502 }
+    );
+  }
+  const pdfUrl = storagePath;
 
   // [DATE-GATE] Honest date: null when none was extracted — no today fallback.
   // The confirm route blocks a null date until the reviewer enters it.
@@ -153,38 +161,43 @@ export async function POST(req: NextRequest) {
     ? new Date(verification.invoice_date).toISOString().split("T")[0]
     : null;
 
-  if (!uploadError) {
-    pdfUrl = storagePath;
+  // [BOEK-011] Resolve correct folder via BOEK-033's function
+  // ctx='user' — manual upload, user is logged in (RLS session active)
+  const folderId = await resolveImportTarget(
+    user.id,
+    verification.invoice_date ?? null,
+    "facturen",
+    "user"
+  );
 
-    // [BOEK-011] Resolve correct folder via BOEK-033's function
-    // ctx='user' — manual upload, user is logged in (RLS session active)
-    const folderId = await resolveImportTarget(
-      user.id,
-      verification.invoice_date ?? null,
-      "facturen",
-      "user"
+  const { data: doc, error: docErr } = await supabase
+    .from("documents")
+    .insert({
+      user_id: user.id,
+      file_name: file.name,
+      file_url: storagePath,
+      file_size: file.size,
+      file_type: file.type,
+      doc_type: "factuur",
+      folder_id: folderId,
+      year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
+      source: "upload",
+      ai_processed: true,
+      ai_doc_type: "invoice",
+      content_hash: contentHash,               // [BRIDGE-EXTRACT] byte-hash for cross-path dedup
+    })
+    .select("id")
+    .single();
+  // [R7] The document row IS the evidence link. If it fails to write, roll back the
+  // stored file and stop — never create an evidence-less invoice.
+  if (docErr || !doc) {
+    await supabase.storage.from("documents").remove([storagePath]);
+    return NextResponse.json(
+      { error: "Opslaan van de factuur is mislukt — probeer het opnieuw." },
+      { status: 500 }
     );
-
-    const { data: doc } = await supabase
-      .from("documents")
-      .insert({
-        user_id: user.id,
-        file_name: file.name,
-        file_url: storagePath,
-        file_size: file.size,
-        file_type: file.type,
-        doc_type: "factuur",
-        folder_id: folderId,
-        year: invoiceDate ? new Date(invoiceDate).getFullYear() : null,
-        source: "upload",
-        ai_processed: true,
-        ai_doc_type: "invoice",
-        content_hash: contentHash,               // [BRIDGE-EXTRACT] byte-hash for cross-path dedup
-      })
-      .select("id")
-      .single();
-    documentId = doc?.id ?? null;
   }
+  const documentId = doc.id;
 
   // Save the invoice — status 'received', awaiting confirmation
   // [BOEK-011 + BOEK-SECURITY] Incoming invoice: receiver_id = user, sender_id = null.
@@ -220,11 +233,16 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (dbError) {
+    // [R7/M4] Roll back the document row + stored file so the evidence isn't orphaned —
+    // its content_hash would otherwise make the byte-hash dedup BLOCK a re-upload (409),
+    // trapping the owner with a file they can neither re-add nor see as an invoice.
+    await pipeline.from("documents").delete().eq("id", documentId);
+    await supabase.storage.from("documents").remove([storagePath]);
     return NextResponse.json({ error: dbError.message }, { status: 500 });
   }
 
   // [BOEK-011] Link document back to invoice (bidirectional) — same pipeline
-  if (documentId && invoice?.id) {
+  if (invoice?.id) {
     await pipeline
       .from("documents")
       .update({ invoice_id: invoice.id })

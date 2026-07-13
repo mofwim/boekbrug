@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
 
   const preAi = decidePreAi(file.name, file.type, textHead)
   if (preAi?.destination === "bank") {
-    return handleBankStatement(buffer, file.name, user.id)
+    return handleBankStatement(buffer, file.name, user.id, file.type || "text/plain")
   }
 
   // ── Type guard for the AI path: only pdf/image go to the extractor ──────────
@@ -455,7 +455,7 @@ export async function POST(req: NextRequest) {
 }
 
 // ── Bank statement handler — mirrors /api/bank/upload (text/xml only) ─────────
-async function handleBankStatement(buffer: Buffer, filename: string, userId: string) {
+async function handleBankStatement(buffer: Buffer, filename: string, userId: string, fileType: string) {
   const content = buffer.toString("utf8")
   const parsed = parseBankFile(content, filename)
   if (parsed.transactions.length === 0) {
@@ -500,10 +500,60 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
     inserted = rows.length
   }
 
-  // [R2] Surface unreadable lines. Each parseError is a transaction line the parser
-  // could NOT read → a transaction that is NOT in the owner's overview (though the raw
-  // file still reaches the accountant). Silently reporting only `inserted` hid this;
-  // now the count travels in the response and the message says it out loud.
+  // [BANK-RAW-STORE] Store the ORIGINAL statement (passthrough) so the closing package
+  // includes it for the accountant AND any line the parser could not read stays
+  // recoverable from the source. This handler previously stored NONE of the raw file, so
+  // a dropped line had no fallback. Best-effort — a failure here never affects the
+  // transactions inserted above. Mirrors /api/bank/upload.
+  let statementStored = false
+  try {
+    const contentHash = computeContentHash(buffer)
+    const { data: existingDoc } = await pipeline
+      .from("documents")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("content_hash", contentHash)
+      .limit(1)
+      .maybeSingle()
+    if (existingDoc) {
+      statementStored = true
+    } else {
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_")
+      const storagePath = `${userId}/bank/${Date.now()}-${safeName}`
+      const { error: upErr } = await pipeline.storage
+        .from("documents")
+        .upload(storagePath, buffer, { contentType: fileType, upsert: false })
+      if (!upErr) {
+        const folderId = await resolveImportTarget(userId, min ?? null, "bank", "pipeline")
+        const stmtYear = min ? Number(min.slice(0, 4)) : null
+        const stmtPeriod = min ? `${min.slice(0, 4)}-Q${Math.ceil(Number(min.slice(5, 7)) / 3)}` : null
+        const { data: sdoc } = await pipeline
+          .from("documents")
+          .insert({
+            user_id: userId,
+            file_name: filename,
+            file_url: storagePath,
+            file_size: buffer.length,
+            file_type: fileType,
+            doc_type: "bankafschrift",
+            folder_id: folderId,
+            source: "upload",
+            content_hash: contentHash,
+            year: stmtYear,
+            period: stmtPeriod,
+          })
+          .select("id")
+          .single()
+        statementStored = sdoc?.id != null
+      }
+    }
+  } catch {
+    // best-effort — the transactions are stored regardless; only the passthrough is missing
+  }
+
+  // [R2] Surface unreadable lines. Each parseError is a transaction line the parser could
+  // NOT read → a transaction that is NOT in the owner's overview. The raw statement is now
+  // stored (above) so it stays recoverable for the accountant; the owner is told the count.
   const unreadable = parsed.parseErrors.length
   return NextResponse.json({
     ok: true,
@@ -512,10 +562,11 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
     parsed: parsed.transactions.length,
     inserted,
     skipped,
+    statementStored,
     parseWarnings: parsed.parseErrors,
     message:
       unreadable > 0
-        ? `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht.`
+        ? `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
         : `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd.`,
   })
 }
