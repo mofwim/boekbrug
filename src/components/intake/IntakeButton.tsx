@@ -77,7 +77,15 @@ export default function IntakeButton({
         //     (highlighted), consistent with a fresh non-invoice upload.
         //   - an invoice duplicate (data.original_id) → link to the invoice in
         //     the incoming manage view.
-        if (res.status === 409 && data.duplicate && data.existing?.id) {
+        if (res.status === 409 && data.duplicate && (data.original_id || data.canForce)) {
+          // SEMANTIC invoice duplicate (same invoice, DIFFERENT file — possibly a false
+          // positive). Must be checked BEFORE data.existing: the semantic 409 usually ALSO
+          // carries `existing` (the original's document), and routing on that first sent it
+          // to the file-location modal — hiding the "Toch toevoegen" override and
+          // mislabelling a genuinely different file as "al toegevoegd".
+          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, file })
+        } else if (res.status === 409 && data.duplicate && data.existing?.id) {
+          // BYTE-HASH duplicate of a file (exact same bytes) → show where it already is.
           setDestModal({
             fileName: file.name,
             message: data.error || 'Dit bestand is al toegevoegd',
