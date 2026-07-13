@@ -564,19 +564,31 @@ function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: bool
 
   return row
 }
-// ─── [BRIDGE-HUB] Layer 2 — Overzicht panel (readiness, honest status) ────────
-interface PackageSummary {
-  quarter: string
-  outgoingCount: number
-  incomingCount: number
-  filesIncluded: number
-  bankStatementIncluded: boolean
-  warnings: { code: string; message: string }[]
-  generatedAt: string
+// ─── [BRIDGE-HUB] Layer 2 — Overzicht panel (the per-client readiness verdict) ────
+// [ACCOUNTANT-TRUTH] Uses the SAME strict readiness engine the owner sees
+// (/api/readiness?clientId): a weighted score, what's still missing, and the
+// reconciliation differences to eyeball — not the old binary warnings view. The
+// accountant now opens on the exact verdict the store owner reads.
+type ReadinessStatus = 'ready' | 'almost' | 'attention'
+interface ReadinessReport {
+  quarterLabel: string
+  score: number
+  status: ReadinessStatus
+  missing: { title: string; detail?: string }[]
+  risks: { title: string; detail?: string }[]
+}
+interface ReadinessResponse {
+  report: ReadinessReport
+  concept: { verschuldigd: number; voorbelasting: number; saldo: number }
+}
+const READINESS_STATUS: Record<ReadinessStatus, { emoji: string; title: string; bg: string; fg: string }> = {
+  ready:     { emoji: '🟢', title: 'Klaar voor verwerking', bg: '#CEEAD6', fg: '#137333' },
+  almost:    { emoji: '🟡', title: 'Bijna klaar',            bg: '#FEE8C4', fg: '#7C5800' },
+  attention: { emoji: '🔴', title: 'Nog niet klaar',         bg: '#F9DEDC', fg: '#B3261E' },
 }
 
 function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
-  const [data, setData] = useState<PackageSummary | null>(null)
+  const [data, setData] = useState<ReadinessResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -584,9 +596,9 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
     let cancelled = false
     setLoading(true); setError(false); setData(null)
     const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
-    fetch(`/api/closing-package/summary?${params}`)
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(j => { if (!cancelled) setData(j) })
+    fetch(`/api/readiness?${params}`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(j => { if (!cancelled) (j?.report ? setData(j) : setError(true)) })
       .catch(() => { if (!cancelled) setError(true) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -603,86 +615,74 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
     )
   }
 
-  const totalInvoices = data.outgoingCount + data.incomingCount
-  // Honest readiness: complete when there are verified invoices and no warnings.
-  const isComplete = data.warnings.length === 0 && totalInvoices > 0
+  const rep = data.report
+  const meta = READINESS_STATUS[rep.status]
+  const teBetalen = data.concept.saldo >= 0
+
+  const itemList = (title: string, color: string, items: { title: string; detail?: string }[]) => (
+    <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {items.map((it, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>error_outline</span>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface }}>{it.title}</div>
+              {it.detail && <div style={{ fontSize: 12, color: M3.outline, marginTop: 2, lineHeight: 1.5 }}>{it.detail}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ fontFamily: FONT }}>
-      {/* [BRUG-HONEST] Status banner — only when NOT complete; no premature Compleet claim */}
-      {!isComplete && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: R.lg, marginBottom: 14, background: '#FEE8C4' }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7C5800' }}>
-            warning
-          </span>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#7C5800' }}>
-              Nog niet compleet
-            </div>
-            <div style={{ fontSize: 12.5, color: '#7C5800', opacity: 0.85 }}>
-              {data.quarter} · {data.warnings.length} {data.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}
-            </div>
-          </div>
+      {/* Verdict — the strict, turnover-aware readiness (same as the owner sees) */}
+      <div style={{ background: meta.bg, borderRadius: R.lg, padding: '16px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 26, lineHeight: 1 }}>{meta.emoji}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: meta.fg }}>{meta.title}</div>
+          <div style={{ fontSize: 12.5, color: meta.fg, opacity: 0.85 }}>{rep.quarterLabel}</div>
         </div>
-      )}
-
-      {/* What's inside — real counts only */}
-      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 14 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: M3.outline, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 12 }}>
-          Wat zit erin
-        </div>
-        <SummaryRow icon="receipt_long" label="Uitgaande facturen" value={String(data.outgoingCount)} />
-        <SummaryRow icon="receipt" label="Inkomende facturen" value={String(data.incomingCount)} />
-        <SummaryRow icon="picture_as_pdf" label="Facturen met PDF" value={String(data.filesIncluded)} />
-        <SummaryRow
-          icon="account_balance"
-          label="Bankafschrift"
-          value={data.bankStatementIncluded ? 'Aanwezig' : 'Ontbreekt'}
-          valueColor={data.bankStatementIncluded ? '#137333' : M3.error}
-          last
-        />
+        <div style={{ fontSize: 24, fontWeight: 800, color: meta.fg }}>{rep.score}%</div>
       </div>
 
-      {/* Honest missing list — specific, never a fake score */}
-      {data.warnings.length > 0 && (
-        <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', border: `1px solid #FEE8C4` }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#7C5800', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
-            Aandachtspunten
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {data.warnings.map((w, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13.5, color: M3.onSurface }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.warning, flexShrink: 0 }}>error_outline</span>
-                <span>{w.message}</span>
-              </div>
-            ))}
-          </div>
+      {rep.missing.length > 0 && itemList('Wat moet er nog gebeuren', '#7C5800', rep.missing)}
+      {rep.risks.length > 0 && itemList('Even controleren', M3.error, rep.risks)}
+      {rep.missing.length === 0 && rep.risks.length === 0 && (
+        <div style={{ background: '#CEEAD6', color: '#137333', borderRadius: R.lg, padding: '12px 16px', marginBottom: 12, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
+          Niets openstaand — alles sluit aan.
         </div>
       )}
+
+      {/* Concept BTW saldo — the number to file */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface }}>
+          {teBetalen ? 'Concept BTW te betalen' : 'Concept BTW terug te ontvangen'}
+        </span>
+        <span style={{ fontSize: 18, fontWeight: 700, color: teBetalen ? M3.onSurface : '#137333' }}>{fmtEur(Math.abs(data.concept.saldo))}</span>
+      </div>
     </div>
   )
 }
 
-function SummaryRow({ icon, label, value, valueColor, last }: { icon: string; label: string; value: string; valueColor?: string; last?: boolean }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: last ? 'none' : `1px solid #F1F1F1` }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.outline }}>{icon}</span>
-      <span style={{ flex: 1, fontSize: 14, color: M3.onSurface }}>{label}</span>
-      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor ?? M3.onSurface }}>{value}</span>
-    </div>
-  )
-}
-
-// ─── [BRIDGE-HUB] Layer 2 — Kwartaal panel (lazy-loads quarter numbers) ────────
-interface ZzpSummary {
-  totalIn: number
-  totalOut: number
-  totalBtwIn: number
-  totalBtwOut: number
+// ─── [BRIDGE-HUB] Layer 2 — Kwartaal panel: the TURNOVER-AWARE result ──────────
+// [ACCOUNTANT-TRUTH] Was invoice-only (/api/quarterly) — for a retail client that
+// OMITTED almost all revenue (till turnover isn't an invoice), so the accountant saw a
+// near-zero income while the ZIP beside it held the correct figure. Now it uses the same
+// cross-channel engine the owner sees (/api/result?clientId): omzet/kosten/resultaat +
+// concept BTW (5a/5b/5g) from invoices + bank + kas + dagomzet, de-duplicated. The number
+// the accountant reads now matches the ZIP and the owner's readiness screen.
+interface QuarterResult {
+  omzet: number; kosten: number; resultaat: number
+  btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number
+  cashOmzetZonderBtw: number
 }
 
 function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
-  const [data, setData] = useState<ZzpSummary | null>(null)
+  const [data, setData] = useState<QuarterResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -690,30 +690,9 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
     let cancelled = false
     setLoading(true); setError(false); setData(null)
     const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
-    fetch(`/api/quarterly?${params}`)
-      .then(r => r.json())
-      .then(j => {
-        if (cancelled) return
-        // Accountant path returns a full QuarterlySummary; derive in/out from it.
-        // ZZP path returns totalIn/totalOut directly. Support both shapes.
-        if (j && typeof j === 'object') {
-          if ('totalIn' in j) {
-            setData({ totalIn: j.totalIn, totalOut: j.totalOut, totalBtwIn: j.totalBtwIn, totalBtwOut: j.totalBtwOut })
-          } else if ('totalIncl' in j) {
-            // QuarterlySummary: split incoming/outgoing from invoices array
-            const invs = Array.isArray(j.invoices) ? j.invoices : []
-            let tIn = 0, tOut = 0, bIn = 0, bOut = 0
-            for (const inv of invs) {
-              const inc = inv.total_inc_btw ?? 0, btw = inv.btw_amount ?? 0
-              if (inv.direction === 'incoming') { tOut += inc; bOut += btw }
-              else { tIn += inc; bIn += btw }
-            }
-            setData({ totalIn: tIn, totalOut: tOut, totalBtwIn: bIn, totalBtwOut: bOut })
-          } else {
-            setError(true)
-          }
-        } else setError(true)
-      })
+    fetch(`/api/result?${params}`)
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(j => { if (cancelled) return; j?.result ? setData(j.result) : setError(true) })
       .catch(() => { if (!cancelled) setError(true) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -734,43 +713,43 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
     )
   }
 
+  const teBetalen = data.btwSaldo >= 0
+  const line = (label: string, value: string, opts: { color?: string; strong?: boolean; top?: boolean } = {}) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderTop: opts.top ? '1px solid #eef1f4' : 'none', marginTop: opts.top ? 4 : 0 }}>
+      <span style={{ fontSize: opts.strong ? 14.5 : 13.5, fontWeight: opts.strong ? 700 : 500, color: opts.color ?? M3.onSurface }}>{label}</span>
+      <span style={{ fontSize: opts.strong ? 18 : 15, fontWeight: opts.strong ? 700 : 600, color: opts.color ?? M3.onSurface }}>{value}</span>
+    </div>
+  )
+
   return (
     <div style={{ fontFamily: FONT }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: M3.outline, marginBottom: 10 }}>
-        Q{quarter} {year}
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: M3.outline, marginBottom: 10 }}>
+        Q{quarter} {year} · alle kanalen (kassa, bank, kas, facturen)
       </div>
-      {/* Inkomsten */}
-      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 10, border: `1px solid #CEEAD6` }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#137333', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-          Inkomsten — geverifieerd
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 11, color: M3.outline }}>Incl. BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#137333' }}>{fmtEur(data.totalIn)}</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, color: M3.outline }}>BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#137333' }}>{fmtEur(data.totalBtwIn)}</div>
-          </div>
-        </div>
+
+      {/* Resultaat — cross-channel, turnover-aware */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px', marginBottom: 10 }}>
+        {line('Omzet (excl. BTW)', fmtEur(data.omzet), { color: '#137333' })}
+        {line('Kosten (excl. BTW)', fmtEur(data.kosten), { color: '#B3261E' })}
+        {line('Resultaat', fmtEur(data.resultaat), { strong: true, top: true })}
       </div>
-      {/* Uitgaven */}
-      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', border: `1px solid #F9DEDC` }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#B3261E', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-          Uitgaven — geverifieerd
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 11, color: M3.outline }}>Incl. BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#B3261E' }}>{fmtEur(data.totalOut)}</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, color: M3.outline }}>BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#B3261E' }}>{fmtEur(data.totalBtwOut)}</div>
-          </div>
-        </div>
+
+      {/* Concept BTW — 5a / 5b / 5g */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px' }}>
+        {line('BTW verschuldigd (5a)', fmtEur(data.btwVerschuldigd))}
+        {line('Voorbelasting (5b)', `− ${fmtEur(data.btwVoorbelasting)}`)}
+        {line(
+          teBetalen ? 'Concept te betalen (5g)' : 'Concept terug te ontvangen (5g)',
+          fmtEur(Math.abs(data.btwSaldo)),
+          { strong: true, top: true, color: teBetalen ? M3.onSurface : '#137333' },
+        )}
       </div>
+
+      {data.cashOmzetZonderBtw > 0 && (
+        <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: R.md, background: '#FEE8C4', color: '#7C5800', fontSize: 12.5, lineHeight: 1.5 }}>
+          {fmtEur(data.cashOmzetZonderBtw)} contante omzet heeft nog geen BTW-tarief — die BTW zit niet in 5a.
+        </div>
+      )}
     </div>
   )
 }
