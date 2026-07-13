@@ -36,6 +36,8 @@ import {
   type InvoiceForQuarterly,
 } from "./quarterly";
 import { calcBtwRate } from "./export";
+import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
+import type { DailyTurnover } from "./turnover";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -353,6 +355,50 @@ export function buildOverviewCsv(
   return lines.join("\r\n");
 }
 
+/** [TURNOVER-CLOSING] The retail till turnover CSV: per-rate summary, per-day payment
+ *  reconciliation, and the exceptions list. RAW numbers only — the accountant computes
+ *  the aangifte; we only hand over the reconciled evidence and flag what doesn't tie. */
+export function buildTurnoverCsv(quarterLabel: string, tc: TurnoverClosing): string {
+  const L: string[] = [];
+  L.push(`BoekBrug — Dagomzet (kassa) ${quarterLabel}`);
+  L.push("");
+
+  L.push("Samenvatting per BTW-tarief (ruwe cijfers — de boekhouder berekent de aangifte)");
+  L.push(["Tarief", "Omzet excl. BTW", "BTW"].map(esc).join(";"));
+  for (const r of tc.summary.perRate) {
+    if (r.net !== 0 || r.btw !== 0) L.push([`${r.rate}%`, EUR(r.net), EUR(r.btw)].map(esc).join(";"));
+  }
+  L.push(["Totaal", EUR(tc.summary.totalNet), EUR(tc.summary.totalBtw)].map(esc).join(";"));
+  L.push(["Totaal incl. BTW", "", EUR(tc.summary.totalIncl)].map(esc).join(";"));
+  L.push(["Betaald met PIN", EUR(tc.summary.totalPin), ""].map(esc).join(";"));
+  L.push(["Betaald contant", EUR(tc.summary.totalCash), ""].map(esc).join(";"));
+  L.push("");
+
+  L.push("Betaalreconciliatie (kassa vs bank vs kasboek)");
+  L.push(["Datum", "PIN kassa", "PIN bank", "Verschil", "Contant kassa", "Contant geteld", "Verschil"].map(esc).join(";"));
+  for (const d of tc.reconciliation) {
+    L.push([d.date, EUR(d.pinExpected), EUR(d.pinSettled), EUR(d.pinDiff), EUR(d.cashExpected), EUR(d.cashCounted), EUR(d.cashDiff)].map(esc).join(";"));
+  }
+  L.push("");
+
+  if (tc.exceptions.length > 0) {
+    L.push("Uitzonderingen — dagen die niet aansluiten (controleer deze)");
+    L.push(["Datum", "Soort", "Toelichting", "Verschil"].map(esc).join(";"));
+    for (const e of tc.exceptions) L.push([e.date, e.kind, e.note, EUR(e.diff)].map(esc).join(";"));
+  } else {
+    L.push("Geen uitzonderingen — alle dagen sluiten aan.");
+  }
+
+  return L.join("\r\n");
+}
+
+/** Shift an ISO 'YYYY-MM-DD' by whole days (for the settlement-lag window). */
+function shiftDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // ─── Assembly (no network — fully node-testable) ────────────────────────────────
 
 interface AssembleInput {
@@ -379,11 +425,14 @@ interface AssembleInput {
    *  honest "do we have bank data" signal (statement files upload after the
    *  quarter closes, so their presence alone under-reports coverage). */
   hasBankData: boolean;
+  /** [TURNOVER-CLOSING] Retail till turnover section (per-rate summary + payment
+   *  reconciliation + exceptions), or null for a non-retail owner with no daily_turnover. */
+  turnoverClosing?: TurnoverClosing | null;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -496,6 +545,18 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates);
   zip.file("overzicht.csv", "\uFEFF" + overviewCsv);
 
+  // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
+  const hasTurnover = !!turnoverClosing && turnoverClosing.summary.days > 0;
+  if (hasTurnover && turnoverClosing) {
+    zip.file("dagomzet.csv", "﻿" + buildTurnoverCsv(quarterLabel, turnoverClosing));
+    if (turnoverClosing.exceptions.length > 0) {
+      warnings.push({
+        code: "turnover_exceptions",
+        message: `Dagomzet: ${turnoverClosing.exceptions.length} dag(en) sluiten niet aan (zie dagomzet.csv) — controleer voor de aangifte.`,
+      });
+    }
+  }
+
   // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
   const allQuarterly = [...outgoing, ...incoming].map(toQuarterly);
   const fullSummary = buildQuarterlySummary(allQuarterly, year, quarter);
@@ -530,6 +591,20 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
           btw_uitgaand: zzpSummary.totalBtwIn,
           btw_inkomend: zzpSummary.totalBtwOut,
         },
+        // [TURNOVER-CLOSING] Retail till turnover — the store's bulk revenue, per rate,
+        // with the days that don't reconcile flagged. null for a non-retail owner.
+        dagomzet: hasTurnover && turnoverClosing
+          ? {
+              dagen: turnoverClosing.summary.days,
+              omzet_per_tarief: turnoverClosing.summary.perRate,
+              totaal_excl_btw: turnoverClosing.summary.totalNet,
+              totaal_btw: turnoverClosing.summary.totalBtw,
+              totaal_incl_btw: turnoverClosing.summary.totalIncl,
+              betaald_pin: turnoverClosing.summary.totalPin,
+              betaald_contant: turnoverClosing.summary.totalCash,
+              uitzonderingen: turnoverClosing.exceptions,
+            }
+          : null,
         waarschuwingen: warnings,
       },
       null,
@@ -834,6 +909,45 @@ export async function buildClosingPackageZip(args: {
   const paidInvoices = [...outgoing, ...incoming].filter((i) => i.status === "paid");
   const paymentDates = await resolvePaymentDates(supabase, paidInvoices);
 
+  // ── [TURNOVER-CLOSING] Retail till turnover for the quarter + its reconciliation ──
+  const { data: turnoverRows } = await supabase
+    .from("daily_turnover")
+    .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
+    .eq("user_id", ownerId)
+    .gte("turnover_date", start)
+    .lte("turnover_date", end);
+  const turnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
+    turnover_date: t.turnover_date,
+    base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,
+    btw_9: t.btw_9 ?? 0, btw_21: t.btw_21 ?? 0,
+    total_incl: t.total_incl, pin_amount: t.pin_amount, cash_amount: t.cash_amount, other_amount: t.other_amount,
+  }));
+
+  let turnoverClosing: TurnoverClosing | null = null;
+  if (turnover.length > 0) {
+    // pos_income lines over the quarter ± a settlement-lag buffer; the DAT date (parsed
+    // inside buildTurnoverClosing) keys each settlement to its takings day.
+    const [posRes, cashRes] = await Promise.all([
+      supabase
+        .from("bank_transactions")
+        .select("description, amount")
+        .eq("user_id", ownerId)
+        .eq("category", "pos_income")
+        .gte("date", shiftDays(start, -5))
+        .lte("date", shiftDays(end, 5)),
+      supabase
+        .from("cash_entries")
+        .select("entry_date, amount")
+        .eq("user_id", ownerId)
+        .eq("category", "omzet")
+        .gte("entry_date", start)
+        .lte("entry_date", end),
+    ]);
+    const posLines = (posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount }));
+    const cashOmzet = (cashRes.data ?? []).map((c) => ({ date: c.entry_date, amount: c.amount }));
+    turnoverClosing = buildTurnoverClosing(turnover, posLines, cashOmzet);
+  }
+
   return assembleClosingPackageZip({
     year,
     quarter,
@@ -846,6 +960,7 @@ export async function buildClosingPackageZip(args: {
     sharedFiles,
     paymentDates,
     hasBankData,
+    turnoverClosing,
     warnings,
   });
 }
