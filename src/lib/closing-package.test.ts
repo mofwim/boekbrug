@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   buildOverviewCsv,
   assembleClosingPackageZip,
+  effectiveDirection,
   type PackageInvoice,
   type PaymentDateInfo,
 } from "./closing-package";
@@ -30,6 +31,8 @@ function invoice(over: Partial<PackageInvoice>): PackageInvoice {
     pdf_url: over.pdf_url ?? null,
     document_id: over.document_id ?? null,
     marked_paid_at: over.marked_paid_at ?? null,
+    sender_id: over.sender_id ?? null,
+    receiver_id: over.receiver_id ?? null,
   };
 }
 
@@ -100,6 +103,24 @@ test("bank file attached → no bank warning at all", async () => {
   const codes = await warningsFor({ hasBankData: true, withFile: true });
   assert.ok(!codes.includes("bank_missing"), "no bank_missing");
   assert.ok(!codes.includes("bank_file_missing"), "no bank_file_missing");
+});
+
+// ─── [FIN-4] Null-direction rows are attributed by ownership, not dropped ──────
+
+test("effectiveDirection keeps a stored direction", () => {
+  assert.equal(effectiveDirection({ direction: "incoming", receiver_id: "x" }, "owner"), "incoming");
+  assert.equal(effectiveDirection({ direction: "outgoing", receiver_id: "owner" }, "owner"), "outgoing");
+});
+
+test("effectiveDirection infers incoming when the owner is the receiver", () => {
+  // A verified purchase saved with a null direction must NOT be dropped: the
+  // owner receiving it makes it incoming.
+  assert.equal(effectiveDirection({ direction: null, receiver_id: "owner" }, "owner"), "incoming");
+});
+
+test("effectiveDirection infers outgoing when the owner is not the receiver", () => {
+  assert.equal(effectiveDirection({ direction: null, receiver_id: "someone-else" }, "owner"), "outgoing");
+  assert.equal(effectiveDirection({ direction: null, receiver_id: null }, "owner"), "outgoing");
 });
 
 // ─── Kilometers is not a tracked feature → never warn (was 100%-fire noise) ────
