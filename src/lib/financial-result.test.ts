@@ -132,7 +132,7 @@ console.log("\n— salesByRate: per-rate split across all sources, sums to btwVe
     { direction: "outgoing", status: "sent", total_ex_btw: 500, btw_amount: 45 },   // 9%
     { direction: "incoming", status: "received", total_ex_btw: 400, btw_amount: 84 }, // purchase, not a sale
   ];
-  const cash: ResultCashEntry[] = [{ direction: "in", amount: 218, category: "omzet", btw_rate: 9 }]; // net 200, btw 18
+  const cash: ResultCashEntry[] = [{ direction: "in", amount: 218, category: "omzet", btw_rate: 9, date: "2026-05-01" }]; // net 200, btw 18; a real (dated) NON-covered day
   const turnover: DailyTurnover[] = [{
     turnover_date: "2026-04-01", base_0: 10, base_9: 1000, base_21: 100, btw_9: 90, btw_21: 21,
     total_incl: 1221, pin_amount: null, cash_amount: null, other_amount: null,
@@ -145,6 +145,26 @@ console.log("\n— salesByRate: per-rate split across all sources, sums to btwVe
   const rateSum = r.salesByRate.reduce((s, x) => s + x.btw, 0);
   check("Σ salesByRate.btw === btwVerschuldigd (no drift)", near(rateSum, r.btwVerschuldigd));
   check("incoming invoice never appears as a sale", byRate(21)!.omzet === 1000 + 100); // not 1400
+}
+
+console.log("\n— AUDIT FIXES: creditnota nets, null-date cash excluded —");
+{
+  // #1 an outgoing creditnota (negative both) must NET its rubriek, not over-declare.
+  const r1 = computeResult([
+    { direction: "outgoing", status: "paid", total_ex_btw: 1185, btw_amount: 249 },
+    { direction: "outgoing", status: "paid", total_ex_btw: -1185, btw_amount: -249 },
+  ], [], []);
+  check("creditnota nets the 21% bucket back to 0", near(r1.salesByRate.find((s) => s.rate === 21)?.btw ?? -1, 0));
+  check("creditnota: btwVerschuldigd = 0 (not over-declared)", near(r1.btwVerschuldigd, 0));
+
+  // #3 a null-date cash omzet on a store that uses turnover must NOT double-count.
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-04-04", base_0: 0, base_9: 1000, base_21: 0, btw_9: 90, btw_21: 0,
+    total_incl: 1090, pin_amount: null, cash_amount: null, other_amount: null,
+  }];
+  const r3 = computeResult([], [], [{ direction: "in", amount: 109, category: "omzet", btw_rate: 9, date: null }], turnover);
+  check("null-date cash on a turnover store is excluded (omzet stays 1000)", near(r3.omzet, 1000));
+  check("null-date cash does not inflate the 9% bucket", near(r3.salesByRate.find((s) => s.rate === 9)?.btw ?? 0, 90));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

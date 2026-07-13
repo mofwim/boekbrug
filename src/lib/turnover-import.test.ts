@@ -88,5 +88,15 @@ console.log("\n— robustness —");
     near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "1.089,00", "1.089,00"]]).rows[0].total_incl!, 1089));
 }
 
+console.log("\n— AUDIT FIX: a net-only sheet is not mistaken for gross —");
+{
+  // No "Netto" column; the per-rate value (1000) is the NET base, gross is 1090.
+  const H: Cell[] = ["Datum", "Omzet incl.", "Base TC 9 %"];
+  const R: Cell[] = ["2026-05-01", 1090, 1000];
+  const { rows } = normalizeTurnoverSheet([H, R]);
+  check("net base kept as-is (not divided as if gross)", Math.abs((rows[0]?.base_9 ?? 0) - 1000) < 0.5);
+  check("BTW derived on top of the net base (≈90)", Math.abs((rows[0]?.btw_9 ?? 0) - 90) < 0.5);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

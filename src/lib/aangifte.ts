@@ -69,8 +69,11 @@ export function buildAangifte(
   for (const s of input.salesByRate) {
     if (s.rate === 21) { om1a += s.omzet; btw1a += s.btw; }
     else if (s.rate === 9) { om1b += s.omzet; btw1b += s.btw; }
-    else if (s.rate === 0) { om1e += s.omzet; }
-    else { om1c += s.omzet; btw1c += s.btw; } // any other non-standard rate
+    else if (s.rate === 0 && Math.round(s.btw) === 0) { om1e += s.omzet; } // genuine 0%
+    // Any other rate — OR a rate-0 bucket that carries BTW (an undecidable/mis-derived
+    // rate, e.g. a null-field or blended-rate invoice) — goes to 1c so the BTW stays
+    // VISIBLE and 5a reflects it, never silently zeroed into 1e.
+    else { om1c += s.omzet; btw1c += s.btw; }
   }
 
   const rows: AangifteRow[] = [

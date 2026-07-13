@@ -118,7 +118,10 @@ export function computeResult(
       omzet += ex;
       btwVerschuldigd += btw;
       // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
-      addSale(ex > 0 ? Math.round((btw / ex) * 100) : 0, ex, btw);
+      // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
+      // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
+      // instead of falling to rate-0 and over-declaring BTW.
+      addSale(ex !== 0 ? Math.round((btw / ex) * 100) : 0, ex, btw);
     } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
       kosten += ex;
       btwVoorbelasting += btw;
@@ -149,7 +152,10 @@ export function computeResult(
     if (c.category === "omzet") {
       // [TURNOVER] cash omzet on a covered day is part of the till turnover already
       // counted — exclude it from omzet, BTW, AND the no-rate nudge (all three).
-      if (c.date && covered.has(c.date)) continue;
+      // Fail-SAFE on a missing date: a store that USES turnover (covered non-empty) has
+      // its cash sales inside the Z-report, so a dateless cash omzet is treated as covered
+      // rather than double-counted; a ZZP (no turnover → covered empty) still counts it.
+      if (c.date ? covered.has(c.date) : covered.size > 0) continue;
       if (c.btw_rate && c.btw_rate > 0) {
         const net = amt / (1 + c.btw_rate / 100);
         omzet += net;

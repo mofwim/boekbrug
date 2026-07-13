@@ -71,5 +71,18 @@ console.log("\n— honest notes: no false reassurance —");
   check("flags cash omzet without a rate (not slotted into 1a/1b)", /250 contante omzet heeft nog geen BTW-tarief/.test(noRate));
 }
 
+console.log("\n— AUDIT FIX: a 0-rate bucket carrying BTW is surfaced (1c), never silently zeroed —");
+{
+  // An undecidable/mis-derived rate can leave BTW in the rate-0 bucket; buildAangifte must
+  // NOT drop it into 1e (which forces btw:0). It belongs in 1c so it stays visible.
+  const a = buildAangifte(
+    { salesByRate: [{ rate: 0, omzet: -1185, btw: -249 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q1 2026",
+  );
+  check("rate-0 WITH btw lands in 1c, not silently in 1e", a.rows.some((r) => r.code === "1c" && Math.round(r.btw) === -249));
+  check("5a reflects it (the BTW is not lost)", a.verschuldigd === -249);
+  check("a genuine 0% row (btw 0) still maps to 1e", buildAangifte({ salesByRate: [{ rate: 0, omzet: 222, btw: 0 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 }, compl(), "Q1 2026").rows.some((r) => r.code === "1e" && r.omzet === 222));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

@@ -141,8 +141,15 @@ export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
     const raw21 = sumCols(row, cols.rate21);
     const sumRates = raw0 + raw9 + raw21;
 
-    // Gross-vs-net detection: which total do the rate columns match?
-    const isGross = Math.abs(sumRates - gross) <= Math.abs(sumRates - netTotal);
+    // Gross-vs-net detection: which total do the rate columns match? With a Netto column,
+    // pick the closer of gross/net. WITHOUT one (netTotal defaults to 0), only call it
+    // gross when the rate columns actually SUM to the gross total (within 2%); otherwise
+    // they are the net base. Never decide by distance-to-0 — that would treat a net-only
+    // sheet as gross and divide the BTW back out, understating it.
+    const hasNet = cols.net >= 0 && netTotal > 0;
+    const isGross = hasNet
+      ? Math.abs(sumRates - gross) <= Math.abs(sumRates - netTotal)
+      : Math.abs(sumRates - gross) <= 0.02 * Math.max(1, Math.abs(gross));
 
     const split = (raw: number, rate: number) =>
       isGross

@@ -97,5 +97,16 @@ check("empty day (no revenue, all null) → no phantom 'unknown' break",
     posSettledForDay: 0, cashCountedForDay: 0,
   }).length === 0);
 
+console.log("\n— AUDIT FIXES: signed refunds + real calendar validation —");
+check("a refund pos line is SUBTRACTED, not added (net = 950)",
+  Math.abs(sumPosSettlements([
+    { description: "AFREK. BETAALAUTOMAAT MAES DAT. 20260404/1 AANT. 5", amount: 1000 },
+    { description: "AFREK. BETAALAUTOMAAT MAES DAT. 20260404/1 AANT. 1", amount: -50 },
+  ], "2026-04-04").total - 950) < 0.005);
+check("impossible calendar date (Feb 31) is rejected → null",
+  parsePosSettlement("x DAT. 20260231/1 AANT. 3").date === null);
+check("a genuine end-of-Feb date still parses", parsePosSettlement("x DAT. 20260228/1 AANT. 3").date === "2026-02-28");
+check("Apr 31 (30-day month) rejected", parsePosSettlement("x DAT. 20260431/1 AANT. 3").date === null);
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

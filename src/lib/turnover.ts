@@ -70,9 +70,14 @@ export function parsePosSettlement(
   const a = description.match(/AANT\.\s*(\d+)/);
   let date: string | null = null;
   if (d) {
-    const mm = Number(d[2]);
-    const dd = Number(d[3]);
-    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) date = `${d[1]}-${d[2]}-${d[3]}`;
+    // Real calendar validation (round-trip), not just 1-31: Feb 31 / Apr 31 roll over to
+    // another month, so getUTCDate no longer matches → rejected. A corrupt date returns
+    // null so the caller falls back to the booking date instead of keying garbage.
+    const y = Number(d[1]), mo = Number(d[2]), dy = Number(d[3]);
+    const probe = new Date(Date.UTC(y, mo - 1, dy));
+    if (probe.getUTCFullYear() === y && probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === dy) {
+      date = `${d[1]}-${d[2]}-${d[3]}`;
+    }
   }
   return { date, count: a ? Number(a[1]) : null };
 }
@@ -80,7 +85,7 @@ export function parsePosSettlement(
 /** One bank line as needed to sum card settlements. */
 export interface PosSettlementLine {
   description: string | null;
-  amount: number | null;      // signed as stored; magnitude is the settled amount
+  amount: number | null;      // signed as stored — credits positive, refunds negative
 }
 
 /**
@@ -100,7 +105,10 @@ export function sumPosSettlements(
   for (const l of lines) {
     const p = parsePosSettlement(l.description);
     if (p.date === date) {
-      total += Math.abs(l.amount ?? 0);
+      // SIGNED sum, not magnitude: a card REFUND settles as a negative bank line and must
+      // be SUBTRACTED. Math.abs would flip it positive and inflate the day's pin, both
+      // fabricating false breaks and masking real skims.
+      total += l.amount ?? 0;
       count += p.count ?? 0;
       matchedLines += 1;
     }
