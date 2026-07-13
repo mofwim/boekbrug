@@ -115,11 +115,36 @@ CREATE TABLE public.bank_transactions (
     CHECK (status = ANY (ARRAY['matched'::text, 'not_found'::text, 'pending'::text])),
   invoice_id uuid,
   created_at timestamp without time zone DEFAULT now(),
+  -- [CONTROL] reconciled to live prod — BANK-IDENTITY columns (see bank_identity.sql)
+  category text,
+  category_source text
+    CHECK (category_source = ANY (ARRAY['ai'::text, 'memory'::text, 'user'::text, 'rule'::text])),
+  category_confirmed boolean NOT NULL DEFAULT false,
   CONSTRAINT bank_transactions_pkey PRIMARY KEY (id),
   CONSTRAINT bank_transactions_user_id_fkey
     FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE,
   CONSTRAINT bank_transactions_invoice_id_fkey
     FOREIGN KEY (invoice_id) REFERENCES public.invoices(id) ON DELETE SET NULL
+);
+
+-- [CONTROL] Present in LIVE prod but absent from this file AND from
+-- supabase/migrations/ (prod-only drift). The accountant readiness "backend"
+-- table — currently has ZERO application reads/writes (see control report H-3).
+CREATE TABLE public.accountant_subject_status (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  accountant_id uuid NOT NULL,
+  subject_type text NOT NULL
+    CHECK (subject_type = ANY (ARRAY['invoice'::text, 'document'::text])),
+  subject_id uuid NOT NULL,
+  status text NOT NULL DEFAULT 'te_verwerken'::text
+    CHECK (status = ANY (ARRAY['te_verwerken'::text, 'in_behandeling'::text, 'verwerkt'::text, 'vraag'::text])),
+  verwerkt_at timestamp with time zone,
+  vraag_text text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT accountant_subject_status_pkey PRIMARY KEY (id),
+  CONSTRAINT accountant_subject_status_accountant_id_fkey
+    FOREIGN KEY (accountant_id) REFERENCES public.profiles(id)
 );
 
 CREATE TABLE public.clients (
@@ -280,7 +305,6 @@ CREATE TABLE public.invoices (
   btw_amount numeric,
   total_inc_btw numeric,
   pdf_url text,
-  sent_to_accountant boolean DEFAULT false,
   created_at timestamp without time zone DEFAULT now(),
   client_name text,
   client_email text,
@@ -304,6 +328,16 @@ CREATE TABLE public.invoices (
   offerte_converted_to uuid,
   source_message_id text,
   document_id uuid,
+  -- [CONTROL] reconciled to live prod (introspection). `shared` is GENERATED and
+  -- replaces the dropped `sent_to_accountant` flag as the accountant-visibility gate.
+  payment_method text,
+  shared boolean GENERATED ALWAYS AS (status = ANY (ARRAY['sent'::text, 'received'::text, 'paid'::text])) STORED,
+  delivery_date date,
+  field_confidence jsonb,
+  payment_date date,
+  vendor_iban text,
+  payment_reference text,
+  payment_prepared_at timestamp with time zone,
   CONSTRAINT invoices_pkey PRIMARY KEY (id),
   CONSTRAINT invoices_sender_id_fkey
     FOREIGN KEY (sender_id) REFERENCES public.profiles(id),
@@ -655,7 +689,7 @@ CREATE POLICY invoice_lines_delete_own ON public.invoice_lines
     WHERE i.id = invoice_lines.invoice_id AND i.sender_id = auth.uid()
   ));
 
--- ── invoices (6) ────────────────────────────────────────
+-- ── invoices (7) ──── [CONTROL] accountant policies reconciled to live ──
 CREATE POLICY invoices_zzp_select ON public.invoices
   FOR SELECT TO authenticated
   USING ((sender_id = auth.uid()) OR (receiver_id = auth.uid()));
@@ -671,27 +705,34 @@ CREATE POLICY invoices_zzp_delete ON public.invoices
   FOR DELETE TO authenticated
   USING ((sender_id = auth.uid()) AND (status = 'draft'::text));
 
-CREATE POLICY invoices_accountant_select ON public.invoices
+-- [CONTROL] Reconciled against LIVE prod via introspection (pg_policies +
+-- pg_get_functiondef). The pre-BRIDGE-A names invoices_accountant_select/_update
+-- and their sent_to_accountant + voldaan bodies NO LONGER EXIST on prod. The live
+-- policies use the GENERATED `shared` column and the helper
+-- is_my_accountant_client(uuid) (defined in the trigger section below), and check
+-- BOTH sender and receiver so the accountant sees a linked client's outgoing AND
+-- incoming invoices.
+CREATE POLICY invoices_accountant_read ON public.invoices
   FOR SELECT TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM accountant_clients ac
-      WHERE ac.accountant_id = auth.uid() AND ac.zzper_id = invoices.sender_id
-    )
-    AND status = ANY (ARRAY['paid'::text, 'voldaan'::text])
-    AND sent_to_accountant = true
+    shared = true
+    AND (is_my_accountant_client(sender_id) OR is_my_accountant_client(receiver_id))
   );
 
-CREATE POLICY invoices_accountant_update ON public.invoices
+CREATE POLICY invoices_accountant_update_v2 ON public.invoices
   FOR UPDATE TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM accountant_clients ac
-      WHERE ac.accountant_id = auth.uid() AND ac.zzper_id = invoices.sender_id
-    )
-    AND status = ANY (ARRAY['paid'::text, 'voldaan'::text])
-    AND sent_to_accountant = true
+    shared = true
+    AND (is_my_accountant_client(sender_id) OR is_my_accountant_client(receiver_id))
+  )
+  WITH CHECK (
+    is_my_accountant_client(sender_id) OR is_my_accountant_client(receiver_id)
   );
+
+CREATE POLICY invoices_receiver_update ON public.invoices
+  FOR UPDATE TO authenticated
+  USING ((receiver_id = auth.uid()) AND (direction = 'incoming'::text))
+  WITH CHECK ((receiver_id = auth.uid()) AND (direction = 'incoming'::text));
 
 -- ── messages (3) ────────────────────────────────────────
 CREATE POLICY messages_select_participant ON public.messages
@@ -898,33 +939,56 @@ BEGIN
 END;
 $$;
 
--- ── Invoice Amount Protection (Trigger function) ────────
--- Allows: service_role + invoice owner. Blocks: accountant modifying amounts/dates.
+-- ── Accountant-linkage helper ────────────────────────────
+-- [CONTROL] reconciled to live prod. SECURITY DEFINER so RLS policies can call it
+-- without recursing into accountant_clients' own policies. Used by the live
+-- invoices_accountant_read / _update_v2 policies.
+CREATE OR REPLACE FUNCTION public.is_my_accountant_client(client uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.accountant_clients ac
+    WHERE ac.accountant_id = auth.uid()
+      AND ac.zzper_id      = client
+  );
+$$;
 
+-- ── Invoice Amount Protection (Trigger function) ────────
+-- Allows: service_role + invoice owner + incoming-invoice receiver.
+-- Blocks: accountant modifying amounts/dates.
+-- [CONTROL] reconciled to live prod: NOT security definer; the sent_to_accountant
+-- check was dropped (column gone — `shared` is GENERATED so a direct write is
+-- rejected by Postgres); added the incoming-receiver exception.
 CREATE OR REPLACE FUNCTION public.prevent_accountant_amount_changes()
 RETURNS trigger
 LANGUAGE plpgsql
-SECURITY DEFINER
 AS $$
 BEGIN
+  -- Exception 1: service_role / pipeline (auth.uid() = NULL)
   IF auth.uid() IS NULL THEN
     RETURN NEW;
   END IF;
-
+  -- Exception 2: ZZP invoice owner (sender) may change anything
   IF OLD.sender_id = auth.uid() THEN
     RETURN NEW;
   END IF;
-
-  IF (NEW.total_ex_btw       IS DISTINCT FROM OLD.total_ex_btw)  OR
-     (NEW.btw_amount         IS DISTINCT FROM OLD.btw_amount)    OR
-     (NEW.total_inc_btw      IS DISTINCT FROM OLD.total_inc_btw) OR
-     (NEW.invoice_date       IS DISTINCT FROM OLD.invoice_date)  OR
-     (NEW.due_date           IS DISTINCT FROM OLD.due_date)      OR
-     (NEW.sender_id          IS DISTINCT FROM OLD.sender_id)     OR
-     (NEW.sent_to_accountant IS DISTINCT FROM OLD.sent_to_accountant)
+  -- Exception 3: receiver of an incoming invoice (mark-as-paid)
+  IF OLD.receiver_id = auth.uid() AND OLD.direction = 'incoming' THEN
+    RETURN NEW;
+  END IF;
+  -- Everyone else (accountant) — protected columns
+  IF (NEW.total_ex_btw  IS DISTINCT FROM OLD.total_ex_btw)  OR
+     (NEW.btw_amount    IS DISTINCT FROM OLD.btw_amount)    OR
+     (NEW.total_inc_btw IS DISTINCT FROM OLD.total_inc_btw) OR
+     (NEW.invoice_date  IS DISTINCT FROM OLD.invoice_date)  OR
+     (NEW.due_date      IS DISTINCT FROM OLD.due_date)      OR
+     (NEW.sender_id     IS DISTINCT FROM OLD.sender_id)
   THEN
     RAISE EXCEPTION
-      'Permission denied: only invoice owner can modify amounts, dates or sharing status (invoice_id: %)',
+      'Permission denied: only invoice owner can modify amounts or dates (invoice_id: %)',
       OLD.id;
   END IF;
   RETURN NEW;

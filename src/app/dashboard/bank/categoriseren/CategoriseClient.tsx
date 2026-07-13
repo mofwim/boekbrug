@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD',
@@ -17,14 +18,9 @@ const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
-// Triage categories offered to the owner (Dutch). The AI/memory pre-selects one.
-const CATS: { key: string; label: string }[] = [
-  { key: 'kosten', label: 'Zakelijke kost' },
-  { key: 'prive', label: 'Privé' },
-  { key: 'transfer', label: 'Overboeking' },
-  { key: 'tax', label: 'Belasting' },
-  { key: 'omzet', label: 'Omzet' },
-]
+// Triage categories offered to the owner (Dutch), from the single source of truth.
+// The AI/memory pre-selects one.
+const CATS = SELECTABLE_CATEGORIES
 
 interface Item {
   id: string

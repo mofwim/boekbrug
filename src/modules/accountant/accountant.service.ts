@@ -3,42 +3,16 @@
 // Pure functions only — no DB, no Supabase, no side effects.
 // Repository calls these; pages/components call repository.
 
-import type { ClientStatus, QuarterRange } from './accountant.types'
+import type { QuarterRange } from './accountant.types'
 
 // ─────────────────────────────────────────────────────────
-// Client status
+// [READINESS] The old computeClientStatus (klaar/bijna_klaar/wacht) was removed.
+// It could assert a false "klaar" (ready) — it counted only PAID invoices, ignored
+// unpaid sent/received receivables, treated any single bank file as full coverage,
+// and used doc_type='bank' which no write path ever stores. In a financial-truth
+// app a false "ready" is the cardinal sin, so readiness is now reported as honest
+// facts (ClientReadiness), computed in accountant.repository.ts, not a verdict here.
 // ─────────────────────────────────────────────────────────
-
-interface ComputeClientStatusParams {
-  /** Does the client have a bank file for the current quarter? */
-  hasBank: boolean
-  /** Total paid invoices in the current quarter */
-  totalInvoices: number
-  /** Invoices with accountant_status = 'verwerkt' */
-  processedInvoices: number
-  /** Days since last document upload — null if never uploaded */
-  lastUploadDaysAgo: number | null
-}
-
-/**
- * Computes client readiness for the current quarter.
- * Never stored — always derived from live data.
- *
- * klaar       = bank file present + all invoices processed + at least 1 invoice
- * bijna_klaar = bank file present OR some invoices processed (but not all)
- * wacht       = no bank file AND no upload in >21 days, OR never uploaded
- */
-export function computeClientStatus(params: ComputeClientStatusParams): ClientStatus {
-  const { hasBank, totalInvoices, processedInvoices, lastUploadDaysAgo } = params
-
-  const allProcessed = totalInvoices > 0 && processedInvoices === totalInvoices
-  const neverUploaded = lastUploadDaysAgo === null
-  const uploadStale = neverUploaded || lastUploadDaysAgo > 21
-
-  if (hasBank && allProcessed) return 'klaar'
-  if (!hasBank && uploadStale) return 'wacht'
-  return 'bijna_klaar'
-}
 
 // ─────────────────────────────────────────────────────────
 // Quarter helpers

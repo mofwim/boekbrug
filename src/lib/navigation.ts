@@ -95,6 +95,14 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard',
   },
 
+  // ── incoming/manage → incoming ───────────────────────────────────────────
+  // [CONTROL] without this it fell through to home, so the primary "Terug"
+  // jumped past the verification list to the dashboard.
+  {
+    match: /^\/dashboard\/incoming\/manage$/,
+    parent: () => '/dashboard/incoming',
+  },
+
   // ── all other /dashboard/* → home per role ────────────────────────────────
   // covers: /facturen, /klanten, /bestanden, /incoming, /quarterly,
   //         /settings, /werkplek (zzp), etc.

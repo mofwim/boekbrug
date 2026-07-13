@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendMessageNotification } from '@/lib/email'
 
 // ── GET: جلب رسائل المحادثة ───────────────────────────────────────────────────
@@ -72,7 +73,11 @@ export async function POST(request: NextRequest) {
     }
 
     // إشعار في قاعدة البيانات
-    await supabase.from('notifications').insert({
+    // [CONTROL] notifications has NO authenticated INSERT policy (verified via
+    // live pg_policies) → an anon insert 42501s silently and the recipient never
+    // gets the in-app notification. Write it via service_role.
+    const pipeline = createPipelineClient()
+    await pipeline.from('notifications').insert({
       user_id: receiver_id,
       title: 'Nieuw bericht',
       body: content.trim().slice(0, 80),

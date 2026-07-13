@@ -32,21 +32,9 @@ import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.
 // [BOEK-028] localStorage key — kept as-is (fragile by design, deferred to DB later)
 const LAST_CLIENT_KEY = 'last_client_id'
 
-// [BRIDGE-NOTIF] STATUS_COLOR / STATUS_LABEL / TODO_ICON are retained but no
-// longer referenced — the readiness chip + 'Vandaag te doen' display were removed
-// (no honest backend yet). Kept intact so the UI returns cleanly later.
-const STATUS_COLOR: Record<string, string> = {
-  klaar:       '#34A853',
-  bijna_klaar: '#FBBC04',
-  wacht:       '#EA4335',
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  klaar:       'Klaar',
-  bijna_klaar: 'Bijna klaar',
-  wacht:       'Wacht',
-}
-
+// [READINESS-P4] The old klaar/bijna_klaar/wacht STATUS_COLOR/STATUS_LABEL maps
+// were removed with the lie-capable computeClientStatus. TODO_ICON stays — the
+// to-do feed is now rendered from honest getTodoFeed items.
 const TODO_ICON: Record<string, string> = {
   invoices_to_process: '📄',
   missing_file:        '📁',
@@ -92,12 +80,10 @@ function timeSalutation(): string {
 // ─────────────────────────────────────────────────────────
 
 export default function AccountantHome({ profile, overview, clients, todos, notifications: initialNotifs, unreadMessages: initialUnread }: Props) {
-  // [BRIDGE-NOTIF] overview + todos are intentionally retained but not rendered
-  // (display removed until a readiness/to-do backend exists). Referenced here so
-  // the kept props don't trip no-unused-vars. Remove these two lines when the
-  // readiness UI returns.
-  void overview
-  void todos
+  // [READINESS-P4] overview + todos are now RENDERED (below) — they are backed by
+  // honest facts: overview = provable counts (open questions / missing bank), todos
+  // = concrete actionable items from getTodoFeed. No "ready" verdict is shown, so
+  // the BRIDGE-NOTIF "placeholder counts are a lie" concern no longer applies.
   const router = useRouter()
   const supabase = createClient()
 
@@ -237,14 +223,50 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           </button>
         </div>
 
-        {/* [BRIDGE-NOTIF] Hidden until a readiness/to-do backend exists.
-            The 3-number bar (Klanten totaal / Klaar voor KW / Wacht op stukken)
-            and the 'Vandaag te doen' feed implied a system that had inspected
-            every client and computed readiness/missing-docs — it had not. Showing
-            placeholder counts is a lie in a financial-truth system, so the DISPLAY
-            is removed. The `overview` and `todos` props/queries are left intact
-            (page.tsx still fetches them) and this UI returns once the backend is
-            real. Same pattern as the deferred UBL download / decorative pay field. */}
+        {/* [READINESS-P4] Honest overview — provable counts only, NO "ready"
+            verdict. Backed by ClientReadiness (both invoice directions, real
+            bank_transactions signal). */}
+        {clients.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            {[
+              { n: overview.total_clients, label: 'Klanten', color: '#202124' },
+              { n: overview.clients_with_open_questions, label: 'Open vraag', color: overview.clients_with_open_questions > 0 ? '#C5221F' : '#5F6368' },
+              { n: overview.clients_missing_bank, label: 'Zonder bank', color: overview.clients_missing_bank > 0 ? '#EA8600' : '#5F6368' },
+            ].map(s => (
+              <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: '12px 8px', textAlign: 'center' }}>
+                <p style={{ fontSize: 22, fontWeight: 700, color: s.color, margin: 0 }}>{s.n}</p>
+                <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{s.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* [READINESS-P4] To-do — concrete actionable items (open questions,
+            unprocessed invoices, missing bank data). Every item is a real gap the
+            accountant can act on; clicking opens the client. */}
+        {todos.length > 0 && (
+          <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
+              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Te doen</h2>
+            </div>
+            {todos.map((t, idx) => (
+              <button
+                key={`${t.client_id}-${t.type}`}
+                onClick={() => router.push(`/dashboard/clients/${t.client_id}`)}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '12px 16px', background: 'none', border: 'none',
+                  borderBottom: idx < todos.length - 1 ? '1px solid #F1F3F4' : 'none',
+                  cursor: 'pointer', textAlign: 'left', minHeight: 48,
+                }}
+              >
+                <span style={{ fontSize: 16, flexShrink: 0 }}>{TODO_ICON[t.type] ?? '•'}</span>
+                <span style={{ flex: 1, fontSize: 13, color: '#202124' }}>{t.description}</span>
+                <span style={{ color: '#1A73E8', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>→</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* ── 4. Mijn klanten ── */}
         <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>

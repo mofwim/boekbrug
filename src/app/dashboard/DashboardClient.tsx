@@ -1,14 +1,13 @@
 'use client'
 
 // src/app/dashboard/DashboardClient.tsx
-// Wrapper فقط — يختار ZZP أو Accountant بناءً على role
+// [CONTROL] ZZP-only. dashboard/page.tsx:26 redirects accountants to
+// /dashboard/accountant BEFORE this renders, so the old AccountantDashboard
+// branch was unreachable dead code and has been removed (AccountantHome is the
+// live accountant home).
 
 import { ZzpDashboard } from './zzp/ZzpDashboard'
-import { AccountantDashboard } from './accountant/AccountantDashboard'
 
 export default function DashboardClient({ profile }: { profile: any }) {
-  if (profile.role === 'accountant') {
-    return <AccountantDashboard profile={profile} />
-  }
   return <ZzpDashboard profile={profile} />
 }

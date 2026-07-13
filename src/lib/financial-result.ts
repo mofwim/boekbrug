@@ -14,6 +14,8 @@
 // cash line has no valid BTW document, so none is claimed). Cash sales recorded without
 // a rate are surfaced separately (cashOmzetZonderBtw) rather than silently guessed.
 
+import { pnlRole } from "./bank-categories";
+
 export interface ResultInvoice {
   direction: "outgoing" | "incoming" | null;
   status: string | null;
@@ -75,12 +77,15 @@ export function computeResult(
 
   // 2) Owner-categorized bank lines that are NOT invoice payments. A bare bank line
   //    carries no valid BTW document, so it moves net revenue/cost only — no BTW.
+  //    The category → P&L role comes from the single source of truth (bank-categories),
+  //    so pos_income (card-terminal / PSP takings) lands on revenue like omzet.
   for (const t of bankTx) {
     if (t.invoice_id) continue;   // payment of an already-counted invoice
     if (!t.category) continue;     // uncategorized → never guessed into a total
     const amt = Math.abs(t.amount ?? 0);
-    if (t.category === "omzet") omzet += amt;
-    else if (t.category === "kosten") kosten += amt;
+    const role = pnlRole(t.category);
+    if (role === "omzet") omzet += amt;
+    else if (role === "kosten") kosten += amt;
     // transfer / prive / tax / fee → excluded
   }
 

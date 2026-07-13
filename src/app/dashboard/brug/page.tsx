@@ -165,7 +165,26 @@ export default async function BrugServerPage() {
     }).sort((a, b) => a.label.localeCompare(b.label, 'nl'))
   }
 
-  return <BrugClient nodes={signedNodes} role={profile.role} clientSummaries={clientSummaries} />
+  // [READINESS-P3] Accountant-asserted per-document status (subject_type='document').
+  // Only the accountant needs it here — RLS acc_status_owner_all scopes the rows to
+  // THIS accountant, so we simply query and map subject_id → {status, vraag_text}.
+  // A ZZP owner gets an empty map (no status claims surface on their own tree here).
+  const docStatus: Record<string, { status: string; vraag_text: string | null }> = {}
+  if (isAccountant) {
+    const docIds = signedNodes.filter(n => n.source === 'document').map(n => n.id)
+    if (docIds.length > 0) {
+      const { data: statusRows } = await supabase
+        .from('accountant_subject_status')
+        .select('subject_id, status, vraag_text')
+        .eq('subject_type', 'document')
+        .in('subject_id', docIds)
+      for (const r of statusRows ?? []) {
+        docStatus[r.subject_id] = { status: r.status, vraag_text: r.vraag_text ?? null }
+      }
+    }
+  }
+
+  return <BrugClient nodes={signedNodes} role={profile.role} clientSummaries={clientSummaries} docStatus={docStatus} />
 }
 
 // [BRIDGE-HUB] Per-client readiness summary for the accountant overview (Layer 1).

@@ -16,25 +16,89 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import {
-  computeClientStatus,
   getCurrentQuarter,
   getQuarterRange,
 } from './accountant.service'
 import type {
   AccountantOverview,
   ClientDetail,
+  ClientReadiness,
   ClientSummary,
   InvoiceRow,
   TodoItem,
 } from './accountant.types'
 
 // ─────────────────────────────────────────────────────────
+// [READINESS] Honest per-client facts for a quarter.
+// ─────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Sb = any
+
+/**
+ * Computes the honest ClientReadiness for one client + quarter. Every number is a
+ * COUNT of real rows; nothing is a verdict. Counts BOTH invoice directions (the
+ * accountant processes what the client sends AND receives), not paid-only. The
+ * bank signal is `bank_transactions` dated in the quarter — the honest signal the
+ * closing package already uses — NOT documents.doc_type (the old check used
+ * 'bank', a value no write path ever stores, so it was always false).
+ */
+async function computeClientReadiness(
+  supabase: Sb,
+  clientId: string,
+  year: number,
+  quarter: number,
+): Promise<ClientReadiness> {
+  const { start, end } = getQuarterRange(year, quarter)
+  // clientId is a verified-linkage UUID from our own DB — safe to embed in .or().
+  const bothDirections = `sender_id.eq.${clientId},receiver_id.eq.${clientId}`
+
+  const [
+    { count: sharedInvoices },
+    { count: processedInvoices },
+    { count: openQuestions },
+    { count: bankCount },
+    { data: lastDoc },
+  ] = await Promise.all([
+    supabase.from('invoices').select('id', { count: 'exact', head: true })
+      .or(bothDirections).eq('shared', true)
+      .gte('invoice_date', start).lte('invoice_date', end),
+    supabase.from('invoices').select('id', { count: 'exact', head: true })
+      .or(bothDirections).eq('shared', true).eq('accountant_status', 'verwerkt')
+      .gte('invoice_date', start).lte('invoice_date', end),
+    supabase.from('invoices').select('id', { count: 'exact', head: true })
+      .or(bothDirections).eq('shared', true).eq('accountant_status', 'vraag')
+      .gte('invoice_date', start).lte('invoice_date', end),
+    supabase.from('bank_transactions').select('id', { count: 'exact', head: true })
+      .eq('user_id', clientId).gte('date', start).lte('date', end),
+    supabase.from('documents').select('created_at')
+      .eq('user_id', clientId).order('created_at', { ascending: false }).limit(1),
+  ])
+
+  let lastUploadDaysAgo: number | null = null
+  if (lastDoc && lastDoc.length > 0) {
+    const diffMs = Date.now() - new Date(lastDoc[0].created_at).getTime()
+    lastUploadDaysAgo = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  }
+
+  return {
+    year,
+    quarter,
+    sharedInvoices: sharedInvoices ?? 0,
+    processedInvoices: processedInvoices ?? 0,
+    openQuestions: openQuestions ?? 0,
+    hasBankData: (bankCount ?? 0) > 0,
+    lastUploadDaysAgo,
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 // Clients
 // ─────────────────────────────────────────────────────────
 
 /**
- * Returns all clients linked to this accountant, with computed status.
- * Sorted: wacht → bijna_klaar → klaar (most urgent first).
+ * Returns all clients linked to this accountant, each with honest readiness facts.
+ * Sorted "needs attention first": open questions, then unprocessed items.
  */
 export async function getAccountantClients(
   accountantId: string
@@ -57,74 +121,20 @@ export async function getAccountantClients(
   if (error || !data) return []
 
   const { year, quarter } = getCurrentQuarter()
-  const { start, end } = getQuarterRange(year, quarter)
 
-  // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes
-  // sent/received; readiness math (klaar/wacht) stays on paid until the
-  // portal redesign decides what 'ready' means with receivables visible.
-  // For each client, compute status from current quarter data
   const summaries = await Promise.all(
     data.map(async (row: any) => {
       const profile = row.profiles
       if (!profile) return null
 
-      // Count paid invoices in current quarter
-      const { count: totalInvoices } = await supabase
-        .from('invoices')
-        .select('id', { count: 'exact', head: true })
-        .eq('sender_id', profile.id)
-        .in('status', ['paid'])
-        .eq('shared', true)
-        .gte('invoice_date', start)
-        .lte('invoice_date', end)
-
-      // Count verwerkt invoices in current quarter
-      const { count: processedInvoices } = await supabase
-        .from('invoices')
-        .select('id', { count: 'exact', head: true })
-        .eq('sender_id', profile.id)
-        .in('status', ['paid'])
-        .eq('shared', true)
-        .eq('accountant_status', 'verwerkt')
-        .gte('invoice_date', start)
-        .lte('invoice_date', end)
-
-      // Check for bank document in current quarter (doc_type = 'bank')
-      const { count: bankCount } = await supabase
-        .from('documents')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', profile.id)
-        .eq('doc_type', 'bank')
-        .gte('created_at', start)
-        .lte('created_at', end + 'T23:59:59')
-
-      // Last document upload (any type)
-      const { data: lastDoc } = await supabase
-        .from('documents')
-        .select('created_at')
-        .eq('user_id', profile.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-
-      let lastUploadDaysAgo: number | null = null
-      if (lastDoc && lastDoc.length > 0) {
-        const diffMs = Date.now() - new Date(lastDoc[0].created_at).getTime()
-        lastUploadDaysAgo = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-      }
-
-      const status = computeClientStatus({
-        hasBank: (bankCount ?? 0) > 0,
-        totalInvoices: totalInvoices ?? 0,
-        processedInvoices: processedInvoices ?? 0,
-        lastUploadDaysAgo,
-      })
+      const readiness = await computeClientReadiness(supabase, profile.id, year, quarter)
 
       return {
         id: profile.id,
         full_name: profile.full_name,
         company_name: profile.company_name,
         email: profile.email,
-        status,
+        readiness,
         linked_at: row.created_at ?? "",
       } satisfies ClientSummary
     })
@@ -132,9 +142,14 @@ export async function getAccountantClients(
 
   const valid = summaries.filter((s): s is ClientSummary => s !== null)
 
-  // Sort: wacht first, then bijna_klaar, then klaar
-  const ORDER = { wacht: 0, bijna_klaar: 1, klaar: 2 }
-  return valid.sort((a, b) => ORDER[a.status] - ORDER[b.status])
+  // Sort "needs attention first": open questions, then most unprocessed items.
+  return valid.sort((a, b) => {
+    const q = b.readiness.openQuestions - a.readiness.openQuestions
+    if (q !== 0) return q
+    const aOpen = a.readiness.sharedInvoices - a.readiness.processedInvoices
+    const bOpen = b.readiness.sharedInvoices - b.readiness.processedInvoices
+    return bOpen - aOpen
+  })
 }
 
 // ─────────────────────────────────────────────────────────
@@ -173,57 +188,8 @@ export async function getClientDetail(
 
   if (!profile) return null
 
-  // Compute status
-  // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes sent/received
   const { year, quarter } = getCurrentQuarter()
-  const { start, end } = getQuarterRange(year, quarter)
-
-  const { count: totalInvoices } = await supabase
-    .from('invoices')
-    .select('id', { count: 'exact', head: true })
-    .eq('sender_id', clientId)
-    .in('status', ['paid'])
-    .eq('shared', true)
-    .gte('invoice_date', start)
-    .lte('invoice_date', end)
-
-  const { count: processedInvoices } = await supabase
-    .from('invoices')
-    .select('id', { count: 'exact', head: true })
-    .eq('sender_id', clientId)
-    .in('status', ['paid'])
-    .eq('shared', true)
-    .eq('accountant_status', 'verwerkt')
-    .gte('invoice_date', start)
-    .lte('invoice_date', end)
-
-  const { count: bankCount } = await supabase
-    .from('documents')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', clientId)
-    .eq('doc_type', 'bank')
-    .gte('created_at', start)
-    .lte('created_at', end + 'T23:59:59')
-
-  const { data: lastDoc } = await supabase
-    .from('documents')
-    .select('created_at')
-    .eq('user_id', clientId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  let lastUploadDaysAgo: number | null = null
-  if (lastDoc && lastDoc.length > 0) {
-    const diffMs = Date.now() - new Date(lastDoc[0].created_at).getTime()
-    lastUploadDaysAgo = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-  }
-
-  const status = computeClientStatus({
-    hasBank: (bankCount ?? 0) > 0,
-    totalInvoices: totalInvoices ?? 0,
-    processedInvoices: processedInvoices ?? 0,
-    lastUploadDaysAgo,
-  })
+  const readiness = await computeClientReadiness(supabase, clientId, year, quarter)
 
   return {
     id: profile.id,
@@ -236,18 +202,18 @@ export async function getClientDetail(
     address: profile.address,
     postal_code: profile.postal_code,
     city: profile.city,
-    status,
+    readiness,
     linked_at: link.created_at ?? "",
   } satisfies ClientDetail
 }
 
 // ─────────────────────────────────────────────────────────
-// Overview (3 numbers)
+// Overview (honest headline counts)
 // ─────────────────────────────────────────────────────────
 
 /**
- * Returns the three summary numbers for the accountant home page.
- * Reuses getAccountantClients to avoid duplicating status logic.
+ * Honest headline counts for the accountant home. No "ready" verdict — just
+ * provable facts across the linked clients.
  */
 export async function getAccountantOverview(
   accountantId: string
@@ -256,8 +222,8 @@ export async function getAccountantOverview(
 
   return {
     total_clients: clients.length,
-    ready_for_quarter: clients.filter(c => c.status === 'klaar').length,
-    waiting: clients.filter(c => c.status === 'wacht').length,
+    clients_with_open_questions: clients.filter(c => c.readiness.openQuestions > 0).length,
+    clients_missing_bank: clients.filter(c => !c.readiness.hasBankData).length,
   }
 }
 
@@ -300,15 +266,19 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
 
       const clientName: string = profile.company_name || profile.full_name || 'Onbekend'
       const clientId: string = profile.id
+      // clientId is a verified-linkage UUID from our own DB — safe to embed.
+      const bothDirections = `sender_id.eq.${clientId},receiver_id.eq.${clientId}`
 
-      // 1. Invoices with 'vraag' status (client needs to answer)
+      // 1. Invoices with 'vraag' status (client needs to answer) — this quarter,
+      //    both directions (was sender-only + paid-only).
       const { count: vraagCount } = await supabase
         .from('invoices')
         .select('id', { count: 'exact', head: true })
-        .eq('sender_id', clientId)
-        .in('status', ['paid'])
+        .or(bothDirections)
         .eq('shared', true)
         .eq('accountant_status', 'vraag')
+        .gte('invoice_date', start)
+        .lte('invoice_date', end)
 
       if ((vraagCount ?? 0) > 0) {
         todos.push({
@@ -320,12 +290,11 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
         })
       }
 
-      // 2. Paid invoices without accountant_status = 'verwerkt' (this quarter)
+      // 2. Shared invoices not yet 'verwerkt' (this quarter, both directions).
       const { count: unprocessedCount } = await supabase
         .from('invoices')
         .select('id', { count: 'exact', head: true })
-        .eq('sender_id', clientId)
-        .in('status', ['paid'])
+        .or(bothDirections)
         .eq('shared', true)
         .not('accountant_status', 'eq', 'verwerkt')
         .gte('invoice_date', start)
@@ -341,21 +310,22 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
         })
       }
 
-      // 3. Missing bank file for current quarter
+      // 3. No bank data for the quarter. [READINESS] honest signal = bank_transactions
+      //    dated in the quarter (the old doc_type='bank' check was always true here:
+      //    no write path stores 'bank' — statements are stored as 'bankafschrift').
       const { count: bankCount } = await supabase
-        .from('documents')
+        .from('bank_transactions')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', clientId)
-        .eq('doc_type', 'bank')
-        .gte('created_at', start)
-        .lte('created_at', end + 'T23:59:59')
+        .gte('date', start)
+        .lte('date', end)
 
       if ((bankCount ?? 0) === 0) {
         todos.push({
           client_id: clientId,
           client_name: clientName,
           type: 'missing_file',
-          description: `${clientName} — bankafschrift ontbreekt`,
+          description: `${clientName} — geen bankgegevens dit kwartaal`,
         })
       }
     })

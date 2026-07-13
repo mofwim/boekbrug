@@ -203,38 +203,48 @@ export default function KwartaalPage() {
       setInvoices(prev => prev.map(i =>
         i.id === invoiceId ? { ...i, accountant_status: invoices.find(x => x.id === invoiceId)?.accountant_status ?? null } : i
       ))
-    } else if (action === 'verwerkt') {
-      // [BRIDGE-NOTIF] N2 — close the trust loop: tell the client their invoice
-      // was processed. Non-blocking; the status change already succeeded.
-      // clientId here IS the ZZP'er's profile id (sender_id/receiver_id of these
-      // invoices), so it's the correct notification target. The route verifies
-      // the accountant↔client link server-side and writes via service_role.
+    } else if (action === 'verwerkt' || action === 'vraag') {
+      // [READINESS-P3] Close the trust loop with the client — for BOTH 'verwerkt'
+      // AND 'vraag'. Previously only 'verwerkt' notified, so a 'vraag' silently
+      // told the client nothing (they learned of a question only by luck).
+      // Non-blocking; the status change already succeeded. clientId IS the ZZP'er's
+      // profile id; the route verifies the accountant↔client link + writes via
+      // service_role.
       const inv = invoices.find(x => x.id === invoiceId)
       const nrLabel = inv?.invoice_number ? `factuur ${inv.invoice_number}` : 'een factuur'
       const party = typeof inv?.client_name === 'string' && inv.client_name.trim()
         ? ` (${inv.client_name.trim()})`
         : ''
-      const amount = typeof inv?.total_inc_btw === 'number' && inv.total_inc_btw > 0
-        ? ` · ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(inv.total_inc_btw)}`
-        : ''
       // Direction-aware target: outgoing lives in /facturen, incoming in /incoming/manage.
-      // Both read ?focus= to land on the exact row.
       const target = inv?.direction === 'outgoing'
         ? `/dashboard/facturen?focus=${invoiceId}`
         : `/dashboard/incoming/manage?focus=${invoiceId}`
+
+      let title: string
+      let body: string
+      if (action === 'verwerkt') {
+        const amount = typeof inv?.total_inc_btw === 'number' && inv.total_inc_btw > 0
+          ? ` · ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(inv.total_inc_btw)}`
+          : ''
+        title = 'Factuur verwerkt'
+        body = `Je boekhouder heeft ${nrLabel}${party}${amount} verwerkt.`
+      } else {
+        // 'vraag' — capture an optional free-text question to send to the client.
+        const q = typeof window !== 'undefined'
+          ? window.prompt('Vraag aan de klant (optioneel):')?.trim()
+          : ''
+        title = 'Vraag van je boekhouder'
+        body = q
+          ? q.slice(0, 200)
+          : `Je boekhouder heeft een vraag over ${nrLabel}${party}.`
+      }
       try {
         await fetch('/api/notifications/notify-client', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            clientId,
-            title: 'Factuur verwerkt',
-            body: `Je boekhouder heeft ${nrLabel}${party}${amount} verwerkt.`,
-            type: 'status',
-            link: target,
-          }),
+          body: JSON.stringify({ clientId, title, body, type: 'status', link: target }),
         })
-      } catch { /* non-blocking — verwerkt already saved */ }
+      } catch { /* non-blocking — status already saved */ }
     }
     setUpdatingId(null)
   }

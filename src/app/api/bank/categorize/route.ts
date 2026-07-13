@@ -11,11 +11,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { counterpartKey, suggestIdentity, type Category } from "@/lib/bank-identity";
-
-const ALLOWED: ReadonlySet<Category> = new Set<Category>([
-  "kosten", "omzet", "prive", "transfer", "tax", "fee", "pos_income",
-]);
+import { counterpartKey, suggestIdentity } from "@/lib/bank-identity";
+import { ALLOWED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
 
 // ─── GET: the to-categorize list with suggestions ────────────────────────────
 export async function GET() {
@@ -77,8 +74,8 @@ export async function POST(req: NextRequest) {
   }
 
   const transactionId = body.transaction_id;
-  const category = body.category as Category | undefined;
-  if (!transactionId || !category || !ALLOWED.has(category)) {
+  const category = body.category as BankCategory | undefined;
+  if (!transactionId || !category || !ALLOWED_CATEGORIES.has(category)) {
     return NextResponse.json({ error: "transaction_id and a valid category are required" }, { status: 400 });
   }
 

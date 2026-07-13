@@ -8,12 +8,23 @@
 // ─────────────────────────────────────────────────────────
 
 /**
- * Computed from quarter data — never stored, never written manually.
- * klaar       = bank file present + all invoices verwerkt + at least 1 invoice
- * bijna_klaar = one or two items missing
- * wacht       = no upload in >21 days OR no bank file at all
+ * [READINESS] Honest, fact-only readiness of a client for a quarter. Every field
+ * is something the system can PROVE from stored data — never a verdict/guess.
+ * There is deliberately NO 'klaar'/'ready' boolean: in a financial-truth app the
+ * system cannot know a quarter is complete (it can't see a bon the client never
+ * uploaded), so it reports what arrived + what the accountant has processed, and
+ * lets the human draw the conclusion. Replaces the old lie-capable
+ * computeClientStatus (klaar/bijna_klaar/wacht).
  */
-export type ClientStatus = 'klaar' | 'bijna_klaar' | 'wacht'
+export interface ClientReadiness {
+  year: number
+  quarter: number
+  sharedInvoices: number       // all shared invoices in the quarter (both directions)
+  processedInvoices: number    // of those, accountant_status = 'verwerkt' (human-asserted)
+  openQuestions: number        // accountant_status = 'vraag' (an open question to the client)
+  hasBankData: boolean         // bank_transactions dated in the quarter — the HONEST bank signal
+  lastUploadDaysAgo: number | null  // days since the client's newest document (null = never)
+}
 
 /** Lightweight summary — used in client list and overview counts */
 export interface ClientSummary {
@@ -21,7 +32,7 @@ export interface ClientSummary {
   full_name: string | null
   company_name: string | null
   email: string | null
-  status: ClientStatus         // computed by computeClientStatus()
+  readiness: ClientReadiness   // honest facts — see ClientReadiness
   linked_at: string            // accountant_clients.created_at (ISO string)
 }
 
@@ -39,11 +50,14 @@ export interface ClientDetail extends ClientSummary {
 // Dashboard overview
 // ─────────────────────────────────────────────────────────
 
-/** Three numbers shown at the top of AccountantHome */
+/**
+ * [READINESS] Honest headline counts for AccountantHome. No "ready for quarter"
+ * verdict — that was a guess. These are provable facts across linked clients.
+ */
 export interface AccountantOverview {
   total_clients: number
-  ready_for_quarter: number    // status === 'klaar'
-  waiting: number              // status === 'wacht'
+  clients_with_open_questions: number   // ≥1 invoice with accountant_status='vraag'
+  clients_missing_bank: number          // no bank_transactions in the current quarter
 }
 
 // ─────────────────────────────────────────────────────────
