@@ -38,11 +38,13 @@ function isValidStatus(s: string | null): s is InvoiceStatus {
 const INVOICE_SELECT =
   "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type" as const;
 
-const INVOICE_SELECT_WITH_SENDER =
-  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type, sender_id" as const;
+// [F2] Both owner sides — an invoice is attributed to the client that is either
+// its sender (a sale) or its receiver (a purchase).
+const INVOICE_SELECT_WITH_OWNERS =
+  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type, sender_id, receiver_id" as const;
 
-// Local type for accountant query rows — includes sender_id
-type InvRowWithSender = InvRow & { sender_id: string | null };
+// Local type for accountant query rows — includes both owner ids
+type InvRowWithOwners = InvRow & { sender_id: string | null; receiver_id: string | null };
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -119,27 +121,45 @@ for (const link of clientLinks) {
       return new NextResponse("Geen klanten gevonden", { status: 404 });
     }
 
-    // [BOEK-014] Use dedicated constant with sender_id — avoids GenericStringError
+    // [F2] Both directions + verified. The old query fetched outgoing PAID only,
+    // so every client's PURCHASES and unpaid SALES were missing and the bulk CSV
+    // disagreed with the on-screen accountant quarter. Fetch invoices where a
+    // linked client is EITHER the sender (sales) or the receiver (purchases),
+    // restricted to the VERIFIED set, then attribute each row to its owning client
+    // by direction.
+    const idList = clientIds.join(",");
     const { data: rawData, error } = await supabase
       .from("invoices")
-      .select(INVOICE_SELECT_WITH_SENDER)
-      .in("sender_id", clientIds)
-      .eq("status", "paid")
-      .neq("status", "archived")
+      .select(INVOICE_SELECT_WITH_OWNERS)
+      .or(`sender_id.in.(${idList}),receiver_id.in.(${idList})`)
+      .in("status", ["sent", "paid", "overdue", "received"])
       .gte("invoice_date", start)
       .lte("invoice_date", end)
-      .order("sender_id", { ascending: true })
       .order("invoice_date", { ascending: true });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     // Safe cast via unknown — select constant guarantees the shape
-    const data = (rawData as unknown) as InvRowWithSender[];
+    const data = (rawData as unknown) as InvRowWithOwners[];
 
-    const rows = data.map((inv) => {
-      const base = toExportRowFull(inv, periodLabel);
-      return { ...base, klant_id: inv.sender_id ?? "" } as InvoiceExportRowAccountant;
-    });
+    const clientIdSet = new Set(clientIds);
+    const rows = data
+      .map((inv) => {
+        // Owning client: outgoing → sender (seller), incoming → receiver (buyer).
+        // Infer direction from ownership when the column is null.
+        const dir =
+          inv.direction ??
+          (inv.receiver_id && clientIdSet.has(inv.receiver_id) ? "incoming" : "outgoing");
+        const klantId = dir === "incoming" ? inv.receiver_id : inv.sender_id;
+        return { inv, klantId };
+      })
+      .filter((x): x is { inv: InvRowWithOwners; klantId: string } =>
+        !!x.klantId && clientIdSet.has(x.klantId)
+      )
+      .map(({ inv, klantId }) => {
+        const base = toExportRowFull(inv, periodLabel);
+        return { ...base, klant_id: klantId } as InvoiceExportRowAccountant;
+      });
 
     const csv = invoicesToCsvAccountant(rows as InvoiceExportRowFull[], clientNames);
     const filename = rawQuarter
