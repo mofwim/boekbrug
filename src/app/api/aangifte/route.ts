@@ -27,7 +27,10 @@ export async function GET(req: NextRequest) {
 
   const now = new Date();
   const sp = req.nextUrl.searchParams;
-  const year = Number(sp.get("year")) || now.getUTCFullYear();
+  // Bounded year: a missing or absurd value falls back to the current year, so an
+  // out-of-range input can never produce a nonsense quarter ("NaN dagen") in the notes.
+  const yr = Number(sp.get("year"));
+  const year = Number.isInteger(yr) && yr >= 2000 && yr <= 2100 ? yr : now.getUTCFullYear();
   const quarter = ([1, 2, 3, 4].includes(Number(sp.get("quarter")))
     ? Number(sp.get("quarter"))
     : Math.floor(now.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;

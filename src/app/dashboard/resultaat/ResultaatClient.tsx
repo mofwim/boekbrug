@@ -97,11 +97,21 @@ export default function ResultaatClient() {
               Overboekingen, privé en belasting tellen niet mee als omzet of kosten.
             </p>
 
-            <Link href="/dashboard/quarterly" style={{
+            {/* Primary next step: the concept BTW-aangifte (rubrieken 1a/1b/5a/5b/5g) —
+                the same figures shown here, mapped to the Belastingdienst-vakken. The
+                button used to be labelled "BTW-aangifte" but pointed at /quarterly
+                (detailed per-factuur cijfers), sending the owner to the wrong surface. */}
+            <Link href="/dashboard/aangifte" style={{
               display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12,
               border: `1px solid ${M3.primary}`, color: M3.primary, textDecoration: 'none', fontSize: 15, fontWeight: 600,
             }}>
-              Gedetailleerde BTW-aangifte →
+              Concept BTW-aangifte →
+            </Link>
+            <Link href="/dashboard/quarterly" style={{
+              display: 'block', textAlign: 'center', padding: '10px', marginTop: 8,
+              color: '#9aa0a6', textDecoration: 'none', fontSize: 13, fontWeight: 500,
+            }}>
+              Gedetailleerde cijfers per kwartaal →
             </Link>
           </>
         )}
