@@ -37,7 +37,18 @@ import {
 } from "./quarterly";
 import { calcBtwRate } from "./export";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
-import type { DailyTurnover } from "./turnover";
+import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
+import {
+  computeResult,
+  type ResultInvoice,
+  type ResultCashEntry,
+} from "./financial-result";
+import {
+  buildAangifte,
+  buildAangifteCsv,
+  type ConceptAangifte,
+  type AangifteCompleteness,
+} from "./aangifte";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -57,6 +68,7 @@ export interface PackageInvoice {
   due_date: string | null;
   pdf_url: string | null;            // outgoing PDF (FACTUUR-A)
   document_id: string | null;        // link to documents (incoming original)
+  client_btw_number: string | null;  // [AANGIFTE] EU-VAT signal for rubriek 4b (not auto-computed)
   marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
   // [FIN-4] ownership — used to infer a NULL direction so a verified row is
   // never silently dropped from the package.
@@ -428,11 +440,16 @@ interface AssembleInput {
   /** [TURNOVER-CLOSING] Retail till turnover section (per-rate summary + payment
    *  reconciliation + exceptions), or null for a non-retail owner with no daily_turnover. */
   turnoverClosing?: TurnoverClosing | null;
+  /** [AANGIFTE] The CONCEPT BTW-aangifte for the quarter — the SAME figures the owner
+   *  sees on the app's aangifte screen (computed via the one reconciliation engine), so
+   *  the accountant opens it next to the evidence in this ZIP. null when there is no
+   *  sales data at all (nothing to declare yet). Never an invented filing. */
+  conceptAangifte?: ConceptAangifte | null;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, conceptAangifte } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -557,6 +574,14 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     }
   }
 
+  // ── concept-btw-aangifte.csv (the concept mapped to Belastingdienst rubrieken) ──
+  // Travels WITH the evidence (invoice PDFs, dagomzet.csv, bank statement) in this same
+  // ZIP, so every rubriek figure is traceable to its source. RAW concept only, headed
+  // "GEEN ingediende aangifte" — the accountant controleert en dient in.
+  if (conceptAangifte) {
+    zip.file("concept-btw-aangifte.csv", "﻿" + buildAangifteCsv(conceptAangifte));
+  }
+
   // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
   const allQuarterly = [...outgoing, ...incoming].map(toQuarterly);
   const fullSummary = buildQuarterlySummary(allQuarterly, year, quarter);
@@ -605,6 +630,22 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
               uitzonderingen: turnoverClosing.exceptions,
             }
           : null,
+        // [AANGIFTE] The CONCEPT BTW-aangifte — same figures as the app's aangifte screen.
+        // A concept ("geen ingediende aangifte"): the accountant controleert en dient in.
+        // The rubriek BTW is derived from the evidence in THIS ZIP (invoices + dagomzet),
+        // so every figure is traceable; the notes state what each one depends on.
+        concept_btw_aangifte: conceptAangifte
+          ? {
+              is_concept: true,
+              kwartaal: conceptAangifte.quarterLabel,
+              rubrieken: conceptAangifte.rows,
+              verschuldigd_5a: conceptAangifte.verschuldigd,
+              voorbelasting_5b: conceptAangifte.voorbelasting,
+              saldo_5g: conceptAangifte.saldo,
+              omzet_zonder_tarief: conceptAangifte.cashOmzetZonderBtw,
+              toelichting: conceptAangifte.notes,
+            }
+          : null,
         waarschuwingen: warnings,
       },
       null,
@@ -619,7 +660,20 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, marked_paid_at, sender_id, receiver_id" as const;
+  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
+
+// [AANGIFTE] EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be
+// intra-EU (rubriek 4b), which the concept aangifte does NOT auto-compute. Mirrors
+// /api/aangifte so the closing package and the app screen never disagree.
+const EU_VAT = /^(AT|BE|BG|CY|CZ|DE|DK|EE|ES|FI|FR|GR|EL|HR|HU|IE|IT|LT|LU|LV|MT|PL|PT|RO|SE|SI|SK)/i;
+
+/** Whole calendar days in a quarter (for the concept-aangifte coverage note). */
+function daysInQuarter(year: number, quarter: Quarter): number {
+  const startMonth = (quarter - 1) * 3;
+  const startMs = Date.UTC(year, startMonth, 1);
+  const endMs = Date.UTC(year, startMonth + 3, 0); // day 0 of next-next month = last day
+  return Math.round((endMs - startMs) / 86400000) + 1;
+}
 
 /**
  * [BRIDGE-HUB Overzicht] Lightweight summary of a client's quarter — WITHOUT
@@ -948,6 +1002,51 @@ export async function buildClosingPackageZip(args: {
     turnoverClosing = buildTurnoverClosing(turnover, posLines, cashOmzet);
   }
 
+  // ── [AANGIFTE] Concept BTW-aangifte — the SAME figures as the app's aangifte screen ──
+  // Computed via the one reconciliation engine (computeResult), so the ZIP and the app
+  // never diverge. Bank lines carry no BTW, so bank=[] here: the aangifte's rubriek BTW
+  // comes only from invoices + rated cash + turnover (all already in this package as
+  // evidence). The covered-days set excludes cash sales the till already counted.
+  const { data: cashAllRows } = await supabase
+    .from("cash_entries")
+    .select("direction, amount, category, btw_rate, entry_date")
+    .eq("user_id", ownerId)
+    .gte("entry_date", start)
+    .lte("entry_date", end);
+  const cashEntries: ResultCashEntry[] = (cashAllRows ?? []).map((c) => ({
+    direction: c.direction === "in" ? "in" : "out",
+    amount: c.amount,
+    category: c.category,
+    btw_rate: c.btw_rate,
+    date: c.entry_date,
+  }));
+  const invoicesForResult: ResultInvoice[] = all.map((i) => ({
+    direction: i.direction as "outgoing" | "incoming" | null,
+    status: i.status,
+    total_ex_btw: i.total_ex_btw,
+    btw_amount: i.btw_amount,
+  }));
+  const coveredDates = new Set(
+    turnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
+  );
+  const result = computeResult(invoicesForResult, [], cashEntries, turnover, coveredDates);
+  const completeness: AangifteCompleteness = {
+    turnoverDays: turnover.length,
+    quarterDays: daysInQuarter(year, quarter),
+    incomingInvoiceCount: incoming.length,
+    outgoingInvoiceCount: outgoing.length,
+    hasEuPurchase: incoming.some(
+      (i) => typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim()),
+    ),
+  };
+  // Only emit a concept when there is something to declare — sales, unrated cash omzet,
+  // or reclaimable voorbelasting. An empty quarter gets no invented filing.
+  const hasDeclarable =
+    result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
+  const conceptAangifte = hasDeclarable
+    ? buildAangifte(result, completeness, `Q${quarter} ${year}`)
+    : null;
+
   return assembleClosingPackageZip({
     year,
     quarter,
@@ -961,6 +1060,7 @@ export async function buildClosingPackageZip(args: {
     paymentDates,
     hasBankData,
     turnoverClosing,
+    conceptAangifte,
     warnings,
   });
 }

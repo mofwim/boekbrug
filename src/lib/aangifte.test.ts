@@ -2,7 +2,7 @@
 // The headline case is PINNED to a REAL accountant filing: Kiwi Food Market, Btw-aangifte
 // 1e kwartaal 2026. If the mapper reproduces that form line-for-line from the same
 // numbers, the concept is trustworthy.
-import { buildAangifte, type AangifteInput, type AangifteCompleteness } from "./aangifte";
+import { buildAangifte, buildAangifteCsv, type AangifteInput, type AangifteCompleteness } from "./aangifte";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -82,6 +82,46 @@ console.log("\n— AUDIT FIX: a 0-rate bucket carrying BTW is surfaced (1c), nev
   check("rate-0 WITH btw lands in 1c, not silently in 1e", a.rows.some((r) => r.code === "1c" && Math.round(r.btw) === -249));
   check("5a reflects it (the BTW is not lost)", a.verschuldigd === -249);
   check("a genuine 0% row (btw 0) still maps to 1e", buildAangifte({ salesByRate: [{ rate: 0, omzet: 222, btw: 0 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 }, compl(), "Q1 2026").rows.some((r) => r.code === "1e" && r.omzet === 222));
+}
+
+console.log("\n— buildAangifteCsv: the concept as a traceable CSV for the closing package —");
+{
+  // The REAL Kiwi Q1 filing → the CSV the accountant opens next to the evidence.
+  const a = buildAangifte(
+    {
+      salesByRate: [
+        { rate: 21, omzet: 1185, btw: 249 },
+        { rate: 9, omzet: 176604, btw: 15894 },
+        { rate: 0, omzet: 222, btw: 0 },
+      ],
+      btwVoorbelasting: 15130,
+      cashOmzetZonderBtw: 0,
+    },
+    compl(),
+    "Q1 2026",
+  );
+  const csv = buildAangifteCsv(a);
+  const lines = csv.split("\r\n");
+  check("uses CRLF + semicolons (Excel-NL)", csv.includes("\r\n") && csv.includes(";"));
+  check("headed as a CONCEPT, not a filing", /GEEN ingediende aangifte/.test(csv) && /Concept BTW-aangifte Q1 2026/.test(csv));
+  check("1a row carries omzet 1185,00 and btw 249,00 (comma decimals)", lines.some((l) => l.startsWith("1a;") && l.includes("1185,00") && l.includes("249,00")));
+  check("1b row carries the 9% bucket", lines.some((l) => l.startsWith("1b;") && l.includes("176604,00") && l.includes("15894,00")));
+  check("1e row present with empty btw cell", lines.some((l) => l.startsWith("1e;") && /;222,00;$/.test(l)));
+  check("5a = 16143,00", lines.some((l) => l.startsWith("5a;") && l.includes("16143,00")));
+  check("5b = 15130,00", lines.some((l) => l.startsWith("5b;") && l.includes("15130,00")));
+  check("5g labelled 'te betalen' with 1013,00 (abs, never negative-signed)", lines.some((l) => l.startsWith("5g;") && /te betalen/.test(l) && l.includes("1013,00")));
+  check("carries the honest notes (source for every figure)", /Waar dit op gebaseerd is/.test(csv) && /Voorbelasting \(5b\) telt/.test(csv));
+}
+
+console.log("\n— buildAangifteCsv: a refund quarter shows 'terug te ontvangen', abs value —");
+{
+  const a = buildAangifte(
+    { salesByRate: [{ rate: 9, omzet: 1000, btw: 90 }], btwVoorbelasting: 300, cashOmzetZonderBtw: 0 },
+    compl(), "Q2 2026",
+  );
+  const csv = buildAangifteCsv(a);
+  check("5g labelled 'terug te ontvangen'", /5g;Concept terug te ontvangen;;210,00/.test(csv));
+  check("saldo itself stays signed (−210) in the object", a.saldo === -210);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

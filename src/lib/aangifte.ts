@@ -131,3 +131,33 @@ export function buildAangifte(
     isConcept: true,
   };
 }
+
+/**
+ * [AANGIFTE] The concept aangifte as a CSV for the accountant's closing package — the
+ * rubrieken + 5a/5b/5g + the honest notes. RAW concept only ("geen ingediende aangifte");
+ * it travels WITH the evidence (invoice PDFs, dagomzet.csv, bank statement) in the same
+ * ZIP, so every figure is traceable to its source. Pure (semicolon CSV, Excel-NL).
+ */
+export function buildAangifteCsv(a: ConceptAangifte): string {
+  const EUR = (n: number) => n.toFixed(2).replace(".", ",");
+  const esc = (v: string | number) => {
+    const s = String(v ?? "");
+    return /[;\n"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const L: string[] = [];
+  L.push(`BoekBrug — Concept BTW-aangifte ${a.quarterLabel}`);
+  L.push("LET OP: concept op basis van de ingevoerde gegevens — GEEN ingediende aangifte. De boekhouder controleert en dient in.");
+  L.push("");
+  L.push(["Rubriek", "Omschrijving", "Omzet", "BTW"].map(esc).join(";"));
+  for (const r of a.rows) {
+    L.push([r.code, r.label, EUR(r.omzet), r.btw ? EUR(r.btw) : ""].map(esc).join(";"));
+  }
+  L.push("");
+  L.push(["5a", "Verschuldigde omzetbelasting", "", EUR(a.verschuldigd)].map(esc).join(";"));
+  L.push(["5b", "Voorbelasting", "", EUR(a.voorbelasting)].map(esc).join(";"));
+  L.push(["5g", `Concept ${a.saldo >= 0 ? "te betalen" : "terug te ontvangen"}`, "", EUR(Math.abs(a.saldo))].map(esc).join(";"));
+  L.push("");
+  L.push("Waar dit op gebaseerd is (controleer voor indiening):");
+  for (const n of a.notes) L.push(esc(n));
+  return L.join("\r\n");
+}
