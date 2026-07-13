@@ -6,7 +6,7 @@
 // it (so the score is never a black box), the few things to fix, the few things to eyeball,
 // and one button to hand it all over. A pure projection of /api/readiness.
 
-import { useEffect, useState, useCallback, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { lastCompletedQuarter } from '@/lib/quarter'
 
@@ -61,8 +61,12 @@ export default function KlaarClient() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const curYear = new Date().getFullYear()
+  // [QUARTER] Refresh via a bump key so the manual "Vernieuwen" fetch runs through the
+  // SAME cancellable effect — clicking refresh then quickly changing quarter can no longer
+  // land stale-quarter data (the superseded request's cancelled flag is always set).
+  const [reloadKey, setReloadKey] = useState(0)
 
-  const load = useCallback(() => {
+  useEffect(() => {
     let cancelled = false
     setLoading(true); setError(false); setData(null)
     fetch(`/api/readiness?year=${year}&quarter=${quarter}`)
@@ -71,9 +75,7 @@ export default function KlaarClient() {
       .catch(() => { if (!cancelled) setError(true) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [year, quarter])
-
-  useEffect(() => load(), [load])
+  }, [year, quarter, reloadKey])
 
   const report = data?.report ?? null
   const meta = report ? STATUS_META[report.status] : STATUS_META.attention
@@ -84,7 +86,7 @@ export default function KlaarClient() {
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
-          <button onClick={load} title="Vernieuwen" style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
+          <button onClick={() => setReloadKey((k) => k + 1)} title="Vernieuwen" style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>Vernieuwen
           </button>
         </div>
@@ -100,7 +102,7 @@ export default function KlaarClient() {
             )
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 6 }}>
-            <button onClick={() => setYear((y) => y - 1)} title="Vorig jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}>
+            <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}>
               <span className="material-symbols-outlined" style={{ fontSize: 20 }}>chevron_left</span>
             </button>
             <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>{year}</span>

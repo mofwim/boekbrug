@@ -9,6 +9,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
+import { quarterFromParams } from "@/lib/quarter";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -17,12 +18,11 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const now = new Date();
   const sp = req.nextUrl.searchParams;
-  const year = Number(sp.get("year")) || now.getUTCFullYear();
-  const quarter = ([1, 2, 3, 4].includes(Number(sp.get("quarter")))
-    ? Number(sp.get("quarter"))
-    : Math.floor(now.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+  // [QUARTER] Honour ?year&quarter (bounded 2000–2100), else default to the LAST COMPLETED
+  // quarter — the app-wide default (quarter.ts). Fixes the missing year bound here and the
+  // open-quarter default a bare hit used to return.
+  const { year, quarter } = quarterFromParams((k) => sp.get(k));
 
   const startMonth = (quarter - 1) * 3;
   const start = `${year}-${pad(startMonth + 1)}-01`;

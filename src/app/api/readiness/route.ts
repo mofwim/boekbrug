@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { summarizeClosingPackage, type Quarter } from "@/lib/closing-package";
+import { summarizeClosingPackage } from "@/lib/closing-package";
 import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
@@ -18,6 +18,7 @@ import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { needsDocument } from "@/lib/bank-identity";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
+import { quarterFromParams } from "@/lib/quarter";
 
 export const dynamic = "force-dynamic";
 
@@ -35,15 +36,11 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const now = new Date();
   const sp = req.nextUrl.searchParams;
-  // Bounded year: a missing or absurd value falls back to the current year, so an
-  // out-of-range input can never produce a nonsense quarter ("NaN dagen") in the notes.
-  const yr = Number(sp.get("year"));
-  const year = Number.isInteger(yr) && yr >= 2000 && yr <= 2100 ? yr : now.getUTCFullYear();
-  const quarter = ([1, 2, 3, 4].includes(Number(sp.get("quarter")))
-    ? Number(sp.get("quarter"))
-    : Math.floor(now.getUTCMonth() / 3) + 1) as Quarter;
+  // [QUARTER] Honour ?year&quarter (bounded), else default to the LAST COMPLETED quarter —
+  // the app-wide default (quarter.ts). Absent/absurd input can never yield the open quarter
+  // or a nonsense year; a bare hit returns the same quarter the UI shows.
+  const { year, quarter } = quarterFromParams((k) => sp.get(k));
 
   const startMonth = (quarter - 1) * 3;
   const start = `${year}-${pad(startMonth + 1)}-01`;

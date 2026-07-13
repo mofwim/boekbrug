@@ -10,6 +10,7 @@ import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
+import { lastCompletedQuarter } from '@/lib/quarter'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -130,19 +131,14 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
     () => clientSummaries?.find(c => c.id === selectedClientId) ?? null,
     [clientSummaries, selectedClientId]
   )
-  const now = new Date()
-  const curYear = now.getFullYear()
-  const curQuarter = Math.floor(now.getMonth() / 3) + 1
+  const curYear = new Date().getFullYear()
 
-  // [BRIDGE-QUARTER-PICKER] The accountant works per quarter/year and can switch
-  // both (Q1–Q4 buttons + year arrows). Default lands on the LAST COMPLETED
-  // quarter — the one whose BTW is actually due to be closed — not the current
-  // (still-open) quarter. So on 1 Jan 2027 the accountant opens straight onto
-  // Q4 2026, exactly the quarter they need, with no extra click. Crossing the
-  // year boundary is handled: in Q1, last completed is Q4 of the previous year.
-  const lastCompleted = curQuarter === 1
-    ? { year: curYear - 1, quarter: 4 }
-    : { year: curYear, quarter: curQuarter - 1 }
+  // [BRIDGE-QUARTER-PICKER] The accountant works per quarter/year and can switch both
+  // (Q1–Q4 buttons + year arrows). The default lands on the LAST COMPLETED quarter — the
+  // one whose BTW is due — via the SHARED quarter.ts helper (UTC), so the accountant hub
+  // opens on the SAME quarter the owner's klaar/resultaat/aangifte default to (previously
+  // this was a duplicated local-time computation that could drift a day at a boundary).
+  const lastCompleted = lastCompletedQuarter()
   const [selectedYear, setSelectedYear] = useState<number>(lastCompleted.year)
   const [selectedQuarter, setSelectedQuarter] = useState<number>(lastCompleted.quarter)
 
@@ -269,7 +265,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
                 })}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 8 }}>
                   <button
-                    onClick={() => setSelectedYear(y => y - 1)}
+                    onClick={() => setSelectedYear(y => Math.max(2000, y - 1))}
                     title="Vorig jaar"
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}
                   >
@@ -675,24 +671,32 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
 // cross-channel engine the owner sees (/api/result?clientId): omzet/kosten/resultaat +
 // concept BTW (5a/5b/5g) from invoices + bank + kas + dagomzet, de-duplicated. The number
 // the accountant reads now matches the ZIP and the owner's readiness screen.
-interface QuarterResult {
-  omzet: number; kosten: number; resultaat: number
-  btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number
-  cashOmzetZonderBtw: number
-}
+interface QuarterResult { omzet: number; kosten: number; resultaat: number; cashOmzetZonderBtw: number }
+interface ConceptBtw { verschuldigd: number; voorbelasting: number; saldo: number }
 
 function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
-  const [data, setData] = useState<QuarterResult | null>(null)
+  const [pnl, setPnl] = useState<QuarterResult | null>(null)
+  const [concept, setConcept] = useState<ConceptBtw | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setError(false); setData(null)
+    setLoading(true); setError(false); setPnl(null); setConcept(null)
     const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
-    fetch(`/api/result?${params}`)
-      .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then(j => { if (cancelled) return; j?.result ? setData(j.result) : setError(true) })
+    // P&L (omzet/kosten/resultaat, cents-accurate) from /api/result; the concept BTW
+    // (5a/5b/5g, WHOLE-EURO per the Belastingdienst form) from /api/aangifte — so the
+    // Kwartaal tab's "5g" equals the Overzicht verdict, the owner's screens and the ZIP,
+    // instead of the raw cents scalar it used to (wrongly) label "5a/5b/5g".
+    Promise.all([
+      fetch(`/api/result?${params}`).then(r => (r.ok ? r.json() : Promise.reject())),
+      fetch(`/api/aangifte?${params}`).then(r => (r.ok ? r.json() : Promise.reject())),
+    ])
+      .then(([rj, aj]) => {
+        if (cancelled) return
+        if (rj?.result && aj?.aangifte) { setPnl(rj.result); setConcept(aj.aangifte) }
+        else setError(true)
+      })
       .catch(() => { if (!cancelled) setError(true) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -705,7 +709,7 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
       </div>
     )
   }
-  if (error || !data) {
+  if (error || !pnl || !concept) {
     return (
       <div style={{ textAlign: 'center', padding: '32px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, fontFamily: FONT }}>
         <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>Cijfers konden niet geladen worden</p>
@@ -713,7 +717,7 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
     )
   }
 
-  const teBetalen = data.btwSaldo >= 0
+  const teBetalen = concept.saldo >= 0
   const line = (label: string, value: string, opts: { color?: string; strong?: boolean; top?: boolean } = {}) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderTop: opts.top ? '1px solid #eef1f4' : 'none', marginTop: opts.top ? 4 : 0 }}>
       <span style={{ fontSize: opts.strong ? 14.5 : 13.5, fontWeight: opts.strong ? 700 : 500, color: opts.color ?? M3.onSurface }}>{label}</span>
@@ -727,27 +731,27 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
         Q{quarter} {year} · alle kanalen (kassa, bank, kas, facturen)
       </div>
 
-      {/* Resultaat — cross-channel, turnover-aware */}
+      {/* Resultaat — cross-channel P&L (cents-accurate) */}
       <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px', marginBottom: 10 }}>
-        {line('Omzet (excl. BTW)', fmtEur(data.omzet), { color: '#137333' })}
-        {line('Kosten (excl. BTW)', fmtEur(data.kosten), { color: '#B3261E' })}
-        {line('Resultaat', fmtEur(data.resultaat), { strong: true, top: true })}
+        {line('Omzet (excl. BTW)', fmtEur(pnl.omzet), { color: '#137333' })}
+        {line('Kosten (excl. BTW)', fmtEur(pnl.kosten), { color: '#B3261E' })}
+        {line('Resultaat', fmtEur(pnl.resultaat), { strong: true, top: true })}
       </div>
 
-      {/* Concept BTW — 5a / 5b / 5g */}
+      {/* Concept BTW — whole-euro, matches het formulier, de ZIP en het Overzicht */}
       <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px' }}>
-        {line('BTW verschuldigd (5a)', fmtEur(data.btwVerschuldigd))}
-        {line('Voorbelasting (5b)', `− ${fmtEur(data.btwVoorbelasting)}`)}
+        {line('BTW verschuldigd (5a)', fmtEur(concept.verschuldigd))}
+        {line('Voorbelasting (5b)', `− ${fmtEur(concept.voorbelasting)}`)}
         {line(
           teBetalen ? 'Concept te betalen (5g)' : 'Concept terug te ontvangen (5g)',
-          fmtEur(Math.abs(data.btwSaldo)),
+          fmtEur(Math.abs(concept.saldo)),
           { strong: true, top: true, color: teBetalen ? M3.onSurface : '#137333' },
         )}
       </div>
 
-      {data.cashOmzetZonderBtw > 0 && (
+      {pnl.cashOmzetZonderBtw > 0 && (
         <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: R.md, background: '#FEE8C4', color: '#7C5800', fontSize: 12.5, lineHeight: 1.5 }}>
-          {fmtEur(data.cashOmzetZonderBtw)} contante omzet heeft nog geen BTW-tarief — die BTW zit niet in 5a.
+          {fmtEur(pnl.cashOmzetZonderBtw)} contante omzet heeft nog geen BTW-tarief — die BTW zit niet in 5a.
         </div>
       )}
     </div>
