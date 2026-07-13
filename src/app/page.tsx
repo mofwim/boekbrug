@@ -68,6 +68,16 @@ const segments = [
   { emoji: '🤝', title: 'Voor boekhouders', body: 'Werk samen met je ZZP-klanten op één plek.', href: '/voor-boekhouders' },
 ]
 
+// Only claims we can stand behind: AVG infra exists; per de Algemene
+// Voorwaarden blijft de gebruiker eigenaar van zijn data; het is gratis te
+// beginnen; de facturen volgen de Nederlandse regels.
+const trust = [
+  { emoji: '🔒', t: 'AVG-proof', d: 'Je privacy staat voorop.' },
+  { emoji: '📄', t: 'Je data blijft van jou', d: 'Jij bent eigenaar van je gegevens.' },
+  { emoji: '💳', t: 'Geen creditcard nodig', d: 'Gratis beginnen, geen verplichting.' },
+  { emoji: '🇳🇱', t: 'Nederlandse facturen', d: 'Volgens de Nederlandse regels.' },
+]
+
 export default async function Home() {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -155,6 +165,21 @@ export default async function Home() {
               <div style={{ fontSize: 16, fontWeight: 700, color: '#1c1c1e', marginBottom: 4 }}>{t.title}</div>
               <div style={{ fontSize: 13, lineHeight: 1.5, color: '#6b6b6e' }}>{t.tagline}</div>
             </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* Trust */}
+      <section style={{ ...wrap, paddingBottom: 56 }}>
+        <div style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 20, padding: 24, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 18 }}>
+          {trust.map((t) => (
+            <div key={t.t} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 22 }} aria-hidden>{t.emoji}</span>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#1c1c1e' }}>{t.t}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: '#6b6b6e' }}>{t.d}</div>
+              </div>
+            </div>
           ))}
         </div>
       </section>

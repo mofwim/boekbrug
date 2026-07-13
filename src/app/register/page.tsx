@@ -216,7 +216,7 @@ function RegisterContent() {
               onClick={() => { setRole('zzper'); setStep(2) }}
               className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
             >
-              <p className="font-medium text-gray-900">ZZP'er</p>
+              <p className="font-medium text-gray-900">ZZP&apos;er</p>
               <p className="text-sm text-gray-500">Ik stuur en ontvang facturen</p>
             </button>
             <button

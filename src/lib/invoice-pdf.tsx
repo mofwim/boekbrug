@@ -239,8 +239,12 @@ export function InvoicePDF({
   const initials = deriveInitials(profile.company_name || profile.full_name)
 
   // [FACTUUR-A] Normalize BTW-id casing on a legal document.
-  const senderBtw = profile.btw_number ? String(profile.btw_number).toUpperCase() : '—'
+  // Empty legal fields are OMITTED (not printed as "—"): a placeholder dash on a
+  // legal invoice looks like a filled-in value and reads as sloppy. Leaving the
+  // line out is honest — the field simply isn't there yet.
+  const senderBtw = profile.btw_number ? String(profile.btw_number).toUpperCase() : ''
   const clientBtw = invoice.client_btw_number ? String(invoice.client_btw_number).toUpperCase() : ''
+  const senderCityLine = `${profile.postal_code || ''} ${profile.city || ''}`.trim()
 
   const groups = btwBreakdown(lines ?? [])
   // Fallback for legacy invoices without lines: one derived rate from totals.
@@ -295,16 +299,15 @@ export function InvoicePDF({
             ) : null}
           </View>
 
-          {/* Afzender — Art. 35a sub a/b: name+address, BTW-id, KVK */}
+          {/* Afzender — Art. 35a sub a/b: name+address, BTW-id, KVK.
+              Empty fields are omitted rather than printed as "—". */}
           <View style={styles.afzenderBlock}>
             <Text style={styles.partyName}>{afzenderName || '—'}</Text>
-            <Text style={styles.partyText}>{profile.address || '—'}</Text>
-            <Text style={styles.partyText}>
-              {(profile.postal_code || profile.city) ? `${profile.postal_code || ''} ${profile.city || ''}`.trim() : '—'}
-            </Text>
-            <Text style={styles.partyText}>BTW nr.: {senderBtw}</Text>
-            <Text style={styles.partyText}>KvK nr.: {profile.kvk_number || '—'}</Text>
-            <Text style={styles.partyText}>IBAN: {profile.iban || '—'}</Text>
+            {profile.address ? <Text style={styles.partyText}>{profile.address}</Text> : null}
+            {senderCityLine ? <Text style={styles.partyText}>{senderCityLine}</Text> : null}
+            {senderBtw ? <Text style={styles.partyText}>BTW nr.: {senderBtw}</Text> : null}
+            {profile.kvk_number ? <Text style={styles.partyText}>KvK nr.: {profile.kvk_number}</Text> : null}
+            {profile.iban ? <Text style={styles.partyText}>IBAN: {profile.iban}</Text> : null}
           </View>
         </View>
 

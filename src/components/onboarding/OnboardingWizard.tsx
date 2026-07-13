@@ -977,7 +977,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Wil je je Gmail koppelen?</h2>
         <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
-          We importeren automatisch je facturen. Jij hoeft niets te doen.
+          We halen je facturen automatisch uit je mail. Jij bevestigt ze met één tik.
         </p>
       </div>
 
@@ -1006,7 +1006,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
           <span style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#EA4335", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "16px", flexShrink: 0 }}>G</span>
           <div>
             <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Ja, koppel mijn Gmail</p>
-            <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>We importeren automatisch je facturen.</p>
+            <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>We halen je facturen automatisch uit je mail; jij bevestigt ze.</p>
             <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#8e8e93" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
           </div>
         </button>

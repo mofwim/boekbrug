@@ -378,6 +378,20 @@ export default function GratisFactuur() {
     client.client_name.trim() &&
     numericLines.some((l) => l.line_total !== 0)
 
+  // Honest completeness check. These velden zijn wettelijk verplicht op een
+  // factuur (Art. 35a Wet OB). We blokkeren de download NIET — sommige
+  // ondernemers zijn KOR-vrijgesteld of maken een concept — maar we zeggen
+  // eerlijk wat er nog mist voor een factuur die aan alle eisen voldoet.
+  const legalMissing = [
+    !sender.btw_number.trim() && 'je BTW-nummer',
+    !sender.address.trim() && 'je adres',
+    !client.client_address.trim() && 'het adres van de klant',
+  ].filter(Boolean) as string[]
+  const legalMissingText =
+    legalMissing.length === 1
+      ? legalMissing[0]
+      : `${legalMissing.slice(0, -1).join(', ')} en ${legalMissing[legalMissing.length - 1]}`
+
   const setS = (k: keyof Sender) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSender((p) => ({ ...p, [k]: e.target.value }))
   const setC = (k: keyof Client) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -691,6 +705,11 @@ export default function GratisFactuur() {
           <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 8 }}>
             Vul je naam, de klant en minstens één regel in.
           </p>
+        )}
+        {canDownload && legalMissing.length > 0 && (
+          <div style={{ marginTop: 12, maxWidth: 520, marginLeft: 'auto', marginRight: 'auto', background: '#fff8e6', border: '1px solid #ffe1a3', color: '#8a6d1f', borderRadius: 12, padding: '10px 14px', fontSize: 13, textAlign: 'center' }}>
+            Tip: voor een factuur die aan alle regels voldoet, vul ook {legalMissingText} in.
+          </div>
         )}
 
         {/* ── Peak-intent register CTA (only real features) ── */}
