@@ -16,9 +16,9 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "BoekBrug — Financieel Command Center",
   description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
-  icons: {
-    icon: "/favicon.ico",
-  },
+  // Icons come from the file convention (favicon.ico + generated icon.tsx +
+  // apple-icon.tsx). No explicit `icons` here — that would override them and
+  // drop the crisp generated PNG icon / Apple touch icon.
   // [SEO] Twitter/X card — makes shared links render a large image card on
   // X, Slack, WhatsApp, etc. Image comes from the site-wide opengraph-image.
   twitter: {
