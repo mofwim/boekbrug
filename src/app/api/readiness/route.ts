@@ -17,6 +17,7 @@ import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { needsDocument } from "@/lib/bank-identity";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
+import { resolveQuarterOwner } from "@/lib/accountant-access";
 
 export const dynamic = "force-dynamic";
 
@@ -51,13 +52,20 @@ export async function GET(req: NextRequest) {
   const quarterDays = Math.round((endD.getTime() - Date.UTC(year, startMonth, 1)) / 86400000) + 1;
   const quarterLabel = `Q${quarter} ${year}`;
 
-  // service_role, every query scoped to this user (mirrors /api/closing-package/summary).
+  // [ACCOUNTANT-TRUTH] Dual-path: own quarter, OR a linked client's quarter for an
+  // accountant (same authorization as /api/closing-package). Every data query below is
+  // service_role and scoped to the resolved ownerId — never widened beyond it.
+  const owner = await resolveQuarterOwner(supabase, user.id, sp.get("clientId"));
+  if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
+  const ownerId = owner.ownerId;
+
+  // service_role, every query scoped to ownerId (mirrors /api/closing-package/summary).
   const pipeline = createPipelineClient();
 
   // ── 1) Invoice evidence — REUSE summarizeClosingPackage (single source of truth) ──
   let summary;
   try {
-    summary = await summarizeClosingPackage({ ownerId: user.id, year, quarter, supabase: pipeline });
+    summary = await summarizeClosingPackage({ ownerId: ownerId, year, quarter, supabase: pipeline });
   } catch (e) {
     const message = e instanceof Error ? e.message : "readiness summary failed";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -69,7 +77,7 @@ export async function GET(req: NextRequest) {
   const { data: bankRows } = await pipeline
     .from("bank_transactions")
     .select("amount, category, invoice_id, date, status, description, counterpart_name")
-    .eq("user_id", user.id).gte("date", start).lte("date", end);
+    .eq("user_id", ownerId).gte("date", start).lte("date", end);
   const bank = bankRows ?? [];
   let undocumentedCount = 0;
   for (const t of bank) {
@@ -86,7 +94,7 @@ export async function GET(req: NextRequest) {
   const { data: invRows } = await pipeline
     .from("invoices")
     .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start).lte("invoice_date", end);
   const invRaw = invRows ?? [];
   // [FIN-4] Infer a NULL direction from ownership — the SAME rule effectiveDirection uses
@@ -95,7 +103,7 @@ export async function GET(req: NextRequest) {
   const effDir = (i: { direction: string | null; receiver_id: string | null }): "incoming" | "outgoing" =>
     i.direction === "incoming" || i.direction === "outgoing"
       ? i.direction
-      : i.receiver_id === user.id ? "incoming" : "outgoing";
+      : i.receiver_id === ownerId ? "incoming" : "outgoing";
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
@@ -104,7 +112,7 @@ export async function GET(req: NextRequest) {
   const { data: cashRows } = await pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date")
-    .eq("user_id", user.id).gte("entry_date", start).lte("entry_date", end);
+    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end);
   const cashEntries: ResultCashEntry[] = (cashRows ?? []).map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount, category: c.category, btw_rate: c.btw_rate, date: c.entry_date,
@@ -115,7 +123,7 @@ export async function GET(req: NextRequest) {
   const { data: turnoverRows } = await pipeline
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
-    .eq("user_id", user.id).gte("turnover_date", startBuffer).lte("turnover_date", end);
+    .eq("user_id", ownerId).gte("turnover_date", startBuffer).lte("turnover_date", end);
   const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
     base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,
@@ -132,10 +140,10 @@ export async function GET(req: NextRequest) {
   if (turnover.length > 0) {
     const [posRes, cashOmzetRes] = await Promise.all([
       pipeline.from("bank_transactions").select("description, amount")
-        .eq("user_id", user.id).eq("category", "pos_income")
+        .eq("user_id", ownerId).eq("category", "pos_income")
         .gte("date", shiftDays(start, -5)).lte("date", shiftDays(end, 5)),
       pipeline.from("cash_entries").select("entry_date, amount")
-        .eq("user_id", user.id).eq("category", "omzet")
+        .eq("user_id", ownerId).eq("category", "omzet")
         .gte("entry_date", start).lte("entry_date", end),
     ]);
     const posLines = (posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount }));

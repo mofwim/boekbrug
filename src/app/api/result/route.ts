@@ -5,8 +5,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
+import { resolveQuarterOwner } from "@/lib/accountant-access";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -27,16 +29,32 @@ export async function GET(req: NextRequest) {
   const endD = new Date(Date.UTC(year, startMonth + 3, 0));
   const end = `${endD.getUTCFullYear()}-${pad(endD.getUTCMonth() + 1)}-${pad(endD.getUTCDate())}`;
 
-  // Invoices for this user (outgoing = sender, incoming = receiver) in the quarter.
-  const { data: invRows } = await supabase
+  // [ACCOUNTANT-TRUTH] Dual-path: own result, OR a linked client's result for an
+  // accountant (same authorization as /api/closing-package). Data queries below use the
+  // service-role pipeline scoped to ownerId — an accountant cannot read a client's rows
+  // through RLS, so this route's reads move from the session client to the pipeline.
+  const owner = await resolveQuarterOwner(supabase, user.id, sp.get("clientId"));
+  if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
+  const ownerId = owner.ownerId;
+  const pipeline = createPipelineClient();
+
+  // Invoices for this owner (outgoing = sender, incoming = receiver) in the quarter.
+  const { data: invRows } = await pipeline
     .from("invoices")
     .select("direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id")
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end);
 
+  // [FIN-4] Infer a NULL direction from ownership (owner is the receiver of an incoming
+  // invoice) — the SAME rule effectiveDirection / aangifte / readiness use — so a
+  // null-direction row is never dropped and result never diverges from the concept.
+  const effDir = (i: { direction: string | null; receiver_id: string | null }): "incoming" | "outgoing" =>
+    i.direction === "incoming" || i.direction === "outgoing"
+      ? i.direction
+      : i.receiver_id === ownerId ? "incoming" : "outgoing";
   const invoices: ResultInvoice[] = (invRows ?? []).map((i) => ({
-    direction: i.direction as "outgoing" | "incoming" | null,
+    direction: effDir(i),
     status: i.status,
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
@@ -45,10 +63,10 @@ export async function GET(req: NextRequest) {
   // Bank lines in the quarter (computeResult excludes invoice payments + uncategorized).
   // [TURNOVER] `description` is needed to parse a pos_income line's takings date (DAT.),
   // which keys the covered-day de-dup against the till turnover.
-  const { data: bankRows } = await supabase
+  const { data: bankRows } = await pipeline
     .from("bank_transactions")
     .select("amount, category, invoice_id, date, description")
-    .eq("user_id", user.id)
+    .eq("user_id", ownerId)
     .gte("date", start)
     .lte("date", end);
 
@@ -62,10 +80,10 @@ export async function GET(req: NextRequest) {
   }));
 
   // Cash entries in the quarter.
-  const { data: cashRows } = await supabase
+  const { data: cashRows } = await pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date")
-    .eq("user_id", user.id)
+    .eq("user_id", ownerId)
     .gte("entry_date", start)
     .lte("entry_date", end);
 
@@ -83,10 +101,10 @@ export async function GET(req: NextRequest) {
   bufD.setUTCDate(bufD.getUTCDate() - 5);
   const startBuffer = `${bufD.getUTCFullYear()}-${pad(bufD.getUTCMonth() + 1)}-${pad(bufD.getUTCDate())}`;
 
-  const { data: turnoverRows } = await supabase
+  const { data: turnoverRows } = await pipeline
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
-    .eq("user_id", user.id)
+    .eq("user_id", ownerId)
     .gte("turnover_date", startBuffer)
     .lte("turnover_date", end);
 
