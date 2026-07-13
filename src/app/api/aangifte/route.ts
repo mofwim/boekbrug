@@ -46,8 +46,16 @@ export async function GET(req: NextRequest) {
     .gte("invoice_date", start)
     .lte("invoice_date", end);
   const invRaw = invRows ?? [];
+  // [FIN-4] Never drop a verified row with a NULL direction: infer it from ownership
+  // (owner is the receiver of an incoming invoice) — the SAME rule effectiveDirection
+  // applies in the closing package. Without this, a null-direction sale is silently
+  // omitted here while the ZIP counts it → the two concept figures diverge.
+  const effDir = (i: { direction: string | null; receiver_id: string | null }): "incoming" | "outgoing" =>
+    i.direction === "incoming" || i.direction === "outgoing"
+      ? i.direction
+      : i.receiver_id === user.id ? "incoming" : "outgoing";
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
-    direction: i.direction as "outgoing" | "incoming" | null,
+    direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
   }));
 
@@ -94,13 +102,12 @@ export async function GET(req: NextRequest) {
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
-  const isIncoming = (i: { direction: string | null }) => i.direction === "incoming";
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays,
-    incomingInvoiceCount: invRaw.filter((i) => isIncoming(i) && IN_OK.has(i.status ?? "")).length,
-    outgoingInvoiceCount: invRaw.filter((i) => i.direction === "outgoing" && OUT_OK.has(i.status ?? "")).length,
-    hasEuPurchase: invRaw.some((i) => isIncoming(i) && IN_OK.has(i.status ?? "") && typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim())),
+    incomingInvoiceCount: invRaw.filter((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "")).length,
+    outgoingInvoiceCount: invRaw.filter((i) => effDir(i) === "outgoing" && OUT_OK.has(i.status ?? "")).length,
+    hasEuPurchase: invRaw.some((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "") && typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim())),
   };
 
   const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`);

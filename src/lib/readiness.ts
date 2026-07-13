@@ -185,13 +185,25 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
     dimensions.push({ key: "cash", label: DIM_LABEL.cash, weight: DIM_WEIGHT.cash, applicable, subscore, detail });
   }
 
-  // ── 4) BTW (20%) — is the turnover fully rated and covered? Checks: no unrated cash
-  //       omzet, full kassadag coverage (retail), and no undecidable rate. ──
+  // A business with money movement but NO recorded revenue is not a "channel we don't
+  // use" — it is an incomplete quarter. `hasActivity` distinguishes an empty quarter
+  // (nothing to judge → BTW genuinely n.v.t.) from a quarter that HAS bank/purchase
+  // activity yet no sales side (a real gap, never n.v.t. — see the BTW block below).
+  const hasActivity =
+    s.bankTxCount > 0 || s.verifiedInvoiceCount > 0 || s.turnoverDays > 0 || s.cashOmzetZonderBtw > 0;
+
+  // ── 4) BTW (20%) — is the omzet fully recorded, rated and covered? When there IS a
+  //       sales side: check rating, kassadag coverage, and undecidable rate. When there
+  //       is activity but NO sales side at all (bank-only): this is a GAP (subscore 0 +
+  //       a 'missing' item), NOT n.v.t. — otherwise a lone bank statement would score
+  //       100% "klaar" while zero revenue is recorded. Only a truly empty quarter is
+  //       n.v.t. here. ──
   {
-    const applicable = s.hasSales;
+    const salesApplicable = s.hasSales;
+    const applicable = s.hasSales || hasActivity;
     const checks: boolean[] = [];
     const detailBits: string[] = [];
-    if (applicable) {
+    if (salesApplicable) {
       // a) all cash omzet has a rate
       const ratedOk = s.cashOmzetZonderBtw <= 0;
       checks.push(ratedOk);
@@ -228,23 +240,38 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         detailBits.push("onbekend tarief");
       }
     }
-    const passed = checks.filter(Boolean).length;
-    const subscore = applicable && checks.length > 0 ? passed / checks.length : applicable ? 1 : 0;
-    dimensions.push({
-      key: "vat",
-      label: DIM_LABEL.vat,
-      weight: DIM_WEIGHT.vat,
-      applicable,
-      subscore,
-      detail: applicable
-        ? detailBits.length === 0
-          ? "Omzet volledig ingedeeld per BTW-tarief."
-          : `Aandacht: ${detailBits.join(", ")}.`
-        : "Nog geen omzet — dit onderdeel telt niet mee.",
-    });
-    if (applicable && s.hasEuPurchase) {
-      notes.push("Er zijn EU-inkopen: BTW-verlegging (rubriek 4b) wordt niet automatisch berekend — je boekhouder verwerkt dit.");
+    let subscore: number;
+    let detail: string;
+    if (salesApplicable) {
+      const passed = checks.filter(Boolean).length;
+      subscore = checks.length > 0 ? passed / checks.length : 1;
+      detail = detailBits.length === 0
+        ? "Omzet volledig ingedeeld per BTW-tarief."
+        : `Aandacht: ${detailBits.join(", ")}.`;
+      if (s.hasEuPurchase) {
+        notes.push("Er zijn EU-inkopen: BTW-verlegging (rubriek 4b) wordt niet automatisch berekend — je boekhouder verwerkt dit.");
+      }
+    } else if (applicable) {
+      // Activity but no revenue recorded at all — the whole sales side is missing.
+      subscore = 0;
+      detail = "Nog geen omzet vastgelegd (geen verkoopfacturen, kassa of kas-omzet).";
+      missing.push({
+        severity: "missing",
+        title: "Nog geen omzet vastgelegd",
+        detail: "Er is wel bank- of inkoopactiviteit, maar geen verkoopfacturen, kassa-omzet of kas-omzet. Controleer of je omzet is ingevoerd voordat je afsluit.",
+      });
+    } else {
+      subscore = 0;
+      detail = "Nog geen gegevens — dit onderdeel telt niet mee.";
     }
+    dimensions.push({ key: "vat", label: DIM_LABEL.vat, weight: DIM_WEIGHT.vat, applicable, subscore, detail });
+  }
+
+  // Honest limit on voorbelasting (fix D): we can only reclaim BTW on inkoopfacturen the
+  // owner actually entered — an un-entered bon means the aftrek is too low. Stated when
+  // there is any activity (not on a truly empty quarter).
+  if (hasActivity) {
+    notes.push("Voorbelasting telt alleen ingevoerde inkoopfacturen/bonnen — ontbreekt er een bon, dan is je BTW-aftrek te laag en betaal je te veel.");
   }
 
   // ── The score: weighted mean over APPLICABLE dimensions only (n.v.t. is excluded, never

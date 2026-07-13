@@ -12,7 +12,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { summarizeClosingPackage, type Quarter } from "@/lib/closing-package";
 import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
-import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
+import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { needsDocument } from "@/lib/bank-identity";
@@ -52,7 +52,13 @@ export async function GET(req: NextRequest) {
   const pipeline = createPipelineClient();
 
   // ── 1) Invoice evidence — REUSE summarizeClosingPackage (single source of truth) ──
-  const summary = await summarizeClosingPackage({ ownerId: user.id, year, quarter, supabase: pipeline });
+  let summary;
+  try {
+    summary = await summarizeClosingPackage({ ownerId: user.id, year, quarter, supabase: pipeline });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "readiness summary failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
   const verifiedInvoiceCount = summary.outgoingCount + summary.incomingCount;
   const invoicesWithEvidence = summary.filesIncluded;
 
@@ -80,8 +86,15 @@ export async function GET(req: NextRequest) {
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .gte("invoice_date", start).lte("invoice_date", end);
   const invRaw = invRows ?? [];
+  // [FIN-4] Infer a NULL direction from ownership — the SAME rule effectiveDirection uses
+  // in the closing package — so a null-direction verified invoice is counted here too and
+  // the readiness/aangifte screen never diverges from the ZIP.
+  const effDir = (i: { direction: string | null; receiver_id: string | null }): "incoming" | "outgoing" =>
+    i.direction === "incoming" || i.direction === "outgoing"
+      ? i.direction
+      : i.receiver_id === user.id ? "incoming" : "outgoing";
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
-    direction: i.direction as "outgoing" | "incoming" | null,
+    direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
   }));
 
@@ -132,13 +145,12 @@ export async function GET(req: NextRequest) {
   const result = computeResult(invoices, [] as ResultBankTx[], cashEntries, turnover, coveredDates);
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
-  const isIncoming = (i: { direction: string | null }) => i.direction === "incoming";
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays,
-    incomingInvoiceCount: invRaw.filter((i) => isIncoming(i) && IN_OK.has(i.status ?? "")).length,
-    outgoingInvoiceCount: invRaw.filter((i) => i.direction === "outgoing" && OUT_OK.has(i.status ?? "")).length,
-    hasEuPurchase: invRaw.some((i) => isIncoming(i) && IN_OK.has(i.status ?? "") && typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim())),
+    incomingInvoiceCount: invRaw.filter((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "")).length,
+    outgoingInvoiceCount: invRaw.filter((i) => effDir(i) === "outgoing" && OUT_OK.has(i.status ?? "")).length,
+    hasEuPurchase: invRaw.some((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "") && typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim())),
   };
   const aangifte = buildAangifte(result, completeness, quarterLabel);
   const hasUndecidableRate = aangifte.rows.some((r) => r.code === "1c");

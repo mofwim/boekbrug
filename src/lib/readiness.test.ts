@@ -122,6 +122,52 @@ console.log("\n— a perfect score with a flagged risk never shows 100 —");
   check("score reflects the failed vat check (93), never a false 100", r.score === 93 && r.score < 100);
 }
 
+console.log("\n— bank-only must NOT be a false 100% green (fix A) —");
+{
+  // Uploaded ONLY a fully-reconciled bank statement: no invoices, no turnover, no cash.
+  // The whole sales side is absent — that's a GAP, not n.v.t. Never 'ready', never ~100%.
+  const r = buildReadiness({
+    quarterLabel: "Q1 2026",
+    verifiedInvoiceCount: 0, invoicesWithEvidence: 0, missingEvidence: [],
+    bankTxCount: 10, undocumentedCount: 0,
+    usesTurnover: false, turnoverDays: 0, reconExceptions: [],
+    hasSales: false, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
+  });
+  check("NOT ready (revenue side is missing)", r.status !== "ready" && r.ready === false);
+  check("'Nog geen omzet vastgelegd' is a missing gap", r.missing.some((m) => /Nog geen omzet vastgelegd/.test(m.title)));
+  check("BTW dimension is a real gap (applicable, 0%), not n.v.t.", r.dimensions.find((d) => d.key === "vat")!.applicable === true && r.dimensions.find((d) => d.key === "vat")!.subscore === 0);
+  check("score = 60 (bank 30 earned / (bank 30 + vat 20) applicable), never ~100", r.score === 60);
+  check("status attention", r.status === "attention");
+}
+
+console.log("\n— a pure-purchase quarter (inkoop + bank, geen omzet) flags the missing revenue —");
+{
+  const r = buildReadiness({
+    quarterLabel: "Q1 2026",
+    verifiedInvoiceCount: 5, invoicesWithEvidence: 5, missingEvidence: [],
+    bankTxCount: 20, undocumentedCount: 0,
+    usesTurnover: false, turnoverDays: 0, reconExceptions: [],
+    hasSales: false, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
+  });
+  check("'Nog geen omzet vastgelegd' flagged even with purchases present", r.missing.some((m) => /Nog geen omzet vastgelegd/.test(m.title)));
+  check("not ready", r.status !== "ready");
+  // invoices 30 + bank 30 earned; vat 20 applicable @0; cash n.v.t. → 60/80 = 75.
+  check("score = 75 (revenue side counts against readiness)", r.score === 75);
+}
+
+console.log("\n— an EMPTY quarter still has BTW as n.v.t. (no activity → nothing to judge) —");
+{
+  const r = buildReadiness({
+    quarterLabel: "Q1 2026",
+    verifiedInvoiceCount: 0, invoicesWithEvidence: 0, missingEvidence: [],
+    bankTxCount: 0, undocumentedCount: 0,
+    usesTurnover: false, turnoverDays: 0, reconExceptions: [],
+    hasSales: false, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
+  });
+  check("no activity → BTW n.v.t. (not a spurious 'geen omzet' gap)", r.dimensions.find((d) => d.key === "vat")!.applicable === false);
+  check("no spurious omzet-missing item on a truly empty quarter", !r.missing.some((m) => /Nog geen omzet vastgelegd/.test(m.title)));
+}
+
 console.log("\n— readiness never claims what it can't measure (honest note always present) —");
 {
   const r = buildReadiness(perfect());
