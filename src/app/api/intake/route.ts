@@ -286,14 +286,25 @@ export async function POST(req: NextRequest) {
   const { error: uploadError } = await supabase.storage
     .from("documents")
     .upload(storagePath, upload.buffer, { contentType: upload.fileType, upsert: false })
-  const pdfUrl = uploadError ? null : storagePath
+  // [R1] A swallowed storage failure was the silent-loss bug: the flow continued and
+  // wrote a documents/invoice row whose file_url points at a file that was NEVER stored,
+  // while telling the owner "opgeslagen" / "factuur herkend". The evidence is then gone
+  // but looks present, and the closing package can never find it. Fail loudly instead —
+  // the owner retries; a cheap AI re-run beats a phantom document that breaks the aangifte.
+  if (uploadError) {
+    return NextResponse.json(
+      { error: "Bestand kon niet worden opgeslagen — probeer het opnieuw." },
+      { status: 502 }
+    )
+  }
+  const pdfUrl = storagePath
 
   const pipeline = createPipelineClient()
 
   // ── Destination: document (not an invoice/receipt) → bestanden only ─────────
   if (decision.destination === "document") {
     const folderId = await ensureImportedFolder(user.id, "pipeline")
-    const { data: doc } = await pipeline
+    const { data: doc, error: docErr } = await pipeline
       .from("documents")
       .insert({
         user_id: user.id,
@@ -310,6 +321,15 @@ export async function POST(req: NextRequest) {
       })
       .select("id")
       .single()
+    // [R1] Don't report success on a failed write. Roll back the stored file so it isn't
+    // orphaned in Storage (a leaked object with no row), and tell the owner to retry.
+    if (docErr || !doc) {
+      await supabase.storage.from("documents").remove([storagePath])
+      return NextResponse.json(
+        { error: "Opslaan in je bestanden is mislukt — probeer het opnieuw." },
+        { status: 500 }
+      )
+    }
     // [INTAKE-FEEDBACK] resolve the folder name so the client can show "where"
     // and deep-link to it (same breadcrumb helper as the duplicate path).
     const docFolderPath = await buildFolderBreadcrumb(supabase, user.id, folderId)
@@ -334,7 +354,7 @@ export async function POST(req: NextRequest) {
 
   const folderId = await resolveImportTarget(user.id, v.invoice_date ?? null, "facturen", "pipeline")
 
-  const { data: doc } = await pipeline
+  const { data: doc, error: docErr } = await pipeline
     .from("documents")
     .insert({
       user_id: user.id,
@@ -352,7 +372,18 @@ export async function POST(req: NextRequest) {
     })
     .select("id")
     .single()
-  const documentId = doc?.id ?? null
+  // [R1] The document row IS the evidence link for an incoming invoice (the closing
+  // package resolves the PDF via invoices.document_id → documents.file_url). If it fails
+  // to write, an invoice with document_id=null has unreachable evidence. Stop and roll
+  // back the stored file rather than create a half-linked, evidence-less invoice.
+  if (docErr || !doc) {
+    await supabase.storage.from("documents").remove([storagePath])
+    return NextResponse.json(
+      { error: "Opslaan van de factuur is mislukt — probeer het opnieuw." },
+      { status: 500 }
+    )
+  }
+  const documentId = doc.id
 
   // [SMART-INTAKE] Merge an intake suggestion into field_confidence (same jsonb
   // pattern as _safecore). _intake_suggest='paid' tells the verify queue to
@@ -398,10 +429,16 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (dbError) {
+    // [R1] Roll back the document row + stored file we just created. Otherwise a
+    // documents row with no invoice is orphaned — and worse, its content_hash would
+    // make the byte-hash dedup BLOCK a re-upload (409), trapping the owner with a file
+    // they can neither re-add nor see as an invoice. Best-effort; then surface the error.
+    await pipeline.from("documents").delete().eq("id", documentId)
+    await supabase.storage.from("documents").remove([storagePath])
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
 
-  if (documentId && invoice?.id) {
+  if (invoice?.id) {
     await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId)
   }
 
