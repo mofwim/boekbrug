@@ -68,10 +68,12 @@ export default function KlantenBeheer({ initialClients }: Props) {
     setInviteSuccess(false)
 
     try {
-      // [CONTROL] Canonical invite path — /api/invite/client stashes
-      // zzper_id=user.id (so the RLS insert passes) AND actually sends the email.
-      // The old /api/accountant/invite sent no email and wrote zzper_id=NULL,
-      // which the accept endpoint hard-rejects (invite could never be accepted).
+      // [CONTROL] Uses /api/invite/client: it stashes zzper_id=user.id (so the RLS
+      // insert passes) AND sends the invite email. The sibling /api/accountant/invite
+      // (kept + security-fixed on main: zzper_id=user.id + scoped invitations read)
+      // creates an acceptable invite but sends NO email — so the emailing route is the
+      // one wired to the button. (Two accountant→client invite routes now coexist;
+      // consolidating them is a follow-up.)
       const res = await fetch('/api/invite/client', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
