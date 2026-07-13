@@ -161,6 +161,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/kas')}
           />
 
+          {/* [TURNOVER-IMPORT] Dagomzet — import the till Z-report (per-BTW-rate daily
+              turnover), the retail store's authoritative revenue. */}
+          <ActionCard
+            icon="point_of_sale" iconBg="#6A1B9A" iconColor="#fff"
+            label="Dagomzet" sub="Kassa Z-rapport importeren"
+            onClick={() => router.push('/dashboard/dagomzet')}
+          />
+
           {/* [RESULT] Financieel overzicht → the combined cross-channel result (BTW,
               omzet, kosten from invoices + bank + kas); it links on to the detailed
               per-invoice BTW-aangifte. */}

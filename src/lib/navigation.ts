@@ -34,6 +34,12 @@ export function getHomePath(role: Role): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PARENT_RULES: ParentRule[] = [
+  // ── dagomzet (turnover import) → dashboard home ───────────────────────────
+  {
+    match: /^\/dashboard\/dagomzet$/,
+    parent: () => '/dashboard',
+  },
+
   // ── invoice/[id]/edit → invoice/[id] ──────────────────────────────────────
   {
     match: /^\/dashboard\/invoice\/([^/]+)\/edit$/,
