@@ -37,6 +37,7 @@ export type AuditAction =
   | 'invoice.updated'
   | 'invoice.deleted'
   | 'invoice.duplicated'              // ← v2: matches historical data
+  | 'invoice.dedup_override'          // ← [INTAKE-FORCE] owner added despite a semantic-duplicate match ("toch toevoegen")
   | 'invoice.status_changed'
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed

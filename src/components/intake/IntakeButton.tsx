@@ -40,7 +40,7 @@ export default function IntakeButton({
   const [toast, setToast] = useState<string | null>(null)
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
-  const [dupModal, setDupModal] = useState<{ message: string; originalId?: string } | null>(null)
+  const [dupModal, setDupModal] = useState<{ message: string; originalId?: string; canForce?: boolean; file?: File } | null>(null)
   // [INTAKE-DEST-MODAL] When a file is NOT an invoice (destination 'document'),
   // the owner needs to KNOW where it landed — a persistent modal (iOS-styled,
   // matching /incoming) with the destination folder + a deep-link that
@@ -57,13 +57,15 @@ export default function IntakeButton({
     setTimeout(() => setToast(null), 3500)
   }
 
-  async function handleFile(file: File) {
+  async function handleFile(file: File, force = false) {
     if (busy) return
     setBusy(true)
     setOpen(false)
     try {
       const fd = new FormData()
       fd.append('file', file)
+      // [INTAKE-FORCE] "toch toevoegen" — override a false-positive SEMANTIC duplicate.
+      if (force) fd.append('force', 'true')
       const res = await fetch('/api/intake', { method: 'POST', body: fd })
       const data: IntakeResult = await res.json()
 
@@ -85,7 +87,7 @@ export default function IntakeButton({
             isDuplicate: true,
           })
         } else if (res.status === 409 && data.duplicate) {
-          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id })
+          setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, file })
         } else {
           showToast(data.error || 'Toevoegen mislukt')
         }
@@ -280,6 +282,17 @@ export default function IntakeButton({
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_forward</span>
               </button>
             )}
+            {/* [INTAKE-FORCE] A semantic match can be a false positive (two distinct
+                same-day receipts, same vendor/amount, no number). Let the owner add it
+                anyway — re-submits with force=true; the exact-same-file gate still holds. */}
+            {dupModal.canForce && dupModal.file && (
+              <button
+                onClick={() => { const f = dupModal.file!; setDupModal(null); handleFile(f, true) }}
+                style={{ width: '100%', background: 'transparent', color: '#7C5800', borderRadius: R.full, padding: '13px', border: '1px solid #E0C48A', cursor: 'pointer', fontFamily: FONT, fontSize: 14.5, fontWeight: 600, marginBottom: 10 }}
+              >
+                Toch toevoegen — dit is een andere factuur
+              </button>
+            )}
             <button
               onClick={() => setDupModal(null)}
               style={{ width: '100%', background: 'transparent', color: M3.primary, borderRadius: R.full, padding: '12px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600 }}
@@ -377,6 +390,7 @@ export interface IntakeResult {
   duplicate?: boolean
   invoice_id?: string
   original_id?: string  // [DUP-MODAL] the existing invoice this duplicates → deep-link
+  canForce?: boolean    // [INTAKE-FORCE] a semantic dup that may be overridden ("toch toevoegen")
   suggest_paid?: boolean
   // [INTAKE-DEST-MODAL] present for destination 'document' → deep-link + highlight
   document_id?: string

@@ -70,6 +70,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Bestand te groot — max 10MB" }, { status: 400 })
   }
 
+  // [INTAKE-FORCE] The owner can override a SEMANTIC duplicate block ("toch toevoegen")
+  // when the match is a false positive — e.g. two genuinely distinct same-day receipts
+  // from one vendor for the same amount, neither carrying an invoice number. This NEVER
+  // overrides the byte-hash gate below: the exact same file still can't be added twice.
+  const force = formData.get("force") === "true"
+
   const arrayBuffer = await file.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
 
@@ -188,7 +194,26 @@ export async function POST(req: NextRequest) {
       }
     )
 
-    if (dup.duplicate && dup.match) {
+    if (dup.duplicate && dup.match && force) {
+      // [INTAKE-FORCE] The owner already saw "bestaat al" and chose to add anyway. Record
+      // the override so a deliberate double-add is fully traceable, then fall through to
+      // storage/insert like a normal invoice.
+      await logAuditAction({
+        userId: user.id,
+        action: "invoice.dedup_override",
+        entityType: "invoice",
+        entityId: dup.match.id,
+        newValue: {
+          reason: "user_forced_add",
+          matched_on: dup.tier,
+          invoice_number: v.invoice_number ?? null,
+          total_inc_btw: v.total_inc_btw ?? v.amount ?? null,
+          vendor: v.vendor ?? null,
+          path: "intake",
+        },
+        ipAddress: getClientIP(req),
+      })
+    } else if (dup.duplicate && dup.match) {
       // Block the duplicate before any storage/insert. Truth in the audit log,
       // a clear message to the owner. The original is untouched.
       await logAuditAction({
@@ -264,6 +289,10 @@ export async function POST(req: NextRequest) {
           error: `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
           duplicate: true,
           original_id: dup.match.id,
+          // [INTAKE-FORCE] This is a SEMANTIC match (same invoice, different file) — it can
+          // be a false positive, so the client may offer "toch toevoegen" (re-POST force=true).
+          // The byte-hash 409 above (exact same file) deliberately omits this flag.
+          canForce: true,
           ...(existing ? { existing } : {}),
         },
         { status: 409 }
