@@ -500,6 +500,11 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
     inserted = rows.length
   }
 
+  // [R2] Surface unreadable lines. Each parseError is a transaction line the parser
+  // could NOT read → a transaction that is NOT in the owner's overview (though the raw
+  // file still reaches the accountant). Silently reporting only `inserted` hid this;
+  // now the count travels in the response and the message says it out loud.
+  const unreadable = parsed.parseErrors.length
   return NextResponse.json({
     ok: true,
     destination: "bank",
@@ -507,6 +512,10 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
     parsed: parsed.transactions.length,
     inserted,
     skipped,
-    message: `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd.`,
+    parseWarnings: parsed.parseErrors,
+    message:
+      unreadable > 0
+        ? `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht.`
+        : `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd.`,
   })
 }
