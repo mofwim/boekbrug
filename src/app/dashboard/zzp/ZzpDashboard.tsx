@@ -122,6 +122,29 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         {/* [HONEST-HOME] Snapshot: "waar sta ik?" answered with certain facts only,
             each a button to the action that resolves it. */}
         <DailyTruth />
+
+        {/* [READINESS] The connective layer — one tap to "ben ik klaar voor de
+            boekhouder?": a single verdict over everything imported (facturen, bank,
+            dagomzet, BTW) with the few things that still need attention and one-click
+            handover. Deliberately prominent (not a menu row) — it's the answer the
+            store owner actually comes for. */}
+        <button
+          onClick={() => router.push('/dashboard/klaar')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
+            padding: '18px 18px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
+            border: 'none', background: 'linear-gradient(135deg, #1A73E8, #1557B0)',
+            boxShadow: EL1, margin: '20px 0 8px',
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>fact_check</span>
+          <span style={{ flex: 1 }}>
+            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Ben ik klaar?</span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>Status van je kwartaal — en klaar voor de boekhouder</span>
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+        </button>
+
         {/* [HONEST-HOME] Simplified home — one curated menu, no duplicated doors.
             Removed: the "Nieuwe factuur" card (the FAB below covers it) and the
             "Inkoopfacturen" card (reachable via the "Te betalen" snapshot and from
