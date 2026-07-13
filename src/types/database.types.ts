@@ -239,6 +239,75 @@ export type Database = {
           },
         ]
       }
+      daily_turnover: {
+        Row: {
+          base_0: number
+          base_21: number
+          base_9: number
+          btw_21: number
+          btw_9: number
+          cash_amount: number | null
+          created_at: string | null
+          document_id: string | null
+          id: string
+          other_amount: number | null
+          pin_amount: number | null
+          source: string
+          total_incl: number | null
+          turnover_date: string
+          user_id: string
+        }
+        Insert: {
+          base_0?: number
+          base_21?: number
+          base_9?: number
+          btw_21?: number
+          btw_9?: number
+          cash_amount?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          other_amount?: number | null
+          pin_amount?: number | null
+          source?: string
+          total_incl?: number | null
+          turnover_date: string
+          user_id: string
+        }
+        Update: {
+          base_0?: number
+          base_21?: number
+          base_9?: number
+          btw_21?: number
+          btw_9?: number
+          cash_amount?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          other_amount?: number | null
+          pin_amount?: number | null
+          source?: string
+          total_incl?: number | null
+          turnover_date?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_turnover_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_turnover_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_entries: {
         Row: {
           amount: number
