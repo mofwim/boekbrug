@@ -132,6 +132,17 @@ export function getPublishedSlugs(locale: Locale): string[] {
   return getPublishedPosts(locale).map((p) => p.frontmatter.slug)
 }
 
+// Other published articles in the same topic cluster (same locale, same
+// pillarSlug), excluding the article itself. Powers the "more in this guide"
+// block, which wires the pillar↔cluster mesh without per-file editing.
+export function getClusterSiblings(post: Post, limit = 4): Post[] {
+  const { pillarSlug, slug, locale } = post.frontmatter
+  if (!pillarSlug) return []
+  return getPublishedPosts(locale)
+    .filter((p) => p.frontmatter.pillarSlug === pillarSlug && p.frontmatter.slug !== slug)
+    .slice(0, limit)
+}
+
 // The same article in the other language, if it exists and is published.
 // Returns { locale, slug, path } so callers can build hreflang + a switcher.
 export function getAlternate(

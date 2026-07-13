@@ -7,6 +7,7 @@
 import type { Metadata } from 'next'
 import {
   articlePath,
+  indexPath,
   getAlternate,
   type Locale,
   type Post,
@@ -67,22 +68,36 @@ export function buildArticleJsonLd(post: Post, locale: Locale): Record<string, u
   const url = absoluteUrl(articlePath(locale, frontmatter.slug))
   const image = absoluteUrl(frontmatter.coverImage ?? DEFAULT_OG_IMAGE)
 
+  // A @graph pairs the post (BlogPosting — the correct type for a blog article,
+  // more specific than Article) with a BreadcrumbList that mirrors the visual
+  // "Blog › [title]" trail, so search engines can render breadcrumb rich results.
   return {
     '@context': 'https://schema.org',
-    '@type': 'Article',
-    headline: frontmatter.title,
-    description: frontmatter.description,
-    inLanguage: hreflang(locale),
-    datePublished: frontmatter.publishedAt || undefined,
-    dateModified: frontmatter.updatedAt || frontmatter.publishedAt || undefined,
-    image: [image],
-    mainEntityOfPage: { '@type': 'WebPage', '@id': url },
-    author: { '@type': 'Organization', name: frontmatter.author, url: absoluteUrl('/') },
-    publisher: {
-      '@type': 'Organization',
-      name: 'BoekBrug',
-      url: absoluteUrl('/'),
-      logo: { '@type': 'ImageObject', url: absoluteUrl(DEFAULT_OG_IMAGE) },
-    },
+    '@graph': [
+      {
+        '@type': 'BlogPosting',
+        headline: frontmatter.title,
+        description: frontmatter.description,
+        inLanguage: hreflang(locale),
+        datePublished: frontmatter.publishedAt || undefined,
+        dateModified: frontmatter.updatedAt || frontmatter.publishedAt || undefined,
+        image: [image],
+        mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+        author: { '@type': 'Organization', name: frontmatter.author, url: absoluteUrl('/') },
+        publisher: {
+          '@type': 'Organization',
+          name: 'BoekBrug',
+          url: absoluteUrl('/'),
+          logo: { '@type': 'ImageObject', url: absoluteUrl(DEFAULT_OG_IMAGE) },
+        },
+      },
+      {
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Blog', item: absoluteUrl(indexPath(locale)) },
+          { '@type': 'ListItem', position: 2, name: frontmatter.title, item: url },
+        ],
+      },
+    ],
   }
 }

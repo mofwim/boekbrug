@@ -14,7 +14,7 @@ import rehypeSlug from 'rehype-slug'
 import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
 import ToolCTA from '@/components/blog/ToolCTA'
-import { indexPath, articlePath, type Locale, type Post } from '@/lib/blog'
+import { indexPath, articlePath, getClusterSiblings, type Locale, type Post } from '@/lib/blog'
 
 // react-markdown injects an internal `node` prop into every custom component;
 // strip it so it never leaks onto the DOM.
@@ -59,9 +59,9 @@ const components: Components = {
   ),
 }
 
-const COPY: Record<Locale, { blog: string; by: string; readTime: string; back: string; switchTo: string; partOf: string }> = {
-  nl: { blog: 'Blog', by: 'door', readTime: 'min leestijd', back: '← Terug naar blog', switchTo: 'Read in English', partOf: 'Onderdeel van de gids' },
-  en: { blog: 'Blog', by: 'by', readTime: 'min read', back: '← Back to blog', switchTo: 'Lees in het Nederlands', partOf: 'Part of the guide' },
+const COPY: Record<Locale, { blog: string; by: string; readTime: string; back: string; switchTo: string; partOf: string; more: string }> = {
+  nl: { blog: 'Blog', by: 'door', readTime: 'min leestijd', back: '← Terug naar blog', switchTo: 'Read in English', partOf: 'Onderdeel van de gids', more: 'Lees ook in deze gids' },
+  en: { blog: 'Blog', by: 'by', readTime: 'min read', back: '← Back to blog', switchTo: 'Lees in het Nederlands', partOf: 'Part of the guide', more: 'More in this guide' },
 }
 
 function formatDate(iso: string, locale: Locale): string {
@@ -86,6 +86,7 @@ export default function ArticleLayout({
 }) {
   const { frontmatter, content, readingMinutes } = post
   const t = COPY[locale]
+  const siblings = getClusterSiblings(post)
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
@@ -159,6 +160,27 @@ export default function ArticleLayout({
             relatedToolLabel={frontmatter.relatedToolLabel}
           />
         </article>
+
+        {/* Related articles in the same guide/cluster — keeps readers in the
+            topic mesh and spreads internal-link equity to sibling articles. */}
+        {siblings.length > 0 && (
+          <section style={{ marginTop: 28 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#8a8a8e', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
+              {t.more}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+              {siblings.map((s) => (
+                <Link
+                  key={s.frontmatter.slug}
+                  href={articlePath(locale, s.frontmatter.slug)}
+                  style={{ display: 'block', background: '#fff', border: '1px solid #ececf1', borderRadius: 12, padding: '14px 16px', textDecoration: 'none', boxShadow: '0 1px 8px rgba(0,0,0,0.03)' }}
+                >
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#1c1c1e', lineHeight: 1.35 }}>{s.frontmatter.title}</span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* 7. Back to blog */}
         <div style={{ marginTop: 28 }}>
