@@ -51,18 +51,22 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiError, setAiError]                     = useState<string | null>(null)
   // [BOEK-029] BOEK-011 integration — pending incoming invoices count
   const [pendingCount, setPendingCount]           = useState<number>(0)
+  // [FIRST-RUN] null = onbekend, 0 = nog geen factuur → toon "eerste stap".
+  const [invoiceCount, setInvoiceCount]           = useState<number | null>(null)
 
   useEffect(() => { loadGlobal() }, [])
 
   async function loadGlobal() {
-    const [{ data: link }, { data: notifData }, { count }] = await Promise.all([
+    const [{ data: link }, { data: notifData }, { count }, { count: invCount }] = await Promise.all([
       supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
       supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
+      supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('zzper_id', profile.id),
     ])
     if (link?.accountant_id) setAccountantId(link.accountant_id)
     if (notifData) setNotifications(notifData)
     setUnreadMessages(count || 0)
+    setInvoiceCount(invCount ?? 0)
 
     // [BOEK-029] BOEK-011: fetch pending incoming invoices count
     try {
@@ -119,6 +123,26 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         <h1 style={{ fontSize: 28, fontWeight: 700, color: M3.onSurface, marginBottom: 28, letterSpacing: -0.5 }}>
           {firstName} 👋
         </h1>
+
+        {/* [FIRST-RUN] Brand-new user (nog geen factuur) → one duidelijke eerste
+            stap in plaats van een muur van kaarten. */}
+        {invoiceCount === 0 && (
+          <div style={{ background: 'linear-gradient(135deg, #007aff, #0056d6)', borderRadius: 18, padding: '22px 20px', color: '#fff', marginBottom: 20 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Zet je eerste stap</div>
+            <div style={{ fontSize: 14, opacity: 0.92, marginBottom: 16, lineHeight: 1.5 }}>
+              Maak je eerste factuur. Het kost je een minuut.
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => router.push('/dashboard/invoice/new')}
+                style={{ background: '#fff', color: '#007aff', border: 'none', borderRadius: 9999, padding: '11px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Maak je eerste factuur
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* [HONEST-HOME] Snapshot: "waar sta ik?" answered with certain facts only,
             each a button to the action that resolves it. */}
         <DailyTruth />
