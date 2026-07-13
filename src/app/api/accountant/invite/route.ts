@@ -31,9 +31,14 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // [SEC-INVITE] zzper_id MUST be the inviting accountant's own id. The invitations
+  // INSERT policy is WITH CHECK (auth.uid() = zzper_id); omitting it left zzper_id
+  // NULL and the insert was rejected (42501), so accountant-initiated invites never
+  // saved. On accept, the accountant→client branch also reads accountantId from
+  // zzper_id, so it must carry the accountant here.
   const { error } = await supabase
     .from('invitations')
-    .insert({ accountant_email: email, invited_by: 'accountant', status: 'pending' })
+    .insert({ zzper_id: user.id, accountant_email: email, invited_by: 'accountant', status: 'pending' })
 
   if (error) {
     // 42501 = RLS rejected the insert. With the policy verified correct, this

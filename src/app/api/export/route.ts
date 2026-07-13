@@ -170,22 +170,30 @@ for (const link of clientLinks) {
   const targetId =
     profile?.role === "accountant" && clientId ? clientId : user.id;
 
+  // [FIN-1] Both directions: a quarter includes INCOMING purchases (receiver_id)
+  // as well as OUTGOING sales (sender_id). The old `.eq("sender_id", targetId)`
+  // fetched sales only, so every expense was absent from the CSV even though it
+  // appears in the quarterly screen and the closing package.
   let query = supabase
     .from("invoices")
     .select(INVOICE_SELECT)
-    .eq("sender_id", targetId)
+    .or(`sender_id.eq.${targetId},receiver_id.eq.${targetId}`)
     .neq("status", "archived")
     .gte("invoice_date", start)
     .lte("invoice_date", end)
     .order("invoice_date", { ascending: true });
 
-// [BOEK-FOUNDATION-TYPES] validate status against DB CHECK constraint
-if (profile?.role === "accountant") {
-  const accountantStatus: InvoiceStatus = isValidStatus(statusFilter) ? statusFilter : "paid";
-  query = query.eq("status", accountantStatus);
-} else if (isValidStatus(statusFilter)) {
-  query = query.eq("status", statusFilter);
-}
+  // [FIN-1] Status: honour an explicit filter for either role; otherwise default
+  // to the VERIFIED set used by the quarterly screen + closing package
+  // ({sent,paid,overdue,received}), so the CSV never leaks draft/processing/unclear
+  // and matches the numbers the user was just looking at. (Before: the ZZP path
+  // had NO status filter — leaking unverified rows — and the accountant path
+  // defaulted to paid-only, disagreeing with the on-screen quarter.)
+  if (isValidStatus(statusFilter)) {
+    query = query.eq("status", statusFilter);
+  } else {
+    query = query.in("status", ["sent", "paid", "overdue", "received"]);
+  }
 
   const { data: rawData, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

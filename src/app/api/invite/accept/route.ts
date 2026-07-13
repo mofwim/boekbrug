@@ -34,6 +34,23 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
       )
     }
 
+    // [SEC-INVITE] Verify the accepting user IS the invitee. Possessing the token
+    // is NOT enough: invitation rows (incl. token + e-mail) are world-readable via
+    // RLS, so without this check any logged-in user holding a token could accept
+    // and — in the zzper→accountant direction — become another ZZP'er's accountant,
+    // gaining RLS read-access to their invoices (horizontal privilege escalation).
+    // `accountant_email` holds the invitee's e-mail in BOTH directions (the
+    // accountant for zzper→accountant, the client for accountant→client), so one
+    // case-insensitive match is correct for both.
+    const inviteeEmail = (invitation.accountant_email ?? '').trim().toLowerCase()
+    const userEmail = (user.email ?? '').trim().toLowerCase()
+    if (!userEmail || userEmail !== inviteeEmail) {
+      return NextResponse.json(
+        { error: 'Deze uitnodiging is voor een ander e-mailadres. Log in met het uitgenodigde adres om te accepteren.' },
+        { status: 403 }
+      )
+    }
+
     // [BOEK-FOUNDATION-TYPES] zzper_id is nullable in DB schema
     if (!invitation.zzper_id) {
       return NextResponse.json(
@@ -77,7 +94,15 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
     }
 
     // ربط ZZP'er بالمحاسب
-    const { error: linkError } = await supabase
+    // [SEC-INVITE] Insert via service_role. The accountant_clients INSERT policy
+    // is WITH CHECK (accountant_id = auth.uid()); in the accountant→client
+    // direction the ACCEPTING user is the client (auth.uid() = zzperId, not
+    // accountantId), so a session-client insert is rejected by RLS and the link
+    // could never complete. By this point the user is authenticated, verified as
+    // the invitee (e-mail match above), and the invitation is valid + unexpired,
+    // so a service_role insert is authorized. Reversible: swap back to `supabase`.
+    const linkPipeline = createPipelineClient()
+    const { error: linkError } = await linkPipeline
       .from('accountant_clients')
       .insert({ accountant_id: accountantId, zzper_id: zzperId })
 

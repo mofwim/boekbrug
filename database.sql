@@ -24,6 +24,50 @@
 -- For context only — not meant to be executed directly.
 -- Use Supabase CLI migrations for actual deployment.
 -- =====================================================
+--
+-- =====================================================
+-- ⚠️  SCHEMA-DRIFT NOTICE (SCH-1) — this snapshot is STALE
+-- =====================================================
+-- The May-24 snapshot below no longer matches production. AUTHORITATIVE sources
+-- where they differ from this file:
+--     • src/types/database.types.ts   (generated from prod)
+--     • supabase/migrations/*.sql      (applied after this snapshot)
+-- Confirmed drift NOT reflected in the table/policy sections below:
+--
+--   Tables present in prod but ABSENT here:
+--     • invoice_counters            (supabase/migrations/factuur_b_numbering.sql)
+--     • counterpart_memory          (supabase/migrations/bank_identity.sql)
+--     • cash_entries                (supabase/migrations/cash_ledger.sql)
+--     • accountant_subject_status   (B.4 'verwerkt' backing table — types only)
+--     • email_skipped_attachments   (types only)
+--
+--   invoices — columns present in prod but ABSENT here (see database.types.ts):
+--     payment_date, payment_method, payment_prepared_at, payment_reference,
+--     vendor_iban, delivery_date, field_confidence (jsonb), source_message_id,
+--     and the GENERATED column:
+--         shared  =  (status IN ('sent','received','paid'))
+--     plus UNIQUE (sender_id, invoice_number)  [factuur_b_numbering.sql].
+--
+--   bank_transactions — added by bank_identity.sql:
+--     category, category_source, category_confirmed.
+--   documents — added later: content_hash, shared (boolean), period, year.
+--   profiles — added later: invoice_number_template, invoice_number_padding.
+--
+--   Functions/triggers:
+--     • next_invoice_seq()  — the ATOMIC number allocator now in use
+--       (factuur_b_numbering.sql). The generate_invoice_number() shown in
+--       SECTION 5 below is DROPPED in prod (COUNT(*)+1, race-prone) — do NOT use.
+--     • B.4 'verwerkt' guard trigger on invoices (fires on
+--       accountant_status='verwerkt'; bypassed when auth.uid() IS NULL).
+--
+--   RLS:
+--     • The invitations "public can read ... USING (true)" policy shown below is
+--       replaced by supabase/migrations/invitations_rls_scoped_read.sql
+--       (scoped to inviter OR invitee). Anyone auditing invitation exposure must
+--       read that migration, not this snapshot.
+--
+-- TODO: regenerate this file from a fresh production introspection.
+-- =====================================================
 
 
 -- =====================================================

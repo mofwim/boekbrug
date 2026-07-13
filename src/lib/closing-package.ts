@@ -698,22 +698,41 @@ export async function buildClosingPackageZip(args: {
     }
   }
 
-  // ── Bank statement(s) for the quarter (BANK-RAW-STORE: doc_type='bankafschrift') ──
-  const { data: bankDocs } = await supabase
-    .from("documents")
-    .select("file_url, file_name, created_at")
-    .eq("user_id", ownerId)
-    .eq("doc_type", "bankafschrift")
-    .gte("created_at", start)
-    .lte("created_at", `${end}T23:59:59`);
-  const bankRows = (bankDocs ?? []) as unknown as Array<{
+  // ── Bank statement(s) for the quarter (doc_type='bankafschrift') ──
+  // [FIN-10] Select the statement FILE by its coverage PERIOD (tagged at upload
+  // from the transaction date range), not by upload time: a Q1 statement is
+  // uploaded in Q2, so the old created_at window missed it and the ZIP shipped
+  // without the statement the accountant needs. Two simple queries — statements
+  // tagged for this quarter, plus a legacy fallback (period NULL → the old
+  // created_at window, so pre-tagging uploads still surface) — merged + de-duped.
+  const stmtPeriod = `${year}-Q${quarter}`;
+  const [{ data: taggedStmts }, { data: legacyStmts }] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("file_url, file_name")
+      .eq("user_id", ownerId)
+      .eq("doc_type", "bankafschrift")
+      .eq("period", stmtPeriod),
+    supabase
+      .from("documents")
+      .select("file_url, file_name")
+      .eq("user_id", ownerId)
+      .eq("doc_type", "bankafschrift")
+      .is("period", null)
+      .gte("created_at", start)
+      .lte("created_at", `${end}T23:59:59`),
+  ]);
+  const bankRows = [...(taggedStmts ?? []), ...(legacyStmts ?? [])] as unknown as Array<{
     file_url: string | null;
     file_name: string | null;
-    created_at: string | null;
   }>;
-  const bankPaths = bankRows
-    .filter((d) => !!d.file_url)
-    .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "bankafschrift" }));
+  const bankPaths: Array<{ path: string; name: string }> = [];
+  const seenBankPath = new Set<string>();
+  for (const d of bankRows) {
+    if (!d.file_url || seenBankPath.has(d.file_url)) continue;
+    seenBankPath.add(d.file_url);
+    bankPaths.push({ path: d.file_url, name: d.file_name ?? "bankafschrift" });
+  }
 
   // ── Download everything in parallel; a failed file → warning, not a crash ──
   async function dl(path: string, name: string): Promise<PackageFile | null> {

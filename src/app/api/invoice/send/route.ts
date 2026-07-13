@@ -151,6 +151,32 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
+
+      // [SEC-SELLER] Art. 35a sub a/b — the SELLER's own name/address, BTW-id and
+      // KvK are mandatory on a legal invoice. They were never enforced, so an
+      // invoice could be issued (number consumed, e-mailed) with these printed as
+      // "—" on the PDF. Enforce BEFORE minting the number so a failed check never
+      // burns a sequence number. IBAN stays optional (payment info, not a validity
+      // requirement). Reviewed values live on the seller's profile.
+      const { data: sellerProfile } = await supabase
+        .from('profiles')
+        .select('btw_number, kvk_number, address, company_name, full_name')
+        .eq('id', user.id)
+        .single()
+      const missingSeller: string[] = []
+      if (!sellerProfile?.btw_number || !String(sellerProfile.btw_number).trim()) missingSeller.push('BTW-nummer')
+      if (!sellerProfile?.kvk_number || !String(sellerProfile.kvk_number).trim()) missingSeller.push('KvK-nummer')
+      if (!sellerProfile?.address || !String(sellerProfile.address).trim()) missingSeller.push('adres')
+      if (!sellerProfile?.company_name?.trim() && !sellerProfile?.full_name?.trim()) missingSeller.push('bedrijfsnaam')
+      if (missingSeller.length > 0) {
+        return NextResponse.json(
+          {
+            error: `Vul eerst je ${missingSeller.join(', ')} in bij Instellingen — wettelijk verplicht op een factuur (Art. 35a Wet OB 1968).`,
+            missing_seller_fields: missingSeller,
+          },
+          { status: 400 }
+        )
+      }
     }
 
     // ── 8. Generate number — skipped entirely for resend ───────

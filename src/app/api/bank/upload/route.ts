@@ -150,6 +150,15 @@ export async function POST(req: NextRequest) {
           // Folder: the bank folder for the statement's period (reuse existing
           // resolver; falls back to a sensible target). min = earliest tx date.
           const folderId = await resolveImportTarget(user.id, min ?? null, "bank", "pipeline");
+          // [FIN-10] Tag the statement's coverage period from its earliest
+          // transaction date, so the closing package can select it by quarter
+          // rather than by upload time (a Q1 statement is uploaded in Q2). Null
+          // when the file had no parseable dates — the package then falls back to
+          // the created_at window.
+          const stmtYear = min ? Number(min.slice(0, 4)) : null;
+          const stmtPeriod = min
+            ? `${min.slice(0, 4)}-Q${Math.ceil(Number(min.slice(5, 7)) / 3)}`
+            : null;
           const { data: doc } = await pipeline
             .from("documents")
             .insert({
@@ -162,6 +171,8 @@ export async function POST(req: NextRequest) {
               folder_id: folderId,
               source: "upload",
               content_hash: contentHash,
+              year: stmtYear,
+              period: stmtPeriod,
             })
             .select("id")
             .single();
