@@ -56,6 +56,10 @@ export interface PackageInvoice {
   pdf_url: string | null;            // outgoing PDF (FACTUUR-A)
   document_id: string | null;        // link to documents (incoming original)
   marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
+  // [FIN-4] ownership — used to infer a NULL direction so a verified row is
+  // never silently dropped from the package.
+  sender_id: string | null;
+  receiver_id: string | null;
 }
 
 /**
@@ -108,6 +112,20 @@ export function isVerifiedForPackage(inv: { direction: string; status: string | 
   if (inv.direction === "outgoing") return OUTGOING_VERIFIED.has(s);
   if (inv.direction === "incoming") return INCOMING_VERIFIED.has(s);
   return false;
+}
+
+/**
+ * [FIN-4] Effective direction: the stored value, or — when it is null — inferred
+ * from ownership (the owner is the receiver of an incoming invoice, the sender of
+ * an outgoing one). Ensures a verified row with a null direction is attributed to
+ * a bucket instead of being silently dropped from the package.
+ */
+export function effectiveDirection(
+  inv: { direction: string | null; receiver_id: string | null },
+  ownerId: string
+): "incoming" | "outgoing" {
+  if (inv.direction === "incoming" || inv.direction === "outgoing") return inv.direction;
+  return inv.receiver_id === ownerId ? "incoming" : "outgoing";
 }
 
 // ─── Helpers (pure) ─────────────────────────────────────────────────────────────
@@ -526,7 +544,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, marked_paid_at" as const;
+  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, marked_paid_at, sender_id, receiver_id" as const;
 
 /**
  * [BRIDGE-HUB Overzicht] Lightweight summary of a client's quarter — WITHOUT
@@ -559,7 +577,14 @@ export async function summarizeClosingPackage(args: {
     .neq("status", "archived");
   if (invErr) throw new Error(`[CLOSING-PACKAGE] summary query failed: ${invErr.message}`);
 
-  const all = (invData ?? []) as unknown as PackageInvoice[];
+  // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
+  // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
+  // returned false on a null direction, so such an invoice vanished from the
+  // package while it still counted on the accountant's screen.
+  const all = (invData ?? []).map((raw) => {
+    const row = raw as unknown as PackageInvoice;
+    return { ...row, direction: effectiveDirection(row, ownerId) };
+  });
   const verified = all.filter(isVerifiedForPackage);
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
@@ -663,7 +688,14 @@ export async function buildClosingPackageZip(args: {
     .neq("status", "archived");
   if (invErr) throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${invErr.message}`);
 
-  const all = (invData ?? []) as unknown as PackageInvoice[];
+  // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
+  // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
+  // returned false on a null direction, so such an invoice vanished from the
+  // package while it still counted on the accountant's screen.
+  const all = (invData ?? []).map((raw) => {
+    const row = raw as unknown as PackageInvoice;
+    return { ...row, direction: effectiveDirection(row, ownerId) };
+  });
   const verified = all.filter(isVerifiedForPackage);
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
