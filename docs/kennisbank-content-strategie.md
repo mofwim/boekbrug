@@ -79,6 +79,14 @@ signals, each tied to something real:
 4. **Your data is yours.** AVG-proof, cookieless analytics, one-click export & delete.
    Say it wherever data/privacy is remotely relevant.
 
+**Plain language is a trust signal too (expat-first).** A large share of ZZP'ers and site
+visitors are internationals whose Dutch is not strong. Write every article in **simple,
+everyday language** — short sentences, common words, jargon explained the first time it
+appears (e.g. _"btw (belasting over de toegevoegde waarde)"_). Aim for roughly B1 level.
+And **pair every NL article with an English version** (linked via `alternateSlug`, so
+hreflang + the language switch work), because expats often prefer to read in English. NL
+stays primary; EN is a full mirror of the articles we publish, not an afterthought.
+
 **Editorial guardrail (accuracy discipline):** every tax/legal figure in an article must be
 verified against an authoritative source (Belastingdienst / KVK) before `draft: false`, and
 must reconcile with the live tool it links to. The reference article already models this
