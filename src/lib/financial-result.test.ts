@@ -3,6 +3,7 @@ import {
   computeResult,
   type ResultInvoice, type ResultBankTx, type ResultCashEntry,
 } from "./financial-result";
+import type { DailyTurnover } from "./turnover";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -77,6 +78,51 @@ console.log("\n— combined, no double count —");
   check("kosten = 150 bank-only cost", r.kosten === 150);
   check("btw = invoice 420 + cash 42", near(r.btwVerschuldigd, 462));
   check("resultaat = 2200 − 150", near(r.resultaat, 2050));
+}
+
+console.log("\n— turnover (retail Z-report) de-dup vs pos_income + cash —");
+{
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-04-04",
+    base_0: 20, base_9: 1000, base_21: 500, btw_9: 90, btw_21: 105,
+    total_incl: 1715, pin_amount: 1200, cash_amount: 415, other_amount: 100,
+  }];
+  const bank: ResultBankTx[] = [
+    { amount: 1200, category: "pos_income", invoice_id: null, settleDate: "2026-04-04" }, // covered → witness, excluded
+    { amount: 800, category: "pos_income", invoice_id: null, settleDate: "2026-05-01" },  // NOT covered → counts
+  ];
+  const cash: ResultCashEntry[] = [
+    { direction: "in", amount: 415, category: "omzet", btw_rate: 21, date: "2026-04-04" },  // covered → excluded (omzet+btw+nudge)
+    { direction: "in", amount: 50, category: "omzet", btw_rate: null, date: "2026-05-02" }, // not covered → counts + nudge
+    { direction: "out", amount: 30, category: "kosten", btw_rate: null, date: "2026-04-04" }, // covered day but KOSTEN → still counts
+  ];
+  const r = computeResult([], bank, cash, turnover);
+  check("turnover net counted; covered pos_income + cash excluded; uncovered counted",
+    near(r.omzet, 1520 + 800 + 50));
+  check("kosten on a covered day still counts", r.kosten === 30);
+  check("btwVerschuldigd = turnover 195 only (covered cash BTW excluded)", near(r.btwVerschuldigd, 195));
+  check("per-rate turnover BTW split (rubriek 1a/1b)", near(r.turnoverBtw9, 90) && near(r.turnoverBtw21, 105));
+  check("nudge fires only for the uncovered unrated cash", r.cashOmzetZonderBtw === 50);
+}
+
+console.log("\n— turnover cross-quarter settlement lag (R1) —");
+{
+  // A Mar 31 (Q1) sale settles on the bank Apr 1 (Q2). Q2 has no turnover row for Mar 31,
+  // but the caller passes a widened covered set including it → must NOT re-count.
+  const bank: ResultBankTx[] = [
+    { amount: 500, category: "pos_income", invoice_id: null, settleDate: "2026-03-31" },
+  ];
+  const covered = new Set(["2026-03-31"]);
+  const r = computeResult([], bank, [], [], covered);
+  check("pos_income settling in Q2 for a Q1 turnover day is NOT re-counted", r.omzet === 0);
+}
+
+console.log("\n— no turnover → byte-identical to before (non-breaking) —");
+{
+  const bank: ResultBankTx[] = [{ amount: 250, category: "pos_income", invoice_id: null }];
+  const r = computeResult([], bank, []);
+  check("pos_income still counts as omzet when no turnover exists", r.omzet === 250);
+  check("new per-rate fields default to 0", r.turnoverBtw9 === 0 && r.turnoverBtw21 === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

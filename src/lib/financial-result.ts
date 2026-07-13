@@ -15,6 +15,7 @@
 // a rate are surfaced separately (cashOmzetZonderBtw) rather than silently guessed.
 
 import { pnlRole } from "./bank-categories";
+import { turnoverNetOmzet, turnoverBtw, type DailyTurnover } from "./turnover";
 
 export interface ResultInvoice {
   direction: "outgoing" | "incoming" | null;
@@ -26,12 +27,16 @@ export interface ResultBankTx {
   amount: number | null;       // signed: + credit, − debit
   category: string | null;      // null = uncategorized (not counted)
   invoice_id: string | null;    // set = payment of an already-counted invoice
+  // [TURNOVER] For a pos_income line: the takings day it settled (parsed DAT date, or the
+  // booking date as a fallback). Used to exclude it on days the till already counted.
+  settleDate?: string | null;
 }
 export interface ResultCashEntry {
   direction: "in" | "out";
   amount: number | null;        // always positive
   category: string | null;
   btw_rate: number | null;      // only set for a cash sale the owner rated
+  date?: string | null;         // [TURNOVER] entry_date — for the covered-day check
 }
 
 export interface FinancialResult {
@@ -42,6 +47,12 @@ export interface FinancialResult {
   btwVoorbelasting: number;   // BTW you reclaim (documented purchases)
   btwSaldo: number;           // verschuldigd − voorbelasting (what you pay/receive)
   cashOmzetZonderBtw: number; // cash sales recorded without a BTW rate — a nudge, not counted in BTW
+  // [TURNOVER] BTW verschuldigd from the till Z-report, split per rate for aangifte
+  // rubriek 1a (21%) / 1b (9%). Turnover-only: invoice/cash BTW is NOT yet rate-split
+  // here, so these do NOT sum to btwVerschuldigd — that scalar stays the authoritative
+  // grand total across all sources.
+  turnoverBtw9: number;
+  turnoverBtw21: number;
 }
 
 // Verified statuses that count (mirrors buildZzpSummary 'all' mode): outgoing that
@@ -54,12 +65,31 @@ export function computeResult(
   invoices: ResultInvoice[],
   bankTx: ResultBankTx[],
   cashEntries: ResultCashEntry[],
+  turnover: DailyTurnover[] = [],
+  coveredDates?: Set<string>,
 ): FinancialResult {
   let omzet = 0;
   let kosten = 0;
   let btwVerschuldigd = 0;
   let btwVoorbelasting = 0;
   let cashOmzetZonderBtw = 0;
+  let turnoverBtw9 = 0;
+  let turnoverBtw21 = 0;
+
+  // [TURNOVER] Days for which the till Z-report IS the authoritative revenue. On such a
+  // day the bank's pos_income settlement and the cash-book omzet are the SAME money,
+  // already counted once via turnover — so they become reconciliation witnesses, not
+  // extra revenue (mirrors the invoice_id → payment rule). Only days with real revenue
+  // suppress: a zero/empty turnover row must never hide a real settlement. The caller MAY
+  // pass a WIDER covered set than `turnover` (dates from the prior quarter whose card
+  // takings settle into this one) so cross-quarter settlements are not double-counted.
+  const covered =
+    coveredDates ??
+    new Set(
+      turnover
+        .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+        .map((t) => t.turnover_date),
+    );
 
   // 1) Invoices — the BTW-exact core.
   for (const inv of invoices) {
@@ -82,6 +112,10 @@ export function computeResult(
   for (const t of bankTx) {
     if (t.invoice_id) continue;   // payment of an already-counted invoice
     if (!t.category) continue;     // uncategorized → never guessed into a total
+    // [TURNOVER] pos_income that settled a day the Z-report already counted is that day's
+    // takings, not new revenue → witness only. Keyed strictly on the takings date
+    // (settleDate), and ONLY for pos_income — a manually-set 'omzet' line still counts.
+    if (t.category === "pos_income" && t.settleDate && covered.has(t.settleDate)) continue;
     const amt = Math.abs(t.amount ?? 0);
     const role = pnlRole(t.category);
     if (role === "omzet") omzet += amt;
@@ -93,6 +127,9 @@ export function computeResult(
   for (const c of cashEntries) {
     const amt = c.amount ?? 0;
     if (c.category === "omzet") {
+      // [TURNOVER] cash omzet on a covered day is part of the till turnover already
+      // counted — exclude it from omzet, BTW, AND the no-rate nudge (all three).
+      if (c.date && covered.has(c.date)) continue;
       if (c.btw_rate && c.btw_rate > 0) {
         const net = amt / (1 + c.btw_rate / 100);
         omzet += net;
@@ -107,6 +144,16 @@ export function computeResult(
     // transfer / prive → excluded
   }
 
+  // 4) Till Z-report — the retail store's authoritative revenue, per BTW rate. Its
+  //    matching bank pos_income + cash omzet were already excluded above (covered days).
+  for (const t of turnover) {
+    omzet += turnoverNetOmzet(t);
+    const b = turnoverBtw(t);
+    btwVerschuldigd += b.total;
+    turnoverBtw9 += b.r9;
+    turnoverBtw21 += b.r21;
+  }
+
   return {
     omzet,
     kosten,
@@ -115,5 +162,7 @@ export function computeResult(
     btwVoorbelasting,
     btwSaldo: btwVerschuldigd - btwVoorbelasting,
     cashOmzetZonderBtw,
+    turnoverBtw9,
+    turnoverBtw21,
   };
 }
