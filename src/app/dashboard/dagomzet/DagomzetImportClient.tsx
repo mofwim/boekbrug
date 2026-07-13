@@ -9,6 +9,7 @@
 
 import { useState, type ChangeEvent, type CSSProperties } from 'react'
 import Link from 'next/link'
+import TurnoverInsights from './TurnoverInsights'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#1C1B1F', neutral: '#5F6368',
@@ -38,6 +39,7 @@ export default function DagomzetImportClient() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState<{ committed: number } | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0) // remounts the insights panel after a commit
 
   async function handleFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -68,7 +70,7 @@ export default function DagomzetImportClient() {
       const json = await res.json()
       if (!res.ok) { setError(json.error ?? 'Opslaan mislukt'); return }
       setDone({ committed: json.committed ?? preview.rows.length })
-      setPreview(null); setFileName(null)
+      setPreview(null); setFileName(null); setRefreshTick((t) => t + 1)
     } catch {
       setError('Opslaan mislukt')
     } finally { setBusy(false) }
@@ -196,6 +198,9 @@ export default function DagomzetImportClient() {
             </div>
           </div>
         )}
+
+        {/* [TURNOVER-ANALYTICS] Insights over what's already imported (remounts after a commit). */}
+        <TurnoverInsights key={refreshTick} />
       </div>
     </div>
   )
