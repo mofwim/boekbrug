@@ -25,8 +25,7 @@ import { verifyInvoiceFromPdf } from "@/lib/ai"
 import { resolveImportTarget, ensureImportedFolder } from "@/lib/bestanden"
 import { computeContentHash } from "@/lib/content-hash"
 import { buildFolderBreadcrumb } from "@/lib/documents"
-import { parseBankFile } from "@/lib/bank-parser"
-import { dedupTransactions, mapToRows, dateRange } from "@/lib/bank-import"
+import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -456,117 +455,29 @@ export async function POST(req: NextRequest) {
 
 // ── Bank statement handler — mirrors /api/bank/upload (text/xml only) ─────────
 async function handleBankStatement(buffer: Buffer, filename: string, userId: string, fileType: string) {
-  const content = buffer.toString("utf8")
-  const parsed = parseBankFile(content, filename)
-  if (parsed.transactions.length === 0) {
-    return NextResponse.json(
-      { error: "Geen transacties gevonden in het bankafschrift", parseWarnings: parsed.parseErrors },
-      { status: 422 }
-    )
-  }
-
   const pipeline = createPipelineClient()
-  const { min, max } = dateRange(parsed.transactions)
+  const result = await importBankStatement({ buffer, filename, fileType, userId, pipeline })
 
-  let existing: {
-    date: string | null
-    amount: number | null
-    description: string | null
-    counterpart_name: string | null
-    reference: string | null
-  }[] = []
-
-  if (min && max) {
-    const { data, error } = await pipeline
-      .from("bank_transactions")
-      .select("date, amount, description, counterpart_name, reference")
-      .eq("user_id", userId)
-      .gte("date", min)
-      .lte("date", max)
-    if (error) {
-      return NextResponse.json({ error: "lookup_failed", detail: error.message }, { status: 500 })
-    }
-    existing = data ?? []
-  }
-
-  const { toInsert, skipped } = dedupTransactions(parsed.transactions, existing)
-  let inserted = 0
-  if (toInsert.length > 0) {
-    const rows = mapToRows(toInsert, userId)
-    const { error } = await pipeline.from("bank_transactions").insert(rows)
-    if (error) {
-      return NextResponse.json({ error: "insert_failed", detail: error.message }, { status: 500 })
-    }
-    inserted = rows.length
-  }
-
-  // [BANK-RAW-STORE] Store the ORIGINAL statement (passthrough) so the closing package
-  // includes it for the accountant AND any line the parser could not read stays
-  // recoverable from the source. This handler previously stored NONE of the raw file, so
-  // a dropped line had no fallback. Best-effort — a failure here never affects the
-  // transactions inserted above. Mirrors /api/bank/upload.
-  let statementStored = false
-  try {
-    const contentHash = computeContentHash(buffer)
-    const { data: existingDoc } = await pipeline
-      .from("documents")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("content_hash", contentHash)
-      .limit(1)
-      .maybeSingle()
-    if (existingDoc) {
-      statementStored = true
-    } else {
-      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_")
-      const storagePath = `${userId}/bank/${Date.now()}-${safeName}`
-      const { error: upErr } = await pipeline.storage
-        .from("documents")
-        .upload(storagePath, buffer, { contentType: fileType, upsert: false })
-      if (!upErr) {
-        const folderId = await resolveImportTarget(userId, min ?? null, "bank", "pipeline")
-        const stmtYear = min ? Number(min.slice(0, 4)) : null
-        const stmtPeriod = min ? `${min.slice(0, 4)}-Q${Math.ceil(Number(min.slice(5, 7)) / 3)}` : null
-        const { data: sdoc } = await pipeline
-          .from("documents")
-          .insert({
-            user_id: userId,
-            file_name: filename,
-            file_url: storagePath,
-            file_size: buffer.length,
-            file_type: fileType,
-            doc_type: "bankafschrift",
-            folder_id: folderId,
-            source: "upload",
-            content_hash: contentHash,
-            year: stmtYear,
-            period: stmtPeriod,
-          })
-          .select("id")
-          .single()
-        statementStored = sdoc?.id != null
-      }
-    }
-  } catch {
-    // best-effort — the transactions are stored regardless; only the passthrough is missing
-  }
-
-  // [R2] Surface unreadable lines. Each parseError is a transaction line the parser could
-  // NOT read → a transaction that is NOT in the owner's overview. The raw statement is now
-  // stored (above) so it stays recoverable for the accountant; the owner is told the count.
-  const unreadable = parsed.parseErrors.length
+  // A bank-shaped file the parser couldn't read yields 0 transactions — but the raw file
+  // is still stored for the accountant (importBankStatement), so this is NOT an error:
+  // report it honestly rather than 422-ing (which would trap the file behind byte-hash
+  // dedup on retry). Aligns the intake path with /api/bank/upload's lenient behavior.
+  const unreadable = result.parseWarnings.length
+  const msg =
+    result.parsed === 0
+      ? "Bankafschrift opgeslagen, maar er zijn geen transacties gelezen — controleer het bestand."
+      : unreadable > 0
+        ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
+        : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
   return NextResponse.json({
     ok: true,
     destination: "bank",
-    format: parsed.format,
-    parsed: parsed.transactions.length,
-    inserted,
-    skipped,
-    statementStored,
-    parseWarnings: parsed.parseErrors,
-    message:
-      unreadable > 0
-        ? `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
-        : `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd.`,
+    format: result.format,
+    parsed: result.parsed,
+    inserted: result.inserted,
+    skipped: result.skipped,
+    statementStored: result.statementStored,
+    parseWarnings: result.parseWarnings,
+    message: msg,
   })
 }
