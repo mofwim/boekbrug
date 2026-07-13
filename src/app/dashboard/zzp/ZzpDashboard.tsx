@@ -178,6 +178,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/resultaat')}
           />
 
+          {/* [AANGIFTE] Concept BTW-aangifte — the rubrieken (1a/1b/5a/5b/5g) derived from
+              the owner's own data; a draft the accountant verifies, never a filing. */}
+          <ActionCard
+            icon="receipt_long" iconBg="#455A64" iconColor="#fff"
+            label="Concept BTW-aangifte" sub="1a/1b/5a/5b op basis van je gegevens"
+            onClick={() => router.push('/dashboard/aangifte')}
+          />
+
           {/* Mijn werkplek — clients, files, company data (secondary). */}
           <ActionCard
             icon="work" iconBg={M3.success} iconColor="#fff"

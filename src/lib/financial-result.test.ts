@@ -125,5 +125,27 @@ console.log("\n— no turnover → byte-identical to before (non-breaking) —")
   check("new per-rate fields default to 0", r.turnoverBtw9 === 0 && r.turnoverBtw21 === 0);
 }
 
+console.log("\n— salesByRate: per-rate split across all sources, sums to btwVerschuldigd —");
+{
+  const inv: ResultInvoice[] = [
+    { direction: "outgoing", status: "paid", total_ex_btw: 1000, btw_amount: 210 }, // 21%
+    { direction: "outgoing", status: "sent", total_ex_btw: 500, btw_amount: 45 },   // 9%
+    { direction: "incoming", status: "received", total_ex_btw: 400, btw_amount: 84 }, // purchase, not a sale
+  ];
+  const cash: ResultCashEntry[] = [{ direction: "in", amount: 218, category: "omzet", btw_rate: 9 }]; // net 200, btw 18
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-04-01", base_0: 10, base_9: 1000, base_21: 100, btw_9: 90, btw_21: 21,
+    total_incl: 1221, pin_amount: null, cash_amount: null, other_amount: null,
+  }];
+  const r = computeResult(inv, [], cash, turnover);
+  const byRate = (rate: number) => r.salesByRate.find((s) => s.rate === rate);
+  check("21% bucket = invoice 210 + turnover 21", near(byRate(21)!.btw, 231));
+  check("9% bucket = invoice 45 + cash 18 + turnover 90", near(byRate(9)!.btw, 153));
+  check("0% bucket present (turnover base_0), no btw", near(byRate(0)!.omzet, 10) && byRate(0)!.btw === 0);
+  const rateSum = r.salesByRate.reduce((s, x) => s + x.btw, 0);
+  check("Σ salesByRate.btw === btwVerschuldigd (no drift)", near(rateSum, r.btwVerschuldigd));
+  check("incoming invoice never appears as a sale", byRate(21)!.omzet === 1000 + 100); // not 1400
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

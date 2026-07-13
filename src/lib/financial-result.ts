@@ -53,7 +53,15 @@ export interface FinancialResult {
   // grand total across all sources.
   turnoverBtw9: number;
   turnoverBtw21: number;
+  // [AANGIFTE] Verschuldigde BTW + omzet split per rate across ALL sales sources
+  // (turnover + outgoing invoices + rated cash). Its BTW sums EXACTLY to btwVerschuldigd
+  // (unrounded), so it is the single source for aangifte rubriek 1a (21%) / 1b (9%) /
+  // 1e (0%) / 1c (other). Unrated cash sales are NOT bucketed here — see
+  // cashOmzetZonderBtw — because we never guess a rate.
+  salesByRate: SalesRateBucket[];
 }
+
+export interface SalesRateBucket { rate: number; omzet: number; btw: number }
 
 // Verified statuses that count (mirrors buildZzpSummary 'all' mode): outgoing that
 // has left the door, incoming the owner has confirmed. Unverified ('processing',
@@ -75,6 +83,16 @@ export function computeResult(
   let cashOmzetZonderBtw = 0;
   let turnoverBtw9 = 0;
   let turnoverBtw21 = 0;
+
+  // [AANGIFTE] Sales BTW per rate, accumulated across every sales source. Kept unrounded
+  // so the per-rate BTW sums back to btwVerschuldigd with no drift.
+  const salesRate = new Map<number, { omzet: number; btw: number }>();
+  const addSale = (rate: number, omzetEx: number, btw: number) => {
+    const cur = salesRate.get(rate) ?? { omzet: 0, btw: 0 };
+    cur.omzet += omzetEx;
+    cur.btw += btw;
+    salesRate.set(rate, cur);
+  };
 
   // [TURNOVER] Days for which the till Z-report IS the authoritative revenue. On such a
   // day the bank's pos_income settlement and the cash-book omzet are the SAME money,
@@ -99,6 +117,8 @@ export function computeResult(
     if (inv.direction === "outgoing" && OUTGOING_OK.has(st)) {
       omzet += ex;
       btwVerschuldigd += btw;
+      // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
+      addSale(ex > 0 ? Math.round((btw / ex) * 100) : 0, ex, btw);
     } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
       kosten += ex;
       btwVoorbelasting += btw;
@@ -134,6 +154,7 @@ export function computeResult(
         const net = amt / (1 + c.btw_rate / 100);
         omzet += net;
         btwVerschuldigd += amt - net;
+        addSale(c.btw_rate, net, amt - net);
       } else {
         omzet += amt;
         cashOmzetZonderBtw += amt; // no rate → counted as revenue, flagged for BTW
@@ -152,6 +173,9 @@ export function computeResult(
     btwVerschuldigd += b.total;
     turnoverBtw9 += b.r9;
     turnoverBtw21 += b.r21;
+    addSale(21, t.base_21 ?? 0, b.r21);
+    addSale(9, t.base_9 ?? 0, b.r9);
+    addSale(0, t.base_0 ?? 0, 0);
   }
 
   return {
@@ -164,5 +188,8 @@ export function computeResult(
     cashOmzetZonderBtw,
     turnoverBtw9,
     turnoverBtw21,
+    salesByRate: [...salesRate.entries()]
+      .map(([rate, v]) => ({ rate, omzet: v.omzet, btw: v.btw }))
+      .sort((a, b) => b.rate - a.rate),
   };
 }

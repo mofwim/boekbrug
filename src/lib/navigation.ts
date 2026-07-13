@@ -40,6 +40,12 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard',
   },
 
+  // ── concept BTW-aangifte → dashboard home ─────────────────────────────────
+  {
+    match: /^\/dashboard\/aangifte$/,
+    parent: () => '/dashboard',
+  },
+
   // ── invoice/[id]/edit → invoice/[id] ──────────────────────────────────────
   {
     match: /^\/dashboard\/invoice\/([^/]+)\/edit$/,
