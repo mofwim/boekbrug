@@ -6,6 +6,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { quarterFromParams } from '@/lib/quarter'
 
 const M3 = {
   primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
@@ -24,20 +26,28 @@ interface Result {
 interface Data { ok: boolean; label: string; result: Result }
 
 export default function ResultaatClient() {
+  const sp = useSearchParams()
+  // [QUARTER] Honour ?year&quarter, else default to the last COMPLETED quarter — the same
+  // default klaar/aangifte use — so the three surfaces always show the same quarter.
+  const initial = quarterFromParams((k) => sp.get(k))
+  const [year, setYear] = useState(initial.year)
+  const [quarter, setQuarter] = useState<number>(initial.quarter)
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
+  const curYear = new Date().getFullYear()
 
   useEffect(() => {
     let cancelled = false
+    setLoading(true); setData(null)
     ;(async () => {
       try {
-        const res = await fetch('/api/result')
+        const res = await fetch(`/api/result?year=${year}&quarter=${quarter}`)
         const json = await res.json()
         if (!cancelled && res.ok) setData(json)
       } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [year, quarter])
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -50,6 +60,21 @@ export default function ResultaatClient() {
             {data ? data.label : 'Dit kwartaal'} · bank, facturen én kas samen
           </p>
         </header>
+
+        {/* [QUARTER] Quarter picker — parity with klaar/aangifte. */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 18 }}>
+          {[1, 2, 3, 4].map((q) => {
+            const active = quarter === q
+            return (
+              <button key={q} onClick={() => setQuarter(q)} style={{ flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface, fontFamily: FONT }}>Q{q}</button>
+            )
+          })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingLeft: 6 }}>
+            <button onClick={() => setYear((y) => y - 1)} title="Vorig jaar" style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary, fontSize: 18, lineHeight: 1 }}>‹</button>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, minWidth: 38, textAlign: 'center' }}>{year}</span>
+            <button onClick={() => setYear((y) => Math.min(y + 1, curYear))} disabled={year >= curYear} style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, fontSize: 18, lineHeight: 1, opacity: year >= curYear ? 0.5 : 1 }}>›</button>
+          </div>
+        </div>
 
         {loading ? (
           <div style={{ height: 220, borderRadius: 16, background: '#F0F1F3' }} />
@@ -98,20 +123,15 @@ export default function ResultaatClient() {
             </p>
 
             {/* Primary next step: the concept BTW-aangifte (rubrieken 1a/1b/5a/5b/5g) —
-                the same figures shown here, mapped to the Belastingdienst-vakken. The
-                button used to be labelled "BTW-aangifte" but pointed at /quarterly
-                (detailed per-factuur cijfers), sending the owner to the wrong surface. */}
-            <Link href="/dashboard/aangifte" style={{
+                the same figures shown here, mapped to the Belastingdienst-vakken. Carries
+                the SAME year/quarter so it opens on the quarter you're looking at. The
+                redundant "/dashboard/quarterly" owner link was removed (it showed an
+                invoice-only, different number — the two-parallel-surfaces confusion). */}
+            <Link href={`/dashboard/aangifte?year=${year}&quarter=${quarter}`} style={{
               display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12,
               border: `1px solid ${M3.primary}`, color: M3.primary, textDecoration: 'none', fontSize: 15, fontWeight: 600,
             }}>
               Concept BTW-aangifte →
-            </Link>
-            <Link href="/dashboard/quarterly" style={{
-              display: 'block', textAlign: 'center', padding: '10px', marginTop: 8,
-              color: '#9aa0a6', textDecoration: 'none', fontSize: 13, fontWeight: 500,
-            }}>
-              Gedetailleerde cijfers per kwartaal →
             </Link>
           </>
         )}

@@ -7,6 +7,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { quarterFromParams } from '@/lib/quarter'
 
 const M3 = {
   primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
@@ -27,20 +29,28 @@ interface Aangifte {
 }
 
 export default function AangifteClient() {
+  const sp = useSearchParams()
+  // [QUARTER] Honour ?year&quarter (e.g. from the readiness card's link), else default to
+  // the last COMPLETED quarter — the same default klaar uses — so the two never disagree.
+  const initial = quarterFromParams((k) => sp.get(k))
+  const [year, setYear] = useState(initial.year)
+  const [quarter, setQuarter] = useState<number>(initial.quarter)
   const [data, setData] = useState<Aangifte | null>(null)
   const [loading, setLoading] = useState(true)
+  const curYear = new Date().getFullYear()
 
   useEffect(() => {
     let cancelled = false
+    setLoading(true); setData(null)
     ;(async () => {
       try {
-        const res = await fetch('/api/aangifte')
+        const res = await fetch(`/api/aangifte?year=${year}&quarter=${quarter}`)
         const json = await res.json()
         if (!cancelled && res.ok) setData(json.aangifte)
       } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [year, quarter])
 
   const teBetalen = data ? data.saldo >= 0 : true
 
@@ -48,9 +58,25 @@ export default function AangifteClient() {
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
         <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 4px' }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 8px' }}>
           Concept BTW-aangifte {data ? `— ${data.quarterLabel}` : ''}
         </h1>
+
+        {/* [QUARTER] Quarter picker — parity with klaar/resultaat, so a figure and the page
+            it links from always refer to the same quarter. */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '0 0 16px' }}>
+          {[1, 2, 3, 4].map((q) => {
+            const active = quarter === q
+            return (
+              <button key={q} onClick={() => setQuarter(q)} style={{ flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, border: `1px solid ${active ? M3.primary : M3.outlineVariant}`, background: active ? M3.primary : M3.surface, color: active ? '#fff' : M3.onSurface, fontFamily: FONT }}>Q{q}</button>
+            )
+          })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingLeft: 6 }}>
+            <button onClick={() => setYear((y) => y - 1)} title="Vorig jaar" style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary, fontSize: 18, lineHeight: 1 }}>‹</button>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, minWidth: 38, textAlign: 'center' }}>{year}</span>
+            <button onClick={() => setYear((y) => Math.min(y + 1, curYear))} disabled={year >= curYear} style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, fontSize: 18, lineHeight: 1, opacity: year >= curYear ? 0.5 : 1 }}>›</button>
+          </div>
+        </div>
 
         {/* Concept banner — this is NOT a filing. */}
         <div style={{ background: M3.warningContainer, color: M3.warning, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, fontWeight: 600, margin: '10px 0 20px', lineHeight: 1.5 }}>

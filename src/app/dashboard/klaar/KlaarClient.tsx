@@ -8,6 +8,7 @@
 
 import { useEffect, useState, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
+import { lastCompletedQuarter } from '@/lib/quarter'
 
 const M3 = {
   primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
@@ -49,13 +50,6 @@ const STATUS_META: Record<Status, { emoji: string; title: string; bg: string; fg
 
 const DIM_ICON: Record<DimensionKey, string> = {
   invoices: 'receipt_long', bank: 'account_balance', cash: 'point_of_sale', vat: 'calculate',
-}
-
-// Default to the LAST COMPLETED quarter — the one whose BTW is actually due — like Brug.
-function lastCompletedQuarter(): { year: number; quarter: number } {
-  const now = new Date()
-  const q = Math.floor(now.getMonth() / 3) + 1
-  return q === 1 ? { year: now.getFullYear() - 1, quarter: 4 } : { year: now.getFullYear(), quarter: q - 1 }
 }
 
 export default function KlaarClient() {
@@ -191,7 +185,7 @@ export default function KlaarClient() {
                   {eur.format(Math.abs(data!.concept.saldo))}
                 </span>
               </div>
-              <Link href="/dashboard/aangifte" style={{ fontSize: 12.5, color: M3.primary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6 }}>
+              <Link href={`/dashboard/aangifte?year=${year}&quarter=${quarter}`} style={{ fontSize: 12.5, color: M3.primary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6 }}>
                 Bekijk de concept-aangifte
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
               </Link>
