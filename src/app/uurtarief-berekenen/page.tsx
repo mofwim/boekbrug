@@ -6,6 +6,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import UurtariefCalculator from './UurtariefCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
@@ -140,6 +141,7 @@ export default function UurtariefBerekenenPage() {
       </div>
 
       <ToolsCrossLinks currentSlug="/uurtarief-berekenen" />
+      <KennisbankLinks tool="/uurtarief-berekenen" />
       <PublicFooter />
     </div>
   )

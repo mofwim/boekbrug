@@ -5,6 +5,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import NettoCalculator from './NettoCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
@@ -120,6 +121,7 @@ export default function NettoInkomenPage() {
       </div>
 
       <ToolsCrossLinks currentSlug="/netto-inkomen-zzp" />
+      <KennisbankLinks tool="/netto-inkomen-zzp" />
       <PublicFooter />
     </div>
   )
