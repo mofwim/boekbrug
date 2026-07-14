@@ -15,6 +15,7 @@ import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -26,6 +27,10 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
+
+  // [COST] Per-user ceiling on the AI/OCR upload pipeline (Claude calls).
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/upload", ...RATE_LIMITS.AI_OCR });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   let formData: FormData;
   try {

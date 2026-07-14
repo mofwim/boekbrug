@@ -41,6 +41,7 @@ import { deriveDueDate } from "@/lib/safecore"
 // [SMART-INTAKE] jsonb column type for invoices.field_confidence — same pattern
 // as email-integration.ts / audit.ts: derive the Json type, cast at write.
 import type { Database } from "@/types/database.types"
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit"
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -54,6 +55,11 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 })
   }
+
+  // [COST] Per-user ceiling on the AI/OCR intake pipeline (Claude calls) — one account
+  // cannot drive unbounded spend.
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/intake", ...RATE_LIMITS.AI_OCR })
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   let formData: FormData
   try {
