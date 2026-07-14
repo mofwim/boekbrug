@@ -125,10 +125,15 @@ export default function ArticleLayout({
             </div>
           )}
 
-          {/* Language switch (also emitted as hreflang in <head>) */}
+          {/* Language switch (also emitted as hreflang in <head>) — a big, filled
+              button so readers can clearly see and reach the other language. */}
           {alternatePath && (
             <div style={{ marginBottom: 24 }}>
-              <Link href={alternatePath} style={{ fontSize: 13, fontWeight: 600, color: '#007aff', textDecoration: 'none' }}>
+              <Link
+                href={alternatePath}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '11px 24px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.30)' }}
+              >
+                <span aria-hidden="true" style={{ fontSize: 18 }}>🌐</span>
                 {t.switchTo} →
               </Link>
             </div>

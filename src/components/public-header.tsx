@@ -17,6 +17,11 @@ export default function PublicHeader() {
         <nav style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Link href="/tools" style={{ fontSize: 15, color: '#1c1c1e', textDecoration: 'none', padding: '8px 12px', fontWeight: 500 }}>Gratis tools</Link>
           <Link href="/blog" style={{ fontSize: 15, color: '#1c1c1e', textDecoration: 'none', padding: '8px 12px', fontWeight: 500 }}>Blog</Link>
+          {/* English-blog link — makes the /en/blog knowledge base reachable from
+              every public page (home, tools, articles), not just the blog index. */}
+          <Link href="/en/blog" aria-label="Read the blog in English" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 14, fontWeight: 600, color: '#007aff', background: '#e8f1ff', border: '1px solid #cfe1ff', borderRadius: 9999, textDecoration: 'none', padding: '6px 12px' }}>
+            <span aria-hidden="true">🌐</span> EN
+          </Link>
           <Link href="/login" style={{ fontSize: 15, color: '#1c1c1e', textDecoration: 'none', padding: '8px 12px', fontWeight: 500 }}>Inloggen</Link>
           <Link href="/register" style={btnPrimary}>Gratis account maken</Link>
         </nav>
