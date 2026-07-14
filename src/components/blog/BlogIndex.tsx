@@ -9,18 +9,22 @@ import PublicFooter from '@/components/public-footer'
 import ArticleCard from '@/components/blog/ArticleCard'
 import type { Locale, Post } from '@/lib/blog'
 
-const COPY: Record<Locale, { heading: string; intro: string; empty: string; tools: string }> = {
+const COPY: Record<Locale, { heading: string; intro: string; empty: string; tools: string; switchLabel: string; switchHref: string }> = {
   nl: {
     heading: 'Blog',
     intro: 'Kennis en tips voor ZZP’ers — belasting, facturen en je administratie, in gewone taal.',
     empty: 'Er zijn nog geen artikelen. Kom snel terug.',
     tools: 'Bekijk onze gratis tools →',
+    switchLabel: 'Read in English',
+    switchHref: '/en/blog',
   },
   en: {
     heading: 'Blog',
     intro: 'Knowledge and tips for freelancers in the Netherlands — tax, invoices and admin, in plain language.',
     empty: 'No articles yet. Check back soon.',
     tools: 'Explore our free tools →',
+    switchLabel: 'Lees in het Nederlands',
+    switchHref: '/blog',
   },
 }
 
@@ -35,7 +39,16 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
           <h1 style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', margin: '0 0 10px', letterSpacing: -0.5 }}>
             {t.heading}
           </h1>
-          <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto 36px', maxWidth: 560 }}>{t.intro}</p>
+          <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto 18px', maxWidth: 560 }}>{t.intro}</p>
+          {/* Language switch — makes the other-locale blog discoverable from the index */}
+          <div style={{ marginBottom: 32 }}>
+            <Link
+              href={t.switchHref}
+              style={{ display: 'inline-block', fontSize: 13, fontWeight: 600, color: '#007aff', background: '#e8f1ff', border: '1px solid #cfe1ff', borderRadius: 9999, padding: '6px 14px', textDecoration: 'none' }}
+            >
+              {t.switchLabel} →
+            </Link>
+          </div>
         </div>
 
         <div style={{ paddingBottom: 48 }}>
