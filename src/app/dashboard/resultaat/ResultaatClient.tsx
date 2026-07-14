@@ -23,7 +23,12 @@ interface Result {
   btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number
   cashOmzetZonderBtw: number
 }
-interface Data { ok: boolean; label: string; result: Result }
+// [TRIANGLE] Card-takings reconciliation summary from /api/result.
+interface Reconciliation {
+  totalCommission: number; commissionBooked: number; acquirerFeeInvoices: number
+  grossMismatchDays: number; incompleteDays: number; eftSettlements: number
+}
+interface Data { ok: boolean; label: string; result: Result; reconciliation?: Reconciliation }
 
 export default function ResultaatClient() {
   const sp = useSearchParams()
@@ -108,6 +113,32 @@ export default function ResultaatClient() {
                 <Metric label="Voorbelasting" value={eur.format(data.result.btwVoorbelasting)} color={M3.onPrimaryContainer} />
               </div>
             </div>
+
+            {/* [TRIANGLE] Card reconciliation — shown only when there's card activity. The
+                commission is already IN the resultaat above; this makes it visible and
+                flags days where the till and the terminal disagree (a real difference). */}
+            {data.reconciliation && (data.reconciliation.eftSettlements > 0 || data.reconciliation.commissionBooked > 0 || data.reconciliation.grossMismatchDays > 0) && (
+              <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 18, marginBottom: 14 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>KAART-CONTROLE (kassa · terminal · bank)</div>
+                <div style={{ display: 'flex', gap: 20, marginTop: 12, flexWrap: 'wrap' }}>
+                  <Metric label="Acquirer-commissie" value={eur.format(data.reconciliation.commissionBooked)} color={M3.onSurface} />
+                  <Metric label="Terminal-afrekeningen" value={String(data.reconciliation.eftSettlements)} color={M3.onSurface} />
+                </div>
+                <div style={{ fontSize: 12.5, color: '#9aa0a6', marginTop: 8, lineHeight: 1.5 }}>
+                  De commissie is verwerkt in het resultaat hierboven en is BTW-vrij (vrijstelling betalingsverkeer).
+                </div>
+                {data.reconciliation.grossMismatchDays > 0 && (
+                  <div style={{ background: M3.warningContainer, borderRadius: 12, padding: '10px 12px', marginTop: 10, fontSize: 13, color: M3.warning }}>
+                    {data.reconciliation.grossMismatchDays} dag(en) waar de kassa-PIN ≠ de terminal-afrekening — een echt verschil (ontbrekende bon of terminalstoring). Controleer die dagen.
+                  </div>
+                )}
+                {data.reconciliation.incompleteDays > 0 && (
+                  <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 8 }}>
+                    {data.reconciliation.incompleteDays} dag(en) nog niet compleet — upload de terminal-afrekening of het bankafschrift voor een volledige controle.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Honest nudge: cash sales without a BTW rate aren't in the BTW figure. */}
             {data.result.cashOmzetZonderBtw > 0 && (

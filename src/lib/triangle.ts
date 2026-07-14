@@ -94,3 +94,41 @@ export function reconcileTriangle(input: TriangleInput): TriangleResult {
   const period = reconcileCardPeriod(inputs);
   return { ...period, eftGrossByDay: eftByDay };
 }
+
+const STATUS_NL: Record<string, string> = {
+  ok: "sluit aan",
+  gross_mismatch: "verschil kassa/terminal — controleer",
+  commission_issue: "commissie controleren",
+  incomplete: "nog niet compleet",
+};
+
+/**
+ * [TRIANGLE] The card reconciliation as a CSV for the accountant's closing package: per day
+ * the till PIN (gross) ↔ terminal afrekening (gross) ↔ bank payout (net), with the
+ * commission = gross − net on the last column. Pure (semicolon CSV, Excel-NL). Only days
+ * that carry at least one card figure are listed, so a pure-invoice quarter yields no rows.
+ */
+export function buildCardReconciliationCsv(quarterLabel: string, tri: TriangleResult): string {
+  const EUR = (n: number | null) => (n == null ? "" : n.toFixed(2).replace(".", ","));
+  const esc = (v: string | number) => {
+    const s = String(v ?? "");
+    return /[;\n"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const rows = tri.days.filter((d) => d.tillPin != null || d.eftGross != null || d.bankNet != null);
+  const L: string[] = [];
+  L.push(`BoekBrug — Kaart-reconciliatie ${quarterLabel}`);
+  L.push("Kassa-PIN (bruto) ↔ terminal-afrekening (bruto) ↔ bank-uitbetaling (netto). Het verschil bruto − netto is de acquirer-commissie (betaalkosten, BTW-vrij). Een verschil tussen kassa en terminal is een ECHT verschil — controleer die dag.");
+  L.push("");
+  L.push(["Datum", "Kassa PIN (bruto)", "Terminal (bruto)", "Bank (netto)", "Commissie", "Status"].map(esc).join(";"));
+  for (const d of rows) {
+    L.push([
+      d.date, EUR(d.tillPin), EUR(d.eftGross), EUR(d.bankNet),
+      EUR(d.commission), STATUS_NL[d.status] ?? d.status,
+    ].map(esc).join(";"));
+  }
+  L.push("");
+  L.push(["Totaal acquirer-commissie (betaalkosten, BTW-vrij)", "", "", "", EUR(tri.totalCommission), ""].map(esc).join(";"));
+  L.push(["Dagen kassa ≠ terminal (controleer voor de aangifte)", "", "", "", "", String(tri.grossMismatchDays)].map(esc).join(";"));
+  L.push(["Dagen nog niet compleet (bank-uitbetaling of terminal ontbreekt)", "", "", "", "", String(tri.incompleteDays)].map(esc).join(";"));
+  return L.join("\r\n");
+}

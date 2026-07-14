@@ -40,6 +40,9 @@ export interface CardBreak {
 
 export interface CardDayResult {
   date: string;
+  tillPin: number | null;       // echo of the inputs, so the CSV/UI can show the row
+  eftGross: number | null;
+  bankNet: number | null;
   grossMatch: boolean | null;   // till == EFT (null when either side is missing)
   grossDiff: number | null;     // eftGross − tillPin
   commission: number | null;    // eftGross − bankNet (null when bankNet absent)
@@ -116,7 +119,11 @@ export function reconcileCardDay(input: CardDayInput): CardDayResult {
     : (grossMatch === null || (input.bankNet == null && input.eftGross != null)) ? "incomplete"
     : "ok";
 
-  return { date: input.date, grossMatch, grossDiff, commission, status, breaks, notes };
+  return {
+    date: input.date,
+    tillPin: input.tillPin, eftGross: input.eftGross, bankNet: input.bankNet ?? null,
+    grossMatch, grossDiff, commission, status, breaks, notes,
+  };
 }
 
 export interface CardPeriodResult {

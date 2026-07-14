@@ -38,6 +38,8 @@ import {
 import { calcBtwRate } from "./export";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
+import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
+import type { EftSettlement } from "./eft-parser";
 import {
   computeResult,
   type ResultInvoice,
@@ -440,6 +442,10 @@ interface AssembleInput {
   /** [TURNOVER-CLOSING] Retail till turnover section (per-rate summary + payment
    *  reconciliation + exceptions), or null for a non-retail owner with no daily_turnover. */
   turnoverClosing?: TurnoverClosing | null;
+  /** [TRIANGLE] Card reconciliation (kassa PIN ↔ terminal afrekening ↔ bank payout) with
+   *  the acquirer commission and the days that don't tie out. null for a non-retail owner
+   *  or when no terminal settlement / card payout exists for the quarter. */
+  cardReconciliation?: TriangleResult | null;
   /** [AANGIFTE] The CONCEPT BTW-aangifte for the quarter — the SAME figures the owner
    *  sees on the app's aangifte screen (computed via the one reconciliation engine), so
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
@@ -449,7 +455,7 @@ interface AssembleInput {
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, conceptAangifte } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -570,6 +576,20 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
       warnings.push({
         code: "turnover_exceptions",
         message: `Dagomzet: ${turnoverClosing.exceptions.length} dag(en) sluiten niet aan (zie dagomzet.csv) — controleer voor de aangifte.`,
+      });
+    }
+  }
+
+  // ── kaart-reconciliatie.csv (kassa PIN ↔ terminal ↔ bank + acquirer-commissie) ──
+  // The card-takings tie-out the accountant otherwise does by hand: gross till PIN vs the
+  // terminal afrekening vs the net bank payout, with the commission (BTW-vrij) and the days
+  // that don't reconcile flagged. This is the reconciliation nothing else in the ZIP shows.
+  if (cardReconciliation && cardReconciliation.days.length > 0) {
+    zip.file("kaart-reconciliatie.csv", "﻿" + buildCardReconciliationCsv(quarterLabel, cardReconciliation));
+    if (cardReconciliation.grossMismatchDays > 0) {
+      warnings.push({
+        code: "card_gross_mismatch",
+        message: `Kaart-reconciliatie: ${cardReconciliation.grossMismatchDays} dag(en) waar kassa-PIN ≠ terminal-afrekening (zie kaart-reconciliatie.csv) — een echt verschil, controleer voor de aangifte.`,
       });
     }
   }
@@ -978,13 +998,14 @@ export async function buildClosingPackageZip(args: {
   }));
 
   let turnoverClosing: TurnoverClosing | null = null;
+  let cardReconciliation: TriangleResult | null = null;
   if (turnover.length > 0) {
     // pos_income lines over the quarter ± a settlement-lag buffer; the DAT date (parsed
     // inside buildTurnoverClosing) keys each settlement to its takings day.
-    const [posRes, cashRes] = await Promise.all([
+    const [posRes, cashRes, eftRes] = await Promise.all([
       supabase
         .from("bank_transactions")
-        .select("description, amount")
+        .select("description, amount, date")
         .eq("user_id", ownerId)
         .eq("category", "pos_income")
         .gte("date", shiftDays(start, -5))
@@ -996,10 +1017,30 @@ export async function buildClosingPackageZip(args: {
         .eq("category", "omzet")
         .gte("entry_date", start)
         .lte("entry_date", end),
+      supabase
+        .from("eft_settlements")
+        .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
+        .eq("user_id", ownerId)
+        .gte("settlement_date", start)
+        .lte("settlement_date", end),
     ]);
     const posLines = (posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount }));
     const cashOmzet = (cashRes.data ?? []).map((c) => ({ date: c.entry_date, amount: c.amount }));
     turnoverClosing = buildTurnoverClosing(turnover, posLines, cashOmzet);
+
+    // [TRIANGLE] Card reconciliation (kassa ↔ terminal ↔ bank). Only meaningful when the
+    // store uploaded terminal afrekeningen; otherwise the days are 'incomplete' and it is
+    // still an honest evidence sheet (what ties out, what doesn't).
+    const eftSettlements: EftSettlement[] = (eftRes.data ?? []).map((e) => ({
+      terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
+      periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,
+      settlementDate: e.settlement_date, grossTotal: e.gross_total ?? 0, txCount: e.tx_count ?? 0,
+      byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
+    }));
+    const netByDay = bankNetByDay((posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount, date: p.date })));
+    const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
+    // Only attach when there is a card figure to show (a terminal settlement or a payout).
+    if (eftSettlements.length > 0 || netByDay.size > 0) cardReconciliation = tri;
   }
 
   // ── [AANGIFTE] Concept BTW-aangifte — the SAME figures as the app's aangifte screen ──
@@ -1060,6 +1101,7 @@ export async function buildClosingPackageZip(args: {
     paymentDates,
     hasBankData,
     turnoverClosing,
+    cardReconciliation,
     conceptAangifte,
     warnings,
   });

@@ -1,5 +1,5 @@
 // [TRIANGLE] Pure node test — run: npx tsx src/lib/triangle.test.ts
-import { reconcileTriangle, eftGrossByDay, bankNetByDay } from "./triangle";
+import { reconcileTriangle, eftGrossByDay, bankNetByDay, buildCardReconciliationCsv } from "./triangle";
 import type { DailyTurnover } from "./turnover";
 import type { EftSettlement } from "./eft-parser";
 
@@ -90,6 +90,22 @@ console.log("\n— a bank payout on a day with no till/EFT is surfaced, not drop
   check("the orphan bank day appears", res.days.some((d) => d.date === "2026-07-13"));
   check("orphan bank day is incomplete (no gross to verify against)",
     res.days.find((d) => d.date === "2026-07-13")?.status === "incomplete");
+}
+
+console.log("\n— buildCardReconciliationCsv (the accountant's view) —");
+{
+  const tri = reconcileTriangle({
+    turnover: [till("2026-07-03", 1000), till("2026-07-04", 800)],
+    eftSettlements: [eft("2026-07-03", 1000), eft("2026-07-04", 750)], // 04 is a mismatch
+    bankNetByDay: new Map([["2026-07-03", 985], ["2026-07-04", 745]]),
+  });
+  const csv = buildCardReconciliationCsv("Q3 2026", tri);
+  check("header names the three corners", /Kassa-PIN.*terminal.*bank/i.test(csv));
+  check("day row shows NL amounts + commission", csv.includes("2026-07-03;1000,00;1000,00;985,00;15,00;sluit aan"));
+  check("mismatch day flagged in status", /2026-07-04;800,00;750,00;.*verschil kassa\/terminal/.test(csv));
+  check("total commission line present (only the ok day = 15,00)", csv.includes("Totaal acquirer-commissie (betaalkosten, BTW-vrij);;;;15,00"));
+  check("gross-mismatch day count surfaced", /Dagen kassa .* terminal.*;1$/m.test(csv));
+  check("result rows echo the inputs", tri.days[0].tillPin === 1000 && tri.days[0].eftGross === 1000 && tri.days[0].bankNet === 985);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -190,3 +190,28 @@ test("no concept → no concept-btw-aangifte.csv (never an invented empty filing
   const json = JSON.parse(await zip.file("overzicht.json")!.async("string"));
   assert.equal(json.concept_btw_aangifte, null);
 });
+
+test("[TRIANGLE] card reconciliation is written to the ZIP and a gross mismatch warns", async () => {
+  const cardReconciliation = {
+    days: [
+      { date: "2026-03-01", tillPin: 1000, eftGross: 1000, bankNet: 985, grossMatch: true, grossDiff: 0, commission: 15, status: "ok" as const, breaks: [], notes: [] },
+      { date: "2026-03-02", tillPin: 800, eftGross: 750, bankNet: 745, grossMatch: false, grossDiff: -50, commission: null, status: "gross_mismatch" as const, breaks: [], notes: [] },
+    ],
+    totalCommission: 15,
+    grossMismatchDays: 1,
+    incompleteDays: 0,
+    eftGrossByDay: new Map([["2026-03-01", 1000], ["2026-03-02", 750]]),
+  };
+  const { zipBytes, summary } = await assembleClosingPackageZip({ ...emptyAssemble, cardReconciliation });
+  const zip = await JSZip.loadAsync(zipBytes);
+  const csv = await zip.file("kaart-reconciliatie.csv")!.async("string");
+  assert.match(csv, /1000,00;1000,00;985,00;15,00;sluit aan/, "the reconciled day shows in the CSV");
+  assert.match(csv, /verschil kassa\/terminal/, "the mismatch day is flagged");
+  assert.ok(summary.warnings.some((w) => w.code === "card_gross_mismatch"), "a gross-mismatch warning is raised");
+});
+
+test("[TRIANGLE] no card reconciliation → no kaart-reconciliatie.csv", async () => {
+  const { zipBytes } = await assembleClosingPackageZip({ ...emptyAssemble, cardReconciliation: null });
+  const zip = await JSZip.loadAsync(zipBytes);
+  assert.equal(zip.file("kaart-reconciliatie.csv"), null, "no card file when there is nothing to reconcile");
+});
