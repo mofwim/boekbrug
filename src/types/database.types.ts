@@ -308,6 +308,56 @@ export type Database = {
           },
         ]
       }
+      articles: {
+        Row: {
+          active: boolean
+          btw_rate: number
+          code: string | null
+          created_at: string | null
+          description: string
+          id: string
+          unit: string | null
+          unit_price: number
+          updated_at: string | null
+          usage_count: number
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          btw_rate?: number
+          code?: string | null
+          created_at?: string | null
+          description: string
+          id?: string
+          unit?: string | null
+          unit_price?: number
+          updated_at?: string | null
+          usage_count?: number
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          btw_rate?: number
+          code?: string | null
+          created_at?: string | null
+          description?: string
+          id?: string
+          unit?: string | null
+          unit_price?: number
+          updated_at?: string | null
+          usage_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "articles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       eft_settlements: {
         Row: {
           by_scheme: Json | null
