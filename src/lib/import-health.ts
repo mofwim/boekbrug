@@ -72,6 +72,13 @@ export interface FieldConfidence {
   vendor?: number
   invoice_number?: number
   invoice_date?: number
+  // [TRUST-AMOUNTS] The money-truth's OWN confidence channel. The AI may emit any
+  // of these for the amounts it read; we take the lowest present. Before this, the
+  // amounts — the one set of facts that IS the money — carried no confidence at all,
+  // so a confidently-wrong read (€121 → €109, internally consistent) passed clean.
+  amount?: number
+  total?: number
+  total_inc_btw?: number
   _safecore?: {
     arithmetic_ok?: boolean
     reason?: string
@@ -131,6 +138,33 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
   // (If storedSafecore exists AND arithmetic_ok !== false, the email path held
   //  it for a dedup note only, not a math problem — not a health warning here.)
+
+  // ── Money-truth axis (the amounts themselves) ────────────────────────────
+  // [TRUST-AMOUNTS] The arithmetic gate above only runs its consistency checks
+  // when incl > 0, so a MISSING or €0 total slips through as "clean" — a real
+  // invoice the reader couldn't price would book as a €0 record with no warning.
+  // The total is the money-truth; if it's absent or zero, that is never "clean" —
+  // ask the human. (Legitimate €0 invoices effectively don't exist; a check costs
+  // the owner one glance and prevents a silent €0 booking.)
+  const incl = inv.total_inc_btw
+  if (incl == null || Math.abs(incl) < 0.005) {
+    flags.arithmetic = true
+    reasons.push('het totaalbedrag ontbreekt of is € 0 — controleer de bedragen')
+  }
+
+  // [TRUST-AMOUNTS] The amounts' own confidence, when the reader provided it. A
+  // low score means the reader itself was unsure about the money — surface that
+  // loudly instead of presenting a confident-looking total. We under-claim: only
+  // flag when a score is actually present and low (never fabricate doubt).
+  if (fc) {
+    const amountScores = [fc.amount, fc.total, fc.total_inc_btw].filter(
+      (n): n is number => typeof n === 'number'
+    )
+    if (amountScores.length > 0 && Math.min(...amountScores) < LOW_CONFIDENCE) {
+      flags.arithmetic = true
+      reasons.push('het bedrag is onzeker gelezen — controleer de bedragen')
+    }
+  }
 
   // ── Confidence axis ──────────────────────────────────────────────────────
   // The AI told us which fields it was unsure about. Mirror the modal's logic:
