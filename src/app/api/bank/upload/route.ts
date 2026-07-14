@@ -62,5 +62,8 @@ export async function POST(req: NextRequest) {
     skipped: result.skipped,
     statementStored: result.statementStored,
     parseWarnings: result.parseWarnings,
+    // [DETECT] True when the upload was a spreadsheet, not a bank statement — the UI shows
+    // this honestly instead of a green "geïmporteerd" with 0 transactions.
+    nonBankSpreadsheet: result.nonBankSpreadsheet,
   });
 }

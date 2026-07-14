@@ -493,7 +493,9 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // dedup on retry). Aligns the intake path with /api/bank/upload's lenient behavior.
   const unreadable = result.parseWarnings.length
   const msg =
-    result.parsed === 0
+    result.nonBankSpreadsheet
+      ? (result.parseWarnings[0] ?? "Dit is een spreadsheet, geen bankafschrift — er zijn geen banktransacties geïmporteerd.")
+      : result.parsed === 0
       ? "Bankafschrift opgeslagen, maar er zijn geen transacties gelezen — controleer het bestand."
       : unreadable > 0
         ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
@@ -507,6 +509,7 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
     skipped: result.skipped,
     statementStored: result.statementStored,
     parseWarnings: result.parseWarnings,
+    nonBankSpreadsheet: result.nonBankSpreadsheet,
     message: msg,
   })
 }
