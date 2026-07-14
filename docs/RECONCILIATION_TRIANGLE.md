@@ -25,30 +25,41 @@ The honest loop: `till PIN == EFT gross` (Leg A — a break is a real discrepanc
 Proven end-to-end on the real files: POS PIN 2026-07-12 (1546.46) == EFT gross (1546.46) ==
 Σ schemes; PIN ledger 2086.65 / cash ledger 216.45 == the till's gross on 2026-07-03.
 
-## What is NOT wired yet (⚠️ the commission is 0 in production TODAY)
+## What is now WIRED into the live app
 
-`reconcileTriangle` is called by **no route**, and **no caller passes `acquirerCommission`**
-(the `result`, `aangifte`, `readiness` routes and `closing-package.ts` all use the 5-arg
-form → it defaults to 0). So in the live app the acquirer commission is **still not booked**
-and **profit is still overstated** — the pure engines above are correct but unreachable.
+The triangle is connected end-to-end (commits a77233a + ba72eb1); the acquirer commission
+is booked and profit is no longer overstated in `/api/result`:
 
-Remaining wiring to make the loop live (needs a running app + Supabase to verify):
+1. **EFT storage** — `eft_settlements` table + migration + generated types.
+2. **EFT ingest** — `POST /api/eft/import`: image/PDF → `ai.ts transcribeEftReceipt`
+   (verbatim OCR) → the proven `parseEftSettlement` → preview → owner-reviewed commit
+   (upsert). Commit requires terminal_id + period_nr so the natural key is complete
+   (no NULL-key duplicate rows).
+3. **Per-day `bankNetByDay`** — built in `/api/result` from `pos_income` lines, keyed by the
+   same `parsePosSettlement(...).date ?? bookingDate` as the covered-day de-dup.
+4. **`reconcileTriangle` + commission** — `/api/result` runs the triangle and passes the
+   commission to `computeResult`, **de-duped as real code** (`netCommissionToBook` +
+   `ACQUIRER_VENDOR_RE` over the raw invoice rows, gated to paid/received status). A
+   `reconciliation` block (raw vs booked commission, Leg-A exceptions) is returned.
+5. **Ledger mis-route guard** — a grootboek/kas xlsx on the turnover import gets a clear
+   "wrong kind" message; a spreadsheet on the bank endpoint is reported truthfully
+   (nonBankSpreadsheet) instead of a silent 0-transaction passthrough.
 
-1. **Store EFT settlements** — a `eft_settlements` table + migration; an OCR/parse route
-   that runs `looksLikeEftReceipt` → `parseEftSettlement` on a photographed receipt
-   (add an `eft_afsluiting` document kind to `ai.ts`).
-2. **Store the ledger cross-check** — route OVERZICHT/KASBOEK xlsx via `detectSheetKind`
-   → `parseLedgerSheet` (not the bank endpoint).
-3. **Per-day `bankNetByDay`** — query `pos_income` settlements grouped by takings day.
-4. **Call `reconcileTriangle`** in the result/aangifte/readiness/closing-package paths and
-   pass `totalCommission` into `computeResult` — **de-duped** against any acquirer-fee
-   invoice already in `kosten` (today that de-dup is documented in a comment only; it must
-   become real caller code, or the fee is double-counted).
-5. **Surface** the commission + Leg-A exceptions in the closing package and the owner view;
-   persist the original Z-report as evidence.
-6. **Fix the latent trap**: a spreadsheet dropped on the bank endpoint is stored as
-   `doc_type:"bankafschrift"` with a content_hash — mis-filed, and its byte-hash can later
-   block re-uploading the same file to the correct importer.
+Verify with `docs/verify-triangle.sql` after applying the migration and uploading receipts.
 
-Until steps 1–5 land and are smoke-tested, treat the profit/commission figures in the live
-app as NOT yet reconciled.
+## Still open (smaller, lower priority)
+
+- **Ledger cross-check as a stored witness** — `parseLedgerSheet` exists and is tested, but
+  the PIN/cash ledger totals are not yet stored/fed as `pinLedgerByDay` (the triangle uses
+  it optionally; Leg A still verifies via till == EFT without it).
+- **Closing-package**: its `computeResult` feeds only the BTW aangifte (commission has no
+  BTW) and never shows profit, so it is intentionally unchanged. If a profit/commission line
+  is ever added to the ZIP, wire the same triangle call there.
+- **Persist the original Z-report** — `daily_turnover.document_id` exists but the import flow
+  does not yet store the uploaded file and link it.
+- **Latent**: a spreadsheet dropped on the bank endpoint is still stored as
+  `doc_type:"bankafschrift"` with a content_hash — mis-filed, and its byte-hash could block
+  re-uploading the same file to the correct importer.
+
+These need a running app + Supabase to smoke-test; the wiring above is type-checked and the
+pure engines are unit-tested, but a live upload → DB → `/api/result` pass is the final proof.
