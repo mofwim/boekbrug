@@ -7,16 +7,46 @@
 
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { formatEuroNL } from '@/lib/format-nl'
+import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
 import { parseAmountNL as parseNum } from '@/lib/parse-nl'
 
 type Mode = 'excl' | 'incl'
+type Locale = 'nl' | 'en'
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
 const PRESET_RATES = [21, 9, 0]
+
+// UI strings only. The calculation and number engine are identical for both
+// locales; only display text and the euro formatter differ. NL is the default
+// so every existing Dutch call site (<BtwCalculator/>) is unchanged.
+const COPY: Record<Locale, {
+  exclTab: string; inclTab: string; amountExcl: string; amountIncl: string
+  amountAria: string; rateLabel: string; or: string; customPh: string
+  customAria: string; vatAmount: string; bExcl: string; bVat: string; bIncl: string
+  ctaText: string; ctaStrong: string; ctaBtn: string; ctaHref: string
+}> = {
+  nl: {
+    exclTab: 'Bedrag is excl. BTW', inclTab: 'Bedrag is incl. BTW',
+    amountExcl: 'Bedrag exclusief BTW', amountIncl: 'Bedrag inclusief BTW',
+    amountAria: 'Bedrag', rateLabel: 'BTW-tarief', or: 'of', customPh: 'bijv. 6',
+    customAria: 'Eigen BTW-tarief', vatAmount: 'BTW-bedrag',
+    bExcl: 'Bedrag exclusief BTW', bVat: 'BTW', bIncl: 'Bedrag inclusief BTW',
+    ctaText: 'BTW automatisch op je facturen?', ctaStrong: 'Maak gratis een factuur.',
+    ctaBtn: 'Factuur maken →', ctaHref: '/factuur-maken',
+  },
+  en: {
+    exclTab: 'Amount is excl. VAT', inclTab: 'Amount is incl. VAT',
+    amountExcl: 'Amount excluding VAT', amountIncl: 'Amount including VAT',
+    amountAria: 'Amount', rateLabel: 'VAT rate', or: 'or', customPh: 'e.g. 6',
+    customAria: 'Custom VAT rate', vatAmount: 'VAT amount',
+    bExcl: 'Amount excluding VAT', bVat: 'VAT', bIncl: 'Amount including VAT',
+    ctaText: 'VAT automatically on your invoices?', ctaStrong: 'Create a free account.',
+    ctaBtn: 'Get started →', ctaHref: '/register',
+  },
+}
 
 const s = {
   card: {
@@ -110,7 +140,9 @@ const s = {
   } as React.CSSProperties,
 }
 
-export default function BtwCalculator() {
+export default function BtwCalculator({ locale = 'nl' }: { locale?: Locale }) {
+  const t = COPY[locale]
+  const fmt = locale === 'en' ? formatEuroEN : formatEuroNL
   const [mode, setMode] = useState<Mode>('excl')
   const [amount, setAmount] = useState('100')
   const [rate, setRate] = useState(21)
@@ -135,15 +167,15 @@ export default function BtwCalculator() {
       {/* Mode */}
       <div style={s.segRow}>
         <button style={s.seg(mode === 'excl')} onClick={() => setMode('excl')}>
-          Bedrag is excl. BTW
+          {t.exclTab}
         </button>
         <button style={s.seg(mode === 'incl')} onClick={() => setMode('incl')}>
-          Bedrag is incl. BTW
+          {t.inclTab}
         </button>
       </div>
 
       {/* Amount */}
-      <div style={s.label}>{mode === 'excl' ? 'Bedrag exclusief BTW' : 'Bedrag inclusief BTW'}</div>
+      <div style={s.label}>{mode === 'excl' ? t.amountExcl : t.amountIncl}</div>
       <div style={s.amountWrap}>
         <span style={s.euro}>€</span>
         <input
@@ -151,14 +183,14 @@ export default function BtwCalculator() {
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           inputMode="decimal"
-          placeholder="0,00"
-          aria-label="Bedrag"
+          placeholder={locale === 'en' ? '0.00' : '0,00'}
+          aria-label={t.amountAria}
           autoFocus
         />
       </div>
 
       {/* Rate */}
-      <div style={s.label}>BTW-tarief</div>
+      <div style={s.label}>{t.rateLabel}</div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {PRESET_RATES.map((r) => (
           <button
@@ -172,7 +204,7 @@ export default function BtwCalculator() {
             {r}%
           </button>
         ))}
-        <span style={{ color: '#aeaeb2', fontSize: 13 }}>of</span>
+        <span style={{ color: '#aeaeb2', fontSize: 13 }}>{t.or}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <input
             style={{
@@ -187,8 +219,8 @@ export default function BtwCalculator() {
             }}
             onFocus={() => customRate !== '' && setCustomActive(true)}
             inputMode="decimal"
-            placeholder="bijv. 6"
-            aria-label="Eigen BTW-tarief"
+            placeholder={t.customPh}
+            aria-label={t.customAria}
           />
           <span style={{ color: '#3c3c43', fontSize: 14, fontWeight: 600 }}>%</span>
         </div>
@@ -196,23 +228,23 @@ export default function BtwCalculator() {
 
       {/* Headline result — the BTW amount */}
       <div style={s.resultPanel}>
-        <div style={s.resultLabel}>BTW-bedrag ({effRate}%)</div>
-        <div style={s.resultBig}>{formatEuroNL(btw)}</div>
+        <div style={s.resultLabel}>{t.vatAmount} ({effRate}%)</div>
+        <div style={s.resultBig}>{fmt(btw)}</div>
       </div>
 
       {/* Breakdown */}
       <div style={{ marginTop: 18 }}>
         <div style={s.breakdownRow}>
-          <span style={{ color: '#6b6b6e' }}>Bedrag exclusief BTW</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(ex)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.bExcl}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(ex)}</span>
         </div>
         <div style={s.breakdownRow}>
-          <span style={{ color: '#6b6b6e' }}>BTW ({effRate}%)</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(btw)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.bVat} ({effRate}%)</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(btw)}</span>
         </div>
         <div style={{ ...s.breakdownRow, borderBottom: 'none' }}>
-          <span style={{ color: '#1c1c1e', fontWeight: 700 }}>Bedrag inclusief BTW</span>
-          <span style={{ fontWeight: 800, color: '#1c1c1e' }}>{formatEuroNL(inc)}</span>
+          <span style={{ color: '#1c1c1e', fontWeight: 700 }}>{t.bIncl}</span>
+          <span style={{ fontWeight: 800, color: '#1c1c1e' }}>{fmt(inc)}</span>
         </div>
       </div>
 
@@ -232,11 +264,11 @@ export default function BtwCalculator() {
         }}
       >
         <div style={{ fontSize: 14, color: '#3c3c43' }}>
-          BTW automatisch op je facturen?{' '}
-          <strong style={{ color: '#1c1c1e' }}>Maak gratis een factuur.</strong>
+          {t.ctaText}{' '}
+          <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
         </div>
         <Link
-          href="/factuur-maken"
+          href={t.ctaHref}
           style={{
             backgroundColor: '#007aff',
             color: '#fff',
@@ -248,7 +280,7 @@ export default function BtwCalculator() {
             whiteSpace: 'nowrap',
           }}
         >
-          Factuur maken →
+          {t.ctaBtn}
         </Link>
       </div>
     </div>

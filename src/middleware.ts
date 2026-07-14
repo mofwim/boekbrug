@@ -23,6 +23,14 @@ const PUBLIC_PATHS = [
   "/netto-inkomen-zzp",
   "/factuur-scannen",
   "/tools",
+  // [EN-TOOLS] English versions of the public calculators, targeting expat /
+  // English search demand ("Dutch VAT calculator", etc). Same tool engines,
+  // English UI — must be reachable without a session, like their NL originals.
+  "/en/btw-berekenen",
+  "/en/netto-inkomen-zzp",
+  "/en/uurtarief-berekenen",
+  "/en/kilometervergoeding",
+  "/en/btw-aangifte-berekenen",
   // [BLOG] The public blog (NL default + EN under /en/blog) must be reachable
   // without a session — logged-out visitors AND search crawlers, otherwise the
   // auth guard redirects them to /login and the SEO blog never gets indexed.
