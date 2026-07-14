@@ -27,6 +27,10 @@
 // will fall through to the AI path (and be classified as document/other) — by
 // design: bank statements are EXPORTED from the bank as a file, not photographed.
 
+// [BANK-CSV] Shared content sniff — the SAME predicate parseBankFile uses to route
+// CSV, so the router and the parser can never disagree about what a bank CSV is.
+import { looksLikeBankCsv } from "./bank-csv"
+
 const BANK_EXTENSIONS = [".mt940", ".sta", ".camt", ".053"]
 
 export function looksLikeBankFile(filename: string, mimeType: string, textHead?: string): boolean {
@@ -47,6 +51,13 @@ export function looksLikeBankFile(filename: string, mimeType: string, textHead?:
 
   // MT940 content marker in a .txt/.sta: starts with the :20: transaction ref tag
   if (textHead && /(^|\n):20:/.test(textHead)) return true
+
+  // [BANK-CSV] CSV bank export (ING/Rabo/bunq/SNS/…). We do NOT route by the .csv
+  // extension alone — a .csv is just as likely a turnover/product export — but by
+  // the header SHAPE, exactly as parseBankFile does. looksLikeBankCsv requires a
+  // header row with both a date- and an amount-column word, so a non-bank CSV
+  // falls through to the AI/document path instead of the bank importer.
+  if (textHead && looksLikeBankCsv(textHead)) return true
 
   return false
 }
