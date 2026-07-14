@@ -1235,8 +1235,11 @@ export async function syncUserEmails(userId: string): Promise<{
     balanced: boolean    // imported+skipped+duplicate+pending === fetched
   }
 } | null> {
-  const { createServerSupabaseClient } = await import('@/lib/supabase-server')
-  const supabase = await createServerSupabaseClient()
+  // [CRON] Use the service-role pipeline (not the session client) so syncUserEmails is
+  // callable both from the user's /api/email/sync AND the scheduled /api/cron/email-sync
+  // (which has no session). The only read below is this user's OWN profile, explicitly
+  // scoped by id — service-role here is safe and removes the request-session coupling.
+  const supabase = createPipelineClient()
 
   // [BOEK-011 + BOEK-SECURITY] Load tokens via Vault. We still need a few
   // fields from email_connections directly (provider) — getEmailTokens
