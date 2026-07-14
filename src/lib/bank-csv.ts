@@ -382,7 +382,11 @@ export function toExportMatrix(result: ParseResult): (string | number)[][] {
  *  A zero-dependency download for the converter page. */
 export function toNormalizedCsv(result: ParseResult): string {
   const esc = (v: string | number): string => {
-    const s = typeof v === "number" ? v.toFixed(2).replace(".", ",") : String(v);
+    let s = typeof v === "number" ? v.toFixed(2).replace(".", ",") : String(v);
+    // Neutralise spreadsheet formula injection: a text cell beginning with = + - @
+    // (or tab/CR) could execute when opened in Excel. Numbers are already formatted
+    // above, so this only guards free-text (counterpart names, descriptions).
+    if (typeof v !== "number" && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const matrix = toExportMatrix(result);

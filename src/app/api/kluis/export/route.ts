@@ -18,8 +18,15 @@ export const dynamic = 'force-dynamic'
 const MAX_FILES = 500
 const MAX_TOTAL_BYTES = 150 * 1024 * 1024 // 150 MB
 
+// CSV cell that is safe to open in Excel/LibreOffice. Two protections:
+//  1. Delimiter/quote/newline escaping (RFC-4180 quoting).
+//  2. FORMULA-INJECTION neutralisation: a cell starting with = + - @ (or a
+//     tab/CR that some tools treat as a formula lead) is prefixed with a single
+//     quote, so a malicious client/file name like `=HYPERLINK(...)` can't execute
+//     in the ACCOUNTANT's spreadsheet. This export is third-party-facing.
 const csvCell = (v: unknown): string => {
-  const s = v == null ? '' : String(v)
+  let s = v == null ? '' : String(v)
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s
   return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 const eur = (n: number | null) => (n == null ? '' : n.toFixed(2).replace('.', ','))
@@ -71,10 +78,12 @@ export async function GET(req: NextRequest) {
   const usedNames = new Set<string>()
 
   for (const d of docs) {
-    if (added >= MAX_FILES) { skipped.push(`${d.file_name} (limiet ${MAX_FILES} bestanden bereikt)`); continue }
     let status = 'ok'
     let name = safeName(d.file_name || 'bestand')
-    if (!d.file_url) {
+    if (added >= MAX_FILES) {
+      status = `overgeslagen (limiet ${MAX_FILES} bestanden bereikt)`
+      skipped.push(`${d.file_name} (${status})`)
+    } else if (!d.file_url) {
       status = 'geen bestand'
     } else {
       const { data: blob, error } = await supabase.storage.from('documents').download(d.file_url)
@@ -87,8 +96,14 @@ export async function GET(req: NextRequest) {
           status = `overgeslagen (max ${Math.round(MAX_TOTAL_BYTES / 1024 / 1024)} MB per export)`
           skipped.push(`${d.file_name} (${status})`)
         } else {
-          // De-dupe identical names so no file silently overwrites another.
-          if (usedNames.has(name)) name = `${added + 1}-${name}`
+          // De-dupe identical names so NO file silently overwrites another (that would
+          // be data loss reported as "ok"). Loop until the candidate name is unused —
+          // a single check could still collide with an already-generated "N-name".
+          if (usedNames.has(name)) {
+            const base = name
+            let n = 2
+            do { name = `${n}-${base}`; n++ } while (usedNames.has(name))
+          }
           usedNames.add(name)
           docFolder.file(name, buf)
           usedBytes += buf.length

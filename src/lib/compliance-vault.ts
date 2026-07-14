@@ -74,13 +74,25 @@ export interface YearSummary {
 }
 
 const isRealInvoice = (t: string | null) => t === "factuur" || t === "creditnota";
-const quarterOf = (iso: string) => Math.floor((new Date(iso + "T00:00:00").getUTCMonth()) / 3) + 1;
 
-/** Which quarter a document belongs to — from its period ('2026-Q2') when present. */
+/** Quarter (1–4) of an ISO date, read straight from the month digits — NO Date, so
+ *  no timezone shift (a UTC-parse + local-read, or vice-versa, moved first-of-quarter
+ *  dates a quarter early on non-UTC servers) and no NaN from a malformed date. Returns
+ *  null for anything without a valid 01–12 month, so it never mis-buckets. */
+function quarterOf(iso: string): number | null {
+  const m = /^\d{4}-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const month = Number(m[1]);
+  return month >= 1 && month <= 12 ? Math.floor((month - 1) / 3) + 1 : null;
+}
+
+/** Which quarter a document belongs to — from its period ('2026-Q2' or '2026-06'). */
 function docQuarter(period: string | null): number | null {
   if (!period) return null;
-  const m = period.match(/Q([1-4])/i);
-  return m ? Number(m[1]) : null;
+  const q = period.match(/Q([1-4])/i);
+  if (q) return Number(q[1]);
+  // Fall back to a month in the period ('2026-06' → Q2).
+  return quarterOf(period);
 }
 
 /**
@@ -96,12 +108,17 @@ export function summarizeYear(
 ): YearSummary {
   const inYear = invoices.filter((i) => i.invoice_date?.slice(0, 4) === String(year) && isRealInvoice(i.invoice_type));
   const docsInYear = documents.filter((d) => d.year === year && !d.trashed);
+  const bankDocs = docsInYear.filter((d) => d.doc_type === "bankafschrift");
+  // Statements we can't place in a quarter (period is null/monthless). If the year has
+  // any of these, we must NOT claim a specific quarter's statement is "missing" — we
+  // have statements, we just can't attribute them. Suppressing avoids a false alarm.
+  const unattributedBankDocs = bankDocs.filter((d) => docQuarter(d.period) === null).length;
 
   const quarters: QuarterSummary[] = ([1, 2, 3, 4] as const).map((q) => {
     const qInv = inYear.filter((i) => i.invoice_date && quarterOf(i.invoice_date) === q);
     const outgoing = qInv.filter((i) => i.direction === "outgoing");
     const incoming = qInv.filter((i) => i.direction === "incoming");
-    const bankStatements = docsInYear.filter((d) => d.doc_type === "bankafschrift" && docQuarter(d.period) === q).length;
+    const bankStatements = bankDocs.filter((d) => docQuarter(d.period) === q).length;
     const hasActivity = qInv.length > 0;
     return {
       quarter: q,
@@ -110,13 +127,15 @@ export function summarizeYear(
       outgoingTotal: outgoing.reduce((s, i) => s + (i.total_inc_btw ?? 0), 0),
       bankStatements,
       hasActivity,
-      missingBankStatement: hasActivity && bankStatements === 0,
+      // Only an honest "missing" when the quarter has activity, no statement of its
+      // own, AND there are no unattributable statements that could be covering it.
+      missingBankStatement: hasActivity && bankStatements === 0 && unattributedBankDocs === 0,
     };
   });
 
   const outgoingCount = inYear.filter((i) => i.direction === "outgoing").length;
   const incomingCount = inYear.filter((i) => i.direction === "incoming").length;
-  const bankStatements = docsInYear.filter((d) => d.doc_type === "bankafschrift").length;
+  const bankStatements = bankDocs.length;
   const outgoingTotal = inYear.filter((i) => i.direction === "outgoing").reduce((s, i) => s + (i.total_inc_btw ?? 0), 0);
 
   const gaps: string[] = [];

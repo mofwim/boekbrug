@@ -148,6 +148,16 @@ console.log("\n— normalized export (bankafschrift naar Excel) —");
   check("Af row flagged Af", m[1][2] === "Af");
   const csv = toNormalizedCsv(r);
   check("CSV has UTF-8 BOM", csv.charCodeAt(0) === 0xfeff);
+  {
+    // Formula-injection guard: a counterpart name starting with '=' must be
+    // neutralised with a leading apostrophe so it can't execute in Excel.
+    const evil = parseBankCsv([
+      '"Datum";"Naam / Omschrijving";"Af Bij";"Bedrag (EUR)";"Mededelingen"',
+      '"20260101";"=HYPERLINK(x)";"Af";"1,00";"x"',
+    ].join('\n'));
+    const out = toNormalizedCsv(evil);
+    check("formula-leading name is apostrophe-prefixed", out.includes("'=HYPERLINK") && !/;=HYPERLINK/.test(out));
+  }
   check("CSV is semicolon-delimited with comma decimals", csv.includes(";1210,00;") || csv.includes(";53,20;"));
   check("CSV header line present", csv.includes("Datum;Bedrag (EUR)"));
 }

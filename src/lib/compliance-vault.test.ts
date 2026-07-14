@@ -69,6 +69,46 @@ console.log("\n— summarizeVault: only years with real data, newest first —")
   check("newest first", years[0] === 2026);
 }
 
+console.log("\n— quarter bucketing is timezone-proof (parsed from the month digits) —");
+{
+  // First-of-quarter dates must land in the RIGHT quarter regardless of server TZ.
+  const s = summarizeYear(2026, 2026, [O("2026-01-01", 1), O("2026-04-01", 2), O("2026-07-01", 3), O("2026-10-01", 4)], []);
+  check("2026-01-01 → Q1", s.quarters[0].outgoingCount === 1);
+  check("2026-04-01 → Q2", s.quarters[1].outgoingCount === 1);
+  check("2026-07-01 → Q3", s.quarters[2].outgoingCount === 1);
+  check("2026-10-01 → Q4", s.quarters[3].outgoingCount === 1);
+  check("quarter counts sum to the year total (no leak to wrong quarter)",
+    s.quarters.reduce((n, q) => n + q.outgoingCount, 0) === s.outgoingCount);
+}
+{
+  // A malformed date is counted in the year but not mis-bucketed into a quarter, and
+  // must not crash.
+  const s = summarizeYear(2026, 2026, [{ invoice_date: "2026-13-45", direction: "outgoing", invoice_type: "factuur", status: "sent", total_inc_btw: 5 }], []);
+  check("garbage month → no quarter, no crash", s.quarters.every((q) => q.outgoingCount === 0));
+}
+
+console.log("\n— null-period bank statement suppresses the false 'missing' alarm —");
+{
+  // A bankafschrift with period=null (realistic on upload) covers the year; we can't
+  // place it in a quarter, so we must NOT warn a quarter is missing.
+  const inv = [O("2026-05-10", 100)]; // Q2 activity
+  const docs: VaultDocument[] = [{ doc_type: "bankafschrift", year: 2026, period: null, trashed: false }];
+  const s = summarizeYear(2026, 2026, inv, docs);
+  check("year counts the null-period statement", s.bankStatements === 1);
+  check("Q2 NOT falsely flagged missing (we have a statement, just unplaced)", s.quarters[1].missingBankStatement === false);
+  check("no false gap note", s.gaps.length === 0);
+}
+{
+  // But with ZERO statements at all, the missing flag still fires (honest).
+  const s = summarizeYear(2026, 2026, [O("2026-05-10", 100)], []);
+  check("truly no statement → Q2 flagged missing", s.quarters[1].missingBankStatement === true);
+}
+{
+  // A month-form period ('2026-06') is attributed to its quarter (Q2).
+  const s = summarizeYear(2026, 2026, [O("2026-06-01", 10)], [{ doc_type: "bankafschrift", year: 2026, period: "2026-06", trashed: false }]);
+  check("month-form period '2026-06' → Q2 statement, not missing", s.quarters[1].bankStatements === 1 && s.quarters[1].missingBankStatement === false);
+}
+
 console.log("\n— offertes/pro_forma are NOT retained records —");
 {
   const inv: VaultInvoice[] = [{ invoice_date: "2026-01-01", direction: "outgoing", invoice_type: "offerte", status: "sent", total_inc_btw: 999 }];
