@@ -102,6 +102,24 @@ console.log("\n— robustness —");
       ]);
       return r.ledger?.kind === "bank";
     })());
+  check("a 'betaling'/'levering' description does NOT mislabel as bank (ing substring)",
+    (() => {
+      const r = parseLedgerSheet([
+        ["Rekening Nr:", null, "610000"],
+        ["Datum", "Naam", "Omschrijving", "Ontvangen", "Uitgaven"],
+        ["2026-07-03", "leverancier", "Levering goederen betaling", 0, 500],
+      ]);
+      return r.ledger?.kind === "other";
+    })());
+  check("a real ING bank line still classifies as bank",
+    (() => {
+      const r = parseLedgerSheet([
+        ["Rekening Nr:", null, "100000"],
+        ["Datum", "Naam", "Omschrijving", "Ontvangen", "Uitgaven"],
+        ["2026-07-03", "ING", "Overboeking", 500, 0],
+      ]);
+      return r.ledger?.kind === "bank";
+    })());
   check("NL number strings parse in amounts",
     near(parseLedgerSheet([
       ["Rekening Nr:", null, "570000"],

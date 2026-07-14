@@ -67,5 +67,17 @@ console.log("\n— an EFT day with no till row is still surfaced (never dropped)
   check("it is incomplete (no till to verify against)", res.days[0].status === "incomplete");
 }
 
+console.log("\n— a bank payout on a day with no till/EFT is surfaced, not dropped —");
+{
+  const res = reconcileTriangle({
+    turnover: [till("2026-07-12", 1546.46)],
+    eftSettlements: [eft("2026-07-12", 1546.46)],
+    bankNetByDay: new Map([["2026-07-13", 980]]), // mis-keyed / weekend-merged payout
+  });
+  check("the orphan bank day appears", res.days.some((d) => d.date === "2026-07-13"));
+  check("orphan bank day is incomplete (no gross to verify against)",
+    res.days.find((d) => d.date === "2026-07-13")?.status === "incomplete");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

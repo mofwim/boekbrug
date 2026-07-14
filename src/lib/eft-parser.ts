@@ -51,6 +51,7 @@ function money(raw: string): number {
   let s = raw.trim();
   if (!s) return NaN;
   if (s.includes(",")) s = s.replace(/\./g, "").replace(",", "."); // NL: dot=thousands, comma=decimal
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ""); // grouped integer "1.234" → 1234 (dots are thousands, not a decimal)
   s = s.replace(/[^\d.\-]/g, "");
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : NaN;

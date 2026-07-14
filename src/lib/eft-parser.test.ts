@@ -128,6 +128,11 @@ console.log("\n— robustness —");
       const r = parseEftSettlement("TMS TERM-ID: 5\nPERIODE EINDE: 30/06/2026 23:59:00\nEFT TOTALEN\nBETALING: 4 40,00");
       return r.settlement?.settlementDate === "2026-06-30";
     })());
+  check("grouped-integer amount '1.234' parses to 1234, not 1.23",
+    (() => {
+      const r = parseEftSettlement("EFT TOTALEN\nBETALING: 40 1.234");
+      return r.settlement !== null && Math.abs(r.settlement.grossTotal - 1234) < 0.005;
+    })());
   check("DD-MM-YYYY (dash) timestamps parse too",
     (() => {
       const r = parseEftSettlement("EFT TOTALEN\nBETALING: 1 5,00\nDATUM LAATSTE TRX: 01-05-2026 10:00:00");

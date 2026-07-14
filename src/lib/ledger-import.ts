@@ -76,7 +76,9 @@ function deriveKind(accountNr: string | null, title: string | null, entries: Led
   const text = `${title ?? ""} ${entries.map((e) => e.description ?? "").join(" ")}`.toLowerCase();
   if (/kontant|contant|\bkas\b|kasboek/.test(text) || accountNr?.startsWith("5700")) return "cash";
   if (/\bpin\b|pin kaart|pinbetaling/.test(text) || accountNr?.startsWith("5501")) return "pin";
-  if (/\bbank\b|overboeking|ing|rabo|abn|iban/.test(text)) return "bank";
+  // Word-bounded bank tokens: a bare "ing" would otherwise match "levering", "betaling",
+  // "rekening" and mislabel any ledger as bank. Require the standalone bank names.
+  if (/\bbank\b|overboeking|\bing\b|\brabo\b|\babn\b|\bsns\b|iban/.test(text)) return "bank";
   return "other";
 }
 

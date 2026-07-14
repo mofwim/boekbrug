@@ -54,6 +54,10 @@ export function reconcileTriangle(input: TriangleInput): TriangleResult {
   const days = new Set<string>();
   for (const t of input.turnover) days.add(t.turnover_date);
   for (const d of eftByDay.keys()) days.add(d);
+  // Union bank payout days too, so a payout keyed to a day with no till/EFT row (a mis-keyed
+  // or weekend-merged deposit) is surfaced as an incomplete day, never silently dropped —
+  // symmetric with the orphan-EFT handling.
+  if (input.bankNetByDay) for (const d of input.bankNetByDay.keys()) days.add(d);
 
   const tillByDay = new Map<string, DailyTurnover>();
   for (const t of input.turnover) tillByDay.set(t.turnover_date, t);
