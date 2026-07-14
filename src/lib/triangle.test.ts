@@ -103,7 +103,7 @@ console.log("\n— buildCardReconciliationCsv (the accountant's view) —");
   check("header names the three corners", /Kassa-PIN.*terminal.*bank/i.test(csv));
   check("day row shows NL amounts + commission", csv.includes("2026-07-03;1000,00;1000,00;985,00;15,00;sluit aan"));
   check("mismatch day flagged in status", /2026-07-04;800,00;750,00;.*verschil kassa\/terminal/.test(csv));
-  check("total commission line present (only the ok day = 15,00)", csv.includes("Totaal acquirer-commissie (betaalkosten, BTW-vrij);;;;15,00"));
+  check("total commission line present (only the ok day = 15,00)", csv.includes("Totaal kaartcommissie (bruto − netto, BTW-vrij);;;;15,00"));
   check("gross-mismatch day count surfaced", /Dagen kassa .* terminal.*;1$/m.test(csv));
   check("result rows echo the inputs", tri.days[0].tillPin === 1000 && tri.days[0].eftGross === 1000 && tri.days[0].bankNet === 985);
 }

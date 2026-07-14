@@ -127,8 +127,10 @@ export function buildCardReconciliationCsv(quarterLabel: string, tri: TriangleRe
     ].map(esc).join(";"));
   }
   L.push("");
-  L.push(["Totaal acquirer-commissie (betaalkosten, BTW-vrij)", "", "", "", EUR(tri.totalCommission), ""].map(esc).join(";"));
+  L.push(["Totaal kaartcommissie (bruto − netto, BTW-vrij)", "", "", "", EUR(tri.totalCommission), ""].map(esc).join(";"));
   L.push(["Dagen kassa ≠ terminal (controleer voor de aangifte)", "", "", "", "", String(tri.grossMismatchDays)].map(esc).join(";"));
   L.push(["Dagen nog niet compleet (bank-uitbetaling of terminal ontbreekt)", "", "", "", "", String(tri.incompleteDays)].map(esc).join(";"));
+  L.push("");
+  L.push("Let op: als de acquirer (CCV/Worldline/…) de transactiekosten APART factureert, staat die factuur bij de inkoopfacturen en IS die commissie daar al als kosten geboekt — dan is dit bruto-verschil ter controle, niet nog eens boeken.");
   return L.join("\r\n");
 }

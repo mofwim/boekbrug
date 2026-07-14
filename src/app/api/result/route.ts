@@ -147,9 +147,25 @@ export async function GET(req: NextRequest) {
     byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
   }));
 
-  // Bank NET card settlement per takings day (pos_income lines only).
-  const posLines = (bankRows ?? []).filter((b) => b.category === "pos_income");
-  const netByDay = bankNetByDay(posLines);
+  // Bank NET card settlement per takings day. A card sale on the LAST days of the quarter
+  // settles into the bank AFTER quarter-end, so fetch pos_income with a +5-day (and −5, for
+  // symmetry with the covered set) settlement-lag buffer — otherwise an end-of-quarter day's
+  // commission is missed here while the closing package (which buffers) counts it, and the
+  // two artifacts disagree. Each line is keyed by its embedded DAT takings date; we then keep
+  // ONLY the days whose takings date is IN the quarter, so the buffer completes in-quarter
+  // days without adding prev/next-quarter rows.
+  const endD2 = new Date(Date.UTC(year, startMonth + 3, 0));
+  endD2.setUTCDate(endD2.getUTCDate() + 5);
+  const endBuffer = `${endD2.getUTCFullYear()}-${pad(endD2.getUTCMonth() + 1)}-${pad(endD2.getUTCDate())}`;
+  const { data: posBufRows } = await pipeline
+    .from("bank_transactions")
+    .select("description, amount, date")
+    .eq("user_id", ownerId)
+    .eq("category", "pos_income")
+    .gte("date", startBuffer)
+    .lte("date", endBuffer);
+  const netByDay = bankNetByDay((posBufRows ?? []).map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
+  for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
 
   const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
 

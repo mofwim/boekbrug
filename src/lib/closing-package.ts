@@ -1038,6 +1038,10 @@ export async function buildClosingPackageZip(args: {
       byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
     }));
     const netByDay = bankNetByDay((posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount, date: p.date })));
+    // Keep only in-quarter takings days: the ±5-day fetch buffer exists to COMPLETE an
+    // end-of-quarter day whose payout lands after quarter-end (DAT still in-quarter), not to
+    // add prev/next-quarter rows to an accountant-facing sheet. Matches /api/result exactly.
+    for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
     const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
     // Only attach when there is a card figure to show (a terminal settlement or a payout).
     if (eftSettlements.length > 0 || netByDay.size > 0) cardReconciliation = tri;
