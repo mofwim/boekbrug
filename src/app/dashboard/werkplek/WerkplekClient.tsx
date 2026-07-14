@@ -19,6 +19,7 @@ const ITEMS = [
   { icon: 'receipt_long', label: 'Mijn facturen',  sub: 'Verstuur en beheer',      href: '/dashboard/facturen', bg: M3.primary,   color: '#fff' },
   { icon: 'folder_open',  label: 'Mijn bestanden', sub: 'Bonnen en documenten',     href: '/dashboard/bestanden', bg: M3.warning,   color: '#fff' },
   { icon: 'people',       label: 'Mijn klanten',   sub: 'Klantgegevens en history', href: '/dashboard/klanten',  bg: M3.success,   color: '#fff' },
+  { icon: 'shield',       label: 'Compliance-kluis', sub: '7 jaar bewaren, klaar voor je boekhouder', href: '/dashboard/kluis', bg: '#455A64', color: '#fff' },
   { icon: 'settings',     label: 'Mijn gegevens',  sub: 'Bedrijf en account',       href: '/dashboard/settings', bg: M3.tertiary,  color: '#fff' },
 ]
 
