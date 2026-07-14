@@ -23,6 +23,11 @@ const PUBLIC_PATHS = [
   "/netto-inkomen-zzp",
   "/factuur-scannen",
   "/tools",
+  // [BLOG] The public blog (NL default + EN under /en/blog) must be reachable
+  // without a session — logged-out visitors AND search crawlers, otherwise the
+  // auth guard redirects them to /login and the SEO blog never gets indexed.
+  "/blog",
+  "/en/blog",
   "/privacy",
   "/voorwaarden",
   "/cookies",
