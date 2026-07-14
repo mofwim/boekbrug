@@ -26,8 +26,8 @@ type ArticleLink = { href: string; title: string }
 const LINKS: Record<string, ArticleLink[]> = {
   '/factuur-maken': [
     { href: '/blog/factuur-maken-gids', title: 'Factuur maken: de complete gids' },
+    { href: '/blog/offerte-maken-zzp', title: 'Offerte maken: wat erop hoort' },
     { href: '/blog/factuur-eisen', title: 'Waar moet een factuur aan voldoen?' },
-    { href: '/blog/creditnota-maken', title: 'Creditnota maken: wanneer en hoe?' },
   ],
   '/factuur-scannen': [
     { href: '/blog/factuur-scannen-hoe-werkt-het', title: 'Factuur scannen met AI: hoe werkt het?' },
@@ -46,8 +46,8 @@ const LINKS: Record<string, ArticleLink[]> = {
   ],
   '/netto-inkomen-zzp': [
     { href: '/blog/netto-inkomen-zzp-2026', title: 'Netto inkomen ZZP 2026 berekenen' },
-    { href: '/blog/zzp-belasting-2026', title: 'ZZP belasting 2026: de complete gids' },
-    { href: '/blog/zelfstandigenaftrek-2026', title: 'Zelfstandigenaftrek 2026 uitgelegd' },
+    { href: '/blog/aftrekposten-zzp-2026', title: 'Aftrekposten voor ZZP’ers in 2026' },
+    { href: '/blog/aangifte-inkomstenbelasting-zzp', title: 'Aangifte inkomstenbelasting: stap voor stap' },
   ],
   '/uurtarief-berekenen': [
     { href: '/blog/goed-uurtarief-zzp', title: "Wat is een goed uurtarief als ZZP'er?" },
