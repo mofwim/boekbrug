@@ -16,7 +16,7 @@ import { otherTools } from '@/lib/tools'
 export const metadata: Metadata = {
   title: 'Bankafschrift naar Excel — gratis omzetten (CSV, MT940, CAMT) | BoekBrug',
   description:
-    'Zet je bankafschrift gratis om naar Excel. Upload een CSV, MT940 of CAMT.053 van ING, Rabobank, bunq, SNS of ASN en download een nette Excel of CSV. Geen account nodig — je bestand blijft in je browser.',
+    'Zet je bankafschrift gratis om naar Excel. Upload een CSV, MT940 of CAMT.053 van ING, Rabobank, bunq en veel andere Nederlandse banken en download een nette Excel of CSV. Geen account nodig — je bestand blijft in je browser.',
   keywords: [
     'bankafschrift naar excel', 'bankafschrift omzetten', 'mt940 naar excel', 'camt naar excel',
     'csv bankafschrift', 'ing afschrift excel', 'rabobank afschrift excel', 'bankafschrift converteren',
@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 const faq = [
   {
     q: 'Welke bankbestanden kan ik omzetten naar Excel?',
-    a: 'CSV, MT940 (.sta) en CAMT.053 (.xml). Die kun je bij elke Nederlandse bank downloaden — ING, Rabobank, bunq, SNS, ASN, Triodos, Knab en meer. Het bedrag, de datum, de tegenpartij en de omschrijving komen netjes in kolommen.',
+    a: 'CSV, MT940 (.sta) en CAMT.053 (.xml). Die kun je bij elke Nederlandse bank downloaden. De CSV-omzetter is getest met ING, Rabobank en bunq; MT940 en CAMT.053 werken bij vrijwel elke bank. Het bedrag, de datum, de tegenpartij en de omschrijving komen netjes in kolommen.',
   },
   {
     q: 'Blijft mijn bankafschrift privé?',
@@ -44,7 +44,7 @@ const faq = [
   },
   {
     q: 'Mijn bank staat er niet bij — werkt het dan toch?',
-    a: 'Waarschijnlijk wel. De omzetter herkent de kolommen op naam (datum, bedrag, tegenpartij, omschrijving), dus ook afschriften van andere banken worden meestal goed gelezen. Lukt het niet, probeer dan het MT940- of CAMT.053-bestand van je bank.',
+    a: 'Waarschijnlijk wel. De omzetter herkent de kolommen op naam (datum, bedrag, tegenpartij, omschrijving), dus ook afschriften van andere banken worden meestal goed gelezen. Lukt het niet met de CSV, download dan het MT940- (.sta) of CAMT.053-bestand (.xml) van je bank — die worden vrijwel altijd gelezen.',
   },
 ]
 

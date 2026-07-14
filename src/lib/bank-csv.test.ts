@@ -113,7 +113,8 @@ console.log("\n— honesty guard: a non-bank CSV imports ZERO, with a clear erro
   ].join("\n");
   const r = parseBankCsv(products);
   check("no transactions fabricated", r.transactions.length === 0);
-  check("a parse error explains why", r.parseErrors.length >= 1 && /datum|bedrag/i.test(r.parseErrors[0]));
+  check("error explains + is non-dismissive (never 'geen bankafschrift')",
+    r.parseErrors.length >= 1 && /kolommen.*niet.*herkend/i.test(r.parseErrors[0]) && !/geen bankafschrift/i.test(r.parseErrors[0]));
   check("looksLikeBankCsv is false for a product list", looksLikeBankCsv(products) === false);
   check("looksLikeBankCsv is true for an ING header", looksLikeBankCsv('"Datum";"Naam";"Bedrag (EUR)"\n"20260101";"x";"1,00"') === true);
   check("MT940 content is NOT mistaken for CSV", looksLikeBankCsv(":20:X\n:25:NL91ABNA0417164300") === false);

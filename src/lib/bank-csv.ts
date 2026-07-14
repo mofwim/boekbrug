@@ -212,7 +212,12 @@ function applySignFlag(amount: number, flag: string): number {
   const mag = Math.abs(amount);
   if (/^(af|debet|debit|d|-)$/.test(f)) return -mag;
   if (/^(bij|credit|c|\+)$/.test(f)) return mag;
-  return amount; // unknown flag → trust the amount's own sign
+  // Flag absent/unrecognised → we cannot assert a direction from it, so we fall back
+  // to the amount's OWN sign. This only matters for a bank that pairs an UNSIGNED
+  // amount with an Af/Bij column (ING) AND leaves the flag blank on a row — which
+  // ING never does in practice. For the signed-amount banks (Rabo/bunq) the sign
+  // column isn't even mapped, so this branch keeps their real sign intact.
+  return amount;
 }
 
 function rowToTransaction(row: string[], map: ColumnMap, currency: string): BankTransaction | null {
@@ -290,6 +295,10 @@ export function parseBankCsv(content: string): ParseResult {
   const headers = matrix[0];
   const map = mapColumns(headers);
   if (map.date < 0 || map.amount < 0) {
+    // Honest, non-dismissive: we could NOT auto-recognise the columns — we do NOT
+    // claim the file "isn't a bank statement" (it may well be one from a bank whose
+    // headers we don't know, or a headerless export). The raw file is still stored
+    // by the caller; point the owner at the MT940/CAMT export as the reliable path.
     return {
       format: "CSV",
       accountIban: null,
@@ -297,8 +306,11 @@ export function parseBankCsv(content: string): ParseResult {
       currency: "EUR",
       transactions: [],
       parseErrors: [
-        "CSV herkend, maar geen datum- en/of bedragkolom gevonden — dit lijkt geen bankafschrift. Kolommen: " +
-          headers.map((h) => h.trim()).filter(Boolean).slice(0, 12).join(", "),
+        "De kolommen in dit CSV-bestand konden niet automatisch worden herkend" +
+          (headers.some((h) => h.trim())
+            ? " (gevonden: " + headers.map((h) => h.trim()).filter(Boolean).slice(0, 12).join(", ") + ")"
+            : "") +
+          ". Download je afschrift bij je bank als MT940 (.sta) of CAMT.053 (.xml) — die worden altijd gelezen.",
       ],
     };
   }

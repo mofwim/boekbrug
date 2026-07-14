@@ -107,8 +107,8 @@ export default function BankConverter() {
           Bankafschrift naar Excel
         </h1>
         <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto', maxWidth: 560, lineHeight: 1.55 }}>
-          Zet je bankafschrift (CSV, MT940 of CAMT.053) om naar een nette Excel. Van ING, Rabobank,
-          bunq, SNS, ASN en meer. Gratis, geen account.
+          Zet je bankafschrift (CSV, MT940 of CAMT.053) om naar een nette Excel. Werkt met ING,
+          Rabobank, bunq en veel andere Nederlandse banken. Gratis, geen account.
         </p>
       </div>
 
