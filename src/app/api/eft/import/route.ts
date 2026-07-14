@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { parseEftSettlement, type EftSettlement } from "@/lib/eft-parser";
 import { transcribeEftReceipt } from "@/lib/ai";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import type { Json } from "@/types/database.types";
 
 const MAX_BYTES = 10 * 1024 * 1024; // a receipt photo is small; generous.
@@ -89,6 +90,10 @@ export async function POST(req: NextRequest) {
   if (file.size === 0 || file.size > MAX_BYTES) {
     return NextResponse.json({ error: "bestand is leeg of te groot (max 10MB)" }, { status: 400 });
   }
+
+  // [COST] Per-user ceiling — this branch runs an AI/OCR vision call (transcribeEftReceipt).
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/eft/import", ...RATE_LIMITS.AI_OCR });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   let text: string;
   try {

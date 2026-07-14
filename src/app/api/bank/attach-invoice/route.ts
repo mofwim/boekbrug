@@ -28,6 +28,7 @@ import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -43,6 +44,10 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
+
+  // [COST] Per-user ceiling — this route runs an AI/OCR vision call (verifyInvoiceFromPdf).
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/bank/attach-invoice", ...RATE_LIMITS.AI_OCR });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   // 2. Read form: the file + the target transaction id.
   let formData: FormData;

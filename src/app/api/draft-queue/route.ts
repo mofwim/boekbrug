@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { composeDraftEmail } from '@/lib/ai'
 import { sendDraftQueueEmail } from '@/lib/email'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 // ─────────────────────────────────────────────────────────
 // Shared type — single source of truth for DraftQueue.tsx
@@ -222,6 +223,10 @@ export async function POST(request: NextRequest) {
       if (items.length === 0) {
         return NextResponse.json({ error: 'Geen openstaande punten' }, { status: 400 })
       }
+
+      // [COST] Per-user ceiling — this action runs an AI text call (composeDraftEmail).
+      const rl = await checkRateLimit({ userId: user.id, endpoint: '/api/draft-queue', ...RATE_LIMITS.AI_TRANSLATE })
+      if (!rl.allowed) return rateLimitResponse(rl)
 
       const accountantName = await accountantLabel(supabase, user.id)
       const result = await composeDraftEmail(

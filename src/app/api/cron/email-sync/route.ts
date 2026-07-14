@@ -24,9 +24,11 @@ export async function GET(req: NextRequest) {
   }
 
   const pipeline = createPipelineClient();
+  // Ordered by connected_at so the iteration order is deterministic across runs.
   const { data: conns, error } = await pipeline
     .from("email_connections")
-    .select("user_id");
+    .select("user_id, connected_at")
+    .order("connected_at", { ascending: true });
   if (error) {
     return NextResponse.json({ error: "kon verbindingen niet laden" }, { status: 500 });
   }
@@ -35,7 +37,10 @@ export async function GET(req: NextRequest) {
 
   let synced = 0, failed = 0, saved = 0;
   // Sequential + error-isolated: one user's failure (expired token, provider hiccup) must
-  // not stop the rest. Per-user rate limiting still applies inside syncUserEmails' callees.
+  // not stop the rest. Per-run cost is bounded by SYNC_BATCH_MAX inside syncUserEmails (not
+  // a rate-limit). SCALE NOTE: this processes ALL connected mailboxes sequentially within
+  // maxDuration; past a few dozen active mailboxes the window can truncate and later users
+  // starve — add pagination / a per-run continuation cursor before scaling beyond a pilot.
   for (const uid of userIds) {
     try {
       const r = await syncUserEmails(uid);

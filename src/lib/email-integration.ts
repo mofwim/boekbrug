@@ -2237,8 +2237,10 @@ export async function syncUserEmails(userId: string): Promise<{
   // [BOEK-011 + BOEK-SECURITY Phase 2.5] Notify the user about imported invoices.
   // After Phase 2.5 cleanup, notifications has no INSERT policy for the
   // authenticated context — any user-client insert returns 403. All notification
-  // writes must go through service_role (createPipelineClient). The user client
-  // (`supabase`) stays for reads where RLS is the right boundary.
+  // writes must go through service_role (createPipelineClient). NOTE: since the
+  // cron refactor, `supabase` above is ALSO the service-role pipeline (every read
+  // in this function is explicitly scoped by the passed userId), so this whole
+  // function is session-independent and callable from the scheduled cron.
   if (saved > 0) {
     const pipeline = createPipelineClient()
     // [BOEK-011] Provider-aware copy — Outlook users shouldn't read "Gmail".
