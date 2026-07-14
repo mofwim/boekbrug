@@ -185,9 +185,15 @@ export function OnboardingWizard({
         const kvk = company.kvk_number.trim();
         if (kvk && !KVK_REGEX.test(kvk)) { setKvkError("KVK-nummer moet uit 8 cijfers bestaan"); return; }
         setKvkError("");
+        // [ONBOARDING-SENDGATE] Persist BTW + adres too, not just name+KVK. The invoice
+        // send route legally requires BTW-nummer + KvK + adres before the first invoice, so
+        // collecting them here (optional, explained) stops the happy path from dead-ending
+        // at "Verzenden". A user who leaves them blank can still finish and add them later.
         await persistStep(4, {
           company_name: company.company_name.trim() || null,
           kvk_number: kvk || null,
+          btw_number: company.btw_number.trim() || null,
+          address: company.address.trim() || null,
         });
         setStep("3C"); // [FACTUUR-B] go to numbering step before Gmail
         return;
@@ -878,7 +884,7 @@ function StepManual({ company, setCompany, kvkError, setKvkError }: {
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Jouw bedrijf</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Twee velden — de rest vul je later in.</p>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Alleen de naam is verplicht. Vul je BTW-nummer en adres in als je facturen wilt versturen — dat mag ook later in Instellingen.</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <Input label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
@@ -886,6 +892,10 @@ function StepManual({ company, setCompany, kvkError, setKvkError }: {
         <Input label="Wat is je KVK-nummer? (optioneel)" placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
+        <Input label="Wat is je BTW-nummer? (nodig om facturen te versturen)" placeholder="NL123456789B01" value={company.btw_number}
+          onChange={(v) => setCompany((p) => ({ ...p, btw_number: v }))} />
+        <Input label="Wat is je adres? (nodig om facturen te versturen)" placeholder="Straat 1, 1234 AB Stad" value={company.address}
+          onChange={(v) => setCompany((p) => ({ ...p, address: v }))} />
       </div>
       {/* [COLD-START] Explain WHY "Volgende" is greyed out — a disabled button with
           no reason reads as "broken" to a first-time user. */}
