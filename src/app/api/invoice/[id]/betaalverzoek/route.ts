@@ -45,7 +45,7 @@ export async function POST(
     token = crypto.randomUUID()
     const { error: upErr } = await supabase
       .from('invoices')
-      .update({ pay_token: token } as never)
+      .update({ pay_token: token })
       .eq('id', id)
       .eq('sender_id', user.id)
     if (upErr) return NextResponse.json({ error: 'Betaallink aanmaken mislukt' }, { status: 500 })

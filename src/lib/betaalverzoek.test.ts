@@ -31,8 +31,13 @@ console.log("\n— buildBetaalverzoek: the happy path —");
   check("EPC payload beneficiary is the OWNER", (r.epcPayload ?? "").includes("Kiwi Food Market"));
 }
 
-console.log("\n— payment_reference wins over invoice number —");
-check("betalingskenmerk takes precedence", buildBetaalverzoek(inv({ payment_reference: "KENM-9" }), OWNER).reference === "KENM-9");
+console.log("\n— reference = invoice number (what reconciliation reads) —");
+// The matcher (bank-matching.referenceMatches) searches ONLY invoice_number, so the
+// quoted kenmerk MUST be the invoice number — even when a payment_reference is set.
+check("invoice number is quoted (not a divergent payment_reference)",
+  buildBetaalverzoek(inv({ payment_reference: "KENM-9" }), OWNER).reference === "2026-014");
+check("falls back to payment_reference only when invoice_number is empty",
+  buildBetaalverzoek(inv({ invoice_number: null, payment_reference: "KENM-9" }), OWNER).reference === "KENM-9");
 
 console.log("\n— guards: what must be REFUSED (no false QR) —");
 check("draft refused (no legal number yet)", !buildBetaalverzoek(inv({ status: "draft" }), OWNER).ok);

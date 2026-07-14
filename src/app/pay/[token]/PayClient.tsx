@@ -113,7 +113,7 @@ export default function PayClient({ token }: { token: string }) {
             </Card>
 
             <p style={{ fontSize: 12, color: '#8e8e93', textAlign: 'center', lineHeight: 1.6, marginTop: 18, padding: '0 8px' }}>
-              Vermeld het kenmerk bij je betaling, dan wordt de factuur automatisch afgeletterd.
+              Vermeld het kenmerk bij je betaling, dan herkent de ontvanger de betaling meteen bij deze factuur.
               BoekBrug verwerkt de betaling niet — je betaalt rechtstreeks vanuit je eigen bank.
             </p>
           </>

@@ -96,10 +96,12 @@ export function buildBetaalverzoek(
     return { ok: false, error: "Het factuurbedrag is niet geschikt voor een betaalverzoek." };
   }
 
-  // Reference: an explicit betalingskenmerk wins, else the invoice number — the SAME
-  // string the reconciliation engine extracts from the incoming bank transaction to
-  // match this payment back to this invoice. This is what "lands in the loop".
-  const reference = (invoice.payment_reference || invoice.invoice_number || "").trim();
+  // Reference: the INVOICE NUMBER first. This must be exactly what the
+  // reconciliation engine reads back from the incoming bank transaction —
+  // bank-matching.referenceMatches() searches ONLY invoice_number, so quoting
+  // anything else would not auto-reconcile. payment_reference is a defensive
+  // fallback for the (shouldn't-happen) case of a sent invoice with no number.
+  const reference = (invoice.invoice_number || invoice.payment_reference || "").trim();
 
   const qr = buildEpcQrPayload({ iban, name: beneficiaryName, amount, reference });
   if (!qr.ok || !qr.payload) {

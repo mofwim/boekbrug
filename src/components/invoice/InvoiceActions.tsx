@@ -181,8 +181,9 @@ const canRequestPayment =
               <h2 className="text-base font-bold text-gray-900">Betaalverzoek voor {invoiceNumber}</h2>
               <p className="text-sm text-gray-500 mt-1">
                 Deel deze link met je klant. Ze betalen {eur.format(bv.amount)} rechtstreeks vanuit hun eigen bank —
-                met kenmerk <span className="font-semibold text-gray-700">{bv.reference || '—'}</span>, zodat de
-                factuur automatisch wordt afgeletterd.
+                met kenmerk <span className="font-semibold text-gray-700">{bv.reference || '—'}</span>. Zodra de
+                betaling in je bankafschrift binnenkomt, herkent BoekBrug haar automatisch bij deze factuur en
+                bevestig je het afletteren met één tik.
               </p>
             </div>
 
