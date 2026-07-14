@@ -167,5 +167,23 @@ console.log("\n— AUDIT FIXES: creditnota nets, null-date cash excluded —");
   check("null-date cash does not inflate the 9% bucket", near(r3.salesByRate.find((s) => s.rate === 9)?.btw ?? 0, 90));
 }
 
+console.log("\n— [TRIANGLE] acquirer commission is booked as a cost, no BTW —");
+{
+  // Till counts card takings GROSS (1090 incl / 1000 net + 90 BTW). Without commission,
+  // profit = 1000. Feeding a €15 acquirer commission drops the result to 985 and adds
+  // NOTHING to voorbelasting (its BTW belongs to the acquirer invoice, not invented here).
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-07-03", base_0: 0, base_9: 1000, base_21: 0, btw_9: 90, btw_21: 0,
+    total_incl: 1090, pin_amount: 1090, cash_amount: 0, other_amount: 0,
+  }];
+  const base = computeResult([], [], [], turnover);
+  check("without commission, resultaat = 1000 (overstated)", near(base.resultaat, 1000));
+  const withComm = computeResult([], [], [], turnover, undefined, 15);
+  check("commission booked → kosten = 15", near(withComm.kosten, 15));
+  check("commission booked → resultaat = 985 (honest)", near(withComm.resultaat, 985));
+  check("commission adds NO voorbelasting", near(withComm.btwVoorbelasting, 0));
+  check("a negative/zero commission is ignored", near(computeResult([], [], [], turnover, undefined, -5).kosten, 0));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

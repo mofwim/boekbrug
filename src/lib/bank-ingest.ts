@@ -15,6 +15,8 @@
 
 import type { PipelineClient } from "./supabase-pipeline";
 import { parseBankFile } from "./bank-parser";
+import { looksLikeSpreadsheetBinary, detectSheetKind } from "./detect-file";
+import { sheetBytesToMatrix } from "./xlsx-adapter";
 import { dedupTransactions, mapToRows, dateRange, type ExistingTxKey } from "./bank-import";
 import { computeContentHash } from "./content-hash";
 import { resolveImportTarget } from "./bestanden";
@@ -28,6 +30,10 @@ export interface BankImportResult {
   parseWarnings: string[];   // lines the parser could NOT read (each = a dropped tx)
   statementStored: boolean;  // raw passthrough copy stored (or already present)
   minDate: string | null;    // earliest tx date (for period tagging / folder)
+  // [DETECT] The upload is a spreadsheet (xlsx/xls), not a bank statement (MT940/CAMT).
+  // Set so the caller tells the owner the truth ("geen banktransacties geïmporteerd")
+  // instead of the old silent 0-transaction passthrough that LOOKED ingested.
+  nonBankSpreadsheet: boolean;
 }
 
 export async function importBankStatement(args: {
@@ -38,13 +44,32 @@ export async function importBankStatement(args: {
   pipeline: PipelineClient;
 }): Promise<BankImportResult> {
   const { buffer, filename, fileType, userId, pipeline } = args;
-  const content = buffer.toString("utf8");
 
+  // [DETECT] A bank statement is MT940 (text) or CAMT.053 (XML). A spreadsheet (xlsx/xls)
+  // is a binary ZIP/OLE2 container — decoding it as UTF-8 and running parseBankFile yields
+  // ZERO transactions while looking successful (the old false-green trap). Detect the
+  // binary up front, skip the fake parse, and tell the caller the truth. The raw file is
+  // still stored below so the accountant always has it.
   let parsed: ReturnType<typeof parseBankFile> | null = null;
-  try {
-    parsed = parseBankFile(content, filename);
-  } catch {
-    parsed = null; // unparseable format — still stored as passthrough below
+  let nonBankSpreadsheet = false;
+  const extraWarnings: string[] = [];
+  if (looksLikeSpreadsheetBinary(buffer)) {
+    nonBankSpreadsheet = true;
+    let hint = "Dit bestand is een spreadsheet (xlsx/xls), geen bankafschrift (MT940/CAMT). Er zijn GEEN banktransacties geïmporteerd.";
+    try {
+      const kind = detectSheetKind(sheetBytesToMatrix(new Uint8Array(buffer)));
+      if (kind === "ledger") hint += " Het lijkt een grootboek/kas-export — importeer het via de dagomzet/kas-kant, niet als bankafschrift.";
+      else if (kind === "turnover") hint += " Het lijkt een kassa-omzetbestand (Z-rapport) — importeer het via Dagomzet.";
+      else hint += " Upload een MT940- of CAMT.053-bestand van je bank voor de banktransacties.";
+    } catch { /* detection is best-effort */ }
+    extraWarnings.push(hint);
+  } else {
+    const content = buffer.toString("utf8");
+    try {
+      parsed = parseBankFile(content, filename);
+    } catch {
+      parsed = null; // unparseable format — still stored as passthrough below
+    }
   }
 
   const transactions = parsed?.transactions ?? [];
@@ -127,8 +152,9 @@ export async function importBankStatement(args: {
     parsed: transactions.length,
     inserted,
     skipped,
-    parseWarnings: parsed?.parseErrors ?? [],
+    parseWarnings: [...extraWarnings, ...(parsed?.parseErrors ?? [])],
     statementStored,
     minDate: min,
+    nonBankSpreadsheet,
   };
 }

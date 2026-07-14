@@ -75,6 +75,13 @@ export function computeResult(
   cashEntries: ResultCashEntry[],
   turnover: DailyTurnover[] = [],
   coveredDates?: Set<string>,
+  // [TRIANGLE] Acquirer commission booked as a cost. The till counts card takings GROSS
+  // (in `turnover`) while the bank pays out NET, so the acquirer's fee is otherwise never
+  // a cost and profit is overstated. reconcileTriangle derives this from EFT gross − bank
+  // net. IMPORTANT: pass it NET of any acquirer fee INVOICE already in `invoices` — else
+  // the same fee is counted twice. The caller (route) owns that de-dup; here it is a plain
+  // cost with no BTW (the reclaimable BTW comes from the acquirer's invoice, not invented).
+  acquirerCommission = 0,
 ): FinancialResult {
   let omzet = 0;
   let kosten = 0;
@@ -183,6 +190,10 @@ export function computeResult(
     addSale(9, t.base_9 ?? 0, b.r9);
     addSale(0, t.base_0 ?? 0, 0);
   }
+
+  // 5) [TRIANGLE] Acquirer commission — a real cost that closes the gross-till vs net-bank
+  //    gap. No BTW is claimed here (see the parameter note); a negative value is ignored.
+  if (acquirerCommission > 0) kosten += acquirerCommission;
 
   return {
     omzet,
