@@ -60,11 +60,13 @@ export default function ArtikelenClient() {
   }
 
   async function save() {
-    setSaving(true); setError(null)
+    setError(null)
+    const price = form.unit_price === '' ? 0 : Number(form.unit_price.replace(',', '.'))
+    if (!Number.isFinite(price) || price < 0) { setError('Prijs moet 0 of hoger zijn.'); return }
+    setSaving(true)
     const payload = {
       code: form.code, description: form.description,
-      unit_price: form.unit_price === '' ? 0 : Number(form.unit_price.replace(',', '.')),
-      btw_rate: form.btw_rate, unit: form.unit,
+      unit_price: price, btw_rate: form.btw_rate, unit: form.unit,
     }
     try {
       const res = await fetch(editingId ? `/api/articles/${editingId}` : '/api/articles', {
@@ -89,8 +91,12 @@ export default function ArtikelenClient() {
 
   async function remove(id: string) {
     if (!confirm('Dit artikel verwijderen? Bestaande facturen blijven ongewijzigd.')) return
-    await fetch(`/api/articles/${id}`, { method: 'DELETE' })
-    setToast('Artikel verwijderd'); await load()
+    try {
+      const res = await fetch(`/api/articles/${id}`, { method: 'DELETE' })
+      if (!res.ok) { setToast('Verwijderen mislukt — probeer opnieuw.'); return }
+      setToast('Artikel verwijderd')
+    } catch { setToast('Verwijderen mislukt — probeer opnieuw.'); return }
+    finally { await load() }
   }
 
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 2200); return () => clearTimeout(t) } }, [toast])

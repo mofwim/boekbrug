@@ -1271,7 +1271,7 @@ function NewInvoicePageContent() {
                     <button onClick={() => removeLine(i)} style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#9AA0A6', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseEnter={e => (e.currentTarget.style.color = '#EA4335')} onMouseLeave={e => (e.currentTarget.style.color = '#9AA0A6')}>×</button>
                   )}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                    <div style={{ flex: 1, position: 'relative' }} onFocusCapture={() => setPickerLine(i)}>
+                    <div style={{ flex: 1, position: 'relative' }} onFocusCapture={() => setPickerLine(i)} onBlur={() => setTimeout(() => setPickerLine(cur => (cur === i ? null : cur)), 150)}>
                       <OutlinedInput value={line.description} onChange={e => { updateLine(i, 'description', e.target.value); setPickerLine(i); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], description: false }; return { ...prev, lines: l } }) }} placeholder="Omschrijving of code (bijv. 22)" label="Omschrijving" focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.description} />
                       {/* [ARTIKELEN] Catalog picker — fill the line from a saved article. */}
                       {sug.length > 0 && (
