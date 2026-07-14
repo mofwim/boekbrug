@@ -8,7 +8,7 @@
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
-import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
 
 type Mode = 'excl' | 'incl'
 type Locale = 'nl' | 'en'
@@ -143,6 +143,7 @@ const s = {
 export default function BtwCalculator({ locale = 'nl' }: { locale?: Locale }) {
   const t = COPY[locale]
   const fmt = locale === 'en' ? formatEuroEN : formatEuroNL
+  const parseNum = locale === 'en' ? parseAmountEN : parseAmountNL
   const [mode, setMode] = useState<Mode>('excl')
   const [amount, setAmount] = useState('100')
   const [rate, setRate] = useState(21)

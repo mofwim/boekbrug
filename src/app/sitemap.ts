@@ -32,7 +32,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   // [EN-TOOLS] English versions of the calculators (listed here as they ship),
   // targeting expat / English search demand. Priority 0.6 — below the primary
   // Dutch tools but indexable.
-  const EN_TOOL_PATHS = ['/en/btw-berekenen']
+  const EN_TOOL_PATHS = ['/en/btw-berekenen', '/en/netto-inkomen-zzp']
   const enToolPages: MetadataRoute.Sitemap = EN_TOOL_PATHS.map((slug) => ({
     url: `${SITE_URL}${slug}`,
     lastModified,

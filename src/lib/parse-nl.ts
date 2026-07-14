@@ -15,6 +15,26 @@
 // appears, it's thousands grouping ONLY when every dot is followed by exactly 3
 // digits (e.g. 40.000, 1.250.000); otherwise it's a decimal point.
 
+/**
+ * English-style amount parser for the public /en tool pages: comma = thousands
+ * separator, dot = decimal. The counterpart to parseAmountNL (Dutch
+ * conventions), because an English user types "50,000" for fifty-thousand,
+ * which parseAmountNL would read as 50.
+ *
+ *   "50,000"     → 50000
+ *   "1,234.56"   → 1234.56
+ *   "50000"      → 50000
+ *   "0.25"       → 0.25
+ */
+export function parseAmountEN(input: string | number | null | undefined): number {
+  if (typeof input === 'number') return isFinite(input) ? input : 0
+  const t = String(input ?? '')
+    .trim()
+    .replace(/[,\s]/g, '') // strip thousands separators and spaces; dot stays decimal
+  const n = parseFloat(t)
+  return isFinite(n) ? n : 0
+}
+
 export function parseAmountNL(input: string | number | null | undefined): number {
   if (typeof input === 'number') return isFinite(input) ? input : 0
   let t = String(input ?? '').trim()
