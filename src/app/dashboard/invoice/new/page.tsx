@@ -577,8 +577,13 @@ function NewInvoicePageContent() {
     setShowDropdown(false)
   }
 
-  async function saveNewClient(userId: string) {
-    if (!clientName || selectedClientId) return
+  // Returns the client_id to persist on the invoice. When a customer is typed
+  // inline (no dropdown pick, no ?client_id), we insert the client row here and
+  // return its fresh id — the caller MUST use this return value, not the
+  // selectedClientId state, which React has not yet updated within the same
+  // handler tick (stale closure would otherwise drop the invoice→klant link).
+  async function saveNewClient(userId: string): Promise<string | null> {
+    if (!clientName || selectedClientId) return selectedClientId
     const { data } = await supabase.from('clients').insert({
       user_id: userId,
       name: clientName,
@@ -588,7 +593,8 @@ function NewInvoicePageContent() {
       city: clientCity,
       btw_number: clientBtw,
     }).select().single()
-    if (data) setSelectedClientId(data.id)
+    if (data) { setSelectedClientId(data.id); return data.id }
+    return null
   }
 
   // ─── Lines ─────────────────────────────────────────────────────────────────
@@ -851,7 +857,7 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    await saveNewClient(user.id)
+    const resolvedClientId = await saveNewClient(user.id)
 
     // [BOEK-031] Always compute fresh totals — avoid stale closure — May 2026
     const currentSign = invoiceType === 'creditnota' ? -1 : 1
@@ -885,7 +891,9 @@ function NewInvoicePageContent() {
       // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
       source: 'created',
       client_name: clientName,
-      client_id: selectedClientId,
+      // Use the id returned by saveNewClient (fresh, non-stale) so an inline-typed
+      // customer's just-created row is linked — not the not-yet-updated state.
+      client_id: resolvedClientId,
       client_email: clientEmail,
       client_address: clientAddress,
       client_postal_code: clientPostal,

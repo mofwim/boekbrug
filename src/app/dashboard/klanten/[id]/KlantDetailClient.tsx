@@ -42,13 +42,18 @@ export default function KlantDetailClient({ client, invoices, totals }: {
   const [notes, setNotes] = useState(client.notes ?? '')
   const [savedNote, setSavedNote] = useState<string>(client.notes ?? '')
   const [savingNote, setSavingNote] = useState(false)
+  const [noteError, setNoteError] = useState('')
 
   async function saveNotes() {
     setSavingNote(true)
+    setNoteError('')
     const supabase = createClient()
     const { error } = await supabase.from('clients').update({ notes: notes.trim() || null }).eq('id', client.id)
     setSavingNote(false)
-    if (!error) setSavedNote(notes.trim())
+    // Never claim "saved" on failure — surface the error and keep the button so
+    // the owner knows the note did NOT persist.
+    if (error) setNoteError('Opslaan mislukt — probeer opnieuw.')
+    else setSavedNote(notes.trim())
   }
 
   function newInvoice() {
@@ -94,6 +99,9 @@ export default function KlantDetailClient({ client, invoices, totals }: {
         <Card title="Notities">
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Context over deze klant — afspraken, voorkeuren, betaalgedrag…"
             rows={3} style={{ width: '100%', boxSizing: 'border-box', border: `1px solid ${M3.outlineVariant}`, borderRadius: 10, padding: '10px 12px', fontSize: 14, fontFamily: FONT, resize: 'vertical', outline: 'none', color: M3.onSurface }} />
+          {noteError && (
+            <div style={{ marginTop: 8, fontSize: 12.5, color: M3.error }}>{noteError}</div>
+          )}
           {notesDirty && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
               <button onClick={saveNotes} disabled={savingNote} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT }}>{savingNote ? 'Opslaan…' : 'Notitie opslaan'}</button>
