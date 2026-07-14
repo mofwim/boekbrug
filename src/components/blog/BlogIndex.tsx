@@ -40,12 +40,14 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
             {t.heading}
           </h1>
           <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto 18px', maxWidth: 560 }}>{t.intro}</p>
-          {/* Language switch — makes the other-locale blog discoverable from the index */}
+          {/* Language switch — makes the other-locale blog discoverable from the index.
+              A big, filled button so it stands out clearly at the top of the index. */}
           <div style={{ marginBottom: 32 }}>
             <Link
               href={t.switchHref}
-              style={{ display: 'inline-block', fontSize: 13, fontWeight: 600, color: '#007aff', background: '#e8f1ff', border: '1px solid #cfe1ff', borderRadius: 9999, padding: '6px 14px', textDecoration: 'none' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 17, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '13px 28px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.30)' }}
             >
+              <span aria-hidden="true" style={{ fontSize: 19 }}>🌐</span>
               {t.switchLabel} →
             </Link>
           </div>
