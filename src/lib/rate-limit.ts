@@ -40,6 +40,10 @@ export const RATE_LIMITS = {
   // unbounded ANTHROPIC spend on the main intake/onboarding/email pipelines.
   AI_OCR:              { maxRequests: 60, windowMinutes: 60 },    // 60 documents / hour
   AI_TRANSLATE:        { maxRequests: 120, windowMinutes: 60 },   // 120 short text calls / hour
+  // [BETAALVERZOEK] Public /pay/[token] read — anonymous surface. Bucketed per
+  // TOKEN (a uuid), so a single leaked/shared link can't be hammered, while a real
+  // customer refreshing the page a few times is never blocked.
+  PUBLIC_PAY:          { maxRequests: 120, windowMinutes: 60 },   // 120 reads / hour per link
 } as const
 
 // ── Main function ─────────────────────────────────────

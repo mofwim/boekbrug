@@ -961,6 +961,7 @@ export type Database = {
           payment_date: string | null
           payment_method: string | null
           payment_prepared_at: string | null
+          pay_token: string | null
           payment_reference: string | null
           pdf_url: string | null
           receiver_id: string | null
@@ -1003,6 +1004,7 @@ export type Database = {
           payment_date?: string | null
           payment_method?: string | null
           payment_prepared_at?: string | null
+          pay_token?: string | null
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
@@ -1045,6 +1047,7 @@ export type Database = {
           payment_date?: string | null
           payment_method?: string | null
           payment_prepared_at?: string | null
+          pay_token?: string | null
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null

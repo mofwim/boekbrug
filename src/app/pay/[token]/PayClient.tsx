@@ -1,0 +1,146 @@
+'use client'
+
+// src/app/pay/[token]/PayClient.tsx
+// [BETAALVERZOEK] The customer-facing payment view. Loads the allowlisted data from
+// /api/pay/[token], renders a "Scan om te betalen" EPC/SEPA QR (from the owner's OWN
+// IBAN) and the copy-able IBAN/amount/reference. HONEST by design: it states clearly
+// that BoekBrug does not process the payment — the customer pays from their own bank.
+// No money moves through us.
+
+import { useEffect, useState } from 'react'
+
+interface PayView {
+  invoiceNumber: string | null
+  clientName: string | null
+  beneficiaryName: string
+  iban: string
+  amount: number
+  reference: string
+  status: string | null
+  dueDate: string | null
+  epcPayload: string
+  alreadyPaid: boolean
+}
+
+const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
+const fmtIban = (s: string) => s.replace(/(.{4})/g, '$1 ').trim()
+const dateNL = (iso: string | null) =>
+  iso ? new Date(iso + 'T00:00:00').toLocaleDateString('nl-NL', { day: '2-digit', month: 'long', year: 'numeric' }) : null
+
+export default function PayClient({ token }: { token: string }) {
+  const [view, setView] = useState<PayView | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [qr, setQr] = useState('')
+  const [copied, setCopied] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/pay/${token}`)
+        if (!res.ok) {
+          if (!cancelled) { setError('Deze betaallink is niet (meer) geldig.'); setLoading(false) }
+          return
+        }
+        const data: PayView = await res.json()
+        if (cancelled) return
+        setView(data)
+        setLoading(false)
+        try {
+          const QR = await import('qrcode')
+          const url = await QR.toDataURL(data.epcPayload, { margin: 1, width: 240 })
+          if (!cancelled) setQr(url)
+        } catch { /* QR is a convenience; the manual details below always work */ }
+      } catch {
+        if (!cancelled) { setError('Kon de betaalgegevens niet laden.'); setLoading(false) }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [token])
+
+  async function copy(value: string, label: string) {
+    try { await navigator.clipboard.writeText(value) } catch { /* clipboard may be blocked */ }
+    setCopied(label)
+    setTimeout(() => setCopied(''), 1500)
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 16px 64px' }}>
+      <div style={{ width: '100%', maxWidth: 440 }}>
+        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#1c1c1e', letterSpacing: -0.4 }}>Betaalverzoek</div>
+        </div>
+
+        {loading && <Card><div style={{ textAlign: 'center', color: '#8e8e93', padding: '30px 0' }}>Laden…</div></Card>}
+
+        {!loading && error && (
+          <Card><div style={{ textAlign: 'center', color: '#b3261e', padding: '24px 8px', fontSize: 15, lineHeight: 1.5 }}>{error}</div></Card>
+        )}
+
+        {!loading && view && (
+          <>
+            {view.alreadyPaid && (
+              <div style={{ background: '#e6f4ea', border: '1px solid #b7e0c3', color: '#137333', borderRadius: 14, padding: '12px 16px', marginBottom: 14, fontSize: 14.5, fontWeight: 600, textAlign: 'center' }}>
+                ✓ Deze factuur is al als betaald gemarkeerd.
+              </div>
+            )}
+
+            <Card>
+              <div style={{ textAlign: 'center', paddingBottom: 6 }}>
+                <div style={{ fontSize: 13, color: '#8e8e93' }}>Te betalen aan</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', margin: '2px 0 10px' }}>{view.beneficiaryName}</div>
+                <div style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', letterSpacing: -1 }}>{eur.format(view.amount)}</div>
+                {view.invoiceNumber && <div style={{ fontSize: 13.5, color: '#6b6b6e', marginTop: 4 }}>Factuur {view.invoiceNumber}{view.clientName ? ` · ${view.clientName}` : ''}</div>}
+                {dateNL(view.dueDate) && <div style={{ fontSize: 13, color: '#8e8e93', marginTop: 2 }}>Vervaldatum {dateNL(view.dueDate)}</div>}
+              </div>
+
+              {qr && !view.alreadyPaid && (
+                <div style={{ textAlign: 'center', margin: '18px 0 6px' }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={qr} alt="Betaal-QR" width={200} height={200} style={{ borderRadius: 12 }} />
+                  <div style={{ fontSize: 13, color: '#6b6b6e', marginTop: 6 }}>Scan met je bankapp om te betalen</div>
+                </div>
+              )}
+            </Card>
+
+            <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#8e8e93', margin: '18px 4px 8px' }}>OF MAAK ZELF OVER</div>
+            <Card>
+              <CopyRow label="IBAN" value={fmtIban(view.iban)} raw={view.iban} onCopy={copy} copied={copied} />
+              <CopyRow label="Bedrag" value={eur.format(view.amount)} raw={view.amount.toFixed(2)} onCopy={copy} copied={copied} />
+              <CopyRow label="Naam" value={view.beneficiaryName} raw={view.beneficiaryName} onCopy={copy} copied={copied} />
+              {view.reference && <CopyRow label="Kenmerk" value={view.reference} raw={view.reference} onCopy={copy} copied={copied} last />}
+            </Card>
+
+            <p style={{ fontSize: 12, color: '#8e8e93', textAlign: 'center', lineHeight: 1.6, marginTop: 18, padding: '0 8px' }}>
+              Vermeld het kenmerk bij je betaling, dan wordt de factuur automatisch afgeletterd.
+              BoekBrug verwerkt de betaling niet — je betaalt rechtstreeks vanuit je eigen bank.
+            </p>
+          </>
+        )}
+
+        <div style={{ textAlign: 'center', fontSize: 11, color: '#c4c4c9', marginTop: 28 }}>Mogelijk gemaakt door BoekBrug</div>
+      </div>
+    </div>
+  )
+}
+
+function Card({ children }: { children: React.ReactNode }) {
+  return <div style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: 20, boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>{children}</div>
+}
+
+function CopyRow({ label, value, raw, onCopy, copied, last }: {
+  label: string; value: string; raw: string; onCopy: (v: string, l: string) => void; copied: string; last?: boolean
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 0', borderBottom: last ? 'none' : '1px solid #f2f2f7' }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: '#8e8e93' }}>{label}</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: '#1c1c1e', wordBreak: 'break-all' }}>{value}</div>
+      </div>
+      <button onClick={() => onCopy(raw, label)} style={{ flexShrink: 0, background: '#f2f2f7', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, color: copied === label ? '#137333' : '#007aff', cursor: 'pointer' }}>
+        {copied === label ? 'Gekopieerd' : 'Kopieer'}
+      </button>
+    </div>
+  )
+}
