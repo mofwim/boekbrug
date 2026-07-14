@@ -104,7 +104,7 @@ export function reconcileCardDay(input: CardDayInput): CardDayResult {
       breaks.push({ kind: "commission_implausible", expected: 0, actual: commission, diff: commission,
         note: `Commissie (${commission.toFixed(2)}) is meer dan ${(maxCommPct * 100).toFixed(0)}% van de kaartomzet — controleer of de bank-uitbetaling bij deze dag hoort.` });
     } else if (commission > 0) {
-      notes.push(`Acquirer-commissie deze dag: €${commission.toFixed(2)} (bruto ${input.eftGross.toFixed(2)} − netto ${input.bankNet.toFixed(2)}). Geboekt als kosten; de BTW hierop komt van de afrekening/factuur van de acquirer, niet verzonnen.`);
+      notes.push(`Acquirer-commissie deze dag: €${commission.toFixed(2)} (bruto ${input.eftGross.toFixed(2)} − netto ${input.bankNet.toFixed(2)}). Geboekt als betaalkosten; binnenlandse PIN-transactiekosten zijn BTW-VRIJGESTELD (vrijstelling betalingsverkeer), dus er wordt geen voorbelasting geclaimd.`);
     }
   } else if (input.eftGross != null) {
     notes.push("Bank-uitbetaling nog niet gekoppeld: commissie voor deze dag is nog niet bekend (upload het bankafschrift met de acquirer-uitbetaling).");
