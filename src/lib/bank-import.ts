@@ -14,6 +14,7 @@
 //       new period (new date)  → different key             → insert as new
 
 import type { BankTransaction } from "./bank-parser";
+import { classifyBankTransaction } from "./bank-identity";
 
 /** Row shape inserted into bank_transactions. status starts 'pending' (human confirms later). */
 export interface BankTransactionRow {
@@ -24,6 +25,12 @@ export interface BankTransactionRow {
   counterpart_name: string | null;
   reference: string | null;
   status: "pending";
+  // [BANK-AUTOCAT] Structural identity assigned at import (pos_income / fee / tax /
+  // transfer / prive). Only the UNAMBIGUOUS, structurally-detectable ones are set; a
+  // genuine business line the classifier can't explain stays null for the owner to code
+  // as kosten/omzet. Without this every line imported as null, so a retail store's card
+  // settlements (AFREK. BETAALAUTOMAAT) never reached the result until manually tagged.
+  category: string | null;
 }
 
 /** Subset of an existing DB row needed for dedup (from a scoped SELECT).
@@ -125,15 +132,21 @@ export function mapToRows(
   transactions: BankTransaction[],
   userId: string
 ): BankTransactionRow[] {
-  return transactions.map((t) => ({
-    user_id: userId,
-    date: t.date || null,
-    amount: t.amount,
-    description: t.description || null,
-    counterpart_name: t.counterpartName,
-    reference: t.reference,
-    status: "pending" as const,
-  }));
+  return transactions.map((t) => {
+    // Auto-classify the structural identities (card takings, fees, tax, transfers, privé).
+    // 'unknown' → null so the genuine business lines still go through human coding.
+    const id = classifyBankTransaction(t.counterpartName, t.description, t.amount);
+    return {
+      user_id: userId,
+      date: t.date || null,
+      amount: t.amount,
+      description: t.description || null,
+      counterpart_name: t.counterpartName,
+      reference: t.reference,
+      status: "pending" as const,
+      category: id === "unknown" ? null : id,
+    };
+  });
 }
 
 /** A stored bank_transactions row, as selected for the matching run (phase 3). */
