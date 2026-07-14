@@ -111,6 +111,10 @@ export interface VerifyInvoiceResult {
     vendor?: number;
     invoice_number?: number;
     invoice_date?: number;
+    // [TRUST-AMOUNTS] The reader's own certainty about the AMOUNTS it read — the
+    // money-truth. Only set when the model actually reports it; absent means "no
+    // signal", NOT "certain" (import-health only flags a low score that is present).
+    amount?: number;
   };
 }
 
@@ -750,7 +754,8 @@ Return only a JSON object with these exact keys:
   "field_confidence": {
     "vendor": number between 0 and 1,
     "invoice_number": number between 0 and 1,
-    "invoice_date": number between 0 and 1
+    "invoice_date": number between 0 and 1,
+    "amount": number between 0 and 1
   },
   "reason": string or null
 }
@@ -882,6 +887,11 @@ Per-field confidence rules:
   like a page number, customer number, or date rather than a clear invoice number.
 - field_confidence.invoice_date: LOW if multiple dates were present (invoice / due / delivery)
   and it was unclear which is the invoice date.
+- field_confidence.amount: how certain you are the AMOUNTS (total_ex_btw / btw_amount /
+  total_inc_btw) are correct. This is the most important score — it is the money. LOW
+  (< 0.7) if any digit was blurry/cut off, the currency or decimal separator was unclear,
+  totals were handwritten, or you had to infer a total from partial figures. A confidently
+  WRONG amount is the worst outcome — when unsure, score LOW so the user is asked to check.
 - due_date: the EXPLICIT due/expiry date if the invoice prints one ("Vervaldatum",
   "Te betalen voor", "Uiterste betaaldatum", "Betalen voor"). Return it as
   "YYYY-MM-DD". If no explicit due date is printed, set due_date to null — do NOT
@@ -1010,6 +1020,13 @@ Return JSON only.`;
       vendor: clamp01(parsed.field_confidence?.vendor),
       invoice_number: clamp01(parsed.field_confidence?.invoice_number),
       invoice_date: clamp01(parsed.field_confidence?.invoice_date),
+      // [TRUST-AMOUNTS] Only carry the amount score when the model actually gave one.
+      // Unlike the fields above, we do NOT default a missing amount score to 1 —
+      // "no signal" must not read as "certain" on the money-truth. import-health
+      // flags it only when it is present and low, so absence fabricates no doubt.
+      ...(typeof parsed.field_confidence?.amount === 'number'
+        ? { amount: Math.min(1, Math.max(0, parsed.field_confidence.amount)) }
+        : {}),
     };
 
     // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
