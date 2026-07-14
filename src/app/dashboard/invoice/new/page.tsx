@@ -380,6 +380,7 @@ function NewInvoicePageContent() {
   const replacesNumberParam = searchParams.get('replacesNumber') ?? ''
   // AI-generated params from ZzpDashboard
   const aiClientName    = searchParams.get('client_name') ?? ''
+  const aiClientId      = searchParams.get('client_id') || null  // [KLANTEN] pre-link to a customer
   const aiClientEmail   = searchParams.get('client_email') ?? ''
   // [BOEK-029] offerte→factuur params — all client fields
   const aiClientAddress = searchParams.get('client_address') ?? ''
@@ -429,7 +430,7 @@ function NewInvoicePageContent() {
   const [clients, setClients]               = useState<Client[]>([])
   const [clientSearch, setClientSearch]     = useState(aiClientName)
   const [showDropdown, setShowDropdown]     = useState(false)
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(aiClientId)
   const autocompleteRef                     = useRef<HTMLDivElement>(null)
 
   // ── Client fields ────────────────────────────────────────────────────────────
@@ -734,6 +735,7 @@ function NewInvoicePageContent() {
       // defaulting to the invoice date.
       delivery_date: invoiceDate,
       client_name: clientName,
+      client_id: selectedClientId,
       client_email: clientEmail,
       client_address: clientAddress,
       client_postal_code: clientPostal,
@@ -883,6 +885,7 @@ function NewInvoicePageContent() {
       // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
       source: 'created',
       client_name: clientName,
+      client_id: selectedClientId,
       client_email: clientEmail,
       client_address: clientAddress,
       client_postal_code: clientPostal,
