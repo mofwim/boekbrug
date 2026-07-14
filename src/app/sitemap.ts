@@ -29,6 +29,23 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: t.priority,
   }))
 
+  // [EN-TOOLS] English versions of the calculators (listed here as they ship),
+  // targeting expat / English search demand. Priority 0.6 — below the primary
+  // Dutch tools but indexable.
+  const EN_TOOL_PATHS = [
+    '/en/btw-berekenen',
+    '/en/netto-inkomen-zzp',
+    '/en/uurtarief-berekenen',
+    '/en/kilometervergoeding',
+    '/en/btw-aangifte-berekenen',
+  ]
+  const enToolPages: MetadataRoute.Sitemap = EN_TOOL_PATHS.map((slug) => ({
+    url: `${SITE_URL}${slug}`,
+    lastModified,
+    changeFrequency: 'monthly',
+    priority: 0.6,
+  }))
+
   // [BLOG] Every published article, in both locales. NL is primary (0.7); EN
   // serves expats (0.5). Uses the article's updatedAt/publishedAt as lastmod so
   // crawlers see genuine freshness.
@@ -41,5 +58,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     })),
   )
 
-  return [...staticPages, ...toolPages, ...blogPages]
+  return [...staticPages, ...toolPages, ...enToolPages, ...blogPages]
 }

@@ -5,6 +5,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import FactuurScanner from './FactuurScanner'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
@@ -127,6 +128,7 @@ export default function FactuurScannenPage() {
       </div>
 
       <ToolsCrossLinks currentSlug="/factuur-scannen" />
+      <KennisbankLinks tool="/factuur-scannen" />
       <PublicFooter />
     </div>
   )

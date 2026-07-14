@@ -7,16 +7,30 @@
 import Link from 'next/link'
 import type { Locale } from '@/lib/blog'
 
-const COPY: Record<Locale, { heading: string; body: string; register: string }> = {
+// Tools that have a published English version at /en/<slug>. For EN articles we
+// route the CTA to the English tool so the reader stays in English; tools not
+// listed here (factuur-maken, factuur-scannen, tools hub) have no EN page yet
+// and keep their Dutch path.
+const EN_TOOLS = new Set([
+  '/btw-berekenen',
+  '/netto-inkomen-zzp',
+  '/uurtarief-berekenen',
+  '/kilometervergoeding',
+  '/btw-aangifte-berekenen',
+])
+
+const COPY: Record<Locale, { heading: string; body: string; register: string; reassure: string }> = {
   nl: {
-    heading: 'Klaar om het zelf te doen?',
-    body: 'Of maak een gratis BoekBrug-account en houd je hele administratie op één plek.',
+    heading: 'Doe het meteen goed — gratis',
+    body: 'Of houd je facturen, bonnetjes en btw bij op één plek in BoekBrug. Automatisch per kwartaal opgeteld en klaar voor je aangifte en je boekhouder.',
     register: 'Gratis account maken',
+    reassure: 'Gratis account, in een minuut geregeld. Je data blijft van jou.',
   },
   en: {
-    heading: 'Ready to do it yourself?',
-    body: 'Or create a free BoekBrug account and keep your whole administration in one place.',
+    heading: 'Get it right from the start — free',
+    body: 'Or keep your invoices, receipts and VAT in one place in BoekBrug. Added up per quarter automatically and ready for your tax return and your accountant.',
     register: 'Create a free account',
+    reassure: 'Free account, set up in a minute. Your data stays yours.',
   },
 }
 
@@ -30,6 +44,7 @@ export default function ToolCTA({
   relatedToolLabel: string
 }) {
   const t = COPY[locale]
+  const toolHref = locale === 'en' && EN_TOOLS.has(relatedTool) ? `/en${relatedTool}` : relatedTool
   return (
     <aside
       style={{
@@ -44,34 +59,48 @@ export default function ToolCTA({
         {t.heading}
       </div>
 
-      {relatedTool && relatedToolLabel && (
+      <p style={{ fontSize: 15, lineHeight: 1.6, color: '#3c3c43', margin: '0 0 18px' }}>
+        {t.body}
+      </p>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        {relatedTool && relatedToolLabel && (
+          <Link
+            href={toolHref}
+            style={{
+              backgroundColor: '#007aff',
+              color: '#fff',
+              fontSize: 15,
+              fontWeight: 600,
+              padding: '13px 24px',
+              borderRadius: 9999,
+              textDecoration: 'none',
+              display: 'inline-block',
+            }}
+          >
+            {relatedToolLabel} →
+          </Link>
+        )}
+
         <Link
-          href={relatedTool}
+          href="/register"
           style={{
-            backgroundColor: '#007aff',
-            color: '#fff',
+            backgroundColor: '#fff',
+            color: '#007aff',
             fontSize: 15,
             fontWeight: 600,
             padding: '13px 24px',
             borderRadius: 9999,
+            border: '1.5px solid #007aff',
             textDecoration: 'none',
             display: 'inline-block',
           }}
         >
-          {relatedToolLabel} →
+          {t.register} →
         </Link>
-      )}
+      </div>
 
-      <p style={{ fontSize: 15, lineHeight: 1.6, color: '#3c3c43', margin: '18px 0 10px' }}>
-        {t.body}
-      </p>
-
-      <Link
-        href="/register"
-        style={{ fontSize: 15, fontWeight: 600, color: '#007aff', textDecoration: 'none' }}
-      >
-        {t.register} →
-      </Link>
+      <p style={{ fontSize: 13, color: '#6b6b6e', margin: '14px 0 0' }}>{t.reassure}</p>
     </aside>
   )
 }

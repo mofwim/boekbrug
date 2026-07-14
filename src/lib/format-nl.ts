@@ -58,6 +58,21 @@ export function formatEuroNL(n: number | null | undefined): string {
 }
 
 /**
+ * Number → "€1,234.56" (English/EU-English formatting: comma thousands, dot
+ * decimal). Additive counterpart to formatEuroNL for the public English tool
+ * pages only — the Dutch app/tools keep using formatEuroNL unchanged.
+ */
+export function formatEuroEN(n: number | null | undefined): string {
+  const v = typeof n === 'number' && isFinite(n) ? n : 0
+  return new Intl.NumberFormat('en-IE', {
+    style: 'currency',
+    currency: 'EUR',
+  })
+    .format(v)
+    .replace(/ /g, ' ')
+}
+
+/**
  * btw_rate does NOT exist as a column on invoices (house rule) —
  * always derived: round(btw_amount / total_ex_btw * 100).
  * Negative pairs (creditnota) yield the correct positive rate.

@@ -9,18 +9,22 @@ import PublicFooter from '@/components/public-footer'
 import ArticleCard from '@/components/blog/ArticleCard'
 import type { Locale, Post } from '@/lib/blog'
 
-const COPY: Record<Locale, { heading: string; intro: string; empty: string; tools: string }> = {
+const COPY: Record<Locale, { heading: string; intro: string; empty: string; tools: string; switchLabel: string; switchHref: string }> = {
   nl: {
     heading: 'Blog',
     intro: 'Kennis en tips voor ZZP’ers — belasting, facturen en je administratie, in gewone taal.',
     empty: 'Er zijn nog geen artikelen. Kom snel terug.',
     tools: 'Bekijk onze gratis tools →',
+    switchLabel: 'Read in English',
+    switchHref: '/en/blog',
   },
   en: {
     heading: 'Blog',
     intro: 'Knowledge and tips for freelancers in the Netherlands — tax, invoices and admin, in plain language.',
     empty: 'No articles yet. Check back soon.',
     tools: 'Explore our free tools →',
+    switchLabel: 'Lees in het Nederlands',
+    switchHref: '/blog',
   },
 }
 
@@ -35,7 +39,18 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
           <h1 style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', margin: '0 0 10px', letterSpacing: -0.5 }}>
             {t.heading}
           </h1>
-          <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto 36px', maxWidth: 560 }}>{t.intro}</p>
+          <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto 18px', maxWidth: 560 }}>{t.intro}</p>
+          {/* Language switch — makes the other-locale blog discoverable from the index.
+              A big, filled button so it stands out clearly at the top of the index. */}
+          <div style={{ marginBottom: 32 }}>
+            <Link
+              href={t.switchHref}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 17, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '13px 28px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.30)' }}
+            >
+              <span aria-hidden="true" style={{ fontSize: 19 }}>🌐</span>
+              {t.switchLabel} →
+            </Link>
+          </div>
         </div>
 
         <div style={{ paddingBottom: 48 }}>

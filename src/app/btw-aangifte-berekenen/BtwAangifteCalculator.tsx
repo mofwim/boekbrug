@@ -7,11 +7,41 @@
 
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { formatEuroNL } from '@/lib/format-nl'
-import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
+import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
+
+type Locale = 'nl' | 'en'
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+// UI strings only; the rubrieken/box math is shared and identical. NL default
+// keeps the existing Dutch tool (<BtwAangifteCalculator/>) unchanged.
+const COPY: Record<Locale, {
+  rev21Label: string; rev21Hint: string; rev21Aria: string
+  rev9Label: string; rev9Hint: string; rev9Aria: string
+  inputLabel: string; inputHint: string; inputAria: string
+  toPay: string; toReclaim: string
+  vat21: string; vat9: string; due: string; inputVat: string; balance: string
+  ctaText: string; ctaStrong: string; ctaBtn: string
+}> = {
+  nl: {
+    rev21Label: 'Omzet met 21% BTW (excl. BTW)', rev21Hint: 'Je verkopen tegen het hoge tarief, zonder BTW', rev21Aria: 'Omzet 21%',
+    rev9Label: 'Omzet met 9% BTW (excl. BTW)', rev9Hint: 'Verkopen tegen het lage tarief (voeding, boeken, kappers…)', rev9Aria: 'Omzet 9%',
+    inputLabel: 'Voorbelasting (BTW over je zakelijke kosten)', inputHint: 'De BTW die je zelf betaalde op inkopen en kosten', inputAria: 'Voorbelasting',
+    toPay: 'Te betalen aan de Belastingdienst', toReclaim: 'Terug te vragen van de Belastingdienst',
+    vat21: 'BTW 21% (rubriek 1a)', vat9: 'BTW 9% (rubriek 1b)', due: 'Verschuldigde BTW (rubriek 5a)', inputVat: 'Voorbelasting (rubriek 5b)', balance: 'Saldo (rubriek 5c)',
+    ctaText: 'Nooit meer je BTW handmatig optellen?', ctaStrong: 'BoekBrug doet het per kwartaal.', ctaBtn: 'Gratis proberen →',
+  },
+  en: {
+    rev21Label: 'Revenue at 21% VAT (excl. VAT)', rev21Hint: 'Your sales at the standard rate, without VAT', rev21Aria: 'Revenue 21%',
+    rev9Label: 'Revenue at 9% VAT (excl. VAT)', rev9Hint: 'Sales at the reduced rate (food, books, hairdressers…)', rev9Aria: 'Revenue 9%',
+    inputLabel: 'Input VAT (VAT on your business costs)', inputHint: 'The VAT you paid yourself on purchases and costs', inputAria: 'Input VAT',
+    toPay: 'To pay to the tax office', toReclaim: 'To reclaim from the tax office',
+    vat21: 'VAT 21% (box 1a)', vat9: 'VAT 9% (box 1b)', due: 'VAT due (box 5a)', inputVat: 'Input VAT (box 5b)', balance: 'Balance (box 5c)',
+    ctaText: 'Never add up your VAT by hand again?', ctaStrong: 'BoekBrug does it per quarter.', ctaBtn: 'Try it free →',
+  },
 }
 
 const s = {
@@ -26,8 +56,11 @@ const s = {
   row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f0f0f4' } as React.CSSProperties,
 }
 
-export default function BtwAangifteCalculator() {
-  const [omzet21, setOmzet21] = useState('10.000')
+export default function BtwAangifteCalculator({ locale = 'nl' }: { locale?: Locale }) {
+  const t = COPY[locale]
+  const fmt = locale === 'en' ? formatEuroEN : formatEuroNL
+  const parseNum = locale === 'en' ? parseAmountEN : parseAmountNL
+  const [omzet21, setOmzet21] = useState(locale === 'en' ? '10,000' : '10.000')
   const [omzet9, setOmzet9] = useState('0')
   const [voorbelasting, setVoorbelasting] = useState('500')
 
@@ -48,71 +81,71 @@ export default function BtwAangifteCalculator() {
   return (
     <div style={s.card}>
       <div style={s.group}>
-        <div style={s.label}>Omzet met 21% BTW (excl. BTW)</div>
-        <div style={s.hint}>Je verkopen tegen het hoge tarief, zonder BTW</div>
+        <div style={s.label}>{t.rev21Label}</div>
+        <div style={s.hint}>{t.rev21Hint}</div>
         <div style={s.field}>
           <span style={s.prefix}>€</span>
-          <input style={s.input} value={omzet21} onChange={(e) => setOmzet21(e.target.value)} inputMode="decimal" aria-label="Omzet 21%" autoFocus />
+          <input style={s.input} value={omzet21} onChange={(e) => setOmzet21(e.target.value)} inputMode="decimal" aria-label={t.rev21Aria} autoFocus />
         </div>
       </div>
 
       <div style={s.group}>
-        <div style={s.label}>Omzet met 9% BTW (excl. BTW)</div>
-        <div style={s.hint}>Verkopen tegen het lage tarief (voeding, boeken, kappers…)</div>
+        <div style={s.label}>{t.rev9Label}</div>
+        <div style={s.hint}>{t.rev9Hint}</div>
         <div style={s.field}>
           <span style={s.prefix}>€</span>
-          <input style={s.input} value={omzet9} onChange={(e) => setOmzet9(e.target.value)} inputMode="decimal" aria-label="Omzet 9%" />
+          <input style={s.input} value={omzet9} onChange={(e) => setOmzet9(e.target.value)} inputMode="decimal" aria-label={t.rev9Aria} />
         </div>
       </div>
 
       <div style={s.group}>
-        <div style={s.label}>Voorbelasting (BTW over je zakelijke kosten)</div>
-        <div style={s.hint}>De BTW die je zelf betaalde op inkopen en kosten</div>
+        <div style={s.label}>{t.inputLabel}</div>
+        <div style={s.hint}>{t.inputHint}</div>
         <div style={s.field}>
           <span style={s.prefix}>€</span>
-          <input style={s.input} value={voorbelasting} onChange={(e) => setVoorbelasting(e.target.value)} inputMode="decimal" aria-label="Voorbelasting" />
+          <input style={s.input} value={voorbelasting} onChange={(e) => setVoorbelasting(e.target.value)} inputMode="decimal" aria-label={t.inputAria} />
         </div>
       </div>
 
       <div style={{ marginTop: 8, background: panelColor, borderRadius: 16, padding: '22px 24px', color: '#fff' }}>
         <div style={{ fontSize: 13, opacity: 0.92, fontWeight: 500 }}>
-          {teBetalen ? 'Te betalen aan de Belastingdienst' : 'Terug te vragen van de Belastingdienst'}
+          {teBetalen ? t.toPay : t.toReclaim}
         </div>
         <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -0.5, margin: '2px 0 0' }}>
-          {formatEuroNL(Math.abs(r.saldo))}
+          {fmt(Math.abs(r.saldo))}
         </div>
       </div>
 
       <div style={{ marginTop: 18 }}>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>BTW 21% (rubriek 1a)</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(r.btw21)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.vat21}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(r.btw21)}</span>
         </div>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>BTW 9% (rubriek 1b)</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(r.btw9)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.vat9}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(r.btw9)}</span>
         </div>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>Verschuldigde BTW (rubriek 5a)</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(r.verschuldigd)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.due}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(r.verschuldigd)}</span>
         </div>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>Voorbelasting (rubriek 5b)</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>− {formatEuroNL(r.voor)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.inputVat}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>− {fmt(r.voor)}</span>
         </div>
         <div style={{ ...s.row, borderBottom: 'none' }}>
-          <span style={{ color: '#1c1c1e', fontWeight: 700 }}>Saldo (rubriek 5c)</span>
-          <span style={{ fontWeight: 800, color: '#1c1c1e' }}>{formatEuroNL(r.saldo)}</span>
+          <span style={{ color: '#1c1c1e', fontWeight: 700 }}>{t.balance}</span>
+          <span style={{ fontWeight: 800, color: '#1c1c1e' }}>{fmt(r.saldo)}</span>
         </div>
       </div>
 
       <div style={{ marginTop: 22, background: '#f9f9fb', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c3c43' }}>
-          Nooit meer je BTW handmatig optellen?{' '}
-          <strong style={{ color: '#1c1c1e' }}>BoekBrug doet het per kwartaal.</strong>
+          {t.ctaText}{' '}
+          <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
         </div>
         <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-          Gratis proberen →
+          {t.ctaBtn}
         </Link>
       </div>
     </div>

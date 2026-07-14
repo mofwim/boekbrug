@@ -15,8 +15,41 @@
 
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { formatEuroNL } from '@/lib/format-nl'
-import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
+import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
+
+type Locale = 'nl' | 'en'
+
+// UI strings only — the 2026 tax parameters and the whole calculation are shared
+// and identical for both locales. NL is the default so the existing Dutch tool
+// (<NettoCalculator/>) is unchanged.
+const COPY: Record<Locale, {
+  profitLabel: string; profitHint: string; profitAria: string
+  hoursTitle: string; hoursHint: string; starterTitle: string; starterHint: string
+  netYear: string; perMonth: string; effRate: string
+  rProfit: string; rDeduction: string; rMkb: string; rTaxable: string
+  rIbBefore: string; rCredits: string; rIb: string; rZvw: string
+  ctaText: string; ctaStrong: string; ctaBtn: string
+}> = {
+  nl: {
+    profitLabel: 'Verwachte jaarwinst', profitHint: 'Omzet min zakelijke kosten (vóór ondernemersaftrek)', profitAria: 'Jaarwinst',
+    hoursTitle: 'Ik voldoe aan het urencriterium', hoursHint: '≥ 1.225 uur → zelfstandigenaftrek €1.200',
+    starterTitle: 'Ik ben starter', starterHint: 'Startersaftrek €2.123 (eerste jaren)',
+    netYear: 'Netto over per jaar (schatting)', perMonth: 'per maand', effRate: 'effectieve druk',
+    rProfit: 'Jaarwinst', rDeduction: 'Ondernemersaftrek', rMkb: 'MKB-winstvrijstelling (12,7%)', rTaxable: 'Belastbare winst',
+    rIbBefore: 'Inkomstenbelasting (vóór kortingen)', rCredits: 'Heffingskortingen', rIb: 'Inkomstenbelasting', rZvw: 'Bijdrage Zvw (4,85%)',
+    ctaText: 'Je omzet en BTW altijd bij de hand?', ctaStrong: 'BoekBrug houdt het per kwartaal bij.', ctaBtn: 'Gratis proberen →',
+  },
+  en: {
+    profitLabel: 'Expected annual profit', profitHint: 'Revenue minus business costs (before entrepreneur deduction)', profitAria: 'Annual profit',
+    hoursTitle: 'I meet the hours criterion', hoursHint: '≥ 1,225 hours → self-employed deduction €1,200',
+    starterTitle: 'I am a starter', starterHint: "Starter's deduction €2,123 (first years)",
+    netYear: 'Net per year (estimate)', perMonth: 'per month', effRate: 'effective rate',
+    rProfit: 'Annual profit', rDeduction: 'Entrepreneur deduction', rMkb: 'SME profit exemption (12.7%)', rTaxable: 'Taxable profit',
+    rIbBefore: 'Income tax (before credits)', rCredits: 'Tax credits', rIb: 'Income tax', rZvw: 'Healthcare contribution Zvw (4.85%)',
+    ctaText: 'Your revenue and VAT always at hand?', ctaStrong: 'BoekBrug keeps it per quarter.', ctaBtn: 'Try it free →',
+  },
+}
 
 const P = {
   zelfstandigenaftrek: 1200,
@@ -81,8 +114,11 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
   )
 }
 
-export default function NettoCalculator() {
-  const [winstStr, setWinstStr] = useState('50.000')
+export default function NettoCalculator({ locale = 'nl' }: { locale?: Locale }) {
+  const t = COPY[locale]
+  const fmt = locale === 'en' ? formatEuroEN : formatEuroNL
+  const parseNum = locale === 'en' ? parseAmountEN : parseAmountNL
+  const [winstStr, setWinstStr] = useState(locale === 'en' ? '50,000' : '50.000')
   const [urencriterium, setUrencriterium] = useState(true)
   const [starter, setStarter] = useState(false)
 
@@ -118,53 +154,53 @@ export default function NettoCalculator() {
 
   return (
     <div style={s.card}>
-      <div style={s.label}>Verwachte jaarwinst</div>
-      <div style={s.hint}>Omzet min zakelijke kosten (vóór ondernemersaftrek)</div>
+      <div style={s.label}>{t.profitLabel}</div>
+      <div style={s.hint}>{t.profitHint}</div>
       <div style={s.field}>
         <span style={{ fontSize: 20, color: '#aeaeb2', marginRight: 8 }}>€</span>
-        <input style={s.input} value={winstStr} onChange={(e) => setWinstStr(e.target.value)} inputMode="decimal" aria-label="Jaarwinst" autoFocus />
+        <input style={s.input} value={winstStr} onChange={(e) => setWinstStr(e.target.value)} inputMode="decimal" aria-label={t.profitAria} autoFocus />
       </div>
 
       <div style={s.toggleRow}>
         <div>
-          <div style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>Ik voldoe aan het urencriterium</div>
-          <div style={{ fontSize: 12, color: '#aeaeb2' }}>≥ 1.225 uur → zelfstandigenaftrek €1.200</div>
+          <div style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>{t.hoursTitle}</div>
+          <div style={{ fontSize: 12, color: '#aeaeb2' }}>{t.hoursHint}</div>
         </div>
         <Toggle on={urencriterium} onClick={() => setUrencriterium((v) => !v)} />
       </div>
       <div style={{ ...s.toggleRow, opacity: urencriterium ? 1 : 0.4 }}>
         <div>
-          <div style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>Ik ben starter</div>
-          <div style={{ fontSize: 12, color: '#aeaeb2' }}>Startersaftrek €2.123 (eerste jaren)</div>
+          <div style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>{t.starterTitle}</div>
+          <div style={{ fontSize: 12, color: '#aeaeb2' }}>{t.starterHint}</div>
         </div>
         <Toggle on={starter && urencriterium} onClick={() => urencriterium && setStarter((v) => !v)} />
       </div>
 
       <div style={{ marginTop: 12, background: 'linear-gradient(135deg, #34c759, #1e9e4a)', borderRadius: 16, padding: '22px 24px', color: '#fff' }}>
-        <div style={{ fontSize: 13, opacity: 0.92, fontWeight: 500 }}>Netto over per jaar (schatting)</div>
-        <div style={{ fontSize: 36, fontWeight: 800, letterSpacing: -0.5, margin: '2px 0 0' }}>{formatEuroNL(r.netto)}</div>
+        <div style={{ fontSize: 13, opacity: 0.92, fontWeight: 500 }}>{t.netYear}</div>
+        <div style={{ fontSize: 36, fontWeight: 800, letterSpacing: -0.5, margin: '2px 0 0' }}>{fmt(r.netto)}</div>
         <div style={{ fontSize: 14, opacity: 0.95, marginTop: 4 }}>
-          ≈ {formatEuroNL(r.nettoMaand)} per maand · effectieve druk {String(r.druk).replace('.', ',')}%
+          ≈ {fmt(r.nettoMaand)} {t.perMonth} · {t.effRate} {locale === 'en' ? String(r.druk) : String(r.druk).replace('.', ',')}%
         </div>
       </div>
 
       <div style={{ marginTop: 18 }}>
-        <div style={s.row}><span style={{ color: '#6b6b6e' }}>Jaarwinst</span><span style={{ fontWeight: 600 }}>{formatEuroNL(r.winst)}</span></div>
-        <div style={s.row}><span style={{ color: '#6b6b6e' }}>Ondernemersaftrek</span><span style={{ fontWeight: 600 }}>− {formatEuroNL(r.ondernemersaftrek)}</span></div>
-        <div style={s.row}><span style={{ color: '#6b6b6e' }}>MKB-winstvrijstelling (12,7%)</span><span style={{ fontWeight: 600 }}>− {formatEuroNL(r.mkb)}</span></div>
-        <div style={s.row}><span style={{ color: '#6b6b6e' }}>Belastbare winst</span><span style={{ fontWeight: 600 }}>{formatEuroNL(r.belastbaar)}</span></div>
-        <div style={s.row}><span style={{ color: '#6b6b6e' }}>Inkomstenbelasting (vóór kortingen)</span><span style={{ fontWeight: 600 }}>{formatEuroNL(r.ib)}</span></div>
-        <div style={s.row}><span style={{ color: '#6b6b6e' }}>Heffingskortingen</span><span style={{ fontWeight: 600 }}>− {formatEuroNL(r.korting)}</span></div>
-        <div style={s.row}><span style={{ color: '#6b6b6e' }}>Inkomstenbelasting</span><span style={{ fontWeight: 600 }}>{formatEuroNL(r.ibNa)}</span></div>
-        <div style={{ ...s.row, borderBottom: 'none' }}><span style={{ color: '#6b6b6e' }}>Bijdrage Zvw (4,85%)</span><span style={{ fontWeight: 600 }}>{formatEuroNL(r.zvw)}</span></div>
+        <div style={s.row}><span style={{ color: '#6b6b6e' }}>{t.rProfit}</span><span style={{ fontWeight: 600 }}>{fmt(r.winst)}</span></div>
+        <div style={s.row}><span style={{ color: '#6b6b6e' }}>{t.rDeduction}</span><span style={{ fontWeight: 600 }}>− {fmt(r.ondernemersaftrek)}</span></div>
+        <div style={s.row}><span style={{ color: '#6b6b6e' }}>{t.rMkb}</span><span style={{ fontWeight: 600 }}>− {fmt(r.mkb)}</span></div>
+        <div style={s.row}><span style={{ color: '#6b6b6e' }}>{t.rTaxable}</span><span style={{ fontWeight: 600 }}>{fmt(r.belastbaar)}</span></div>
+        <div style={s.row}><span style={{ color: '#6b6b6e' }}>{t.rIbBefore}</span><span style={{ fontWeight: 600 }}>{fmt(r.ib)}</span></div>
+        <div style={s.row}><span style={{ color: '#6b6b6e' }}>{t.rCredits}</span><span style={{ fontWeight: 600 }}>− {fmt(r.korting)}</span></div>
+        <div style={s.row}><span style={{ color: '#6b6b6e' }}>{t.rIb}</span><span style={{ fontWeight: 600 }}>{fmt(r.ibNa)}</span></div>
+        <div style={{ ...s.row, borderBottom: 'none' }}><span style={{ color: '#6b6b6e' }}>{t.rZvw}</span><span style={{ fontWeight: 600 }}>{fmt(r.zvw)}</span></div>
       </div>
 
       <div style={{ marginTop: 22, background: '#f9f9fb', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c3c43' }}>
-          Je omzet en BTW altijd bij de hand?{' '}
-          <strong style={{ color: '#1c1c1e' }}>BoekBrug houdt het per kwartaal bij.</strong>
+          {t.ctaText}{' '}
+          <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
         </div>
-        <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>Gratis proberen →</Link>
+        <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>{t.ctaBtn}</Link>
       </div>
     </div>
   )

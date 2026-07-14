@@ -6,6 +6,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import UurtariefCalculator from './UurtariefCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
@@ -15,7 +16,10 @@ export const metadata: Metadata = {
   description:
     'Bereken je uurtarief als ZZP’er: gewenst jaarinkomen, zakelijke kosten en factureerbare uren, met buffer voor belasting en pensioen. Gratis, geen account nodig.',
   keywords: ['uurtarief berekenen', 'uurtarief zzp', 'wat moet ik vragen per uur', 'tarief freelancer'],
-  alternates: { canonical: '/uurtarief-berekenen' },
+  alternates: {
+    canonical: '/uurtarief-berekenen',
+    languages: { 'nl-NL': '/uurtarief-berekenen', 'en': '/en/uurtarief-berekenen' },
+  },
   openGraph: {
     title: 'Uurtarief berekenen als ZZP’er',
     description: 'Gewenst inkomen + kosten ÷ factureerbare uren, met buffer. Gratis uurtarief-calculator.',
@@ -140,6 +144,7 @@ export default function UurtariefBerekenenPage() {
       </div>
 
       <ToolsCrossLinks currentSlug="/uurtarief-berekenen" />
+      <KennisbankLinks tool="/uurtarief-berekenen" />
       <PublicFooter />
     </div>
   )

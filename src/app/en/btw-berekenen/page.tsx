@@ -1,46 +1,45 @@
-// src/app/btw-berekenen/page.tsx
-// [BTW-TOOL] Public, login-free BTW calculator — a lead-gen tool for the Dutch
-// market. Server component: owns the SEO metadata + structured data and renders
-// the interactive <BtwCalculator/> (client). Added to middleware PUBLIC_PATHS.
-// Dutch slug on purpose — people search "btw berekenen", not "vat calculator".
+// src/app/en/btw-berekenen/page.tsx
+// [BTW-TOOL/EN] English version of the public BTW (VAT) calculator. Server
+// component: owns English SEO metadata + structured data and renders the SAME
+// interactive <BtwCalculator/> (client) with locale="en". The calculation and
+// number engine are shared and unchanged — only the display language differs.
+// Targets the underserved "Dutch VAT calculator (English)" search demand.
 
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import BtwCalculator from './BtwCalculator'
-import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
-import KennisbankLinks from '@/components/KennisbankLinks'
+import BtwCalculator from '@/app/btw-berekenen/BtwCalculator'
 import PublicFooter from '@/components/public-footer'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
 
 export const metadata: Metadata = {
-  title: 'BTW berekenen (21%, 9% of 0%) — gratis BTW-calculator | BoekBrug',
+  title: 'Dutch VAT calculator (21%, 9% or 0%) — free BTW calculator | BoekBrug',
   description:
-    'Bereken snel je BTW: van bedrag exclusief naar inclusief BTW of andersom, met 21%, 9% of 0%. Gratis, direct in je browser, geen account nodig.',
-  keywords: ['btw berekenen', 'btw calculator', 'btw 21 procent', 'btw 9 procent', 'inclusief exclusief btw'],
+    'Quickly calculate Dutch VAT (BTW): from an amount excluding VAT to including VAT or the other way around, at 21%, 9% or 0%. Free, instant, in your browser, no account needed.',
+  keywords: ['dutch vat calculator', 'btw calculator english', 'vat calculator netherlands', 'calculate vat netherlands', '21% vat netherlands'],
   alternates: {
-    canonical: '/btw-berekenen',
+    canonical: '/en/btw-berekenen',
     languages: { 'nl-NL': '/btw-berekenen', 'en': '/en/btw-berekenen' },
   },
   openGraph: {
-    title: 'BTW berekenen — gratis BTW-calculator',
-    description: 'Van exclusief naar inclusief BTW of andersom. 21%, 9% of 0%. Gratis en direct.',
+    title: 'Dutch VAT calculator — free BTW calculator',
+    description: 'From excluding to including VAT or the other way around. 21%, 9% or 0%. Free and instant.',
     type: 'website',
   },
 }
 
 const faq = [
   {
-    q: 'Hoe bereken ik de BTW over een bedrag?',
-    a: 'BTW over een bedrag exclusief BTW = bedrag × tarief. Bij 21% reken je € 100 × 21% = € 21 BTW, dus € 121 inclusief BTW.',
+    q: 'How do I calculate VAT on an amount?',
+    a: 'VAT on an amount excluding VAT = amount × rate. At 21% you calculate € 100 × 21% = € 21 VAT, so € 121 including VAT.',
   },
   {
-    q: 'Hoe haal ik de BTW uit een bedrag inclusief BTW?',
-    a: 'Deel het bedrag inclusief BTW door 1 plus het tarief. Bij 21%: € 121 ÷ 1,21 = € 100 exclusief, de BTW is € 21.',
+    q: 'How do I take the VAT out of an amount including VAT?',
+    a: 'Divide the amount including VAT by 1 plus the rate. At 21%: € 121 ÷ 1.21 = € 100 excluding, and the VAT is € 21.',
   },
   {
-    q: 'Welke BTW-tarieven zijn er in Nederland?',
-    a: 'Het algemene tarief is 21%. Het lage tarief is 9% (bijvoorbeeld voeding, boeken, kappers). En 0% voor sommige goederen en diensten (bijvoorbeeld export binnen de EU).',
+    q: 'Which VAT rates exist in the Netherlands?',
+    a: 'The standard rate is 21%. The reduced rate is 9% (for example food, books, hairdressers). And 0% for some goods and services (for example exports within the EU).',
   },
 ]
 
@@ -49,11 +48,11 @@ const jsonLd = {
   '@graph': [
     {
       '@type': 'WebApplication',
-      name: 'BTW-calculator',
+      name: 'Dutch VAT calculator',
       applicationCategory: 'FinanceApplication',
       operatingSystem: 'Web',
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'EUR' },
-      description: 'Gratis BTW-calculator: bereken BTW van exclusief naar inclusief of andersom (21%, 9%, 0%).',
+      description: 'Free Dutch VAT (BTW) calculator: calculate VAT from excluding to including or the other way around (21%, 9%, 0%).',
     },
     {
       '@type': 'FAQPage',
@@ -67,8 +66,8 @@ const jsonLd = {
       '@type': 'BreadcrumbList',
       itemListElement: [
         { '@type': 'ListItem', position: 1, name: 'Home', item: absoluteUrl('/') },
-        { '@type': 'ListItem', position: 2, name: 'Gratis tools', item: absoluteUrl('/tools') },
-        { '@type': 'ListItem', position: 3, name: 'BTW berekenen', item: absoluteUrl('/btw-berekenen') },
+        { '@type': 'ListItem', position: 2, name: 'Blog', item: absoluteUrl('/en/blog') },
+        { '@type': 'ListItem', position: 3, name: 'Dutch VAT calculator', item: absoluteUrl('/en/btw-berekenen') },
       ],
     },
   ],
@@ -78,7 +77,7 @@ const wrap: React.CSSProperties = { maxWidth: 680, margin: '0 auto', padding: '0
 const h2: React.CSSProperties = { fontSize: 20, fontWeight: 700, color: '#1c1c1e', margin: '0 0 12px' }
 const p: React.CSSProperties = { fontSize: 15, lineHeight: 1.65, color: '#3c3c43', margin: '0 0 14px' }
 
-export default function BtwBerekenenPage() {
+export default function EnBtwCalculatorPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
@@ -86,47 +85,51 @@ export default function BtwBerekenenPage() {
 
       <div style={{ ...wrap, paddingTop: 40, paddingBottom: 8, textAlign: 'center' }}>
         <h1 style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', margin: '0 0 8px', letterSpacing: -0.5 }}>
-          BTW berekenen
+          Dutch VAT calculator
         </h1>
-        <p style={{ fontSize: 16, color: '#6b6b6e', margin: '0 0 28px' }}>
-          Van exclusief naar inclusief BTW — of andersom. Gratis en direct, geen account nodig.
+        <p style={{ fontSize: 16, color: '#6b6b6e', margin: '0 0 8px' }}>
+          From excluding to including VAT — or the other way around. Free and instant, no account needed.
+        </p>
+        <p style={{ fontSize: 14, margin: '0 0 28px' }}>
+          <Link href="/btw-berekenen" style={{ color: '#007aff', textDecoration: 'none', fontWeight: 600 }}>
+            🇳🇱 Bekijk in het Nederlands →
+          </Link>
         </p>
       </div>
 
       <div style={{ ...wrap, paddingBottom: 40 }}>
-        <BtwCalculator />
+        <BtwCalculator locale="en" />
       </div>
 
       {/* SEO / helpful content */}
       <div style={{ ...wrap, paddingBottom: 64 }}>
         <section style={{ marginTop: 24 }}>
-          <h2 style={h2}>Hoe werkt BTW berekenen?</h2>
+          <h2 style={h2}>How does calculating VAT work?</h2>
           <p style={p}>
-            Wil je de BTW <strong>optellen</strong> bij een bedrag exclusief BTW? Vermenigvuldig het bedrag
-            met het tarief. Bijvoorbeeld: € 100 × 21% = € 21 BTW, samen € 121 inclusief BTW.
+            Want to <strong>add</strong> VAT to an amount excluding VAT? Multiply the amount by the rate.
+            For example: € 100 × 21% = € 21 VAT, together € 121 including VAT.
           </p>
           <p style={p}>
-            Wil je de BTW juist <strong>uit</strong> een bedrag inclusief BTW halen? Deel door 1 plus het
-            tarief: € 121 ÷ 1,21 = € 100 exclusief BTW, de BTW is dan € 21. De calculator hierboven doet dit
-            live, in beide richtingen.
-          </p>
-        </section>
-
-        <section style={{ marginTop: 28 }}>
-          <h2 style={h2}>De Nederlandse BTW-tarieven</h2>
-          <p style={p}>
-            <strong>21% — algemeen tarief:</strong> geldt voor de meeste goederen en diensten.
-            <br />
-            <strong>9% — laag tarief:</strong> bijvoorbeeld voeding, medicijnen, boeken, kappers,
-            fietsreparatie.
-            <br />
-            <strong>0% — nultarief:</strong> bijvoorbeeld leveringen naar het buitenland en leveringen naar
-            andere EU-landen.
+            Want to take the VAT <strong>out</strong> of an amount including VAT? Divide by 1 plus the
+            rate: € 121 ÷ 1.21 = € 100 excluding VAT, so the VAT is € 21. The calculator above does this
+            live, in both directions.
           </p>
         </section>
 
         <section style={{ marginTop: 28 }}>
-          <h2 style={h2}>Veelgestelde vragen</h2>
+          <h2 style={h2}>The Dutch VAT rates</h2>
+          <p style={p}>
+            <strong>21% — standard rate:</strong> applies to most goods and services.
+            <br />
+            <strong>9% — reduced rate:</strong> for example food, medicines, books, hairdressers, bicycle
+            repair.
+            <br />
+            <strong>0% — zero rate:</strong> for example supplies abroad and supplies to other EU countries.
+          </p>
+        </section>
+
+        <section style={{ marginTop: 28 }}>
+          <h2 style={h2}>Frequently asked questions</h2>
           {faq.map((f) => (
             <div key={f.q} style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: '#1c1c1e', marginBottom: 4 }}>{f.q}</div>
@@ -147,15 +150,15 @@ export default function BtwBerekenenPage() {
           }}
         >
           <div style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>
-            Facturen met de BTW er al bij?
+            Invoices with the VAT already on them?
           </div>
           <div style={{ fontSize: 15, color: '#6b6b6e', marginBottom: 16 }}>
-            Met BoekBrug maak je snel een nette factuur. De BTW wordt automatisch berekend en per tarief
-            gesplitst.
+            With BoekBrug you quickly make a tidy invoice. The VAT is calculated automatically and split
+            per rate.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
-              href="/factuur-maken"
+              href="/register"
               style={{
                 backgroundColor: '#007aff',
                 color: '#fff',
@@ -166,10 +169,10 @@ export default function BtwBerekenenPage() {
                 textDecoration: 'none',
               }}
             >
-              Gratis factuur maken
+              Create a free account
             </Link>
             <Link
-              href="/register"
+              href="/en/blog"
               style={{
                 backgroundColor: '#fff',
                 color: '#007aff',
@@ -181,19 +184,17 @@ export default function BtwBerekenenPage() {
                 textDecoration: 'none',
               }}
             >
-              Account aanmaken
+              Read the blog
             </Link>
           </div>
         </section>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
-          BoekBrug — de brug tussen jou en je boekhouder. Tarieven kunnen veranderen. Twijfel je? Kijk bij de
-          Belastingdienst.
+          BoekBrug — the bridge between you and your accountant. Rates can change. In doubt? Check the
+          Belastingdienst (Dutch tax office).
         </p>
       </div>
 
-      <ToolsCrossLinks currentSlug="/btw-berekenen" />
-      <KennisbankLinks tool="/btw-berekenen" />
       <PublicFooter />
     </div>
   )

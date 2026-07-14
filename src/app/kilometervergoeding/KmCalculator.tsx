@@ -7,11 +7,40 @@
 
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { formatEuroNL } from '@/lib/format-nl'
-import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
+import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
+
+type Locale = 'nl' | 'en'
 
 // Onbelaste kilometervergoeding 2026 (Belastingdienst). Editable in the UI.
 const DEFAULT_RATE = '0,25'
+const DEFAULT_RATE_EN = '0.25'
+
+// UI strings only; the km × rate math is shared and identical. NL default keeps
+// the existing Dutch tool (<KmCalculator/>) unchanged.
+const COPY: Record<Locale, {
+  distanceLabel: string; kmAria: string; rateLabel: string; rateAria: string
+  returnLabel: string; tripsLabel: string; tripsAria: string
+  allowance: string; totalKm: string; ratePerKm: string
+  ctaText: string; ctaStrong: string; ctaBtn: string; ctaHref: string
+}> = {
+  nl: {
+    distanceLabel: 'Afstand (enkele reis) in kilometers', kmAria: 'Kilometers',
+    rateLabel: 'Tarief per kilometer', rateAria: 'Tarief per kilometer',
+    returnLabel: 'Heen en terug (retour)', tripsLabel: 'Aantal ritten', tripsAria: 'Aantal ritten',
+    allowance: 'Vergoeding', totalKm: 'Totaal kilometers', ratePerKm: 'Tarief per km',
+    ctaText: 'Reiskosten doorberekenen aan je klant?', ctaStrong: 'Zet ze op je factuur.',
+    ctaBtn: 'Factuur maken →', ctaHref: '/factuur-maken',
+  },
+  en: {
+    distanceLabel: 'Distance (one way) in kilometres', kmAria: 'Kilometres',
+    rateLabel: 'Rate per kilometre', rateAria: 'Rate per kilometre',
+    returnLabel: 'Round trip (return)', tripsLabel: 'Number of trips', tripsAria: 'Number of trips',
+    allowance: 'Allowance', totalKm: 'Total kilometres', ratePerKm: 'Rate per km',
+    ctaText: 'Charge travel costs to your client?', ctaStrong: 'Put them on your invoice.',
+    ctaBtn: 'Get started →', ctaHref: '/register',
+  },
+}
 
 const s = {
   card: {
@@ -67,9 +96,12 @@ const s = {
   } as React.CSSProperties,
 }
 
-export default function KmCalculator() {
+export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
+  const t = COPY[locale]
+  const fmt = locale === 'en' ? formatEuroEN : formatEuroNL
+  const parseNum = locale === 'en' ? parseAmountEN : parseAmountNL
   const [km, setKm] = useState('50')
-  const [rate, setRate] = useState(DEFAULT_RATE)
+  const [rate, setRate] = useState(locale === 'en' ? DEFAULT_RATE_EN : DEFAULT_RATE)
   const [retour, setRetour] = useState(false)
   const [trips, setTrips] = useState('1')
 
@@ -83,7 +115,7 @@ export default function KmCalculator() {
 
   return (
     <div style={s.card}>
-      <div style={s.label}>Afstand (enkele reis) in kilometers</div>
+      <div style={s.label}>{t.distanceLabel}</div>
       <div style={s.field}>
         <input
           style={s.input}
@@ -91,13 +123,13 @@ export default function KmCalculator() {
           onChange={(e) => setKm(e.target.value)}
           inputMode="decimal"
           placeholder="0"
-          aria-label="Kilometers"
+          aria-label={t.kmAria}
           autoFocus
         />
         <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>km</span>
       </div>
 
-      <div style={s.label}>Tarief per kilometer</div>
+      <div style={s.label}>{t.rateLabel}</div>
       <div style={s.field}>
         <span style={s.prefix}>€</span>
         <input
@@ -105,13 +137,13 @@ export default function KmCalculator() {
           value={rate}
           onChange={(e) => setRate(e.target.value)}
           inputMode="decimal"
-          placeholder="0,25"
-          aria-label="Tarief per kilometer"
+          placeholder={locale === 'en' ? '0.25' : '0,25'}
+          aria-label={t.rateAria}
         />
       </div>
 
       <div style={s.toggleRow}>
-        <span style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>Heen en terug (retour)</span>
+        <span style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>{t.returnLabel}</span>
         <button
           onClick={() => setRetour((v) => !v)}
           aria-pressed={retour}
@@ -142,7 +174,7 @@ export default function KmCalculator() {
         </button>
       </div>
 
-      <div style={s.label}>Aantal ritten</div>
+      <div style={s.label}>{t.tripsLabel}</div>
       <div style={s.field}>
         <input
           style={s.input}
@@ -150,28 +182,28 @@ export default function KmCalculator() {
           onChange={(e) => setTrips(e.target.value)}
           inputMode="numeric"
           placeholder="1"
-          aria-label="Aantal ritten"
+          aria-label={t.tripsAria}
         />
         <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>×</span>
       </div>
 
       <div style={s.resultPanel}>
-        <div style={{ fontSize: 13, opacity: 0.9, fontWeight: 500 }}>Vergoeding</div>
+        <div style={{ fontSize: 13, opacity: 0.9, fontWeight: 500 }}>{t.allowance}</div>
         <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -0.5, margin: '2px 0 0' }}>
-          {formatEuroNL(total)}
+          {fmt(total)}
         </div>
       </div>
 
       <div style={{ marginTop: 18 }}>
         <div style={s.breakdownRow}>
-          <span style={{ color: '#6b6b6e' }}>Totaal kilometers</span>
+          <span style={{ color: '#6b6b6e' }}>{t.totalKm}</span>
           <span style={{ fontWeight: 600, color: '#1c1c1e' }}>
-            {totalKm.toLocaleString('nl-NL')} km
+            {totalKm.toLocaleString(locale === 'en' ? 'en-IE' : 'nl-NL')} km
           </span>
         </div>
         <div style={{ ...s.breakdownRow, borderBottom: 'none' }}>
-          <span style={{ color: '#6b6b6e' }}>Tarief per km</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(perKm)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.ratePerKm}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(perKm)}</span>
         </div>
       </div>
 
@@ -190,11 +222,11 @@ export default function KmCalculator() {
         }}
       >
         <div style={{ fontSize: 14, color: '#3c3c43' }}>
-          Reiskosten doorberekenen aan je klant?{' '}
-          <strong style={{ color: '#1c1c1e' }}>Zet ze op je factuur.</strong>
+          {t.ctaText}{' '}
+          <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
         </div>
         <Link
-          href="/factuur-maken"
+          href={t.ctaHref}
           style={{
             backgroundColor: '#007aff',
             color: '#fff',
@@ -206,7 +238,7 @@ export default function KmCalculator() {
             whiteSpace: 'nowrap',
           }}
         >
-          Factuur maken →
+          {t.ctaBtn}
         </Link>
       </div>
     </div>

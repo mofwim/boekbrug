@@ -5,6 +5,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import NettoCalculator from './NettoCalculator'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
+import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
@@ -14,7 +15,10 @@ export const metadata: Metadata = {
   description:
     'Reken uit wat je als ZZP’er netto overhoudt in 2026: inkomstenbelasting, zelfstandigenaftrek, MKB-winstvrijstelling, heffingskortingen en Zvw. Het is een schatting. Gratis.',
   keywords: ['netto inkomen zzp', 'zzp belasting berekenen', 'hoeveel houd ik over zzp', 'bruto netto zzp 2026'],
-  alternates: { canonical: '/netto-inkomen-zzp' },
+  alternates: {
+    canonical: '/netto-inkomen-zzp',
+    languages: { 'nl-NL': '/netto-inkomen-zzp', 'en': '/en/netto-inkomen-zzp' },
+  },
   openGraph: {
     title: 'Netto inkomen ZZP berekenen (2026)',
     description: 'Hoeveel houd je over? Een schatting met belasting, aftrek, heffingskortingen en Zvw.',
@@ -120,6 +124,7 @@ export default function NettoInkomenPage() {
       </div>
 
       <ToolsCrossLinks currentSlug="/netto-inkomen-zzp" />
+      <KennisbankLinks tool="/netto-inkomen-zzp" />
       <PublicFooter />
     </div>
   )

@@ -6,6 +6,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { TOOLS } from '@/lib/tools'
 import PublicFooter from '@/components/public-footer'
+import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
 
@@ -84,6 +85,7 @@ export default function ToolsHubPage() {
           BoekBrug — de brug tussen jou en je boekhouder.
         </p>
       </div>
+      <KennisbankLinks tool="/tools" />
       <PublicFooter />
     </div>
   )
