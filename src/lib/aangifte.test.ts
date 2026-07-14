@@ -68,7 +68,7 @@ console.log("\n— honest notes: no false reassurance —");
   check("flags EU purchases / rubriek 4b not auto-computed", /rubriek 4b/.test(eu));
 
   const noRate = buildAangifte({ ...base, cashOmzetZonderBtw: 250 }, compl(), "Q1 2026").notes.join(" ");
-  check("flags cash omzet without a rate (not slotted into 1a/1b)", /250 contante omzet heeft nog geen BTW-tarief/.test(noRate));
+  check("flags omzet without a rate (not slotted into 1a/1b)", /250 omzet heeft nog geen BTW-tarief/.test(noRate));
 }
 
 console.log("\n— AUDIT FIX: a 0-rate bucket carrying BTW is surfaced (1c), never silently zeroed —");

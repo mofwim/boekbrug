@@ -201,7 +201,11 @@ export function computeResult(
     // rate must be assigned before this can be filed. Tolerant of per-day rounding.
     if (t.total_incl != null) {
       const unrated = t.total_incl - (net + b.total);
-      if (unrated > Math.max(0.05, 0.005 * Math.abs(t.total_incl))) {
+      // A correctly-imported day reconciles net+BTW to the CENT (both come from the same
+      // Z-report), so a tight tolerance (10c + 0.1%) catches even a small un-imported bucket
+      // on a large day without false-triggering on legitimate per-line rounding — the
+      // owner's "no silent loss" rule over the looser 0.5% payment-reconciliation floor.
+      if (unrated > Math.max(0.10, 0.001 * Math.abs(t.total_incl))) {
         omzet += unrated;
         cashOmzetZonderBtw += unrated;
       }

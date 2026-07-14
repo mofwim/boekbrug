@@ -88,7 +88,7 @@ console.log("\n— unrated cash omzet is a BTW gap (missing) —");
 {
   const r = buildReadiness(perfect({ cashOmzetZonderBtw: 250 }));
   check("vat dimension drops below 1", r.dimensions.find((d) => d.key === "vat")!.subscore < 1);
-  check("'€250 contante omzet zonder BTW-tarief' listed", r.missing.some((m) => /250 contante omzet zonder BTW-tarief/.test(m.title)));
+  check("'€250 omzet zonder BTW-tarief' listed", r.missing.some((m) => /250 omzet zonder BTW-tarief/.test(m.title)));
   check("not ready", r.status !== "ready");
 }
 

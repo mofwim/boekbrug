@@ -143,8 +143,8 @@ export default function ResultaatClient() {
             {/* Honest nudge: cash sales without a BTW rate aren't in the BTW figure. */}
             {data.result.cashOmzetZonderBtw > 0 && (
               <div style={{ background: M3.warningContainer, borderRadius: 14, padding: '12px 14px', marginBottom: 14, fontSize: 13, color: M3.warning }}>
-                {eur.format(data.result.cashOmzetZonderBtw)} contante omzet is nog zonder BTW-tarief geboekt — die BTW zit
-                dus niet in dit bedrag. Vul het tarief in bij Kas voor een compleet BTW-cijfer.
+                {eur.format(data.result.cashOmzetZonderBtw)} omzet is nog zonder BTW-tarief geboekt (contante omzet of een
+                niet-gesplitste kassadag) — die BTW zit dus niet in dit bedrag. Ken het tarief toe bij Kas of Dagomzet voor een compleet BTW-cijfer.
               </div>
             )}
 

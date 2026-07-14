@@ -210,10 +210,10 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       if (!ratedOk) {
         missing.push({
           severity: "missing",
-          title: `€${euro(s.cashOmzetZonderBtw)} contante omzet zonder BTW-tarief`,
+          title: `€${euro(s.cashOmzetZonderBtw)} omzet zonder BTW-tarief`,
           detail: "Ken 9% of 21% toe — anders staat deze omzet in geen enkele rubriek.",
         });
-        detailBits.push("contante omzet zonder tarief");
+        detailBits.push("omzet zonder tarief");
       }
       // b) full kassadag coverage (only when the store uses a till)
       if (s.usesTurnover) {
