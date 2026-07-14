@@ -162,6 +162,13 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/facturen')}
           />
 
+          {/* [ARTIKELEN] Catalogus — vaste factuurregels, hergebruik met een code. */}
+          <ActionCard
+            icon="inventory_2" iconBg="#5F6368" iconColor="#fff"
+            label="Artikelen" sub="Je vaste factuurregels"
+            onClick={() => router.push('/dashboard/artikelen')}
+          />
+
           {/* Inkomende facturen — supplier invoices: verify queue + manage. */}
           <ActionCardBadge
             icon="mark_email_unread" iconBg="#0288D1" iconColor="#fff"
