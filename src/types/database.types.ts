@@ -308,6 +308,78 @@ export type Database = {
           },
         ]
       }
+      eft_settlements: {
+        Row: {
+          by_scheme: Json | null
+          created_at: string | null
+          document_id: string | null
+          first_trx: string | null
+          gross_total: number
+          id: string
+          last_trx: string | null
+          period_end: string | null
+          period_nr: string | null
+          period_start: string | null
+          settlement_date: string
+          shift_nr: string | null
+          source: string
+          terminal_id: string | null
+          tx_count: number
+          user_id: string
+        }
+        Insert: {
+          by_scheme?: Json | null
+          created_at?: string | null
+          document_id?: string | null
+          first_trx?: string | null
+          gross_total: number
+          id?: string
+          last_trx?: string | null
+          period_end?: string | null
+          period_nr?: string | null
+          period_start?: string | null
+          settlement_date: string
+          shift_nr?: string | null
+          source?: string
+          terminal_id?: string | null
+          tx_count?: number
+          user_id: string
+        }
+        Update: {
+          by_scheme?: Json | null
+          created_at?: string | null
+          document_id?: string | null
+          first_trx?: string | null
+          gross_total?: number
+          id?: string
+          last_trx?: string | null
+          period_end?: string | null
+          period_nr?: string | null
+          period_start?: string | null
+          settlement_date?: string
+          shift_nr?: string | null
+          source?: string
+          terminal_id?: string | null
+          tx_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eft_settlements_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eft_settlements_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_entries: {
         Row: {
           amount: number

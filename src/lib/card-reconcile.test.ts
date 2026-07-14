@@ -1,5 +1,5 @@
 // [CARD-RECON] Pure node test — run: npx tsx src/lib/card-reconcile.test.ts
-import { reconcileCardDay, reconcileCardPeriod } from "./card-reconcile";
+import { reconcileCardDay, reconcileCardPeriod, netCommissionToBook } from "./card-reconcile";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -71,6 +71,14 @@ console.log("\n— period aggregation: total commission + exception counts —")
   check("total commission = 23 (15 + 8, mismatch/incomplete excluded)", near(p.totalCommission, 23));
   check("1 gross-mismatch day", p.grossMismatchDays === 1);
   check("incomplete day counted", p.incompleteDays >= 1);
+}
+
+console.log("\n— netCommissionToBook: de-dup against acquirer fee invoices (Finding 1) —");
+{
+  check("no acquirer invoice → book full commission", near(netCommissionToBook(30, 0), 30));
+  check("acquirer invoice fully covers → book 0 (no double-count)", near(netCommissionToBook(30, 30), 0));
+  check("partial acquirer invoice → book residual", near(netCommissionToBook(30, 18), 12));
+  check("over-covering invoice → floored at 0, never negative", near(netCommissionToBook(30, 45), 0));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

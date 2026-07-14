@@ -1583,3 +1583,32 @@ Return JSON only. If unsure between sender and receiver, choose the one at the T
     return FALLBACK;
   }
 }
+// [TRIANGLE] Transcribe a payment-terminal settlement receipt (Equens CTAP "TOTALEN
+// RAPPORT") to VERBATIM plain text, so the proven pure parser (eft-parser.ts) — not the
+// model — does the structured extraction and applies its reconciliation cross-checks. The
+// model only reads the pixels; the arithmetic is deterministic and testable downstream.
+export async function transcribeEftReceipt(
+  fileBase64: string,
+  mimeType: string,
+  filename: string,
+): Promise<string> {
+  const systemPrompt =
+    'Je transcribeert kassabon-achtige betaalterminal-afrekeningen exact zoals gedrukt. ' +
+    'Verzin niets, corrigeer geen getallen, laat niets weg.';
+  const prompt =
+    'Dit is een afrekening/dagafsluiting van een betaalterminal (bijv. Equens CTAP, "TOTALEN RAPPORT"). ' +
+    'Transcribeer ELKE regel exact zoals gedrukt — alle labels (TMS TERM-ID, PERIODE NR, PERIODE START/EINDE, ' +
+    'DATUM EERSTE/LAATSTE TRX, EFT TOTALEN, BETALING, TOTAAL, en de kaartsoorten zoals V Pay, Maestro, ' +
+    'Debit Mastercard, Visa Debit, MasterCard) met hun #TRX-aantallen en EUR-bedragen. ' +
+    'Geef ALLEEN de tekst terug, geen uitleg.';
+
+  const isPdf = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+  if (isPdf) return callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+
+  const mt: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' =
+    mimeType === 'image/png' ? 'image/png'
+    : mimeType === 'image/webp' ? 'image/webp'
+    : mimeType === 'image/gif' ? 'image/gif'
+    : 'image/jpeg';
+  return callClaudeWithImage(fileBase64, mt, prompt, systemPrompt);
+}

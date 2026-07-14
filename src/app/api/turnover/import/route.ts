@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
 import { normalizeTurnoverSheet } from "@/lib/turnover-import";
+import { detectSheetKind } from "@/lib/detect-file";
 import type { DailyTurnover } from "@/lib/turnover";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB — a Z-report is tiny; this is generous.
@@ -79,6 +80,17 @@ export async function POST(req: NextRequest) {
     matrix = sheetBytesToMatrix(bytes);
   } catch {
     return NextResponse.json({ error: "kon het bestand niet lezen als spreadsheet" }, { status: 422 });
+  }
+
+  // [DETECT] A grootboek/kas export (OVERZICHT/KASBOEK) is NOT a Z-report — its per-rate
+  // omzet columns are absent, so the normalizer would return a confusing "no_header". Catch
+  // it and point the owner to the right place instead of a dead end.
+  if (detectSheetKind(matrix) === "ledger") {
+    return NextResponse.json({
+      ok: false,
+      wrongKind: "ledger",
+      error: "Dit lijkt een grootboek/kas-overzicht (OVERZICHT/KASBOEK), geen kassa-Z-rapport. De dagomzet-import verwacht een Z-rapport met 'Omzet incl.' en BTW-tarief kolommen.",
+    }, { status: 422 });
   }
 
   const { rows, warnings } = normalizeTurnoverSheet(matrix);

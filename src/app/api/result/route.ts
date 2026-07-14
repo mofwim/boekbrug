@@ -10,6 +10,9 @@ import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEn
 import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
+import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
+import { netCommissionToBook, ACQUIRER_VENDOR_RE } from "@/lib/card-reconcile";
+import type { EftSettlement } from "@/lib/eft-parser";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -41,7 +44,7 @@ export async function GET(req: NextRequest) {
   // Invoices for this owner (outgoing = sender, incoming = receiver) in the quarter.
   const { data: invRows } = await pipeline
     .from("invoices")
-    .select("direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id")
+    .select("direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end);
@@ -124,7 +127,40 @@ export async function GET(req: NextRequest) {
       .map((t) => t.turnover_date),
   );
 
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates);
+  // [TRIANGLE] Card-takings reconciliation. The till counts card sales GROSS while the bank
+  // pays out NET, so the acquirer commission is otherwise never a cost and profit is
+  // overstated. Fetch the EFT terminal settlements (corner 2), reconcile against the till
+  // (Leg A) and the bank's net pos_income (Leg B = commission), then book the commission —
+  // de-duped against any acquirer-fee invoice already in kosten so the fee is never counted
+  // twice. In-quarter EFT rows only (settlement_date within the period).
+  const { data: eftRows } = await pipeline
+    .from("eft_settlements")
+    .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
+    .eq("user_id", ownerId)
+    .gte("settlement_date", start)
+    .lte("settlement_date", end);
+
+  const eftSettlements: EftSettlement[] = (eftRows ?? []).map((e) => ({
+    terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
+    periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,
+    settlementDate: e.settlement_date, grossTotal: e.gross_total ?? 0, txCount: e.tx_count ?? 0,
+    byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
+  }));
+
+  // Bank NET card settlement per takings day (pos_income lines only).
+  const posLines = (bankRows ?? []).filter((b) => b.category === "pos_income");
+  const netByDay = bankNetByDay(posLines);
+
+  const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
+
+  // Acquirer-fee invoices already booked as kosten (incoming, from a known acquirer/PSP) —
+  // subtract them so the commission delta isn't double-counted with the fee invoice.
+  const acquirerFeesBooked = (invoices as (ResultInvoice & { client_name?: string | null })[])
+    .filter((i) => i.direction === "incoming" && ACQUIRER_VENDOR_RE.test(i.client_name ?? ""))
+    .reduce((s, i) => s + (i.total_ex_btw ?? 0) + (i.btw_amount ?? 0), 0);
+  const commissionToBook = netCommissionToBook(triangle.totalCommission, acquirerFeesBooked);
+
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, commissionToBook);
 
   return NextResponse.json({
     ok: true,
@@ -132,5 +168,15 @@ export async function GET(req: NextRequest) {
     quarter,
     label: `Q${quarter} ${year}`,
     result,
+    // [TRIANGLE] Transparency for the owner + the closing package: the raw commission, what
+    // was actually booked (net of acquirer invoices), and the Leg-A exceptions to review.
+    reconciliation: {
+      totalCommission: triangle.totalCommission,
+      commissionBooked: commissionToBook,
+      acquirerFeeInvoices: Math.round(acquirerFeesBooked * 100) / 100,
+      grossMismatchDays: triangle.grossMismatchDays,
+      incompleteDays: triangle.incompleteDays,
+      eftSettlements: eftSettlements.length,
+    },
   });
 }

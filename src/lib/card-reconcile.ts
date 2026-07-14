@@ -126,6 +126,23 @@ export interface CardPeriodResult {
   incompleteDays: number;       // days where the payout/commission isn't matched yet
 }
 
+// [TRIANGLE] Known card-acquirer / PSP vendor names. An incoming invoice from one of
+// these IS the commission already booked as kosten — so its amount is subtracted from the
+// triangle commission before booking, or the fee is counted twice. This turns Finding 1's
+// prose "guard" into real code.
+export const ACQUIRER_VENDOR_RE =
+  /\b(ccv|worldline|paysquare|adyen|equens|mollie|buckaroo|sum\s?up|zettle|izettle|nets|stripe|klarna|rabo\s?omnikassa|omnikassa)\b/i;
+
+/**
+ * The commission to actually book as a cost: the raw triangle commission (Σ EFT gross −
+ * bank net) MINUS any acquirer-fee invoices already sitting in kosten, floored at 0. If the
+ * store uploaded the acquirer's fee invoice, that invoice already carried the cost (and its
+ * BTW as voorbelasting) through the normal invoice path, so only the residual is booked.
+ */
+export function netCommissionToBook(rawCommission: number, acquirerFeesAlreadyBooked: number): number {
+  return Math.max(0, r2(rawCommission - Math.max(0, acquirerFeesAlreadyBooked)));
+}
+
 /** Reconcile a period of card days and aggregate the commission + exception counts. */
 export function reconcileCardPeriod(inputs: CardDayInput[]): CardPeriodResult {
   const days = inputs.map(reconcileCardDay);

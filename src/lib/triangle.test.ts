@@ -1,5 +1,5 @@
 // [TRIANGLE] Pure node test — run: npx tsx src/lib/triangle.test.ts
-import { reconcileTriangle, eftGrossByDay } from "./triangle";
+import { reconcileTriangle, eftGrossByDay, bankNetByDay } from "./triangle";
 import type { DailyTurnover } from "./turnover";
 import type { EftSettlement } from "./eft-parser";
 
@@ -26,6 +26,19 @@ console.log("\n— eftGrossByDay sums shifts on the same day —");
   check("two shifts on 07-12 summed to 1546.46", near(m.get("2026-07-12")!, 1546.46));
   check("07-13 = 200", near(m.get("2026-07-13")!, 200));
   check("null settlementDate skipped", eftGrossByDay([{ ...eft("x", 5), settlementDate: null }]).size === 0);
+}
+
+console.log("\n— bankNetByDay groups pos_income by takings day (DAT.), signed —");
+{
+  const m = bankNetByDay([
+    { description: "AFREK. BETAALAUTOMAAT MAES DAT. 20260712/6094 AANT. 80", amount: 900, date: "2026-07-13" },
+    { description: "AFREK. BETAALAUTOMAAT VPAY DAT. 20260712/6095 AANT. 20", amount: 620, date: "2026-07-13" },
+    { description: "AFREK. BETAALAUTOMAAT REFUND DAT. 20260712/6096 AANT. 1", amount: -8, date: "2026-07-13" },
+  ]);
+  check("07-12 net = 900+620−8 = 1512 (keyed by DAT., not booking date)", near(m.get("2026-07-12")!, 1512));
+  check("nothing keyed to the booking date 07-13", !m.has("2026-07-13"));
+  check("no DAT. falls back to booking date",
+    bankNetByDay([{ description: "kale overboeking", amount: 100, date: "2026-07-14" }]).get("2026-07-14") === 100);
 }
 
 console.log("\n— full triangle on aligned days —");

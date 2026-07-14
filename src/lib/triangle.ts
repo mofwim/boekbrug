@@ -16,9 +16,27 @@
 
 import { reconcileCardPeriod, type CardDayInput, type CardPeriodResult } from "./card-reconcile";
 import type { EftSettlement } from "./eft-parser";
-import type { DailyTurnover } from "./turnover";
+import { parsePosSettlement, type DailyTurnover } from "./turnover";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Group bank pos_income lines into the NET card settlement per TAKINGS day. The takings day
+ * is the settlement's embedded "DAT." date (parsePosSettlement), falling back to the booking
+ * date when the bank omits it — the same key the covered-day de-dup uses, so bankNet lines up
+ * with the till/EFT day. Amounts are summed SIGNED (a card refund settles negative).
+ */
+export function bankNetByDay(
+  posLines: { description: string | null; amount: number | null; date: string | null }[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const l of posLines) {
+    const d = parsePosSettlement(l.description).date ?? l.date;
+    if (!d) continue;
+    out.set(d, r2((out.get(d) ?? 0) + (l.amount ?? 0)));
+  }
+  return out;
+}
 
 export interface TriangleInput {
   turnover: DailyTurnover[];
