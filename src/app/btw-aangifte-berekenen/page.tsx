@@ -15,7 +15,10 @@ export const metadata: Metadata = {
   description:
     'Bereken je BTW-aangifte: verschuldigde BTW over je omzet (21% en 9%) min voorbelasting = te betalen of terug te vragen. Gratis, geen account nodig.',
   keywords: ['btw aangifte berekenen', 'hoeveel btw moet ik betalen', 'btw teruggave berekenen', 'voorbelasting'],
-  alternates: { canonical: '/btw-aangifte-berekenen' },
+  alternates: {
+    canonical: '/btw-aangifte-berekenen',
+    languages: { 'nl-NL': '/btw-aangifte-berekenen', 'en': '/en/btw-aangifte-berekenen' },
+  },
   openGraph: {
     title: 'BTW-aangifte berekenen',
     description: 'Verschuldigde BTW − voorbelasting = te betalen of terug. Gratis simulator.',

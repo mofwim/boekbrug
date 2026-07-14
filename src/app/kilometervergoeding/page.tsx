@@ -16,7 +16,10 @@ export const metadata: Metadata = {
   description:
     'Bereken snel je reiskostenvergoeding: kilometers × tarief, met retour en meerdere ritten. Tarief 2026: € 0,25 per km. Gratis, geen account nodig.',
   keywords: ['kilometervergoeding berekenen', 'reiskostenvergoeding', 'km vergoeding 2026', '0,25 per km'],
-  alternates: { canonical: '/kilometervergoeding' },
+  alternates: {
+    canonical: '/kilometervergoeding',
+    languages: { 'nl-NL': '/kilometervergoeding', 'en': '/en/kilometervergoeding' },
+  },
   openGraph: {
     title: 'Kilometervergoeding berekenen (2026)',
     description: 'Kilometers × tarief, met retour en ritten. Tarief 2026: € 0,25 per km. Gratis.',

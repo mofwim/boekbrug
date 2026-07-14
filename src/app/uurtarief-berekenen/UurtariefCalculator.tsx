@@ -7,11 +7,41 @@
 
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { formatEuroNL } from '@/lib/format-nl'
-import { parseAmountNL as parseNum } from '@/lib/parse-nl'
+import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
+import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
+
+type Locale = 'nl' | 'en'
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+// UI strings only; the rate math is shared and identical. NL default keeps the
+// existing Dutch tool (<UurtariefCalculator/>) unchanged.
+const COPY: Record<Locale, {
+  incomeLabel: string; incomeHint: string; incomeAria: string
+  costsLabel: string; costsHint: string; costsAria: string
+  hoursLabel: string; hoursHint: string; hoursAria: string; hoursSuffix: string
+  bufferLabel: string; bufferAria: string; recommended: string
+  baseRate: string; buffer: string; yearRevenue: string
+  ctaText: string; ctaStrong: string; ctaBtn: string; ctaHref: string
+}> = {
+  nl: {
+    incomeLabel: 'Gewenst jaarinkomen', incomeHint: 'Wat je bruto wilt overhouden aan winst', incomeAria: 'Gewenst jaarinkomen',
+    costsLabel: 'Zakelijke kosten per jaar', costsHint: 'Verzekeringen, tools, administratie, etc.', costsAria: 'Zakelijke kosten',
+    hoursLabel: 'Declarabele uren per jaar', hoursHint: 'Uren die je kunt factureren — vaak ongeveer 1.200 van 1.800 gewerkte uren', hoursAria: 'Declarabele uren', hoursSuffix: 'uur',
+    bufferLabel: 'Buffer voor belasting, pensioen en lege uren', bufferAria: 'Buffer percentage', recommended: 'Aanbevolen uurtarief',
+    baseRate: 'Basistarief (zonder buffer)', buffer: 'Buffer', yearRevenue: 'Benodigde jaaromzet',
+    ctaText: 'Tarief bepaald?', ctaStrong: 'Factureer het meteen.', ctaBtn: 'Factuur maken →', ctaHref: '/factuur-maken',
+  },
+  en: {
+    incomeLabel: 'Desired annual income', incomeHint: 'The profit you want to keep before tax', incomeAria: 'Desired annual income',
+    costsLabel: 'Business costs per year', costsHint: 'Insurance, tools, admin, etc.', costsAria: 'Business costs',
+    hoursLabel: 'Billable hours per year', hoursHint: 'Hours you can invoice — often about 1,200 of 1,800 worked hours', hoursAria: 'Billable hours', hoursSuffix: 'hrs',
+    bufferLabel: 'Buffer for tax, pension and downtime', bufferAria: 'Buffer percentage', recommended: 'Recommended hourly rate',
+    baseRate: 'Base rate (without buffer)', buffer: 'Buffer', yearRevenue: 'Required annual revenue',
+    ctaText: 'Rate set?', ctaStrong: 'Create your account.', ctaBtn: 'Get started →', ctaHref: '/register',
+  },
 }
 
 const s = {
@@ -68,9 +98,12 @@ const s = {
   } as React.CSSProperties,
 }
 
-export default function UurtariefCalculator() {
-  const [income, setIncome] = useState('40.000')
-  const [costs, setCosts] = useState('5.000')
+export default function UurtariefCalculator({ locale = 'nl' }: { locale?: Locale }) {
+  const t = COPY[locale]
+  const fmt = locale === 'en' ? formatEuroEN : formatEuroNL
+  const parseNum = locale === 'en' ? parseAmountEN : parseAmountNL
+  const [income, setIncome] = useState(locale === 'en' ? '40,000' : '40.000')
+  const [costs, setCosts] = useState(locale === 'en' ? '5,000' : '5.000')
   const [hours, setHours] = useState('1200')
   const [useBuffer, setUseBuffer] = useState(true)
   const [buffer, setBuffer] = useState('30')
@@ -92,36 +125,36 @@ export default function UurtariefCalculator() {
 
   return (
     <div style={s.card}>
-      <div style={s.label}>Gewenst jaarinkomen</div>
-      <div style={s.hint}>Wat je bruto wilt overhouden aan winst</div>
+      <div style={s.label}>{t.incomeLabel}</div>
+      <div style={s.hint}>{t.incomeHint}</div>
       <div style={s.field}>
         <span style={s.prefix}>€</span>
-        <input style={s.input} value={income} onChange={(e) => setIncome(e.target.value)} inputMode="decimal" aria-label="Gewenst jaarinkomen" autoFocus />
+        <input style={s.input} value={income} onChange={(e) => setIncome(e.target.value)} inputMode="decimal" aria-label={t.incomeAria} autoFocus />
       </div>
 
-      <div style={s.label}>Zakelijke kosten per jaar</div>
-      <div style={s.hint}>Verzekeringen, tools, administratie, etc.</div>
+      <div style={s.label}>{t.costsLabel}</div>
+      <div style={s.hint}>{t.costsHint}</div>
       <div style={s.field}>
         <span style={s.prefix}>€</span>
-        <input style={s.input} value={costs} onChange={(e) => setCosts(e.target.value)} inputMode="decimal" aria-label="Zakelijke kosten" />
+        <input style={s.input} value={costs} onChange={(e) => setCosts(e.target.value)} inputMode="decimal" aria-label={t.costsAria} />
       </div>
 
-      <div style={s.label}>Declarabele uren per jaar</div>
-      <div style={s.hint}>Uren die je kunt factureren — vaak ongeveer 1.200 van 1.800 gewerkte uren</div>
+      <div style={s.label}>{t.hoursLabel}</div>
+      <div style={s.hint}>{t.hoursHint}</div>
       <div style={s.field}>
-        <input style={s.input} value={hours} onChange={(e) => setHours(e.target.value)} inputMode="numeric" aria-label="Declarabele uren" />
-        <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>uur</span>
+        <input style={s.input} value={hours} onChange={(e) => setHours(e.target.value)} inputMode="numeric" aria-label={t.hoursAria} />
+        <span style={{ ...s.prefix, marginRight: 0, marginLeft: 8 }}>{t.hoursSuffix}</span>
       </div>
 
       <div style={s.toggleRow}>
         <div>
-          <span style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>Buffer voor belasting, pensioen en lege uren</span>
+          <span style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>{t.bufferLabel}</span>
           {useBuffer && (
             <input
               value={buffer}
               onChange={(e) => setBuffer(e.target.value)}
               inputMode="decimal"
-              aria-label="Buffer percentage"
+              aria-label={t.bufferAria}
               style={{ width: 52, marginLeft: 10, padding: '6px 8px', borderRadius: 8, border: '1.5px solid #e5e5ea', fontSize: 14, fontWeight: 600, textAlign: 'center', fontFamily: 'inherit' }}
             />
           )}
@@ -137,35 +170,35 @@ export default function UurtariefCalculator() {
       </div>
 
       <div style={s.resultPanel}>
-        <div style={{ fontSize: 13, opacity: 0.9, fontWeight: 500 }}>Aanbevolen uurtarief</div>
+        <div style={{ fontSize: 13, opacity: 0.9, fontWeight: 500 }}>{t.recommended}</div>
         <div style={{ fontSize: 36, fontWeight: 800, letterSpacing: -0.5, margin: '2px 0 0' }}>
-          {formatEuroNL(recommended)}
+          {fmt(recommended)}
         </div>
       </div>
 
       <div style={{ marginTop: 18 }}>
         <div style={s.breakdownRow}>
-          <span style={{ color: '#6b6b6e' }}>Basistarief (zonder buffer)</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(base)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.baseRate}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(base)}</span>
         </div>
         {useBuffer && (
           <div style={s.breakdownRow}>
-            <span style={{ color: '#6b6b6e' }}>Buffer ({bufferPct}%)</span>
-            <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(recommended - base)}</span>
+            <span style={{ color: '#6b6b6e' }}>{t.buffer} ({bufferPct}%)</span>
+            <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(recommended - base)}</span>
           </div>
         )}
         <div style={{ ...s.breakdownRow, borderBottom: 'none' }}>
-          <span style={{ color: '#6b6b6e' }}>Benodigde jaaromzet</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{formatEuroNL(yearRevenue)}</span>
+          <span style={{ color: '#6b6b6e' }}>{t.yearRevenue}</span>
+          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(yearRevenue)}</span>
         </div>
       </div>
 
       <div style={{ marginTop: 22, background: '#f9f9fb', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c3c43' }}>
-          Tarief bepaald? <strong style={{ color: '#1c1c1e' }}>Factureer het meteen.</strong>
+          {t.ctaText} <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
         </div>
-        <Link href="/factuur-maken" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-          Factuur maken →
+        <Link href={t.ctaHref} style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+          {t.ctaBtn}
         </Link>
       </div>
     </div>
