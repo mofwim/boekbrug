@@ -30,3 +30,22 @@ function normCell(v: unknown): Cell {
   if (typeof v === "number" || typeof v === "string") return v;
   return String(v);
 }
+
+/** A rectangular matrix (header row + data rows) → .xlsx file bytes. The mirror of
+ *  sheetBytesToMatrix, used by the "bankafschrift naar Excel" converter to hand the
+ *  owner a real spreadsheet. Numbers stay numeric so Excel treats them as amounts;
+ *  a light column-width pass keeps the sheet readable. */
+export function matrixToXlsxBytes(rows: (string | number)[][], sheetName = "Transacties"): Uint8Array {
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  // Column widths from the longest cell in each column (capped), so nothing is clipped.
+  const colCount = rows.reduce((m, r) => Math.max(m, r.length), 0);
+  ws["!cols"] = Array.from({ length: colCount }, (_, c) => {
+    let w = 8;
+    for (const r of rows) w = Math.max(w, String(r[c] ?? "").length + 2);
+    return { wch: Math.min(w, 48) };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  return new Uint8Array(out);
+}
