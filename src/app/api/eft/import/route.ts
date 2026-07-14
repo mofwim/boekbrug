@@ -43,6 +43,14 @@ export async function POST(req: NextRequest) {
       if (typeof s.grossTotal !== "number" || !Number.isFinite(s.grossTotal)) {
         return NextResponse.json({ error: "ongeldig totaalbedrag op de afrekening" }, { status: 400 });
       }
+      // The natural key is (terminal_id, period_nr, settlement_date). Both parts must be
+      // present, otherwise the UNIQUE index (NULLS DISTINCT) would let a re-import INSERT a
+      // duplicate settlement instead of updating — doubling that day's gross. Every real
+      // terminal receipt prints TMS TERM-ID + PERIODE NR; if OCR missed them the owner fills
+      // them in from the preview before committing.
+      if (!s.terminalId || !String(s.terminalId).trim() || !s.periodNr || !String(s.periodNr).trim()) {
+        return NextResponse.json({ error: "terminal-ID en periode-nummer zijn verplicht (vul ze aan vanaf de bon) — anders kan dezelfde afrekening dubbel worden opgeslagen" }, { status: 400 });
+      }
       const record = {
         user_id: user.id,
         settlement_date: s.settlementDate,

@@ -153,10 +153,18 @@ export async function GET(req: NextRequest) {
 
   const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
 
-  // Acquirer-fee invoices already booked as kosten (incoming, from a known acquirer/PSP) —
-  // subtract them so the commission delta isn't double-counted with the fee invoice.
-  const acquirerFeesBooked = (invoices as (ResultInvoice & { client_name?: string | null })[])
-    .filter((i) => i.direction === "incoming" && ACQUIRER_VENDOR_RE.test(i.client_name ?? ""))
+  // Acquirer-fee invoices already booked as kosten — subtract them so the commission delta
+  // isn't double-counted with the fee invoice. Computed from the RAW invoice rows (which
+  // still carry client_name + status), NOT the stripped ResultInvoice objects, and gated to
+  // the SAME statuses computeResult actually books as kosten (INCOMING_OK = paid/received) —
+  // a draft/processing acquirer invoice is not in kosten, so it must not reduce the
+  // commission either.
+  const INCOMING_OK = new Set(["paid", "received"]);
+  const acquirerFeesBooked = (invRows ?? [])
+    .filter((i) =>
+      effDir(i) === "incoming" &&
+      INCOMING_OK.has(i.status ?? "") &&
+      ACQUIRER_VENDOR_RE.test(i.client_name ?? ""))
     .reduce((s, i) => s + (i.total_ex_btw ?? 0) + (i.btw_amount ?? 0), 0);
   const commissionToBook = netCommissionToBook(triangle.totalCommission, acquirerFeesBooked);
 
