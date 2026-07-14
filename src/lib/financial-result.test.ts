@@ -167,6 +167,31 @@ console.log("\n— AUDIT FIXES: creditnota nets, null-date cash excluded —");
   check("null-date cash does not inflate the 9% bucket", near(r3.salesByRate.find((s) => s.rate === 9)?.btw ?? 0, 90));
 }
 
+console.log("\n— [FIN-5] a turnover day whose rate columns didn't import is not lost —");
+{
+  // A broken Z-report import: gross printed (total_incl 2000) but the per-rate bases are 0
+  // (the normalizer couldn't split it). Old behavior: omzet += 0, 5a += 0 → revenue vanishes
+  // and the day slips past the readiness gate. New: the unaccounted gross is recovered as
+  // revenue AND flagged as omzet-zonder-tarief so a rate must be assigned before filing.
+  const broken: DailyTurnover[] = [{
+    turnover_date: "2026-07-05", base_0: 0, base_9: 0, base_21: 0, btw_9: 0, btw_21: 0,
+    total_incl: 2000, pin_amount: 1500, cash_amount: 500, other_amount: 0,
+  }];
+  const r = computeResult([], [], [], broken);
+  check("the €2000 gross is NOT lost (counted in omzet)", near(r.omzet, 2000));
+  check("it is flagged as omzet-zonder-tarief (blocks readiness)", near(r.cashOmzetZonderBtw, 2000));
+  check("5a stays honest — no invented BTW on the unrated day", near(r.btwVerschuldigd, 0));
+
+  // A well-formed day still reconciles exactly — no false 'unrated' trigger from rounding.
+  const clean: DailyTurnover[] = [{
+    turnover_date: "2026-07-06", base_0: 0, base_9: 1000, base_21: 0, btw_9: 90, btw_21: 0,
+    total_incl: 1090, pin_amount: 1090, cash_amount: 0, other_amount: 0,
+  }];
+  const rc = computeResult([], [], [], clean);
+  check("a reconciling day adds nothing to the no-rate flag", near(rc.cashOmzetZonderBtw, 0));
+  check("a reconciling day's omzet is exactly its net (1000)", near(rc.omzet, 1000));
+}
+
 console.log("\n— [TRIANGLE] acquirer commission is booked as a cost, no BTW —");
 {
   // Till counts card takings GROSS (1090 incl / 1000 net + 90 BTW). Without commission,

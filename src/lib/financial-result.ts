@@ -181,14 +181,31 @@ export function computeResult(
   // 4) Till Z-report — the retail store's authoritative revenue, per BTW rate. Its
   //    matching bank pos_income + cash omzet were already excluded above (covered days).
   for (const t of turnover) {
-    omzet += turnoverNetOmzet(t);
+    const net = turnoverNetOmzet(t);
     const b = turnoverBtw(t);
+    omzet += net;
     btwVerschuldigd += b.total;
     turnoverBtw9 += b.r9;
     turnoverBtw21 += b.r21;
     addSale(21, t.base_21 ?? 0, b.r21);
     addSale(9, t.base_9 ?? 0, b.r9);
     addSale(0, t.base_0 ?? 0, 0);
+
+    // [FIN-5] A day whose printed gross (total_incl) exceeds its rated net+BTW is turnover
+    // whose BTW rate did NOT import (e.g. a Z-report the normalizer couldn't split per
+    // tarief). Left as-is it would vanish: the day counts as "covered" (total_incl>0) so
+    // the bank/cash witnesses are suppressed, yet it adds 0 to 5a — silently understating
+    // the aangifte to zero and slipping past the readiness gate. Instead, recover the
+    // unaccounted gross as revenue AND flag it as omzet-zonder-tarief (exactly like unrated
+    // cash: counted in omzet, surfaced in cashOmzetZonderBtw, which BLOCKS readiness) so a
+    // rate must be assigned before this can be filed. Tolerant of per-day rounding.
+    if (t.total_incl != null) {
+      const unrated = t.total_incl - (net + b.total);
+      if (unrated > Math.max(0.05, 0.005 * Math.abs(t.total_incl))) {
+        omzet += unrated;
+        cashOmzetZonderBtw += unrated;
+      }
+    }
   }
 
   // 5) [TRIANGLE] Acquirer commission — a real cost that closes the gross-till vs net-bank
