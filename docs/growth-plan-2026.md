@@ -123,11 +123,18 @@ The four quarterly BTW deadlines are a recurring 4×/year engine — one evergre
 These are the highest-leverage moves that require **app/tool changes** and so are
 **not** done by the portal work. Flagged here so the team can prioritise them.
 
-1. **English versions of the 7 free tools at `/en/...`.** The single biggest
-   keyword wedge (near-zero competition on "Dutch VAT calculator", "invoice
-   generator Netherlands", "freelance net income Netherlands"). Requires i18n of
-   the tool components — an app change. The EN blog already exists to feed them
-   internal links.
+1. ~~English versions of the free tools at `/en/...`.~~ **✅ SHIPPED (July 2026,
+   authorized as an exception).** The 5 calculators now have English versions at
+   `/en/btw-berekenen`, `/en/netto-inkomen-zzp`, `/en/uurtarief-berekenen`,
+   `/en/kilometervergoeding`, `/en/btw-aangifte-berekenen` — targeting "Dutch VAT
+   calculator", "freelance net income / hourly rate Netherlands", "mileage
+   allowance Netherlands", "Dutch VAT return". Each calculator got an optional
+   `locale` prop (default `'nl'`, so the Dutch tools are byte-identical) sharing
+   the exact math engine; only display strings, the euro formatter
+   (`formatEuroEN`) and the number parser (`parseAmountEN`, comma=thousands)
+   switch on locale. EN blog article CTAs route to the EN tool. Still open for the
+   dev team: **English `factuur-maken` and `factuur-scannen`** (heavier — PDF/AI
+   flows), and adding the English tools to a visible switch on the `/tools` hub.
 2. **Bookkeeper referral / "for bookkeepers" landing + invite flow.** Turn the
    bridge into a real acquisition channel (one accountant → their whole ZZP book).
    The plumbing exists (`/api/accountant/invite`, UBL export); it needs a

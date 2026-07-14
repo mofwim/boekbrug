@@ -7,6 +7,18 @@
 import Link from 'next/link'
 import type { Locale } from '@/lib/blog'
 
+// Tools that have a published English version at /en/<slug>. For EN articles we
+// route the CTA to the English tool so the reader stays in English; tools not
+// listed here (factuur-maken, factuur-scannen, tools hub) have no EN page yet
+// and keep their Dutch path.
+const EN_TOOLS = new Set([
+  '/btw-berekenen',
+  '/netto-inkomen-zzp',
+  '/uurtarief-berekenen',
+  '/kilometervergoeding',
+  '/btw-aangifte-berekenen',
+])
+
 const COPY: Record<Locale, { heading: string; body: string; register: string; reassure: string }> = {
   nl: {
     heading: 'Doe het meteen goed — gratis',
@@ -32,6 +44,7 @@ export default function ToolCTA({
   relatedToolLabel: string
 }) {
   const t = COPY[locale]
+  const toolHref = locale === 'en' && EN_TOOLS.has(relatedTool) ? `/en${relatedTool}` : relatedTool
   return (
     <aside
       style={{
@@ -53,7 +66,7 @@ export default function ToolCTA({
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         {relatedTool && relatedToolLabel && (
           <Link
-            href={relatedTool}
+            href={toolHref}
             style={{
               backgroundColor: '#007aff',
               color: '#fff',
