@@ -51,6 +51,14 @@ function normHeader(v: Cell): string {
 /** Parse a date cell → ISO 'YYYY-MM-DD', or null. Accepts ISO, DD-MM-YYYY, DD/MM/YYYY, Date. */
 function parseDate(v: Cell): string | null {
   if (v == null) return null;
+  // Excel serial date: a bare number in the Datum cell (the .xls stores dates this way).
+  // The adapter's cellDates usually converts it to a Date→ISO, but handle a raw serial
+  // defensively so a mis-tagged cell never silently drops the whole day. The 1899-12-30
+  // epoch absorbs Excel's 1900 leap-year quirk for any modern date.
+  if (typeof v === "number" && v > 20000 && v < 80000) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  }
   const s = String(v).trim();
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
@@ -66,9 +74,13 @@ interface ColMap {
   date: number;
   gross: number;               // "Omzet incl."
   net: number;                 // "Netto Omzet"
-  rate0: number[];             // may be several 0% columns → summed
-  rate9: number[];
-  rate21: number[];
+  // Per rate, split into HT (Hors Taxe = NET) and OTHER ("Base TC" = gross, or a generic
+  // "Base" whose gross/net is decided by arithmetic). When HT columns exist (month.xls),
+  // base = HT and BTW = TC − HT (exact). When they don't (feb.xls), the OTHER set is a
+  // single set interpreted by arithmetic. This is what stops HT+TC being summed (which
+  // doubled the omzet on the real month.xls export).
+  htRate0: number[]; htRate9: number[]; htRate21: number[];
+  otherRate0: number[]; otherRate9: number[]; otherRate21: number[];
   cash: number;                // "Contant"
   pin: number;                 // "PIN"
   other: number[];             // "Betaling_*" → summed
@@ -83,15 +95,19 @@ function mapColumns(matrix: Cell[][]): { header: number; cols: ColMap } | null {
     const date = find(/^datum/);
     const gross = find(/omzet incl/);
     if (date < 0 || gross < 0) continue; // not the header row
+    // Base columns for a rate, split by whether the header carries the HT (net) marker.
+    const baseCols = (rate: number, wantHt: boolean) =>
+      heads
+        .map((x, i) => (new RegExp(`base.*\\b${rate}\\s*%`).test(x) && /\bht\b/.test(x) === wantHt ? i : -1))
+        .filter((i) => i >= 0);
     return {
       header: h,
       cols: {
         date,
         gross,
         net: find(/netto/),
-        rate0: findAll(/base.*\b0\s*%/),
-        rate9: findAll(/base.*\b9\s*%/),
-        rate21: findAll(/base.*\b21\s*%/),
+        htRate0: baseCols(0, true), htRate9: baseCols(9, true), htRate21: baseCols(21, true),
+        otherRate0: baseCols(0, false), otherRate9: baseCols(9, false), otherRate21: baseCols(21, false),
         cash: find(/contant/),
         pin: find(/^pin$|\bpin\b/),
         other: findAll(/betaling/),
@@ -121,7 +137,9 @@ export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
     return { rows, warnings };
   }
   const { header, cols } = mapped;
-  if (cols.rate9.length === 0 && cols.rate21.length === 0) {
+  const has9 = cols.htRate9.length + cols.otherRate9.length > 0;
+  const has21 = cols.htRate21.length + cols.otherRate21.length > 0;
+  if (!has9 && !has21) {
     warnings.push({ row: 0, code: "no_rate_columns", message: "Geen BTW-tarief kolommen (9% / 21%) gevonden — kan omzet niet per tarief splitsen." });
   }
 
@@ -136,29 +154,43 @@ export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
     if (gross === 0) continue; // an empty day — nothing to import
     const netTotal = cols.net >= 0 ? num(row[cols.net]) : 0;
 
-    const raw0 = sumCols(row, cols.rate0);
-    const raw9 = sumCols(row, cols.rate9);
-    const raw21 = sumCols(row, cols.rate21);
-    const sumRates = raw0 + raw9 + raw21;
+    const hasHT = cols.htRate0.length + cols.htRate9.length + cols.htRate21.length > 0;
 
-    // Gross-vs-net detection: which total do the rate columns match? With a Netto column,
-    // pick the closer of gross/net. WITHOUT one (netTotal defaults to 0), only call it
-    // gross when the rate columns actually SUM to the gross total (within 2%); otherwise
-    // they are the net base. Never decide by distance-to-0 — that would treat a net-only
-    // sheet as gross and divide the BTW back out, understating it.
-    const hasNet = cols.net >= 0 && netTotal > 0;
-    const isGross = hasNet
-      ? Math.abs(sumRates - gross) <= Math.abs(sumRates - netTotal)
-      : Math.abs(sumRates - gross) <= 0.02 * Math.max(1, Math.abs(gross));
+    let s9: { base: number; btw: number };
+    let s21: { base: number; btw: number };
+    let base0: number;
 
-    const split = (raw: number, rate: number) =>
-      isGross
-        ? { base: r2(raw / (1 + rate / 100)), btw: r2(raw - raw / (1 + rate / 100)) }
-        : { base: r2(raw), btw: r2(raw * (rate / 100)) };
-
-    const s9 = split(raw9, 9);
-    const s21 = split(raw21, 21);
-    const base0 = r2(raw0); // 0% base == gross == net
+    if (hasHT) {
+      // Pair mode (month.xls): HT is the NET base; BTW = TC (gross) − HT, exact — no
+      // division rounding. Statiegeld/beltegoed live in the 0% HT column(s) → base_0 with
+      // zero BTW (0% = zero-tax). HT and TC are the SAME money in two views — never summed.
+      const net9 = sumCols(row, cols.htRate9);
+      const net21 = sumCols(row, cols.htRate21);
+      const gross9 = sumCols(row, cols.otherRate9);
+      const gross21 = sumCols(row, cols.otherRate21);
+      s9 = { base: r2(net9), btw: cols.otherRate9.length ? r2(gross9 - net9) : r2(net9 * 0.09) };
+      s21 = { base: r2(net21), btw: cols.otherRate21.length ? r2(gross21 - net21) : r2(net21 * 0.21) };
+      base0 = r2(sumCols(row, cols.htRate0));
+    } else {
+      // Legacy single-set (feb.xls / a net-only POS): one "Base" set, gross-vs-net decided
+      // by arithmetic. With a Netto column, pick the closer of gross/net; without one, only
+      // call it gross when the columns SUM to the gross total (≤2%), else treat as net base.
+      const raw0 = sumCols(row, cols.otherRate0);
+      const raw9 = sumCols(row, cols.otherRate9);
+      const raw21 = sumCols(row, cols.otherRate21);
+      const sumRates = raw0 + raw9 + raw21;
+      const hasNet = cols.net >= 0 && netTotal > 0;
+      const isGross = hasNet
+        ? Math.abs(sumRates - gross) <= Math.abs(sumRates - netTotal)
+        : Math.abs(sumRates - gross) <= 0.02 * Math.max(1, Math.abs(gross));
+      const split = (raw: number, rate: number) =>
+        isGross
+          ? { base: r2(raw / (1 + rate / 100)), btw: r2(raw - raw / (1 + rate / 100)) }
+          : { base: r2(raw), btw: r2(raw * (rate / 100)) };
+      s9 = split(raw9, 9);
+      s21 = split(raw21, 21);
+      base0 = r2(raw0);
+    }
 
     const cash = cols.cash >= 0 ? num(row[cols.cash]) : 0;
     const pin = cols.pin >= 0 ? num(row[cols.pin]) : 0;

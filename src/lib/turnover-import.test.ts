@@ -98,5 +98,48 @@ console.log("\n— AUDIT FIX: a net-only sheet is not mistaken for gross —");
   check("BTW derived on top of the net base (≈90)", Math.abs((rows[0]?.btw_9 ?? 0) - 90) < 0.5);
 }
 
+console.log("\n— REAL month.xls: Base HT (net) + Base TC (gross) — use HT, BTW = TC − HT —");
+{
+  // Verbatim from Kiwi's real month.xls, day 03/07/2026. The columns come in PAIRS:
+  // Base HT (Hors Taxe = net) AND Base TC (Toutes Taxes Comprises = gross). Summing both
+  // (the old bug) doubled the omzet. Use HT as the base, BTW = TC − HT (exact, no division).
+  const H: Cell[] = [
+    "Datum", "Omzet incl.", "BTW", "Netto Omzet",
+    " Base HT 0 %", " Base HT 0 %", " Base HT 9 %", " Base HT 21 %",
+    " Base TC 0 %", " Base TC 0 %", " Base TC 9 %", " Base TC 21 %",
+    "Contant", "PIN", "Betaling_3", "Betaling_4", "Betaling_5",
+  ];
+  const R: Cell[] = [
+    "2026-07-03", 2303.100342, 193.780762, 2109.31958,
+    0.0, 2.55, 2071.734259, 35.008264,
+    0.0, 2.55, 2258.190342, 42.36,
+    216.449997, 2086.650005, 0.0, 0.0, 0.0,
+  ];
+  const { rows, warnings } = normalizeTurnoverSheet([H, R]);
+  const d = rows[0];
+  check("base_9 = HT net 2071.73 (NOT doubled to ~3972)", near(d.base_9, 2071.73, 0.02));
+  check("base_21 = HT net 35.01 (NOT doubled to ~64)", near(d.base_21, 35.01, 0.02));
+  check("base_0 = statiegeld 2.55 at 0% (zero-tax)", near(d.base_0, 2.55, 0.02));
+  check("btw_9 = TC − HT = 186.46", near(d.btw_9, 186.46, 0.05));
+  check("btw_21 = TC − HT = 7.35", near(d.btw_21, 7.35, 0.05));
+  check("statiegeld carries NO BTW (0%)", true); // base_0 has no btw field — implicit 0
+  check("total_incl = Omzet incl. 2303.10", near(d.total_incl!, 2303.10, 0.02));
+  check("net omzet (b0+b9+b21) ≈ Netto Omzet 2109.32", near(d.base_0 + d.base_9 + d.base_21, 2109.32, 0.05));
+  check("cash = Contant 216.45", near(d.cash_amount!, 216.45, 0.02));
+  check("pin = PIN 2086.65", near(d.pin_amount!, 2086.65, 0.02));
+  check("no rate_total_mismatch warning (it reconciles now)", !warnings.some((w) => w.code === "rate_total_mismatch"));
+}
+
+console.log("\n— REAL month.xls: Excel serial date (46206) parses to 2026-07-03 —");
+{
+  // The .xls stores Datum as an Excel serial number. The adapter's cellDates usually
+  // converts it, but parseDate must handle a bare serial defensively so a mis-tagged cell
+  // never silently drops the whole day.
+  const H: Cell[] = ["Datum", "Omzet incl.", " Base HT 9 %", " Base TC 9 %"];
+  const R: Cell[] = [46206, 2258.19, 2071.73, 2258.19];
+  const { rows } = normalizeTurnoverSheet([H, R]);
+  check("serial 46206 → 2026-07-03", rows[0]?.turnover_date === "2026-07-03");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
