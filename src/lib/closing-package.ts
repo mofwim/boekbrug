@@ -37,13 +37,14 @@ import {
 } from "./quarterly";
 import { calcBtwRate } from "./export";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
-import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
+import { turnoverNetOmzet, parsePosSettlement, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
 import type { EftSettlement } from "./eft-parser";
 import {
   computeResult,
   type ResultInvoice,
   type ResultCashEntry,
+  type ResultBankTx,
 } from "./financial-result";
 import {
   buildAangifte,
@@ -1049,9 +1050,11 @@ export async function buildClosingPackageZip(args: {
 
   // ── [AANGIFTE] Concept BTW-aangifte — the SAME figures as the app's aangifte screen ──
   // Computed via the one reconciliation engine (computeResult), so the ZIP and the app
-  // never diverge. Bank lines carry no BTW, so bank=[] here: the aangifte's rubriek BTW
-  // comes only from invoices + rated cash + turnover (all already in this package as
-  // evidence). The covered-days set excludes cash sales the till already counted.
+  // never diverge. The aangifte's rubriek BTW still comes only from invoices + rated cash +
+  // turnover — a bank line carries no BTW document. But a bank line categorized
+  // 'omzet'/'pos_income' with no invoice or Z-report IS revenue with no rate, and must be
+  // surfaced as omzet-zonder-tarief here too (not silently dropped), so the ZIP matches
+  // /api/result and /api/readiness. The covered-days set excludes takings the till counted.
   const { data: cashAllRows } = await supabase
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date")
@@ -1065,6 +1068,20 @@ export async function buildClosingPackageZip(args: {
     btw_rate: c.btw_rate,
     date: c.entry_date,
   }));
+  const { data: bankAllRows } = await supabase
+    .from("bank_transactions")
+    .select("amount, category, invoice_id, date, description")
+    .eq("user_id", ownerId)
+    .gte("date", start)
+    .lte("date", end);
+  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map((b) => {
+    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
+    return {
+      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
+      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
+      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
+    };
+  });
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
     status: i.status,
@@ -1074,7 +1091,7 @@ export async function buildClosingPackageZip(args: {
   const coveredDates = new Set(
     turnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
   );
-  const result = computeResult(invoicesForResult, [], cashEntries, turnover, coveredDates);
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates);
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),
