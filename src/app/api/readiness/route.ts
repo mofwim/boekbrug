@@ -77,13 +77,23 @@ export async function GET(req: NextRequest) {
     .eq("user_id", ownerId).gte("date", start).lte("date", end);
   const bank = bankRows ?? [];
   let undocumentedCount = 0;
+  // [TRUST-READY] Count received payments (credits) we can't yet explain: pending,
+  // no linked invoice, and no category at all. Card takings are auto-categorised
+  // 'pos_income' on import and are reconciled via the till triangle, so they carry a
+  // category and are correctly excluded here — this counts only genuinely unresolved
+  // income, the "money in with no invoice" that readiness never used to see.
+  let unmatchedIncomeCount = 0;
   for (const t of bank) {
     if (t.status === "pending" && !t.invoice_id) {
-      const stillOpen =
-        t.category == null
-          ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
-          : t.category === "kosten";
-      if (stillOpen) undocumentedCount++;
+      if ((t.amount ?? 0) > 0 && t.category == null) {
+        unmatchedIncomeCount++;
+      } else {
+        const stillOpen =
+          t.category == null
+            ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
+            : t.category === "kosten";
+        if (stillOpen) undocumentedCount++;
+      }
     }
   }
 
@@ -171,6 +181,7 @@ export async function GET(req: NextRequest) {
     missingEvidence: [], // exact COUNT drives the score; specific numbers aren't surfaced here
     bankTxCount: bank.length,
     undocumentedCount,
+    unmatchedIncomeCount,
     usesTurnover: turnover.length > 0,
     turnoverDays: turnover.length,
     reconExceptions,

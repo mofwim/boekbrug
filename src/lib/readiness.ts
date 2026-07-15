@@ -25,6 +25,11 @@ export interface ReadinessSignals {
   // ── Bank ──
   bankTxCount: number;                  // bank transactions DATED in the quarter
   undocumentedCount: number;            // pending outgoing costs still without a document
+  // [TRUST-READY] pending INCOMING payments (credits) with no linked invoice AND no
+  // category — money in we cannot yet explain. Was invisible to readiness (a credit
+  // never "needs a document"), so a payment with no invoice behind it scored the
+  // quarter "100% klaar". A genuine gap: revenue the accountant can't tie to a sale.
+  unmatchedIncomeCount: number;
 
   // ── Till / cash reconciliation (retail triangle: till ⇄ bank ⇄ drawer) ──
   usesTurnover: boolean;                // daily_turnover rows exist → the triangle applies
@@ -142,7 +147,10 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         detail: "Upload het bankafschrift van dit kwartaal — zonder bank kan de boekhouder niets aansluiten.",
       });
     } else {
-      const resolved = Math.max(0, s.bankTxCount - s.undocumentedCount);
+      // [TRUST-READY] Both unresolved kinds lower the score and count as gaps: a cost
+      // still missing its bon, AND a received payment we can't tie to an invoice.
+      const openBank = s.undocumentedCount + s.unmatchedIncomeCount;
+      const resolved = Math.max(0, s.bankTxCount - openBank);
       subscore = clamp01(resolved / s.bankTxCount);
       detail = `${resolved} van ${s.bankTxCount} banktransacties verwerkt.`;
       if (s.undocumentedCount > 0) {
@@ -153,6 +161,18 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 banktransactie wacht nog op een bon"
               : `${s.undocumentedCount} banktransacties wachten nog op een bon`,
           detail: "Uitgaven zonder document tellen niet mee als kosten en verlagen je aftrek.",
+        });
+      }
+      if (s.unmatchedIncomeCount > 0) {
+        // The one thing a bank check exists to catch: money in with no invoice behind
+        // it. A genuine gap — it blocks "klaar" so the owner links it or explains it.
+        missing.push({
+          severity: "missing",
+          title:
+            s.unmatchedIncomeCount === 1
+              ? "1 ontvangen betaling zonder factuur"
+              : `${s.unmatchedIncomeCount} ontvangen betalingen zonder factuur`,
+          detail: "Koppel de betaling aan een factuur of geef aan wat het is (bijv. huur, lening, privé). Onverklaarde omzet kan de boekhouder niet aansluiten.",
         });
       }
     }

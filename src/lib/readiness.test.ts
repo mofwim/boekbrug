@@ -14,7 +14,7 @@ function check(name: string, cond: boolean) {
 const perfect = (over: Partial<ReadinessSignals> = {}): ReadinessSignals => ({
   quarterLabel: "Q1 2026",
   verifiedInvoiceCount: 40, invoicesWithEvidence: 40, missingEvidence: [],
-  bankTxCount: 120, undocumentedCount: 0,
+  bankTxCount: 120, undocumentedCount: 0, unmatchedIncomeCount: 0,
   usesTurnover: true, turnoverDays: 90, reconExceptions: [],
   hasSales: true, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
   ...over,
@@ -27,6 +27,18 @@ console.log("\n— a clean retail quarter is 100% and ready —");
   check("status ready", r.status === "ready" && r.ready === true);
   check("no missing, no risks", r.missing.length === 0 && r.risks.length === 0);
   check("all four dimensions applicable", r.dimensions.every((d) => d.applicable));
+}
+
+console.log("\n— [TRUST-READY] a received payment with no invoice blocks 'klaar' —");
+{
+  // Was the CRITICAL false-green: an unmatched incoming payment never lowered the
+  // score, so the quarter read '100% klaar' while revenue had no invoice behind it.
+  const r = buildReadiness(perfect({ unmatchedIncomeCount: 2 }));
+  check("not ready when a payment has no invoice", r.status !== "ready" && r.ready === false);
+  check("surfaced as a MISSING gap (not a soft risk)", r.missing.some((m) => /zonder factuur/.test(m.title)));
+  check("score dips below 100", r.score < 100);
+  const clean = buildReadiness(perfect({ unmatchedIncomeCount: 0 }));
+  check("zero unmatched income → still ready (no false alarm)", clean.status === "ready");
 }
 
 console.log("\n— the weighted mean is exact (30/30/20/20) —");
@@ -45,7 +57,7 @@ console.log("\n— n.v.t. dimensions are EXCLUDED from the denominator, never fa
   const zzp = buildReadiness({
     quarterLabel: "Q1 2026",
     verifiedInvoiceCount: 10, invoicesWithEvidence: 10, missingEvidence: [],
-    bankTxCount: 30, undocumentedCount: 0,
+    bankTxCount: 30, undocumentedCount: 0, unmatchedIncomeCount: 0,
     usesTurnover: false, turnoverDays: 0, reconExceptions: [],
     hasSales: true, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
   });
@@ -104,7 +116,7 @@ console.log("\n— empty quarter: nothing to judge → 0, attention —");
   const r = buildReadiness({
     quarterLabel: "Q1 2026",
     verifiedInvoiceCount: 0, invoicesWithEvidence: 0, missingEvidence: [],
-    bankTxCount: 0, undocumentedCount: 0,
+    bankTxCount: 0, undocumentedCount: 0, unmatchedIncomeCount: 0,
     usesTurnover: false, turnoverDays: 0, reconExceptions: [],
     hasSales: false, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
   });
@@ -129,7 +141,7 @@ console.log("\n— bank-only must NOT be a false 100% green (fix A) —");
   const r = buildReadiness({
     quarterLabel: "Q1 2026",
     verifiedInvoiceCount: 0, invoicesWithEvidence: 0, missingEvidence: [],
-    bankTxCount: 10, undocumentedCount: 0,
+    bankTxCount: 10, undocumentedCount: 0, unmatchedIncomeCount: 0,
     usesTurnover: false, turnoverDays: 0, reconExceptions: [],
     hasSales: false, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
   });
@@ -145,7 +157,7 @@ console.log("\n— a pure-purchase quarter (inkoop + bank, geen omzet) flags the
   const r = buildReadiness({
     quarterLabel: "Q1 2026",
     verifiedInvoiceCount: 5, invoicesWithEvidence: 5, missingEvidence: [],
-    bankTxCount: 20, undocumentedCount: 0,
+    bankTxCount: 20, undocumentedCount: 0, unmatchedIncomeCount: 0,
     usesTurnover: false, turnoverDays: 0, reconExceptions: [],
     hasSales: false, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
   });
@@ -160,7 +172,7 @@ console.log("\n— an EMPTY quarter still has BTW as n.v.t. (no activity → not
   const r = buildReadiness({
     quarterLabel: "Q1 2026",
     verifiedInvoiceCount: 0, invoicesWithEvidence: 0, missingEvidence: [],
-    bankTxCount: 0, undocumentedCount: 0,
+    bankTxCount: 0, undocumentedCount: 0, unmatchedIncomeCount: 0,
     usesTurnover: false, turnoverDays: 0, reconExceptions: [],
     hasSales: false, cashOmzetZonderBtw: 0, quarterDays: 90, hasUndecidableRate: false, hasEuPurchase: false,
   });
