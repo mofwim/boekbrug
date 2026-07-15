@@ -1785,6 +1785,16 @@ export async function syncUserEmails(userId: string): Promise<{
 
           if (tier.kind === 'number') {
             contentQuery = contentQuery.eq('invoice_number', classification.invoiceNumber as string)
+            // [TRUST-DEDUP] Also constrain by VENDOR when we know it. Two different
+            // suppliers can each issue invoice number "1" (or "2026001") for the same
+            // total — matching on number+total alone wrongly discarded the second as a
+            // duplicate of the first, losing a real purchase invoice. client_name on
+            // an incoming invoice IS the vendor. When the vendor is unknown we fall
+            // back to number+total (byte-hash + message-key already caught true
+            // re-arrivals), so this only ever makes the key STRICTER, never looser.
+            if (classification.vendor && classification.vendor.trim()) {
+              contentQuery = contentQuery.ilike('client_name', classification.vendor.trim())
+            }
           } else {
             // vendor tier: client_name on an incoming invoice IS the vendor.
             // ilike handles case-insensitivity; we pass the RAW (trimmed) vendor
