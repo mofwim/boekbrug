@@ -19,14 +19,41 @@ export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   const search        = p.get("search") ?? "";
   const starred       = p.get("starred") === "true";
+  // [BESTANDEN-SMART] Drive/OneDrive-style smart views. One flat, cross-folder
+  // list of the owner's own documents, filtered by a virtual axis instead of a
+  // folder. 'recent' = latest first (capped), 'starred' = favourites, 'shared'
+  // = everything the accountant can see. All read-only over the same RLS-bound
+  // documents table (own rows, trashed=false). No new tables, no writes.
+  const view          = p.get("view"); // 'recent' | 'starred' | 'shared'
+  const stats         = p.get("stats") === "true";
   const folderIdParam = p.get("folder_id");
 
-  // ── Starred view ──
-  if (starred) {
+  // ── Storage usage (count + total bytes of the owner's live files) ──
+  // [BESTANDEN-SMART] Powers the sidebar storage meter. Sums file_size over the
+  // owner's non-trashed documents — a single indexed scan (documents_user_created).
+  if (stats) {
     const { data, error } = await supabase
+      .from("documents").select("file_size")
+      .eq("user_id", user.id).eq("trashed", false);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const rows = data ?? [];
+    const bytes = rows.reduce((sum, d) => sum + (d.file_size ?? 0), 0);
+    return NextResponse.json({ count: rows.length, bytes });
+  }
+
+  // ── Smart views: recent / starred / shared ──
+  // [BESTANDEN-SMART] `starred=true` is the pre-existing param and stays working;
+  // `view=starred` is its named alias. All three return the same { documents } shape
+  // the client already renders for the starred/search lists.
+  if (view === "recent" || view === "starred" || view === "shared" || starred) {
+    let q = supabase
       .from("documents").select(DOC_SELECT)
-      .eq("user_id", user.id).eq("starred", true).eq("trashed", false)
+      .eq("user_id", user.id).eq("trashed", false)
       .order("created_at", { ascending: false });
+    if (view === "starred" || starred) q = q.eq("starred", true);
+    else if (view === "shared")        q = q.eq("shared", true);
+    else                               q = q.limit(50); // recent — latest 50
+    const { data, error } = await q;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ documents: data ?? [] });
   }

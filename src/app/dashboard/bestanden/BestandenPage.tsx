@@ -30,6 +30,35 @@ import { RenameModal } from "./components/modals/RenameModal";
 import { MoveModal } from "./components/modals/MoveModal";
 import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
 
+// [BESTANDEN-SMART] Virtual, cross-folder listings — the Drive/OneDrive left-nav.
+// These replace the folder view with a flat file list filtered by a virtual axis.
+type SmartView = "recent" | "starred" | "shared";
+
+// [BESTANDEN-SMART] Metadata for each smart view: sidebar label, icon, and the
+// empty-state copy. Kept in one place so the sidebar and the content header agree.
+const SMART_VIEWS: Record<SmartView, { label: string; icon: string; empty: string }> = {
+  recent:  { label: "Recent",     icon: "schedule",     empty: "Recent geopende of toegevoegde bestanden verschijnen hier" },
+  starred: { label: "Favorieten", icon: "star",         empty: "Markeer bestanden met een ster om ze hier terug te vinden" },
+  shared:  { label: "Gedeeld",    icon: "group",        empty: "Bestanden die je met je boekhouder deelt verschijnen hier" },
+};
+
+// [BESTANDEN-SORT] Client-side sort axes for file listings.
+type SortField = "name" | "date" | "size";
+const SORT_LABELS: Record<SortField, string> = { name: "Naam", date: "Datum", size: "Grootte" };
+
+// [BESTANDEN-SORT] Pure sorter — never mutates the input. Folders and smart views
+// both run their document arrays through this before rendering.
+function sortDocs(docs: BestandRow[], field: SortField, dir: "asc" | "desc"): BestandRow[] {
+  const factor = dir === "asc" ? 1 : -1;
+  return [...docs].sort((a, b) => {
+    let cmp = 0;
+    if (field === "name")      cmp = a.file_name.localeCompare(b.file_name, "nl");
+    else if (field === "size") cmp = (a.file_size ?? 0) - (b.file_size ?? 0);
+    else                       cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    return cmp * factor;
+  });
+}
+
 // ─── Breadcrumb ────────────────────────────────────────────────────────────────
 
 function Breadcrumb({ folders, currentFolderId, onNavigate }: {
@@ -199,6 +228,23 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // ── UI state ──
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [showTrash, setShowTrash] = useState(false);
+  // [BESTANDEN-SMART] Drive/OneDrive smart views (Recent / Favorieten / Gedeeld).
+  // Null = normal folder browsing. When set, a flat cross-folder list replaces the
+  // folder view (same content slot as the trash view). Mutually exclusive with trash.
+  const [smartView, setSmartView] = useState<SmartView | null>(null);
+  const [smartDocs, setSmartDocs] = useState<BestandRow[]>([]);
+  const [smartLoading, setSmartLoading] = useState(false);
+  // [BESTANDEN-SMART] Bumped after a mutation (star/share/move/delete) so the
+  // active smart view re-fetches and never shows a stale row. No-op when browsing
+  // a normal folder (the load effect returns early unless a smart view is active).
+  const [smartRefreshKey, setSmartRefreshKey] = useState(0);
+  // [BESTANDEN-SMART] Storage usage for the sidebar meter (total bytes + file count).
+  const [storage, setStorage] = useState<{ count: number; bytes: number } | null>(null);
+  // [BESTANDEN-SORT] Sort axis applied to the current listing (folder + smart views).
+  const [sortField, setSortField] = useState<SortField>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
@@ -238,23 +284,37 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   // [BOEK-033] Internal navigation history — back button between folders/views
-  type NavState = { folderId: string | null; showTrash: boolean };
+  // [BESTANDEN-SMART] NavState carries smartView too, so Back restores a smart
+  // view (Recent/Favorieten/Gedeeld) exactly as it restores a folder or the trash.
+  type NavState = { folderId: string | null; showTrash: boolean; smartView: SmartView | null };
   const navHistoryRef = useRef<NavState[]>([]);
 
   const navigateTo = useCallback((folderId: string | null, opts?: { trash?: boolean }) => {
     // Push current state to history
-    navHistoryRef.current.push({ folderId: currentFolderId, showTrash });
+    navHistoryRef.current.push({ folderId: currentFolderId, showTrash, smartView });
     setCurrentFolderId(folderId);
     setShowTrash(opts?.trash ?? false);
+    setSmartView(null); // [BESTANDEN-SMART] leaving a smart view for a real folder
     setSelectedIds(new Set());
     setSearch("");
-  }, [currentFolderId, showTrash]); // eslint-disable-line
+  }, [currentFolderId, showTrash, smartView]); // eslint-disable-line
+
+  // [BESTANDEN-SMART] Enter a smart view. Parallels navigateTo: pushes history,
+  // clears folder/trash/selection so the flat cross-folder list takes over.
+  const navigateToSmart = useCallback((view: SmartView) => {
+    navHistoryRef.current.push({ folderId: currentFolderId, showTrash, smartView });
+    setSmartView(view);
+    setShowTrash(false);
+    setSelectedIds(new Set());
+    setSearch("");
+  }, [currentFolderId, showTrash, smartView]); // eslint-disable-line
 
   const navigateBack = useCallback(() => {
     const prev = navHistoryRef.current.pop();
     if (!prev) return;
     setCurrentFolderId(prev.folderId);
     setShowTrash(prev.showTrash);
+    setSmartView(prev.smartView);
     setSelectedIds(new Set());
     setSearch("");
   }, []);
@@ -325,10 +385,46 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setFolderTree(buildTree(sorted, null));
   }, []);
 
+  // [BESTANDEN-SMART] Storage meter — cheap count+bytes aggregate over own files.
+  const refreshStorage = useCallback(async () => {
+    const res = await fetch("/api/bestanden?stats=true").catch(() => null);
+    if (!res?.ok) return;
+    const data = await res.json() as { count: number; bytes: number };
+    setStorage(data);
+  }, []);
+
   useEffect(() => {
     loadContents(currentFolderId);
     loadAllFolders();
+    refreshStorage(); // [BESTANDEN-SMART] keep the sidebar meter fresh on load/nav
   }, [currentFolderId]); // eslint-disable-line
+
+  // [BESTANDEN-SMART] Re-fetch the active smart view after a mutation. Cheap: only
+  // fires the network call while a smart view is open (guarded in the effect).
+  const bumpSmart = useCallback(() => setSmartRefreshKey(k => k + 1), []);
+
+  // [BESTANDEN-SMART] Load the flat list for the active smart view. Re-fetches on
+  // entry AND on smartRefreshKey so Recent/Favorieten/Gedeeld stay fresh (e.g.
+  // after starring or un-sharing a file from within the view itself).
+  useEffect(() => {
+    if (!smartView) return;
+    let cancelled = false;
+    setSmartLoading(true);
+    fetch(`/api/bestanden?view=${smartView}`)
+      .then(r => r.json())
+      .then((j: { documents?: BestandRow[] }) => { if (!cancelled) setSmartDocs(j.documents ?? []); })
+      .catch(() => { if (!cancelled) setSmartDocs([]); })
+      .finally(() => { if (!cancelled) setSmartLoading(false); });
+    return () => { cancelled = true; };
+  }, [smartView, smartRefreshKey]);
+
+  // [BESTANDEN-SORT] Close the sort menu on outside click (same pattern as + Nieuw).
+  useEffect(() => {
+    if (!showSortMenu) return;
+    const fn = (e: MouseEvent) => { if (!sortMenuRef.current?.contains(e.target as Node)) setShowSortMenu(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [showSortMenu]);
 
   // [BESTANDEN-FOCUS] Once the docs of the target folder are loaded, scroll to
   // and highlight the focused file, then clear the highlight after a moment.
@@ -428,7 +524,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   }, [selectedIds, currentFolderId, subFolders, docs]); // eslint-disable-line
 
   // ── Selection helpers ──
-  const allItems = [...subFolders.map(f => `f:${f.id}`), ...docs.map(d => `d:${d.id}`)];
+  // [BESTANDEN-SORT] Sorted copy used for BOTH rendering and range-selection order,
+  // so Shift-click ranges follow exactly what the user sees.
+  const displayDocs = sortDocs(docs, sortField, sortDir);
+  const allItems = [...subFolders.map(f => `f:${f.id}`), ...displayDocs.map(d => `d:${d.id}`)];
 
   const handleSelect = (e: React.MouseEvent, itemKey: string) => {
     const id = itemKey.slice(2);
@@ -505,6 +604,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       body: JSON.stringify({ trashed: true }),
     });
     setDocs(p => p.filter(d => d.id !== id));
+    setSmartDocs(p => p.filter(d => d.id !== id)); // [BESTANDEN-SMART] drop from smart view
+    refreshStorage();
   };
 
   const handleMove = async (id: string, type: "file" | "folder", folderId: string | null) => {
@@ -523,6 +624,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       setDocs(p => p.filter(d => d.id !== id));
     }
     setMoveTarget(null);
+    bumpSmart(); // [BESTANDEN-SMART] a move may change what Gedeeld/Recent shows
   };
 
   const handleStar = async (id: string, type: "file" | "folder", current: boolean) => {
@@ -532,6 +634,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         body: JSON.stringify({ starred: !current }),
       });
       setDocs(p => p.map(d => d.id === id ? { ...d, starred: !current } : d));
+      setSmartDocs(p =>
+        smartView === "starred"
+          ? p.filter(d => d.id !== id)                                   // un/re-star leaves Favorieten
+          : p.map(d => d.id === id ? { ...d, starred: !current } : d),  // reflect elsewhere
+      );
     } else {
       await fetch(`/api/bestanden/folders?id=${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -562,6 +669,12 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       body: JSON.stringify({ shared: next }),
     });
     setDocs(p => p.map(d => d.id === docId ? { ...d, shared: next } : d));
+    // [BESTANDEN-SMART] In Gedeeld, un-sharing removes the row; elsewhere reflect it.
+    setSmartDocs(p =>
+      smartView === "shared" && !next
+        ? p.filter(d => d.id !== docId)
+        : p.map(d => d.id === docId ? { ...d, shared: next } : d),
+    );
     setToast(next ? "Gedeeld met je boekhouder" : "Delen gestopt");
     window.setTimeout(() => setToast(null), 2600);
   };
@@ -569,9 +682,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
   const handleUploaded = useCallback((doc: BestandRow) => {
     setDocs(p => [doc, ...p]);
+    refreshStorage(); // [BESTANDEN-SMART] keep the sidebar meter accurate
     // No share popup — sharing is manual via right-click → "Delen"
     // No AI suggestion popup — AI places silently in UploadArea
-  }, []);
+  }, [refreshStorage]);
 
   // ── Download ──
   const downloadFile = async (docId: string, fileName: string) => {
@@ -593,8 +707,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" })),
     ]);
     setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
+    setSmartDocs(p => p.filter(d => !selectedFileIds.includes(d.id))); // [BESTANDEN-SMART]
     setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
     setSelectedIds(new Set());
+    refreshStorage();
   };
 
   const handleBulkMove = async (folderId: string | null) => {
@@ -606,6 +722,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
     setSelectedIds(new Set()); setBulkMoveOpen(false);
     loadAllFolders();
+    bumpSmart(); // [BESTANDEN-SMART] moved files may enter/leave Gedeeld
   };
 
   // [BRUG-FILES-SHARED] Bulk share has no quarter picker, so it defaults to the
@@ -622,7 +739,9 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       body: JSON.stringify({ shared: true }),
     })));
     setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d));
+    setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d)); // [BESTANDEN-SMART]
     setSelectedIds(new Set());
+    bumpSmart();
   };
 
   const handleBulkStar = async () => {
@@ -631,8 +750,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
     ]);
     setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d));
+    setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d)); // [BESTANDEN-SMART]
     setSubFolders(p => p.map(f => selectedFolderIds.includes(f.id) ? { ...f, starred: true } : f));
     setSelectedIds(new Set());
+    bumpSmart();
   };
 
   // ── Context menus ──
@@ -866,6 +987,70 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             )}
           </div>
 
+          {/* [BESTANDEN-SORT] Sort control — Naam / Datum / Grootte + direction. */}
+          <div ref={sortMenuRef} style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              onClick={() => setShowSortMenu(v => !v)}
+              title="Sorteren"
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                height: 38, padding: "0 10px", background: "#F1F3F4",
+                border: "none", borderRadius: T.md, cursor: "pointer",
+                color: T.onSurface,
+              }}
+            >
+              <Icon name="sort" size={18} color={T.outline} />
+              <span className="hidden sm:inline" style={{ fontSize: 13 }}>{SORT_LABELS[sortField]}</span>
+              <Icon name={sortDir === "asc" ? "arrow_upward" : "arrow_downward"} size={14} color={T.outline} />
+            </button>
+            {showSortMenu && (() => {
+              const rect = sortMenuRef.current?.getBoundingClientRect();
+              return (
+                <div style={{
+                  position: "fixed",
+                  top: rect ? rect.bottom + 6 : 62,
+                  right: rect ? window.innerWidth - rect.right : 12,
+                  background: "white", borderRadius: 12,
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.15)", border: "1px solid #E0E0E0",
+                  minWidth: 180, zIndex: 9999, padding: "4px 0",
+                }}>
+                  {(Object.keys(SORT_LABELS) as SortField[]).map(field => (
+                    <button key={field}
+                      onClick={() => { setSortField(field); setShowSortMenu(false); }}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 12,
+                        padding: "10px 16px", background: "none", border: "none",
+                        fontSize: 14, color: sortField === field ? T.primary : T.onSurface,
+                        fontWeight: sortField === field ? 600 : 400, cursor: "pointer", textAlign: "left",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                      onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                    >
+                      {sortField === field
+                        ? <Icon name="check" size={16} color={T.primary} />
+                        : <span style={{ width: 16, display: "inline-block", flexShrink: 0 }} />}
+                      {SORT_LABELS[field]}
+                    </button>
+                  ))}
+                  <div style={{ height: 1, background: T.surfaceVariant, margin: "4px 0" }} />
+                  <button
+                    onClick={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: 12,
+                      padding: "10px 16px", background: "none", border: "none",
+                      fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                  >
+                    <Icon name={sortDir === "asc" ? "arrow_upward" : "arrow_downward"} size={16} color={T.outline} />
+                    {sortDir === "asc" ? "Oplopend" : "Aflopend"}
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+
           {/* View toggle */}
           <div style={{ display: "flex", background: "#F1F3F4", borderRadius: T.md, padding: 3, flexShrink: 0 }}>
             {(["grid", "list"] as ViewMode[]).map(mode => (
@@ -1060,18 +1245,50 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             </Link>
 
             {/* Root */}
-            <button onClick={() => navigateTo(null)} style={{
-              width: "100%", display: "flex", alignItems: "center", gap: 10,
-              padding: "8px 12px", border: "none", cursor: "pointer",
-              borderRadius: T.md, textAlign: "left", fontSize: 14,
-              background: currentFolderId === null && !showTrash ? T.primaryContainer : "transparent",
-              color: currentFolderId === null && !showTrash ? T.primary : T.onSurface,
-              fontWeight: currentFolderId === null && !showTrash ? 600 : 400,
-              transition: "background 0.1s",
-            }}>
-              <Icon name="home" size={18} color={currentFolderId === null && !showTrash ? T.primary : T.outline} />
-              Mijn bestanden
-            </button>
+            {(() => {
+              const rootActive = currentFolderId === null && !showTrash && !smartView;
+              return (
+                <button onClick={() => navigateTo(null)} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 10,
+                  padding: "8px 12px", border: "none", cursor: "pointer",
+                  borderRadius: T.md, textAlign: "left", fontSize: 14,
+                  background: rootActive ? T.primaryContainer : "transparent",
+                  color: rootActive ? T.primary : T.onSurface,
+                  fontWeight: rootActive ? 600 : 400,
+                  transition: "background 0.1s",
+                }}>
+                  <Icon name="home" size={18} color={rootActive ? T.primary : T.outline} />
+                  Mijn bestanden
+                </button>
+              );
+            })()}
+
+            {/* [BESTANDEN-SMART] Smart views — the Drive/OneDrive left-nav. Recent,
+                Favorieten, Gedeeld: flat cross-folder lists, one tap away. */}
+            {(Object.keys(SMART_VIEWS) as SmartView[]).map(view => {
+              const meta = SMART_VIEWS[view];
+              const active = smartView === view;
+              return (
+                <button key={view} onClick={() => navigateToSmart(view)} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 10,
+                  padding: "8px 12px", border: "none", cursor: "pointer",
+                  borderRadius: T.md, textAlign: "left", fontSize: 14,
+                  background: active ? T.primaryContainer : "transparent",
+                  color: active ? T.primary : T.onSurface,
+                  fontWeight: active ? 600 : 400,
+                  transition: "background 0.1s",
+                }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = T.surfaceVariant; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <Icon name={meta.icon} size={18} color={active ? T.primary : T.outline} />
+                  {meta.label}
+                </button>
+              );
+            })}
+
+            {/* [BESTANDEN-SMART] Divider before the real folder tree. */}
+            <div style={{ height: 1, background: T.surfaceVariant, margin: "8px 4px" }} />
 
             {/* Folder tree — with drag-drop on each item */}
             {folderTree.map(node => (
@@ -1142,6 +1359,22 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 </button>
               </div>
             </div>
+
+            {/* [BESTANDEN-SMART] Storage meter — Drive/OneDrive-style usage footer.
+                Honest usage (no invented quota): total size + file count. */}
+            <div style={{ marginTop: 12, borderTop: `1px solid ${T.surfaceVariant}`, paddingTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px" }}>
+                <Icon name="cloud" size={18} color={T.outline} style={{ flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ fontSize: 13, fontWeight: 500, color: T.onSurface, margin: 0 }}>
+                    {storage ? formatSize(storage.bytes) : "—"} gebruikt
+                  </p>
+                  <p style={{ fontSize: 11, color: T.outline, margin: "1px 0 0" }}>
+                    {storage ? `${storage.count} bestand${storage.count === 1 ? "" : "en"}` : "Berekenen…"}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </aside>
 
@@ -1197,7 +1430,74 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           }}>
 
             {showTrash ? (
-              <Trash onBack={() => setShowTrash(false)} />
+              <Trash onBack={() => { setShowTrash(false); refreshStorage(); }} />
+            ) : smartView ? (
+              /* ── Smart view: Recent / Favorieten / Gedeeld ── */
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+                  <Icon name={SMART_VIEWS[smartView].icon} size={22} color={T.primary} />
+                  <h2 style={{ fontSize: 18, fontWeight: 600, color: T.onSurface, margin: 0 }}>
+                    {SMART_VIEWS[smartView].label}
+                  </h2>
+                  {!smartLoading && smartDocs.length > 0 && (
+                    <span style={{ fontSize: 13, color: T.outline }}>
+                      {smartDocs.length} bestand{smartDocs.length === 1 ? "" : "en"}
+                    </span>
+                  )}
+                </div>
+
+                {smartLoading ? (
+                  <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner size={32} /></div>
+                ) : smartDocs.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "48px 24px" }}>
+                    <div style={{ width: 80, height: 80, borderRadius: T.xl, background: T.primaryContainer, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                      <Icon name={SMART_VIEWS[smartView].icon} size={40} color={T.primary} />
+                    </div>
+                    <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>Nog niets hier</p>
+                    <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>{SMART_VIEWS[smartView].empty}</p>
+                  </div>
+                ) : viewMode === "grid" ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
+                    {sortDocs(smartDocs, sortField, sortDir).map(doc => (
+                      <div key={doc.id} style={{ borderRadius: T.lg }}>
+                        <DocCard
+                          doc={doc}
+                          selected={selectedIds.has(`d:${doc.id}`)}
+                          onPreview={() => setPreview(doc)}
+                          onSelect={e => handleSelect(e, `d:${doc.id}`)}
+                          onContextMenu={e => openFileContextMenu(e, doc)}
+                          onDragStart={e => handleDocDragStart(e, doc.id)}
+                          cardRef={() => {}}
+                          onToggleShare={handleToggleShare}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
+                    {sortDocs(smartDocs, sortField, sortDir).map((doc, i) => {
+                      const folderName = doc.folder_id
+                        ? (allFolders.find(f => f.id === doc.folder_id)?.name ?? null)
+                        : null;
+                      return (
+                        <div key={doc.id} style={{ borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none" }}>
+                          <DocRow
+                            doc={doc}
+                            selected={selectedIds.has(`d:${doc.id}`)}
+                            onPreview={() => setPreview(doc)}
+                            onSelect={e => handleSelect(e, `d:${doc.id}`)}
+                            onContextMenu={e => openFileContextMenu(e, doc)}
+                            onDragStart={e => handleDocDragStart(e, doc.id)}
+                            onToggleShare={handleToggleShare}
+                            folderLabel={folderName ?? "Mijn bestanden"}
+                            onOpenLocation={() => navigateTo(doc.folder_id ?? null)}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             ) : search.trim() ? (
               /* ── Search results ── */
               <div>
@@ -1332,7 +1632,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                         </p>
                         {viewMode === "grid" ? (
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
-                            {docs.map(doc => (
+                            {displayDocs.map(doc => (
                               <div
                                 key={doc.id}
                                 style={{
@@ -1357,7 +1657,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                           </div>
                         ) : (
                           <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
-                            {docs.map((doc, i) => (
+                            {displayDocs.map((doc, i) => (
                               <div
                                 key={doc.id}
                                 data-doc-row
