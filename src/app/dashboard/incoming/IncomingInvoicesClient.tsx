@@ -147,6 +147,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     let totalSkipped = 0;
     let totalDuplicate = 0;
     let totalErrors = 0;
+    let totalCouldNotRead = 0;
     let anyUnbalanced = false;
     // [BOEK-011] No-progress guard: if a round saves nothing AND remaining
     // didn't shrink, looping again would just repeat the same work. Stop and
@@ -173,6 +174,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           totalDuplicate += data.balance.duplicate ?? 0;
           if (data.balance.balanced === false) anyUnbalanced = true;
         }
+        totalCouldNotRead += data.couldNotRead ?? 0;
         totalErrors += data.errors ?? 0;
         const remaining = data.remaining ?? 0;
 
@@ -217,6 +219,14 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             extra > 0
               ? `${totalSaved} geïmporteerd. Alles is verwerkt (${extra} overgeslagen of al aanwezig).`
               : `${totalSaved} geïmporteerd. Alles is verwerkt.`;
+        }
+        // [COULD-NOT-READ] Never hide files we couldn't read: tell the owner to check
+        // them in bestanden (they were kept, not discarded, and not booked as anything).
+        if (totalCouldNotRead > 0) {
+          message +=
+            totalCouldNotRead === 1
+              ? " 1 bestand konden we niet lezen — het staat in je bestanden, controleer het even."
+              : ` ${totalCouldNotRead} bestanden konden we niet lezen — ze staan in je bestanden, controleer ze even.`;
         }
         setSyncResult(message);
         setTimeout(() => window.location.reload(), 1500);
