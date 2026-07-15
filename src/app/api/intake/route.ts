@@ -337,6 +337,14 @@ export async function POST(req: NextRequest) {
 
   // ── Destination: document (not an invoice/receipt) → bestanden only ─────────
   if (decision.destination === "document") {
+    // [TRUST-INTAKE] Distinguish "confidently NOT a financial doc" from "we couldn't
+    // READ it" (an AI outage / unreadable scan returns confidence 0 from the fallback).
+    // The old code told the owner "geen factuur of bon herkend" for BOTH — so a real
+    // receipt photographed during an outage was silently filed as "overig" and booked
+    // nothing behind a confident dismissal. When we couldn't actually read it, we store
+    // the file (never lose it) but say so honestly and tell the owner to check/retry —
+    // we never assert it isn't an invoice when we simply didn't manage to read it.
+    const couldNotRead = !(v.confidence > 0)
     const folderId = await ensureImportedFolder(user.id, "pipeline")
     const { data: doc, error: docErr } = await pipeline
       .from("documents")
@@ -349,7 +357,8 @@ export async function POST(req: NextRequest) {
         doc_type: "overig",
         folder_id: folderId,
         source: "camera",
-        ai_processed: true,
+        // Only claim we processed it when we actually read it.
+        ai_processed: !couldNotRead,
         ai_doc_type: v.document_kind ?? "other",
         content_hash: contentHash,
       })
@@ -370,10 +379,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       destination: "document",
+      could_not_read: couldNotRead,
       document_id: doc?.id ?? null,
       folder_id: folderId,
       folder_name: docFolderPath.length ? docFolderPath[docFolderPath.length - 1] : null,
-      message: "Opgeslagen in je bestanden (geen factuur of bon herkend).",
+      message: couldNotRead
+        ? "We konden dit document niet lezen. Het staat veilig in je bestanden — controleer het, of upload een duidelijkere foto als het een factuur of bon is."
+        : "Opgeslagen in je bestanden (geen factuur of bon herkend).",
     })
   }
 
