@@ -17,8 +17,38 @@ import {
   evaluateArithmetic,
   isPlaceholderInvoiceNumber,
   isReliableVendor,
+  normalizeVendor,
   deriveDueDate,
 } from '@/lib/safecore'
+
+// Legal suffixes / entity noise stripped when comparing two vendor names for the
+// duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
+// and conservative — only universally-safe suffixes, never real name words.
+const VENDOR_SUFFIX_NOISE = new Set([
+  'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc',
+])
+
+/** A comparison key for a vendor name: lowercased, legal suffixes + punctuation
+ *  stripped, collapsed. Pure. Empty string when there's nothing usable. */
+export function vendorCoreKey(name: string | null | undefined): string {
+  const tokens = normalizeVendor(name)
+    .replace(/\./g, '')          // collapse dotted acronyms first: "b.v." → "bv"
+    .replace(/[^a-z0-9\s]/g, ' ') // other punctuation → separator
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !VENDOR_SUFFIX_NOISE.has(t))
+  return tokens.join(' ')
+}
+
+/** True ONLY when both vendors are reliable AND their core keys differ — i.e. these
+ *  are genuinely DIFFERENT suppliers (who might each issue the same invoice number for
+ *  the same total). When either vendor is unknown/junk we cannot tell them apart, so we
+ *  return false (do not treat as different) and let the strong number+total anchor decide.
+ *  This lets a duplicate through the exact-string DB filter without missing it, while
+ *  still refusing to merge two real different vendors that share a number+total. */
+export function vendorsAreDifferent(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!isReliableVendor(a) || !isReliableVendor(b)) return false
+  return vendorCoreKey(a) !== vendorCoreKey(b)
+}
 // [BOEK-SAFECORE] jsonb column type for invoices.field_confidence — mirrors the
 // audit.ts pattern (derive the Json type from generated types, cast at write).
 import type { Database } from '@/types/database.types'
@@ -1875,16 +1905,15 @@ export async function syncUserEmails(userId: string): Promise<{
 
           if (tier.kind === 'number') {
             contentQuery = contentQuery.eq('invoice_number', classification.invoiceNumber as string)
-            // [TRUST-DEDUP] Also constrain by VENDOR when we know it. Two different
-            // suppliers can each issue invoice number "1" (or "2026001") for the same
-            // total — matching on number+total alone wrongly discarded the second as a
-            // duplicate of the first, losing a real purchase invoice. client_name on
-            // an incoming invoice IS the vendor. When the vendor is unknown we fall
-            // back to number+total (byte-hash + message-key already caught true
-            // re-arrivals), so this only ever makes the key STRICTER, never looser.
-            if (classification.vendor && classification.vendor.trim()) {
-              contentQuery = contentQuery.ilike('client_name', classification.vendor.trim())
-            }
+            // [TRUST-DEDUP] Vendor is compared in CODE (below), NOT with a DB `ilike`.
+            // An `ilike` with no wildcards is exact-apart-from-case, so a re-arrival of
+            // the SAME invoice under a slightly different vendor string ("Atapack B.V."
+            // vs "Atapack", extra spaces, OCR variance) slipped past the filter and the
+            // cost was booked TWICE. For a DUPLICATE blocker, a stricter key = fewer
+            // blocks = the dangerous direction. So we fetch candidates on number+total
+            // (+date) and use vendorsAreDifferent() to only DECLINE the match when both
+            // vendors are reliable AND genuinely different — keeping the guard against
+            // two real vendors sharing a number+total, without the false-negative.
           } else {
             // vendor tier: client_name on an incoming invoice IS the vendor.
             // ilike handles case-insensitivity; we pass the RAW (trimmed) vendor
@@ -1905,10 +1934,19 @@ export async function syncUserEmails(userId: string): Promise<{
             contentQuery = contentQuery.eq('invoice_date', realDateIso)
           }
 
-          const { data: existingByContent } = await contentQuery.limit(1)
+          // Number tier: fetch SEVERAL candidates (number+total+date can legitimately
+          // repeat across different vendors) and pick the first that isn't a genuinely
+          // different vendor. Vendor tier already constrains the vendor in-query → 1 row.
+          const { data: existingByContent } = await contentQuery.limit(tier.kind === 'number' ? 25 : 1)
 
-          if (existingByContent && existingByContent.length > 0) {
-            const original = existingByContent[0]
+          const original =
+            tier.kind === 'number'
+              ? (existingByContent ?? []).find(
+                  (c) => !vendorsAreDifferent(classification.vendor, c.client_name),
+                ) ?? null
+              : (existingByContent && existingByContent.length > 0 ? existingByContent[0] : null)
+
+          if (original) {
 
             // [BOEK-SAFECORE] Audit the blocked duplicate — truth in the log,
             // silence in the UI. entityId = the ORIGINAL (the duplicate is never
