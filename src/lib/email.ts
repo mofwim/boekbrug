@@ -113,7 +113,12 @@ export async function sendInvoiceToClient({
     ? `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.</p>`
     : ''
 
-  await resend.emails.send({
+  // [TRUST-DELIVERY] Resend's SDK resolves to { data, error } and does NOT throw on
+  // an API-level rejection (invalid recipient, unverified domain, rate-limit,
+  // validation). Ignoring the return let a rejected send look delivered, so the
+  // invoice showed "verstuurd" while the customer received nothing. Capture the
+  // result and THROW on error so the caller's catch marks it email_failed.
+  const { error: sendError } = await resend.emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${docLabel} ${invoiceNumber} van ${zzperName}`,
@@ -145,6 +150,10 @@ export async function sendInvoiceToClient({
         }
       : {})
   })
+  if (sendError) {
+    // Surface the real reason; the caller treats any throw here as email_failed.
+    throw new Error(`Resend afgewezen: ${sendError.message ?? 'onbekende fout'}`)
+  }
 }
 
 // ── BOEK-007: إيميل إشعار رسالة جديدة ────────────────────────────────────────
