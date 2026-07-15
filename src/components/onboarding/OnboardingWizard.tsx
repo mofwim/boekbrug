@@ -423,7 +423,18 @@ export function OnboardingWizard({
           {role === "zzp" && step === 5 && (
             <StepAccountant accountantEmail={accountantEmail} setAccountantEmail={setAccountantEmail} />
           )}
-          {role === "zzp" && step === 6 && <StepDone firstName={firstName} role="zzp" />}
+          {role === "zzp" && step === 6 && (
+            <StepDone
+              firstName={firstName}
+              role="zzp"
+              missingSendFields={[
+                !company.company_name.trim() && "bedrijfsnaam",
+                !company.btw_number.trim() && "BTW-nummer",
+                !company.kvk_number.trim() && "KvK-nummer",
+                !company.address.trim() && "adres",
+              ].filter(Boolean) as string[]}
+            />
+          )}
 
           {/* Accountant */}
           {role === "accountant" && step === 3 && (
@@ -432,7 +443,7 @@ export function OnboardingWizard({
           {role === "accountant" && step === 4 && (
             <StepInviteClient clientEmail={clientEmail} setClientEmail={setClientEmail} />
           )}
-          {role === "accountant" && step === 5 && <StepDone firstName={firstName} role="accountant" />}
+          {role === "accountant" && step === 5 && <StepDone firstName={firstName} role="accountant" missingSendFields={[]} />}
         </div>
 
         {/* Buttons */}
@@ -900,23 +911,36 @@ function StepInviteClient({ clientEmail, setClientEmail }: {
   );
 }
 
-function StepDone({ firstName, role }: { firstName: string; role: Role }) {
+function StepDone({ firstName, role, missingSendFields }: { firstName: string; role: Role; missingSendFields: string[] }) {
+  // [TRUST-ONBOARDING] Be HONEST about readiness. The invoice-send route legally
+  // requires bedrijfsnaam + BTW + KvK + adres; if any is still blank we must NOT
+  // celebrate "klaar voor gebruik" and then hard-block the owner at their first
+  // invoice. When something's missing we say so plainly and point to Instellingen.
+  const needsMore = role === "zzp" && missingSendFields.length > 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "16px" }}>
-      <span style={{ fontSize: "60px" }}>🎉</span>
+      <span style={{ fontSize: "60px" }}>{needsMore ? "👍" : "🎉"}</span>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
-          Je bent klaar, {firstName}!
+          {needsMore ? `Bijna klaar, ${firstName}!` : `Je bent klaar, ${firstName}!`}
         </h2>
         <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
           {role === "accountant"
             ? "Nodig klanten uit en beheer alles op één plek."
-            : "BoekBrug is ingericht en klaar voor gebruik."}
+            : needsMore
+              ? "Je kunt meteen aan de slag. Eén ding nog voordat je facturen kunt versturen:"
+              : "BoekBrug is ingericht en klaar voor gebruik."}
         </p>
       </div>
-      <div style={{ background: "#f2f2f7", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#6b6b6e", textAlign: "left", width: "100%" }}>
-        💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden
-      </div>
+      {needsMore ? (
+        <div style={{ background: "#FFF8E6", border: "1px solid #FFE9A8", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#7C5800", textAlign: "left", width: "100%", lineHeight: 1.5 }}>
+          Vul nog je <strong>{missingSendFields.join(", ")}</strong> in bij <strong>Instellingen</strong> — dat is wettelijk verplicht op een factuur. Zonder deze gegevens kun je nog geen factuur versturen.
+        </div>
+      ) : (
+        <div style={{ background: "#f2f2f7", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#6b6b6e", textAlign: "left", width: "100%" }}>
+          💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden
+        </div>
+      )}
     </div>
   );
 }
