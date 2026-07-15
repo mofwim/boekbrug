@@ -48,7 +48,10 @@ export async function sendClientInvite({
   accountantName: string
   acceptUrl: string
 }) {
-  await resend.emails.send({
+  // [TRUST-DELIVERY] Capture Resend's { error } — it does NOT throw on an API
+  // rejection — and throw so the caller (invite route) rolls back the pending row
+  // and returns a retryable error instead of a silent dead-end.
+  const { error: sendError } = await resend.emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${accountantName} nodigt je uit op BoekBrug`,
@@ -65,6 +68,9 @@ export async function sendClientInvite({
       </div>
     `
   })
+  if (sendError) {
+    throw new Error(`Resend afgewezen: ${sendError.message ?? 'onbekende fout'}`)
+  }
 }
 
 // ── إيميل للعميل عند استلام فاتورة ───────────────────────────────────────────
