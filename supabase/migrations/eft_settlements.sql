@@ -36,12 +36,16 @@ CREATE TABLE IF NOT EXISTS public.eft_settlements (
 
 ALTER TABLE public.eft_settlements ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS eft_settlements_select_own ON public.eft_settlements;
 CREATE POLICY eft_settlements_select_own ON public.eft_settlements
   FOR SELECT TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS eft_settlements_insert_own ON public.eft_settlements;
 CREATE POLICY eft_settlements_insert_own ON public.eft_settlements
   FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS eft_settlements_update_own ON public.eft_settlements;
 CREATE POLICY eft_settlements_update_own ON public.eft_settlements
   FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS eft_settlements_delete_own ON public.eft_settlements;
 CREATE POLICY eft_settlements_delete_own ON public.eft_settlements
   FOR DELETE TO authenticated USING (user_id = auth.uid());
 

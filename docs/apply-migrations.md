@@ -7,8 +7,15 @@ brengt live in lijn met de code.
 
 **Hoe:** open elke `.sql` hieronder in de Supabase SQL-editor (Database → SQL) en
 Run 'm. Draai daarna sectie A van `live-trust-check.sql` opnieuw; elke kolom moet
-`true` zijn. De meeste migraties zijn **idempotent** (`IF NOT EXISTS` / `CREATE OR
-REPLACE`) — nog eens draaien kan geen kwaad. De twee met een ⚠️ vragen aandacht.
+`true` zijn. Alle migraties zijn nu **her-uitvoerbaar** — tabellen/kolommen gebruiken
+`IF NOT EXISTS` en elke RLS-policy staat nu achter een `DROP POLICY IF EXISTS`, dus je
+kunt ze allemaal draaien zonder je zorgen te maken over wat al is toegepast. De twee met
+een ⚠️ vragen aandacht.
+
+> **Zie je `ERROR: 42710: policy "…" already exists`?** Dat betekende alleen dat die
+> migratie AL was toegepast (`CREATE POLICY` kent geen `IF NOT EXISTS`). Opgelost: elke
+> policy heeft nu een `DROP POLICY IF EXISTS` ervoor. Gebruik de HUIDIGE versie van de
+> bestanden (opnieuw kopiëren/plakken) en de fout verdwijnt.
 
 > Draai ze in deze volgorde. Tabellen komen vóór de kolommen/policies die ernaar
 > verwijzen; onafhankelijke migraties mogen in elke volgorde omdat ze `IF NOT EXISTS`

@@ -40,12 +40,16 @@ CREATE TABLE IF NOT EXISTS public.daily_turnover (
 
 ALTER TABLE public.daily_turnover ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS daily_turnover_select_own ON public.daily_turnover;
 CREATE POLICY daily_turnover_select_own ON public.daily_turnover
   FOR SELECT TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS daily_turnover_insert_own ON public.daily_turnover;
 CREATE POLICY daily_turnover_insert_own ON public.daily_turnover
   FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS daily_turnover_update_own ON public.daily_turnover;
 CREATE POLICY daily_turnover_update_own ON public.daily_turnover
   FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS daily_turnover_delete_own ON public.daily_turnover;
 CREATE POLICY daily_turnover_delete_own ON public.daily_turnover
   FOR DELETE TO authenticated USING (user_id = auth.uid());
 

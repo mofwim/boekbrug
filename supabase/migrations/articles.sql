@@ -33,11 +33,15 @@ CREATE INDEX IF NOT EXISTS idx_articles_user_active
 
 ALTER TABLE public.articles ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS articles_select_own ON public.articles;
 CREATE POLICY articles_select_own ON public.articles
   FOR SELECT TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS articles_insert_own ON public.articles;
 CREATE POLICY articles_insert_own ON public.articles
   FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS articles_update_own ON public.articles;
 CREATE POLICY articles_update_own ON public.articles
   FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS articles_delete_own ON public.articles;
 CREATE POLICY articles_delete_own ON public.articles
   FOR DELETE TO authenticated USING (user_id = auth.uid());
