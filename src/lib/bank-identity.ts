@@ -119,6 +119,13 @@ export type Category = TxIdentity | 'kosten' | 'omzet';
 export interface IdentitySuggestion {
   category: Category;
   source: 'memory' | 'ai';
+  // TRUE only when the suggestion rests on real evidence: a category the owner
+  // confirmed for this counterpart before (memory), or a specific pattern match
+  // (tax / prive / transfer / pos_income / fee). FALSE for the bare kosten/omzet
+  // fallback, which is a guess by sign alone. A safe bulk-apply must use ONLY the
+  // confident ones — blanket-applying the fallback would silently mis-book
+  // transfers, tax and private lines as deductible costs.
+  confident: boolean;
 }
 
 /**
@@ -133,8 +140,9 @@ export function suggestIdentity(
   amount: number,
   memoryCategory?: string | null,
 ): IdentitySuggestion {
-  if (memoryCategory) return { category: memoryCategory as Category, source: 'memory' };
+  if (memoryCategory) return { category: memoryCategory as Category, source: 'memory', confident: true };
   const id = classifyBankTransaction(counterpartName, description, amount);
-  if (id !== 'unknown') return { category: id, source: 'ai' };
-  return { category: amount < 0 ? 'kosten' : 'omzet', source: 'ai' };
+  if (id !== 'unknown') return { category: id, source: 'ai', confident: true };
+  // Fallback: sign alone. A plausible default to SHOW, but never to auto-apply.
+  return { category: amount < 0 ? 'kosten' : 'omzet', source: 'ai', confident: false };
 }
