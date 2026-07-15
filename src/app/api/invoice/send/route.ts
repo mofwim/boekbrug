@@ -148,8 +148,18 @@ export async function POST(request: NextRequest) {
     if (!resend && Array.isArray(lines) && lines.length > 0) {
       const lineEx = (l: { line_total?: number | null; quantity?: number | null; unit_price?: number | null }) =>
         typeof l.line_total === 'number' ? l.line_total : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0)
-      const ex = round2(lines.reduce((s, l) => s + lineEx(l), 0))
-      const btw = round2(lines.reduce((s, l) => s + (lineEx(l) * (Number(l.btw_rate) || 0)) / 100, 0))
+      // [BTW-ROUND] Round BTW PER TARIEF, then sum — the Belastingdienst/Peppol method the
+      // legal PDF (btwBreakdown → round2 per rate) AND the UBL export use. Summing per-line
+      // BTW and rounding once (the old way) drifted a cent on multi-rate invoices, so the
+      // e-mailed total + accountant/BTW figures disagreed with the PDF/UBL the SAME invoice
+      // ships. Group ex per rate, round each rate's BTW, sum → stored == PDF == UBL to the cent.
+      const exByRate = new Map<number, number>()
+      for (const l of lines) {
+        const rate = Number(l.btw_rate) || 0
+        exByRate.set(rate, (exByRate.get(rate) ?? 0) + lineEx(l))
+      }
+      const ex = round2([...exByRate.values()].reduce((s, e) => s + e, 0))
+      const btw = round2([...exByRate.entries()].reduce((s, [rate, e]) => s + round2((e * rate) / 100), 0))
       computedTotals = { total_ex_btw: ex, btw_amount: btw, total_inc_btw: round2(ex + btw) }
     }
     // The authoritative total for the e-mail + accountant notification below.

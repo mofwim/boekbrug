@@ -169,11 +169,18 @@ export default function KwartaalPage() {
         if (rRes.ok && aRes.ok) {
           const pnl = await rRes.json()
           const btw = await aRes.json()
-          setRecon({
-            omzet: Number(pnl?.omzet) || 0,
-            kosten: Number(pnl?.kosten) || 0,
-            saldo: Number(btw?.saldo) || 0,
-          })
+          // [TRUST-ACCOUNTANT] Read the ACTUAL response shape: /api/result nests the P&L
+          // under `result`, /api/aangifte nests the concept under `aangifte`. Reading
+          // pnl.omzet / btw.saldo (the old bug) was always undefined → a confident €0,00
+          // shown as reconciled truth for every client and quarter. Only set recon when all
+          // three are real numbers; otherwise leave it null so the tiles keep the "…" dash
+          // instead of inventing a zero.
+          const omzet = Number(pnl?.result?.omzet)
+          const kosten = Number(pnl?.result?.kosten)
+          const saldo = Number(btw?.aangifte?.saldo)
+          if ([omzet, kosten, saldo].every(Number.isFinite)) {
+            setRecon({ omzet, kosten, saldo })
+          }
         }
       } catch { /* leave recon null → tiles show a loading dash, never a wrong number */ }
     }

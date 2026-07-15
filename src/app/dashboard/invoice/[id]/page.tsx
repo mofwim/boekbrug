@@ -178,13 +178,16 @@ export default function InvoiceDetailPage() {
       if (linesData) setLines(linesData)
       if (ownProfile) setViewerProfile(ownProfile) // [ACC-INVOICE-VIEW]
 
-      // [BOEK-031] Controleer of er al een creditnota bestaat voor deze factuur
-      // receiver_id wordt gebruikt als link naar de originele factuur
+      // [BOEK-031] Is deze factuur al gecrediteerd? The creditnota stores its link to the
+      // original in `original_invoice_id` (the real FK the creditnota route writes + guards
+      // on). The old lookup used `receiver_id` — a USER-id FK, not the invoice link — so it
+      // was ALWAYS null: the "Gecrediteerd via …" banner never appeared and the "Creditnota"
+      // button stayed on an already-credited invoice, dead-ending on the server's 409.
       if (CREDITABLE_STATUSES.includes(invoiceData.status) && invoiceData.invoice_type === 'factuur') {
         const { data: creditnota } = await supabase
           .from('invoices')
           .select('id, invoice_number, status, created_at')
-          .eq('receiver_id', invoiceId)
+          .eq('original_invoice_id', invoiceId)
           .eq('invoice_type', 'creditnota')
           .maybeSingle()
 

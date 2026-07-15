@@ -11,8 +11,11 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const code = searchParams.get('code')
-  // `next` param — fallback destination after login
-  const next = searchParams.get('next') ?? '/dashboard'
+  // `next` param — fallback destination after login. [SEC] Accept ONLY a same-origin
+  // relative path (starts with a single "/", not "//" or "/\"); anything else falls back
+  // to /dashboard, so a crafted ?next=//evil.com can't turn login into an open redirect.
+  const rawNext = searchParams.get('next') ?? '/dashboard'
+  const next = /^\/(?![/\\])/.test(rawNext) ? rawNext : '/dashboard'
 
   // [Google-OAuth] No code = something went wrong upstream
   if (!code) {
