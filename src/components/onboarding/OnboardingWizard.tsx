@@ -1,13 +1,19 @@
 // src/components/onboarding/OnboardingWizard.tsx
 // [BOEK-015] Smart Onboarding — Complete Redesign — May 2026
 //
-// ZZP'er flow:  1=Welcome → 2=Role → 3=HowToStart → 3A=AIUpload | 3B=Manual → 4=Gmail → 5=Accountant → 6=Done
+// ZZP'er flow:  1=Welcome → 2=Role → 3=Manual company details (validated) → 3C=Numbering → 4=Gmail → 5=Accountant → 6=Done
 // Accountant:   1=Welcome → 2=Role → 3=OfficeDetails → 4=InviteClient → 5=Done
+//
+// [TRUST-ONBOARDING] The old "upload a factuur, AI fills your details" step was
+// REMOVED: on a received invoice it captured the SUPPLIER's KvK/BTW/IBAN as the
+// owner's own, and stored unvalidated legal identity. The owner types their own
+// identity once, validated; AI extraction stays where it earns its keep — on
+// INCOMING documents, never on the owner's identity.
 //
 // Rules:
 // - Eén vraag per scherm
 // - Geen technische termen
-// - Minimale invoer — AI doet het werk
+// - Eigen identiteit: handmatig + gevalideerd (nooit AI-geraden)
 // - font-size 16px op inputs (iOS zoom prevention)
 // - env(safe-area-inset-bottom) op bottom
 
@@ -17,6 +23,11 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from "@/lib/invoice-template";
+// [TRUST-ONBOARDING] Validate the owner's OWN identity at entry — these validators
+// already exist but the onboarding capture path never used them, so garbage BTW/IBAN
+// was stored and later printed on a legal invoice. KvK stays the local KVK_REGEX.
+import { BTW_REGEX } from "@/lib/validation";
+import { isValidIban, normalizeIban } from "@/lib/epc-qr";
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -83,6 +94,8 @@ export function OnboardingWizard({
     company_name: "", kvk_number: "", btw_number: "", iban: "", address: "",
   });
   const [kvkError, setKvkError] = useState("");
+  const [btwError, setBtwError] = useState("");
+  const [ibanError, setIbanError] = useState("");
   const [accountantEmail, setAccountantEmail] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
@@ -181,19 +194,26 @@ export function OnboardingWizard({
         return;
       }
       if (step === 2) { await persistStep(3); setStep(3); return; }
-      if (step === "3B") {
+      if (step === "3B" || step === 3) {
+        // [TRUST-ONBOARDING] Validate the owner's OWN identity BEFORE it is stored and
+        // later printed on a legal invoice. Fields stay optional-to-finish (a user can
+        // add them later in Instellingen — StepDone is honest about that), but anything
+        // TYPED must be well-formed: a garbage BTW/IBAN is never saved as truth.
         const kvk = company.kvk_number.trim();
-        if (kvk && !KVK_REGEX.test(kvk)) { setKvkError("KVK-nummer moet uit 8 cijfers bestaan"); return; }
-        setKvkError("");
-        // [ONBOARDING-SENDGATE] Persist BTW + adres too, not just name+KVK. The invoice
-        // send route legally requires BTW-nummer + KvK + adres before the first invoice, so
-        // collecting them here (optional, explained) stops the happy path from dead-ending
-        // at "Verzenden". A user who leaves them blank can still finish and add them later.
+        const btw = company.btw_number.trim().toUpperCase();
+        const iban = company.iban.trim() ? normalizeIban(company.iban) : "";
+        let bad = false;
+        if (kvk && !KVK_REGEX.test(kvk)) { setKvkError("KVK-nummer moet uit 8 cijfers bestaan"); bad = true; }
+        if (btw && !BTW_REGEX.test(btw)) { setBtwError("BTW-nummer moet zijn als NL123456789B01"); bad = true; }
+        if (iban && !isValidIban(iban)) { setIbanError("IBAN is ongeldig — controleer het rekeningnummer"); bad = true; }
+        if (bad) return;
+        setKvkError(""); setBtwError(""); setIbanError("");
         await persistStep(4, {
           company_name: company.company_name.trim() || null,
           kvk_number: kvk || null,
-          btw_number: company.btw_number.trim() || null,
+          btw_number: btw || null,
           address: company.address.trim() || null,
+          iban: iban || null,
         });
         setStep("3C"); // [FACTUUR-B] go to numbering step before Gmail
         return;
@@ -364,32 +384,19 @@ export function OnboardingWizard({
           {step === 1 && <StepWelcome firstName={firstName} />}
           {step === 2 && <StepRole role={role} setRole={setRole} />}
 
-          {/* ZZP */}
-          {role === "zzp" && step === 3 && (
-            <StepHowToStart
-              onUpload={() => setStep("3A")}
-              onManual={() => setStep("3B")}
+          {/* ZZP — [TRUST-ONBOARDING] identity is entered MANUALLY and validated. The
+              old "upload a factuur, AI fills your details" path was removed: it captured
+              the SUPPLIER's KvK/BTW/IBAN as the owner's own when a received invoice was
+              uploaded, and stored unvalidated legal identity. The owner's own 5 fields
+              are known by heart and typed once — AI extraction belongs on INCOMING
+              documents, not on the owner's identity. */}
+          {role === "zzp" && (step === 3 || step === "3B") && (
+            <StepManual
+              company={company} setCompany={setCompany}
+              kvkError={kvkError} setKvkError={setKvkError}
+              btwError={btwError} setBtwError={setBtwError}
+              ibanError={ibanError} setIbanError={setIbanError}
             />
-          )}
-          {role === "zzp" && step === "3A" && (
-            <StepAIUpload
-              company={company}
-              setCompany={setCompany}
-              onSuccess={async () => {
-                await persistStep(4, {
-                  company_name: company.company_name || null,
-                  kvk_number: company.kvk_number || null,
-                  btw_number: company.btw_number || null,
-                  iban: company.iban || null,
-                  address: company.address || null,
-                });
-                setStep("3C"); // [FACTUUR-B] go to numbering step before Gmail
-              }}
-              onFallback={() => setStep("3B")}
-            />
-          )}
-          {role === "zzp" && step === "3B" && (
-            <StepManual company={company} setCompany={setCompany} kvkError={kvkError} setKvkError={setKvkError} />
           )}
           {role === "zzp" && step === "3C" && (
             <StepInvoiceStart
@@ -632,44 +639,6 @@ function StepRole({ role, setRole }: { role: Role; setRole: (r: Role) => void })
   );
 }
 
-function StepHowToStart({ onUpload, onManual }: { onUpload: () => void; onManual: () => void }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Hoe wil je beginnen?</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Kies de makkelijkste manier voor jou.</p>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <button
-          onClick={onUpload}
-          style={{
-            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
-            border: "none", cursor: "pointer", width: "100%",
-          }}
-        >
-          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>📄 Upload een factuur</p>
-          <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e", lineHeight: 1.5 }}>
-            We lezen je bedrijfsgegevens automatisch uit — je hoeft niets zelf in te typen.
-          </p>
-          <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#8e8e93" }}>🔒 Jouw gegevens blijven privé.</p>
-        </button>
-        <button
-          onClick={onManual}
-          style={{
-            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
-            border: "none", cursor: "pointer", width: "100%",
-          }}
-        >
-          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>✏️ Zelf invullen</p>
-          <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>
-            Vul je gegevens stap voor stap handmatig in.
-          </p>
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function StepInvoiceStart({ value, onChange, error }: {
   value: string; onChange: (v: string) => void; error?: string;
 }) {
@@ -723,168 +692,17 @@ function StepInvoiceStart({ value, onChange, error }: {
   );
 }
 
-type UploadState = "idle" | "uploading" | "success" | "editing" | "error";
-
-function StepAIUpload({ company, setCompany, onSuccess, onFallback }: {
-  company: CompanyData;
-  setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
-  onSuccess: () => void;
-  onFallback: () => void;
-}) {
-  const [state, setState] = useState<UploadState>("idle");
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  async function handleFile(file: File) {
-    setState("uploading");
-    try {
-      // [BOEK-015] Step 1: upload file via /api/files to get a documentId
-      const now = new Date();
-      const year = String(now.getFullYear());
-      const quarter = String(Math.ceil((now.getMonth() + 1) / 3));
-
-      // [BOEK-015] fix: unique filename prevents Supabase Storage collision
-      // error "The resource already exists" = same path uploaded twice
-      const ext = file.name.split(".").pop() ?? "pdf";
-      const uniqueName = `onboarding-${Date.now()}.${ext}`;
-      const renamedFile = new File([file], uniqueName, { type: file.type });
-
-      const formData = new FormData();
-      formData.append("file", renamedFile);   // renamed — no collision
-      formData.append("year", year);
-      formData.append("quarter", quarter);
-      // doc_type omitted — not required, avoids constraint issues
-
-      const uploadRes = await fetch("/api/files", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!uploadRes.ok) { setState("error"); return; }
-
-      const uploadData = await uploadRes.json();
-      const documentId: string = uploadData.id ?? uploadData.document?.id;
-
-      if (!documentId) { setState("error"); return; }
-
-      // [BOEK-015] Step 2: extract company details via /api/onboarding/extract
-      // This endpoint uses extractCompanyDetails from @/lib/ai
-      // It reads the actual PDF/image content and returns: company_name, kvk, btw, iban
-      const extractRes = await fetch("/api/onboarding/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documentId, fileName: file.name, mimeType: file.type }),
-      });
-
-      const extractData = await extractRes.json();
-
-      if (extractData.found) {
-        setCompany((p) => ({
-          ...p,
-          company_name: extractData.company_name ?? p.company_name,
-          kvk_number: extractData.kvk_number ?? p.kvk_number,
-          btw_number: extractData.btw_number ?? p.btw_number,
-          iban: extractData.iban ?? p.iban,
-          address: extractData.address ?? p.address,
-        }));
-        setState("success");
-      } else {
-        // AI found nothing useful → guide user to manual form
-        onFallback();
-      }
-    } catch {
-      setState("error");
-    }
-  }
-
-  if (state === "uploading") return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: "60px", gap: "16px" }}>
-      <span style={{ fontSize: "40px" }}>✨</span>
-      <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>We lezen je factuur uit…</p>
-      <p style={{ margin: 0, fontSize: "14px", color: "#8e8e93" }}>Dit duurt maar even</p>
-    </div>
-  );
-
-  if (state === "success") return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#34c759" }}>✓ We hebben je gegevens gevonden!</p>
-      <div style={{ background: "#f2f2f7", borderRadius: "16px", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-        {([["Bedrijfsnaam", company.company_name], ["KVK", company.kvk_number], ["BTW", company.btw_number], ["IBAN", company.iban]] as [string, string][])
-          .filter(([, v]) => v)
-          .map(([label, value]) => (
-            <div key={label} style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: "14px", color: "#8e8e93" }}>{label}</span>
-              <span style={{ fontSize: "14px", fontWeight: 500, color: "#1c1c1e" }}>{value}</span>
-            </div>
-          ))}
-      </div>
-      <Btn onClick={onSuccess}>✓ Ja, ga verder</Btn>
-      <Btn onClick={() => setState("editing")} secondary>Aanpassen</Btn>
-    </div>
-  );
-
-  if (state === "editing") return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 700, color: "#1c1c1e" }}>Gegevens aanpassen</h3>
-      {(["company_name", "kvk_number", "btw_number", "iban"] as (keyof CompanyData)[]).map((f) => (
-        <Input key={f} label={f === "company_name" ? "Bedrijfsnaam" : f === "kvk_number" ? "KVK-nummer" : f === "btw_number" ? "BTW-nummer" : "IBAN"}
-          placeholder="" value={company[f]} onChange={(v) => setCompany((p) => ({ ...p, [f]: v }))} />
-      ))}
-      <Btn onClick={onSuccess}>Opslaan en verder</Btn>
-    </div>
-  );
-
-  if (state === "error") return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <p style={{ color: "#ff3b30", fontSize: "15px" }}>Er ging iets mis. Probeer opnieuw of vul handmatig in.</p>
-      <Btn onClick={() => setState("idle")}>Opnieuw proberen</Btn>
-      <Btn onClick={onFallback} secondary>Handmatig invullen</Btn>
-    </div>
-  );
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Upload een factuur</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
-          We lezen je bedrijfsgegevens automatisch uit.
-        </p>
-      </div>
-      <button
-        onClick={() => fileRef.current?.click()}
-        style={{
-          padding: "40px 20px", borderRadius: "18px", border: "2px dashed #c7c7cc",
-          background: "#f9f9fb", cursor: "pointer", display: "flex", flexDirection: "column",
-          alignItems: "center", gap: "12px", width: "100%",
-        }}
-      >
-        <span style={{ fontSize: "40px" }}>📄</span>
-        <span style={{ fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Tik om te uploaden</span>
-        <span style={{ fontSize: "14px", color: "#8e8e93" }}>PDF, JPG of PNG — max 25 MB</span>
-      </button>
-      {/* [BOEK-015] fix: expanded accept — includes webp, heic, application/pdf */}
-      <input ref={fileRef} type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,image/*,application/pdf"
-        style={{ display: "none" }}
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-      <div style={{ background: "#f2f2f7", borderRadius: "14px", padding: "14px 16px", display: "flex", gap: "10px" }}>
-        <span>🔒</span>
-        <p style={{ margin: 0, fontSize: "13px", color: "#6b6b6e" }}>
-          Jouw gegevens blijven privé. We lezen alleen je bedrijfsgegevens uit.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function StepManual({ company, setCompany, kvkError, setKvkError }: {
+function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setBtwError, ibanError, setIbanError }: {
   company: CompanyData; setCompany: React.Dispatch<React.SetStateAction<CompanyData>>;
   kvkError: string; setKvkError: (e: string) => void;
+  btwError: string; setBtwError: (e: string) => void;
+  ibanError: string; setIbanError: (e: string) => void;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Jouw bedrijf</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Alleen de naam is verplicht. Vul je BTW-nummer en adres in als je facturen wilt versturen — dat mag ook later in Instellingen.</p>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Alleen de naam is verplicht om verder te gaan. BTW-nummer, adres en IBAN heb je nodig om facturen te versturen — vul ze nu in (dat mag ook later in Instellingen).</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <Input label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
@@ -892,8 +710,10 @@ function StepManual({ company, setCompany, kvkError, setKvkError }: {
         <Input label="Wat is je KVK-nummer? (optioneel)" placeholder="12345678" value={company.kvk_number}
           inputMode="numeric" maxLength={8} error={kvkError}
           onChange={(v) => { setCompany((p) => ({ ...p, kvk_number: v })); setKvkError(""); }} />
-        <Input label="Wat is je BTW-nummer? (nodig om facturen te versturen)" placeholder="NL123456789B01" value={company.btw_number}
-          onChange={(v) => setCompany((p) => ({ ...p, btw_number: v }))} />
+        <Input label="Wat is je BTW-nummer? (nodig om facturen te versturen)" placeholder="NL123456789B01" value={company.btw_number} error={btwError}
+          onChange={(v) => { setCompany((p) => ({ ...p, btw_number: v })); setBtwError(""); }} />
+        <Input label="Wat is je IBAN? (voor betaalverzoeken)" placeholder="NL91ABNA0417164300" value={company.iban} error={ibanError}
+          onChange={(v) => { setCompany((p) => ({ ...p, iban: v })); setIbanError(""); }} />
         <Input label="Wat is je adres? (nodig om facturen te versturen)" placeholder="Straat 1, 1234 AB Stad" value={company.address}
           onChange={(v) => setCompany((p) => ({ ...p, address: v }))} />
       </div>
