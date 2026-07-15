@@ -36,7 +36,10 @@ interface Item {
   suggested: string
   suggested_source: 'memory' | 'ai'
   suggested_confident: boolean
+  confirmed?: boolean
 }
+
+type Mode = 'todo' | 'review'
 
 function formatDate(iso: string | null): string {
   if (!iso) return ''
@@ -56,10 +59,12 @@ export default function CategoriseClient() {
   const [confidentAvailable, setConfidentAvailable] = useState(0)
   const [bulkBusy, setBulkBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mode, setMode] = useState<Mode>('todo')
 
-  async function load() {
+  async function load(which: Mode = mode) {
     try {
-      const res = await fetch('/api/bank/categorize')
+      const url = which === 'review' ? '/api/bank/categorize?scope=review' : '/api/bank/categorize'
+      const res = await fetch(url)
       const json = await res.json()
       if (res.ok) {
         const list: Item[] = json.items ?? []
@@ -83,10 +88,17 @@ export default function CategoriseClient() {
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => { if (!cancelled) await load() })()
+    ;(async () => { if (!cancelled) await load('todo') })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  async function switchMode(next: Mode) {
+    if (next === mode) return
+    setMode(next)
+    setLoading(true)
+    await load(next)
+  }
 
   async function confirm(id: string) {
     const category = choice[id]
@@ -101,7 +113,8 @@ export default function CategoriseClient() {
       })
       if (res.ok) {
         setItems((prev) => prev.filter((it) => it.id !== id))
-        setTotalRemaining((n) => Math.max(0, n - 1))
+        // Only the to-do queue tracks a DB-wide remaining count; review mode doesn't.
+        if (mode === 'todo') setTotalRemaining((n) => Math.max(0, n - 1))
       } else {
         setError('Deze transactie kon niet worden opgeslagen. Probeer het opnieuw.')
       }
@@ -146,12 +159,34 @@ export default function CategoriseClient() {
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
         <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
 
-        <header style={{ margin: '16px 0 20px' }}>
+        <header style={{ margin: '16px 0 16px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Wat is dit?</h1>
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>
-            Geef elke banktransactie een plek. We onthouden je keuze per bedrijf.
+            {mode === 'todo'
+              ? 'Geef elke banktransactie een plek. We onthouden je keuze per bedrijf.'
+              : 'Controleer wat we al hebben ingevuld en wijzig een verkeerde categorie.'}
           </p>
         </header>
+
+        {/* Two views: nog te doen (leeg = klaar) en het al-ingevulde herzien, zodat een
+            fout ingevulde categorie (die geld uit je W&V kan verbergen) altijd te
+            corrigeren is. */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+          {([['todo', 'Te doen'], ['review', 'Ingevuld wijzigen']] as [Mode, string][]).map(([m, label]) => (
+            <button
+              key={m}
+              onClick={() => switchMode(m)}
+              style={{
+                padding: '8px 14px', borderRadius: 999, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT,
+                background: mode === m ? M3.primaryContainer : '#F1F3F4',
+                color: mode === m ? '#041E49' : M3.neutral,
+                border: mode === m ? `1px solid ${M3.primary}` : '1px solid transparent',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
         {error && (
           <div role="alert" style={{ background: '#FCE8E6', color: '#B3261E', borderRadius: 12, padding: '12px 14px', fontSize: 14, marginBottom: 14 }}>
@@ -161,39 +196,53 @@ export default function CategoriseClient() {
 
         {loading ? (
           <div style={{ height: 120, borderRadius: 16, background: '#F0F1F3' }} />
-        ) : trulyDone ? (
+        ) : mode === 'todo' && trulyDone ? (
           <div style={{ background: M3.successContainer, borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
             <div style={{ fontSize: 32, marginBottom: 6 }}>✓</div>
             <div style={{ fontSize: 16, fontWeight: 600, color: '#0B5345' }}>Alles is gecategoriseerd</div>
             <div style={{ fontSize: 14, color: '#0B5345', marginTop: 2 }}>Geen transacties die nog aandacht nodig hebben.</div>
           </div>
+        ) : mode === 'review' && items.length === 0 ? (
+          <div style={{ background: '#F1F3F4', borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface }}>Nog niets ingevuld</div>
+            <div style={{ fontSize: 14, color: M3.neutral, marginTop: 2 }}>Zodra je transacties een categorie geeft, kun je ze hier wijzigen.</div>
+          </div>
         ) : (
           <>
-            {/* Honest running total + one-tap sweep of the confident suggestions. */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 14, color: M3.neutral }}>
-                <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> {totalRemaining === 1 ? 'transactie' : 'transacties'} te doen
-                {hasMore && <span> · we tonen de eerste {items.length}</span>}
-              </div>
-              {confidentAvailable > 0 && (
-                <button
-                  onClick={bulkApply}
-                  disabled={bulkBusy}
-                  style={{
-                    padding: '9px 14px', borderRadius: 999, border: `1px solid ${M3.primary}`,
-                    background: bulkBusy ? '#F1F3F4' : M3.primaryContainer, color: '#041E49',
-                    fontSize: 13.5, fontWeight: 600, cursor: bulkBusy ? 'default' : 'pointer', fontFamily: FONT,
-                  }}
-                >
-                  {bulkBusy ? 'Bezig…' : `${confidentAvailable} zekere invullen`}
-                </button>
-              )}
-            </div>
+            {/* Honest running total + one-tap sweep of the confident suggestions (to-do only). */}
+            {mode === 'todo' && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 14, color: M3.neutral }}>
+                    <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> {totalRemaining === 1 ? 'transactie' : 'transacties'} te doen
+                    {hasMore && <span> · we tonen de eerste {items.length}</span>}
+                  </div>
+                  {confidentAvailable > 0 && (
+                    <button
+                      onClick={bulkApply}
+                      disabled={bulkBusy}
+                      style={{
+                        padding: '9px 14px', borderRadius: 999, border: `1px solid ${M3.primary}`,
+                        background: bulkBusy ? '#F1F3F4' : M3.primaryContainer, color: '#041E49',
+                        fontSize: 13.5, fontWeight: 600, cursor: bulkBusy ? 'default' : 'pointer', fontFamily: FONT,
+                      }}
+                    >
+                      {bulkBusy ? 'Bezig…' : `${confidentAvailable} zekere invullen`}
+                    </button>
+                  )}
+                </div>
+                {confidentAvailable > 0 && (
+                  <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
+                    We vullen alleen transacties in die we zeker weten (onthouden of duidelijk herkend, zoals
+                    belasting, overboekingen en bankkosten). De rest laten we aan jou — we verzinnen niets.
+                  </p>
+                )}
+              </>
+            )}
 
-            {confidentAvailable > 0 && (
+            {mode === 'review' && (
               <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
-                We vullen alleen transacties in die we zeker weten (onthouden of duidelijk herkend, zoals
-                belasting, overboekingen en bankkosten). De rest laten we aan jou — we verzinnen niets.
+                Tik op een categorie om die te wijzigen en bevestig. Wat de app zelf invulde staat bovenaan.
               </p>
             )}
 
@@ -207,9 +256,11 @@ export default function CategoriseClient() {
                     </div>
                     <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>
                       {formatDate(it.date)}
-                      {it.suggested_source === 'memory'
-                        ? ' · onthouden'
-                        : it.suggested_confident ? ' · herkend' : ' · voorstel'}
+                      {mode === 'review'
+                        ? (it.confirmed ? ' · door jou bevestigd' : ' · automatisch ingevuld')
+                        : it.suggested_source === 'memory'
+                          ? ' · onthouden'
+                          : it.suggested_confident ? ' · herkend' : ' · voorstel'}
                     </div>
                   </div>
                   <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: M3.onSurface, whiteSpace: 'nowrap' }}>
