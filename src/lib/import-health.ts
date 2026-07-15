@@ -28,7 +28,7 @@
 // which the page already knows. Keeping them separate is what lets a clean
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
-import { evaluateArithmetic } from '@/lib/safecore'
+import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
 
 // Confidence below this → ask the owner to confirm the field (BRIDGE-EXTRACT's
 // modal uses the same 0.7 threshold; kept identical so the surface and the modal
@@ -56,6 +56,12 @@ export interface HealthInput {
   btw_amount: number | null
   total_inc_btw: number | null
   invoice_date: string | null
+  // [TRUST-NUMBER] The STORED invoice number. The email path stores a fabricated
+  // placeholder (EMAIL-<ts>) when the reader returned none, and the AI's per-field
+  // confidence score defaults to 1 for a missing field — so a fabricated number reads
+  // "clean" with no trace. Passing the value lets health flag a missing/placeholder
+  // number. Optional so existing call sites keep compiling (undefined → not checked).
+  invoice_number?: string | null
   // [BRIDGE-CREDITNOTA-SIGN] 'creditnota' → the recompute below takes the
   // sign-inverted gate (amounts must be NEGATIVE + consistent). Optional so
   // existing call sites keep compiling; absent/other → the standard gate.
@@ -174,6 +180,19 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   if (!inv.invoice_date || !String(inv.invoice_date).trim()) {
     flags.invoiceDate = true
     reasons.push('de factuurdatum ontbreekt — vul hem aan om te kunnen bevestigen')
+  }
+
+  // ── Invoice-number axis (the value, not just the AI's confidence) ────────
+  // [TRUST-NUMBER] A missing/placeholder number is never "clean": the stored
+  // EMAIL-<ts> placeholder is a fabricated identifier (defeats duplicate detection
+  // and is not a real Art. 35 number). Only evaluate when the caller supplied the
+  // field, so legacy call sites that don't pass it keep their old behaviour.
+  if (inv.invoice_number !== undefined) {
+    const num = inv.invoice_number
+    if (!num || !String(num).trim() || isPlaceholderInvoiceNumber(num)) {
+      flags.invoiceNumber = true
+      reasons.push('het factuurnummer ontbreekt of kon niet worden gelezen — controleer het')
+    }
   }
 
   // ── Confidence axis ──────────────────────────────────────────────────────

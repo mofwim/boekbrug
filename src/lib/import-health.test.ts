@@ -12,7 +12,8 @@ function check(name: string, cond: boolean) {
 function inv(p: Partial<HealthInput>): HealthInput {
   return {
     total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121,
-    invoice_date: '2026-03-10', invoice_type: 'factuur', field_confidence: null, ...p,
+    invoice_date: '2026-03-10', invoice_number: '2026-014',
+    invoice_type: 'factuur', field_confidence: null, ...p,
   }
 }
 
@@ -22,6 +23,25 @@ console.log('\n— a genuinely clean invoice stays calm (no false alarm) —')
   check('clean → level clean, no reasons', h.level === 'clean' && h.reasons.length === 0)
   const h2 = classifyImportHealth(inv({ field_confidence: { vendor: 0.98, invoice_number: 0.95, invoice_date: 0.99, amount: 0.97 } }))
   check('clean + high confidences → still clean', h2.level === 'clean')
+}
+
+console.log('\n— a fabricated/missing invoice number is NEVER clean —')
+{
+  const placeholder = classifyImportHealth(inv({ invoice_number: `EMAIL-${1700000000000}` }))
+  check('EMAIL-<ts> placeholder → needs-review', placeholder.level === 'needs-review')
+  check('placeholder → invoiceNumber flag + reason', placeholder.flags.invoiceNumber && placeholder.reasons.some((r) => /factuurnummer/i.test(r)))
+  const empty = classifyImportHealth(inv({ invoice_number: '' }))
+  check('empty number → needs-review', empty.level === 'needs-review' && empty.flags.invoiceNumber)
+  const nul = classifyImportHealth(inv({ invoice_number: null }))
+  check('null number → needs-review', nul.level === 'needs-review' && nul.flags.invoiceNumber)
+  // Backward-compat: a caller that doesn't pass the field is NOT flagged on it.
+  const legacy = classifyImportHealth({
+    total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121,
+    invoice_date: '2026-03-10', invoice_type: 'factuur', field_confidence: null,
+  })
+  check('invoice_number undefined (legacy caller) → not flagged, stays clean', legacy.level === 'clean')
+  const real = classifyImportHealth(inv({ invoice_number: '2026-014' }))
+  check('a real number → clean', real.level === 'clean')
 }
 
 console.log('\n— missing / €0 total is NEVER clean (was a silent €0 booking) —')

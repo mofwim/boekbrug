@@ -191,6 +191,7 @@ export default async function IncomingPage() {
           btw_amount: inv.btw_amount,
           total_inc_btw: inv.total_inc_btw,
           invoice_date: inv.invoice_date,
+          invoice_number: inv.invoice_number,
           invoice_type: inv.invoice_type,
           field_confidence: inv.field_confidence,
         }),
