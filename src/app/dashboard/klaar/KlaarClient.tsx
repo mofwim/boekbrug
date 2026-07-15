@@ -22,7 +22,7 @@ const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR',
 
 type DimensionKey = 'invoices' | 'bank' | 'cash' | 'vat'
 interface Dimension { key: DimensionKey; label: string; weight: number; applicable: boolean; subscore: number; detail: string }
-interface Item { severity: 'missing' | 'risk'; title: string; detail?: string }
+interface Item { severity: 'missing' | 'risk'; title: string; detail?: string; fix?: { label: string; href: string } }
 type Status = 'ready' | 'almost' | 'attention'
 interface Report {
   quarterLabel: string
@@ -220,17 +220,34 @@ function Section({ title, tone, icon, children }: { title: string; tone: 'warnin
 
 function ItemRow({ item, tone }: { item: Item; tone: 'warning' | 'error' }) {
   const color = tone === 'warning' ? M3.warning : M3.error
-  return (
+  // A gap that STATES a problem but offers no way to act is a dead-end. When the item
+  // carries a fix destination, the whole row becomes a tap-through to exactly where the
+  // owner resolves it — so "what's missing" and "where to fix it" are one action.
+  const body = (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
       <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>
         {tone === 'warning' ? 'radio_button_unchecked' : 'error_outline'}
       </span>
-      <div>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, lineHeight: 1.4 }}>{item.title}</div>
         {item.detail && <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2, lineHeight: 1.5 }}>{item.detail}</div>}
+        {item.fix && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6, fontSize: 12.5, fontWeight: 700, color: M3.primary }}>
+            {item.fix.label}
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>chevron_right</span>
+          </span>
+        )}
       </div>
     </div>
   )
+  if (item.fix) {
+    return (
+      <Link href={item.fix.href} style={{ display: 'block', textDecoration: 'none', borderRadius: 12, padding: 6, margin: -6 }}>
+        {body}
+      </Link>
+    )
+  }
+  return body
 }
 
 function DimRow({ d, last }: { d: Dimension; last: boolean }) {

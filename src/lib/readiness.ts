@@ -67,7 +67,21 @@ export interface ReadinessItem {
                                         // risk = a reconciliation signal to eyeball
   title: string;                        // Dutch, specific
   detail?: string;
+  // [ACTIONABLE] Where the owner fixes THIS gap. A readiness item that only STATES a
+  // problem with no way to act on it is a dead-end — the owner has to hunt the menu. Set
+  // only when the destination is unambiguous; omitted when we can't be sure (better no
+  // link than a wrong one). The UI renders the item as a tap-through when present.
+  fix?: { label: string; href: string };
 }
+
+// The owner-facing fix destinations (dashboard routes). Kept here so the gap and its
+// remedy are defined together and never drift.
+const FIX = {
+  bank: { label: "Naar Bank", href: "/dashboard/bank" },
+  dagomzet: { label: "Naar Dagomzet", href: "/dashboard/dagomzet" },
+  kas: { label: "Naar Kas", href: "/dashboard/kas" },
+  nieuweFactuur: { label: "Omzet invoeren", href: "/dashboard/invoice/new" },
+} as const;
 
 export type ReadinessStatus = "ready" | "almost" | "attention";
 
@@ -145,6 +159,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         severity: "missing",
         title: "Bankafschrift ontbreekt",
         detail: "Upload het bankafschrift van dit kwartaal — zonder bank kan de boekhouder niets aansluiten.",
+        fix: FIX.bank,
       });
     } else {
       // [TRUST-READY] Both unresolved kinds lower the score and count as gaps: a cost
@@ -161,6 +176,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 banktransactie wacht nog op een bon"
               : `${s.undocumentedCount} banktransacties wachten nog op een bon`,
           detail: "Uitgaven zonder document tellen niet mee als kosten en verlagen je aftrek.",
+          fix: FIX.bank,
         });
       }
       if (s.unmatchedIncomeCount > 0) {
@@ -173,6 +189,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 ontvangen betaling zonder factuur"
               : `${s.unmatchedIncomeCount} ontvangen betalingen zonder factuur`,
           detail: "Koppel de betaling aan een factuur of geef aan wat het is (bijv. huur, lening, privé). Onverklaarde omzet kan de boekhouder niet aansluiten.",
+          fix: FIX.bank,
         });
       }
     }
@@ -232,6 +249,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
           severity: "missing",
           title: `€${euro(s.cashOmzetZonderBtw)} omzet zonder BTW-tarief`,
           detail: "Ken 9% of 21% toe — anders staat deze omzet in geen enkele rubriek.",
+          fix: s.usesTurnover ? FIX.dagomzet : FIX.kas,
         });
         detailBits.push("omzet zonder tarief");
       }
@@ -244,6 +262,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
             severity: "missing",
             title: `${s.turnoverDays} van ${s.quarterDays} kassadagen geïmporteerd`,
             detail: "Ontbrekende dagen tellen niet mee in de omzet — controleer of alle Z-rapporten erin zitten.",
+            fix: FIX.dagomzet,
           });
           detailBits.push(`${s.quarterDays - s.turnoverDays} kassadagen ontbreken`);
         }
@@ -279,6 +298,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         severity: "missing",
         title: "Nog geen omzet vastgelegd",
         detail: "Er is wel bank- of inkoopactiviteit, maar geen verkoopfacturen, kassa-omzet of kas-omzet. Controleer of je omzet is ingevoerd voordat je afsluit.",
+        fix: s.usesTurnover ? FIX.dagomzet : FIX.nieuweFactuur,
       });
     } else {
       subscore = 0;
