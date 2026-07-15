@@ -92,6 +92,9 @@ const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'credit',  label: 'Credit'   },
 ]
 
+// [SEARCH] Accent-insensitive fold ("José" ↔ "jose") for the quick-filter.
+const fold = (s: string) => (s ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function FacturenClient({ profile }: { profile: any }) {
   const router   = useRouter()
@@ -119,6 +122,11 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const searchParams = useSearchParams()
   const focusId = searchParams.get('focus')
   const [highlightId, setHighlightId] = useState<string | null>(null)
+
+  // [SEARCH] Quick text-filter over the loaded invoices. Seeded once from ?search=
+  // (set by the global search bar's Enter fallback). Full/server-side invoice
+  // search lives in the global search dropdown; this is an on-page refinement.
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
@@ -159,11 +167,16 @@ export default function FacturenClient({ profile }: { profile: any }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, loading, invoices.length])
 
+  const sq = fold(search.trim())
   const displayed = invoices.filter(inv => {
     if (inv.status === 'archived') return false
     if (filter === 'offerte') return inv.invoice_type === 'pro_forma'
     if (filter === 'credit')  return inv.invoice_type === 'creditnota'
     return true
+  }).filter(inv => {
+    if (!sq) return true
+    return fold(inv.invoice_number ?? '').includes(sq)
+        || fold(inv.client_name ?? '').includes(sq)
   })
   const sorted = sort === 'desc' ? displayed : [...displayed].reverse()
 
@@ -378,6 +391,27 @@ export default function FacturenClient({ profile }: { profile: any }) {
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
             </button>
           </div>
+        </div>
+
+        {/* [SEARCH] Quick text-filter (invoice number / client name) */}
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Zoek op factuurnummer of klant..."
+            aria-label="Facturen zoeken"
+            style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              aria-label="Zoekopdracht wissen"
+              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#49454F' }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
+            </button>
+          )}
         </div>
 
         {/* [BOEK-029] Filter dropdown — works on all screen sizes */}

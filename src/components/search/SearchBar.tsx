@@ -54,11 +54,14 @@ function saveRecent(term: string) {
 
 function Highlight({ text, query }: { text: string; query: string }) {
   if (!query.trim() || !text) return <>{text}</>;
+  // Capture group → String.split returns [text, match, text, match, …] so the
+  // matched fragments sit at ODD indices. (The old code used a stateful /g regex
+  // with .test() inside .map(), whose lastIndex drifted and mis-marked fragments.)
   const re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
   return (
     <>
       {text.split(re).map((part, i) =>
-        re.test(part) ? (
+        i % 2 === 1 ? (
           <mark key={i} style={{ background: "#FAC775", color: "#412402", borderRadius: 3, padding: "0 2px", fontStyle: "normal" }}>
             {part}
           </mark>
@@ -166,14 +169,15 @@ function TypeIcon({ type }: { type: string }) {
 }
 
 function ResultRow({
-  item, query, selected, onMouseEnter, onClick,
+  item, query, selected, optionId, onMouseEnter, onClick,
 }: {
-  item: SearchResult; query: string; selected: boolean;
+  item: SearchResult; query: string; selected: boolean; optionId?: string;
   onMouseEnter: () => void; onClick: () => void;
 }) {
   const st = STATUS_CONFIG[item.status ?? ""];
   return (
     <button
+      id={optionId}
       role="option"
       aria-selected={selected}
       onMouseEnter={onMouseEnter}
@@ -233,6 +237,7 @@ interface SearchInputProps {
   loading: boolean;
   placeholder: string;
   fontSize?: number;
+  activeId?: string;
   onChange: (val: string) => void;
   onFocus?: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
@@ -241,7 +246,7 @@ interface SearchInputProps {
 
 function SearchInput({
   inputRef, query, open, loading, placeholder,
-  fontSize = 14, onChange, onFocus, onKeyDown, onClear,
+  fontSize = 14, activeId, onChange, onFocus, onKeyDown, onClear,
 }: SearchInputProps) {
   return (
     <div style={{
@@ -265,6 +270,8 @@ function SearchInput({
         aria-haspopup="listbox"
         role="combobox"
         aria-autocomplete="list"
+        aria-controls="bb-search-listbox"
+        aria-activedescendant={activeId}
         style={{
           flex: 1, background: "transparent", border: "none", outline: "none",
           fontSize, color: "#212121", minWidth: 0,
@@ -299,6 +306,7 @@ interface DropdownContentProps {
   showRecent: boolean;
   showResults: boolean;
   loading: boolean;
+  error: string | null;
   query: string;
   recent: string[];
   groups: SearchResultGroup;
@@ -311,7 +319,7 @@ interface DropdownContentProps {
 }
 
 function DropdownContent({
-  showRecent, showResults, loading, query, recent,
+  showRecent, showResults, loading, error, query, recent,
   groups, flatResults, selectedIdx, totalCount,
   onSelectRecent, onSelectResult, onHoverIdx,
 }: DropdownContentProps) {
@@ -324,6 +332,7 @@ function DropdownContent({
           {recent.map((term, i) => (
             <button
               key={term}
+              id={`bb-opt-${i}`}
               role="option"
               aria-selected={selectedIdx === i}
               onMouseEnter={() => onHoverIdx(i)}
@@ -343,8 +352,20 @@ function DropdownContent({
         </>
       )}
 
+      {/* Error state — a backend/network failure must not masquerade as "no results" */}
+      {showResults && error && (
+        <div role="status" style={{ padding: "28px 16px", textAlign: "center" }}>
+          <p style={{ fontSize: 14, color: "#A32D2D", margin: 0, fontWeight: 500 }}>
+            Zoeken mislukt
+          </p>
+          <p style={{ fontSize: 13, color: "#9E9E9E", margin: "4px 0 0" }}>
+            Controleer je verbinding en probeer het opnieuw.
+          </p>
+        </div>
+      )}
+
       {/* Empty state */}
-      {showResults && !loading && totalCount === 0 && (
+      {showResults && !loading && !error && totalCount === 0 && (
         <div style={{ padding: "32px 16px", textAlign: "center" }}>
           <p style={{ fontSize: 14, color: "#9E9E9E", margin: 0 }}>
             Geen resultaten voor{" "}
@@ -365,6 +386,7 @@ function DropdownContent({
               <ResultRow
                 key={item.id} item={item} query={query}
                 selected={selectedIdx === idx}
+                optionId={`bb-opt-${idx}`}
                 onMouseEnter={() => onHoverIdx(idx)}
                 onClick={() => onSelectResult(item)}
               />
@@ -383,6 +405,7 @@ function DropdownContent({
               <ResultRow
                 key={item.id} item={item} query={query}
                 selected={selectedIdx === idx}
+                optionId={`bb-opt-${idx}`}
                 onMouseEnter={() => onHoverIdx(idx)}
                 onClick={() => onSelectResult(item)}
               />
@@ -401,6 +424,7 @@ function DropdownContent({
               <ResultRow
                 key={item.id} item={item} query={query}
                 selected={selectedIdx === idx}
+                optionId={`bb-opt-${idx}`}
                 onMouseEnter={() => onHoverIdx(idx)}
                 onClick={() => onSelectResult(item)}
               />
@@ -416,7 +440,7 @@ function DropdownContent({
 
 export function SearchBar() {
   const router = useRouter();
-  const { query, setQuery, groups, totalCount, loading, clear } = useSearch({ debounceMs: 200 });
+  const { query, setQuery, groups, totalCount, loading, error, clear } = useSearch({ debounceMs: 200 });
 
   const [open, setOpen] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(-1);
@@ -504,10 +528,12 @@ export function SearchBar() {
   }, [clear]);
 
   const navigate = useCallback((result: SearchResult) => {
-    saveRecent(result.title);
+    // Recent = what the user actually typed (falls back to the title only when the
+    // result was opened without a live query, e.g. via keyboard on recents).
+    saveRecent(query.trim() || result.title);
     closeSearch();
     router.push(result.href);
-  }, [router, closeSearch]);
+  }, [router, closeSearch, query]);
 
   const applyRecent = useCallback((term: string) => {
     setQuery(term);
@@ -527,8 +553,12 @@ export function SearchBar() {
         break;
       case "Enter":
         e.preventDefault();
-        // [BOEK-028] Enter with no selection → search facturen — May 2026
+        // [SEARCH] Enter with no selection → open the top result if there is one;
+        // otherwise fall back to the facturen list pre-filled with the query
+        // (FacturenClient now reads ?search=). — Jul 2026
         if (selectedIdx < 0) {
+          const top = showResults ? flatResults[0] : undefined;
+          if (top) { navigate(top); break; }
           if (query.trim()) {
             saveRecent(query.trim());
             closeSearch();
@@ -546,7 +576,7 @@ export function SearchBar() {
         closeSearch();
         break;
     }
-  }, [open, navItems, selectedIdx, applyRecent, navigate, closeSearch]);
+  }, [open, navItems, selectedIdx, applyRecent, navigate, closeSearch, showResults, flatResults, query, router]);
 
   const onInputChange = useCallback((val: string) => {
     setQuery(val);
@@ -556,8 +586,10 @@ export function SearchBar() {
 
   // ─── shared dropdown props ─────────────────────────────────────────────────
 
+  const activeId = selectedIdx >= 0 ? `bb-opt-${selectedIdx}` : undefined;
+
   const dropdownProps: DropdownContentProps = {
-    showRecent, showResults, loading, query, recent,
+    showRecent, showResults, loading, error, query, recent,
     groups, flatResults, selectedIdx, totalCount,
     onSelectRecent: applyRecent,
     onSelectResult: navigate,
@@ -565,7 +597,7 @@ export function SearchBar() {
   };
 
   const desktopInputProps: SearchInputProps = {
-    inputRef, query, open, loading,
+    inputRef, query, open, loading, activeId,
     placeholder: "Zoeken…",
     onChange: onInputChange,
     onFocus: () => setOpen(true),
@@ -574,7 +606,7 @@ export function SearchBar() {
   };
 
   const mobileInputProps: SearchInputProps = {
-    inputRef: mobileInputRef, query, open, loading,
+    inputRef: mobileInputRef, query, open, loading, activeId,
     placeholder: "Zoeken naar facturen, bestanden…",
     fontSize: 16,
     onChange: onInputChange,
@@ -601,7 +633,9 @@ export function SearchBar() {
         {open && (showRecent || showResults) && portalEl && createPortal(
           <div
             ref={portalDropdownRef}
+            id="bb-search-listbox"
             role="listbox"
+            aria-label="Zoekresultaten"
             style={{
               position: "fixed",
               top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width,
@@ -671,7 +705,9 @@ export function SearchBar() {
             </div>
           </div>
           <div
+            id="bb-search-listbox"
             role="listbox"
+            aria-label="Zoekresultaten"
             style={{
               flex: 1, overflowY: "auto", overscrollBehavior: "contain",
               WebkitOverflowScrolling: "touch",

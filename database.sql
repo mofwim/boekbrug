@@ -489,6 +489,38 @@ CREATE INDEX idx_invoices_message_id
 CREATE INDEX invoices_search_idx
   ON public.invoices USING gin (search_vector);
 
+-- [SEARCH] Trigram indexes so the global-search API's ILIKE '%term%' (leading
+-- wildcard) predicates are index-backed instead of sequential scans. Requires the
+-- pg_trgm extension (SECTION 9). Mirrored in supabase/migrations/search_engine.sql.
+CREATE INDEX IF NOT EXISTS invoices_invoice_number_trgm
+  ON public.invoices USING gin (invoice_number gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_name_trgm
+  ON public.invoices USING gin (client_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_email_trgm
+  ON public.invoices USING gin (client_email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_description_trgm
+  ON public.invoice_lines USING gin (description gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_invoice_id_idx
+  ON public.invoice_lines USING btree (invoice_id);
+CREATE INDEX IF NOT EXISTS documents_file_name_trgm
+  ON public.documents USING gin (file_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_doc_type_trgm
+  ON public.documents USING gin (doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_ai_doc_type_trgm
+  ON public.documents USING gin (ai_doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_notes_trgm
+  ON public.documents USING gin (notes gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_full_name_trgm
+  ON public.profiles USING gin (full_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_company_name_trgm
+  ON public.profiles USING gin (company_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_email_trgm
+  ON public.profiles USING gin (email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_name_trgm
+  ON public.clients USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_email_trgm
+  ON public.clients USING gin (email gin_trgm_ops);
+
 -- rate_limits
 CREATE INDEX idx_rate_limits_cleanup
   ON public.rate_limits USING btree (window_start);
@@ -1150,6 +1182,7 @@ CREATE TRIGGER prevent_accountant_amount_changes
 --     - pgsodium      (for vault encryption)
 --     - supabase_vault (for encrypted secrets)
 --     - pg_cron       (for cleanup_old_rate_limits scheduling)
+--     - pg_trgm       (for ILIKE '%..%' search trigram indexes — see SECTION 3 / search_engine.sql)
 --
 -- pg_cron job for rate_limits cleanup (in production: daily):
 --   SELECT cron.schedule(
