@@ -108,18 +108,25 @@ export function referenceMatches(
   if (!invoiceNumber) return false;
   const needle = normalizeRef(invoiceNumber);
   if (needle.length < 4) return false; // too short → unsafe
-  const haystack = normalizeRef(`${tx.reference ?? ""} ${tx.description ?? ""}`);
   // [TRUST-MATCH] A plain substring test let a short PURELY-NUMERIC invoice number
-  // match as a fragment of a longer number: invoice "2050" matched reference
-  // "26302050" and auto-pre-selected the WRONG invoice for a one-click confirm. For
-  // a numeric needle we require it NOT to be flanked by another digit (i.e. it is a
-  // whole number token, not a slice of a bigger one). An alphanumeric needle (with
-  // letters, e.g. "2026-014" → "2026014" or "INV2050") keeps the substring test.
+  // match as a fragment of a LONGER number: invoice "2050" matched reference
+  // "26302050" and auto-pre-selected the WRONG invoice for a one-click confirm. For a
+  // numeric needle we require it to be a WHOLE number token — not flanked by another
+  // digit. The haystack KEEPS SPACES as token boundaries (stripping only punctuation),
+  // so two space-separated numbers in a reference — "12345 1001" — do NOT fuse into
+  // one digit run that would hide a real match, while a hyphenated number still
+  // matches its printed form ("2026-014" → "2026014", hyphen removed, no space added).
+  const haystack = `${tx.reference ?? ""} ${tx.description ?? ""}`
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ");
   if (!/^[0-9]+$/.test(needle)) return haystack.includes(needle);
   for (let idx = haystack.indexOf(needle); idx >= 0; idx = haystack.indexOf(needle, idx + 1)) {
     const before = idx > 0 ? haystack[idx - 1] : "";
     const after = idx + needle.length < haystack.length ? haystack[idx + needle.length] : "";
-    if (!/[0-9]/.test(before) && !/[0-9]/.test(after)) return true; // a clean whole-number token
+    // A space (or string edge) is a clean boundary; only an adjacent DIGIT means the
+    // needle is a slice of a bigger number.
+    if (!/[0-9]/.test(before) && !/[0-9]/.test(after)) return true;
   }
   return false;
 }
