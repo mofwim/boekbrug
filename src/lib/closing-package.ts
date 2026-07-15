@@ -353,7 +353,10 @@ export function buildOverviewCsv(
       inv.client_name ?? "—",
       inv.invoice_date ?? "—",
       payCell,
-      EUR(inv.total_inc_btw ?? 0),
+      // [TRUST-NUMBER] Show the real total: fall back to excl + BTW when total_inc_btw
+      // wasn't stored, so an invoice that carries real amounts doesn't print €0,00 next
+      // to a non-zero BTW-overzicht (a contradiction the accountant would trip over).
+      EUR(inv.total_inc_btw ?? ((inv.total_ex_btw ?? 0) + (inv.btw_amount ?? 0))),
       inv.status ?? "—",
     ].map(esc).join(";"));
   }
