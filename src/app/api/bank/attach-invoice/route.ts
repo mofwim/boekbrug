@@ -28,6 +28,7 @@ import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -43,6 +44,10 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
+
+  // [COST] Per-user ceiling — this route runs an AI/OCR vision call (verifyInvoiceFromPdf).
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/bank/attach-invoice", ...RATE_LIMITS.AI_OCR });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   // 2. Read form: the file + the target transaction id.
   let formData: FormData;
@@ -189,7 +194,7 @@ export async function POST(req: NextRequest) {
     "facturen",
     "user"
   );
-  const { data: doc } = await supabase
+  const { data: doc, error: docErr } = await supabase
     .from("documents")
     .insert({
       user_id: user.id,
@@ -207,7 +212,15 @@ export async function POST(req: NextRequest) {
     })
     .select("id")
     .single();
-  const documentId = doc?.id ?? null;
+  // [R7] Capture the documents-insert error. The closing package resolves an incoming
+  // invoice's evidence via document_id → documents.file_url; a null document_id would
+  // make this (auto-PAID) invoice's file unreachable there. Roll back the stored file
+  // and stop rather than create an evidence-less paid invoice.
+  if (docErr || !doc) {
+    await supabase.storage.from("documents").remove([storagePath]);
+    return NextResponse.json({ error: "Opslaan van de factuur mislukt — probeer het opnieuw." }, { status: 500 });
+  }
+  const documentId = doc.id;
 
   // 8. Create the invoice — already 'paid' (the owner attached the file for a
   //    payment they SEE on the statement). Direction-aware:
@@ -242,13 +255,15 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (dbError || !invoice) {
+    // [R7/M4] Roll back the document row + stored file so the evidence isn't orphaned —
+    // its content_hash would otherwise make byte-hash dedup BLOCK a re-upload (409).
+    await pipeline.from("documents").delete().eq("id", documentId);
+    await supabase.storage.from("documents").remove([storagePath]);
     return NextResponse.json({ error: dbError?.message || "Aanmaken factuur mislukt" }, { status: 500 });
   }
 
   // 9. Link document → invoice (bidirectional).
-  if (documentId) {
-    await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId);
-  }
+  await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId);
 
   // 10. [BANK-ATTACH-MULTI] Do NOT mark the transaction 'matched' here. One
   //     payment can cover SEVERAL invoices (a supplier groups them); marking it

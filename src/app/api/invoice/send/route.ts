@@ -132,6 +132,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Factuurbedrag ontbreekt' }, { status: 400 })
     }
 
+    // ── 6b. [TRUST-TOTALS] Recompute the legal totals SERVER-SIDE from the lines ─
+    // The browser-supplied totals are never trusted on the record that gets a legal
+    // number and is e-mailed. The create path stored raw floats; only the edit PUT
+    // rounded — so the stored total depended on whether the draft was touched. We
+    // recompute here (same round2 + per-line math as the edit route) for issuance
+    // and conversion. A resend delivers the already-issued PDF, so it is untouched.
+    const round2 = (n: number): number =>
+      (n < 0 ? -1 : 1) * (Math.round(Math.abs(n) * 100 + 1e-9) / 100)
+    const { data: lines } = await supabase
+      .from('invoice_lines')
+      .select('*')
+      .eq('invoice_id', invoiceId)
+    let computedTotals: { total_ex_btw: number; btw_amount: number; total_inc_btw: number } | null = null
+    if (!resend && Array.isArray(lines) && lines.length > 0) {
+      const lineEx = (l: { line_total?: number | null; quantity?: number | null; unit_price?: number | null }) =>
+        typeof l.line_total === 'number' ? l.line_total : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0)
+      const ex = round2(lines.reduce((s, l) => s + lineEx(l), 0))
+      const btw = round2(lines.reduce((s, l) => s + (lineEx(l) * (Number(l.btw_rate) || 0)) / 100, 0))
+      computedTotals = { total_ex_btw: ex, btw_amount: btw, total_inc_btw: round2(ex + btw) }
+    }
+    // The authoritative total for the e-mail + accountant notification below.
+    const finalTotalInc = computedTotals?.total_inc_btw ?? invoice.total_inc_btw
+
     // ── 7. Pro forma / Offerte → convert to official Factuur upon sending ─
     // Per Belastingdienst: only official facturen count — pro forma is not a legal invoice
     const isConversion = !resend &&
@@ -202,16 +225,29 @@ export async function POST(request: NextRequest) {
     // convertOnly: keep status='sent', just update number + type
     // resend: nothing to commit — delivery only
     if (!resend) {
-      const { error: updateError } = await supabase
+      // [TRUST-NUMBER] COMPARE-AND-SWAP. The status check in step 5 read a fetched
+      // row; two concurrent sends (or a double-click that races the first commit)
+      // both passed it and both minted a number under an id-only UPDATE, so one
+      // number was orphaned as a permanent gap AND the invoice was e-mailed twice.
+      // We now guard the UPDATE on the ORIGINAL state (draft for a send, pro_forma/
+      // offerte for a conversion) and require exactly one affected row. The loser of
+      // the race writes nothing and does NOT deliver — it gets a clean 409.
+      let updateQ = supabase
         .from('invoices')
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .update({
           ...(convertOnly ? {} : { status: 'sent' as const }),
           invoice_number: finalNumber,
           invoice_type: finalType as 'factuur' | 'creditnota' | 'pro_forma' | 'offerte',
+          ...(computedTotals ?? {}),
           updated_at: new Date().toISOString(),
         } as any)
         .eq('id', invoiceId)
+        .eq('sender_id', user.id)
+      updateQ = convertOnly
+        ? updateQ.in('invoice_type', ['pro_forma', 'offerte'])
+        : updateQ.eq('status', 'draft')
+      const { data: updatedRows, error: updateError } = await updateQ.select('id')
 
       if (updateError) {
         console.error('[FACTUUR-A] Invoice update failed', { invoiceId, updateError })
@@ -220,6 +256,18 @@ export async function POST(request: NextRequest) {
           extra: { invoiceId, finalNumber, userId: user.id },
         })
         return NextResponse.json({ error: 'Server fout' }, { status: 500 })
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        // Lost the compare-and-swap: already sent/converted by a concurrent request.
+        // The number we minted is now unused — log it so the rare gap is VISIBLE,
+        // never silent — and refuse to double-deliver.
+        console.warn('[TRUST-NUMBER] Send race lost — minted number unused (gap)', { invoiceId, finalNumber })
+        Sentry.captureMessage('invoice-send race: minted number unused (sequence gap)', {
+          level: 'warning',
+          tags: { feature: 'invoice-send' },
+          extra: { invoiceId, finalNumber, userId: user.id },
+        })
+        return NextResponse.json({ error: 'Deze factuur is al verzonden.' }, { status: 409 })
       }
 
       // ── 10. Audit log — via service_role (BOEK-SECURITY-2) ───
@@ -254,17 +302,14 @@ export async function POST(request: NextRequest) {
     const zzperName = profile?.company_name || profile?.full_name || 'Onbekend'
 
     // ── 12. [FACTUUR-A] Render the legal PDF — AFTER number commit ─
-    // The PDF must carry the final number, so it can only be rendered now.
-    const { data: lines } = await supabase
-      .from('invoice_lines')
-      .select('*')
-      .eq('invoice_id', invoiceId)
-
+    // The PDF must carry the final number + the server-recomputed totals (lines
+    // were fetched in step 6b). It can only be rendered now.
     let pdfBuffer: Buffer | null = null
     try {
       pdfBuffer = await renderInvoicePdf(
         {
           ...invoice,
+          ...(computedTotals ?? {}),
           invoice_number: finalNumber,
           invoice_type: finalType,
           status: resend || convertOnly ? invoice.status : 'sent',
@@ -332,7 +377,7 @@ export async function POST(request: NextRequest) {
         clientName: invoice.client_name,
         zzperName,
         invoiceNumber: finalNumber,
-        totalInc: invoice.total_inc_btw,
+        totalInc: finalTotalInc,
         dueDate: invoice.due_date ?? '',
         invoiceDate: invoice.invoice_date ?? undefined,
         pdfBuffer,
@@ -371,7 +416,7 @@ export async function POST(request: NextRequest) {
               user_id: accountantLink.accountant_id,
               title: 'Nieuwe factuur verzonden',
               // [FACTUUR-A] Dutch comma in the notification too — one rule everywhere
-              body: `${zzperName} heeft factuur ${finalNumber} verzonden — € ${invoice.total_inc_btw.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              body: `${zzperName} heeft factuur ${finalNumber} verzonden — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
               type: 'invoice',
               read: false,
               link: `/dashboard/clients/${user.id}`,

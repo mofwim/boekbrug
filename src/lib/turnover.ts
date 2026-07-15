@@ -1,0 +1,212 @@
+// src/lib/turnover.ts
+// [TURNOVER] Phase 1 — pure helpers for daily till/POS turnover (dagomzet), split by
+// BTW rate, plus the reconciliation against bank pos_income settlements and the cash
+// book. No I/O, fully testable (run: npx tsx src/lib/turnover.test.ts).
+//
+// A retail day's revenue is the Z-report: one day mixes 0% / 9% / 21% turnover across
+// pin / contant / overig. These helpers turn that into per-rate net revenue + BTW, and
+// reconcile the THREE independent witnesses of the same money:
+//   1. the till   — this turnover row (pin_amount / cash_amount expected)
+//   2. the bank   — pos_income lines that SETTLED that day's card takings
+//   3. the drawer — cash-book omzet entries counted that day
+// A gap between them is a real signal (a missing bon, a skim, a timing lag) — it is
+// SURFACED as a break, never guessed away.
+//
+// KNOWN LIMITATION (documented for G4): a card settlement credited to the bank may be
+// NET of PSP/scheme fees while the till's pin_amount is GROSS. The tolerance below is a
+// percentage floor so a small per-batch fee does not fire a break every day, but true
+// fee modeling (reconcile against the gross terminal batch, or subtract an expected fee)
+// needs real settlement data and is deferred. A residual pin break is informational.
+
+export interface DailyTurnover {
+  turnover_date: string;       // ISO 'YYYY-MM-DD'
+  base_0: number;              // net taxable base per rate (excl. BTW)
+  base_9: number;
+  base_21: number;
+  btw_9: number;
+  btw_21: number;
+  total_incl: number | null;   // gross turnover as printed (cross-check; may be absent)
+  pin_amount: number | null;   // payment-method split (reconciliation keys)
+  cash_amount: number | null;
+  other_amount: number | null;
+}
+
+/** Net revenue (ex-BTW) of a turnover day: the three per-rate bases summed. */
+export function turnoverNetOmzet(t: DailyTurnover): number {
+  return (t.base_0 ?? 0) + (t.base_9 ?? 0) + (t.base_21 ?? 0);
+}
+
+/**
+ * BTW verschuldigd of a turnover day, kept PER RATE (0% contributes nothing). The result
+ * engine needs the split — a single collapsed total cannot fill rubriek 1a (21%) vs 1b
+ * (9%) of the aangifte. Values come straight from the Z-report; we do not re-derive them
+ * from base × rate (the till already rounded per line — trust its documented figure).
+ */
+export function turnoverBtw(t: DailyTurnover): { r9: number; r21: number; total: number } {
+  const r9 = t.btw_9 ?? 0;
+  const r21 = t.btw_21 ?? 0;
+  return { r9, r21, total: r9 + r21 };
+}
+
+/**
+ * A bank pos_income line (card-terminal / PSP settlement) embeds the ORIGINAL takings
+ * date and transaction count in its description, e.g.
+ *   "AFREK. BETAALAUTOMAAT MAES ... DAT. 20260404/6094 AANT. 31 MREFNR. KFM".
+ * Parsing "DAT. YYYYMMDD" lets us reconcile a settlement to the exact turnover DAY,
+ * independent of when the money actually landed (settlement lags a day and PSPs batch,
+ * so the transaction's own booking date is the wrong key). Returns the ISO date + count,
+ * or nulls when the markers are absent (a non-POS line, or a bank that does not emit
+ * them — then the caller falls back to a date window / the booking date).
+ *
+ * The date is calendar-validated (month 01-12, day 01-31): a corrupt "DAT. 20261345"
+ * returns date=null so the caller falls back rather than keying a settlement to a date
+ * string that can never match any turnover_date (which would SILENTLY drop it).
+ */
+export function parsePosSettlement(
+  description: string | null | undefined,
+): { date: string | null; count: number | null } {
+  if (!description) return { date: null, count: null };
+  const d = description.match(/DAT\.\s*(\d{4})(\d{2})(\d{2})/);
+  const a = description.match(/AANT\.\s*(\d+)/);
+  let date: string | null = null;
+  if (d) {
+    // Real calendar validation (round-trip), not just 1-31: Feb 31 / Apr 31 roll over to
+    // another month, so getUTCDate no longer matches → rejected. A corrupt date returns
+    // null so the caller falls back to the booking date instead of keying garbage.
+    const y = Number(d[1]), mo = Number(d[2]), dy = Number(d[3]);
+    const probe = new Date(Date.UTC(y, mo - 1, dy));
+    if (probe.getUTCFullYear() === y && probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === dy) {
+      date = `${d[1]}-${d[2]}-${d[3]}`;
+    }
+  }
+  return { date, count: a ? Number(a[1]) : null };
+}
+
+/** One bank line as needed to sum card settlements. */
+export interface PosSettlementLine {
+  description: string | null;
+  amount: number | null;      // signed as stored — credits positive, refunds negative
+}
+
+/**
+ * Sum ALL pos_income settlement lines that key to one takings day. A retail day settles
+ * across several card schemes (MAES / VPAY / VIDB / DBMC), each its own bank line sharing
+ * the same "DAT." — so a caller MUST sum them, not read one. This helper owns that (an ad
+ * hoc caller that read a single line would silently under-count pin). Also returns the
+ * combined AANT count (transactions), a free cross-check against the till's ticket count.
+ */
+export function sumPosSettlements(
+  lines: PosSettlementLine[],
+  date: string,
+): { total: number; count: number; matchedLines: number } {
+  let total = 0;
+  let count = 0;
+  let matchedLines = 0;
+  for (const l of lines) {
+    const p = parsePosSettlement(l.description);
+    if (p.date === date) {
+      // SIGNED sum, not magnitude: a card REFUND settles as a negative bank line and must
+      // be SUBTRACTED. Math.abs would flip it positive and inflate the day's pin, both
+      // fabricating false breaks and masking real skims.
+      total += l.amount ?? 0;
+      count += p.count ?? 0;
+      matchedLines += 1;
+    }
+  }
+  return { total, count, matchedLines };
+}
+
+export interface ReconcileInput {
+  turnover: DailyTurnover;
+  /** Σ bank pos_income amounts whose parsed DAT == turnover_date (positive euros). */
+  posSettledForDay: number;
+  /** Σ cash-book omzet entries for that date (positive euros). */
+  cashCountedForDay: number;
+  /** Absolute euro tolerance floor for rounding. Default €0.02. */
+  tolerance?: number;
+  /** Relative tolerance floor (fraction of the expected figure). Default 0.5%. */
+  tolerancePct?: number;
+}
+
+export interface ReconcileBreak {
+  kind: "pin" | "cash" | "internal" | "unknown";
+  expected: number;            // what the till says (or the printed total, for internal)
+  actual: number;             // what the bank settled / drawer counted / methods sum
+  diff: number;               // actual − expected (signed; + = more than the till said)
+  note?: string;
+}
+
+/**
+ * Compare a turnover day's EXPECTED pin/cash (from the Z-report) against what the bank
+ * actually settled and what the cash book counted, PLUS the Z-report's own internal
+ * identity. Returns one break per witness that disagrees beyond tolerance; an empty array
+ * means everything ties out — the day is "true". Pure: the caller fetches and sums the
+ * bank/cash figures (see sumPosSettlements).
+ *
+ * Honesty guards (a silent "reconciled" on absent data is the enemy):
+ *   - A method the Z-report never recorded (pin_amount / cash_amount = null) does NOT
+ *     pass silently against a 0 settlement: if the day has revenue it emits an 'unknown'
+ *     break so the gap is visible.
+ *   - The internal identity (pin+contant+overig ≈ total_incl, and omzet+BTW ≈ total_incl)
+ *     is checked so a day whose parts don't add up to its own printed total surfaces even
+ *     when each part looks individually plausible.
+ * Tolerance is a percentage floor (max of an absolute €0.02 and 0.5% of the expected),
+ * compared on integer cents to avoid IEEE-754 boundary false breaks.
+ */
+export function reconcileDay(input: ReconcileInput): ReconcileBreak[] {
+  const t = input.turnover;
+  const absTol = input.tolerance ?? 0.02;
+  const pctTol = input.tolerancePct ?? 0.005;
+  const breaks: ReconcileBreak[] = [];
+
+  const within = (diff: number, expected: number): boolean => {
+    const diffCents = Math.round(diff * 100);
+    const tolCents = Math.round(Math.max(absTol, pctTol * Math.abs(expected)) * 100);
+    return Math.abs(diffCents) <= tolCents;
+  };
+  const hasRevenue = turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0;
+
+  // ── pin ──
+  if (t.pin_amount == null) {
+    if (hasRevenue) {
+      breaks.push({ kind: "unknown", expected: 0, actual: input.posSettledForDay,
+        diff: input.posSettledForDay, note: "pin_amount ontbreekt op de Z-bon" });
+    }
+  } else {
+    const diff = input.posSettledForDay - t.pin_amount;
+    if (!within(diff, t.pin_amount)) {
+      breaks.push({ kind: "pin", expected: t.pin_amount, actual: input.posSettledForDay, diff });
+    }
+  }
+
+  // ── cash ──
+  if (t.cash_amount == null) {
+    if (hasRevenue) {
+      breaks.push({ kind: "unknown", expected: 0, actual: input.cashCountedForDay,
+        diff: input.cashCountedForDay, note: "cash_amount ontbreekt op de Z-bon" });
+    }
+  } else {
+    const diff = input.cashCountedForDay - t.cash_amount;
+    if (!within(diff, t.cash_amount)) {
+      breaks.push({ kind: "cash", expected: t.cash_amount, actual: input.cashCountedForDay, diff });
+    }
+  }
+
+  // ── internal identity (only when the printed gross total is present) ──
+  if (t.total_incl != null) {
+    const methods = (t.pin_amount ?? 0) + (t.cash_amount ?? 0) + (t.other_amount ?? 0);
+    const mDiff = methods - t.total_incl;
+    if (!within(mDiff, t.total_incl)) {
+      breaks.push({ kind: "internal", expected: t.total_incl, actual: methods, diff: mDiff,
+        note: "pin+contant+overig ≠ totaal" });
+    }
+    const gross = turnoverNetOmzet(t) + turnoverBtw(t).total;
+    const gDiff = gross - t.total_incl;
+    if (!within(gDiff, t.total_incl)) {
+      breaks.push({ kind: "internal", expected: t.total_incl, actual: gross, diff: gDiff,
+        note: "omzet+BTW ≠ totaal" });
+    }
+  }
+
+  return breaks;
+}

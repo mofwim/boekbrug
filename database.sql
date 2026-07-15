@@ -61,10 +61,11 @@
 --       accountant_status='verwerkt'; bypassed when auth.uid() IS NULL).
 --
 --   RLS:
---     • The invitations "public can read ... USING (true)" policy shown below is
---       replaced by supabase/migrations/invitations_rls_scoped_read.sql
---       (scoped to inviter OR invitee). Anyone auditing invitation exposure must
---       read that migration, not this snapshot.
+--     • The invitations SELECT policy below is scoped to the inviter (zzper_id)
+--       OR the invitee (accountant_email == auth.email()) — never "public USING
+--       (true)". supabase/migrations/invitations_rls_scoped_read.sql applies the
+--       same change to an already-provisioned DB; this snapshot and that migration
+--       now agree, so a fresh provision is secure by default.
 --
 -- TODO: regenerate this file from a fresh production introspection.
 -- =====================================================
@@ -637,8 +638,18 @@ CREATE POLICY folders_delete_own ON public.folders
   USING ((user_id = auth.uid()) AND (is_system = false));
 
 -- ── invitations (2) ─────────────────────────────────────
-CREATE POLICY "public can read invitations" ON public.invitations
-  FOR SELECT TO public USING (true);
+-- [SEC-INVITE] Read is scoped to the two parties of the invitation: the inviter
+-- (zzper_id) or the invitee (accountant_email == auth.email()). The old
+-- "public USING (true)" let ANY caller — including anonymous — enumerate every
+-- accept-token and invited e-mail (invitation-hijack + info disclosure). Server
+-- paths that must read across users (/api/invite/info) use service_role and
+-- bypass RLS. Mirrors supabase/migrations/invitations_rls_scoped_read.sql.
+CREATE POLICY "invitee or inviter can read invitations" ON public.invitations
+  FOR SELECT TO authenticated
+  USING (
+    auth.uid() = zzper_id
+    OR lower(accountant_email) = lower(auth.email())
+  );
 
 CREATE POLICY "zzper can insert invitations" ON public.invitations
   FOR INSERT TO public WITH CHECK (auth.uid() = zzper_id);

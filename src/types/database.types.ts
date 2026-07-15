@@ -239,6 +239,197 @@ export type Database = {
           },
         ]
       }
+      daily_turnover: {
+        Row: {
+          base_0: number
+          base_21: number
+          base_9: number
+          btw_21: number
+          btw_9: number
+          cash_amount: number | null
+          created_at: string | null
+          document_id: string | null
+          id: string
+          other_amount: number | null
+          pin_amount: number | null
+          source: string
+          total_incl: number | null
+          turnover_date: string
+          user_id: string
+        }
+        Insert: {
+          base_0?: number
+          base_21?: number
+          base_9?: number
+          btw_21?: number
+          btw_9?: number
+          cash_amount?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          other_amount?: number | null
+          pin_amount?: number | null
+          source?: string
+          total_incl?: number | null
+          turnover_date: string
+          user_id: string
+        }
+        Update: {
+          base_0?: number
+          base_21?: number
+          base_9?: number
+          btw_21?: number
+          btw_9?: number
+          cash_amount?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          other_amount?: number | null
+          pin_amount?: number | null
+          source?: string
+          total_incl?: number | null
+          turnover_date?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_turnover_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_turnover_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      articles: {
+        Row: {
+          active: boolean
+          btw_rate: number
+          code: string | null
+          created_at: string | null
+          description: string
+          id: string
+          unit: string | null
+          unit_price: number
+          updated_at: string | null
+          usage_count: number
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          btw_rate?: number
+          code?: string | null
+          created_at?: string | null
+          description: string
+          id?: string
+          unit?: string | null
+          unit_price?: number
+          updated_at?: string | null
+          usage_count?: number
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          btw_rate?: number
+          code?: string | null
+          created_at?: string | null
+          description?: string
+          id?: string
+          unit?: string | null
+          unit_price?: number
+          updated_at?: string | null
+          usage_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "articles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      eft_settlements: {
+        Row: {
+          by_scheme: Json | null
+          created_at: string | null
+          document_id: string | null
+          first_trx: string | null
+          gross_total: number
+          id: string
+          last_trx: string | null
+          period_end: string | null
+          period_nr: string | null
+          period_start: string | null
+          settlement_date: string
+          shift_nr: string | null
+          source: string
+          terminal_id: string | null
+          tx_count: number
+          user_id: string
+        }
+        Insert: {
+          by_scheme?: Json | null
+          created_at?: string | null
+          document_id?: string | null
+          first_trx?: string | null
+          gross_total: number
+          id?: string
+          last_trx?: string | null
+          period_end?: string | null
+          period_nr?: string | null
+          period_start?: string | null
+          settlement_date: string
+          shift_nr?: string | null
+          source?: string
+          terminal_id?: string | null
+          tx_count?: number
+          user_id: string
+        }
+        Update: {
+          by_scheme?: Json | null
+          created_at?: string | null
+          document_id?: string | null
+          first_trx?: string | null
+          gross_total?: number
+          id?: string
+          last_trx?: string | null
+          period_end?: string | null
+          period_nr?: string | null
+          period_start?: string | null
+          settlement_date?: string
+          shift_nr?: string | null
+          source?: string
+          terminal_id?: string | null
+          tx_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eft_settlements_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eft_settlements_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_entries: {
         Row: {
           amount: number
@@ -304,6 +495,7 @@ export type Database = {
           id: string
           kvk_number: string | null
           name: string
+          notes: string | null
           postal_code: string | null
           user_id: string | null
         }
@@ -317,6 +509,7 @@ export type Database = {
           id?: string
           kvk_number?: string | null
           name: string
+          notes?: string | null
           postal_code?: string | null
           user_id?: string | null
         }
@@ -330,6 +523,7 @@ export type Database = {
           id?: string
           kvk_number?: string | null
           name?: string
+          notes?: string | null
           postal_code?: string | null
           user_id?: string | null
         }
@@ -748,6 +942,7 @@ export type Database = {
           client_btw_number: string | null
           client_city: string | null
           client_email: string | null
+          client_id: string | null
           client_name: string | null
           client_postal_code: string | null
           created_at: string | null
@@ -766,6 +961,7 @@ export type Database = {
           payment_date: string | null
           payment_method: string | null
           payment_prepared_at: string | null
+          pay_token: string | null
           payment_reference: string | null
           pdf_url: string | null
           receiver_id: string | null
@@ -789,6 +985,7 @@ export type Database = {
           client_btw_number?: string | null
           client_city?: string | null
           client_email?: string | null
+          client_id?: string | null
           client_name?: string | null
           client_postal_code?: string | null
           created_at?: string | null
@@ -807,6 +1004,7 @@ export type Database = {
           payment_date?: string | null
           payment_method?: string | null
           payment_prepared_at?: string | null
+          pay_token?: string | null
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
@@ -830,6 +1028,7 @@ export type Database = {
           client_btw_number?: string | null
           client_city?: string | null
           client_email?: string | null
+          client_id?: string | null
           client_name?: string | null
           client_postal_code?: string | null
           created_at?: string | null
@@ -848,6 +1047,7 @@ export type Database = {
           payment_date?: string | null
           payment_method?: string | null
           payment_prepared_at?: string | null
+          pay_token?: string | null
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null

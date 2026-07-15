@@ -95,7 +95,7 @@ export default function BankClient() {
   const [busy, setBusy] = useState(false)
   // [BANK-DND] true while a file is being dragged over the upload zone.
   const [dragActive, setDragActive] = useState(false)
-  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number } | null>(null)
+  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number; unreadable: number } | null>(null)
   // [BANK-STATEMENTS] Uploaded statements (filename + upload time) and the
   // "refresh names" action that upgrades older rows' names from their description.
   const [statements, setStatements] = useState<{ id: string; name: string; uploadedAt: string; size: number }[] | null>(null)
@@ -224,7 +224,10 @@ export default function BankClient() {
         setBusy(false)
         return
       }
-      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped })
+      // [R2] parseWarnings = statement lines the parser could not read. Each one is a
+      // transaction that is NOT in the overview (the raw file still reaches the accountant).
+      // The UI dropped this field, so the owner was never told a line went missing.
+      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped, unreadable: Array.isArray(upJson.parseWarnings) ? upJson.parseWarnings.length : 0 })
 
       // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the
       // server keeps a passthrough copy regardless of format). But a CSV/PDF — or
@@ -736,6 +739,13 @@ export default function BankClient() {
         <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: R.md, background: M3.surface, boxShadow: EL1, fontSize: 13, color: '#3c4043' }}>
           <strong>{uploadInfo.format}</strong> · {uploadInfo.parsed} transacties gelezen ·{' '}
           {uploadInfo.inserted} nieuw{uploadInfo.skipped > 0 ? ` · ${uploadInfo.skipped} dubbel overgeslagen` : ''}
+          {/* [R2] Never silently short a transaction: if lines couldn't be read, say so —
+              they're in the stored file for the accountant, but not in this overview. */}
+          {uploadInfo.unreadable > 0 && (
+            <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: R.sm, background: '#FEE8C4', color: '#7C5800', fontSize: 12.5, fontWeight: 600 }}>
+              ⚠ {uploadInfo.unreadable} regel{uploadInfo.unreadable === 1 ? '' : 's'} kon{uploadInfo.unreadable === 1 ? '' : 'den'} niet gelezen worden en {uploadInfo.unreadable === 1 ? 'staat' : 'staan'} niet in je overzicht. Het originele bestand is wél bewaard voor je boekhouder — controleer die regel{uploadInfo.unreadable === 1 ? '' : 's'}.
+            </div>
+          )}
         </div>
       )}
 

@@ -25,8 +25,7 @@ import { verifyInvoiceFromPdf } from "@/lib/ai"
 import { resolveImportTarget, ensureImportedFolder } from "@/lib/bestanden"
 import { computeContentHash } from "@/lib/content-hash"
 import { buildFolderBreadcrumb } from "@/lib/documents"
-import { parseBankFile } from "@/lib/bank-parser"
-import { dedupTransactions, mapToRows, dateRange } from "@/lib/bank-import"
+import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
@@ -42,6 +41,7 @@ import { deriveDueDate } from "@/lib/safecore"
 // [SMART-INTAKE] jsonb column type for invoices.field_confidence — same pattern
 // as email-integration.ts / audit.ts: derive the Json type, cast at write.
 import type { Database } from "@/types/database.types"
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit"
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -55,6 +55,11 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 })
   }
+
+  // [COST] Per-user ceiling on the AI/OCR intake pipeline (Claude calls) — one account
+  // cannot drive unbounded spend.
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/intake", ...RATE_LIMITS.AI_OCR })
+  if (!rl.allowed) return rateLimitResponse(rl)
 
   let formData: FormData
   try {
@@ -71,6 +76,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Bestand te groot — max 10MB" }, { status: 400 })
   }
 
+  // [INTAKE-FORCE] The owner can override a SEMANTIC duplicate block ("toch toevoegen")
+  // when the match is a false positive — e.g. two genuinely distinct same-day receipts
+  // from one vendor for the same amount, neither carrying an invoice number. This NEVER
+  // overrides the byte-hash gate below: the exact same file still can't be added twice.
+  const force = formData.get("force") === "true"
+
   const arrayBuffer = await file.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
 
@@ -86,7 +97,7 @@ export async function POST(req: NextRequest) {
 
   const preAi = decidePreAi(file.name, file.type, textHead)
   if (preAi?.destination === "bank") {
-    return handleBankStatement(buffer, file.name, user.id)
+    return handleBankStatement(buffer, file.name, user.id, file.type || "text/plain")
   }
 
   // ── Type guard for the AI path: only pdf/image go to the extractor ──────────
@@ -189,7 +200,26 @@ export async function POST(req: NextRequest) {
       }
     )
 
-    if (dup.duplicate && dup.match) {
+    if (dup.duplicate && dup.match && force) {
+      // [INTAKE-FORCE] The owner already saw "bestaat al" and chose to add anyway. Record
+      // the override so a deliberate double-add is fully traceable, then fall through to
+      // storage/insert like a normal invoice.
+      await logAuditAction({
+        userId: user.id,
+        action: "invoice.dedup_override",
+        entityType: "invoice",
+        entityId: dup.match.id,
+        newValue: {
+          reason: "user_forced_add",
+          matched_on: dup.tier,
+          invoice_number: v.invoice_number ?? null,
+          total_inc_btw: v.total_inc_btw ?? v.amount ?? null,
+          vendor: v.vendor ?? null,
+          path: "intake",
+        },
+        ipAddress: getClientIP(req),
+      })
+    } else if (dup.duplicate && dup.match) {
       // Block the duplicate before any storage/insert. Truth in the audit log,
       // a clear message to the owner. The original is untouched.
       await logAuditAction({
@@ -265,6 +295,10 @@ export async function POST(req: NextRequest) {
           error: `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
           duplicate: true,
           original_id: dup.match.id,
+          // [INTAKE-FORCE] This is a SEMANTIC match (same invoice, different file) — it can
+          // be a false positive, so the client may offer "toch toevoegen" (re-POST force=true).
+          // The byte-hash 409 above (exact same file) deliberately omits this flag.
+          canForce: true,
           ...(existing ? { existing } : {}),
         },
         { status: 409 }
@@ -286,14 +320,33 @@ export async function POST(req: NextRequest) {
   const { error: uploadError } = await supabase.storage
     .from("documents")
     .upload(storagePath, upload.buffer, { contentType: upload.fileType, upsert: false })
-  const pdfUrl = uploadError ? null : storagePath
+  // [R1] A swallowed storage failure was the silent-loss bug: the flow continued and
+  // wrote a documents/invoice row whose file_url points at a file that was NEVER stored,
+  // while telling the owner "opgeslagen" / "factuur herkend". The evidence is then gone
+  // but looks present, and the closing package can never find it. Fail loudly instead —
+  // the owner retries; a cheap AI re-run beats a phantom document that breaks the aangifte.
+  if (uploadError) {
+    return NextResponse.json(
+      { error: "Bestand kon niet worden opgeslagen — probeer het opnieuw." },
+      { status: 502 }
+    )
+  }
+  const pdfUrl = storagePath
 
   const pipeline = createPipelineClient()
 
   // ── Destination: document (not an invoice/receipt) → bestanden only ─────────
   if (decision.destination === "document") {
+    // [TRUST-INTAKE] Distinguish "confidently NOT a financial doc" from "we couldn't
+    // READ it" (an AI outage / unreadable scan returns confidence 0 from the fallback).
+    // The old code told the owner "geen factuur of bon herkend" for BOTH — so a real
+    // receipt photographed during an outage was silently filed as "overig" and booked
+    // nothing behind a confident dismissal. When we couldn't actually read it, we store
+    // the file (never lose it) but say so honestly and tell the owner to check/retry —
+    // we never assert it isn't an invoice when we simply didn't manage to read it.
+    const couldNotRead = !(v.confidence > 0)
     const folderId = await ensureImportedFolder(user.id, "pipeline")
-    const { data: doc } = await pipeline
+    const { data: doc, error: docErr } = await pipeline
       .from("documents")
       .insert({
         user_id: user.id,
@@ -304,22 +357,35 @@ export async function POST(req: NextRequest) {
         doc_type: "overig",
         folder_id: folderId,
         source: "camera",
-        ai_processed: true,
+        // Only claim we processed it when we actually read it.
+        ai_processed: !couldNotRead,
         ai_doc_type: v.document_kind ?? "other",
         content_hash: contentHash,
       })
       .select("id")
       .single()
+    // [R1] Don't report success on a failed write. Roll back the stored file so it isn't
+    // orphaned in Storage (a leaked object with no row), and tell the owner to retry.
+    if (docErr || !doc) {
+      await supabase.storage.from("documents").remove([storagePath])
+      return NextResponse.json(
+        { error: "Opslaan in je bestanden is mislukt — probeer het opnieuw." },
+        { status: 500 }
+      )
+    }
     // [INTAKE-FEEDBACK] resolve the folder name so the client can show "where"
     // and deep-link to it (same breadcrumb helper as the duplicate path).
     const docFolderPath = await buildFolderBreadcrumb(supabase, user.id, folderId)
     return NextResponse.json({
       ok: true,
       destination: "document",
+      could_not_read: couldNotRead,
       document_id: doc?.id ?? null,
       folder_id: folderId,
       folder_name: docFolderPath.length ? docFolderPath[docFolderPath.length - 1] : null,
-      message: "Opgeslagen in je bestanden (geen factuur of bon herkend).",
+      message: couldNotRead
+        ? "We konden dit document niet lezen. Het staat veilig in je bestanden — controleer het, of upload een duidelijkere foto als het een factuur of bon is."
+        : "Opgeslagen in je bestanden (geen factuur of bon herkend).",
     })
   }
 
@@ -334,7 +400,7 @@ export async function POST(req: NextRequest) {
 
   const folderId = await resolveImportTarget(user.id, v.invoice_date ?? null, "facturen", "pipeline")
 
-  const { data: doc } = await pipeline
+  const { data: doc, error: docErr } = await pipeline
     .from("documents")
     .insert({
       user_id: user.id,
@@ -352,7 +418,18 @@ export async function POST(req: NextRequest) {
     })
     .select("id")
     .single()
-  const documentId = doc?.id ?? null
+  // [R1] The document row IS the evidence link for an incoming invoice (the closing
+  // package resolves the PDF via invoices.document_id → documents.file_url). If it fails
+  // to write, an invoice with document_id=null has unreachable evidence. Stop and roll
+  // back the stored file rather than create a half-linked, evidence-less invoice.
+  if (docErr || !doc) {
+    await supabase.storage.from("documents").remove([storagePath])
+    return NextResponse.json(
+      { error: "Opslaan van de factuur is mislukt — probeer het opnieuw." },
+      { status: 500 }
+    )
+  }
+  const documentId = doc.id
 
   // [SMART-INTAKE] Merge an intake suggestion into field_confidence (same jsonb
   // pattern as _safecore). _intake_suggest='paid' tells the verify queue to
@@ -398,10 +475,16 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (dbError) {
+    // [R1] Roll back the document row + stored file we just created. Otherwise a
+    // documents row with no invoice is orphaned — and worse, its content_hash would
+    // make the byte-hash dedup BLOCK a re-upload (409), trapping the owner with a file
+    // they can neither re-add nor see as an invoice. Best-effort; then surface the error.
+    await pipeline.from("documents").delete().eq("id", documentId)
+    await supabase.storage.from("documents").remove([storagePath])
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
 
-  if (documentId && invoice?.id) {
+  if (invoice?.id) {
     await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId)
   }
 
@@ -418,58 +501,30 @@ export async function POST(req: NextRequest) {
 }
 
 // ── Bank statement handler — mirrors /api/bank/upload (text/xml only) ─────────
-async function handleBankStatement(buffer: Buffer, filename: string, userId: string) {
-  const content = buffer.toString("utf8")
-  const parsed = parseBankFile(content, filename)
-  if (parsed.transactions.length === 0) {
-    return NextResponse.json(
-      { error: "Geen transacties gevonden in het bankafschrift", parseWarnings: parsed.parseErrors },
-      { status: 422 }
-    )
-  }
-
+async function handleBankStatement(buffer: Buffer, filename: string, userId: string, fileType: string) {
   const pipeline = createPipelineClient()
-  const { min, max } = dateRange(parsed.transactions)
+  const result = await importBankStatement({ buffer, filename, fileType, userId, pipeline })
 
-  let existing: {
-    date: string | null
-    amount: number | null
-    description: string | null
-    counterpart_name: string | null
-    reference: string | null
-  }[] = []
-
-  if (min && max) {
-    const { data, error } = await pipeline
-      .from("bank_transactions")
-      .select("date, amount, description, counterpart_name, reference")
-      .eq("user_id", userId)
-      .gte("date", min)
-      .lte("date", max)
-    if (error) {
-      return NextResponse.json({ error: "lookup_failed", detail: error.message }, { status: 500 })
-    }
-    existing = data ?? []
-  }
-
-  const { toInsert, skipped } = dedupTransactions(parsed.transactions, existing)
-  let inserted = 0
-  if (toInsert.length > 0) {
-    const rows = mapToRows(toInsert, userId)
-    const { error } = await pipeline.from("bank_transactions").insert(rows)
-    if (error) {
-      return NextResponse.json({ error: "insert_failed", detail: error.message }, { status: 500 })
-    }
-    inserted = rows.length
-  }
-
+  // A bank-shaped file the parser couldn't read yields 0 transactions — but the raw file
+  // is still stored for the accountant (importBankStatement), so this is NOT an error:
+  // report it honestly rather than 422-ing (which would trap the file behind byte-hash
+  // dedup on retry). Aligns the intake path with /api/bank/upload's lenient behavior.
+  const unreadable = result.parseWarnings.length
+  const msg =
+    result.parsed === 0
+      ? "Bankafschrift opgeslagen, maar er zijn geen transacties gelezen — controleer het bestand."
+      : unreadable > 0
+        ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
+        : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
   return NextResponse.json({
     ok: true,
     destination: "bank",
-    format: parsed.format,
-    parsed: parsed.transactions.length,
-    inserted,
-    skipped,
-    message: `Bankafschrift verwerkt — ${inserted} transactie(s) toegevoegd.`,
+    format: result.format,
+    parsed: result.parsed,
+    inserted: result.inserted,
+    skipped: result.skipped,
+    statementStored: result.statementStored,
+    parseWarnings: result.parseWarnings,
+    message: msg,
   })
 }

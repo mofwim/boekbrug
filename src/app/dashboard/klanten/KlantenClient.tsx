@@ -251,7 +251,13 @@ export default function KlantenClient({ profile }: { profile: any }) {
                         {client.iban        && <InfoLine label="IBAN" value={client.iban} />}
                         {client.address     && <InfoLine label="Adres" value={[client.address, client.postal_code, client.city].filter(Boolean).join(', ')} />}
                       </div>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {/* [KLANTEN] Open the mini-CRM detail: history, notes, totals. */}
+                        <button onClick={e => { e.stopPropagation(); router.push(`/dashboard/klanten/${client.id}`) }}
+                          style={{ fontSize: 13, color: M3.onSurface, background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person</span>
+                          Bekijk
+                        </button>
                         <button onClick={e => { e.stopPropagation(); handleDelete(client.id) }}
                           style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>

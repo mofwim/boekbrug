@@ -60,10 +60,31 @@ export interface ClassifyDocumentResult {
   isDuplicate?: boolean;
 }
 
+// [TRUST-UNCERTAIN] Decide what to do with a read given its overall confidence and
+// whether it carries any invoice signal (a vendor or an amount). The old code hard-
+// dropped everything below 0.6 as "not an invoice" — silently losing real but hard-
+// to-read invoices. This never drops a signal-bearing read in the uncertain band;
+// it routes it to human review instead. Pure + exported so it is unit-tested.
+//   >= 0.60                         → 'accept'  (normal flow)
+//   [0.35, 0.60) with signal        → 'review'  (flow to verify queue, FLAGGED)
+//   < 0.35, or no invoice signal    → 'skip'    (spam / newsletter / unreadable)
+export type ConfidenceBand = 'accept' | 'review' | 'skip';
+export function decideConfidenceBand(confidence: number, hasInvoiceSignal: boolean): ConfidenceBand {
+  if (!(confidence >= 0)) return 'skip'; // NaN/negative → skip
+  if (confidence >= 0.6) return 'accept';
+  if (confidence >= 0.35 && hasInvoiceSignal) return 'review';
+  return 'skip';
+}
+
 // [BOEK-011] Result of reading an actual PDF — May 2026
 export interface VerifyInvoiceResult {
   is_invoice: boolean;       // true only if this is a real commercial invoice
   confidence: number;        // 0–1
+  // [TRUST-UNCERTAIN] The reader saw likely-invoice content but was NOT confident
+  // it read it correctly (blurry photo, odd/foreign layout). Such an item is routed
+  // to the human verify queue FLAGGED — never silently dropped. Distinct from
+  // is_invoice:false (confidently NOT an invoice → quietly skipped).
+  uncertain?: boolean;
   vendor?: string;           // who sent the invoice
   amount?: number;           // total amount including BTW (numeric) — alias of total_inc_btw
   invoice_number?: string;   // invoice number if found
@@ -111,6 +132,10 @@ export interface VerifyInvoiceResult {
     vendor?: number;
     invoice_number?: number;
     invoice_date?: number;
+    // [TRUST-AMOUNTS] The reader's own certainty about the AMOUNTS it read — the
+    // money-truth. Only set when the model actually reports it; absent means "no
+    // signal", NOT "certain" (import-health only flags a low score that is present).
+    amount?: number;
   };
 }
 
@@ -750,7 +775,8 @@ Return only a JSON object with these exact keys:
   "field_confidence": {
     "vendor": number between 0 and 1,
     "invoice_number": number between 0 and 1,
-    "invoice_date": number between 0 and 1
+    "invoice_date": number between 0 and 1,
+    "amount": number between 0 and 1
   },
   "reason": string or null
 }
@@ -882,6 +908,11 @@ Per-field confidence rules:
   like a page number, customer number, or date rather than a clear invoice number.
 - field_confidence.invoice_date: LOW if multiple dates were present (invoice / due / delivery)
   and it was unclear which is the invoice date.
+- field_confidence.amount: how certain you are the AMOUNTS (total_ex_btw / btw_amount /
+  total_inc_btw) are correct. This is the most important score — it is the money. LOW
+  (< 0.7) if any digit was blurry/cut off, the currency or decimal separator was unclear,
+  totals were handwritten, or you had to infer a total from partial figures. A confidently
+  WRONG amount is the worst outcome — when unsure, score LOW so the user is asked to check.
 - due_date: the EXPLICIT due/expiry date if the invoice prints one ("Vervaldatum",
   "Te betalen voor", "Uiterste betaaldatum", "Betalen voor"). Return it as
   "YYYY-MM-DD". If no explicit due date is printed, set due_date to null — do NOT
@@ -1010,6 +1041,13 @@ Return JSON only.`;
       vendor: clamp01(parsed.field_confidence?.vendor),
       invoice_number: clamp01(parsed.field_confidence?.invoice_number),
       invoice_date: clamp01(parsed.field_confidence?.invoice_date),
+      // [TRUST-AMOUNTS] Only carry the amount score when the model actually gave one.
+      // Unlike the fields above, we do NOT default a missing amount score to 1 —
+      // "no signal" must not read as "certain" on the money-truth. import-health
+      // flags it only when it is present and low, so absence fabricates no doubt.
+      ...(typeof parsed.field_confidence?.amount === 'number'
+        ? { amount: Math.min(1, Math.max(0, parsed.field_confidence.amount)) }
+        : {}),
     };
 
     // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
@@ -1096,13 +1134,32 @@ Return JSON only.`;
     // the SAFECORE gate — never silently treated as a creditnota).
     parsed.is_credit_note = parsed.is_credit_note === true;
 
-    // Enforce minimum confidence threshold
-    // Below 0.6 → treat as not an invoice to avoid false positives
-    if (parsed.confidence < 0.6) {
+    // [TRUST-UNCERTAIN] Confidence banding — never silently drop a real-but-hard
+    // invoice. Below the hard floor (or with no invoice signal at all) it's spam /
+    // a newsletter → skip. In the uncertain band [0.35, 0.6) WITH a vendor or an
+    // amount, we route it to the human verify queue FLAGGED instead of discarding
+    // it: is_invoice becomes true, `uncertain` is set, and we cap the amount
+    // confidence so the health surface shows "onzeker gelezen — controleer". The
+    // human then confirms or dismisses; the invoice is never lost without a trace.
+    const hasInvoiceSignal =
+      !!parsed.vendor ||
+      parsed.total_inc_btw != null ||
+      parsed.total_ex_btw != null ||
+      parsed.amount != null;
+    const band = decideConfidenceBand(parsed.confidence, hasInvoiceSignal);
+    if (band === 'skip') {
       return {
         is_invoice: false,
         confidence: parsed.confidence,
         reason: parsed.reason || 'Te lage zekerheid — bestand overgeslagen',
+      };
+    }
+    if (band === 'review') {
+      parsed.is_invoice = true;
+      parsed.uncertain = true;
+      parsed.field_confidence = {
+        ...(parsed.field_confidence ?? {}),
+        amount: Math.min(parsed.field_confidence?.amount ?? 0.4, 0.4),
       };
     }
 
@@ -1582,4 +1639,33 @@ Return JSON only. If unsure between sender and receiver, choose the one at the T
     console.error('[BOEK-015] extractCompanyDetails failed:', error);
     return FALLBACK;
   }
+}
+// [TRIANGLE] Transcribe a payment-terminal settlement receipt (Equens CTAP "TOTALEN
+// RAPPORT") to VERBATIM plain text, so the proven pure parser (eft-parser.ts) — not the
+// model — does the structured extraction and applies its reconciliation cross-checks. The
+// model only reads the pixels; the arithmetic is deterministic and testable downstream.
+export async function transcribeEftReceipt(
+  fileBase64: string,
+  mimeType: string,
+  filename: string,
+): Promise<string> {
+  const systemPrompt =
+    'Je transcribeert kassabon-achtige betaalterminal-afrekeningen exact zoals gedrukt. ' +
+    'Verzin niets, corrigeer geen getallen, laat niets weg.';
+  const prompt =
+    'Dit is een afrekening/dagafsluiting van een betaalterminal (bijv. Equens CTAP, "TOTALEN RAPPORT"). ' +
+    'Transcribeer ELKE regel exact zoals gedrukt — alle labels (TMS TERM-ID, PERIODE NR, PERIODE START/EINDE, ' +
+    'DATUM EERSTE/LAATSTE TRX, EFT TOTALEN, BETALING, TOTAAL, en de kaartsoorten zoals V Pay, Maestro, ' +
+    'Debit Mastercard, Visa Debit, MasterCard) met hun #TRX-aantallen en EUR-bedragen. ' +
+    'Geef ALLEEN de tekst terug, geen uitleg.';
+
+  const isPdf = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+  if (isPdf) return callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+
+  const mt: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' =
+    mimeType === 'image/png' ? 'image/png'
+    : mimeType === 'image/webp' ? 'image/webp'
+    : mimeType === 'image/gif' ? 'image/gif'
+    : 'image/jpeg';
+  return callClaudeWithImage(fileBase64, mt, prompt, systemPrompt);
 }

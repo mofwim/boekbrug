@@ -14,6 +14,7 @@ import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL } from '@/lib/format-nl'
+import { matchArticles, type Article } from '@/lib/articles'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -379,6 +380,7 @@ function NewInvoicePageContent() {
   const replacesNumberParam = searchParams.get('replacesNumber') ?? ''
   // AI-generated params from ZzpDashboard
   const aiClientName    = searchParams.get('client_name') ?? ''
+  const aiClientId      = searchParams.get('client_id') || null  // [KLANTEN] pre-link to a customer
   const aiClientEmail   = searchParams.get('client_email') ?? ''
   // [BOEK-029] offerte→factuur params — all client fields
   const aiClientAddress = searchParams.get('client_address') ?? ''
@@ -428,7 +430,7 @@ function NewInvoicePageContent() {
   const [clients, setClients]               = useState<Client[]>([])
   const [clientSearch, setClientSearch]     = useState(aiClientName)
   const [showDropdown, setShowDropdown]     = useState(false)
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(aiClientId)
   const autocompleteRef                     = useRef<HTMLDivElement>(null)
 
   // ── Client fields ────────────────────────────────────────────────────────────
@@ -575,8 +577,13 @@ function NewInvoicePageContent() {
     setShowDropdown(false)
   }
 
-  async function saveNewClient(userId: string) {
-    if (!clientName || selectedClientId) return
+  // Returns the client_id to persist on the invoice. When a customer is typed
+  // inline (no dropdown pick, no ?client_id), we insert the client row here and
+  // return its fresh id — the caller MUST use this return value, not the
+  // selectedClientId state, which React has not yet updated within the same
+  // handler tick (stale closure would otherwise drop the invoice→klant link).
+  async function saveNewClient(userId: string): Promise<string | null> {
+    if (!clientName || selectedClientId) return selectedClientId
     const { data } = await supabase.from('clients').insert({
       user_id: userId,
       name: clientName,
@@ -586,7 +593,8 @@ function NewInvoicePageContent() {
       city: clientCity,
       btw_number: clientBtw,
     }).select().single()
-    if (data) setSelectedClientId(data.id)
+    if (data) { setSelectedClientId(data.id); return data.id }
+    return null
   }
 
   // ─── Lines ─────────────────────────────────────────────────────────────────
@@ -602,6 +610,35 @@ function NewInvoicePageContent() {
 
   function updateLine(i: number, field: keyof InvoiceLine, value: string | number | boolean) {
     setLines(prev => prev.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
+  }
+
+  // [ARTIKELEN] The line-item catalog (gateway #1) — pick a saved article to fill a line
+  // by code or name, or save the current line back to the catalog. Fewer clicks per line.
+  const [catalog, setCatalog] = useState<Article[]>([])
+  const [pickerLine, setPickerLine] = useState<number | null>(null)
+  const [savedToCatalog, setSavedToCatalog] = useState<number | null>(null)
+  useEffect(() => {
+    fetch('/api/articles').then(r => r.ok ? r.json() : null).then(j => { if (j?.articles) setCatalog(j.articles) }).catch(() => {})
+  }, [])
+  function pickArticle(i: number, a: Article) {
+    setLines(prev => prev.map((l, idx) => idx === i ? { ...l, description: a.description, unit_price: a.unit_price, btw_rate: a.btw_rate } : l))
+    setPickerLine(null)
+    // Bump usage so the picker learns the owner's most-used lines. Best-effort.
+    fetch(`/api/articles/${a.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bump: true }) }).catch(() => {})
+  }
+  async function saveLineToCatalog(i: number, line: InvoiceLine) {
+    if (!line.description.trim()) return
+    try {
+      const res = await fetch('/api/articles', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: line.description, unit_price: line.unit_price, btw_rate: line.btw_rate, code: '', unit: '' }),
+      })
+      if (res.ok) {
+        const j = await res.json()
+        if (j.article) setCatalog(prev => [j.article, ...prev])
+        setSavedToCatalog(i); setTimeout(() => setSavedToCatalog(cur => cur === i ? null : cur), 2000)
+      }
+    } catch { /* silent */ }
   }
 
   // [BOEK-031] AI translation per line — via API route (client-safe) — May 2026
@@ -704,6 +741,7 @@ function NewInvoicePageContent() {
       // defaulting to the invoice date.
       delivery_date: invoiceDate,
       client_name: clientName,
+      client_id: selectedClientId,
       client_email: clientEmail,
       client_address: clientAddress,
       client_postal_code: clientPostal,
@@ -819,7 +857,7 @@ function NewInvoicePageContent() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    await saveNewClient(user.id)
+    const resolvedClientId = await saveNewClient(user.id)
 
     // [BOEK-031] Always compute fresh totals — avoid stale closure — May 2026
     const currentSign = invoiceType === 'creditnota' ? -1 : 1
@@ -853,6 +891,9 @@ function NewInvoicePageContent() {
       // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
       source: 'created',
       client_name: clientName,
+      // Use the id returned by saveNewClient (fresh, non-stale) so an inline-typed
+      // customer's just-created row is linked — not the not-yet-updated state.
+      client_id: resolvedClientId,
       client_email: clientEmail,
       client_address: clientAddress,
       client_postal_code: clientPostal,
@@ -1233,14 +1274,28 @@ function NewInvoicePageContent() {
               <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{invoiceType === 'offerte' ? 'Offerteregels' : 'Factuurregels'}</p>
               <p style={{ fontSize: 12, color: '#9AA0A6', margin: '-4px 0 0' }}>Schrijf in uw eigen taal — druk op <strong>Vertaal</strong> voor professioneel Nederlands</p>
 
-              {lines.map((line, i) => (
+              {lines.map((line, i) => {
+                const sug = pickerLine === i ? matchArticles(catalog, line.description) : []
+                return (
                 <div key={i} style={{ backgroundColor: '#F8F9FA', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }}>
                   {lines.length > 1 && (
                     <button onClick={() => removeLine(i)} style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#9AA0A6', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseEnter={e => (e.currentTarget.style.color = '#EA4335')} onMouseLeave={e => (e.currentTarget.style.color = '#9AA0A6')}>×</button>
                   )}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                    <div style={{ flex: 1 }}>
-                      <OutlinedInput value={line.description} onChange={e => { updateLine(i, 'description', e.target.value); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], description: false }; return { ...prev, lines: l } }) }} placeholder="Omschrijving dienst" label="Omschrijving" focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.description} />
+                    <div style={{ flex: 1, position: 'relative' }} onFocusCapture={() => setPickerLine(i)} onBlur={() => setTimeout(() => setPickerLine(cur => (cur === i ? null : cur)), 150)}>
+                      <OutlinedInput value={line.description} onChange={e => { updateLine(i, 'description', e.target.value); setPickerLine(i); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], description: false }; return { ...prev, lines: l } }) }} placeholder="Omschrijving of code (bijv. 22)" label="Omschrijving" focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.description} />
+                      {/* [ARTIKELEN] Catalog picker — fill the line from a saved article. */}
+                      {sug.length > 0 && (
+                        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid #E0E0E0', borderRadius: 8, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.14)', maxHeight: 220, overflowY: 'auto' }}>
+                          {sug.map(a => (
+                            <button key={a.id} type="button" onMouseDown={e => { e.preventDefault(); pickArticle(i, a) }} style={{ display: 'flex', width: '100%', boxSizing: 'border-box', alignItems: 'center', gap: 8, padding: '9px 12px', border: 'none', borderBottom: '1px solid #F1F3F4', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
+                              {a.code && <span style={{ fontFamily: 'Roboto Mono, monospace', fontSize: 12, fontWeight: 700, color: '#1A73E8', background: '#D3E3FD', borderRadius: 6, padding: '2px 6px' }}>{a.code}</span>}
+                              <span style={{ flex: 1, fontSize: 13.5, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.description}</span>
+                              <span style={{ fontSize: 12.5, color: '#5F6368', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap' }}>{NL_NUMBER.format(a.unit_price)} · {a.btw_rate}%</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <button onClick={() => translateLine(i)} disabled={line.translating} style={{ flexShrink: 0, fontSize: 12, fontWeight: 500, padding: '10px 12px', borderRadius: 9999, border: 'none', backgroundColor: line.translating ? '#F1F3F4' : cfg.activeBg, color: line.translating ? '#9AA0A6' : cfg.activeColor, cursor: line.translating ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', marginBottom: 1 }}>
                       {line.translating ? '...' : 'Vertaal'}
@@ -1259,12 +1314,14 @@ function NewInvoicePageContent() {
                       </select>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9AA0A6' }}>
-                    <span>Totaal excl.</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#9AA0A6' }}>
+                    {line.description.trim()
+                      ? <button type="button" onClick={() => saveLineToCatalog(i, line)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: savedToCatalog === i ? '#137333' : '#1A73E8', fontWeight: 500 }}>{savedToCatalog === i ? '✓ In catalogus' : '+ Bewaar in catalogus'}</button>
+                      : <span>Totaal excl.</span>}
                     <span style={{ fontWeight: 600, color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.quantity * line.unit_price)}</span>
                   </div>
                 </div>
-              ))}
+              )})}
 
               <button onClick={addLine} style={{ alignSelf: 'flex-start', fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0' }}>
                 + Regel toevoegen

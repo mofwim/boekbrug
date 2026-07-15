@@ -13,8 +13,14 @@ export async function POST(request: NextRequest) {
 
     const { token } = await request.json()
 
-    // جلب الدعوة
-    const { data: invitation } = await supabase
+    // جلب الدعوة — read via service_role. The invitations SELECT RLS policy is now
+    // scoped to the two parties (inviter OR invitee e-mail), so a session-client read
+    // by a user logged into the WRONG account would return 0 rows and collapse the
+    // precise "wrong e-mail" message below into a generic "Ongeldig". Reading by token
+    // with service_role lets us always find the row and then enforce the invitee check
+    // ourselves (below), preserving both the guard AND the helpful message.
+    const invitePipeline = createPipelineClient()
+    const { data: invitation } = await invitePipeline
       .from('invitations')
       .select('*')
       .eq('token', token)
@@ -34,14 +40,15 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
       )
     }
 
-    // [SEC-INVITE] Verify the accepting user IS the invitee. Possessing the token
-    // is NOT enough: invitation rows (incl. token + e-mail) are world-readable via
-    // RLS, so without this check any logged-in user holding a token could accept
-    // and — in the zzper→accountant direction — become another ZZP'er's accountant,
-    // gaining RLS read-access to their invoices (horizontal privilege escalation).
-    // `accountant_email` holds the invitee's e-mail in BOTH directions (the
-    // accountant for zzper→accountant, the client for accountant→client), so one
-    // case-insensitive match is correct for both.
+    // [SEC-INVITE] Verify the accepting user IS the invitee. Possessing the token is
+    // NOT enough — this route reads the invitation via service_role (to keep the precise
+    // wrong-account message), so it must enforce the invitee match itself: without it any
+    // logged-in user holding a token could accept and — in the zzper→accountant direction —
+    // become another ZZP'er's accountant, gaining RLS read-access to their invoices
+    // (horizontal privilege escalation). The DB SELECT policy is scoped as defence-in-depth.
+    // `accountant_email` holds the invitee's e-mail in BOTH directions (the accountant for
+    // zzper→accountant, the client for accountant→client), so one case-insensitive match
+    // is correct for both.
     const inviteeEmail = (invitation.accountant_email ?? '').trim().toLowerCase()
     const userEmail = (user.email ?? '').trim().toLowerCase()
     if (!userEmail || userEmail !== inviteeEmail) {

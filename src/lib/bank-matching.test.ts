@@ -176,5 +176,21 @@ console.log("\n— outcomes —");
   check("aggregate counts correct", r.autoCount === 1 && r.noneCount === 1 && r.choiceCount === 0);
 }
 
+console.log("\n— [TRUST-MATCH] a short numeric invoice number must not match inside a longer number —");
+{
+  const t = (r: string) => ({ reference: r, description: "" });
+  check("'2050' does NOT match inside '26302050' (no wrong auto-pick)", referenceMatches(t("26302050"), "2050") === false);
+  check("exact '26302050' still matches", referenceMatches(t("26302050"), "26302050") === true);
+  check("'2050' matches as a clean whole token", referenceMatches(t("factuur 2050 voldaan"), "2050") === true);
+  check("real invoice number in description matches", referenceMatches(t("betaling 2026014"), "2026-014") === true);
+  check("alphanumeric needle keeps substring match", referenceMatches(t("ref inv2050 x"), "INV2050") === true);
+  check("too-short (<4) still rejected", referenceMatches(t("999"), "999") === false);
+  // Regression: two space-separated numbers must NOT fuse and hide a real match.
+  check("'1001' matches in '12345 1001' (numbers not fused)", referenceMatches(t("12345 1001"), "1001") === true);
+  check("year-based '2026-014' matches next to another number", referenceMatches(t("ordernr 99 2026-014"), "2026-014") === true);
+  check("hyphenated number matches its printed form", referenceMatches(t("betaling 2026-014 voldaan"), "2026-014") === true);
+  check("still rejects a fragment inside a longer fused number", referenceMatches(t("betaling 992026014"), "2026014") === false);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

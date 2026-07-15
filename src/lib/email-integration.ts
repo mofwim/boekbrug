@@ -17,8 +17,38 @@ import {
   evaluateArithmetic,
   isPlaceholderInvoiceNumber,
   isReliableVendor,
+  normalizeVendor,
   deriveDueDate,
 } from '@/lib/safecore'
+
+// Legal suffixes / entity noise stripped when comparing two vendor names for the
+// duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
+// and conservative — only universally-safe suffixes, never real name words.
+const VENDOR_SUFFIX_NOISE = new Set([
+  'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc',
+])
+
+/** A comparison key for a vendor name: lowercased, legal suffixes + punctuation
+ *  stripped, collapsed. Pure. Empty string when there's nothing usable. */
+export function vendorCoreKey(name: string | null | undefined): string {
+  const tokens = normalizeVendor(name)
+    .replace(/\./g, '')          // collapse dotted acronyms first: "b.v." → "bv"
+    .replace(/[^a-z0-9\s]/g, ' ') // other punctuation → separator
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !VENDOR_SUFFIX_NOISE.has(t))
+  return tokens.join(' ')
+}
+
+/** True ONLY when both vendors are reliable AND their core keys differ — i.e. these
+ *  are genuinely DIFFERENT suppliers (who might each issue the same invoice number for
+ *  the same total). When either vendor is unknown/junk we cannot tell them apart, so we
+ *  return false (do not treat as different) and let the strong number+total anchor decide.
+ *  This lets a duplicate through the exact-string DB filter without missing it, while
+ *  still refusing to merge two real different vendors that share a number+total. */
+export function vendorsAreDifferent(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!isReliableVendor(a) || !isReliableVendor(b)) return false
+  return vendorCoreKey(a) !== vendorCoreKey(b)
+}
 // [BOEK-SAFECORE] jsonb column type for invoices.field_confidence — mirrors the
 // audit.ts pattern (derive the Json type from generated types, cast at write).
 import type { Database } from '@/types/database.types'
@@ -481,7 +511,13 @@ export async function fetchGmailAttachments(
   messageIndex: Array<{ messageId: string; date: string }>
 }> {
   const afterDate = Math.floor(syncAfterMs / 1000)
-  const query = `has:attachment after:${afterDate}`
+  // [OWN-SENT] Exclude the owner's OWN outbound mail. A ZZP'er emails invoices to
+  // customers from this same mailbox; those live in Sent (To=customer, never in the
+  // Inbox), and if fetched they were booked as INCOMING costs — phantom voorbelasting
+  // attributed to the owner's own customer. `-in:sent -in:drafts -in:chats` drops those
+  // while KEEPING a supplier invoice the owner forwarded to themselves (its Inbox copy
+  // is not in Sent), so real incoming documents are not lost.
+  const query = `has:attachment after:${afterDate} -in:sent -in:drafts -in:chats`
 
   // 1. List message IDs — WITH pagination.
   //
@@ -796,7 +832,13 @@ export async function fetchOutlookAttachments(
   // the expensive per-message Graph call that trips throttling. Built cheaply
   // from source_message_id in the DB before we get here. This is a PERFORMANCE
   // skip only; correctness still rests on PHASE 0/2 dedup downstream.
-  alreadyDoneMessageIds?: Set<string>
+  alreadyDoneMessageIds?: Set<string>,
+  // [OWN-SENT] The connected mailbox address. Graph's /me/messages spans ALL
+  // folders (incl. Sent Items), so the owner's OWN outbound invoices would be
+  // fetched and booked as incoming costs. We drop a message that the owner SENT
+  // to someone else (from == owner AND owner not a recipient), while keeping a
+  // supplier invoice the owner forwarded to THEMSELVES (owner is a recipient).
+  ownerEmail?: string | null
 ): Promise<{
   attachments: GmailAttachment[]
   complete: boolean
@@ -813,7 +855,7 @@ export async function fetchOutlookAttachments(
   const firstUrl =
     `https://graph.microsoft.com/v1.0/me/messages` +
     `?$filter=${encodeURIComponent(filter)}` +
-    `&$select=id,subject,from,receivedDateTime,hasAttachments` +
+    `&$select=id,subject,from,toRecipients,receivedDateTime,hasAttachments` +
     `&$orderby=receivedDateTime desc` +
     `&$top=50`
 
@@ -821,8 +863,21 @@ export async function fetchOutlookAttachments(
     id: string
     subject?: string
     from?: { emailAddress?: { name?: string; address?: string } }
+    toRecipients?: Array<{ emailAddress?: { address?: string } }>
     receivedDateTime?: string
     hasAttachments?: boolean
+  }
+
+  // [OWN-SENT] true when the owner SENT this message to someone else — from == owner
+  // AND owner is not among the recipients. Own outbound invoices must not be booked as
+  // incoming. A forward-to-self (owner is a recipient) is NOT own-outbound → kept.
+  const owner = (ownerEmail ?? '').trim().toLowerCase()
+  const isOwnOutbound = (m: OutlookMessage): boolean => {
+    if (!owner) return false
+    const fromAddr = (m.from?.emailAddress?.address ?? '').trim().toLowerCase()
+    if (fromAddr !== owner) return false
+    const toAddrs = (m.toRecipients ?? []).map((r) => (r.emailAddress?.address ?? '').trim().toLowerCase())
+    return !toAddrs.includes(owner)
   }
 
   const messagesRaw: OutlookMessage[] = []
@@ -909,6 +964,7 @@ export async function fetchOutlookAttachments(
   const withAttachments = messages.filter((m) => {
     if (!m.hasAttachments) return false
     if (alreadyDoneMessageIds && alreadyDoneMessageIds.has(m.id)) return false
+    if (isOwnOutbound(m)) return false // [OWN-SENT] owner's own outbound mail — not incoming
     return true
   })
   console.log('[BOEK-011] Outlook attachment fetch', {
@@ -1024,6 +1080,10 @@ async function fetchOutlookMessageAttachments(
 export interface AttachmentClassification {
   isInvoice: boolean
   confidence: number
+  // [TRUST-UNCERTAIN] The reader recognised likely-invoice content but wasn't sure
+  // it read it right. Such an item is imported FLAGGED (not skipped) so it reaches
+  // the human verify queue instead of vanishing.
+  uncertain?: boolean
   // [STATEMENT-SKIP] Claude's short Dutch reason when is_invoice=false (e.g.
   // "rekeningoverzicht — samenvatting van bestaande facturen"). Stored in the
   // skip registry so the owner/dev can audit WHAT was skipped and WHY, instead
@@ -1079,6 +1139,7 @@ export async function classifyAttachment(
   return {
     isInvoice: result.is_invoice,
     confidence: result.confidence,
+    uncertain: result.uncertain,
     // [STATEMENT-SKIP] why Claude rejected it — surfaces in the skip registry
     reason: result.reason,
     vendor: result.vendor,
@@ -1221,6 +1282,9 @@ export async function syncUserEmails(userId: string): Promise<{
   errors: number
   remaining: number
   skipped: number
+  // [COULD-NOT-READ] Attachments kept in bestanden because we couldn't read them
+  // (never asserted "not an invoice"). Surfaced so the owner can go check them.
+  couldNotRead: number
   // [BOEK-TRUST] Honest reconciliation for "did everything arrive?". Every
   // fetched attachment this run lands in exactly one bucket; balanced=true means
   // the buckets sum to fetched with nothing unaccounted. This is deliberately a
@@ -1231,12 +1295,16 @@ export async function syncUserEmails(userId: string): Promise<{
     imported: number     // saved as invoices
     skipped: number      // registered as non-invoice (logos/signatures/etc.)
     duplicate: number    // recognised as already-imported
+    couldNotRead: number // kept in bestanden, couldn't be read (not asserted non-invoice)
     pending: number      // deferred to next sync (batch cap / transient fail)
-    balanced: boolean    // imported+skipped+duplicate+pending === fetched
+    balanced: boolean    // imported+skipped+duplicate+couldNotRead+pending === fetched
   }
 } | null> {
-  const { createServerSupabaseClient } = await import('@/lib/supabase-server')
-  const supabase = await createServerSupabaseClient()
+  // [CRON] Use the service-role pipeline (not the session client) so syncUserEmails is
+  // callable both from the user's /api/email/sync AND the scheduled /api/cron/email-sync
+  // (which has no session). The only read below is this user's OWN profile, explicitly
+  // scoped by id — service-role here is safe and removes the request-session coupling.
+  const supabase = createPipelineClient()
 
   // [BOEK-011 + BOEK-SECURITY] Load tokens via Vault. We still need a few
   // fields from email_connections directly (provider) — getEmailTokens
@@ -1323,7 +1391,7 @@ export async function syncUserEmails(userId: string): Promise<{
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, balance: { fetched: 0, imported: 0, skipped: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [BOEK-011 throttle] Build the set of message IDs already fully processed,
@@ -1380,14 +1448,14 @@ export async function syncUserEmails(userId: string): Promise<{
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
-      const r = await fetchOutlookAttachments(accessToken, syncAfterMs, doneMessageIds)
+      const r = await fetchOutlookAttachments(accessToken, syncAfterMs, doneMessageIds, tokens.email)
       attachments = r.attachments
       fetchComplete = r.complete
       messageIndex = r.messageIndex
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, balance: { fetched: 0, imported: 0, skipped: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   let verified = 0
@@ -1404,6 +1472,9 @@ export async function syncUserEmails(userId: string): Promise<{
   // [BOEK-SAFECORE] Rule 1 — count of invoices HELD in 'processing' for an
   // arithmetic problem (subset of `saved`; they exist but aren't shared yet).
   let held = 0
+  // [COULD-NOT-READ] Attachments we could NOT read (API reject / unsupported /
+  // unparseable) — kept in bestanden for the owner, NOT asserted "not an invoice".
+  let couldNotRead = 0
 
   // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
   const { resolveImportTarget } = await import('@/lib/bestanden')
@@ -1579,6 +1650,63 @@ export async function syncUserEmails(userId: string): Promise<{
       // [watermark] NOT complete — the mark stops before this email.
       if (classifyFailed) {
         errors++
+        continue
+      }
+
+      // [COULD-NOT-READ] We did not manage to READ this file (API reject / unsupported
+      // type / unparseable JSON → verifyInvoiceFromPdf's confidence-0 FALLBACK). That is
+      // NOT proof it isn't an invoice, so it must NOT be registered as a permanent
+      // 'not an invoice' skip (which discards a possibly-real invoice forever, unseen).
+      // Mirror the intake fix: keep the file owner-visible in bestanden, count it so the
+      // owner is told, and register it with reason 'could_not_read' (still stops the
+      // costly per-sync re-send, but is honest about WHY).
+      if (!classification.isInvoice && !((classification.confidence ?? 0) > 0)) {
+        try {
+          const buf = Buffer.from(attachment.data, 'base64')
+          const hash = computeContentHash(buf)
+          const { data: dupDoc } = await supabase
+            .from('documents').select('id')
+            .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
+          if (!dupDoc) {
+            const safeName = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+            const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
+            const { error: upErr } = await supabase.storage
+              .from('documents').upload(storagePath, buf, { contentType: attachment.mimeType, upsert: false })
+            if (!upErr) {
+              const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
+              const { error: docErr } = await supabase.from('documents').insert({
+                user_id: userId,
+                file_name: attachment.filename,
+                file_url: storagePath,
+                file_size: buf.length,
+                file_type: attachment.mimeType,
+                doc_type: 'overig',
+                folder_id: folderId,
+                source: 'email',
+                ai_processed: false,          // we did NOT read it — never claim we did
+                ai_doc_type: 'could_not_read',
+                content_hash: hash,
+              })
+              if (docErr) await supabase.storage.from('documents').remove([storagePath])
+            }
+          }
+        } catch (e) {
+          console.error('[BOEK-011] could-not-read save failed', e)
+        }
+        const skipPipeline = createPipelineClient()
+        await skipPipeline
+          .from('email_skipped_attachments')
+          .upsert(
+            {
+              user_id: userId,
+              source_message_id: `${attachment.messageId}:${attachment.filename}`,
+              filename: attachment.filename,
+              reason: 'could_not_read',
+            },
+            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+          )
+        couldNotRead++
+        completedKeys.add(wmKey) // handled (kept + registered) = complete
         continue
       }
 
@@ -1777,6 +1905,15 @@ export async function syncUserEmails(userId: string): Promise<{
 
           if (tier.kind === 'number') {
             contentQuery = contentQuery.eq('invoice_number', classification.invoiceNumber as string)
+            // [TRUST-DEDUP] Vendor is compared in CODE (below), NOT with a DB `ilike`.
+            // An `ilike` with no wildcards is exact-apart-from-case, so a re-arrival of
+            // the SAME invoice under a slightly different vendor string ("Atapack B.V."
+            // vs "Atapack", extra spaces, OCR variance) slipped past the filter and the
+            // cost was booked TWICE. For a DUPLICATE blocker, a stricter key = fewer
+            // blocks = the dangerous direction. So we fetch candidates on number+total
+            // (+date) and use vendorsAreDifferent() to only DECLINE the match when both
+            // vendors are reliable AND genuinely different — keeping the guard against
+            // two real vendors sharing a number+total, without the false-negative.
           } else {
             // vendor tier: client_name on an incoming invoice IS the vendor.
             // ilike handles case-insensitivity; we pass the RAW (trimmed) vendor
@@ -1797,10 +1934,19 @@ export async function syncUserEmails(userId: string): Promise<{
             contentQuery = contentQuery.eq('invoice_date', realDateIso)
           }
 
-          const { data: existingByContent } = await contentQuery.limit(1)
+          // Number tier: fetch SEVERAL candidates (number+total+date can legitimately
+          // repeat across different vendors) and pick the first that isn't a genuinely
+          // different vendor. Vendor tier already constrains the vendor in-query → 1 row.
+          const { data: existingByContent } = await contentQuery.limit(tier.kind === 'number' ? 25 : 1)
 
-          if (existingByContent && existingByContent.length > 0) {
-            const original = existingByContent[0]
+          const original =
+            tier.kind === 'number'
+              ? (existingByContent ?? []).find(
+                  (c) => !vendorsAreDifferent(classification.vendor, c.client_name),
+                ) ?? null
+              : (existingByContent && existingByContent.length > 0 ? existingByContent[0] : null)
+
+          if (original) {
 
             // [BOEK-SAFECORE] Audit the blocked duplicate — truth in the log,
             // silence in the UI. entityId = the ORIGINAL (the duplicate is never
@@ -1872,7 +2018,7 @@ export async function syncUserEmails(userId: string): Promise<{
           )
 
           // [BOEK-011] Step 2: create the documents record with correct folder_id
-          const { data: doc } = await supabase
+          const { data: doc, error: docErr } = await supabase
             .from('documents')
             .insert({
               user_id: userId,
@@ -1891,8 +2037,19 @@ export async function syncUserEmails(userId: string): Promise<{
             .select('id')
             .single()
 
-          documentId = doc?.id ?? null
-          pdfUrl = storagePath
+          if (docErr || !doc) {
+            // [R7] The documents insert failed. Don't leave an orphan storage object nor an
+            // invoice claiming a pdf_url whose documents row doesn't exist (unreachable in
+            // the closing package). Remove the file; the invoice still saves (the sync
+            // deliberately never loses extracted invoice data), but without a broken link.
+            console.error('[BOEK-011] Document insert failed:', docErr?.message)
+            await supabase.storage.from('documents').remove([storagePath])
+            documentId = null
+            pdfUrl = null
+          } else {
+            documentId = doc.id
+            pdfUrl = storagePath
+          }
         } else {
           console.error('[BOEK-011] Storage upload failed:', uploadErr.message)
         }
@@ -2036,6 +2193,18 @@ export async function syncUserEmails(userId: string): Promise<{
           })
         } else {
           console.error('[BOEK-011] Save error:', dbError.message)
+          // [R7] Roll back the orphan document + storage object. Otherwise its content_hash
+          // makes the NEXT sync's byte-hash Check 0 treat this attachment as "already
+          // imported" → the watermark advances past the email and the incoming invoice is
+          // PERMANENTLY, silently lost (never reaches Crediteuren / voorbelasting / aangifte
+          // / the closing package). Mirrors the intake + email-upload rollback. Best-effort;
+          // the watermark still holds so the email is re-fetched and retried cleanly.
+          if (documentId) {
+            await insertPipeline.from('documents').delete().eq('id', documentId)
+          }
+          if (pdfUrl) {
+            await supabase.storage.from('documents').remove([pdfUrl])
+          }
           errors++
           // [watermark] NOT complete — a genuine save failure; the mark stops
           // here so the next sync re-fetches and retries this email.
@@ -2211,8 +2380,10 @@ export async function syncUserEmails(userId: string): Promise<{
   // [BOEK-011 + BOEK-SECURITY Phase 2.5] Notify the user about imported invoices.
   // After Phase 2.5 cleanup, notifications has no INSERT policy for the
   // authenticated context — any user-client insert returns 403. All notification
-  // writes must go through service_role (createPipelineClient). The user client
-  // (`supabase`) stays for reads where RLS is the right boundary.
+  // writes must go through service_role (createPipelineClient). NOTE: since the
+  // cron refactor, `supabase` above is ALSO the service-role pipeline (every read
+  // in this function is explicitly scoped by the passed userId), so this whole
+  // function is session-independent and callable from the scheduled cron.
   if (saved > 0) {
     const pipeline = createPipelineClient()
     // [BOEK-011] Provider-aware copy — Outlook users shouldn't read "Gmail".
@@ -2264,7 +2435,9 @@ export async function syncUserEmails(userId: string): Promise<{
   // knownKeys (already-imported before this run) are intentionally NOT in the
   // batch math — they were reconciled in the sync that first imported them.
   const processedThisBatch = freshAttachments.length
-  const bucketed = saved + skipped + duplicate + errors
+  // couldNotRead is its own accounted-for bucket (kept in bestanden, registered) — it
+  // must be in the sum or a real, fully-handled attachment would read as an unaccounted gap.
+  const bucketed = saved + skipped + duplicate + errors + couldNotRead
   const balanced = bucketed === processedThisBatch
 
   if (!balanced) {
@@ -2294,11 +2467,13 @@ export async function syncUserEmails(userId: string): Promise<{
     // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
     // the no-progress guard.
     skipped,
+    couldNotRead,
     balance: {
       fetched: processedThisBatch,
       imported: saved,
       skipped,
       duplicate,
+      couldNotRead,
       pending: remainingAfterBatch,
       balanced,
     },

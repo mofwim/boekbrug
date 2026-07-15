@@ -30,6 +30,14 @@ export const TOOLS: PublicTool[] = [
     priority: 0.9,
   },
   {
+    slug: '/bankafschrift-naar-excel',
+    emoji: '🏦',
+    title: 'Bankafschrift naar Excel',
+    tagline: 'Zet je bankafschrift (CSV, MT940 of CAMT.053) om naar een nette Excel. Blijft in je browser.',
+    keywords: ['bankafschrift naar excel', 'mt940 naar excel', 'camt naar excel', 'bankafschrift omzetten'],
+    priority: 0.85,
+  },
+  {
     slug: '/btw-berekenen',
     emoji: '🧮',
     title: 'BTW berekenen',

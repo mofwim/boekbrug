@@ -1,7 +1,13 @@
 // lib/bank-parser.ts
-// Bank statement parsers: MT940 + CAMT.053 (BOEK-014 — read only)
+// Bank statement parsers: MT940 + CAMT.053 (BOEK-014 — read only) + CSV (BANK-CSV).
 // Parsed transactions are returned as BankTransaction[] — not saved to DB yet.
 // Saving + matching happens in BOEK-016 (Bank Matching Engine).
+
+// [BANK-CSV] CSV parsing lives in its own module (bank-csv.ts) to keep this file
+// focused on the SWIFT/XML formats. The import is type-safe and cycle-safe: both
+// modules only reference each other's hoisted `export function`s at call time,
+// never at module-init time.
+import { parseBankCsv, looksLikeBankCsv } from "./bank-csv";
 
 // ─── Canonical transaction type ───────────────────────────────────────────────
 
@@ -24,7 +30,7 @@ export interface BankTransaction {
 
 /** Result of parsing a bank file */
 export interface ParseResult {
-  format: "MT940" | "CAMT053";
+  format: "MT940" | "CAMT053" | "CSV";
   accountIban: string | null;
   accountName: string | null;
   currency: string;
@@ -653,6 +659,15 @@ export function parseBankFile(content: string, filename: string): ParseResult {
     content.includes("<BkToCstmrStmt")
   ) {
     return parseCAMT053(content);
+  }
+
+  // [BANK-CSV] CSV bank export (ING, Rabobank, bunq, SNS, ASN, Triodos, Knab, …).
+  // Route .csv by extension, or any file whose content looks like a delimited
+  // statement with date+amount headers. Kept out of the MT940 fallback below so a
+  // CSV upload no longer silently parses to zero transactions. Imported lazily to
+  // keep this module's dependency graph unchanged for the MT940/CAMT paths.
+  if (lower.endsWith(".csv") || looksLikeBankCsv(content)) {
+    return parseBankCsv(content);
   }
 
   // MT940: .mt940, .sta, .txt, or starts with :20:

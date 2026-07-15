@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { extractCompanyDetails } from "@/lib/ai";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -21,6 +22,10 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
+
+  // [COST] Per-user ceiling on the AI company-details extraction (Claude vision).
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/onboarding/extract", ...RATE_LIMITS.AI_OCR });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   const body = await req.json();
   const { documentId, mimeType, fileName } = body;

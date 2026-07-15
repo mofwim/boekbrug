@@ -122,6 +122,29 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         {/* [HONEST-HOME] Snapshot: "waar sta ik?" answered with certain facts only,
             each a button to the action that resolves it. */}
         <DailyTruth />
+
+        {/* [READINESS] The connective layer — one tap to "ben ik klaar voor de
+            boekhouder?": a single verdict over everything imported (facturen, bank,
+            dagomzet, BTW) with the few things that still need attention and one-click
+            handover. Deliberately prominent (not a menu row) — it's the answer the
+            store owner actually comes for. */}
+        <button
+          onClick={() => router.push('/dashboard/klaar')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
+            padding: '18px 18px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
+            border: 'none', background: 'linear-gradient(135deg, #1A73E8, #1557B0)',
+            boxShadow: EL1, margin: '20px 0 8px',
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>fact_check</span>
+          <span style={{ flex: 1 }}>
+            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Ben ik klaar?</span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>Status van je kwartaal — en klaar voor de boekhouder</span>
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+        </button>
+
         {/* [HONEST-HOME] Simplified home — one curated menu, no duplicated doors.
             Removed: the "Nieuwe factuur" card (the FAB below covers it) and the
             "Inkoopfacturen" card (reachable via the "Te betalen" snapshot and from
@@ -137,6 +160,13 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             icon="description" iconBg="#00897B" iconColor="#fff"
             label="Mijn facturen" sub="Bekijk en beheer je facturen"
             onClick={() => router.push('/dashboard/facturen')}
+          />
+
+          {/* [ARTIKELEN] Catalogus — vaste factuurregels, hergebruik met een code. */}
+          <ActionCard
+            icon="inventory_2" iconBg="#5F6368" iconColor="#fff"
+            label="Artikelen" sub="Je vaste factuurregels"
+            onClick={() => router.push('/dashboard/artikelen')}
           />
 
           {/* Inkomende facturen — supplier invoices: verify queue + manage. */}
@@ -161,6 +191,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             onClick={() => router.push('/dashboard/kas')}
           />
 
+          {/* [TURNOVER-IMPORT] Dagomzet — import the till Z-report (per-BTW-rate daily
+              turnover), the retail store's authoritative revenue. */}
+          <ActionCard
+            icon="point_of_sale" iconBg="#6A1B9A" iconColor="#fff"
+            label="Dagomzet" sub="Kassa Z-rapport importeren"
+            onClick={() => router.push('/dashboard/dagomzet')}
+          />
+
           {/* [RESULT] Financieel overzicht → the combined cross-channel result (BTW,
               omzet, kosten from invoices + bank + kas); it links on to the detailed
               per-invoice BTW-aangifte. */}
@@ -168,6 +206,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             icon="bar_chart" iconBg={M3.warning} iconColor="#fff"
             label="Financieel overzicht" sub="Resultaat en BTW dit kwartaal"
             onClick={() => router.push('/dashboard/resultaat')}
+          />
+
+          {/* [AANGIFTE] Concept BTW-aangifte — the rubrieken (1a/1b/5a/5b/5g) derived from
+              the owner's own data; a draft the accountant verifies, never a filing. */}
+          <ActionCard
+            icon="receipt_long" iconBg="#455A64" iconColor="#fff"
+            label="Concept BTW-aangifte" sub="1a/1b/5a/5b op basis van je gegevens"
+            onClick={() => router.push('/dashboard/aangifte')}
           />
 
           {/* Mijn werkplek — clients, files, company data (secondary). */}

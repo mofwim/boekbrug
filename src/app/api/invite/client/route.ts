@@ -71,14 +71,31 @@ export async function POST(request: NextRequest) {
 
     if (invError) return NextResponse.json({ error: 'Uitnodiging opslaan mislukt' }, { status: 500 })
 
-    const acceptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/invite/accept?token=${invitation.token}`
+    // [TRUST-INVITE] Fall back to the request origin when NEXT_PUBLIC_APP_URL is
+    // unset — otherwise the client is mailed "undefined/invite/accept?..." (a dead
+    // link) while the route still reports success. Mirrors the accountant route.
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/+$/, '')
+    const acceptUrl = `${baseUrl}/invite/accept?token=${invitation.token}`
 
-    await sendClientInvite({
-      toEmail: clientEmail,
-      clientName: clientEmail,
-      accountantName,
-      acceptUrl
-    })
+    // [TRUST-INVITE] The email is the WHOLE point of an invite. If the send fails we
+    // must NOT leave a 'pending' row behind — otherwise the retry hits the duplicate
+    // guard ("al verstuurd") and the client is permanently unreachable while nothing
+    // ever arrived. Roll the row back and return an honest, retryable error.
+    try {
+      await sendClientInvite({
+        toEmail: clientEmail,
+        clientName: clientEmail,
+        accountantName,
+        acceptUrl,
+      })
+    } catch (sendErr) {
+      console.error('[TRUST-INVITE] Client invite email failed — rolling back row', sendErr)
+      await supabase.from('invitations').delete().eq('id', invitation.id)
+      return NextResponse.json(
+        { error: 'Uitnodiging versturen mislukt — probeer het opnieuw.' },
+        { status: 502 }
+      )
+    }
 
     return NextResponse.json({ success: true })
 

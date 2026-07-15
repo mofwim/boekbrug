@@ -80,5 +80,19 @@ check("unexplained credit → omzet",
 check("transfer beats the kosten fallback",
   suggestIdentity(null, "Opname Geldautomaat", -100).category === "transfer");
 
+console.log("\n— confident flag (governs safe bulk-apply) —");
+check("memory match is confident",
+  suggestIdentity("Shell", "brandstof", -60, "kosten").confident === true);
+check("pattern match (tax) is confident",
+  suggestIdentity("Belastingdienst", "BTW", -1200).confident === true);
+check("pattern match (transfer) is confident",
+  suggestIdentity(null, "Opname Geldautomaat", -100).confident === true);
+check("pattern match (pos_income) is confident",
+  suggestIdentity("ING DD&C", "Afrek.", 842.15).confident === true);
+check("kosten fallback is NOT confident (never auto-apply)",
+  suggestIdentity("Bol.com", "iDEAL", -49.99).confident === false);
+check("omzet fallback is NOT confident (never auto-apply)",
+  suggestIdentity("Onbekend", "overboeking", 250).confident === false);
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

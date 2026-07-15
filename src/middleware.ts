@@ -16,6 +16,7 @@ const PUBLIC_PATHS = [
   "/invite",
   "/pay",
   "/factuur-maken",
+  "/bankafschrift-naar-excel",
   "/btw-berekenen",
   "/kilometervergoeding",
   "/uurtarief-berekenen",

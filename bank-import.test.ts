@@ -30,16 +30,32 @@ function rowFromTx(t: BankTransaction): ExistingTxKey {
   };
 }
 
-console.log("\n— contentKey —");
-check("same content → same key",
-  contentKey("2026-02-10", 4, "Koffie", "Cafe X", null) ===
-  contentKey("2026-02-10", 4, "  koffie ", "cafe x", null)); // norm: trim/case/space
+console.log("\n— contentKey (date, amount, counterpart, reference) —");
+check("same content → same key (norm: trim/case/space)",
+  contentKey("2026-02-10", 4, "Cafe X", "REF1") ===
+  contentKey("2026-02-10", 4, "  cafe x ", "ref1"));
 check("different amount → different key",
-  contentKey("2026-02-10", 4, "Koffie", "Cafe X", null) !==
-  contentKey("2026-02-10", 5, "Koffie", "Cafe X", null));
+  contentKey("2026-02-10", 4, "Cafe X", null) !==
+  contentKey("2026-02-10", 5, "Cafe X", null));
 check("amount precision normalized (4 vs 4.00)",
-  contentKey("2026-02-10", 4, "x", null, null) ===
-  contentKey("2026-02-10", 4.0, "x", null, null));
+  contentKey("2026-02-10", 4, "x", null) ===
+  contentKey("2026-02-10", 4.0, "x", null));
+
+console.log("\n— contentKey: format-stable counterpart (finding #1 fix) —");
+// [BANK-DEDUP-CSV] The same real payment exported two ways: MT940 derives
+// "Jansen Bouw B.V." from the REMI, the CSV reads "Jansen Bouw BV" from a column.
+// Same date + amount + reference → must be ONE transaction, not two.
+check("legal-form/punctuation variants share a key (B.V. == BV)",
+  contentKey("2026-02-10", -1210, "Jansen Bouw B.V.", "29528") ===
+  contentKey("2026-02-10", -1210, "Jansen Bouw BV", "29528"));
+check("diacritics ignored (Café == Cafe)",
+  contentKey("2026-02-10", 4, "Café Zürich", null) ===
+  contentKey("2026-02-10", 4, "Cafe Zurich", null));
+// SAFETY: digits are KEPT — two genuinely different same-day, same-amount,
+// reference-less stores must stay DISTINCT so dedup never DROPS a real tx.
+check("distinct numbered stores stay distinct (Shell 123 ≠ Shell 456)",
+  contentKey("2026-02-10", -50, "Shell 123", null) !==
+  contentKey("2026-02-10", -50, "Shell 456", null));
 
 console.log("\n— dateRange —");
 {
@@ -76,6 +92,34 @@ console.log("\n— dedup (multiset) —");
   const existing = [rowFromTx(old)];
   const { toInsert, skipped } = dedupTransactions(incoming, existing);
   check("overlap → insert only the new one", toInsert.length === 1 && toInsert[0].description === "Nieuw" && skipped === 1);
+}
+
+// 5. Cross-format re-upload: MT940 first, then the SAME period as CSV. The invoice
+//    transfer must dedup; two distinct reference-less fuel stops must both survive.
+{
+  const mt940 = [
+    tx({ date: "2026-02-10", amount: -1210, counterpartName: "Jansen Bouw B.V.", reference: "29528" }),
+    tx({ date: "2026-02-11", amount: -50, counterpartName: "Shell 123", reference: null }),
+    tx({ date: "2026-02-11", amount: -50, counterpartName: "Shell 456", reference: null }),
+  ];
+  const existing = mt940.map(rowFromTx);
+  // CSV of the same period: same tx, column-sourced names (no dots / different noise).
+  const csv = [
+    tx({ date: "2026-02-10", amount: -1210, counterpartName: "Jansen Bouw BV", reference: "29528" }),
+    tx({ date: "2026-02-11", amount: -50, counterpartName: "Shell 123", reference: null }),
+    tx({ date: "2026-02-11", amount: -50, counterpartName: "Shell 456", reference: null }),
+  ];
+  const { toInsert, skipped } = dedupTransactions(csv, existing);
+  check("cross-format re-upload dedups all 3 (no double-count of in/uit)", toInsert.length === 0 && skipped === 3);
+}
+// 6. Guard: the two distinct fuel stops are NOT collapsed on a first import.
+{
+  const incoming = [
+    tx({ date: "2026-02-11", amount: -50, counterpartName: "Shell 123", reference: null }),
+    tx({ date: "2026-02-11", amount: -50, counterpartName: "Shell 456", reference: null }),
+  ];
+  const { toInsert } = dedupTransactions(incoming, []);
+  check("distinct numbered stores both import (no silent under-count)", toInsert.length === 2);
 }
 
 console.log("\n— mapToRows —");

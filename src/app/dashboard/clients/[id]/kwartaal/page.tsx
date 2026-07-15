@@ -106,6 +106,13 @@ export default function KwartaalPage() {
   const [client, setClient] = useState<any>(null)
   const [invoices, setInvoices] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  // [TRUST-ACCOUNTANT] The quarter tiles must show the SAME reconciled, turnover-aware
+  // figures as the owner's /klaar, the Brug hub and the ZIP — not an invoices-only
+  // client-side sum (which, for a retail/cash client, is a fraction of the real omzet
+  // and prints a "BTW totaal" that is a naive both-direction sum, equal to neither 5a
+  // nor 5g). Sourced from /api/result (omzet/kosten) + /api/aangifte (5g saldo), the
+  // exact endpoints the Brug KwartaalPanel already uses. One client, one truth.
+  const [recon, setRecon] = useState<{ omzet: number; kosten: number; saldo: number } | null>(null)
   const [sortAsc, setSortAsc] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
@@ -151,6 +158,24 @@ export default function KwartaalPage() {
       const merged = [...(outgoing ?? []), ...(incoming ?? [])]
       setInvoices(merged)
       setLoading(false)
+
+      // [TRUST-ACCOUNTANT] Reconciled quarter figures — same source as the ZIP + owner.
+      try {
+        const params = new URLSearchParams({ year: String(year), quarter: String(q), clientId })
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${params}`),
+          fetch(`/api/aangifte?${params}`),
+        ])
+        if (rRes.ok && aRes.ok) {
+          const pnl = await rRes.json()
+          const btw = await aRes.json()
+          setRecon({
+            omzet: Number(pnl?.omzet) || 0,
+            kosten: Number(pnl?.kosten) || 0,
+            saldo: Number(btw?.saldo) || 0,
+          })
+        }
+      } catch { /* leave recon null → tiles show a loading dash, never a wrong number */ }
     }
     load()
   }, [clientId, q, year])
@@ -176,11 +201,9 @@ export default function KwartaalPage() {
     return sortAsc ? da - db : db - da
   })
 
-  // [BRIDGE-A] Totals include ALL shared invoices (sent/received/paid) —
-  // M decision: quarter BTW is on Factuurdatum, not Betaaldatum (accrual view).
-  const totalIn  = invoices.filter(i => i.direction === 'outgoing').reduce((s, i) => s + (i.total_inc_btw || 0), 0)
-  const totalOut = invoices.filter(i => i.direction === 'incoming').reduce((s, i) => s + (i.total_inc_btw || 0), 0)
-  const totalBtw = invoices.reduce((s, i) => s + (i.btw_amount || 0), 0)
+  // [TRUST-ACCOUNTANT] The invoices-only client-side totals were removed — the quarter
+  // tiles now use the reconciled /api/result + /api/aangifte figures (see `recon`), so
+  // the accountant sees the SAME numbers as the owner and the ZIP.
 
   // [BOEK-028] accountant_status update
   // [BOEK-006] action can be null = "niet verwerkt" (neutral, accountant hasn't acted)
@@ -299,9 +322,11 @@ export default function KwartaalPage() {
         {/* Quarter summary */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
           {[
-            { label: 'Inkomsten',  value: NL_NUMBER.format(totalIn),  color: '#34A853' },
-            { label: 'Uitgaven',   value: NL_NUMBER.format(totalOut), color: '#EA4335' },
-            { label: 'BTW totaal', value: NL_NUMBER.format(totalBtw), color: '#9334E6' },
+            // [TRUST-ACCOUNTANT] Reconciled, turnover-aware figures (same as the ZIP +
+            // owner). While they load, show "…" rather than a wrong invoices-only sum.
+            { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: '#34A853' },
+            { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: '#EA4335' },
+            { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#9334E6' },
           ].map(s => (
             <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, textAlign: 'center' }}>
               <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>

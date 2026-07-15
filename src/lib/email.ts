@@ -5,7 +5,16 @@ import { Resend } from 'resend'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL, formatEuroNL } from './format-nl'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+// [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
+// import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
+// step imports every route module to collect page data (with no runtime env), so a
+// top-level `new Resend()` failed the whole production build / Vercel deploy over a
+// key that's only needed at REQUEST time. The env var is present when a handler runs.
+let _resend: Resend | null = null
+function getResend(): Resend {
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
+  return _resend
+}
 
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
@@ -17,7 +26,7 @@ export async function sendAccountantInvite({
   zzperName: string
   acceptUrl: string
 }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${zzperName} wil je toevoegen als boekhouder`,
@@ -48,7 +57,10 @@ export async function sendClientInvite({
   accountantName: string
   acceptUrl: string
 }) {
-  await resend.emails.send({
+  // [TRUST-DELIVERY] Capture Resend's { error } — it does NOT throw on an API
+  // rejection — and throw so the caller (invite route) rolls back the pending row
+  // and returns a retryable error instead of a silent dead-end.
+  const { error: sendError } = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${accountantName} nodigt je uit op BoekBrug`,
@@ -65,6 +77,9 @@ export async function sendClientInvite({
       </div>
     `
   })
+  if (sendError) {
+    throw new Error(`Resend afgewezen: ${sendError.message ?? 'onbekende fout'}`)
+  }
 }
 
 // ── إيميل للعميل عند استلام فاتورة ───────────────────────────────────────────
@@ -113,7 +128,12 @@ export async function sendInvoiceToClient({
     ? `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.</p>`
     : ''
 
-  await resend.emails.send({
+  // [TRUST-DELIVERY] Resend's SDK resolves to { data, error } and does NOT throw on
+  // an API-level rejection (invalid recipient, unverified domain, rate-limit,
+  // validation). Ignoring the return let a rejected send look delivered, so the
+  // invoice showed "verstuurd" while the customer received nothing. Capture the
+  // result and THROW on error so the caller's catch marks it email_failed.
+  const { error: sendError } = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${docLabel} ${invoiceNumber} van ${zzperName}`,
@@ -145,6 +165,10 @@ export async function sendInvoiceToClient({
         }
       : {})
   })
+  if (sendError) {
+    // Surface the real reason; the caller treats any throw here as email_failed.
+    throw new Error(`Resend afgewezen: ${sendError.message ?? 'onbekende fout'}`)
+  }
 }
 
 // ── BOEK-007: إيميل إشعار رسالة جديدة ────────────────────────────────────────
@@ -161,7 +185,7 @@ export async function sendMessageNotification({
   messagePreview: string
   conversationUrl: string
 }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `Nieuw bericht van ${senderName}`,
@@ -192,7 +216,7 @@ export async function sendAccountantUnlinkedNotification({
   accountantName: string
   clientName: string
 }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${clientName} heeft de koppeling beëindigd`,
@@ -218,7 +242,7 @@ export async function sendClientUnlinkedNotification({
   clientName: string
   accountantName: string
 }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${accountantName} heeft de koppeling beëindigd`,
@@ -266,7 +290,7 @@ export async function sendDraftQueueEmail({
 
   const safeBody = escape(body).replace(/\r?\n/g, '<br>')
 
-  await resend.emails.send({
+  await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject,
@@ -315,7 +339,7 @@ export async function sendAccountExportSummary({
       ? `<p style="color:#999; font-size:13px;">${skippedCount} bestand(en) konden niet worden opgehaald en zijn overgeslagen.</p>`
       : ''
 
-  await resend.emails.send({
+  await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: 'Je BoekBrug-gegevensexport',

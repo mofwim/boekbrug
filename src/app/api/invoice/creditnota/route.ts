@@ -132,6 +132,11 @@ export async function POST(request: NextRequest) {
         // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
         source: 'created',
         client_name: original.client_name,
+        // Carry the robust invoice→klant link onto the creditnota too, so the
+        // customer's history stays linked even if the name is later edited or
+        // the client row is renamed. Falls back to null (name path) for legacy
+        // originals that predate client_id.
+        client_id: original.client_id ?? null,
         client_email: original.client_email,
         client_address: original.client_address,
         client_postal_code: original.client_postal_code,

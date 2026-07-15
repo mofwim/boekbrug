@@ -15,20 +15,68 @@ type Props = {
   status: string
   // [BOEK-020] thread direction to hide UBL export on incoming invoices
   direction?: string | null
+  // [BETAALVERZOEK] thread the type so the payment-request action shows only on
+  // real outgoing facturen (not offertes/creditnota's).
+  invoiceType?: string | null
 }
 
 // فقط draft يمكن حذفه — Human Control من الوثيقة
 const DELETABLE_STATUSES = ['draft']
 
-export function InvoiceActions({ invoiceId, invoiceNumber, status, direction }: Props) {
+// [BETAALVERZOEK] Shape returned by POST /api/invoice/[id]/betaalverzoek.
+interface Betaalverzoek {
+  url: string
+  beneficiaryName: string
+  iban: string
+  amount: number
+  reference: string
+  epcPayload: string
+}
+const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
+
+export function InvoiceActions({ invoiceId, invoiceNumber, status, direction, invoiceType }: Props) {
   const router = useRouter()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [loadingDelete, setLoadingDelete] = useState(false)
   const [error, setError] = useState('')
 
+  // [BETAALVERZOEK] Payment-request modal state.
+  const [bv, setBv] = useState<Betaalverzoek | null>(null)
+  const [bvLoading, setBvLoading] = useState(false)
+  const [bvError, setBvError] = useState('')
+  const [bvQr, setBvQr] = useState('')
+  const [bvCopied, setBvCopied] = useState('')
+
   //const canDelete = DELETABLE_STATUSES.includes(status)
 const canEdit = status === 'draft'
 const canDelete = status === 'draft'
+// A betaalverzoek is for an issued, unpaid, OUTGOING factuur.
+const canRequestPayment =
+  direction !== 'incoming' &&
+  (invoiceType == null || invoiceType === 'factuur') &&
+  ['sent', 'overdue', 'processing'].includes(status)
+
+  async function openBetaalverzoek() {
+    setBvLoading(true); setBvError(''); setBv(null); setBvQr('')
+    try {
+      const res = await fetch(`/api/invoice/${invoiceId}/betaalverzoek`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) { setBvError(data.error || 'Betaalverzoek maken mislukt'); setBvLoading(false); return }
+      setBv(data)
+      setBvLoading(false)
+      try {
+        // A QR of the pay LINK — scan to OPEN the payment page (handy at a counter).
+        const QR = await import('qrcode')
+        setBvQr(await QR.toDataURL(data.url, { margin: 1, width: 220 }))
+      } catch { /* the link below always works without the QR */ }
+    } catch {
+      setBvError('Betaalverzoek maken mislukt'); setBvLoading(false)
+    }
+  }
+  async function bvCopy(value: string, label: string) {
+    try { await navigator.clipboard.writeText(value) } catch { /* clipboard may be blocked */ }
+    setBvCopied(label); setTimeout(() => setBvCopied(''), 1500)
+  }
 
 
   // ── BOEK-002: Delete ─────────────────────────────────────────────────────
@@ -71,9 +119,21 @@ const canDelete = status === 'draft'
             ✕ Verwijderen
           </button>
         )}
+        {/* [BETAALVERZOEK] Deel een betaallink — alleen voor een verstuurde uitgaande factuur */}
+        {canRequestPayment && (
+          <button
+            onClick={openBetaalverzoek}
+            disabled={bvLoading}
+            className="text-sm text-[#007aff] hover:text-[#0051d5] px-3 py-1.5 rounded-xl hover:bg-blue-50 transition-colors disabled:opacity-50"
+          >
+            {bvLoading ? 'Bezig…' : '💶 Betaalverzoek'}
+          </button>
+        )}
         {/* [BOEK-020] UBL/XML export — single invoice (hides itself for draft/incoming) */}
         <UblExportButton invoiceId={invoiceId} invoiceNumber={invoiceNumber} status={status} direction={direction} />
       </div>
+
+      {bvError && <p className="text-xs text-red-500 mt-1">{bvError}</p>}
 
       {/* Foutmelding */}
       {error && (
@@ -108,6 +168,49 @@ const canDelete = status === 'draft'
                 Annuleren
               </button>
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* [BETAALVERZOEK] Share modal — the link (+ QR of the link) and payment summary */}
+      {bv && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onClick={() => setBv(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h2 className="text-base font-bold text-gray-900">Betaalverzoek voor {invoiceNumber}</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Deel deze link met je klant. Ze betalen {eur.format(bv.amount)} rechtstreeks vanuit hun eigen bank —
+                met kenmerk <span className="font-semibold text-gray-700">{bv.reference || '—'}</span>. Zodra de
+                betaling in je bankafschrift binnenkomt, herkent BoekBrug haar automatisch bij deze factuur en
+                bevestig je het afletteren met één tik.
+              </p>
+            </div>
+
+            {bvQr && (
+              <div className="flex justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={bvQr} alt="QR naar betaalpagina" width={180} height={180} className="rounded-xl" />
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-2">
+              <input readOnly value={bv.url} className="flex-1 bg-transparent text-sm text-gray-700 px-2 outline-none" onFocus={(e) => e.currentTarget.select()} />
+              <button
+                onClick={() => bvCopy(bv.url, 'link')}
+                className="shrink-0 bg-[#007aff] hover:bg-[#0051d5] text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
+              >
+                {bvCopied === 'link' ? 'Gekopieerd' : 'Kopieer link'}
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-400 leading-relaxed">
+              BoekBrug verwerkt de betaling niet — het geld gaat direct naar je eigen IBAN ({bv.iban.replace(/(.{4})/g, '$1 ').trim()}).
+            </p>
+
+            <button onClick={() => setBv(null)} className="w-full border border-gray-200 text-gray-600 text-sm font-medium py-2.5 rounded-xl hover:bg-gray-50 transition-colors">
+              Sluiten
+            </button>
           </div>
         </div>,
         document.body

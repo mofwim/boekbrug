@@ -28,7 +28,7 @@
 // which the page already knows. Keeping them separate is what lets a clean
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
-import { evaluateArithmetic } from '@/lib/safecore'
+import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
 
 // Confidence below this → ask the owner to confirm the field (BRIDGE-EXTRACT's
 // modal uses the same 0.7 threshold; kept identical so the surface and the modal
@@ -56,6 +56,12 @@ export interface HealthInput {
   btw_amount: number | null
   total_inc_btw: number | null
   invoice_date: string | null
+  // [TRUST-NUMBER] The STORED invoice number. The email path stores a fabricated
+  // placeholder (EMAIL-<ts>) when the reader returned none, and the AI's per-field
+  // confidence score defaults to 1 for a missing field — so a fabricated number reads
+  // "clean" with no trace. Passing the value lets health flag a missing/placeholder
+  // number. Optional so existing call sites keep compiling (undefined → not checked).
+  invoice_number?: string | null
   // [BRIDGE-CREDITNOTA-SIGN] 'creditnota' → the recompute below takes the
   // sign-inverted gate (amounts must be NEGATIVE + consistent). Optional so
   // existing call sites keep compiling; absent/other → the standard gate.
@@ -72,6 +78,13 @@ export interface FieldConfidence {
   vendor?: number
   invoice_number?: number
   invoice_date?: number
+  // [TRUST-AMOUNTS] The money-truth's OWN confidence channel. The AI may emit any
+  // of these for the amounts it read; we take the lowest present. Before this, the
+  // amounts — the one set of facts that IS the money — carried no confidence at all,
+  // so a confidently-wrong read (€121 → €109, internally consistent) passed clean.
+  amount?: number
+  total?: number
+  total_inc_btw?: number
   _safecore?: {
     arithmetic_ok?: boolean
     reason?: string
@@ -131,6 +144,56 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
   // (If storedSafecore exists AND arithmetic_ok !== false, the email path held
   //  it for a dedup note only, not a math problem — not a health warning here.)
+
+  // ── Money-truth axis (the amounts themselves) ────────────────────────────
+  // [TRUST-AMOUNTS] The arithmetic gate above only runs its consistency checks
+  // when incl > 0, so a MISSING or €0 total slips through as "clean" — a real
+  // invoice the reader couldn't price would book as a €0 record with no warning.
+  // The total is the money-truth; if it's absent or zero, that is never "clean" —
+  // ask the human. (Legitimate €0 invoices effectively don't exist; a check costs
+  // the owner one glance and prevents a silent €0 booking.)
+  const incl = inv.total_inc_btw
+  if (incl == null || Math.abs(incl) < 0.005) {
+    flags.arithmetic = true
+    reasons.push('het totaalbedrag ontbreekt of is € 0 — controleer de bedragen')
+  }
+
+  // [TRUST-AMOUNTS] The amounts' own confidence, when the reader provided it. A
+  // low score means the reader itself was unsure about the money — surface that
+  // loudly instead of presenting a confident-looking total. We under-claim: only
+  // flag when a score is actually present and low (never fabricate doubt).
+  if (fc) {
+    const amountScores = [fc.amount, fc.total, fc.total_inc_btw].filter(
+      (n): n is number => typeof n === 'number'
+    )
+    if (amountScores.length > 0 && Math.min(...amountScores) < LOW_CONFIDENCE) {
+      flags.arithmetic = true
+      reasons.push('het bedrag is onzeker gelezen — controleer de bedragen')
+    }
+  }
+
+  // ── Date axis ────────────────────────────────────────────────────────────
+  // [TRUST-DATE] A MISSING invoice date is not "clean": the server confirm route
+  // hard-blocks a dateless invoice (the DATE-GATE), so a green "klaar" pill would
+  // lie — the owner taps confirm and it fails. Flag it here so the pill and the
+  // server agree, and the owner is told to add the date up front.
+  if (!inv.invoice_date || !String(inv.invoice_date).trim()) {
+    flags.invoiceDate = true
+    reasons.push('de factuurdatum ontbreekt — vul hem aan om te kunnen bevestigen')
+  }
+
+  // ── Invoice-number axis (the value, not just the AI's confidence) ────────
+  // [TRUST-NUMBER] A missing/placeholder number is never "clean": the stored
+  // EMAIL-<ts> placeholder is a fabricated identifier (defeats duplicate detection
+  // and is not a real Art. 35 number). Only evaluate when the caller supplied the
+  // field, so legacy call sites that don't pass it keep their old behaviour.
+  if (inv.invoice_number !== undefined) {
+    const num = inv.invoice_number
+    if (!num || !String(num).trim() || isPlaceholderInvoiceNumber(num)) {
+      flags.invoiceNumber = true
+      reasons.push('het factuurnummer ontbreekt of kon niet worden gelezen — controleer het')
+    }
+  }
 
   // ── Confidence axis ──────────────────────────────────────────────────────
   // The AI told us which fields it was unsure about. Mirror the modal's logic:
