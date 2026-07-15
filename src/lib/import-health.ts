@@ -166,6 +166,16 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     }
   }
 
+  // ── Date axis ────────────────────────────────────────────────────────────
+  // [TRUST-DATE] A MISSING invoice date is not "clean": the server confirm route
+  // hard-blocks a dateless invoice (the DATE-GATE), so a green "klaar" pill would
+  // lie — the owner taps confirm and it fails. Flag it here so the pill and the
+  // server agree, and the owner is told to add the date up front.
+  if (!inv.invoice_date || !String(inv.invoice_date).trim()) {
+    flags.invoiceDate = true
+    reasons.push('de factuurdatum ontbreekt — vul hem aan om te kunnen bevestigen')
+  }
+
   // ── Confidence axis ──────────────────────────────────────────────────────
   // The AI told us which fields it was unsure about. Mirror the modal's logic:
   // a missing score defaults to confident (1) so we never false-flag clean rows.

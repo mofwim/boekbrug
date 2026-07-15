@@ -1765,12 +1765,26 @@ export default function IncomingInvoicesClient({
   const handleVerifyBatch = useCallback(async () => {
     const targets = pending.filter((p) => selected.has(p.id));
     if (targets.length === 0) return;
+    // [TRUST-BULK] Bulk verify books the stored amounts AS-IS, with no per-invoice
+    // review. So a card flagged "Aandacht nodig" (an uncertain/likely-wrong amount, a
+    // missing date, a rekenfout) must NEVER be swept into a batch unseen — that is the
+    // one path that could write a known-uncertain number into the accountant's books.
+    // We confirm only the clean ones and send the flagged ones back for individual
+    // review, honestly. (selectAllReady already excludes them; this guards the manual
+    // hand-tap case too.)
+    const flagged = targets.filter((p) => p.health.level === "needs-review");
+    const cleanTargets = targets.filter((p) => p.health.level !== "needs-review");
+    if (cleanTargets.length === 0) {
+      setBulkConfirmOpen(false);
+      showToast(`${flagged.length} factuur${flagged.length > 1 ? "en hebben" : " heeft"} aandacht nodig — open ${flagged.length > 1 ? "ze" : "hem"} los om te controleren`);
+      return;
+    }
     setBulkConfirmOpen(false);
     setBulkRunning(true);
 
     let ok = 0;
     const failedNames: string[] = [];
-    for (const inv of targets) {
+    for (const inv of cleanTargets) {
       try {
         const res = await fetch(`/api/email/confirm/${inv.id}`, {
           method: "POST",
@@ -1799,10 +1813,11 @@ export default function IncomingInvoicesClient({
     setBulkRunning(false);
     setSelectMode(false);
     setSelected(new Set());
+    const heldNote = flagged.length > 0 ? ` · ${flagged.length} met aandacht overgeslagen` : "";
     if (failedNames.length === 0) {
-      showToast(`✓ ${ok} factuur${ok > 1 ? "en" : ""} geverifieerd`);
+      showToast(`✓ ${ok} factuur${ok > 1 ? "en" : ""} geverifieerd${heldNote}`);
     } else {
-      showToast(`${ok} geverifieerd · ${failedNames.length} mislukt — ververs de pagina`);
+      showToast(`${ok} geverifieerd · ${failedNames.length} mislukt${heldNote} — ververs de pagina`);
     }
   }, [pending, selected]);
 

@@ -46,6 +46,15 @@ console.log('\n— the amounts get their OWN confidence channel —')
   check('no amount score present → no fabricated amount doubt', noAmt.level === 'clean')
 }
 
+console.log('\n— [TRUST-DATE] a missing invoice date is flagged (server refuses it) —')
+{
+  const noDate = classifyImportHealth(inv({ invoice_date: null }))
+  check('null date → needs-review', noDate.level === 'needs-review' && noDate.flags.invoiceDate)
+  check("null date → 'ontbreekt' reason", noDate.reasons.some((r) => /factuurdatum ontbreekt/.test(r)))
+  check('blank date → needs-review', classifyImportHealth(inv({ invoice_date: '  ' })).level === 'needs-review')
+  check('a present date is not flagged', classifyImportHealth(inv({ invoice_date: '2026-03-10' })).flags.invoiceDate === false)
+}
+
 console.log('\n— existing guards still hold —')
 {
   const mismatch = classifyImportHealth(inv({ total_ex_btw: 100, btw_amount: 21, total_inc_btw: 100 }))
