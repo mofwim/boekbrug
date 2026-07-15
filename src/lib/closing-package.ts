@@ -605,8 +605,12 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 
   // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
   const allQuarterly = [...outgoing, ...incoming].map(toQuarterly);
-  const fullSummary = buildQuarterlySummary(allQuarterly, year, quarter);
   const zzpSummary = buildZzpSummary(allQuarterly, year, quarter, "all");
+  // [BTW-DIRECTION] omzet_per_tarief is SALES per rate — it must be built from OUTGOING
+  // invoices ONLY. Feeding [...outgoing,...incoming] bucketed purchase costs into the
+  // "omzet" rate rows (a €800 purchase @21% inflated the 21% omzet to 1800/378 instead of
+  // 1000/210), contradicting the sibling btw_uitgaand/btw_inkomend fields in the same JSON.
+  const salesSummary = buildQuarterlySummary(outgoing.map(toQuarterly), year, quarter);
 
   const summary: ClosingPackageSummary = {
     quarter: quarterLabel,
@@ -631,7 +635,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         bankafschrift_bijgevoegd: summary.bankStatementIncluded,
         // RAW numbers only — accountant computes the aangifte.
         btw_overzicht: {
-          omzet_per_tarief: fullSummary.btwBreakdown,
+          omzet_per_tarief: salesSummary.btwBreakdown,
           uitgaand_incl: zzpSummary.totalIn,
           inkomend_incl: zzpSummary.totalOut,
           btw_uitgaand: zzpSummary.totalBtwIn,
@@ -682,6 +686,96 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 
 const INVOICE_FIELDS =
   "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
+
+/**
+ * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
+ * (`.gte(...).lte(...)`) silently DROP NULL-date rows, so such an invoice belongs to
+ * this owner and is verified, yet appears in NO quarter's package and NO concept
+ * aangifte — its BTW just vanishes (voorbelasting too low / te-betalen too high) with
+ * zero trace. This finds them so the package can WARN instead of losing them. Returns
+ * the count + up-to-`cap` human labels. Never throws (a query error → empty, no crash).
+ */
+async function datelessVerifiedInvoices(
+  supabase: PipelineClient,
+  ownerId: string,
+  cap = 10,
+): Promise<{ count: number; labels: string[] }> {
+  const { data } = await supabase
+    .from("invoices")
+    .select(INVOICE_FIELDS)
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+    .is("invoice_date", null)
+    .neq("status", "archived");
+  const verified = (data ?? [])
+    .map((raw) => {
+      const row = raw as unknown as PackageInvoice;
+      return { ...row, direction: effectiveDirection(row, ownerId) };
+    })
+    .filter(isVerifiedForPackage);
+  return {
+    count: verified.length,
+    labels: verified.slice(0, cap).map((i) => i.invoice_number ?? i.id),
+  };
+}
+
+/** A warning for dateless verified invoices, or null when there are none. Shared by the
+ * ZIP builder and the preview summary so both tell the SAME truth. */
+function datelessWarning(d: { count: number; labels: string[] }): ClosingPackageWarning | null {
+  if (d.count === 0) return null;
+  const shown = d.labels.join(", ");
+  const more = d.count > d.labels.length ? ` (+${d.count - d.labels.length} meer)` : "";
+  return {
+    code: "invoice_no_date",
+    message:
+      `${d.count} geverifieerde factu(u)r(en) hebben GEEN datum en vallen daardoor buiten elk ` +
+      `kwartaalpakket — hun BTW/voorbelasting ontbreekt tot je een datum toekent: ${shown}${more}.`,
+  };
+}
+
+/**
+ * [FIN-10] The bank statement FILE paths for a quarter — the SAME two queries the ZIP
+ * builder uses (period-tagged + legacy created_at fallback), extracted so the preview
+ * summary can tell whether a statement file will actually be attached. Returns de-duped
+ * {path,name}. Presence of transactions ≠ presence of the statement file.
+ */
+async function bankStatementPaths(
+  supabase: PipelineClient,
+  ownerId: string,
+  year: number,
+  quarter: Quarter,
+): Promise<Array<{ path: string; name: string }>> {
+  const start = quarterStartDate(year, quarter);
+  const end = quarterEndDate(year, quarter);
+  const stmtPeriod = `${year}-Q${quarter}`;
+  const [{ data: taggedStmts }, { data: legacyStmts }] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("file_url, file_name")
+      .eq("user_id", ownerId)
+      .eq("doc_type", "bankafschrift")
+      .eq("period", stmtPeriod),
+    supabase
+      .from("documents")
+      .select("file_url, file_name")
+      .eq("user_id", ownerId)
+      .eq("doc_type", "bankafschrift")
+      .is("period", null)
+      .gte("created_at", start)
+      .lte("created_at", `${end}T23:59:59`),
+  ]);
+  const rows = [...(taggedStmts ?? []), ...(legacyStmts ?? [])] as Array<{
+    file_url: string | null;
+    file_name: string | null;
+  }>;
+  const out: Array<{ path: string; name: string }> = [];
+  const seen = new Set<string>();
+  for (const d of rows) {
+    if (!d.file_url || seen.has(d.file_url)) continue;
+    seen.add(d.file_url);
+    out.push({ path: d.file_url, name: d.file_name ?? "bankafschrift" });
+  }
+  return out;
+}
 
 // [AANGIFTE] EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be
 // intra-EU (rubriek 4b), which the concept aangifte does NOT auto-compute. Mirrors
@@ -778,7 +872,11 @@ export async function summarizeClosingPackage(args: {
     .gte("date", start)
     .lte("date", end)
     .limit(1);
-  const bankStatementIncluded = (bankTx ?? []).length > 0;
+  const hasBankData = (bankTx ?? []).length > 0;
+  // Whether the statement FILE will actually be attached — separate from "we have bank
+  // data". Reported truthfully so the preview matches the ZIP (which two-tiers the same way).
+  const bankFilePaths = await bankStatementPaths(supabase, ownerId, year, quarter);
+  const bankStatementIncluded = bankFilePaths.length > 0;
 
   // Honest warnings — the real gaps, listed specifically.
   if (verified.length === 0) {
@@ -793,8 +891,15 @@ export async function summarizeClosingPackage(args: {
           : `${missingPdf.length} facturen zonder PDF.`,
     });
   }
-  if (!bankStatementIncluded) {
+  // [DATE-GAP] Verified invoices with no date never enter any quarter — warn, don't lose.
+  const dateless = datelessWarning(await datelessVerifiedInvoices(supabase, ownerId));
+  if (dateless) warnings.push(dateless);
+  // Bank: mirror the ZIP's two-tier truth exactly. No data at all vs. data present but the
+  // statement file isn't attached — the latter used to be invisible to the preview.
+  if (!hasBankData) {
     warnings.push({ code: "no_bank_statement", message: "Geen banktransacties gevonden voor dit kwartaal — upload het bankafschrift." });
+  } else if (!bankStatementIncluded) {
+    warnings.push({ code: "bank_file_missing", message: "Banktransacties zijn aanwezig, maar het originele bankafschrift-bestand is (nog) niet bijgevoegd — upload het bankafschrift." });
   }
 
   return {
@@ -849,6 +954,12 @@ export async function buildClosingPackageZip(args: {
   const verified = all.filter(isVerifiedForPackage);
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
+
+  // [DATE-GAP] Verified invoices with NO invoice_date are dropped by the range filter
+  // above and would vanish from BOTH the evidence and the concept aangifte with no trace.
+  // Warn (with labels) so the accountant knows to assign a date instead of losing the BTW.
+  const datelessZip = datelessWarning(await datelessVerifiedInvoices(supabase, ownerId));
+  if (datelessZip) warnings.push(datelessZip);
 
   // ── Resolve PDF storage paths ──
   // outgoing → invoices.pdf_url ; incoming → documents.file_url via document_id.
