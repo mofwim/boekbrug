@@ -26,10 +26,44 @@ const PAGE_SIZE = 200;
 const BULK_MAX = 5000;
 
 // ─── GET: the to-categorize list with suggestions + the honest remaining total ───
-export async function GET() {
+// ?scope=review → instead returns lines that ALREADY have a category, so the owner can
+// CORRECT a wrong one (a false-positive 'fee'/'transfer' silently drops a real cost from
+// the P&L, and nothing else in the app lets you change a set category). The write path
+// (POST) already re-categorises any line, so review reuses it.
+export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  if (req.nextUrl.searchParams.get("scope") === "review") {
+    // Already-categorised, still-pending lines (auto-applied or confirmed). Show the
+    // STORED category so the owner can see + change it. Unconfirmed (machine-applied)
+    // first, so the guesses that most deserve a look sit at the top.
+    const { data: rows } = await supabase
+      .from("bank_transactions")
+      .select("id, date, amount, counterpart_name, description, category, category_source, category_confirmed")
+      .eq("user_id", user.id)
+      .eq("status", "pending")
+      .is("invoice_id", null)
+      .not("category", "is", null)
+      .order("category_confirmed", { ascending: true })
+      .order("date", { ascending: false })
+      .limit(PAGE_SIZE);
+
+    const items = (rows ?? []).map((t) => ({
+      id: t.id,
+      date: t.date,
+      amount: t.amount,
+      counterpart_name: t.counterpart_name,
+      description: t.description,
+      // In review mode `suggested` = the CURRENT stored category (what to pre-select).
+      suggested: t.category,
+      suggested_source: t.category_source ?? "ai",
+      suggested_confident: t.category_confirmed === true,
+      confirmed: t.category_confirmed === true,
+    }));
+    return NextResponse.json({ ok: true, review: true, items, count: items.length });
+  }
 
   // The TRUE remaining count — an exact head-count, independent of the page size.
   // This is what governs "alles gecategoriseerd": only 0 here means truly done.
