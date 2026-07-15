@@ -481,7 +481,13 @@ export async function fetchGmailAttachments(
   messageIndex: Array<{ messageId: string; date: string }>
 }> {
   const afterDate = Math.floor(syncAfterMs / 1000)
-  const query = `has:attachment after:${afterDate}`
+  // [OWN-SENT] Exclude the owner's OWN outbound mail. A ZZP'er emails invoices to
+  // customers from this same mailbox; those live in Sent (To=customer, never in the
+  // Inbox), and if fetched they were booked as INCOMING costs — phantom voorbelasting
+  // attributed to the owner's own customer. `-in:sent -in:drafts -in:chats` drops those
+  // while KEEPING a supplier invoice the owner forwarded to themselves (its Inbox copy
+  // is not in Sent), so real incoming documents are not lost.
+  const query = `has:attachment after:${afterDate} -in:sent -in:drafts -in:chats`
 
   // 1. List message IDs — WITH pagination.
   //
@@ -796,7 +802,13 @@ export async function fetchOutlookAttachments(
   // the expensive per-message Graph call that trips throttling. Built cheaply
   // from source_message_id in the DB before we get here. This is a PERFORMANCE
   // skip only; correctness still rests on PHASE 0/2 dedup downstream.
-  alreadyDoneMessageIds?: Set<string>
+  alreadyDoneMessageIds?: Set<string>,
+  // [OWN-SENT] The connected mailbox address. Graph's /me/messages spans ALL
+  // folders (incl. Sent Items), so the owner's OWN outbound invoices would be
+  // fetched and booked as incoming costs. We drop a message that the owner SENT
+  // to someone else (from == owner AND owner not a recipient), while keeping a
+  // supplier invoice the owner forwarded to THEMSELVES (owner is a recipient).
+  ownerEmail?: string | null
 ): Promise<{
   attachments: GmailAttachment[]
   complete: boolean
@@ -813,7 +825,7 @@ export async function fetchOutlookAttachments(
   const firstUrl =
     `https://graph.microsoft.com/v1.0/me/messages` +
     `?$filter=${encodeURIComponent(filter)}` +
-    `&$select=id,subject,from,receivedDateTime,hasAttachments` +
+    `&$select=id,subject,from,toRecipients,receivedDateTime,hasAttachments` +
     `&$orderby=receivedDateTime desc` +
     `&$top=50`
 
@@ -821,8 +833,21 @@ export async function fetchOutlookAttachments(
     id: string
     subject?: string
     from?: { emailAddress?: { name?: string; address?: string } }
+    toRecipients?: Array<{ emailAddress?: { address?: string } }>
     receivedDateTime?: string
     hasAttachments?: boolean
+  }
+
+  // [OWN-SENT] true when the owner SENT this message to someone else — from == owner
+  // AND owner is not among the recipients. Own outbound invoices must not be booked as
+  // incoming. A forward-to-self (owner is a recipient) is NOT own-outbound → kept.
+  const owner = (ownerEmail ?? '').trim().toLowerCase()
+  const isOwnOutbound = (m: OutlookMessage): boolean => {
+    if (!owner) return false
+    const fromAddr = (m.from?.emailAddress?.address ?? '').trim().toLowerCase()
+    if (fromAddr !== owner) return false
+    const toAddrs = (m.toRecipients ?? []).map((r) => (r.emailAddress?.address ?? '').trim().toLowerCase())
+    return !toAddrs.includes(owner)
   }
 
   const messagesRaw: OutlookMessage[] = []
@@ -909,6 +934,7 @@ export async function fetchOutlookAttachments(
   const withAttachments = messages.filter((m) => {
     if (!m.hasAttachments) return false
     if (alreadyDoneMessageIds && alreadyDoneMessageIds.has(m.id)) return false
+    if (isOwnOutbound(m)) return false // [OWN-SENT] owner's own outbound mail — not incoming
     return true
   })
   console.log('[BOEK-011] Outlook attachment fetch', {
@@ -1226,6 +1252,9 @@ export async function syncUserEmails(userId: string): Promise<{
   errors: number
   remaining: number
   skipped: number
+  // [COULD-NOT-READ] Attachments kept in bestanden because we couldn't read them
+  // (never asserted "not an invoice"). Surfaced so the owner can go check them.
+  couldNotRead: number
   // [BOEK-TRUST] Honest reconciliation for "did everything arrive?". Every
   // fetched attachment this run lands in exactly one bucket; balanced=true means
   // the buckets sum to fetched with nothing unaccounted. This is deliberately a
@@ -1236,8 +1265,9 @@ export async function syncUserEmails(userId: string): Promise<{
     imported: number     // saved as invoices
     skipped: number      // registered as non-invoice (logos/signatures/etc.)
     duplicate: number    // recognised as already-imported
+    couldNotRead: number // kept in bestanden, couldn't be read (not asserted non-invoice)
     pending: number      // deferred to next sync (batch cap / transient fail)
-    balanced: boolean    // imported+skipped+duplicate+pending === fetched
+    balanced: boolean    // imported+skipped+duplicate+couldNotRead+pending === fetched
   }
 } | null> {
   // [CRON] Use the service-role pipeline (not the session client) so syncUserEmails is
@@ -1331,7 +1361,7 @@ export async function syncUserEmails(userId: string): Promise<{
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, balance: { fetched: 0, imported: 0, skipped: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [BOEK-011 throttle] Build the set of message IDs already fully processed,
@@ -1388,14 +1418,14 @@ export async function syncUserEmails(userId: string): Promise<{
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
-      const r = await fetchOutlookAttachments(accessToken, syncAfterMs, doneMessageIds)
+      const r = await fetchOutlookAttachments(accessToken, syncAfterMs, doneMessageIds, tokens.email)
       attachments = r.attachments
       fetchComplete = r.complete
       messageIndex = r.messageIndex
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, balance: { fetched: 0, imported: 0, skipped: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   let verified = 0
@@ -1412,6 +1442,9 @@ export async function syncUserEmails(userId: string): Promise<{
   // [BOEK-SAFECORE] Rule 1 — count of invoices HELD in 'processing' for an
   // arithmetic problem (subset of `saved`; they exist but aren't shared yet).
   let held = 0
+  // [COULD-NOT-READ] Attachments we could NOT read (API reject / unsupported /
+  // unparseable) — kept in bestanden for the owner, NOT asserted "not an invoice".
+  let couldNotRead = 0
 
   // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
   const { resolveImportTarget } = await import('@/lib/bestanden')
@@ -1587,6 +1620,63 @@ export async function syncUserEmails(userId: string): Promise<{
       // [watermark] NOT complete — the mark stops before this email.
       if (classifyFailed) {
         errors++
+        continue
+      }
+
+      // [COULD-NOT-READ] We did not manage to READ this file (API reject / unsupported
+      // type / unparseable JSON → verifyInvoiceFromPdf's confidence-0 FALLBACK). That is
+      // NOT proof it isn't an invoice, so it must NOT be registered as a permanent
+      // 'not an invoice' skip (which discards a possibly-real invoice forever, unseen).
+      // Mirror the intake fix: keep the file owner-visible in bestanden, count it so the
+      // owner is told, and register it with reason 'could_not_read' (still stops the
+      // costly per-sync re-send, but is honest about WHY).
+      if (!classification.isInvoice && !((classification.confidence ?? 0) > 0)) {
+        try {
+          const buf = Buffer.from(attachment.data, 'base64')
+          const hash = computeContentHash(buf)
+          const { data: dupDoc } = await supabase
+            .from('documents').select('id')
+            .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
+          if (!dupDoc) {
+            const safeName = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+            const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
+            const { error: upErr } = await supabase.storage
+              .from('documents').upload(storagePath, buf, { contentType: attachment.mimeType, upsert: false })
+            if (!upErr) {
+              const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
+              const { error: docErr } = await supabase.from('documents').insert({
+                user_id: userId,
+                file_name: attachment.filename,
+                file_url: storagePath,
+                file_size: buf.length,
+                file_type: attachment.mimeType,
+                doc_type: 'overig',
+                folder_id: folderId,
+                source: 'email',
+                ai_processed: false,          // we did NOT read it — never claim we did
+                ai_doc_type: 'could_not_read',
+                content_hash: hash,
+              })
+              if (docErr) await supabase.storage.from('documents').remove([storagePath])
+            }
+          }
+        } catch (e) {
+          console.error('[BOEK-011] could-not-read save failed', e)
+        }
+        const skipPipeline = createPipelineClient()
+        await skipPipeline
+          .from('email_skipped_attachments')
+          .upsert(
+            {
+              user_id: userId,
+              source_message_id: `${attachment.messageId}:${attachment.filename}`,
+              filename: attachment.filename,
+              reason: 'could_not_read',
+            },
+            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+          )
+        couldNotRead++
+        completedKeys.add(wmKey) // handled (kept + registered) = complete
         continue
       }
 
@@ -2307,7 +2397,9 @@ export async function syncUserEmails(userId: string): Promise<{
   // knownKeys (already-imported before this run) are intentionally NOT in the
   // batch math — they were reconciled in the sync that first imported them.
   const processedThisBatch = freshAttachments.length
-  const bucketed = saved + skipped + duplicate + errors
+  // couldNotRead is its own accounted-for bucket (kept in bestanden, registered) — it
+  // must be in the sum or a real, fully-handled attachment would read as an unaccounted gap.
+  const bucketed = saved + skipped + duplicate + errors + couldNotRead
   const balanced = bucketed === processedThisBatch
 
   if (!balanced) {
@@ -2337,11 +2429,13 @@ export async function syncUserEmails(userId: string): Promise<{
     // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
     // the no-progress guard.
     skipped,
+    couldNotRead,
     balance: {
       fetched: processedThisBatch,
       imported: saved,
       skipped,
       duplicate,
+      couldNotRead,
       pending: remainingAfterBatch,
       balanced,
     },
