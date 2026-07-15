@@ -141,5 +141,25 @@ console.log("\n— REAL month.xls: Excel serial date (46206) parses to 2026-07-0
   check("serial 46206 → 2026-07-03", rows[0]?.turnover_date === "2026-07-03");
 }
 
+// [ASYMMETRIC HT/TC] The silent-BTW bug: a sheet with HT for one rate (9%) but ONLY a
+// TC/gross column for another (21%). A global hasHT flag booked the TC-only rate's whole
+// gross as BTW (base=0, btw=gross), silently. Per-rate decision must derive its net.
+console.log("\n— asymmetric HT/TC columns (per-rate gross-vs-net) —");
+{
+  const H: Cell[] = [
+    "Datum", "Omzet incl.", "BTW", "Netto Omzet",
+    "Base HT 9 %", "Base TC 9 %", "Base TC 21 %", "Contant", "PIN",
+  ];
+  // 9% has HT(net 100)+TC(gross 109); 21% has ONLY TC (gross 121 → net 100, btw 21).
+  const DAY: Cell[] = ["2026-03-01", 230, 30, 200, 100, 109, 121, 115, 115];
+  const { rows } = normalizeTurnoverSheet([H, DAY]);
+  const d = rows[0];
+  check("9% (HT+TC): base = HT net 100", near(d.base_9, 100));
+  check("9% (HT+TC): btw = TC − HT = 9", near(d.btw_9, 9));
+  check("21% (TC-only): net derived from gross = 100 (NOT 0)", near(d.base_21, 100));
+  check("21% (TC-only): btw = 21 (NOT the whole gross 121)", near(d.btw_21, 21));
+  check("net + BTW reconstructs gross", near(d.base_9 + d.base_21 + d.btw_9 + d.btw_21, 230, 0.05));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

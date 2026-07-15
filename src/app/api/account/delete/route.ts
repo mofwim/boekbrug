@@ -39,11 +39,16 @@ export async function POST(req: NextRequest) {
   const pipeline = createPipelineClient();
 
   // GATE: the export must be confirmed first. No row / not confirmed → 409.
-  const { data: dr } = await pipeline
+  // deletion_requests has no UNIQUE(user_id), so two concurrent exports can insert two
+  // rows; .maybeSingle() then ERRORS on >1 row and the user is stuck at a permanent 409
+  // "export first" with no exit. Take the most recent row instead of assuming exactly one.
+  const { data: drRows } = await pipeline
     .from("deletion_requests")
     .select("id, export_confirmed")
     .eq("user_id", user.id)
-    .maybeSingle();
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const dr = drRows?.[0];
 
   if (!dr || dr.export_confirmed !== true) {
     return NextResponse.json(
