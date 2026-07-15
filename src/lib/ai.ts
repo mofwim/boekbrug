@@ -60,10 +60,31 @@ export interface ClassifyDocumentResult {
   isDuplicate?: boolean;
 }
 
+// [TRUST-UNCERTAIN] Decide what to do with a read given its overall confidence and
+// whether it carries any invoice signal (a vendor or an amount). The old code hard-
+// dropped everything below 0.6 as "not an invoice" — silently losing real but hard-
+// to-read invoices. This never drops a signal-bearing read in the uncertain band;
+// it routes it to human review instead. Pure + exported so it is unit-tested.
+//   >= 0.60                         → 'accept'  (normal flow)
+//   [0.35, 0.60) with signal        → 'review'  (flow to verify queue, FLAGGED)
+//   < 0.35, or no invoice signal    → 'skip'    (spam / newsletter / unreadable)
+export type ConfidenceBand = 'accept' | 'review' | 'skip';
+export function decideConfidenceBand(confidence: number, hasInvoiceSignal: boolean): ConfidenceBand {
+  if (!(confidence >= 0)) return 'skip'; // NaN/negative → skip
+  if (confidence >= 0.6) return 'accept';
+  if (confidence >= 0.35 && hasInvoiceSignal) return 'review';
+  return 'skip';
+}
+
 // [BOEK-011] Result of reading an actual PDF — May 2026
 export interface VerifyInvoiceResult {
   is_invoice: boolean;       // true only if this is a real commercial invoice
   confidence: number;        // 0–1
+  // [TRUST-UNCERTAIN] The reader saw likely-invoice content but was NOT confident
+  // it read it correctly (blurry photo, odd/foreign layout). Such an item is routed
+  // to the human verify queue FLAGGED — never silently dropped. Distinct from
+  // is_invoice:false (confidently NOT an invoice → quietly skipped).
+  uncertain?: boolean;
   vendor?: string;           // who sent the invoice
   amount?: number;           // total amount including BTW (numeric) — alias of total_inc_btw
   invoice_number?: string;   // invoice number if found
@@ -1113,13 +1134,32 @@ Return JSON only.`;
     // the SAFECORE gate — never silently treated as a creditnota).
     parsed.is_credit_note = parsed.is_credit_note === true;
 
-    // Enforce minimum confidence threshold
-    // Below 0.6 → treat as not an invoice to avoid false positives
-    if (parsed.confidence < 0.6) {
+    // [TRUST-UNCERTAIN] Confidence banding — never silently drop a real-but-hard
+    // invoice. Below the hard floor (or with no invoice signal at all) it's spam /
+    // a newsletter → skip. In the uncertain band [0.35, 0.6) WITH a vendor or an
+    // amount, we route it to the human verify queue FLAGGED instead of discarding
+    // it: is_invoice becomes true, `uncertain` is set, and we cap the amount
+    // confidence so the health surface shows "onzeker gelezen — controleer". The
+    // human then confirms or dismisses; the invoice is never lost without a trace.
+    const hasInvoiceSignal =
+      !!parsed.vendor ||
+      parsed.total_inc_btw != null ||
+      parsed.total_ex_btw != null ||
+      parsed.amount != null;
+    const band = decideConfidenceBand(parsed.confidence, hasInvoiceSignal);
+    if (band === 'skip') {
       return {
         is_invoice: false,
         confidence: parsed.confidence,
         reason: parsed.reason || 'Te lage zekerheid — bestand overgeslagen',
+      };
+    }
+    if (band === 'review') {
+      parsed.is_invoice = true;
+      parsed.uncertain = true;
+      parsed.field_confidence = {
+        ...(parsed.field_confidence ?? {}),
+        amount: Math.min(parsed.field_confidence?.amount ?? 0.4, 0.4),
       };
     }
 

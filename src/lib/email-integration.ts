@@ -1024,6 +1024,10 @@ async function fetchOutlookMessageAttachments(
 export interface AttachmentClassification {
   isInvoice: boolean
   confidence: number
+  // [TRUST-UNCERTAIN] The reader recognised likely-invoice content but wasn't sure
+  // it read it right. Such an item is imported FLAGGED (not skipped) so it reaches
+  // the human verify queue instead of vanishing.
+  uncertain?: boolean
   // [STATEMENT-SKIP] Claude's short Dutch reason when is_invoice=false (e.g.
   // "rekeningoverzicht — samenvatting van bestaande facturen"). Stored in the
   // skip registry so the owner/dev can audit WHAT was skipped and WHY, instead
@@ -1079,6 +1083,7 @@ export async function classifyAttachment(
   return {
     isInvoice: result.is_invoice,
     confidence: result.confidence,
+    uncertain: result.uncertain,
     // [STATEMENT-SKIP] why Claude rejected it — surfaces in the skip registry
     reason: result.reason,
     vendor: result.vendor,
