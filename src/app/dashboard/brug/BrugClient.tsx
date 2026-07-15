@@ -751,7 +751,7 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
 
       {pnl.cashOmzetZonderBtw > 0 && (
         <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: R.md, background: '#FEE8C4', color: '#7C5800', fontSize: 12.5, lineHeight: 1.5 }}>
-          {fmtEur(pnl.cashOmzetZonderBtw)} contante omzet heeft nog geen BTW-tarief — die BTW zit niet in 5a.
+          {fmtEur(pnl.cashOmzetZonderBtw)} omzet (contant of via de bank) heeft nog geen BTW-tarief — die BTW zit niet in 5a.
         </div>
       )}
     </div>

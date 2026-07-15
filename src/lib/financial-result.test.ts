@@ -102,7 +102,56 @@ console.log("\n— turnover (retail Z-report) de-dup vs pos_income + cash —");
   check("kosten on a covered day still counts", r.kosten === 30);
   check("btwVerschuldigd = turnover 195 only (covered cash BTW excluded)", near(r.btwVerschuldigd, 195));
   check("per-rate turnover BTW split (rubriek 1a/1b)", near(r.turnoverBtw9, 90) && near(r.turnoverBtw21, 105));
-  check("nudge fires only for the uncovered unrated cash", r.cashOmzetZonderBtw === 50);
+  // The uncovered €800 pos_income is real revenue with NO BTW rate → it must be flagged
+  // (blocks readiness), exactly like the €50 unrated cash. Silently zero-rating it was the
+  // HIGH money-truth bug. Total no-rate omzet = 800 (bank) + 50 (cash) = 850.
+  check("bank omzet without rate is flagged too (not just cash)", r.cashOmzetZonderBtw === 850);
+}
+
+console.log("\n— [BTW-TRUTH] bank omzet without a rate must not silently declare €0 BTW —");
+{
+  // A plain 'omzet' bank credit and an uncovered pos_income line: both revenue, no rate.
+  const bank: ResultBankTx[] = [
+    { amount: 1210, category: "omzet", invoice_id: null },
+    { amount: 605, category: "pos_income", invoice_id: null, settleDate: "2026-06-30", settleExact: true },
+  ];
+  const r = computeResult([], bank, []);
+  check("counted in omzet", near(r.omzet, 1815));
+  check("no invented BTW (btwVerschuldigd 0, salesByRate empty)",
+    r.btwVerschuldigd === 0 && r.salesByRate.length === 0);
+  check("BUT surfaced as omzet-zonder-tarief (blocks readiness)", near(r.cashOmzetZonderBtw, 1815));
+}
+
+console.log("\n— [SETTLE-LAG] fallback booking date reconciles to Z-report via backward window —");
+{
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-04-06", // Monday: the takings day
+    base_0: 0, base_9: 0, base_21: 1000, btw_9: 0, btw_21: 210,
+    total_incl: 1210, pin_amount: 1210, cash_amount: 0, other_amount: 0,
+  }];
+  // Bank omitted DAT. → settleDate is the booking date (Apr 8, T+2), settleExact false.
+  const bankFallback: ResultBankTx[] = [
+    { amount: 1210, category: "pos_income", invoice_id: null, settleDate: "2026-04-08", settleExact: false },
+  ];
+  const rf = computeResult([], bankFallback, [], turnover);
+  check("fallback booking date (T+2) is reconciled to the Z-report day → not double-counted",
+    near(rf.omzet, 1000) && rf.cashOmzetZonderBtw === 0);
+
+  // An EXACT takings date that ISN'T covered must still count (never hidden by the window).
+  const bankExactUncovered: ResultBankTx[] = [
+    { amount: 300, category: "pos_income", invoice_id: null, settleDate: "2026-04-07", settleExact: true },
+  ];
+  const re = computeResult([], bankExactUncovered, [], turnover);
+  check("exact takings date not in covered → counts (window never hides exact-dated revenue)",
+    near(re.omzet, 1000 + 300) && near(re.cashOmzetZonderBtw, 300));
+
+  // A fallback booking date with NO covered day within the lag window → still real revenue.
+  const bankFarFallback: ResultBankTx[] = [
+    { amount: 400, category: "pos_income", invoice_id: null, settleDate: "2026-04-20", settleExact: false },
+  ];
+  const rff = computeResult([], bankFarFallback, [], turnover);
+  check("fallback booking date beyond the lag window → counts (not silently suppressed)",
+    near(rff.omzet, 1000 + 400) && near(rff.cashOmzetZonderBtw, 400));
 }
 
 console.log("\n— turnover cross-quarter settlement lag (R1) —");

@@ -109,7 +109,7 @@ export function buildAangifte(
   );
   if (input.cashOmzetZonderBtw > 0) {
     notes.push(
-      `€${euro(input.cashOmzetZonderBtw)} omzet heeft nog geen BTW-tarief (contante omzet of een niet-gesplitste kassadag) — die is NIET in 1a/1b ingedeeld. ` +
+      `€${euro(input.cashOmzetZonderBtw)} omzet heeft nog geen BTW-tarief (contante omzet, bankomzet of een niet-gesplitste kassadag) — die is NIET in 1a/1b ingedeeld. ` +
       "Ken een tarief toe voor een compleet beeld.",
     );
   }

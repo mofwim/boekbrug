@@ -30,6 +30,12 @@ export interface ResultBankTx {
   // [TURNOVER] For a pos_income line: the takings day it settled (parsed DAT date, or the
   // booking date as a fallback). Used to exclude it on days the till already counted.
   settleDate?: string | null;
+  // TRUE when settleDate is the REAL takings date parsed from the statement (DAT.),
+  // FALSE/absent when it is only the booking date used as a fallback. When it is a
+  // fallback, the true takings day is a day or two EARLIER (settlement lags takings),
+  // so the covered-day check widens to a short backward window — never forward, so it
+  // can never suppress (hide) revenue on a day that carries its own exact takings date.
+  settleExact?: boolean;
 }
 export interface ResultCashEntry {
   direction: "in" | "out";
@@ -62,6 +68,37 @@ export interface FinancialResult {
 }
 
 export interface SalesRateBucket { rate: number; omzet: number; btw: number }
+
+// The maximum settlement lag (days) we look BACKWARD when a pos_income line's takings
+// date wasn't printed and we only have the booking date. Card settlements post to the
+// bank the same day or a few days after the sale — never before — so looking back a few
+// days (and never forward) reconciles a T+1/T+2 payout to its Z-report day without ever
+// hiding revenue on a day that carries its own exact takings date.
+const SETTLE_LAG_DAYS = 3;
+
+// Is a pos_income line the settlement of a day the till Z-report already counted? Exact
+// takings date (settleExact) → exact covered match. Fallback booking date → also accept a
+// covered day up to SETTLE_LAG_DAYS earlier (the sale happened before the payout posted).
+function posSettlesCoveredDay(t: ResultBankTx, covered: Set<string>): boolean {
+  if (!t.settleDate) return false;
+  if (covered.has(t.settleDate)) return true;
+  if (t.settleExact) return false; // exact date: no widening — never hide real revenue
+  for (let back = 1; back <= SETTLE_LAG_DAYS; back++) {
+    if (covered.has(isoMinusDays(t.settleDate, back))) return true;
+  }
+  return false;
+}
+
+// Subtract whole days from a 'YYYY-MM-DD' string via UTC (no local-TZ drift). Returns
+// '' for a malformed input so it simply won't match any covered date.
+function isoMinusDays(iso: string, days: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return "";
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  d.setUTCDate(d.getUTCDate() - days);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+}
 
 // Verified statuses that count (mirrors buildZzpSummary 'all' mode): outgoing that
 // has left the door, incoming the owner has confirmed. Unverified ('processing',
@@ -143,12 +180,25 @@ export function computeResult(
     if (t.invoice_id) continue;   // payment of an already-counted invoice
     if (!t.category) continue;     // uncategorized → never guessed into a total
     // [TURNOVER] pos_income that settled a day the Z-report already counted is that day's
-    // takings, not new revenue → witness only. Keyed strictly on the takings date
-    // (settleDate), and ONLY for pos_income — a manually-set 'omzet' line still counts.
-    if (t.category === "pos_income" && t.settleDate && covered.has(t.settleDate)) continue;
+    // takings, not new revenue → witness only. Keyed on the takings date (settleDate).
+    // When settleDate is the exact DAT. date, an exact covered-day match. When it is only
+    // the booking-date fallback, the real takings day is 1–3 days earlier (settlement lag),
+    // so widen to a short BACKWARD window — never forward, so a real takings day carrying
+    // its own exact date can never be hidden. ONLY for pos_income — a manually-set 'omzet'
+    // line still counts (the owner's stated intent), and if it lacks a rate it is surfaced
+    // below as omzet-zonder-tarief rather than silently zero-rated.
+    if (t.category === "pos_income" && posSettlesCoveredDay(t, covered)) continue;
     const amt = Math.abs(t.amount ?? 0);
     const role = pnlRole(t.category);
-    if (role === "omzet") omzet += amt;
+    if (role === "omzet") {
+      omzet += amt;
+      // A bank revenue line (pos_income takings on an un-covered day, or a manual 'omzet'
+      // chip) carries NO BTW rate — it must NOT silently declare €0 BTW in 5a. Surface it
+      // exactly like unrated cash: counted in omzet, flagged as omzet-zonder-tarief, which
+      // blocks readiness and appears in the aangifte note so a rate is assigned before
+      // filing. (Card takings reconciled to a Z-report were already excluded above.)
+      cashOmzetZonderBtw += amt;
+    }
     else if (role === "kosten") kosten += amt;
     // transfer / prive / tax / fee → excluded
   }

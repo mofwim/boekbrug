@@ -73,14 +73,18 @@ export async function GET(req: NextRequest) {
     .gte("date", start)
     .lte("date", end);
 
-  const bankTx: ResultBankTx[] = (bankRows ?? []).map((b) => ({
-    amount: b.amount, category: b.category, invoice_id: b.invoice_id,
+  const bankTx: ResultBankTx[] = (bankRows ?? []).map((b) => {
     // For a pos_income line, prefer the embedded takings date (DAT.); fall back to the
     // booking date only when the bank omits it. Non-POS lines don't need a settleDate.
-    settleDate: b.category === "pos_income"
-      ? (parsePosSettlement(b.description).date ?? b.date)
-      : null,
-  }));
+    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
+    return {
+      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
+      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
+      // Exact only when the real takings date was printed; a booking-date fallback lets
+      // computeResult widen to a short backward settlement-lag window (never forward).
+      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
+    };
+  });
 
   // Cash entries in the quarter.
   const { data: cashRows } = await pipeline
