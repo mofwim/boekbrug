@@ -99,6 +99,7 @@ export function OnboardingWizard({
   const [accountantEmail, setAccountantEmail] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   // [BOEK-015] Reset saving state whenever step changes — safety net for all transitions
   // Placed after useState declaration to avoid hoisting confusion
@@ -121,11 +122,17 @@ export function OnboardingWizard({
   const counter = stepCounter(step, role, roleAlreadySet);
 
   async function persistStep(nextStep: number, extra?: Record<string, unknown>) {
-    await fetch("/api/onboarding", {
+    // [TRUST-ONBOARDING] THROW on a failed save. Before this, persistStep ignored
+    // res.ok and the caller advanced regardless — so if the PATCH 500'd (expired
+    // session / RLS), the wizard moved on and the entered KvK/BTW/adres were silently
+    // lost while the user believed they were stored. Throwing lets handleNext's catch
+    // keep the user on the step with an error, so nothing is lost unknowingly.
+    const res = await fetch("/api/onboarding", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ step: nextStep, role, ...extra }),
     });
+    if (!res.ok) throw new Error(`onboarding save failed: ${res.status}`);
   }
 
   // [BOEK-011] Fix 2: detect gmail=connected after OAuth callback redirect
@@ -142,7 +149,10 @@ export function OnboardingWizard({
       const timer = setTimeout(() => {
         setStep((cur) => {
           if (cur === 4) {
-            void persistStep(5); // fire-and-forget; step guard prevents double
+            // fire-and-forget; step guard prevents double. persistStep now throws on
+            // a failed save, so swallow here — this auto-advance is a convenience and
+            // step 5 (accountant) carries no data to lose.
+            void persistStep(5).catch(() => {});
             return 5;
           }
           return cur; // user already advanced manually — do nothing
@@ -186,6 +196,7 @@ export function OnboardingWizard({
   async function handleNext() {
     // [BOEK-015] fix: always wrap in try/finally so saving resets even on error
     setSaving(true);
+    setSaveError("");
     try {
     if (role === "zzp") {
       if (step === 1) {
@@ -288,6 +299,9 @@ export function OnboardingWizard({
     } catch (err) {
       console.error("[BOEK-015] handleNext error:", err);
       setSaving(false); // only reset on actual error
+      // [TRUST-ONBOARDING] Tell the user the step did NOT save (they stay put, data
+      // intact) instead of silently swallowing it and appearing to advance.
+      setSaveError("Opslaan mislukt — controleer je verbinding en probeer opnieuw.");
     }
     // Note: no finally — finish() navigates away, component unmounts naturally
   }
@@ -423,6 +437,9 @@ export function OnboardingWizard({
 
         {/* Buttons */}
         <div className="mt-8 space-y-3">
+          {saveError && (
+            <p style={{ margin: 0, fontSize: "13.5px", color: "#B3261E", textAlign: "center" }}>{saveError}</p>
+          )}
           {isDone ? (
             <Btn onClick={finish} loading={finishing}>Ga naar mijn dashboard →</Btn>
           ) : (
