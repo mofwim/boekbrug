@@ -55,7 +55,14 @@ export async function GET(req: NextRequest) {
     supabase
       .from('invoices')
       .select('invoice_number, invoice_date, direction, invoice_type, client_name, total_ex_btw, btw_amount, total_inc_btw, status')
-      .eq('sender_id', user.id)
+      // [TRUST-ARCHIVE] BOTH directions. Outgoing invoices are the owner's as
+      // sender_id; incoming (purchase) invoices are stored with sender_id NULL and
+      // receiver_id = the owner, so a sender_id-only query silently dropped every
+      // purchase record — while the README claimed 'in en uit'. The .or matches the
+      // invoices RLS policy (sender_id = auth.uid() OR receiver_id = auth.uid()), so
+      // it stays owner-scoped. Without incoming, the accountant cannot reconstruct
+      // voorbelasting from the 7-year archive.
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .gte('invoice_date', `${year}-01-01`)
       .lte('invoice_date', `${year}-12-31`),
   ])
@@ -153,7 +160,19 @@ export async function GET(req: NextRequest) {
     `De stukken over ${year} bewaar je dus tot en met ${keepThroughYear(year)}.`,
     ``,
     `Documenten in dit bestand: ${added}${skipped.length ? ` (overgeslagen: ${skipped.length})` : ''}.`,
-    `Facturen in het overzicht: ${invs.length}.`,
+    // [TRUST-ARCHIVE] Honest, split count — no single conflated total. Only factuur/
+    // creditnota are fiscale stukken; offertes/pro-forma's and concepten are listed
+    // for completeness but flagged so the accountant isn't misled.
+    (() => {
+      const isFiscal = (t: string | null) => t === 'factuur' || t === 'creditnota'
+      const uit = invs.filter((i) => i.direction === 'outgoing' && isFiscal(i.invoice_type)).length
+      const inn = invs.filter((i) => i.direction === 'incoming' && isFiscal(i.invoice_type)).length
+      const concept = invs.filter(
+        (i) => i.status === 'draft' || i.invoice_type === 'offerte' || i.invoice_type === 'pro_forma'
+      ).length
+      return `Facturen in het overzicht: ${uit} uitgaand, ${inn} inkomend` +
+        (concept ? ` (+ ${concept} concept/offerte — niet-fiscaal, ter info)` : '') + '.'
+    })(),
     ...(skipped.length ? ['', 'Overgeslagen bestanden:', ...skipped.map((s) => `  - ${s}`)] : []),
     ``,
     `BoekBrug — je financiële waarheid, altijd exporteerbaar.`,
