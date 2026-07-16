@@ -16,6 +16,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import {
   matchTransactions,
   isFullyCovered,
+  coveredReferenceNumbers,
   normalizeRef,
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
@@ -98,6 +99,9 @@ export async function GET() {
     (r) => (r as BankTransactionDbRow).invoice_id != null
   );
   const partialLink = new Map<string, boolean>(); // txId → allCovered
+  // [BANK-SLOT-PERSIST] Per-tx list of reference numbers already paid — so the UI marks
+  // those slots "Betaald" on reload instead of showing an already-paid invoice as open.
+  const coveredByTx = new Map<string, string[]>();
 
   if (linkedTxRows.length > 0) {
     // Paid invoice numbers for this user, both directions (cheap, single read).
@@ -119,6 +123,7 @@ export async function GET() {
     for (const r of linkedTxRows) {
       const row = r as BankTransactionDbRow;
       partialLink.set(row.id, isFullyCovered(row.reference, paidSet));
+      coveredByTx.set(row.id, coveredReferenceNumbers(row.reference, paidSet));
     }
   }
 
@@ -145,6 +150,9 @@ export async function GET() {
       // in "Te bevestigen" regardless of `outcome` (it may have no candidates left).
       partiallyLinked: isLinked,
       allCovered: isLinked ? partialLink.get(txId!) === true : false,
+      // [BANK-SLOT-PERSIST] Normalized reference numbers already paid against this tx, so
+      // the multi-invoice UI marks those slots "Betaald" after a reload (session state gone).
+      coveredNumbers: isLinked ? (coveredByTx.get(txId!) ?? []) : [],
     };
   });
 

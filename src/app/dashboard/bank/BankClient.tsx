@@ -87,6 +87,9 @@ interface Suggestion {
   // allCovered: every reference number is now paid (→ it's effectively done).
   partiallyLinked?: boolean
   allCovered?: boolean
+  // [BANK-SLOT-PERSIST] Server-computed reference numbers already paid against this tx,
+  // so a paid slot shows "Betaald" after a reload (session confirm state is gone).
+  coveredNumbers?: string[]
 }
 interface MatchResponse {
   ok: boolean
@@ -1210,11 +1213,14 @@ function TxCard({
   // batch and steer to the wrong pick — caught in adversarial review) — fixes both bugs.
   const resolvedRefCount = countResolvedReferences(
     allRefParts,
-    [...s.candidates.map((c) => c.invoiceNumber), ...confirmedNumbers],
+    [...s.candidates.map((c) => c.invoiceNumber), ...confirmedNumbers, ...(s.coveredNumbers ?? [])],
   )
   const wasMulti = !isIgnoredTab && (resolvedRefCount >= 2 || s.partiallyLinked === true)
   // Equality — not substring — so "263" can't claim "26302050".
-  const confirmedSet = new Set(confirmedNumbers.map(normRef))
+  // [BANK-SLOT-PERSIST] Merge the SESSION's just-confirmed numbers with the server's
+  // covered numbers (paid invoices, reload-safe) so an already-paid slot shows "Betaald"
+  // after a refresh instead of a false "Koppelen" / "nog open" that would double-book it.
+  const confirmedSet = new Set([...confirmedNumbers, ...(s.coveredNumbers ?? [])].map(normRef))
   // [BANK-SLOT-DISMISS] Build slots whenever the transaction STARTED multi, so a
   // single remaining number (after others were dismissed) still shows its own
   // linkable row — not just an empty banner. Driven by wasMulti, not isMulti.

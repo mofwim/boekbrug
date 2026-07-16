@@ -7,6 +7,7 @@
 'use client'
 
 import React from 'react'
+import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 
 // ── Design System tokens ───────────────────────────────────────────────────────
 // ZZP → Material You | Accountant → Google Workspace
@@ -65,6 +66,11 @@ export interface InvoiceRowProps {
   onEdit?: (id: string) => void
   resendingId?: string | null
   onAccountantAction?: (id: string, action: 'verwerkt' | 'in_behandeling' | 'vraag' | null) => void
+  // [BANK-RECON-BADGE] Reconciliation status vs the bank statement for THIS invoice.
+  // linked → "in bankafschrift"; pendingMatch → a confident unconfirmed payment the owner
+  // can confirm in one tap (onReconConfirm routes to the bank page). Undefined → no badge.
+  recon?: InvoiceRecon
+  onReconConfirm?: (invoiceId: string) => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -109,6 +115,54 @@ function StatusChip({ status, mode }: { status: string; mode: 'zzp' | 'accountan
       {STATUS_LABEL[status] ?? status}
     </span>
   )
+}
+
+// [BANK-RECON-BADGE] A small chip showing this invoice's relationship to the bank
+// statement. "In bankafschrift" (green) when a bank line is already linked; "Betaling
+// gevonden" (blue, tappable) when the engine confidently matches an unconfirmed payment.
+// The pending chip stops row-click propagation and routes to the bank page to confirm —
+// it never marks the invoice paid by itself.
+function ReconBadge({
+  recon, mode, invoiceId, onReconConfirm,
+}: {
+  recon: InvoiceRecon
+  mode: 'zzp' | 'accountant'
+  invoiceId: string
+  onReconConfirm?: (invoiceId: string) => void
+}) {
+  const radius = mode === 'zzp' ? 9999 : 4
+  if (recon.linked) {
+    return (
+      <span title="Deze betaling staat in je bankafschrift" style={{
+        display: 'inline-flex', alignItems: 'center', gap: 3,
+        backgroundColor: '#E6F4EA', color: '#137333',
+        borderRadius: radius, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
+      }}>
+        <span aria-hidden>🔗</span> In bankafschrift
+      </span>
+    )
+  }
+  if (recon.pendingMatch) {
+    const clickable = !!onReconConfirm
+    return (
+      <span
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onClick={clickable ? (e) => { e.stopPropagation(); onReconConfirm!(invoiceId) } : undefined}
+        onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onReconConfirm!(invoiceId) } } : undefined}
+        title="Er staat een betaling in je bankafschrift die hierbij lijkt te horen — bevestig het op de Bank-pagina"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          backgroundColor: '#E8F0FE', color: '#1967D2',
+          borderRadius: radius, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
+          cursor: clickable ? 'pointer' : 'default',
+        }}
+      >
+        <span aria-hidden>🏦</span> Betaling gevonden
+      </span>
+    )
+  }
+  return null
 }
 
 // [DS] Accountant action chip — Workspace rectangle style
@@ -192,6 +246,8 @@ export function InvoiceRowItem({
   onEdit,
   resendingId = null,
   onAccountantAction,
+  recon,
+  onReconConfirm,
 }: InvoiceRowProps) {
   const displayStatus    = getDisplayStatus(invoice)
   const isAccountantMode = !!onAccountantAction
@@ -280,6 +336,11 @@ export function InvoiceRowItem({
         <span style={{ fontSize: 14, fontWeight: 700, color: '#202124', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap' }}>
           {new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.total_inc_btw ?? 0)}
         </span>
+
+        {/* [BANK-RECON-BADGE] Reconciliation vs the bank statement (owner-facing). */}
+        {recon && (
+          <ReconBadge recon={recon} mode={isAccountantMode ? 'accountant' : 'zzp'} invoiceId={invoice.id} onReconConfirm={onReconConfirm} />
+        )}
 
         {/* ════ ACCOUNTANT MODE — Workspace chips ════ */}
         {isAccountantMode && (

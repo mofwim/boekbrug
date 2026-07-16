@@ -129,12 +129,18 @@ export function referenceMatches(
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, "")
     .replace(/\s+/g, " ");
-  if (!/^[0-9]+$/.test(needle)) return haystack.includes(needle);
+  // [TRUST-MATCH-ALNUM] The digit-boundary guard now applies to ALPHANUMERIC invoice
+  // numbers too, not only pure digits. Previously an alphanumeric needle fell back to a
+  // raw substring test, so invoice "MF26" matched reference "MF260" (a DIFFERENT invoice,
+  // one sequence number later) → a 0.97 'auto' + a false "factuurnummer staat in
+  // bankafschrift" line + one tap paid the WRONG invoice. A trailing/leading DIGIT extends
+  // the number and changes identity, so it is never a clean boundary; a LETTER before the
+  // number is fine (a printed prefix like "INV2050" still matches invoice "2050").
   for (let idx = haystack.indexOf(needle); idx >= 0; idx = haystack.indexOf(needle, idx + 1)) {
     const before = idx > 0 ? haystack[idx - 1] : "";
     const after = idx + needle.length < haystack.length ? haystack[idx + needle.length] : "";
-    // A space (or string edge) is a clean boundary; only an adjacent DIGIT means the
-    // needle is a slice of a bigger number.
+    // A space (or string edge) is a clean boundary; an adjacent DIGIT means the needle is a
+    // slice of a bigger number ("2050"⊂"26302050", "MF26"⊂"MF260") → not a real match.
     if (!/[0-9]/.test(before) && !/[0-9]/.test(after)) return true;
   }
   return false;
@@ -486,4 +492,24 @@ export function isFullyCovered(
   if (refNumbers.length <= 1) return true; // single-invoice case — one link completes it
   const paidSet = paidNumbers instanceof Set ? paidNumbers : new Set(paidNumbers);
   return refNumbers.every((n) => paidSet.has(n));
+}
+
+/**
+ * Which of a transaction's reference numbers are already backed by a PAID invoice —
+ * the normalized subset of parseReferenceNumbers(reference) that is in paidNumbers.
+ *
+ * [BANK-SLOT-PERSIST] The multi-invoice card marks a slot "Betaald" from the SESSION's
+ * confirmed set, which is lost on reload; the paid invoice is then excluded from the
+ * matcher's candidates (paid), so its slot had no candidate and showed "Koppelen" /
+ * "0/N bevestigd" — a false "unpaid", and re-uploading it would double-book the bill.
+ * The match route returns this list per partially-linked tx so the UI can mark those
+ * slots paid on reload. Consistent with isFullyCovered (same paidSet, same equality).
+ */
+export function coveredReferenceNumbers(
+  reference: string | null,
+  paidNumbers: Iterable<string>
+): string[] {
+  const refNumbers = parseReferenceNumbers(reference);
+  const paidSet = paidNumbers instanceof Set ? paidNumbers : new Set(paidNumbers);
+  return refNumbers.filter((n) => paidSet.has(n));
 }
