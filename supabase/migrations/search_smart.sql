@@ -4,12 +4,14 @@
 -- schaars zijn ("bedoelde je …?"). Ze gebruiken de trigram-operator `%` (index-gedekt
 -- door search_engine.sql) zodat "mohamd" nog steeds "Mohamed" vindt.
 --
--- Drempel: de default pg_trgm-drempel (0.3) is te streng voor KORTE queries met één
--- weggevallen letter — bv. similarity('fmz','famz') ≈ 0.286 < 0.3 → gemist. Daarom
--- verlagen we de drempel naar 0.2, maar ALLEEN binnen de functie-scope
--- (`SET pg_trgm.similarity_threshold = 0.2` op de functie zelf). Zo blijft de `%`-
--- operator de trigram-index gebruiken (snel) én worden korte typefouten gevonden,
--- zonder dat de drempel voor enige andere query in de sessie verandert.
+-- Drempels: de default similarity-drempel (0.3) is te streng voor KORTE queries met
+-- één weggevallen letter — similarity('fmz','famz') ≈ 0.286 < 0.3 → gemist. Bovendien
+-- straft similarity() lengteverschil af, dus een typefout op één WOORD in een langere
+-- naam ("famz" in "Famz Trading BV") scoort laag. Daarom matchen we met TWEE operatoren:
+--   * `%`  (similarity)      — hele-string-gelijkenis, drempel 0.2
+--   * `<%` (word_similarity) — beste-woord/deel-gelijkenis, drempel 0.4
+-- Beide drempels zijn FUNCTIE-scoped (SET op de functie), dus de operatoren blijven
+-- index-gedekt (snel) en geen enkele andere query in de sessie wordt beïnvloed.
 --
 -- Veiligheid: SECURITY INVOKER (de default, hier expliciet) → de functie draait met
 -- de RLS-context van de aanroeper. Een gebruiker krijgt dus NOOIT rijen die hij niet
@@ -28,14 +30,20 @@ STABLE
 SECURITY INVOKER
 SET search_path = public
 SET pg_trgm.similarity_threshold = 0.2
+SET pg_trgm.word_similarity_threshold = 0.4
 AS $$
   SELECT i.*
   FROM public.invoices i
   WHERE length(btrim(q)) >= 2
-    AND (i.client_name % q OR i.invoice_number % q)
+    AND (
+      i.client_name % q OR q <% coalesce(i.client_name, '')
+      OR i.invoice_number % q OR q <% coalesce(i.invoice_number, '')
+    )
   ORDER BY GREATEST(
       similarity(coalesce(i.client_name, ''), q),
-      similarity(coalesce(i.invoice_number, ''), q)
+      word_similarity(q, coalesce(i.client_name, '')),
+      similarity(coalesce(i.invoice_number, ''), q),
+      word_similarity(q, coalesce(i.invoice_number, ''))
     ) DESC
   LIMIT 8;
 $$;
@@ -48,14 +56,20 @@ STABLE
 SECURITY INVOKER
 SET search_path = public
 SET pg_trgm.similarity_threshold = 0.2
+SET pg_trgm.word_similarity_threshold = 0.4
 AS $$
   SELECT c.*
   FROM public.clients c
   WHERE length(btrim(q)) >= 2
-    AND (c.name % q OR coalesce(c.email, '') % q)
+    AND (
+      c.name % q OR q <% coalesce(c.name, '')
+      OR coalesce(c.email, '') % q OR q <% coalesce(c.email, '')
+    )
   ORDER BY GREATEST(
       similarity(coalesce(c.name, ''), q),
-      similarity(coalesce(c.email, ''), q)
+      word_similarity(q, coalesce(c.name, '')),
+      similarity(coalesce(c.email, ''), q),
+      word_similarity(q, coalesce(c.email, ''))
     ) DESC
   LIMIT 5;
 $$;
