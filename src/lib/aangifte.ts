@@ -26,6 +26,9 @@ export interface AangifteCompleteness {
   incomingInvoiceCount: number;  // purchase invoices feeding 5b (voorbelasting)
   outgoingInvoiceCount: number;  // sales invoices feeding 1a/1b
   hasEuPurchase: boolean;        // an incoming invoice from outside NL (rubriek 4b — not auto-computed)
+  // Verified invoices with NO invoice_date. A date-range fetch silently drops them, so they
+  // are NOT in the figures above — surfaced as a note so the concept isn't quietly too low.
+  datelessVerifiedCount?: number;
 }
 
 export interface AangifteRow {
@@ -117,6 +120,13 @@ export function buildAangifte(
     notes.push(
       "Er zijn inkopen uit het buitenland (EU). BTW-verlegging (rubriek 4b) en de bijbehorende voorbelasting " +
       "worden hier NIET automatisch berekend — je boekhouder verwerkt dit.",
+    );
+  }
+  if ((completeness.datelessVerifiedCount ?? 0) > 0) {
+    const n = completeness.datelessVerifiedCount ?? 0;
+    notes.push(
+      `Let op: ${n} geverifieerde factu(u)r(en) ${n === 1 ? "heeft" : "hebben"} geen factuurdatum en ${n === 1 ? "telt" : "tellen"} ` +
+      "daarom NIET mee in dit kwartaal — voer de factuurdatum in zodat de omzet/voorbelasting compleet is.",
     );
   }
 

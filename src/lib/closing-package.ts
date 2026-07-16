@@ -572,9 +572,8 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     filesIncluded++;
   }
 
-  // ── overzicht.csv + overzicht.json ──
-  const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates);
-  zip.file("overzicht.csv", "\uFEFF" + overviewCsv);
+  // ── overzicht.csv is built LATER (after all warnings are collected) so the CSV's
+  //    "Let op" section matches overzicht.json — see below. ──
 
   // \u2500\u2500 kasboek.csv ([CASH-EVIDENCE] standalone cash-book sheet, when the owner keeps one) \u2500\u2500
   if (cashCsv) zip.file("kasboek.csv", "\uFEFF" + cashCsv);
@@ -604,6 +603,11 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
       });
     }
   }
+
+  // ── overzicht.csv — built HERE, after every warning (incl. turnover_exceptions and
+  //    card_gross_mismatch above) is in `warnings`, so its "Let op" section matches
+  //    overzicht.json instead of under-reporting the quarter's open points to the accountant.
+  zip.file("overzicht.csv", "﻿" + buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates));
 
   // ── concept-btw-aangifte.csv (the concept mapped to Belastingdienst rubrieken) ──
   // Travels WITH the evidence (invoice PDFs, dagomzet.csv, bank statement) in this same
@@ -1148,18 +1152,24 @@ export async function buildClosingPackageZip(args: {
   const paymentDates = await resolvePaymentDates(supabase, paidInvoices);
 
   // ── [TURNOVER-CLOSING] Retail till turnover for the quarter + its reconciliation ──
+  // [COVERED-BUFFER] Fetch a 5-day PRE-quarter buffer too, so the covered-day de-dup below
+  // matches /api/aangifte exactly: a card payout booked early this quarter that settles a
+  // PREVIOUS-quarter till day (settleExact) must be suppressed here — without the buffer the
+  // ZIP counted it AGAIN as omzet-zonder-tarief, disagreeing with the in-app concept.
   const { data: turnoverRows } = await supabase
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
     .eq("user_id", ownerId)
-    .gte("turnover_date", start)
+    .gte("turnover_date", shiftDays(start, -5))
     .lte("turnover_date", end);
-  const turnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
+  const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
     base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,
     btw_9: t.btw_9 ?? 0, btw_21: t.btw_21 ?? 0,
     total_incl: t.total_incl, pin_amount: t.pin_amount, cash_amount: t.cash_amount, other_amount: t.other_amount,
   }));
+  // dagomzet.csv + the triangle use strictly IN-quarter rows; the covered set uses the buffer.
+  const turnover: DailyTurnover[] = allTurnover.filter((t) => t.turnover_date >= start);
 
   let turnoverClosing: TurnoverClosing | null = null;
   let cardReconciliation: TriangleResult | null = null;
@@ -1251,8 +1261,10 @@ export async function buildClosingPackageZip(args: {
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
   }));
+  // [COVERED-BUFFER] Build from the BUFFERED set (incl. up to 5 pre-quarter days) so a
+  // settleExact card line paying a previous-quarter till day is suppressed — matching aangifte.
   const coveredDates = new Set(
-    turnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
+    allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
   );
   const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates);
   const completeness: AangifteCompleteness = {

@@ -10,6 +10,7 @@ import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEn
 import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import { netCommissionToBook, ACQUIRER_VENDOR_RE } from "@/lib/card-reconcile";
 import type { EftSettlement } from "@/lib/eft-parser";
@@ -42,12 +43,13 @@ export async function GET(req: NextRequest) {
   const pipeline = createPipelineClient();
 
   // Invoices for this owner (outgoing = sender, incoming = receiver) in the quarter.
-  const { data: invRows } = await pipeline
+  const invRows = await fetchAllRows((from, to) => pipeline
     .from("invoices")
     .select("direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
-    .lte("invoice_date", end);
+    .lte("invoice_date", end)
+    .order("id", { ascending: true }).range(from, to));
 
   // [FIN-4] Infer a NULL direction from ownership (owner is the receiver of an incoming
   // invoice) — the SAME rule effectiveDirection / aangifte / readiness use — so a
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
     i.direction === "incoming" || i.direction === "outgoing"
       ? i.direction
       : i.receiver_id === ownerId ? "incoming" : "outgoing";
-  const invoices: ResultInvoice[] = (invRows ?? []).map((i) => ({
+  const invoices: ResultInvoice[] = invRows.map((i) => ({
     direction: effDir(i),
     status: i.status,
     total_ex_btw: i.total_ex_btw,
@@ -66,14 +68,15 @@ export async function GET(req: NextRequest) {
   // Bank lines in the quarter (computeResult excludes invoice payments + uncategorized).
   // [TURNOVER] `description` is needed to parse a pos_income line's takings date (DAT.),
   // which keys the covered-day de-dup against the till turnover.
-  const { data: bankRows } = await pipeline
+  const bankRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
     .select("amount, category, invoice_id, date, description")
     .eq("user_id", ownerId)
     .gte("date", start)
-    .lte("date", end);
+    .lte("date", end)
+    .order("id", { ascending: true }).range(from, to));
 
-  const bankTx: ResultBankTx[] = (bankRows ?? []).map((b) => {
+  const bankTx: ResultBankTx[] = bankRows.map((b) => {
     // For a pos_income line, prefer the embedded takings date (DAT.); fall back to the
     // booking date only when the bank omits it. Non-POS lines don't need a settleDate.
     const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
@@ -87,14 +90,15 @@ export async function GET(req: NextRequest) {
   });
 
   // Cash entries in the quarter.
-  const { data: cashRows } = await pipeline
+  const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date")
     .eq("user_id", ownerId)
     .gte("entry_date", start)
-    .lte("entry_date", end);
+    .lte("entry_date", end)
+    .order("id", { ascending: true }).range(from, to));
 
-  const cashEntries: ResultCashEntry[] = (cashRows ?? []).map((c) => ({
+  const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount, category: c.category, btw_rate: c.btw_rate,
     date: c.entry_date,
@@ -161,14 +165,15 @@ export async function GET(req: NextRequest) {
   const endD2 = new Date(Date.UTC(year, startMonth + 3, 0));
   endD2.setUTCDate(endD2.getUTCDate() + 5);
   const endBuffer = `${endD2.getUTCFullYear()}-${pad(endD2.getUTCMonth() + 1)}-${pad(endD2.getUTCDate())}`;
-  const { data: posBufRows } = await pipeline
+  const posBufRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
     .select("description, amount, date")
     .eq("user_id", ownerId)
     .eq("category", "pos_income")
     .gte("date", startBuffer)
-    .lte("date", endBuffer);
-  const netByDay = bankNetByDay((posBufRows ?? []).map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
+    .lte("date", endBuffer)
+    .order("id", { ascending: true }).range(from, to));
+  const netByDay = bankNetByDay(posBufRows.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
   for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
 
   const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });

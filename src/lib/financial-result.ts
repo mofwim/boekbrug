@@ -199,19 +199,28 @@ export function computeResult(
     // line still counts (the owner's stated intent), and if it lacks a rate it is surfaced
     // below as omzet-zonder-tarief rather than silently zero-rated.
     if (t.category === "pos_income" && posSettlesCoveredDay(t, covered)) continue;
-    const amt = Math.abs(t.amount ?? 0);
+    // [SIGN] Keep the SIGN of the bank amount — do NOT Math.abs it. A card refund/chargeback
+    // settles as a NEGATIVE pos_income and a supplier refund as a POSITIVE kosten credit;
+    // abs would book money leaving the business as money arriving (and vice-versa). The stored
+    // convention is credit(+)/debit(−), so a normal cost (debit, negative) becomes a positive
+    // kosten via -raw, while a refund correctly reduces it. (sumPosSettlements keeps the sign
+    // for the same reason.)
+    const raw = t.amount ?? 0;
     const role = pnlRole(t.category);
     if (role === "omzet") {
-      omzet += amt;
+      omzet += raw;
       // A bank revenue line (pos_income takings on an un-covered day, or a manual 'omzet'
       // chip) carries NO BTW rate — it must NOT silently declare €0 BTW in 5a. Surface it
       // exactly like unrated cash: counted in omzet, flagged as omzet-zonder-tarief, which
       // blocks readiness and appears in the aangifte note so a rate is assigned before
-      // filing. (Card takings reconciled to a Z-report were already excluded above.)
-      cashOmzetZonderBtw += amt;
-      omzetZonderBtwNonCash += amt; // bank-sourced → the rate split comes from the Z-report
+      // filing. Only a POSITIVE unrated line adds to the nudge — a refund reduces omzet but
+      // must not inflate the zonder-tarief warning or block readiness.
+      if (raw > 0) {
+        cashOmzetZonderBtw += raw;
+        omzetZonderBtwNonCash += raw; // bank-sourced → the rate split comes from the Z-report
+      }
     }
-    else if (role === "kosten") kosten += amt;
+    else if (role === "kosten") kosten += -raw; // debit(−) → positive cost; refund(+) reduces it
     // transfer / prive / tax / fee → excluded
   }
 

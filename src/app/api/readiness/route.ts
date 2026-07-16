@@ -7,6 +7,7 @@
 // short missing/risks lists. No new financial logic; every figure traces to imported data.
 // Owner-scoped (self). Read-only.
 
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
@@ -71,11 +72,11 @@ export async function GET(req: NextRequest) {
   const invoicesWithEvidence = summary.filesIncluded;
 
   // ── 2) Bank — transactions DATED in the quarter, and how many still need a bon ──
-  const { data: bankRows } = await pipeline
+  const bank = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
     .select("amount, category, invoice_id, date, status, description, counterpart_name")
-    .eq("user_id", ownerId).gte("date", start).lte("date", end);
-  const bank = bankRows ?? [];
+    .eq("user_id", ownerId).gte("date", start).lte("date", end)
+    .order("id", { ascending: true }).range(from, to));
   let undocumentedCount = 0;
   // [TRUST-READY] Count received payments (credits) we can't yet explain: pending,
   // no linked invoice, and no category at all. Card takings are auto-categorised
@@ -98,12 +99,12 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──
-  const { data: invRows } = await pipeline
+  const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
     .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .gte("invoice_date", start).lte("invoice_date", end);
-  const invRaw = invRows ?? [];
+    .gte("invoice_date", start).lte("invoice_date", end)
+    .order("id", { ascending: true }).range(from, to));
   // [FIN-4] Infer a NULL direction from ownership — the SAME rule effectiveDirection uses
   // in the closing package — so a null-direction verified invoice is counted here too and
   // the readiness/aangifte screen never diverges from the ZIP.
@@ -116,11 +117,12 @@ export async function GET(req: NextRequest) {
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
   }));
 
-  const { data: cashRows } = await pipeline
+  const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date")
-    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end);
-  const cashEntries: ResultCashEntry[] = (cashRows ?? []).map((c) => ({
+    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end)
+    .order("id", { ascending: true }).range(from, to));
+  const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount, category: c.category, btw_rate: c.btw_rate, date: c.entry_date,
   }));
@@ -145,16 +147,18 @@ export async function GET(req: NextRequest) {
   // Till reconciliation exceptions (the retail triangle) — only when a till is used.
   let reconExceptions: ReadinessSignals["reconExceptions"] = [];
   if (turnover.length > 0) {
-    const [posRes, cashOmzetRes] = await Promise.all([
-      pipeline.from("bank_transactions").select("description, amount")
+    const [posRows, cashOmzetRows] = await Promise.all([
+      fetchAllRows((from, to) => pipeline.from("bank_transactions").select("description, amount")
         .eq("user_id", ownerId).eq("category", "pos_income")
-        .gte("date", shiftDays(start, -5)).lte("date", shiftDays(end, 5)),
-      pipeline.from("cash_entries").select("entry_date, amount")
+        .gte("date", shiftDays(start, -5)).lte("date", shiftDays(end, 5))
+        .order("id", { ascending: true }).range(from, to)),
+      fetchAllRows((from, to) => pipeline.from("cash_entries").select("entry_date, amount")
         .eq("user_id", ownerId).eq("category", "omzet")
-        .gte("entry_date", start).lte("entry_date", end),
+        .gte("entry_date", start).lte("entry_date", end)
+        .order("id", { ascending: true }).range(from, to)),
     ]);
-    const posLines = (posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount }));
-    const cashOmzet = (cashOmzetRes.data ?? []).map((c) => ({ date: c.entry_date, amount: c.amount }));
+    const posLines = posRows.map((p) => ({ description: p.description, amount: p.amount }));
+    const cashOmzet = cashOmzetRows.map((c) => ({ date: c.entry_date, amount: c.amount }));
     const tc = buildTurnoverClosing(turnover, posLines, cashOmzet);
     reconExceptions = tc.exceptions.map((e) => ({ date: e.date, kind: e.kind, note: e.note, diff: e.diff }));
   }
