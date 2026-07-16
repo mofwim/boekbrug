@@ -1943,7 +1943,12 @@ export async function syncUserEmails(userId: string): Promise<{
           // Number tier: fetch SEVERAL candidates (number+total+date can legitimately
           // repeat across different vendors) and pick the first that isn't a genuinely
           // different vendor. Vendor tier already constrains the vendor in-query → 1 row.
-          const { data: existingByContent } = await contentQuery.limit(tier.kind === 'number' ? 25 : 1)
+          // [DEDUP-WINDOW] Number tier compares the number normalized in code (no in-query
+          // .eq), so order deterministically and use a wide cap — the match must never fall
+          // outside the window for a shop with many same-total invoices. Vendor tier stays 1.
+          const { data: existingByContent } = await contentQuery
+            .order('id', { ascending: false })
+            .limit(tier.kind === 'number' ? 200 : 1)
 
           const original =
             tier.kind === 'number'

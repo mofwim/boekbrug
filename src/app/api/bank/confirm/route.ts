@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
 
   // 4. Write (a): invoice → paid. SESSION client so the verwerkt trigger fires (auth.uid() set).
   //    Never write `shared` (GENERATED) or 'voldaan' (UI-only).
-  const { error: payErr } = await supabase
+  const { data: payData, error: payErr } = await supabase
     .from("invoices")
     .update({
       status: "paid",
@@ -144,7 +144,8 @@ export async function POST(req: NextRequest) {
       marked_paid_at: new Date().toISOString(),
     })
     .eq("id", invoiceId)
-    .neq("status", "paid"); // idempotent: don't re-pay / reset marked_paid_at on double-submit
+    .neq("status", "paid") // idempotent: don't re-pay / reset marked_paid_at on double-submit
+    .select("id"); // [BANK-PAY-RACE] know whether THIS request actually paid it
 
   if (payErr) {
     // B.4 trigger rejection surfaces here → let the UI show the "vraag boekhouder" dialog.
@@ -155,6 +156,15 @@ export async function POST(req: NextRequest) {
       );
     }
     return NextResponse.json({ error: "payment_failed", detail: payErr.message }, { status: 500 });
+  }
+
+  // [BANK-PAY-RACE] The idempotent .neq("status","paid") no-ops (0 rows, no error) if a
+  // CONCURRENT request paid this invoice between our fetch and this write. We must NOT then
+  // treat the payment as ours — otherwise a later link failure would roll back a payment we
+  // didn't make. Zero rows updated ⇒ someone else already paid it: bail like the pre-check,
+  // never proceed to link or rollback.
+  if (!payData || payData.length === 0) {
+    return NextResponse.json({ error: "invoice_already_paid" }, { status: 409 });
   }
 
   // 5. [BANK-MULTI-CONFIRM] Decide allCovered: is EVERY invoice number listed in

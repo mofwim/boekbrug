@@ -194,7 +194,10 @@ export async function POST(req: NextRequest) {
         // [DEDUP-NUMBER-NORM] The candidate set is already pinned by total (+date); for the
         // number tier compare the number WHITESPACE-NORMALIZED in JS, so "26 / 3958" is
         // caught as a duplicate of "26/3958" (an exact .eq missed it → double booking).
-        const { data } = await query.limit(50)
+        // [DEDUP-WINDOW] Deterministic order + a wide cap so the number match never falls
+        // outside the window (dropping the .eq removed the natural bound); 200 far exceeds
+        // any realistic count of same-total invoices sharing one date.
+        const { data } = await query.order("id", { ascending: false }).limit(200)
         const rows = data ?? []
         const hit =
           q.tier === "number" && q.invoiceNumber

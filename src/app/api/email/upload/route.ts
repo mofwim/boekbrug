@@ -166,7 +166,9 @@ export async function POST(req: NextRequest) {
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
       // [DEDUP-NUMBER-NORM] Compare the number whitespace-normalized in code (an exact .eq
       // missed "26 / 3958" vs "26/3958"); the candidate set is already pinned by total(+date).
-      const { data } = await query.limit(50);
+      // [DEDUP-WINDOW] Deterministic order + a wide cap so the number match never falls
+      // outside the window (dropping the .eq removed the natural bound).
+      const { data } = await query.order("id", { ascending: false }).limit(200);
       const rows = data ?? [];
       const hit =
         q.tier === "number" && q.invoiceNumber
