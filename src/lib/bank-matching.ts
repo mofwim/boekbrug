@@ -40,6 +40,11 @@ export type MatchSignal = "reference" | "amount" | "date" | "counterpart";
 export interface MatchCandidate {
   invoiceId: string;
   invoiceNumber: string | null;
+  // [BANK-BATCH-RECONCILE] The invoice's own gross total (total_inc_btw). The UI needs
+  // it to reconcile a multi-invoice payment: sum the referenced invoices and check the
+  // total equals the bank debit — the honest proof that a batch payment covers exactly
+  // these invoices (no per-invoice amount appears in the statement, only the sum does).
+  amount: number | null;
   confidence: number; // 0..1
   signals: MatchSignal[];
   reason: string; // short Dutch explanation
@@ -342,6 +347,7 @@ export function matchTransactions(
       candidates.push({
         invoiceId: inv.id,
         invoiceNumber: inv.invoice_number,
+        amount: inv.total_inc_btw,
         confidence,
         signals,
         reason,
