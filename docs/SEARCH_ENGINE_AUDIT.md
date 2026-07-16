@@ -101,6 +101,8 @@ Doel: de zoekmachine **werkend, correct, veilig en snel** maken — alleen zoeke
 | 7 | **Mappen doorzoekbaar:** zoeken toont nu ook mappen (op naam), klikbaar om te openen. | `src/lib/bestanden.ts`, `src/app/api/bestanden/route.ts`, `src/app/dashboard/bestanden/BestandenPage.tsx` |
 | 8 | **Bankfilter eerlijk:** doorzoekt nu écht het **bedrag** (placeholder beloofde dat al) + accent-vouwing op naam/referentie. | `src/app/dashboard/bank/BankClient.tsx` |
 | 9 | **Accent-vouwing** in artikelen, factuur-artikelpicker en factuur-klantpicker ("café" ↔ "cafe"); klantpicker doorzoekt ook KVK. | `src/lib/articles.ts`, `src/app/dashboard/artikelen/ArtikelenClient.tsx`, `src/app/dashboard/invoice/new/page.tsx` |
+| 10 | **Slimme laag — relevantie-ranking** (exact > prefix > woordgrens > substring > fuzzy, dan recentheid) in de globale zoek-API. | `src/app/api/search/route.ts` |
+| 11 | **Slimme laag — typo-tolerantie (fuzzy)** via `pg_trgm`-similariteit als exacte resultaten schaars zijn; veilige fallback (`safeRpc`) als de migratie nog niet is toegepast. | `supabase/migrations/search_smart.sql`, `src/app/api/search/route.ts` (+ `database.sql`) |
 
 ### Niet in deze PR (bewust — buiten "alleen zoeken" of te hoog risico)
 - Globale balk op élke pagina mounten (raakt layouts van bestanden/accountant).
@@ -109,8 +111,17 @@ Doel: de zoekmachine **werkend, correct, veilig en snel** maken — alleen zoeke
 - Accountant die documenten van klanten doorzoekt (RLS is owner-only).
 - `unaccent`-extensie voor accent-ongevoelig **server-side** zoeken (client-side
   filters vouwen accenten nu al; server-side ILIKE blijft accent-gevoelig).
+- Fuzzy-uitbreiding naar documenten/mappen/accountant-profielen (nu alleen facturen +
+  eigen klanten; de rest gebruikt exact/substring + ranking).
 
 Deze staan hier gedocumenteerd als vervolgstappen.
+
+### Let op — verificatiestatus van de slimme laag
+- **Ranking** (JS) is volledig statisch getest (tsc/build) en pure logica.
+- **Fuzzy (RPC + `search_smart.sql`)** is standaard, idempotent SQL, maar is **niet op
+  een live database uitgevoerd** in deze omgeving (geen Supabase-credentials). De API
+  valt veilig terug op exact/substring als de functies ontbreken. Toepassen + live
+  testen (bv. op een Vercel-preview/staging) is de laatste stap vóór productie.
 
 ---
 

@@ -922,6 +922,42 @@ BEGIN
 END;
 $$;
 
+-- [SEARCH] Fuzzy (typo-tolerant) search via pg_trgm. SECURITY INVOKER → the caller's
+-- RLS applies, so only rows the user may already see are returned. Used by /api/search
+-- to augment sparse exact/substring results. Mirrored in supabase/migrations/search_smart.sql.
+CREATE OR REPLACE FUNCTION public.search_invoices_fuzzy(q text)
+RETURNS SETOF public.invoices
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT i.*
+  FROM public.invoices i
+  WHERE length(btrim(q)) >= 2
+    AND (i.client_name % q OR i.invoice_number % q)
+  ORDER BY GREATEST(
+      similarity(coalesce(i.client_name, ''), q),
+      similarity(coalesce(i.invoice_number, ''), q)
+    ) DESC
+  LIMIT 8;
+$$;
+
+CREATE OR REPLACE FUNCTION public.search_clients_fuzzy(q text)
+RETURNS SETOF public.clients
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT c.*
+  FROM public.clients c
+  WHERE length(btrim(q)) >= 2
+    AND (c.name % q OR coalesce(c.email, '') % q)
+  ORDER BY GREATEST(
+      similarity(coalesce(c.name, ''), q),
+      similarity(coalesce(c.email, ''), q)
+    ) DESC
+  LIMIT 5;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.search_invoices_fuzzy(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_clients_fuzzy(text)  TO authenticated;
+
 -- ── Invoice Numbering ───────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.generate_invoice_number(user_id uuid)

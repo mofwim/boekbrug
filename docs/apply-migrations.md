@@ -34,6 +34,7 @@ een ⚠️ vragen aandacht.
 | 7 | `supabase/migrations/betaalverzoek.sql` | Betaalverzoek + `invoices.pay_token` | `invoices_pay_token` |
 | 8 | `supabase/migrations/accountant_subject_status.sql` | Verwerkingsstatus per onderwerp (boekhouder) | — (prod-drift herstel) |
 | 9 | `supabase/migrations/search_engine.sql` | `pg_trgm` + trigram-indexen voor snelle ILIKE-zoek (globale zoekmachine) | — (alleen prestaties) |
+| 10 | `supabase/migrations/search_smart.sql` | Fuzzy (typo-tolerante) zoekfuncties `search_invoices_fuzzy`/`search_clients_fuzzy` | — (zoeken werkt ook zonder; dan geen typo-tolerantie) |
 
 ## 2) ⚠️ Facturnummering — MAAK EERST EEN BACKUP
 

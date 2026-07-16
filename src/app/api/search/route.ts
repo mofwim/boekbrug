@@ -10,6 +10,11 @@
 //   - zzp'ers now search their own clients table; accountants search linked profiles.
 //   - Result hrefs use the params the target pages actually read: ?focus= (facturen,
 //     klanten) and ?folder=&focus= (bestanden). Previously ?highlight=/?file= were dead.
+// [SEARCH] Smart layer — Jul 2026
+//   - Relevance ranking (exact > prefix > word-boundary > substring > fuzzy), then recency.
+//   - Typo tolerance: when exact/substring results are sparse, augment with pg_trgm
+//     fuzzy matches via RPC (search_smart.sql). Gracefully skipped (safeRpc → []) when
+//     the migration is not yet applied, so search never breaks.
 // ⚠️  This is the ONLY file allowed to import supabase-server.ts for search.
 //     All Supabase queries are here. search.ts has types only.
 //     Runs on the anon key + user cookies → RLS is enforced on every query.
@@ -69,6 +74,48 @@ function buildOr(fields: string[], terms: string[]): string {
 function dedup(arr: SearchResult[]): SearchResult[] {
   const seen = new Set<string>();
   return arr.filter((r) => { if (seen.has(r.id)) return false; seen.add(r.id); return true; });
+}
+
+// ─── [SEARCH] Relevance ranking ──────────────────────────────────────────────
+// Accent-insensitive fold so "café" ranks like "cafe".
+const fold = (s: string | null | undefined) =>
+  (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Higher = more relevant: exact > starts-with > word-boundary > substring > (fuzzy=0).
+// Scored against the whole typed query over the row's most identifying fields.
+function rankScore(query: string, fields: Array<string | null | undefined>): number {
+  const needle = fold(query).trim();
+  if (!needle) return 0;
+  const wb = new RegExp(`\\b${escapeRegex(needle)}`);
+  let best = 0;
+  for (const f of fields) {
+    const v = fold(f);
+    if (!v) continue;
+    let s = 0;
+    if (v === needle) s = 1000;
+    else if (v.startsWith(needle)) s = 800;
+    else if (wb.test(v)) s = 600;
+    else if (v.includes(needle)) s = 400;
+    if (s > best) best = s;
+  }
+  return best;
+}
+
+// Sort raw rows by relevance, then recency (newest first). Pure, no mutation.
+function rankRows<T extends { created_at?: string | null }>(
+  rows: T[],
+  query: string,
+  fieldsOf: (row: T) => Array<string | null | undefined>
+): T[] {
+  return [...rows].sort((a, b) => {
+    const d = rankScore(query, fieldsOf(b)) - rankScore(query, fieldsOf(a));
+    if (d !== 0) return d;
+    return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+  });
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -196,36 +243,71 @@ export async function GET(req: NextRequest) {
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
+  // ── [SEARCH] Fuzzy augmentation (typo tolerance) when results are sparse ──────
+  // safeRpc returns [] if the fuzzy function isn't present (migration not applied)
+  // or on any error, so search degrades gracefully to the exact/substring path.
+  // Cast: these RPCs are optional (added by search_smart.sql) so they aren't in the
+  // generated Supabase types. Narrowed to a typed caller (keeps `this` bound).
+  type RpcCaller = {
+    rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
+  };
+  const safeRpc = async (fn: string, args: Record<string, unknown>): Promise<any[]> => {
+    try {
+      const { data, error } = await (supabase as unknown as RpcCaller).rpc(fn, args);
+      if (error) return [];
+      return (data ?? []) as any[];
+    } catch {
+      return [];
+    }
+  };
+
+  let invoiceRows: any[] = invoicesRes.data ?? [];
+  if ((target === "all" || target === "invoices") && invoiceRows.length < 3) {
+    // RLS scopes the fuzzy rows to what this user may already see.
+    invoiceRows = [...invoiceRows, ...(await safeRpc("search_invoices_fuzzy", { q }))];
+  }
+
+  let clientRows: any[] = clientsRes.data ?? [];
+  if ((target === "all" || target === "clients") && role !== "accountant" && clientRows.length < 3) {
+    clientRows = [...clientRows, ...(await safeRpc("search_clients_fuzzy", { q }))];
+  }
+
   const invoices: SearchResult[] = dedup(
-    (invoicesRes.data ?? []).map((inv: any) => ({
-      type: "invoice" as const,
-      id: inv.id,
-      title: inv.invoice_number ?? "—",
-      subtitle: inv.client_name ?? "",
-      meta: inv.total_inc_btw != null ? fmt(inv.total_inc_btw) : undefined,
-      status: inv.status,
-      href: `/dashboard/facturen?focus=${inv.id}`,
-      createdAt: inv.created_at,
-    }))
-  );
+    rankRows(invoiceRows, q, (inv) => [inv.invoice_number, inv.client_name, inv.client_email])
+      .map((inv: any) => ({
+        type: "invoice" as const,
+        id: inv.id,
+        title: inv.invoice_number ?? "—",
+        subtitle: inv.client_name ?? "",
+        meta: inv.total_inc_btw != null ? fmt(inv.total_inc_btw) : undefined,
+        status: inv.status,
+        href: `/dashboard/facturen?focus=${inv.id}`,
+        createdAt: inv.created_at,
+      }))
+  ).slice(0, 8);
 
   const documents: SearchResult[] = dedup(
-    (docsRes.data ?? []).map((doc: any) => ({
-      type: "document" as const,
-      id: doc.id,
-      title: doc.file_name,
-      subtitle: doc.ai_doc_type ?? doc.doc_type ?? "document",
-      meta: [doc.period, doc.year].filter(Boolean).join(" · ") || undefined,
-      // Bestanden reads ?folder=&focus= (root docs carry no folder → focus only)
-      href: doc.folder_id
-        ? `/dashboard/bestanden?folder=${doc.folder_id}&focus=${doc.id}`
-        : `/dashboard/bestanden?focus=${doc.id}`,
-      createdAt: doc.created_at,
-    }))
-  );
+    rankRows(docsRes.data ?? [], q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
+      .map((doc: any) => ({
+        type: "document" as const,
+        id: doc.id,
+        title: doc.file_name,
+        subtitle: doc.ai_doc_type ?? doc.doc_type ?? "document",
+        meta: [doc.period, doc.year].filter(Boolean).join(" · ") || undefined,
+        // Bestanden reads ?folder=&focus= (root docs carry no folder → focus only)
+        href: doc.folder_id
+          ? `/dashboard/bestanden?folder=${doc.folder_id}&focus=${doc.id}`
+          : `/dashboard/bestanden?focus=${doc.id}`,
+        createdAt: doc.created_at,
+      }))
+  ).slice(0, 4);
 
   const clients: SearchResult[] = dedup(
-    (clientsRes.data ?? []).map((row: any) =>
+    rankRows(clientRows, q, (row) =>
+      role === "accountant"
+        ? [row.full_name, row.company_name, row.email, row.kvk_number]
+        : [row.name, row.email, row.kvk_number, row.city]
+    ).map((row: any) =>
       role === "accountant"
         ? {
             type: "client" as const,
@@ -246,7 +328,7 @@ export async function GET(req: NextRequest) {
             createdAt: row.created_at,
           }
     )
-  );
+  ).slice(0, 5);
 
   return NextResponse.json({ invoices, documents, clients });
 }
