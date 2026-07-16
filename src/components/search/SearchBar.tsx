@@ -50,6 +50,26 @@ function saveRecent(term: string) {
   localStorage.setItem(RECENT_KEY, JSON.stringify(next));
 }
 
+// [SEARCH] Enter-with-no-selection should open the BEST match across all groups, not
+// just the first invoice (flatResults is grouped invoices→documents→clients, so the
+// API's per-group ranking is otherwise lost for the Enter shortcut).
+const foldStr = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+function pickBest(results: SearchResult[], query: string): SearchResult | undefined {
+  if (results.length === 0) return undefined;
+  const q = foldStr(query.trim());
+  if (!q) return results[0];
+  const score = (r: SearchResult) => {
+    const t = foldStr(r.title), s = foldStr(r.subtitle);
+    if (t === q) return 5;
+    if (t.startsWith(q)) return 4;
+    if (s === q || s.startsWith(q)) return 3;
+    if (t.includes(q)) return 2;
+    if (s.includes(q)) return 1;
+    return 0;
+  };
+  return results.reduce((best, r) => (score(r) > score(best) ? r : best), results[0]);
+}
+
 // ─── Highlight ────────────────────────────────────────────────────────────────
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -560,7 +580,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
         // otherwise fall back to the facturen list pre-filled with the query
         // (FacturenClient now reads ?search=). — Jul 2026
         if (selectedIdx < 0) {
-          const top = showResults ? flatResults[0] : undefined;
+          const top = showResults ? pickBest(flatResults, query) : undefined;
           if (top) { navigate(top); break; }
           if (query.trim()) {
             saveRecent(query.trim());

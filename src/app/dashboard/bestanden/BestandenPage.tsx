@@ -357,15 +357,19 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // ── Search ── (documents + folders)
   useEffect(() => {
     if (!search.trim()) { setSearchResults(null); setFolderResults([]); return; }
+    // [SEARCH] `active` guards against out-of-order responses: a superseded query's
+    // in-flight fetch must not overwrite the newer query's results.
+    let active = true;
     const t = setTimeout(async () => {
       setSearchLoading(true);
       const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
       const json = await res.json() as { results?: SearchResult[]; folders?: { id: string; name: string; parent_id: string | null }[] };
+      if (!active) return;
       setSearchResults(json.results ?? []);
       setFolderResults(json.folders ?? []);
       setSearchLoading(false);
     }, 300);
-    return () => clearTimeout(t);
+    return () => { active = false; clearTimeout(t); };
   }, [search]);
 
   useEffect(() => { if (newFolderInline) setTimeout(() => newFolderRef.current?.focus(), 50); }, [newFolderInline]);

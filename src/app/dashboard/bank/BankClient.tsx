@@ -687,7 +687,10 @@ export default function BankClient() {
           const amountLike = raw.length > 0 && !/[^\d.,\s€-]/.test(raw)
           const qDigits = raw.replace(/[^\d]/g, '')
           const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
-          const isWhole = !/[.,]/.test(raw)
+          // "whole euro" = the parsed value is an integer ("15","1.500","1.500,00"),
+          // NOT that the raw string lacks separators — a NL thousands-dot ("1.500")
+          // is still a whole number and must keep the whole-euro match.
+          const isWhole = Number.isInteger(qNum)
           const an = Math.abs(s.amount)
           const amountMatch =
             amountLike && qDigits.length > 0 &&

@@ -114,8 +114,8 @@ function rankScore(query: string, fields: Array<string | null | undefined>): num
   if (best > 0) return best;
 
   // Multi-token fallback: reward how many tokens are present across all fields.
-  // Drop 1-char tokens — they match almost anything and skew coverage scoring.
-  const tokens = needle.split(/\s+/).filter((t) => t.length > 1);
+  // Keep 1-char tokens so initials still count ("J Jansen" → "Jan Jansen").
+  const tokens = needle.split(/\s+/).filter((t) => t.length > 0);
   if (tokens.length > 1) {
     const haystack = folded.join(" ");
     const matched = tokens.filter((t) => haystack.includes(t)).length;
@@ -150,7 +150,11 @@ export async function GET(req: NextRequest) {
 
   // [SEARCH] Cap length: bounds the un-indexed per-row trigram work in the fuzzy
   // RPCs (a huge q over many RLS-visible rows would be an amplification vector).
-  const q = (req.nextUrl.searchParams.get("q") ?? "").trim().slice(0, 100);
+  // Drop a lone trailing surrogate the slice may have split (invalid UTF-8 → PG error).
+  const q = (req.nextUrl.searchParams.get("q") ?? "")
+    .trim()
+    .slice(0, 100)
+    .replace(/[\uD800-\uDBFF]$/, "");
   const target = (req.nextUrl.searchParams.get("target") ?? "all") as SearchTarget;
 
   const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [] };
@@ -215,7 +219,7 @@ export async function GET(req: NextRequest) {
     target === "all" || target === "invoices"
       ? supabase
           .from("invoices")
-          .select("id, invoice_number, client_name, client_email, status, total_inc_btw, created_at")
+          .select("id, invoice_number, client_name, client_email, status, total_inc_btw, created_at, direction")
           // (sender_id ∈ ids OR receiver_id ∈ ids) — AND-ed with the text .or() below
           .or(`sender_id.in.(${idList}),receiver_id.in.(${idList})`)
           .or(
@@ -308,7 +312,11 @@ export async function GET(req: NextRequest) {
         subtitle: inv.client_name ?? "",
         meta: inv.total_inc_btw != null ? fmt(inv.total_inc_btw) : undefined,
         status: inv.status,
-        href: `/dashboard/facturen?focus=${inv.id}`,
+        // Received (incoming) invoices live on /dashboard/incoming, not /facturen
+        // (which lists only the user's own sent invoices). Both consume ?focus=.
+        href: inv.direction === "incoming"
+          ? `/dashboard/incoming?focus=${inv.id}`
+          : `/dashboard/facturen?focus=${inv.id}`,
         createdAt: inv.created_at,
       }))
   ).slice(0, 8);
@@ -342,7 +350,9 @@ export async function GET(req: NextRequest) {
             title: row.full_name ?? row.company_name ?? row.email ?? "—",
             subtitle: row.company_name ?? row.email ?? "",
             meta: row.kvk_number ? `KVK ${row.kvk_number}` : undefined,
-            href: `/dashboard/klanten?focus=${row.id}`,
+            // Accountant clients are linked zzp'er PROFILES → the accountant views
+            // them at /dashboard/clients/{id}, NOT the owner's own /dashboard/klanten.
+            href: `/dashboard/clients/${row.id}`,
             createdAt: row.created_at,
           }
         : {

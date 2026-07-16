@@ -111,10 +111,27 @@ Doel: de zoekmachine **werkend, correct, veilig en snel** maken — alleen zoeke
 - Accountant die documenten van klanten doorzoekt (RLS is owner-only).
 - `unaccent`-extensie voor accent-ongevoelig **server-side** zoeken (client-side
   filters vouwen accenten nu al; server-side ILIKE blijft accent-gevoelig).
-- Fuzzy-uitbreiding naar documenten/mappen/accountant-profielen (nu alleen facturen +
-  eigen klanten; de rest gebruikt exact/substring + ranking).
+- Fuzzy-uitbreiding naar accountant-profielen (accountant-klantzoek is exact/substring;
+  een `search_profiles_fuzzy` zou een id-scope-parameter nodig hebben).
+- **Cross-group ranking** is er alleen voor de Enter-sneltoets (pickBest); de dropdown
+  toont nog steeds vaste groepsvolgorde (facturen → bestanden → klanten).
+- **Coverage:** de globale zoek dekt facturen/regels, documenten/mappen, klanten. Bank-
+  transacties, kas, artikelen en berichten zitten er (bewust, nog) niet in.
+- **Tests:** er zijn nog geen geautomatiseerde tests voor zoeken. Hoogste-waarde test:
+  href-correctheid per resultaattype/rol (zou D1/D2 hieronder hebben gevangen), plus
+  pure-functie-tests voor `sanitizeTerm`/`normalizeQuery`/`amountConditions`.
 
 Deze staan hier gedocumenteerd als vervolgstappen.
+
+### Agent-hunt fixes (twee rondes adversariële bug-hunt)
+Vier + drie onafhankelijke bug-hunt-agents. Beveiliging bleek solide (geen injectie,
+geen cross-tenant-lek). Verholpen defects o.a.: dubbele SearchBar op de accountant-hub;
+overlay-z-index onder modals; bankfilter-vervuiling; `?search=` sync; `€`-prefix bedrag;
+query-lengte-cap (DoS); **dode deep-links** — ontvangen facturen routeren nu naar
+`/dashboard/incoming?focus=` (i.p.v. facturen, die alleen verzonden toont) en
+accountant-klanten naar `/dashboard/clients/{id}` (i.p.v. de eigen `/klanten`);
+useSearch abort-op-unmount + spinner-race; Bestanden out-of-order-race; Enter opent het
+best passende resultaat over groepen.
 
 ### Fuzzy-ontwerp (definitief, live bevestigd) — 3 signalen
 Eén maat vangt niet alle typefouten, dus `search_smart.sql` combineert er drie

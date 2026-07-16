@@ -551,9 +551,7 @@ export function DashboardHeader({
   const logoHref = isAccountant ? '/dashboard/accountant' : '/dashboard'
 
   return (
-    <header
-      data-dashboard-header="true"
-      style={{
+    <header style={{
       position: 'sticky',
       top: 0,
       zIndex: 50,
