@@ -9,6 +9,7 @@
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
+import { escapeLikeValue } from '@/lib/sanitize'
 import { logAuditAction } from '@/lib/audit'
 // [IMPORT-MONITOR Part 0] SAFECORE primitives moved to a shared module so the
 // read-time health classifier can reuse the EXACT same logic. Move-only: these
@@ -1198,11 +1199,22 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
  *
  * Returns true = keep (send to Claude). false = drop (not even worth an AI call).
  */
+// [M1] Untrusted inbound email attachments get the same hard byte ceiling as the
+// manual upload path (email/upload/route.ts caps at 10 MB). Without it, anyone who
+// emails the owner a large PDF causes an unbounded Storage write + a Claude call —
+// storage-growth / AI-spend DoS from untrusted mail.
+const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
 export function isLikelyInvoiceCandidate(att: {
   filename: string
   mimeType: string
   size: number
 }): boolean {
+  // [M1] Upper ceiling first — applies to PDFs and images alike. A provider-reported
+  // size over the cap is dropped BEFORE we fetch the bytes (no download, no Storage,
+  // no AI). size===0 means "unknown" → enforced at the byte-length chokepoint below.
+  if (att.size > MAX_EMAIL_ATTACHMENT_BYTES) return false
+
   // PDFs always go through — the strongest invoice signal, never size/name filtered.
   if (att.mimeType === 'application/pdf') return true
 
@@ -1735,6 +1747,29 @@ export async function syncUserEmails(userId: string): Promise<{
         completedKeys.add(wmKey) // [watermark] registered = complete
         continue
       }
+
+      // [M1] Hard byte ceiling on untrusted inbound attachments (mirrors the manual
+      // upload's 10 MB cap). The candidate filter already drops known-oversized files
+      // before fetch; this catches the provider-unknown (size===0) case once the real
+      // bytes are in hand — BEFORE any Storage upload / dedup / insert. Registered as
+      // a skip so the watermark advances and it is never re-fetched.
+      const approxBytes = Math.floor((attachment.data.length * 3) / 4)
+      if (approxBytes > MAX_EMAIL_ATTACHMENT_BYTES) {
+        await supabase
+          .from('email_skipped_attachments')
+          .upsert(
+            {
+              user_id: userId,
+              source_message_id: `${attachment.messageId}:${attachment.filename}`,
+              filename: attachment.filename,
+              reason: 'te groot — overgeslagen (max 10MB)',
+            },
+            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+          )
+        skipped++
+        completedKeys.add(wmKey)
+        continue
+      }
       verified++
 
       // [BRIDGE-EXTRACT] Check 0 (PRIMARY) — byte-hash dedup.
@@ -1924,7 +1959,9 @@ export async function syncUserEmails(userId: string): Promise<{
             // placeholder+reliable-vendor fallback). The date filter below adds
             // the precision that makes this acceptable. Stronger vendor matching
             // is BRIDGE-ALIAS territory.
-            contentQuery = contentQuery.ilike('client_name', (classification.vendor ?? '').trim())
+            // [L2] Escape LIKE wildcards so the match is literal (as the comment
+            // above intends) — a parsed vendor with `%`/`_` must not act as a wildcard.
+            contentQuery = contentQuery.ilike('client_name', escapeLikeValue((classification.vendor ?? '').trim()))
           }
 
           // Date filter: applied when we have a real date. For the vendor tier

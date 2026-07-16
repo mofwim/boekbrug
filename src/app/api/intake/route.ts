@@ -28,6 +28,7 @@ import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+import { escapeLikeValue } from "@/lib/sanitize"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
 // ingest, so every invoice lives as a PDF from day one (opens uniformly, can be
 // stamped by the closing package with no download-time conversion).
@@ -190,7 +191,9 @@ export async function POST(req: NextRequest) {
         if (q.tier === "number" && q.invoiceNumber) {
           query = query.eq("invoice_number", q.invoiceNumber)
         } else if (q.tier === "vendor" && q.vendor) {
-          query = query.ilike("client_name", q.vendor)
+          // [L2] Escape LIKE wildcards — an AI/OCR-parsed vendor containing `%`/`_`
+          // would otherwise act as a wildcard and broaden this dedup match.
+          query = query.ilike("client_name", escapeLikeValue(q.vendor))
         }
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
         const { data } = await query.limit(1)
