@@ -478,9 +478,13 @@ export function matchTransactions(
     } else {
       m.outcome = "choice";
       m.best = null;
-      // For 'choice' we claim the TOP candidate so it can't auto-match elsewhere,
-      // but still show the full free list so the owner can pick.
-      claimed.add(top.invoiceId);
+      // [BANK-CHOICE-NOCLAIM] Do NOT claim a 'choice' candidate. The human hasn't picked
+      // yet, and claiming the ARBITRARY top of a near-tie removed that invoice from every
+      // other transaction — turning a genuine second payment into a false "geen factuur",
+      // or forcing the remaining single candidate into a one-tap 'auto' on a pick that was
+      // actually ambiguous. Only a confident 'auto' (an invoice is paid once) claims; a
+      // 'choice' keeps every candidate available until the owner confirms one (after which
+      // it becomes paid and drops out of the next match on its own).
     }
     m.candidates = free;
   }

@@ -318,5 +318,25 @@ console.log("\n— [BANK-PARTIAL] instalment references are detected and kept ou
   ).confidence >= DEFAULT_OPTIONS.autoConfidence);
 }
 
+console.log("\n— [BANK-CHOICE-NOCLAIM] an ambiguous choice does not steal a candidate from another tx —");
+{
+  // Two €500 "Jansen" credits, two €500 "Jansen" invoices → each tx matches both by
+  // amount+counterpart (a genuine ambiguous choice). Neither may claim, so BOTH keep both
+  // options for the owner to resolve — no false "geen factuur", no forced auto.
+  const r = matchTransactions(
+    [
+      tx({ amount: 500, date: "2026-02-12", counterpartName: "Jansen BV" }),
+      tx({ amount: 500, date: "2026-02-13", counterpartName: "Jansen BV" }),
+    ],
+    [
+      inv({ id: "x", invoice_number: "JAN-1", total_inc_btw: 500, direction: "outgoing", client_name: "Jansen BV", invoice_date: "2026-02-01" }),
+      inv({ id: "y", invoice_number: "JAN-2", total_inc_btw: 500, direction: "outgoing", client_name: "Jansen BV", invoice_date: "2026-02-02" }),
+    ],
+  );
+  check("first tx is a choice (not forced auto)", r.matches[0].outcome === "choice");
+  check("second tx is NOT 'none' (candidate wasn't stolen)", r.matches[1].outcome !== "none");
+  check("both txns keep both candidates", r.matches[0].candidates.length === 2 && r.matches[1].candidates.length === 2);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

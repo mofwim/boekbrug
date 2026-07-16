@@ -219,7 +219,23 @@ export async function POST(req: NextRequest) {
 
   if (linkErr) {
     console.error("[BOEK-016] transaction link failed after payment:", linkErr.message);
-    return NextResponse.json({ ok: true, allCovered, warning: "transaction_link_failed" });
+    // [BANK-LINK-ROLLBACK] The payment write succeeded but the bank link did not. Leaving
+    // the invoice 'paid' with no linked bank line ORPHANS it: the matcher excludes paid
+    // invoices, so the tx reappears as "geen factuur" and can never be re-confirmed
+    // (invoice_already_paid). Roll the invoice back to its prior status so the state stays
+    // consistent and the owner can simply retry — never a paid invoice with no proof.
+    const { error: rollbackErr } = await supabase
+      .from("invoices")
+      .update({ status: inv.status, payment_method: null, marked_paid_at: null })
+      .eq("id", invoiceId)
+      .eq("status", "paid");
+    if (rollbackErr) {
+      console.error("[BANK-LINK-ROLLBACK] rollback also failed:", rollbackErr.message);
+    }
+    return NextResponse.json(
+      { error: "transaction_link_failed", detail: linkErr.message, rolledBack: !rollbackErr },
+      { status: 500 }
+    );
   }
 
   // 7. Notification (non-blocking) — notifications inserts use service_role by rule.
