@@ -109,6 +109,18 @@ console.log("\n— outcomes —");
   check("reference match signals include 'reference'", !!m.best?.signals.includes("reference"));
 }
 
+// 1b. [QF3] Reference match with the WRONG amount must NOT auto-mark the invoice paid.
+{
+  const r = matchTransactions(
+    // €50 payment quoting invoice 001-2026 (€1210) — a partial/mis-referenced payment.
+    [tx({ amount: 50, reference: "001-2026", counterpartName: "ONBEKEND" })],
+    [inv({ id: "A", total_inc_btw: 1210 })]
+  );
+  const m = r.matches[0];
+  check("wrong-amount reference → NOT auto (human choice)", m.outcome !== "auto");
+  check("wrong-amount reference → still listed as a candidate", (m.candidates?.length ?? 0) > 0);
+}
+
 // 2. Amount + date + counterpart → auto
 {
   const r = matchTransactions(

@@ -92,6 +92,12 @@ console.log("\n— robustness —");
     near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "(1.089,00)", "0"]]).rows[0].total_incl!, -1089));
   check("trailing-minus negative keeps its sign",
     near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "50,00-", "0"]]).rows[0].total_incl!, -50));
+  // [QF5] a whole-euro NL value with a thousands dot and no comma → 2500, not 2,50.
+  check("NL thousands dot without decimals → 2500 (not 2.5)",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "2.500", "0"]]).rows[0].total_incl!, 2500));
+  // a genuine decimal dot (2 trailing digits) stays a decimal.
+  check("genuine decimal dot stays decimal (12.50 → 12.5, not 1250)",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "12.50", "0"]]).rows[0].total_incl!, 12.5));
 }
 
 console.log("\n— AUDIT FIX: a net-only sheet is not mistaken for gross —");
