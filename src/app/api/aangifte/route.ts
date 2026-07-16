@@ -12,6 +12,7 @@ import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function shiftDays(iso: string, days: number): string {
@@ -48,14 +49,14 @@ export async function GET(req: NextRequest) {
   const ownerId = owner.ownerId;
   const pipeline = createPipelineClient();
 
-  // Invoices (both directions) in the quarter.
-  const { data: invRows } = await pipeline
+  // Invoices (both directions) in the quarter. [PAGINATION] paged past the 1000-row cap.
+  const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
     .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
-    .lte("invoice_date", end);
-  const invRaw = invRows ?? [];
+    .lte("invoice_date", end)
+    .order("id", { ascending: true }).range(from, to));
   // [FIN-4] Never drop a verified row with a NULL direction: infer it from ownership
   // (owner is the receiver of an incoming invoice) — the SAME rule effectiveDirection
   // applies in the closing package. Without this, a null-direction sale is silently
@@ -70,11 +71,12 @@ export async function GET(req: NextRequest) {
   }));
 
   // Bank + cash (same de-dup inputs as /api/result).
-  const { data: bankRows } = await pipeline
+  const bankRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
     .select("amount, category, invoice_id, date, description")
-    .eq("user_id", ownerId).gte("date", start).lte("date", end);
-  const bankTx: ResultBankTx[] = (bankRows ?? []).map((b) => {
+    .eq("user_id", ownerId).gte("date", start).lte("date", end)
+    .order("id", { ascending: true }).range(from, to));
+  const bankTx: ResultBankTx[] = bankRows.map((b) => {
     // [SETTLE-EXACT] Must match /api/result, /api/readiness AND the closing package: when a
     // pos_income line has NO printed DAT. date, settleDate falls back to the booking date and
     // the covered-day de-dup must widen backward — WITHOUT settleExact it wrongly treated the
@@ -89,11 +91,12 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const { data: cashRows } = await pipeline
+  const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
     .select("direction, amount, category, btw_rate, entry_date")
-    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end);
-  const cashEntries: ResultCashEntry[] = (cashRows ?? []).map((c) => ({
+    .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end)
+    .order("id", { ascending: true }).range(from, to));
+  const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount, category: c.category, btw_rate: c.btw_rate, date: c.entry_date,
   }));
@@ -122,12 +125,29 @@ export async function GET(req: NextRequest) {
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
+
+  // [DATELESS] A verified invoice with NO invoice_date is silently dropped by the date-range
+  // fetch above, so it is NOT in the figures — count those separately so the concept can warn
+  // instead of quietly understating omzet/voorbelasting. (Matches the ZIP's dateless warning.)
+  const datelessRaw = await fetchAllRows((from, to) => pipeline
+    .from("invoices")
+    .select("status, receiver_id, direction")
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+    .is("invoice_date", null)
+    .order("id", { ascending: true }).range(from, to));
+  const datelessVerifiedCount = datelessRaw.filter((i) => {
+    const dir = i.direction === "incoming" || i.direction === "outgoing"
+      ? i.direction : (i.receiver_id === ownerId ? "incoming" : "outgoing");
+    return dir === "incoming" ? IN_OK.has(i.status ?? "") : OUT_OK.has(i.status ?? "");
+  }).length;
+
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays,
     incomingInvoiceCount: invRaw.filter((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "")).length,
     outgoingInvoiceCount: invRaw.filter((i) => effDir(i) === "outgoing" && OUT_OK.has(i.status ?? "")).length,
     hasEuPurchase: invRaw.some((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "") && typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim())),
+    datelessVerifiedCount,
   };
 
   const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`);

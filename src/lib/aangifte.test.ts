@@ -69,6 +69,12 @@ console.log("\n— honest notes: no false reassurance —");
 
   const noRate = buildAangifte({ ...base, cashOmzetZonderBtw: 250 }, compl(), "Q1 2026").notes.join(" ");
   check("flags omzet without a rate (not slotted into 1a/1b)", /250 omzet heeft nog geen BTW-tarief/.test(noRate));
+
+  // [DATELESS] verified invoices with no date are dropped by the range fetch → must warn.
+  const dateless = buildAangifte(base, compl({ datelessVerifiedCount: 2 }), "Q1 2026").notes.join(" ");
+  check("flags dateless verified invoices (silently dropped otherwise)", /2 geverifieerde/.test(dateless) && /geen factuurdatum/.test(dateless));
+  const noDateless = buildAangifte(base, compl(), "Q1 2026").notes.join(" ");
+  check("no dateless note when count is 0/undefined", !/geen factuurdatum/.test(noDateless));
 }
 
 console.log("\n— AUDIT FIX: a 0-rate bucket carrying BTW is surfaced (1c), never silently zeroed —");

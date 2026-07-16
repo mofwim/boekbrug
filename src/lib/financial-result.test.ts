@@ -48,6 +48,20 @@ console.log("\n— bank de-dup (the critical one) —");
   check("bare bank lines add no BTW", r.btwVerschuldigd === 0 && r.btwVoorbelasting === 84);
 }
 
+console.log("\n— [SIGN] a refund keeps its sign (not abs'd into fabricated revenue/cost) —");
+{
+  const bank: ResultBankTx[] = [
+    { amount: 1000, category: "omzet", invoice_id: null },   // card takings → +1000 omzet
+    { amount: -150, category: "omzet", invoice_id: null },   // card REFUND → must REDUCE omzet by 150
+    { amount: -200, category: "kosten", invoice_id: null },  // normal expense → +200 kosten
+    { amount: 50, category: "kosten", invoice_id: null },    // supplier REFUND (credit) → REDUCES kosten by 50
+  ];
+  const r = computeResult([], bank, []);
+  check("refund reduces omzet (1000 − 150 = 850), not 1150", r.omzet === 850);
+  check("supplier refund reduces kosten (200 − 50 = 150), not 250", r.kosten === 150);
+  check("negative omzet does not inflate the zonder-tarief nudge", r.cashOmzetZonderBtw === 1000);
+}
+
 console.log("\n— cash —");
 {
   const cash: ResultCashEntry[] = [
