@@ -5,10 +5,13 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useParentPath } from '@/lib/navigation-hooks'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+
+// [SEARCH] Accent-insensitive fold ("Café" ↔ "cafe") for local client filtering.
+const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -48,6 +51,13 @@ export default function KlantenClient({ profile }: { profile: any }) {
   // [BOEK-029] Navigation strategy — parent is always /dashboard for ZZP
   const parentHref = useParentPath(profile.role ?? 'zzper')
 
+  // [SEARCH] Deep-link focus from the global search (?focus={clientId}) — scroll,
+  // expand and briefly highlight the matching client card.
+  const searchParams = useSearchParams()
+  const focusId = searchParams.get('focus')
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
   const [clients, setClients]       = useState<Client[]>([])
   const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
@@ -68,10 +78,33 @@ export default function KlantenClient({ profile }: { profile: any }) {
     setLoading(false)
   }
 
-  const filtered = clients.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.email ?? '').toLowerCase().includes(search.toLowerCase())
-  )
+  // [SEARCH] Accent-insensitive filter across the full customer record — not just
+  // name/email (KVK, BTW, IBAN, city, address are all findable now).
+  const q = fold(search.trim())
+  const filtered = q
+    ? clients.filter(c =>
+        fold(c.name).includes(q) ||
+        fold(c.email ?? '').includes(q) ||
+        fold(c.kvk_number ?? '').includes(q) ||
+        fold(c.btw_number ?? '').includes(q) ||
+        fold(c.iban ?? '').includes(q) ||
+        fold(c.city ?? '').includes(q) ||
+        fold(c.address ?? '').includes(q)
+      )
+    : clients
+
+  // [SEARCH] Reveal the ?focus= client once the list has loaded.
+  useEffect(() => {
+    if (!focusId || loading) return
+    if (!clients.some(c => c.id === focusId)) return
+    setExpandedId(focusId)
+    setHighlightId(focusId)
+    const scrollTimer = setTimeout(() => {
+      rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+    const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
+    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+  }, [focusId, loading, clients])
 
   async function handleSave() {
     if (!form.name.trim()) { setError('Naam is verplicht'); return }
@@ -169,7 +202,7 @@ export default function KlantenClient({ profile }: { profile: any }) {
           <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
           <input
             value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Zoek op naam of e-mail..."
+            placeholder="Zoek op naam, e-mail, KVK, IBAN..."
             style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 16px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
           />
         </div>
@@ -227,7 +260,15 @@ export default function KlantenClient({ profile }: { profile: any }) {
               const expanded = expandedId === client.id
               const bg = avatarColor(client.name)
               return (
-                <div key={client.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1 }}>
+                <div
+                  key={client.id}
+                  ref={el => { rowRefs.current[client.id] = el }}
+                  style={{
+                    borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1,
+                    outline: highlightId === client.id ? `2px solid ${M3.primary}` : '2px solid transparent',
+                    outlineOffset: 2, transition: 'outline-color 0.3s',
+                  }}
+                >
                   {/* Main row */}
                   <div onClick={() => setExpandedId(expanded ? null : client.id)}
                     style={{ background: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>

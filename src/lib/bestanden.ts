@@ -529,13 +529,20 @@ export async function renameDocument(
 
 // ─── Search ───────────────────────────────────────────────────────────────────────
 
+// [SEARCH] Neutralise PostgREST .or()/ILIKE metacharacters. A comma or paren in the
+// query broke the .or() grammar; %/_ act as wildcards. Replace them with spaces so a
+// query like "factuur, mei (2026)" no longer errors or mis-matches.
+function sanitizeLike(q: string): string {
+  return q.replace(/[,()%_*\\":]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 export async function searchBestanden(
   userId: string,
   query: string,
   ctx: BestandenContext = "user"
 ): Promise<SearchResult[]> {
   const supabase = await resolveClient(ctx);
-  const q = query.trim();
+  const q = sanitizeLike(query);
   if (!q) return [];
 
   const { data, error } = await supabase
@@ -559,6 +566,34 @@ export async function searchBestanden(
   }
 
   return docs.map(d => ({ ...d, folder_name: d.folder_id ? (folderMap[d.folder_id] ?? null) : null }));
+}
+
+// [SEARCH] Folders are findable by name too (previously only documents were).
+export interface FolderSearchResult {
+  id: string;
+  name: string;
+  parent_id: string | null;
+}
+
+export async function searchFolders(
+  userId: string,
+  query: string,
+  ctx: BestandenContext = "user"
+): Promise<FolderSearchResult[]> {
+  const supabase = await resolveClient(ctx);
+  const q = sanitizeLike(query);
+  if (!q) return [];
+
+  const { data, error } = await supabase
+    .from("folders")
+    .select("id, name, parent_id")
+    .eq("user_id", userId)
+    .ilike("name", `%${q}%`)
+    .order("name", { ascending: true })
+    .limit(20);
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as FolderSearchResult[];
 }
 
 // ─── Find folder by path ──────────────────────────────────────────────────────────

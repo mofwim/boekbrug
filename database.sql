@@ -489,6 +489,40 @@ CREATE INDEX idx_invoices_message_id
 CREATE INDEX invoices_search_idx
   ON public.invoices USING gin (search_vector);
 
+-- [SEARCH] Trigram indexes so the global-search API's ILIKE '%term%' (leading
+-- wildcard) predicates are index-backed instead of sequential scans. Mirrored in
+-- supabase/migrations/search_engine.sql. Self-enables pg_trgm so a fresh provision
+-- of this file never fails on gin_trgm_ops even if the Dashboard step was skipped.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS invoices_invoice_number_trgm
+  ON public.invoices USING gin (invoice_number gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_name_trgm
+  ON public.invoices USING gin (client_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_email_trgm
+  ON public.invoices USING gin (client_email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_description_trgm
+  ON public.invoice_lines USING gin (description gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_invoice_id_idx
+  ON public.invoice_lines USING btree (invoice_id);
+CREATE INDEX IF NOT EXISTS documents_file_name_trgm
+  ON public.documents USING gin (file_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_doc_type_trgm
+  ON public.documents USING gin (doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_ai_doc_type_trgm
+  ON public.documents USING gin (ai_doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_notes_trgm
+  ON public.documents USING gin (notes gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_full_name_trgm
+  ON public.profiles USING gin (full_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_company_name_trgm
+  ON public.profiles USING gin (company_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_email_trgm
+  ON public.profiles USING gin (email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_name_trgm
+  ON public.clients USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_email_trgm
+  ON public.clients USING gin (email gin_trgm_ops);
+
 -- rate_limits
 CREATE INDEX idx_rate_limits_cleanup
   ON public.rate_limits USING btree (window_start);
@@ -890,6 +924,42 @@ BEGIN
 END;
 $$;
 
+-- [SEARCH] Fuzzy (typo-tolerant) search via pg_trgm. SECURITY INVOKER → the caller's
+-- RLS applies, so only rows the user may already see are returned. Used by /api/search
+-- to augment sparse exact/substring results. Mirrored in supabase/migrations/search_smart.sql.
+CREATE OR REPLACE FUNCTION public.search_invoices_fuzzy(q text)
+RETURNS SETOF public.invoices
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT i.*
+  FROM public.invoices i
+  WHERE length(btrim(q)) >= 2
+    AND (i.client_name % q OR i.invoice_number % q)
+  ORDER BY GREATEST(
+      similarity(coalesce(i.client_name, ''), q),
+      similarity(coalesce(i.invoice_number, ''), q)
+    ) DESC
+  LIMIT 8;
+$$;
+
+CREATE OR REPLACE FUNCTION public.search_clients_fuzzy(q text)
+RETURNS SETOF public.clients
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT c.*
+  FROM public.clients c
+  WHERE length(btrim(q)) >= 2
+    AND (c.name % q OR coalesce(c.email, '') % q)
+  ORDER BY GREATEST(
+      similarity(coalesce(c.name, ''), q),
+      similarity(coalesce(c.email, ''), q)
+    ) DESC
+  LIMIT 5;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.search_invoices_fuzzy(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_clients_fuzzy(text)  TO authenticated;
+
 -- ── Invoice Numbering ───────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.generate_invoice_number(user_id uuid)
@@ -1150,6 +1220,7 @@ CREATE TRIGGER prevent_accountant_amount_changes
 --     - pgsodium      (for vault encryption)
 --     - supabase_vault (for encrypted secrets)
 --     - pg_cron       (for cleanup_old_rate_limits scheduling)
+--     - pg_trgm       (for ILIKE '%..%' search trigram indexes — see SECTION 3 / search_engine.sql)
 --
 -- pg_cron job for rate_limits cleanup (in production: daily):
 --   SELECT cron.schedule(

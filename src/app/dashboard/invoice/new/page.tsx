@@ -14,7 +14,7 @@ import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL } from '@/lib/format-nl'
-import { matchArticles, type Article } from '@/lib/articles'
+import { matchArticles, foldText, type Article } from '@/lib/articles'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -560,9 +560,12 @@ function NewInvoicePageContent() {
 
   // ─── Client autocomplete ───────────────────────────────────────────────────
 
+  // [SEARCH] Accent-insensitive so "café"/"cafe" match; also searches KVK.
+  const clientQ = foldText(clientSearch)
   const filteredClients = clients.filter(c =>
-    c.name.toLowerCase().includes(clientSearch.toLowerCase()) ||
-    (c.email ?? '').toLowerCase().includes(clientSearch.toLowerCase())
+    foldText(c.name).includes(clientQ) ||
+    foldText(c.email ?? '').includes(clientQ) ||
+    foldText((c as { kvk_number?: string | null }).kvk_number ?? '').includes(clientQ)
   ).slice(0, 6)
 
   function selectClient(c: Client) {
