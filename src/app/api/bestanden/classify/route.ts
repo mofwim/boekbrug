@@ -54,10 +54,15 @@ export async function POST(req: NextRequest) {
 
     if (!doc) return NextResponse.json({ type: "unknown", folderId: null, folderPath: "" });
 
-    // Call AI classification
+    // Call AI classification.
+    // [AI-ARGS] classifyDocument(fileContent, fileName): this route does not fetch
+    // the file's text (it's a filename-based folder SUGGESTION only), so the filename
+    // is the sole signal — pass it as fileName (was mistakenly `doc.file_type`, the
+    // MIME type, which made the model classify off "application/pdf"). Content is the
+    // filename too, since that's the only text we have here.
     const classification = await classifyDocument(
       doc.file_name,
-      doc.file_type
+      doc.file_name
     );
 
     // Map AI result to folder path
