@@ -333,6 +333,32 @@ export function scorePair(
   return { confidence, signals, reason };
 }
 
+/**
+ * [BANK-DEDUP-CANDIDATES] Collapse candidates that are the SAME bill re-imported twice —
+ * same normalized invoice number AND same gross amount to the cent (e.g. "26 / 3958" vs
+ * "26/3958" from a re-generated PDF, which the exact-string import dedup misses). Keeps
+ * the FIRST occurrence, so call AFTER sorting by confidence to keep the strongest. A
+ * candidate with no usable number/amount is never collapsed (can't prove it's a
+ * duplicate), and requiring the AMOUNT to match too means a mere invoice-number collision
+ * across two genuinely different bills is never hidden.
+ */
+export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[] {
+  const seen = new Set<string>();
+  const out: MatchCandidate[] = [];
+  for (const c of candidates) {
+    const num = normalizeRef(c.invoiceNumber ?? "");
+    if (num.length === 0 || c.amount == null || !Number.isFinite(c.amount)) {
+      out.push(c); // no safe identity → keep (never hide something we can't prove is a dup)
+      continue;
+    }
+    const key = `${num}|${Math.round(Math.abs(c.amount) * 100)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
+}
+
 // ─── Main entry ────────────────────────────────────────────────────────────────
 
 /**
@@ -366,7 +392,9 @@ export function matchTransactions(
     }
 
     candidates.sort((a, b) => b.confidence - a.confidence);
-    const trimmed = candidates.slice(0, opts.maxCandidates);
+    // [BANK-DEDUP-CANDIDATES] Collapse a duplicate invoice (same number+amount) so the
+    // owner never sees the same bill twice in "Kies de juiste factuur".
+    const trimmed = dedupeCandidates(candidates).slice(0, opts.maxCandidates);
 
     let outcome: MatchOutcome = "none";
     let best: MatchCandidate | null = null;

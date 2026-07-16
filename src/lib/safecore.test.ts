@@ -8,7 +8,7 @@
 //
 // Style: plain check() functions + process exit code — same as retention.test.ts.
 
-import { evaluateArithmetic } from './safecore'
+import { evaluateArithmetic, normalizeInvoiceNumber } from './safecore'
 
 let failures = 0
 function check(name: string, cond: boolean, detail?: string) {
@@ -132,6 +132,16 @@ console.log('═══ safecore creditnota tests ═══\n')
   )
   check('12a. datum buiten bereik → blocked (standaard)', std.ok === false)
   check('12b. datum buiten bereik → blocked (creditnota)', cn.ok === false)
+}
+
+console.log('\n═══ [DEDUP-NUMBER-NORM] invoice-number normalization ═══\n')
+{
+  check('spacing around a separator folds', normalizeInvoiceNumber('26 / 3958') === normalizeInvoiceNumber('26/3958'))
+  check('leading/trailing space folds', normalizeInvoiceNumber('  26/3958 ') === '26/3958')
+  check('case folds', normalizeInvoiceNumber('Inv2026') === 'inv2026')
+  check('a genuinely different number does NOT fold', normalizeInvoiceNumber('26/3958') !== normalizeInvoiceNumber('26/3959'))
+  check('a different separator is preserved (not merged)', normalizeInvoiceNumber('26/3958') !== normalizeInvoiceNumber('26-3958'))
+  check('null → empty string', normalizeInvoiceNumber(null) === '')
 }
 
 console.log(`\n${failures === 0 ? '✅ ALLE TESTS GESLAAGD' : `❌ ${failures} FAILURES`}`)

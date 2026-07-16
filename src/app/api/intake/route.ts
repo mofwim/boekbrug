@@ -34,7 +34,7 @@ import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
-import { findSemanticDuplicate } from "@/lib/safecore"
+import { findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -187,16 +187,20 @@ export async function POST(req: NextRequest) {
           .eq("receiver_id", user.id)
           .eq("direction", "incoming")
           .eq("total_inc_btw", q.total)
-        if (q.tier === "number" && q.invoiceNumber) {
-          query = query.eq("invoice_number", q.invoiceNumber)
-        } else if (q.tier === "vendor" && q.vendor) {
+        if (q.tier === "vendor" && q.vendor) {
           query = query.ilike("client_name", q.vendor)
         }
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
-        const { data } = await query.limit(1)
-        return data && data.length > 0
-          ? { id: data[0].id, invoice_number: data[0].invoice_number, client_name: data[0].client_name }
-          : null
+        // [DEDUP-NUMBER-NORM] The candidate set is already pinned by total (+date); for the
+        // number tier compare the number WHITESPACE-NORMALIZED in JS, so "26 / 3958" is
+        // caught as a duplicate of "26/3958" (an exact .eq missed it → double booking).
+        const { data } = await query.limit(50)
+        const rows = data ?? []
+        const hit =
+          q.tier === "number" && q.invoiceNumber
+            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
+            : rows[0]
+        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null
       }
     )
 

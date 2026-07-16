@@ -9,7 +9,9 @@ import {
   isEligible,
   isFullyCovered,
   coveredReferenceNumbers,
+  dedupeCandidates,
   type InvoiceForMatching,
+  type MatchCandidate,
 } from "./bank-matching";
 
 let passed = 0;
@@ -256,6 +258,37 @@ console.log("\n— [BANK-SLOT-PERSIST] coveredReferenceNumbers reports the paid 
   check("none paid → empty", coveredReferenceNumbers("26302050, 26302362", new Set<string>()).length === 0);
   // Consistency with isFullyCovered: covered==refNumbers ⇔ fully covered.
   check("covered-all agrees with isFullyCovered", isFullyCovered("26302050, 26302362", new Set(["26302050", "26302362"])) === true);
+}
+
+console.log("\n— [BANK-DEDUP-CANDIDATES] a duplicate invoice is collapsed, a collision is not —");
+{
+  const cand = (invoiceId: string, invoiceNumber: string | null, amount: number | null, confidence: number): MatchCandidate =>
+    ({ invoiceId, invoiceNumber, amount, invoiceDate: "2026-05-06", confidence, signals: ["amount"], reason: "" });
+  // famzfood: same number (different whitespace) + same amount → one candidate kept (highest conf).
+  const deduped = dedupeCandidates([
+    cand("a", "26 / 3958", 630.15, 0.9),
+    cand("b", "26/3958", 630.15, 0.7),
+  ]);
+  check("same number+amount collapses to ONE", deduped.length === 1);
+  check("keeps the higher-confidence one", deduped[0].invoiceId === "a");
+  // Same number but DIFFERENT amount (a mere collision) → both kept, nothing hidden.
+  check("same number, different amount → both kept",
+    dedupeCandidates([cand("a", "INV1", 100, 0.9), cand("b", "INV1", 200, 0.8)]).length === 2);
+  // No usable number → never collapsed.
+  check("null-number candidates are never collapsed",
+    dedupeCandidates([cand("a", null, 100, 0.9), cand("b", null, 100, 0.8)]).length === 2);
+}
+
+console.log("\n— [BANK-DEDUP-CANDIDATES] matchTransactions shows a duplicate invoice once —");
+{
+  const r = matchTransactions(
+    [tx({ amount: -630.15, date: "2026-05-06", counterpartName: "famzfood", reference: "26 3958" })],
+    [
+      inv({ id: "d1", invoice_number: "26 / 3958", total_inc_btw: 630.15, direction: "incoming", client_name: "famzfood", invoice_date: "2026-05-06" }),
+      inv({ id: "d2", invoice_number: "26/3958", total_inc_btw: 630.15, direction: "incoming", client_name: "famzfood", invoice_date: "2026-05-06" }),
+    ],
+  );
+  check("only one candidate is offered (not the duplicate twice)", r.matches[0].candidates.length === 1);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
