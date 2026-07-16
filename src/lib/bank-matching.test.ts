@@ -7,6 +7,8 @@ import {
   amountMatches,
   dateProximityScore,
   isEligible,
+  isFullyCovered,
+  coveredReferenceNumbers,
   type InvoiceForMatching,
 } from "./bank-matching";
 
@@ -202,6 +204,14 @@ console.log("\n— [TRUST-MATCH] a short numeric invoice number must not match i
   check("year-based '2026-014' matches next to another number", referenceMatches(t("ordernr 99 2026-014"), "2026-014") === true);
   check("hyphenated number matches its printed form", referenceMatches(t("betaling 2026-014 voldaan"), "2026-014") === true);
   check("still rejects a fragment inside a longer fused number", referenceMatches(t("betaling 992026014"), "2026014") === false);
+  // [TRUST-MATCH-ALNUM] alphanumeric invoice numbers get the same digit-boundary guard.
+  check("'MF26' does NOT match 'MF260' (next sequence number)", referenceMatches(t("betaling MF260"), "MF26") === false);
+  check("'MF26' matches exact 'MF26'", referenceMatches(t("betaling MF26 voldaan"), "MF26") === true);
+  check("'F2026-01' does NOT match 'F2026-011'", referenceMatches(t("ref F2026011"), "F2026-01") === false);
+  check("'F2026-01' matches its printed form", referenceMatches(t("betaling F2026-01"), "F2026-01") === true);
+  // A printed letter PREFIX on a numeric invoice number still matches (INV2050 ⊃ 2050).
+  check("numeric '2050' still matches inside 'INV2050' (letter prefix ok)", referenceMatches(t("ref INV2050"), "2050") === true);
+  check("'INV2050' does NOT match 'INV20500'", referenceMatches(t("ref INV20500"), "INV2050") === false);
 }
 
 // [BANK-PSP-MATCH] The HorecaRama case: a PSP (Mollie) debit whose remittance carries a
@@ -234,6 +244,18 @@ console.log("\n— [BANK-PSP-MATCH] a PSP payment with a junk reference still ma
   check("the real invoice IS a candidate (not 'none')", m.outcome !== "none" && m.candidates.length >= 1);
   check("candidate is invoice 82910", m.candidates.some((c) => c.invoiceNumber === "82910"));
   check("it matched on amount (not reference)", m.candidates[0]?.signals.includes("amount") === true && !m.candidates[0]?.signals.includes("reference"));
+}
+
+console.log("\n— [BANK-SLOT-PERSIST] coveredReferenceNumbers reports the paid subset —");
+{
+  const paid = new Set(["26302050"]); // only the first invoice of the batch is paid
+  const covered = coveredReferenceNumbers("26302050, 26302362", paid);
+  check("returns the paid reference number", covered.length === 1 && covered[0] === "26302050");
+  check("does not report the still-open number", !covered.includes("26302362"));
+  check("both paid → both covered", coveredReferenceNumbers("26302050, 26302362", new Set(["26302050", "26302362"])).length === 2);
+  check("none paid → empty", coveredReferenceNumbers("26302050, 26302362", new Set<string>()).length === 0);
+  // Consistency with isFullyCovered: covered==refNumbers ⇔ fully covered.
+  check("covered-all agrees with isFullyCovered", isFullyCovered("26302050, 26302362", new Set(["26302050", "26302362"])) === true);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
