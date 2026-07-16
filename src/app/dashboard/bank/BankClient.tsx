@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { reconcileBatch } from '@/lib/bank-batch-reconcile'
+import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const M3 = {
@@ -1199,19 +1199,20 @@ function TxCard({
   // a fully-dismissed transaction (e.g. Brabant Water, where every number was a
   // customer/postcode, not an invoice) can still be cleared. Slots are built from
   // the current refParts, so dismissed numbers simply disappear as rows.
-  // [BANK-PSP-MATCH] A PSP / webshop payment (Mollie, order gateways) carries a
-  // transaction hash and an order number in its remittance — NOT the invoice number. The
-  // parser extracts those as "reference numbers", so allRefParts.length > 1 and the tx
-  // was forced into the multi-invoice slot view, which only offers invoices whose number
-  // equals a reference fragment — hiding the REAL invoice the engine already matched by
-  // amount + counterpart. If a single candidate covers the FULL debit to the cent, this
-  // is one payment of one invoice (the fragments are junk), so fall back to the normal
-  // match UI and offer it. Genuine batch payments (no single candidate equals the whole
-  // amount — M.H. BAL, ATAPACK) are unaffected and keep the slot view.
-  const hasFullAmountSingleMatch = s.candidates.some(
-    (c) => c.amount != null && Math.round(Math.abs(c.amount) * 100) === Math.round(Math.abs(s.amount) * 100),
+  // [BANK-PSP-MATCH] A genuine multi-invoice batch = ≥2 of the bank's reference numbers
+  // resolve to REAL invoices (a live candidate, or a number already confirmed against this
+  // tx), OR the server flagged this tx as a partially-linked multi (one invoice already
+  // paid, others still open). A PSP / order-gateway reference (Mollie transaction hash +
+  // order number) resolves <2 real invoices, so it falls through to the normal match UI and
+  // the amount-matched invoice is offered instead of hidden. Counting RESOLVED references —
+  // not raw fragments (which forced the slot view on junk), and not any full-amount
+  // candidate (which let an UNRELATED invoice equal to the whole debit collapse a real
+  // batch and steer to the wrong pick — caught in adversarial review) — fixes both bugs.
+  const resolvedRefCount = countResolvedReferences(
+    allRefParts,
+    [...s.candidates.map((c) => c.invoiceNumber), ...confirmedNumbers],
   )
-  const wasMulti = allRefParts.length > 1 && !isIgnoredTab && !hasFullAmountSingleMatch
+  const wasMulti = !isIgnoredTab && (resolvedRefCount >= 2 || s.partiallyLinked === true)
   // Equality — not substring — so "263" can't claim "26302050".
   const confirmedSet = new Set(confirmedNumbers.map(normRef))
   // [BANK-SLOT-DISMISS] Build slots whenever the transaction STARTED multi, so a
@@ -1722,6 +1723,9 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
           {onOpenFile && (
             <button
               onClick={(e) => { e.stopPropagation(); onOpenFile(cand.invoiceId) }}
+              // [A11Y] The row wrapper is a role=button that selects on Enter/Space; stop
+              // the key event here so opening the PDF doesn't ALSO select the candidate.
+              onKeyDown={(e) => e.stopPropagation()}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 'auto',
                 border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,

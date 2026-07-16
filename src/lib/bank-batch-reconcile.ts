@@ -15,6 +15,37 @@
 //
 // Run: npx tsx src/lib/bank-batch-reconcile.test.ts
 
+import { normalizeRef } from "./bank-matching";
+
+// [BANK-PSP-MATCH] How many of a payment's reference fragments actually resolve to a real
+// invoice — a candidate the engine matched, or a number already confirmed against this tx.
+//
+// This is the ONLY safe signal for "is this a genuine multi-invoice batch?". A PSP / order
+// gateway (Mollie, webshop) writes a transaction hash + an order number in the remittance,
+// so refParts.length > 1 even though ZERO of them are invoice numbers. Counting fragments
+// alone (the old bug) forced the slot view and hid a real amount-matched invoice. Counting
+// FULL-amount candidates instead (the second bug an adversarial review caught) let an
+// UNRELATED invoice that happened to equal the whole debit collapse a genuine batch and
+// auto-select the wrong invoice. Counting resolved references avoids both: only ≥2 real
+// invoice numbers in the reference makes it a batch; junk fragments resolve to 0.
+export function countResolvedReferences(
+  refParts: string[],
+  knownInvoiceNumbers: Array<string | null | undefined>,
+): number {
+  const known = new Set(
+    knownInvoiceNumbers.map((n) => normalizeRef(n ?? "")).filter((n) => n.length > 0),
+  );
+  const seen = new Set<string>();
+  let count = 0;
+  for (const rp of refParts) {
+    const key = normalizeRef(rp);
+    if (key.length === 0 || seen.has(key)) continue; // dedup: a doubled ref isn't two invoices
+    seen.add(key);
+    if (known.has(key)) count++;
+  }
+  return count;
+}
+
 export interface BatchSlotInput {
   refNum: string;
   /** The matched invoice's gross total (total_inc_btw), or null when no invoice with
