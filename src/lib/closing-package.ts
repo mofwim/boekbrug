@@ -455,11 +455,15 @@ interface AssembleInput {
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
    *  sales data at all (nothing to declare yet). Never an invented filing. */
   conceptAangifte?: ConceptAangifte | null;
+  /** [CASH-EVIDENCE] The cash book (kasboek) as a CSV — a standalone evidence sheet for a
+   *  cash-heavy shop, so the accountant sees every kasboeking, not only the netted cash
+   *  figures inside the concept aangifte. null when the owner keeps no cash book. */
+  cashCsv?: string | null;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, cashCsv } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -571,6 +575,9 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // ── overzicht.csv + overzicht.json ──
   const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates);
   zip.file("overzicht.csv", "\uFEFF" + overviewCsv);
+
+  // \u2500\u2500 kasboek.csv ([CASH-EVIDENCE] standalone cash-book sheet, when the owner keeps one) \u2500\u2500
+  if (cashCsv) zip.file("kasboek.csv", "\uFEFF" + cashCsv);
 
   // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
   const hasTurnover = !!turnoverClosing && turnoverClosing.summary.days > 0;
@@ -1263,6 +1270,26 @@ export async function buildClosingPackageZip(args: {
     result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
   const conceptAangifte = hasDeclarable
     ? buildAangifte(result, completeness, `Q${quarter} ${year}`)
+    : null;
+
+  // [CASH-EVIDENCE] Standalone kasboek sheet when the owner keeps a cash book — so a
+  // cash-heavy shop hands the accountant every kasboeking, not only the netted cash figures
+  // inside the concept aangifte. Injection-safe via esc(); null when there are no entries.
+  const cashCsv = (cashAllRows ?? []).length > 0
+    ? [
+        `BoekBrug — Kasboek Q${quarter} ${year}`,
+        "",
+        ["Datum", "Richting", "Categorie", "BTW-tarief", "Bedrag"].map(esc).join(";"),
+        ...(cashAllRows ?? []).map((c) =>
+          [
+            c.entry_date ?? "",
+            c.direction === "in" ? "In" : "Uit",
+            c.category ?? "",
+            c.btw_rate != null ? `${c.btw_rate}%` : "",
+            EUR(Number(c.amount) || 0),
+          ].map(esc).join(";"),
+        ),
+      ].join("\n")
     : null;
 
   return assembleClosingPackageZip({

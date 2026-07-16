@@ -74,10 +74,20 @@ export async function GET(req: NextRequest) {
     .from("bank_transactions")
     .select("amount, category, invoice_id, date, description")
     .eq("user_id", ownerId).gte("date", start).lte("date", end);
-  const bankTx: ResultBankTx[] = (bankRows ?? []).map((b) => ({
-    amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-    settleDate: b.category === "pos_income" ? (parsePosSettlement(b.description).date ?? b.date) : null,
-  }));
+  const bankTx: ResultBankTx[] = (bankRows ?? []).map((b) => {
+    // [SETTLE-EXACT] Must match /api/result, /api/readiness AND the closing package: when a
+    // pos_income line has NO printed DAT. date, settleDate falls back to the booking date and
+    // the covered-day de-dup must widen backward — WITHOUT settleExact it wrongly treated the
+    // fallback as exact, silently absorbing a missing-Z-report card day into a neighbouring
+    // till day (understating omzet + hiding the omzet-zonder-tarief warning). Now all four
+    // surfaces agree on the same quarter.
+    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
+    return {
+      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
+      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
+      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
+    };
+  });
 
   const { data: cashRows } = await pipeline
     .from("cash_entries")
