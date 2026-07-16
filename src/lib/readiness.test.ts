@@ -75,13 +75,24 @@ console.log("\n— missing bank data is a real gap (bank → 0) —");
   check("almost, not ready", r.status === "almost");
 }
 
-console.log("\n— undocumented bank lines lower the bank ratio proportionally —");
+console.log("\n— [NO-CODEER] uncoded cost debits do NOT lower readiness (feature removed) —");
 {
-  // 120 tx, 12 undocumented → resolved 108/120 = 0.9 → bank 27. 30+27+20+20 = 97.
+  // 120 tx, 12 uncoded cost debits. Coding a bare bank debit gives no BTW and can
+  // double-count an invoice, so it is NOT a readiness gap. bank stays 30 → 100.
   const r = buildReadiness(perfect({ bankTxCount: 120, undocumentedCount: 12 }));
+  check("score = 100 (undocumented no longer drags bank)", r.score === 100);
+  check("no 'wacht nog op een bon' item is listed", !r.missing.some((m) => /wachten nog op een bon/.test(m.title)));
+  check("still ready", r.status === "ready");
+}
+
+console.log("\n— unmatched INCOME still lowers the bank ratio (revenue truth survives) —");
+{
+  // 120 tx, 12 received payments with no invoice behind them → resolved 108/120 = 0.9 →
+  // bank 27. 30+27+20+20 = 97. Money in with no invoice must never silently pass.
+  const r = buildReadiness(perfect({ bankTxCount: 120, unmatchedIncomeCount: 12 }));
   check("score = 97 (bank at 0.9)", r.score === 97);
-  check("a 'wacht nog op een bon' item is listed", r.missing.some((m) => /wachten nog op een bon/.test(m.title)));
-  check("not ready (a gap remains)", r.status !== "ready");
+  check("a 'zonder factuur' income item is listed", r.missing.some((m) => /zonder factuur/.test(m.title)));
+  check("not ready (unexplained income is a gap)", r.status !== "ready");
 }
 
 console.log("\n— reconciliation differences are RISKS (eyeball), not blocking gaps —");

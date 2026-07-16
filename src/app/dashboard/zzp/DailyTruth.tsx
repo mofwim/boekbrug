@@ -120,7 +120,10 @@ export default function DailyTruth() {
 
   const { toPay, toReceive, bank, attention, attentionCount } = data
   const lastDate = formatDate(bank.lastDate)
-  const allClear = toPay.count === 0 && toReceive.count === 0 && bank.undocumented === 0
+  // [NO-CODEER] Uncoded bank debits no longer count as "not clear" — coding a bare debit
+  // gives no BTW and can double-count an invoice, so it isn't an open task the owner owes.
+  // "Alles is bij" now reflects only real open money: nothing to pay and nothing to receive.
+  const allClear = toPay.count === 0 && toReceive.count === 0
 
   // incoming → the manage surface (pay / mark paid); outgoing → the invoice detail.
   const openItem = (it: AttentionItem) =>
@@ -166,34 +169,13 @@ export default function DailyTruth() {
         </>
       )}
 
-      {/* [BANK-IDENTITY] Durable categorize entry — rendered ALWAYS (outside allClear),
-          so uncategorized transactions (incl. income that would otherwise understate
-          omzet) are reachable even when nothing is "undocumented". */}
-      <button
-        onClick={() => router.push('/dashboard/bank/categoriseren')}
-        style={{
-          width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
-          marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
-          background: bank.undocumented > 0 ? M3.warningContainer : M3.surface,
-          boxShadow: EL1,
-          border: `1px solid ${bank.undocumented > 0 ? 'transparent' : M3.outlineVariant}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: bank.undocumented > 0 ? M3.warning : M3.onSurface }}>
-            Nog te documenteren
-          </div>
-          <div style={{ fontSize: 12.5, color: bank.undocumented > 0 ? M3.warning : M3.neutral, marginTop: 2 }}>
-            {bank.undocumented > 0
-              ? `${bank.undocumented} ${bank.undocumented === 1 ? 'transactie zonder bon' : 'transacties categoriseren'}`
-              : 'Transacties bekijken en categoriseren'}
-          </div>
-        </div>
-        <span style={{ fontFamily: FONT_NUM, fontSize: 20, fontWeight: 700, color: bank.undocumented > 0 ? M3.warning : M3.neutral }}>
-          {bank.undocumented > 0 ? bank.undocumented : '›'}
-        </span>
-      </button>
+      {/* [NO-CODEER] The per-line bank-categorize entry was removed on purpose. For a
+          retail administration costs come in on the INCOMING invoice (which carries the
+          BTW to reclaim) and revenue from the Z-report/dagomzet — hand-coding a bare bank
+          debit gives no voorbelasting and can double-count an invoice already booked, so
+          the "give every transaction a category" flow was more busywork than truth. The
+          page + API still exist (reachable by URL) if we ever re-enable it; the readiness
+          screen still flags genuinely unexplained INCOME (money in with no invoice). */}
 
       {/* [CASH-LEDGER] Kas line — only when the owner actually uses cash. */}
       {data.kas?.used && (
