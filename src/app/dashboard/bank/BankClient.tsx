@@ -1199,7 +1199,19 @@ function TxCard({
   // a fully-dismissed transaction (e.g. Brabant Water, where every number was a
   // customer/postcode, not an invoice) can still be cleared. Slots are built from
   // the current refParts, so dismissed numbers simply disappear as rows.
-  const wasMulti = allRefParts.length > 1 && !isIgnoredTab
+  // [BANK-PSP-MATCH] A PSP / webshop payment (Mollie, order gateways) carries a
+  // transaction hash and an order number in its remittance — NOT the invoice number. The
+  // parser extracts those as "reference numbers", so allRefParts.length > 1 and the tx
+  // was forced into the multi-invoice slot view, which only offers invoices whose number
+  // equals a reference fragment — hiding the REAL invoice the engine already matched by
+  // amount + counterpart. If a single candidate covers the FULL debit to the cent, this
+  // is one payment of one invoice (the fragments are junk), so fall back to the normal
+  // match UI and offer it. Genuine batch payments (no single candidate equals the whole
+  // amount — M.H. BAL, ATAPACK) are unaffected and keep the slot view.
+  const hasFullAmountSingleMatch = s.candidates.some(
+    (c) => c.amount != null && Math.round(Math.abs(c.amount) * 100) === Math.round(Math.abs(s.amount) * 100),
+  )
+  const wasMulti = allRefParts.length > 1 && !isIgnoredTab && !hasFullAmountSingleMatch
   // Equality — not substring — so "263" can't claim "26302050".
   const confirmedSet = new Set(confirmedNumbers.map(normRef))
   // [BANK-SLOT-DISMISS] Build slots whenever the transaction STARTED multi, so a
@@ -1732,7 +1744,13 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
               match; the choice list shows nothing extra. */}
           {emphasis && (
             <span style={{ fontSize: 11.5, color: M3.success, fontWeight: 500 }}>
-              Dit bedrag en factuurnummer staan in je bankafschrift
+              {/* [BANK-PSP-MATCH] Honest proof line: only claim the factuurnummer is in the
+                  statement when the reference signal actually fired. An amount+counterpart
+                  match (a PSP/order payment) has NO invoice number in the statement, so we
+                  say only that the amount matches — never invent a reference that isn't there. */}
+              {Array.isArray(cand.signals) && cand.signals.includes('reference')
+                ? 'Dit bedrag en factuurnummer staan in je bankafschrift'
+                : 'Dit bedrag komt overeen met je bankafschrift'}
             </span>
           )}
           {/* [BANK-INVOICE-FILE] Open the actual invoice PDF before confirming. */}

@@ -204,5 +204,37 @@ console.log("\n— [TRUST-MATCH] a short numeric invoice number must not match i
   check("still rejects a fragment inside a longer fused number", referenceMatches(t("betaling 992026014"), "2026014") === false);
 }
 
+// [BANK-PSP-MATCH] The HorecaRama case: a PSP (Mollie) debit whose remittance carries a
+// transaction hash + order number — NOT the invoice number — must still find the real
+// invoice by amount + counterpart. The engine already does; the bug was in the UI (a
+// >1 reference-fragment count forced the multi-invoice slot view, which hid this
+// amount-matched candidate). This locks the engine behaviour the UI fix relies on.
+console.log("\n— [BANK-PSP-MATCH] a PSP payment with a junk reference still matches the real invoice by amount —");
+{
+  const r = matchTransactions(
+    [tx({
+      amount: -914.76, // incoming supplier invoice → money out (debit)
+      date: "2026-05-27",
+      reference: "8152314131466030 72802",
+      description: "a54208441c0a8afc8fb6e9eec515c17 8152314131466030 Order ORD 72802 horecarama.nl HorecaRama",
+      counterpartName: "HorecaRama via Stichting Mollie Payments",
+    })],
+    [inv({
+      id: "hr-82910",
+      invoice_number: "82910",
+      total_inc_btw: 914.76,
+      invoice_date: "2026-05-27",
+      due_date: "2026-06-10",
+      client_name: "HorecaRama BV",
+      direction: "incoming",
+      status: "received",
+    })],
+  );
+  const m = r.matches[0];
+  check("the real invoice IS a candidate (not 'none')", m.outcome !== "none" && m.candidates.length >= 1);
+  check("candidate is invoice 82910", m.candidates.some((c) => c.invoiceNumber === "82910"));
+  check("it matched on amount (not reference)", m.candidates[0]?.signals.includes("amount") === true && !m.candidates[0]?.signals.includes("reference"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
