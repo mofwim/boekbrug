@@ -684,10 +684,11 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
         <IconSearch size={variant === "launcher" ? 22 : 18} />
       </button>
 
-      {/* Full-screen overlay (compact mode) */}
+      {/* Full-screen overlay (compact mode). High z-index so the search overlay sits
+          above page modals / sticky action bars (some reach z:1500–3000). */}
       {compact && open && (
         <div style={{
-          position: "fixed", inset: 0, zIndex: 200,
+          position: "fixed", inset: 0, zIndex: 2147483000,
           background: "white", display: "flex", flexDirection: "column",
         }}>
           <div style={{

@@ -53,9 +53,10 @@ function normalizeQuery(q: string): string[] {
 // ("1.500,00" / "1.500" / "1500,00"). Only kick in for money-shaped queries so a
 // normal name/number search never triggers a spurious amount match.
 function amountConditions(q: string): string[] {
-  // Strip spaces first so "1 500" parses as 1500 (not 1). Gate to money-shaped input.
-  const trimmed = q.trim().replace(/\s/g, "");
-  if (!/\d/.test(trimmed) || !/^[\d.,€]+$/.test(trimmed)) return [];
+  // Strip spaces AND the euro sign so "1 500" / "€1.500,00" parse correctly
+  // (parseAmountNL doesn't strip currency). Gate to money-shaped input.
+  const trimmed = q.trim().replace(/[\s€]/g, "");
+  if (!/\d/.test(trimmed) || !/^[\d.,]+$/.test(trimmed)) return [];
   const n = parseAmountNL(trimmed);
   // Cap well below 1e21 where Number.toString() switches to exponential notation
   // (which would emit a non-digit "1e+21" into the ILIKE pattern).
@@ -113,7 +114,8 @@ function rankScore(query: string, fields: Array<string | null | undefined>): num
   if (best > 0) return best;
 
   // Multi-token fallback: reward how many tokens are present across all fields.
-  const tokens = needle.split(/\s+/).filter((t) => t.length > 0);
+  // Drop 1-char tokens — they match almost anything and skew coverage scoring.
+  const tokens = needle.split(/\s+/).filter((t) => t.length > 1);
   if (tokens.length > 1) {
     const haystack = folded.join(" ");
     const matched = tokens.filter((t) => haystack.includes(t)).length;
@@ -146,7 +148,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
 
-  const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
+  // [SEARCH] Cap length: bounds the un-indexed per-row trigram work in the fuzzy
+  // RPCs (a huge q over many RLS-visible rows would be an amplification vector).
+  const q = (req.nextUrl.searchParams.get("q") ?? "").trim().slice(0, 100);
   const target = (req.nextUrl.searchParams.get("target") ?? "all") as SearchTarget;
 
   const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [] };

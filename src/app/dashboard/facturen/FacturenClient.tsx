@@ -123,10 +123,14 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const focusId = searchParams.get('focus')
   const [highlightId, setHighlightId] = useState<string | null>(null)
 
-  // [SEARCH] Quick text-filter over the loaded invoices. Seeded once from ?search=
-  // (set by the global search bar's Enter fallback). Full/server-side invoice
-  // search lives in the global search dropdown; this is an on-page refinement.
-  const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
+  // [SEARCH] Quick text-filter over the loaded invoices. Seeded from ?search= (set by
+  // the global search bar's Enter fallback). The global bar is now reachable on every
+  // page, so a ?search= push can arrive while we're already mounted on /dashboard/facturen
+  // (no remount) — sync on param change, not just at mount. Local typing doesn't change
+  // the param, so it never clobbers the user's input.
+  const searchParam = searchParams.get('search') ?? ''
+  const [search, setSearch] = useState(searchParam)
+  useEffect(() => { setSearch(searchParam) }, [searchParam])
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
