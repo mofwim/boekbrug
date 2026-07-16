@@ -53,6 +53,9 @@ export interface FinancialResult {
   btwVoorbelasting: number;   // BTW you reclaim (documented purchases)
   btwSaldo: number;           // verschuldigd − voorbelasting (what you pay/receive)
   cashOmzetZonderBtw: number; // cash sales recorded without a BTW rate — a nudge, not counted in BTW
+  // Of cashOmzetZonderBtw, the portion from BANK revenue or an un-split till day (not plain
+  // cash). > 0 → the rate split needs the Z-report → readiness points the fix at Dagomzet.
+  omzetZonderBtwNonCash: number;
   // [TURNOVER] BTW verschuldigd from the till Z-report, split per rate for aangifte
   // rubriek 1a (21%) / 1b (9%). Turnover-only: invoice/cash BTW is NOT yet rate-split
   // here, so these do NOT sum to btwVerschuldigd — that scalar stays the authoritative
@@ -125,6 +128,11 @@ export function computeResult(
   let btwVerschuldigd = 0;
   let btwVoorbelasting = 0;
   let cashOmzetZonderBtw = 0;
+  // [ZONDER-TARIEF-SOURCE] Of the omzet-zonder-tarief total, how much comes from BANK
+  // revenue or an un-split till day (vs. plain cash). Bank/till revenue needs the Z-report
+  // rate split to know 9%/21% — so the fix guidance points to Dagomzet, not Kas. Pure cash
+  // omzet's rate is assigned at Kas. Lets readiness route the "fix" link to the right screen.
+  let omzetZonderBtwNonCash = 0;
   let turnoverBtw9 = 0;
   let turnoverBtw21 = 0;
 
@@ -198,6 +206,7 @@ export function computeResult(
       // blocks readiness and appears in the aangifte note so a rate is assigned before
       // filing. (Card takings reconciled to a Z-report were already excluded above.)
       cashOmzetZonderBtw += amt;
+      omzetZonderBtwNonCash += amt; // bank-sourced → the rate split comes from the Z-report
     }
     else if (role === "kosten") kosten += amt;
     // transfer / prive / tax / fee → excluded
@@ -258,6 +267,7 @@ export function computeResult(
       if (unrated > Math.max(0.10, 0.001 * Math.abs(t.total_incl))) {
         omzet += unrated;
         cashOmzetZonderBtw += unrated;
+        omzetZonderBtwNonCash += unrated; // till day with an un-imported rate → fix at Dagomzet
       }
     }
   }
@@ -274,6 +284,7 @@ export function computeResult(
     btwVoorbelasting,
     btwSaldo: btwVerschuldigd - btwVoorbelasting,
     cashOmzetZonderBtw,
+    omzetZonderBtwNonCash,
     turnoverBtw9,
     turnoverBtw21,
     salesByRate: [...salesRate.entries()]

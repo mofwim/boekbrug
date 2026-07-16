@@ -104,6 +104,22 @@ console.log("\n— unrated cash omzet is a BTW gap (missing) —");
   check("not ready", r.status !== "ready");
 }
 
+console.log("\n— omzet-zonder-tarief fix routes by SOURCE, not just by till —");
+{
+  // Plain cash (no till, no bank-sourced omzet) → the owner sets the rate at Kas.
+  const cash = buildReadiness(perfect({ usesTurnover: false, turnoverDays: 0, cashOmzetZonderBtw: 250, omzetZonderBtwNonCash: 0 }));
+  const cashItem = cash.missing.find((m) => /omzet zonder BTW-tarief/.test(m.title));
+  check("plain cash omzet → fix points to Kas", cashItem?.fix?.href === "/dashboard/kas");
+
+  // Bank-received omzet (money on the bank, rate lives in the Z-report) → Dagomzet,
+  // even for a store with NO till rows yet. This was the live bug: €168k bank omzet
+  // pointed to 'Naar Kas'.
+  const bank = buildReadiness(perfect({ usesTurnover: false, turnoverDays: 0, cashOmzetZonderBtw: 168159, omzetZonderBtwNonCash: 168159 }));
+  const bankItem = bank.missing.find((m) => /omzet zonder BTW-tarief/.test(m.title));
+  check("bank-sourced omzet → fix points to Dagomzet (not Kas)", bankItem?.fix?.href === "/dashboard/dagomzet");
+  check("bank-sourced detail mentions the Z-rapport", /Z-rapport/.test(bankItem?.detail ?? ""));
+}
+
 console.log("\n— partial kassadag coverage is a BTW gap —");
 {
   const r = buildReadiness(perfect({ turnoverDays: 80, quarterDays: 90 }));
