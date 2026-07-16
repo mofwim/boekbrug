@@ -780,6 +780,53 @@ async function bankStatementPaths(
   return out;
 }
 
+/**
+ * [BRUG-FILES-SHARED] Owner-shared general docs (kassabonnen, contracten, …) split into
+ * the ones tied to THIS quarter (go in the ZIP) and a count of the ones the owner shared
+ * but that belong to another quarter OR carry no quarter at all — those silently fall out
+ * of every package, so the summary/ZIP can WARN instead of dropping them unseen. Excludes
+ * invoices (own section) and bankafschriften (own section). Shared by the ZIP + the preview
+ * so both count and warn identically.
+ */
+async function sharedDocsForQuarter(
+  supabase: PipelineClient,
+  ownerId: string,
+  year: number,
+  quarter: Quarter,
+): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number }> {
+  const sharedPeriod = `${year}-Q${quarter}`;
+  const { data } = await supabase
+    .from("documents")
+    .select("file_url, file_name, doc_type, invoice_id, period")
+    .eq("user_id", ownerId)
+    .eq("shared", true)
+    .eq("trashed", false)
+    .is("invoice_id", null);
+  const rows = (data ?? []) as Array<{
+    file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
+  }>;
+  const paths: Array<{ path: string; name: string }> = [];
+  let outsideCount = 0;
+  for (const d of rows) {
+    if (!d.file_url || d.doc_type === "bankafschrift") continue; // not a general shared doc
+    if (d.period === sharedPeriod) paths.push({ path: d.file_url, name: d.file_name ?? "document" });
+    else outsideCount++; // shared, but another quarter / no quarter → not in THIS package
+  }
+  return { paths, outsideCount };
+}
+
+/** A warning for shared files that fall outside this quarter's package, or null. Shared by
+ *  the ZIP builder and the preview summary so both tell the SAME truth. */
+function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
+  if (outsideCount <= 0) return null;
+  return {
+    code: "shared_outside_quarter",
+    message:
+      `${outsideCount} gedeeld(e) bestand(en) hoort/horen bij een ander kwartaal of hebben geen ` +
+      `kwartaal, en zitten NIET in dit pakket — controleer of ze bij dit kwartaal thuishoren.`,
+  };
+}
+
 // [AANGIFTE] EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be
 // intra-EU (rubriek 4b), which the concept aangifte does NOT auto-compute. Mirrors
 // /api/aangifte so the closing package and the app screen never disagree.
@@ -881,6 +928,11 @@ export async function summarizeClosingPackage(args: {
   const bankFilePaths = await bankStatementPaths(supabase, ownerId, year, quarter);
   const bankStatementIncluded = bankFilePaths.length > 0;
 
+  // [C#3] Owner-shared general docs for this quarter — counted so the preview
+  // filesIncluded matches what the ZIP actually ships (invoices-with-PDF alone undercounted
+  // it, since the ZIP also carries bank + shared files). [C#2] outsideCount → a warning.
+  const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
+
   // Honest warnings — the real gaps, listed specifically.
   if (verified.length === 0) {
     warnings.push({ code: "no_invoices", message: "Geen geverifieerde facturen in dit kwartaal." });
@@ -904,12 +956,17 @@ export async function summarizeClosingPackage(args: {
   } else if (!bankStatementIncluded) {
     warnings.push({ code: "bank_file_missing", message: "Banktransacties zijn aanwezig, maar het originele bankafschrift-bestand is (nog) niet bijgevoegd — upload het bankafschrift." });
   }
+  // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  if (sharedOutside) warnings.push(sharedOutside);
 
   return {
     quarter: `Q${quarter} ${year}`,
     outgoingCount: outgoing.length,
     incomingCount: incoming.length,
-    filesIncluded: withPdf,
+    // [C#3] Match what the ZIP actually ships: invoices-with-PDF + bank statement file(s)
+    // + owner-shared docs for this quarter. (km is not a feature yet → 0.)
+    filesIncluded: withPdf + bankFilePaths.length + shared.paths.length,
     bankStatementIncluded,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -1070,29 +1127,14 @@ export async function buildClosingPackageZip(args: {
   const hasBankData = (bankTxRows ?? []).length > 0;
 
   // ── [BRUG-FILES-SHARED] Owner-shared general docs for this quarter ──
-  // shared=true (the field the accountant RLS reads), tied to the quarter via
-  // period='{year}-Q{n}'. Exclude invoices (invoice_id set) and bank statements
-  // (doc_type='bankafschrift') — those already have their own ZIP sections.
-  const sharedPeriod = `${year}-Q${quarter}`;
-  const { data: sharedDocs } = await supabase
-    .from("documents")
-    .select("file_url, file_name, doc_type, invoice_id")
-    .eq("user_id", ownerId)
-    .eq("shared", true)
-    .eq("period", sharedPeriod)
-    .eq("trashed", false)
-    .is("invoice_id", null);
-  const sharedRows = (sharedDocs ?? []) as unknown as Array<{
-    file_url: string | null;
-    file_name: string | null;
-    doc_type: string | null;
-    invoice_id: string | null;
-  }>;
-  const sharedPaths = sharedRows
-    .filter((d) => !!d.file_url && d.doc_type !== "bankafschrift")
-    .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "document" }));
-  const sharedFilesRaw = await Promise.all(sharedPaths.map((p) => dl(p.path, p.name)));
+  // Shared via the single helper (same split as the preview): in-quarter → the ZIP;
+  // outside-quarter → a [C#2] warning so a shared file that belongs elsewhere isn't
+  // silently absent. Invoices + bankafschriften are excluded (their own sections).
+  const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
+  const sharedFilesRaw = await Promise.all(shared.paths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  if (sharedOutside) warnings.push(sharedOutside);
 
   // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──
   const paidInvoices = [...outgoing, ...incoming].filter((i) => i.status === "paid");
