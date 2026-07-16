@@ -680,16 +680,22 @@ export default function BankClient() {
       ? activeListRaw.filter((s) => {
           const raw = filterText.trim()
           const q = fold(raw)
-          // Amount: exact value ("1.500,00" / "45,50") or exact whole-euro match ("15"
-          // → €15,xx). Uses === (not substring) so "15" doesn't also match 150/1.500 —
-          // that would pollute an ordinary text search that happens to contain a digit.
+          // Amount: only when the query is AMOUNT-LIKE (digits/separators/€ only) — a
+          // text query that merely contains a digit ("factuur 2") must NOT trigger it.
+          // Exact value ("1.500,00" / "45,50"), plus a whole-euro match ("15" → €15,xx)
+          // ONLY when no decimal was typed (so "1,5" means €1,50, not also €15,xx).
+          const amountLike = raw.length > 0 && !/[^\d.,\s€-]/.test(raw)
           const qDigits = raw.replace(/[^\d]/g, '')
           const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
+          // "whole euro" = the parsed value is an integer ("15","1.500","1.500,00"),
+          // NOT that the raw string lacks separators — a NL thousands-dot ("1.500")
+          // is still a whole number and must keep the whole-euro match.
+          const isWhole = Number.isInteger(qNum)
           const an = Math.abs(s.amount)
           const amountMatch =
-            qDigits.length > 0 &&
+            amountLike && qDigits.length > 0 &&
             ((Number.isFinite(qNum) && qNum > 0 && Math.abs(an - qNum) < 0.005) ||
-              String(Math.trunc(an)) === qDigits)
+              (isWhole && String(Math.trunc(an)) === qDigits))
           return (
             fold(s.counterpart ?? '').includes(q) ||
             fold(s.reference ?? '').includes(q) ||

@@ -58,30 +58,38 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
 
     setLoading(true);
 
-    timerRef.current = setTimeout(async () => {
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
+    // [SEARCH] Per-run guard: a superseded/unmounted run must neither overwrite newer
+    // state nor flip the spinner off while a newer request is still in flight.
+    let cancelled = false;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
+    timerRef.current = setTimeout(async () => {
       try {
         const params = new URLSearchParams({ q: query, target });
         // [BOEK-012] fetch API only — never import supabase-server directly
-        const res = await fetch(`/api/search?${params}`, {
-          signal: abortRef.current.signal,
-        });
+        const res = await fetch(`/api/search?${params}`, { signal: controller.signal });
         if (!res.ok) throw new Error("Zoekopdracht mislukt");
         const data: SearchResultGroup = await res.json();
+        if (cancelled) return;
         setGroups(data);
         setError(null);
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if (cancelled || (e as Error).name === "AbortError") return;
         setError((e as Error).message);
         setGroups(EMPTY_GROUP);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }, debounceMs);
 
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+    // Cleanup on deps-change AND unmount: cancel state writes, abort the fetch, clear timer.
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, [query, minLength, debounceMs, target]);
 
   const totalCount =
