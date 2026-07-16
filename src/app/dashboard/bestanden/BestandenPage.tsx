@@ -357,19 +357,28 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   }, []);
 
   // ── Load data ──
+  // [race] Sequence guard: quickly navigating A→B fires two loadContents; without
+  // this, if A resolves last it overwrites B's contents while the breadcrumb/URL say
+  // B. Only the most recent call may write state (and clear `loading`).
+  const loadSeqRef = useRef(0);
   const loadContents = useCallback(async (folderId: string | null) => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
-    const res = await fetch(`/api/bestanden?folder_id=${folderId ?? "root"}`);
-    const json = await res.json() as { folders?: FolderRow[]; documents?: BestandRow[] };
-    // [BOEK-033] Gedeeld met boekhouder always first
-    const folders = (json.folders ?? []).sort((a, b) => {
-      if (a.name === "Gedeeld met boekhouder") return -1;
-      if (b.name === "Gedeeld met boekhouder") return 1;
-      return a.name.localeCompare(b.name, "nl");
-    });
-    setSubFolders(folders);
-    setDocs(json.documents ?? []);
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/bestanden?folder_id=${folderId ?? "root"}`);
+      const json = await res.json() as { folders?: FolderRow[]; documents?: BestandRow[] };
+      if (seq !== loadSeqRef.current) return; // a newer load started — drop this stale result
+      // [BOEK-033] Gedeeld met boekhouder always first
+      const folders = (json.folders ?? []).sort((a, b) => {
+        if (a.name === "Gedeeld met boekhouder") return -1;
+        if (b.name === "Gedeeld met boekhouder") return 1;
+        return a.name.localeCompare(b.name, "nl");
+      });
+      setSubFolders(folders);
+      setDocs(json.documents ?? []);
+    } finally {
+      if (seq === loadSeqRef.current) setLoading(false);
+    }
   }, []);
 
   const loadAllFolders = useCallback(async () => {
@@ -451,14 +460,18 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // ── Search ──
   useEffect(() => {
     if (!search.trim()) { setSearchResults(null); return; }
+    let cancelled = false; // [race] don't let a slow "a" response overwrite "ab"
     const t = setTimeout(async () => {
       setSearchLoading(true);
-      const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
-      const json = await res.json() as { results?: SearchResult[] };
-      setSearchResults(json.results ?? []);
-      setSearchLoading(false);
+      try {
+        const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
+        const json = await res.json() as { results?: SearchResult[] };
+        if (!cancelled) setSearchResults(json.results ?? []);
+      } finally {
+        if (!cancelled) setSearchLoading(false);
+      }
     }, 300);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [search]);
 
   useEffect(() => { if (newFolderInline) setTimeout(() => newFolderRef.current?.focus(), 50); }, [newFolderInline]);
@@ -560,36 +573,63 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     lastClickedRef.current = itemKey;
   };
 
+  // [mutation-safety] Shared helpers so a failed write never leaves the UI asserting
+  // success. flashToast shows a transient message; reloadTruth re-syncs the view with
+  // the server (used when an optimistic-ish action fails, so nothing silently lies).
+  const flashToast = (msg: string, ms = 2600) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), ms);
+  };
+  const reloadTruth = () => {
+    loadContents(currentFolderId);
+    loadAllFolders();
+    bumpSmart();
+    refreshStorage();
+  };
+  const creatingFolderRef = useRef(false); // [double-fire] Enter + onBlur guard
+  const bulkBusyRef = useRef(false);       // [double-submit] one batch at a time
+  const fabUploadingRef = useRef(false);   // [double-submit] serialize FAB uploads
+
   // ── Folder CRUD ──
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) { setNewFolderInline(false); return; }
-    const res = await fetch("/api/bestanden/folders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newFolderName.trim(), parent_id: currentFolderId }),
-    });
-    const json = await res.json() as FolderRow;
-    if (json.id) { setSubFolders(p => [...p, json]); setAllFolders(p => [...p, json]); }
-    setNewFolderName(""); setNewFolderInline(false);
+    if (creatingFolderRef.current) return; // [double-fire] Enter then onBlur → one folder
+    creatingFolderRef.current = true;
+    const name = newFolderName.trim();
+    setNewFolderName(""); setNewFolderInline(false); // clear now so a second fire no-ops
+    try {
+      const res = await fetch("/api/bestanden/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, parent_id: currentFolderId }),
+      });
+      if (!res.ok) { flashToast("Map aanmaken mislukt"); return; }
+      const json = await res.json() as FolderRow;
+      if (json.id) { setSubFolders(p => [...p, json]); setAllFolders(p => [...p, json]); }
+    } finally {
+      creatingFolderRef.current = false;
+    }
   };
 
   const handleRenameConfirm = async (newName: string) => {
     if (!renameTarget) return;
-    if (renameTarget.type === "folder") {
-      await fetch(`/api/bestanden/folders?id=${renameTarget.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName }),
-      });
-      setSubFolders(p => p.map(f => f.id === renameTarget.id ? { ...f, name: newName } : f));
-      setAllFolders(p => p.map(f => f.id === renameTarget.id ? { ...f, name: newName } : f));
-    } else {
-      await fetch(`/api/bestanden?id=${renameTarget.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_name: newName }),
-      });
-      setDocs(p => p.map(d => d.id === renameTarget.id ? { ...d, file_name: newName } : d));
-    }
+    const target = renameTarget;
     setRenameTarget(null);
+    const url = target.type === "folder"
+      ? `/api/bestanden/folders?id=${target.id}`
+      : `/api/bestanden?id=${target.id}`;
+    const body = target.type === "folder" ? { name: newName } : { file_name: newName };
+    const res = await fetch(url, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) { flashToast("Hernoemen mislukt"); return; } // don't show a name that didn't save
+    if (target.type === "folder") {
+      setSubFolders(p => p.map(f => f.id === target.id ? { ...f, name: newName } : f));
+      setAllFolders(p => p.map(f => f.id === target.id ? { ...f, name: newName } : f));
+    } else {
+      setDocs(p => p.map(d => d.id === target.id ? { ...d, file_name: newName } : d));
+    }
   };
 
   const handleDeleteFolder = async (id: string) => {
@@ -597,51 +637,54 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     const folder = subFolders.find(f => f.id === id) ?? allFolders.find(f => f.id === id);
     if (folder?.is_system) return;
     if (!confirm("Map verwijderen? Bestanden worden naar hoofdmap verplaatst.")) return;
-    // Optimistic update
+    const res = await fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" });
+    if (!res.ok) { flashToast("Map verwijderen mislukt"); return; } // no optimistic removal on failure
     setSubFolders(p => p.filter(f => f.id !== id));
     setAllFolders(p => p.filter(f => f.id !== id));
     setFolderTree(p => p.filter(n => n.id !== id));
     setDocs(p => p.map(d => d.folder_id === id ? { ...d, folder_id: null } : d));
-    await fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" });
+    refreshStorage();
   };
 
   // ── File actions ──
   const handleDelete = async (id: string) => {
     // Soft delete — move to trash
-    await fetch(`/api/bestanden?id=${id}`, {
+    const res = await fetch(`/api/bestanden?id=${id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ trashed: true }),
     });
+    if (!res.ok) { flashToast("Verwijderen mislukt"); return; }
     setDocs(p => p.filter(d => d.id !== id));
     setSmartDocs(p => p.filter(d => d.id !== id)); // [BESTANDEN-SMART] drop from smart view
     refreshStorage();
   };
 
   const handleMove = async (id: string, type: "file" | "folder", folderId: string | null) => {
+    const url = type === "folder" ? `/api/bestanden/folders?id=${id}` : `/api/bestanden?id=${id}`;
+    const body = type === "folder" ? { parent_id: folderId } : { folder_id: folderId };
+    const res = await fetch(url, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setMoveTarget(null);
+    if (!res.ok) { flashToast("Verplaatsen mislukt"); return; } // don't remove a row that didn't move
     if (type === "folder") {
-      await fetch(`/api/bestanden/folders?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_id: folderId }),
-      });
       setSubFolders(p => p.filter(f => f.id !== id));
       loadAllFolders();
     } else {
-      await fetch(`/api/bestanden?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder_id: folderId }),
-      });
       setDocs(p => p.filter(d => d.id !== id));
     }
-    setMoveTarget(null);
     bumpSmart(); // [BESTANDEN-SMART] a move may change what Gedeeld/Recent shows
   };
 
   const handleStar = async (id: string, type: "file" | "folder", current: boolean) => {
+    const url = type === "file" ? `/api/bestanden?id=${id}` : `/api/bestanden/folders?id=${id}`;
+    const res = await fetch(url, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ starred: !current }),
+    });
+    if (!res.ok) { flashToast("Actie mislukt"); return; }
     if (type === "file") {
-      await fetch(`/api/bestanden?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ starred: !current }),
-      });
       setDocs(p => p.map(d => d.id === id ? { ...d, starred: !current } : d));
       setSmartDocs(p =>
         smartView === "starred"
@@ -649,10 +692,6 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           : p.map(d => d.id === id ? { ...d, starred: !current } : d),  // reflect elsewhere
       );
     } else {
-      await fetch(`/api/bestanden/folders?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ starred: !current }),
-      });
       setSubFolders(p => p.map(f => f.id === id ? { ...f, starred: !current } : f));
     }
   };
@@ -673,10 +712,16 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // Sharing also stamps the current quarter server-side so the file lands in the ZIP.
   const handleToggleShare = async (docId: string, currentlyShared: boolean) => {
     const next = !currentlyShared;
-    await fetch(`/api/bestanden?id=${docId}`, {
+    const res = await fetch(`/api/bestanden?id=${docId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shared: next }),
     });
+    // [share-truth] If the write failed we must NOT flip the badge or claim success —
+    // otherwise the owner believes the accountant can see a doc that never got shared.
+    if (!res.ok) {
+      flashToast(next ? "Delen mislukt — probeer opnieuw" : "Stoppen met delen mislukt");
+      return;
+    }
     setDocs(p => p.map(d => d.id === docId ? { ...d, shared: next } : d));
     // [BESTANDEN-SMART] In Gedeeld, un-sharing removes the row; elsewhere reflect it.
     setSmartDocs(p =>
@@ -684,8 +729,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         ? p.filter(d => d.id !== docId)
         : p.map(d => d.id === docId ? { ...d, shared: next } : d),
     );
-    setToast(next ? "Gedeeld met je boekhouder" : "Delen gestopt");
-    window.setTimeout(() => setToast(null), 2600);
+    flashToast(next ? "Gedeeld met je boekhouder" : "Delen gestopt");
   };
 
   // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
@@ -711,27 +755,41 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
   const handleBulkDelete = async () => {
     if (!confirm(`${selectedIds.size} item(s) verwijderen?`)) return;
-    await Promise.all([
-      ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) })),
-      ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" })),
-    ]);
-    setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
-    setSmartDocs(p => p.filter(d => !selectedFileIds.includes(d.id))); // [BESTANDEN-SMART]
-    setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
-    setSelectedIds(new Set());
-    refreshStorage();
+    if (bulkBusyRef.current) return; // [double-submit] one batch at a time
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all([
+        ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) })),
+        ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" })),
+      ]);
+      setSelectedIds(new Set());
+      if (results.some(r => !r.ok)) { flashToast("Sommige items niet verwijderd — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
+      setSmartDocs(p => p.filter(d => !selectedFileIds.includes(d.id))); // [BESTANDEN-SMART]
+      setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
+      refreshStorage();
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   const handleBulkMove = async (folderId: string | null) => {
-    await Promise.all([
-      ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder_id: folderId }) })),
-      ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parent_id: folderId }) })),
-    ]);
-    setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
-    setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
-    setSelectedIds(new Set()); setBulkMoveOpen(false);
-    loadAllFolders();
-    bumpSmart(); // [BESTANDEN-SMART] moved files may enter/leave Gedeeld
+    if (bulkBusyRef.current) return;
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all([
+        ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder_id: folderId }) })),
+        ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parent_id: folderId }) })),
+      ]);
+      setSelectedIds(new Set()); setBulkMoveOpen(false);
+      if (results.some(r => !r.ok)) { flashToast("Sommige items niet verplaatst — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
+      setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
+      loadAllFolders();
+      bumpSmart(); // [BESTANDEN-SMART] moved files may enter/leave Gedeeld
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   // [BRUG-FILES-SHARED] Bulk share has no quarter picker, so it defaults to the
@@ -743,26 +801,41 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // without moving them; the route stamps the current quarter. Files stay where they
   // are and simply become visible to the accountant.
   const handleBulkShare = async () => {
-    await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shared: true }),
-    })));
-    setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d));
-    setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d)); // [BESTANDEN-SMART]
-    setSelectedIds(new Set());
-    bumpSmart();
+    if (bulkBusyRef.current) return;
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shared: true }),
+      })));
+      setSelectedIds(new Set());
+      // [share-truth] Never claim a bulk share succeeded if any write failed.
+      if (results.some(r => !r.ok)) { flashToast("Sommige bestanden niet gedeeld — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d));
+      setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d)); // [BESTANDEN-SMART]
+      bumpSmart();
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   const handleBulkStar = async () => {
-    await Promise.all([
-      ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
-      ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
-    ]);
-    setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d));
-    setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d)); // [BESTANDEN-SMART]
-    setSubFolders(p => p.map(f => selectedFolderIds.includes(f.id) ? { ...f, starred: true } : f));
-    setSelectedIds(new Set());
-    bumpSmart();
+    if (bulkBusyRef.current) return;
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all([
+        ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
+        ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
+      ]);
+      setSelectedIds(new Set());
+      if (results.some(r => !r.ok)) { flashToast("Sommige items niet aangepast — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d));
+      setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d)); // [BESTANDEN-SMART]
+      setSubFolders(p => p.map(f => selectedFolderIds.includes(f.id) ? { ...f, starred: true } : f));
+      bumpSmart();
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   // ── Context menus ──
@@ -1084,6 +1157,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 // The FAB input now supports multiple files
                 const files = e.target.files;
                 if (!files?.length) return;
+                // [double-submit] Serialize FAB uploads — a second tap mid-upload would
+                // otherwise run a concurrent loop racing on handleUploaded / classify.
+                if (fabUploadingRef.current) { e.target.value = ""; return; }
+                fabUploadingRef.current = true;
+                try {
                 for (const file of Array.from(files)) {
                   const now = new Date(); const fd = new FormData();
                   fd.append("file", file);
@@ -1142,6 +1220,9 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                       ai_doc_type: null, ai_suggested_folder: null, source: "upload",
                     });
                   }
+                }
+                } finally {
+                  fabUploadingRef.current = false;
                 }
                 e.target.value = "";
               }}
