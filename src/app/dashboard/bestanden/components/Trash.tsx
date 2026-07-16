@@ -47,16 +47,10 @@ export function Trash({ onBack }: TrashProps) {
     setSelected(new Set());
   };
 
-  const permanentDelete = async (ids: string[]) => {
-    if (!confirm(`${ids.length} bestand(en) permanent verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
-    await Promise.all(ids.map(id =>
-      fetch(`/api/files/${id}`, { method: "DELETE" })
-    ));
-    setItems(p => p.filter(d => !ids.includes(d.id)));
-    setSelected(new Set());
-  };
-
-  const emptyTrash = () => permanentDelete(items.map(i => i.id));
+  // [TRASH-HONEST] No permanent-delete action. Financial documents fall under the
+  // 7-year bewaarplicht, so the trash is "hidden but retained", never truly deleted.
+  // (The old "Prullenbak legen"/permanent-delete buttons called a disabled 410 route
+  // and only *looked* like they worked — removed so the UI stops lying.)
 
   return (
     <div style={{ fontFamily: "'Google Sans','Roboto',sans-serif" }}>
@@ -77,21 +71,6 @@ export function Trash({ onBack }: TrashProps) {
           </div>
         </div>
 
-        {items.length > 0 && (
-          <button onClick={emptyTrash} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "8px 16px", background: "none",
-            border: `1px solid ${T.error}`, borderRadius: T.full,
-            fontSize: 14, fontWeight: 500, color: T.error, cursor: "pointer",
-            transition: "background 0.1s",
-          }}
-            onMouseEnter={e => (e.currentTarget.style.background = T.errorContainer)}
-            onMouseLeave={e => (e.currentTarget.style.background = "none")}
-          >
-            <Icon name="delete_forever" size={18} color={T.error} />
-            Prullenbak legen
-          </button>
-        )}
       </div>
 
       {/* Info bar */}
@@ -102,7 +81,7 @@ export function Trash({ onBack }: TrashProps) {
       }}>
         <Icon name="info" size={18} color={T.warning} />
         <p style={{ fontSize: 13, color: T.onSurface, margin: 0 }}>
-          Bestanden in de prullenbak worden na 30 dagen automatisch permanent verwijderd.
+          Bestanden hier zijn verborgen maar blijven bewaard (fiscale bewaarplicht). Kies “Herstellen” om ze terug te zetten.
         </p>
       </div>
 
@@ -122,13 +101,6 @@ export function Trash({ onBack }: TrashProps) {
             border: "none", borderRadius: T.full, fontSize: 13, fontWeight: 500, cursor: "pointer",
           }}>
             <Icon name="restore" size={16} color={T.onPrimary} /> Herstellen
-          </button>
-          <button onClick={() => permanentDelete([...selected])} style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "7px 14px", background: T.error, color: "white",
-            border: "none", borderRadius: T.full, fontSize: 13, fontWeight: 500, cursor: "pointer",
-          }}>
-            <Icon name="delete_forever" size={16} color="white" /> Verwijderen
           </button>
           <button onClick={() => setSelected(new Set())} style={{
             width: 28, height: 28, border: "none", background: "none",
@@ -217,15 +189,6 @@ export function Trash({ onBack }: TrashProps) {
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                   >
                     <Icon name="restore" size={18} color={T.success} />
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); permanentDelete([doc.id]); }}
-                    title="Permanent verwijderen"
-                    style={{ width: 32, height: 32, border: "none", background: "none", cursor: "pointer", borderRadius: T.full, display: "flex", alignItems: "center", justifyContent: "center" }}
-                    onMouseEnter={e => (e.currentTarget.style.background = T.errorContainer)}
-                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
-                  >
-                    <Icon name="delete_forever" size={18} color={T.error} />
                   </button>
                 </div>
               </div>

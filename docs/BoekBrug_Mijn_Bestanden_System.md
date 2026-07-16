@@ -121,8 +121,11 @@ De `BestandenPage` is een volwaardige Drive-ervaring:
   duplicaatdetectie (byte-hash) met link naar het reeds bestaande bestand.
 - **AI:** bij upload in de hoofdmap classificeert de AI het document en **stelt**
   een map voor (de eigenaar bevestigt — nooit stil verplaatsen).
-- **Prullenbak:** zachte verwijdering (`trashed`), herstellen, permanent
-  verwijderen, "prullenbak legen"; auto-opschoning na 30 dagen (tekstueel).
+- **Prullenbak:** zachte verwijdering (`trashed`) + herstellen. **Geen** permanente
+  verwijdering vanuit de UI: financiële stukken vallen onder de 7-jaars
+  bewaarplicht, dus de prullenbak is "verborgen maar bewaard". (De oude
+  "permanent verwijderen"/"prullenbak legen"-knoppen riepen een uitgeschakelde
+  410-route aan en deden in werkelijkheid niets — verwijderd zodat de UI niet liegt.)
 - **Zoeken:** debounced, full-text over naam/notities/doc_type, met
   "open locatie"-chip naar de map van het resultaat.
 
