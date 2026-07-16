@@ -97,13 +97,18 @@ Doel: de zoekmachine **werkend, correct, veilig en snel** maken — alleen zoeke
 | 3 | **SearchBar:** foutmelding tonen, `Highlight`-bug gefixt, recente = getypte query, Enter opent top-resultaat, `aria-activedescendant` + optie-`id`s. | `src/components/search/SearchBar.tsx` |
 | 4 | **Klanten:** leest nu `?focus=` (scroll+highlight) en filtert op meer velden met accent-vouwing. | `src/app/dashboard/klanten/KlantenClient.tsx` |
 | 5 | **Facturen:** leest nu `?search=` en heeft een tekstzoekveld (snelfilter op factuurnummer/klantnaam). | `src/app/dashboard/facturen/FacturenClient.tsx` |
+| 6 | **Bestanden-zoek:** zelfde `.or()`-sanitatie als de API (komma/haakjes/wildcards braken de query). | `src/lib/bestanden.ts` |
+| 7 | **Mappen doorzoekbaar:** zoeken toont nu ook mappen (op naam), klikbaar om te openen. | `src/lib/bestanden.ts`, `src/app/api/bestanden/route.ts`, `src/app/dashboard/bestanden/BestandenPage.tsx` |
+| 8 | **Bankfilter eerlijk:** doorzoekt nu écht het **bedrag** (placeholder beloofde dat al) + accent-vouwing op naam/referentie. | `src/app/dashboard/bank/BankClient.tsx` |
+| 9 | **Accent-vouwing** in artikelen, factuur-artikelpicker en factuur-klantpicker ("café" ↔ "cafe"); klantpicker doorzoekt ook KVK. | `src/lib/articles.ts`, `src/app/dashboard/artikelen/ArtikelenClient.tsx`, `src/app/dashboard/invoice/new/page.tsx` |
 
 ### Niet in deze PR (bewust — buiten "alleen zoeken" of te hoog risico)
 - Globale balk op élke pagina mounten (raakt layouts van bestanden/accountant).
 - Server-side volledige facturenzoek in `useInfiniteInvoices` (gedeelde, beschermde
   hook — `SHARED_FILES_PROTOCOL`).
 - Accountant die documenten van klanten doorzoekt (RLS is owner-only).
-- `unaccent`-extensie voor accent-ongevoelig server-side zoeken.
+- `unaccent`-extensie voor accent-ongevoelig **server-side** zoeken (client-side
+  filters vouwen accenten nu al; server-side ILIKE blijft accent-gevoelig).
 
 Deze staan hier gedocumenteerd als vervolgstappen.
 

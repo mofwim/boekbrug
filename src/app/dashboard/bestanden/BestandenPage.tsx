@@ -202,6 +202,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  // [SEARCH] Matching folders (by name) shown above file results.
+  const [folderResults, setFolderResults] = useState<{ id: string; name: string; parent_id: string | null }[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
   // ── Modals ──
@@ -282,6 +284,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setShowTrash(false);
     setSearch("");
     setSearchResults(null);
+    setFolderResults([]);
     // Clean the URL so refresh/back don't re-trigger the deep-link.
     window.history.replaceState({}, "", "/dashboard/bestanden");
   }, [searchParams]);
@@ -351,14 +354,15 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // otherwise. The URL is now read inline in useState above — single source
   // of truth, no ordering issues.
 
-  // ── Search ──
+  // ── Search ── (documents + folders)
   useEffect(() => {
-    if (!search.trim()) { setSearchResults(null); return; }
+    if (!search.trim()) { setSearchResults(null); setFolderResults([]); return; }
     const t = setTimeout(async () => {
       setSearchLoading(true);
       const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
-      const json = await res.json() as { results?: SearchResult[] };
+      const json = await res.json() as { results?: SearchResult[]; folders?: { id: string; name: string; parent_id: string | null }[] };
       setSearchResults(json.results ?? []);
+      setFolderResults(json.folders ?? []);
       setSearchLoading(false);
     }, 300);
     return () => clearTimeout(t);
@@ -1202,16 +1206,38 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               /* ── Search results ── */
               <div>
                 <p style={{ fontSize: 12, fontWeight: 600, color: T.outline, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 16px" }}>
-                  {searchLoading ? "Zoeken..." : `${searchResults?.length ?? 0} resultaten voor "${search}"`}
+                  {searchLoading ? "Zoeken..." : `${(searchResults?.length ?? 0) + folderResults.length} resultaten voor "${search}"`}
                 </p>
                 {searchLoading ? (
                   <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner size={32} /></div>
-                ) : !(searchResults?.length) ? (
+                ) : !(searchResults?.length) && folderResults.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "48px 24px" }}>
                     <Icon name="search_off" size={48} color={T.outline} style={{ display: "block", margin: "0 auto 12px" }} />
-                    <p style={{ fontSize: 14, color: T.outline }}>Geen bestanden gevonden</p>
+                    <p style={{ fontSize: 14, color: T.outline }}>Niets gevonden</p>
                   </div>
                 ) : (
+                  <>
+                  {/* [SEARCH] Matching folders — click to open. */}
+                  {folderResults.length > 0 && (
+                    <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden", marginBottom: 16 }}>
+                      {folderResults.map((f, i) => (
+                        <button
+                          key={f.id}
+                          onClick={() => { setSearch(""); setSearchResults(null); setFolderResults([]); navigateTo(f.id); }}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center", gap: 12,
+                            padding: "12px 16px", textAlign: "left", cursor: "pointer",
+                            background: "transparent", border: "none",
+                            borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none",
+                          }}
+                        >
+                          <Icon name="folder" size={22} color={T.primary} />
+                          <span style={{ fontSize: 14, color: T.onSurface, fontWeight: 500 }}>{f.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {searchResults && searchResults.length > 0 && (
                   <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
                     {searchResults!.map((doc, i) => (
                       <div
@@ -1241,6 +1267,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                       </div>
                     ))}
                   </div>
+                  )}
+                  </>
                 )}
               </div>
             ) : (

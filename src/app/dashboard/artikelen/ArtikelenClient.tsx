@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { type Article } from '@/lib/articles'
+import { type Article, foldText } from '@/lib/articles'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
@@ -47,10 +47,10 @@ export default function ArtikelenClient() {
 
   const shown = useMemo(() => {
     // Reuse the same picker ranking the invoice uses, but include archived in the manage view.
-    const q = search.trim().toLowerCase()
+    const q = foldText(search.trim())
     if (!q) return [...articles].sort((a, b) => Number(b.active) - Number(a.active) || b.usage_count - a.usage_count)
     return articles.filter((a) =>
-      (a.code ?? '').toLowerCase().includes(q) || a.description.toLowerCase().includes(q))
+      foldText(a.code ?? '').includes(q) || foldText(a.description).includes(q))
   }, [articles, search])
 
   function openNew() { setForm(EMPTY); setEditingId(null); setError(null); setShowForm(true) }

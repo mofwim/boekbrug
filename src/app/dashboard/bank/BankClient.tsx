@@ -671,16 +671,28 @@ export default function BankClient() {
     : bankTab === 'ignored' ? (ignoredList ?? [])
     : confirmedList
 
-  // [BANK-FILTER] Only the "Geen factuur" tab is filtered (the long one). The
-  // filter is a simple case-insensitive substring over name + reference + date.
+  // [BANK-FILTER] Only the "Geen factuur" tab is filtered (the long one).
+  // [SEARCH] Now genuinely searches AMOUNT too (the placeholder promised "bedrag"
+  // but the filter ignored it), and folds accents on name/reference.
+  const fold = (x: string) => x.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
   const activeList =
     bankTab === 'none' && filterText.trim()
       ? activeListRaw.filter((s) => {
-          const q = filterText.trim().toLowerCase()
+          const raw = filterText.trim()
+          const q = fold(raw)
+          // Amount: exact value ("1.500,00" / "45,50") or integer-substring ("150").
+          const qDigits = raw.replace(/[^\d]/g, '')
+          const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
+          const an = Math.abs(s.amount)
+          const amountMatch =
+            qDigits.length > 0 &&
+            ((Number.isFinite(qNum) && Math.abs(an - qNum) < 0.005) ||
+              String(Math.trunc(an)).includes(qDigits))
           return (
-            (s.counterpart ?? '').toLowerCase().includes(q) ||
-            (s.reference ?? '').toLowerCase().includes(q) ||
-            (s.date ?? '').toLowerCase().includes(q)
+            fold(s.counterpart ?? '').includes(q) ||
+            fold(s.reference ?? '').includes(q) ||
+            (s.date ?? '').toLowerCase().includes(raw.toLowerCase()) ||
+            amountMatch
           )
         })
       : activeListRaw
