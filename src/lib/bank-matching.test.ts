@@ -10,6 +10,9 @@ import {
   isFullyCovered,
   coveredReferenceNumbers,
   dedupeCandidates,
+  isPartialPaymentHint,
+  scorePair,
+  DEFAULT_OPTIONS,
   type InvoiceForMatching,
   type MatchCandidate,
 } from "./bank-matching";
@@ -289,6 +292,30 @@ console.log("\n— [BANK-DEDUP-CANDIDATES] matchTransactions shows a duplicate i
     ],
   );
   check("only one candidate is offered (not the duplicate twice)", r.matches[0].candidates.length === 1);
+}
+
+console.log("\n— [BANK-PARTIAL] instalment references are detected and kept out of auto —");
+{
+  check("'Tweede deel factuur 26302050' → partial", isPartialPaymentHint("Tweede deel factuur 26302050") === true);
+  check("'2e termijn' → partial", isPartialPaymentHint("betaling 2e termijn") === true);
+  check("'deelbetaling' → partial", isPartialPaymentHint("deelbetaling order 99") === true);
+  check("'aanbetaling' → partial", isPartialPaymentHint("aanbetaling project") === true);
+  check("a normal payment is NOT partial", isPartialPaymentHint("betaling factuur 2026-014 voldaan") === false);
+  check("'termijnen' inside a word does not falsely fire", isPartialPaymentHint("kortermijnlening") === false);
+
+  // scorePair: a reference + exact amount would be 0.97 auto, but an instalment marker
+  // caps it to a human choice (<= 0.6), so it never one-taps the invoice fully paid.
+  const partial = scorePair(
+    tx({ amount: -500, reference: "26302050", description: "Tweede deel factuur 26302050" }),
+    inv({ invoice_number: "26302050", total_inc_btw: 500, direction: "incoming", status: "received" }),
+    DEFAULT_OPTIONS,
+  );
+  check("instalment ref caps confidence below auto (0.7)", partial.confidence <= 0.6);
+  check("a clean full payment still reaches auto", scorePair(
+    tx({ amount: -500, reference: "26302050", description: "betaling 26302050" }),
+    inv({ invoice_number: "26302050", total_inc_btw: 500, direction: "incoming", status: "received" }),
+    DEFAULT_OPTIONS,
+  ).confidence >= DEFAULT_OPTIONS.autoConfidence);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
