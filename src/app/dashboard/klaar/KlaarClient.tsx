@@ -173,6 +173,12 @@ export default function KlaarClient() {
               <div style={{ fontSize: 11.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', padding: '12px 0 6px', fontWeight: 600 }}>
                 Waar de score op gebaseerd is
               </div>
+              {/* [DISAMBIGUATE] Each row shows two figures — the colored number is how
+                  COMPLETE that part is; the grey chip is how heavily it WEIGHS in the total.
+                  Two bare percentages side by side read as competing scores, so name them. */}
+              <div style={{ fontSize: 12, color: M3.neutral, lineHeight: 1.45, padding: '0 0 8px' }}>
+                Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>gekleurde percentage</b> is hoe compleet dit onderdeel is. Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>grijze label</b> is hoe zwaar het meetelt in je totaalscore.
+              </div>
               {report.dimensions.map((d, i) => (
                 <DimRow key={d.key} d={d} last={i === report.dimensions.length - 1} />
               ))}
@@ -258,12 +264,25 @@ function DimRow({ d, last }: { d: Dimension; last: boolean }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.neutral }}>{DIM_ICON[d.key]}</span>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: M3.onSurface }}>{d.label}</span>
-        <span style={{ fontSize: 11, color: M3.neutral, fontWeight: 600 }}>{d.weight}%</span>
+        {/* Weight as a muted chip — reads as a label ("how much it counts"), not a score.
+            Hidden when n.v.t.: a non-applicable part is EXCLUDED from the score, so it
+            weighs nothing here — showing "weegt 20%" would contradict that. */}
+        {pct != null && (
+          <span style={{ fontSize: 10.5, color: M3.neutral, fontWeight: 600, background: '#F1F1F1', borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+            weegt {d.weight}%
+          </span>
+        )}
         <span style={{ fontSize: 13, fontWeight: 700, fontFamily: FONT_NUM, color: pct == null ? M3.neutral : barColor, minWidth: 44, textAlign: 'right' }}>
           {pct == null ? 'n.v.t.' : `${pct}%`}
         </span>
       </div>
-      <div style={{ fontSize: 12, color: M3.neutral, marginTop: 4, marginLeft: 30, lineHeight: 1.45 }}>{d.detail}</div>
+      {/* Thin fill bar — makes the colored percentage read as a completeness level. */}
+      {pct != null && (
+        <div style={{ height: 4, borderRadius: 2, background: '#F1F1F1', marginTop: 8, marginLeft: 30, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 2 }} />
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: M3.neutral, marginTop: 6, marginLeft: 30, lineHeight: 1.45 }}>{d.detail}</div>
     </div>
   )
 }
