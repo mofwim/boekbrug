@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
+import { parsePaymentPeriod } from '@/lib/payment-period'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const M3 = {
@@ -1284,6 +1285,22 @@ function TxCard({
                 {refLabel}
               </span>
             )}
+            {/* [BANK-PERIOD] A recurring debit (rent/lease/subscription) states the month
+                it covers. Surface it so the owner can match it to the right invoice among
+                same-amount candidates — we never auto-match it (invoices have no period). */}
+            {(() => {
+              const period = parsePaymentPeriod(s.description)
+              return period ? (
+                <span title="De periode die deze betaling dekt" style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
+                  borderRadius: R.full, background: '#E8F0FE', color: '#1967D2',
+                  fontSize: 11.5, fontWeight: 600, fontFamily: FONT,
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event</span>
+                  {period.label}
+                </span>
+              ) : null
+            })()}
             {/* [BANK-DETAILS] Toggle the full original bank description. */}
             {hasDetails && (
               <button
