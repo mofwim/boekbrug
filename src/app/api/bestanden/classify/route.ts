@@ -71,14 +71,18 @@ export async function POST(req: NextRequest) {
     const quarter = monthToQuarter(month);
 
     // [BOEK-033] Map AI result to folder type
-    // 'bank' is not in classifyDocument union — detect via filename instead
+    // 'bank' is not in classifyDocument union — detect via filename instead.
+    // [I#4] Tightened: (a) match bank tokens on WORD boundaries so vendor names like
+    // "Rabobank_factuur" / "ABN bankgarantie" don't get filed as statements, and
+    // (b) never let a filename token override a confident invoice/receipt — a real
+    // statement is classified 'unknown', so gating on that keeps detection working
+    // while stopping false positives that would silently move a file into Bank.
     const lowerName = (doc.file_name ?? body.fileName ?? "").toLowerCase();
+    const bankTokens = /(bankafschrift|bankstatement|camt|mt940|afschrift|\bbank\b|\bstatement\b)/;
     const isBankFile =
-      lowerName.includes("bank") ||
-      lowerName.includes("camt") ||
-      lowerName.includes("afschrift") ||
-      lowerName.includes("statement") ||
-      (classification.type === "unknown" && lowerName.includes("mt940"));
+      bankTokens.test(lowerName) &&
+      classification.type !== "invoice" &&
+      classification.type !== "receipt";
 
     let folderType: "facturen" | "kosten" | "bank" | undefined;
     if (isBankFile)                              folderType = "bank";

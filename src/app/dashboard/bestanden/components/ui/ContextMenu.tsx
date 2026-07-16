@@ -21,7 +21,10 @@ export function ContextMenu({
   const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const menuW = 220;
-  const menuH = items.length * 40 + 16;
+  // [F#6] Count divider rows (they add ~9px each) so the flip-up estimate near the
+  // viewport bottom doesn't underestimate the height and overflow off-screen.
+  const dividers = items.filter((it, i) => it.divider && i > 0).length;
+  const menuH = items.length * 40 + dividers * 9 + 16;
   const left = x + menuW > vw ? x - menuW : x;
   const top  = y + menuH > vh ? y - menuH : y;
 

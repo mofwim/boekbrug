@@ -29,6 +29,7 @@ export async function GET() {
     .select("id, file_name, created_at, file_size")
     .eq("user_id", user.id)
     .eq("doc_type", "bankafschrift")
+    .eq("trashed", false) // [T#4] don't list soft-deleted statements
     .order("created_at", { ascending: false });
 
   if (error) {

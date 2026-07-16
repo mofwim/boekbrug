@@ -2,7 +2,7 @@
 // src/app/dashboard/bestanden/components/UploadArea.tsx
 // [BOEK-033] Multi-file upload — sequential, silent AI, user-visible errors
 
-import { useState, useRef, useCallback, DragEvent } from "react";
+import { useState, useRef, useEffect, useCallback, DragEvent } from "react";
 import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { Spinner } from "./ui/Spinner";
@@ -29,6 +29,11 @@ interface FailedFile {
 
 export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // [F#8] Guard against setState after unmount (navigating away mid-upload). React 19
+  // swallows the warning, but this keeps the batch-completion updates from firing into
+  // a torn-down component.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [currentFileIdx, setCurrentFileIdx] = useState(0);
@@ -121,6 +126,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
       }
     }
 
+    if (!mountedRef.current) return; // [F#8] component gone — don't touch state
     setUploading(false);
     setProgress(0);
     setCurrentFileIdx(0);
@@ -167,7 +173,9 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
           {totalFiles > 1 && (
             <div style={{ width: "100%", height: 2, background: T.surfaceVariant, borderRadius: T.full, overflow: "hidden" }}>
               <div style={{
-                width: `${((currentFileIdx - 1) / totalFiles) * 100}%`,
+                // [F#7] Include the current file's own progress so the batch bar
+                // actually reaches 100% on the last file (was capped at (N-1)/N).
+                width: `${(((currentFileIdx - 1) + progress / 100) / totalFiles) * 100}%`,
                 height: "100%", background: `${T.primary}55`,
                 borderRadius: T.full, transition: "width 0.3s",
               }} />

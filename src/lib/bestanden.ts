@@ -542,6 +542,14 @@ export async function moveFolder(
   const supabase = await resolveClient(ctx);
   if (folderId === newParentId) throw new Error("Kan map niet in zichzelf verplaatsen");
 
+  // [Fo#5] System folders can't be moved (mirrors rename/delete). RLS already blocks
+  // the UPDATE, but a 0-row update is NOT an error — without this guard the PATCH
+  // route would report { ok: true } for a move that silently did nothing.
+  const { data: self } = await supabase
+    .from("folders").select("is_system").eq("id", folderId).eq("user_id", userId).maybeSingle();
+  if (!self) throw new Error("Map niet gevonden");
+  if (self.is_system) throw new Error("Systeemmappen kunnen niet worden verplaatst");
+
   // [Fo#1] Reject moving a folder INTO ITS OWN DESCENDANT. Such a move builds a
   // parent_id cycle: the whole ring detaches from the root-anchored tree (buildTree
   // only descends from parent_id=null → the subtree becomes invisible/unreachable),

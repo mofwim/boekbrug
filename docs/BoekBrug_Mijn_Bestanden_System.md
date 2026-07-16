@@ -176,6 +176,26 @@ Uit een gerichte bug-jacht op deze unit:
   foutcontrole — geen dangling rows / weesobjecten meer.
 - **`[F#2]` Upload-inputveld** reset, zodat hetzelfde bestand opnieuw kiesbaar is.
 
+Tweede ronde:
+- **`[T#4]`** `/api/bank/statements` filtert nu `trashed=false` (verwijderde
+  afschriften lekten in de statements-lijst).
+- **`[I#4]`** AI-bankdetectie op woordgrenzen + niet meer over een zeker
+  `invoice`/`receipt`-oordeel heen — "Rabobank_factuur" wordt niet als afschrift
+  gefiled.
+- **`[Fo#5]`** `moveFolder` weigert systeemmappen (geen stille `{ ok:true }` no-op).
+- **`[F#1/F#3]`** Signed-URL-fetching gedeeld/gecachet/concurrency-gelimiteerd
+  (`signedUrl.ts`) — geen request-storm bij een map vol foto's, en remounts
+  hergebruiken de URL (TTL onder de 1h-expiry).
+- **`[F#4]`** PreviewModal fetch is cancel-guarded; **`[F#5]`** "Openen" alleen voor
+  image/pdf; **`[F#6]`** contextmenu-hoogte telt dividers; **`[F#7]`** batch-balk
+  haalt 100%; **`[F#8]`** upload zet geen state na unmount.
+
+**Bewust NIET gedaan (`[I#3]`):** een unique index op `(user_id, content_hash)` om
+de TOCTOU-race in de dedup-gate te sluiten — dat zou de `allowDuplicate`-functie
+("nogmaals uploaden", die opzettelijk een tweede rij met dezelfde hash maakt)
+breken. De race is een goedaardige dubbel-submit-edge; de index is hier de
+verkeerde fix.
+
 ---
 
 ## 5. Delen met de boekhouder
