@@ -201,6 +201,7 @@ export async function GET(req: NextRequest) {
     reconExceptions,
     hasSales: result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0,
     cashOmzetZonderBtw: result.cashOmzetZonderBtw,
+    omzetZonderBtwNonCash: result.omzetZonderBtwNonCash,
     quarterDays,
     hasUndecidableRate,
     hasEuPurchase: completeness.hasEuPurchase,
