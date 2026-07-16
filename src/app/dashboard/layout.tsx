@@ -4,6 +4,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import SentryUserProvider from '@/components/providers/SentryUserProvider'
+import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 
 export default async function DashboardLayout({
   children,
@@ -35,6 +36,9 @@ export default async function DashboardLayout({
         />
       )}
       {children}
+      {/* [SEARCH] Global search — reachable on every dashboard page (see component
+          for where it hides). Only mounts for a logged-in profile. */}
+      {profile && <GlobalSearchLauncher />}
     </>
   )
 }

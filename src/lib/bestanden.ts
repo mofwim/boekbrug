@@ -536,6 +536,19 @@ function sanitizeLike(q: string): string {
   return q.replace(/[,()%_*\\":]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+// [SEARCH] The fuzzy RPCs (search_smart.sql) aren't in the generated Supabase types.
+// Narrow cast that keeps `this` bound; returns [] on any error so search never breaks.
+type RpcCaller = { rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }> };
+async function fuzzyRpc(client: unknown, fn: string, query: string): Promise<any[]> {
+  try {
+    const { data, error } = await (client as RpcCaller).rpc(fn, { q: query.trim() });
+    if (error) return [];
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function searchBestanden(
   userId: string,
   query: string,
@@ -555,7 +568,12 @@ export async function searchBestanden(
     .limit(50);
 
   if (error) throw new Error(error.message);
-  const docs = (data ?? []) as BestandRow[];
+  let docs = (data ?? []) as BestandRow[];
+
+  // [SEARCH] Typo-tolerant fallback when exact/substring found nothing.
+  if (docs.length === 0) {
+    docs = (await fuzzyRpc(supabase, "search_documents_fuzzy", query)) as BestandRow[];
+  }
 
   const folderIds = [...new Set(docs.map(d => d.folder_id).filter(Boolean))] as string[];
   let folderMap: Record<string, string> = {};
@@ -593,7 +611,14 @@ export async function searchFolders(
     .limit(20);
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as FolderSearchResult[];
+  let folders = (data ?? []) as FolderSearchResult[];
+
+  // [SEARCH] Typo-tolerant fallback when the exact/substring name match found nothing.
+  if (folders.length === 0) {
+    folders = (await fuzzyRpc(supabase, "search_folders_fuzzy", query)) as FolderSearchResult[];
+  }
+
+  return folders;
 }
 
 // ─── Find folder by path ──────────────────────────────────────────────────────────

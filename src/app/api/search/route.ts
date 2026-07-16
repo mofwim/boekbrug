@@ -290,6 +290,11 @@ export async function GET(req: NextRequest) {
     clientRows = [...clientRows, ...(await safeRpc("search_clients_fuzzy", { q }))];
   }
 
+  let docRows: any[] = docsRes.data ?? [];
+  if ((target === "all" || target === "documents") && docRows.length < 3) {
+    docRows = [...docRows, ...(await safeRpc("search_documents_fuzzy", { q }))];
+  }
+
   const invoices: SearchResult[] = dedup(
     rankRows(invoiceRows, q, (inv) => [inv.invoice_number, inv.client_name, inv.client_email])
       .map((inv: any) => ({
@@ -305,7 +310,7 @@ export async function GET(req: NextRequest) {
   ).slice(0, 8);
 
   const documents: SearchResult[] = dedup(
-    rankRows(docsRes.data ?? [], q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
+    rankRows(docRows, q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
       .map((doc: any) => ({
         type: "document" as const,
         id: doc.id,
