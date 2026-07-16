@@ -203,7 +203,9 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
             type="file"
             multiple
             style={{ display: "none" }}
-            onChange={e => handleFiles(e.target.files)}
+            // [F#2] Reset value after handling so picking the SAME file again still
+            // fires onChange (handleFiles captures the list synchronously via Array.from).
+            onChange={e => { const input = e.currentTarget; handleFiles(input.files); input.value = ""; }}
           />
         </div>
       )}

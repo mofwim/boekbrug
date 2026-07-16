@@ -102,6 +102,10 @@ export async function uploadDocument(
     notes?: string;
     year: number;
     quarter: number;
+    // [I#1] Destination folder chosen by the owner (the file manager uploads INTO
+    // the folder the user is browsing). Without this the row defaults to folder_id
+    // NULL (root) and the file silently leaves the folder on the next refresh.
+    folderId?: string | null;
     // [BESTANDEN-DUP] When true, skip the byte-hash duplicate gate and upload
     // anyway. The personal file manager (Mijn bestanden) is the user's own
     // space — after an explicit "upload again" confirmation, they may keep a
@@ -239,6 +243,7 @@ export async function uploadDocument(
       year: opts.year,
       invoice_id: opts.invoiceId ?? null,
       notes: opts.notes ?? null,
+      folder_id: opts.folderId ?? null,          // [I#1] honour the chosen folder (else NULL = root)
       content_hash: contentHash,                 // [BRIDGE-EXTRACT] byte-hash for cross-path dedup
     })
     .select("id")
@@ -345,12 +350,16 @@ export async function deleteDocument(
 
   if (!doc) return { error: "Niet gevonden" };
 
-  // Delete from storage (file_url is the raw path)
-  await supabase.storage.from("documents").remove([doc.file_url]);
+  // [I#2] Delete the DB row FIRST and abort on failure — a failed row-delete then
+  // touches no storage (no orphaned object). [L8] scope by user_id for defense-in-depth.
+  const { error: delErr } = await supabase.from("documents").delete()
+    .eq("id", documentId).eq("user_id", userId);
+  if (delErr) return { error: delErr.message };
 
-  // Delete from DB — [L8] scope by user_id too (defense-in-depth alongside RLS,
-  // consistent with every other mutation in this module).
-  await supabase.from("documents").delete().eq("id", documentId).eq("user_id", userId);
+  // Then remove the storage object. A failed remove leaves an orphaned object (a
+  // background sweep can reclaim it) but never a dangling row that would sign 404 URLs.
+  const { error: rmErr } = await supabase.storage.from("documents").remove([doc.file_url]);
+  if (rmErr) return { error: rmErr.message };
 
   return {};
 }

@@ -154,6 +154,25 @@ Voettekst in de zijbalk toont het totaal gebruikte volume + aantal bestanden
 (`?stats=true` → som van `file_size` over niet-verwijderde eigen bestanden).
 Eerlijke weergave: geen verzonnen quota. Ververst na upload/verwijderen/herstellen.
 
+### 4.4 Bug-hunt hardening (integriteit)
+Uit een gerichte bug-jacht op deze unit:
+- **`[I#1]` Upload respecteert de map.** `uploadDocument` + `POST /api/files`
+  bewaren nu `folder_id` (met eigenaars-validatie). Voorheen viel elk in-een-map
+  geüpload bestand na een refresh terug naar de hoofdmap.
+- **`[Fo#1]` Geen mapcycli.** `moveFolder` weigert een map naar haar eigen submap
+  te verplaatsen (voorkwam een onzichtbare, losgekoppelde subtree + een
+  breadcrumb-crash door oneindige recursie). `MoveModal` toont de subtree niet meer.
+- **`[Fo#2]` Systeemmapnamen gereserveerd.** Een custom map kan niet meer
+  "Gedeeld met boekhouder"/"Geïmporteerde bestanden" heten — dat toonde een
+  "gedeeld"-badge zonder echt te delen.
+- **`[Fo#3]` `deleteFolder`** controleert nu elke stap (reparent vóór delete), zodat
+  de `ON DELETE CASCADE` nooit per ongeluk een subtree wist.
+- **`[T#3]` Globale zoekbalk** filtert nu `trashed=false` (verwijderde bestanden
+  lekten in de topbar-zoek).
+- **`[I#2]` `deleteDocument`** verwijdert eerst de rij, dan het object, met
+  foutcontrole — geen dangling rows / weesobjecten meer.
+- **`[F#2]` Upload-inputveld** reset, zodat hetzelfde bestand opnieuw kiesbaar is.
+
 ---
 
 ## 5. Delen met de boekhouder

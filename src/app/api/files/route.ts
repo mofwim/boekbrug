@@ -69,11 +69,23 @@ export async function POST(req: NextRequest) {
   // [BESTANDEN-DUP] explicit "upload again" confirmation from the dup modal
   const allowDuplicate = formData.get("allowDuplicate") === "true";
 
+  // [I#1] Destination folder the owner uploaded into. Validate ownership before
+  // trusting it (a foreign/unknown id → root), then persist it so the file stays
+  // where the user put it instead of silently dropping to the root.
+  const folderIdRaw = (formData.get("folder_id") as string | null) ?? null;
+  let folderId: string | null = null;
+  if (folderIdRaw) {
+    const { data: folder } = await supabase
+      .from("folders").select("id").eq("id", folderIdRaw).eq("user_id", user.id).maybeSingle();
+    folderId = folder ? folderIdRaw : null;
+  }
+
   const { id, error, duplicate, existing } = await uploadDocument(user.id, file, {
     year,
     quarter,
     invoiceId,
     notes,
+    folderId,
     allowDuplicate,
   });
 

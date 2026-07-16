@@ -26,7 +26,24 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
     return () => window.removeEventListener("keydown", fn);
   }, [onClose]);
 
-  const available = folders.filter(f => f.id !== excludeId);
+  // [Fo#1/Fo#6] When moving a FOLDER (excludeId set), exclude the folder itself AND
+  // its whole descendant subtree — offering a descendant as target would build a
+  // parent_id cycle (server also rejects it, but don't offer the invalid choice).
+  const available = (() => {
+    if (!excludeId) return folders;
+    const banned = new Set<string>([excludeId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const f of folders) {
+        if (f.parent_id && banned.has(f.parent_id) && !banned.has(f.id)) {
+          banned.add(f.id);
+          changed = true;
+        }
+      }
+    }
+    return folders.filter(f => !banned.has(f.id));
+  })();
 
   const rowStyle = (active: boolean): React.CSSProperties => ({
     width: "100%", display: "flex", alignItems: "center", gap: 12,

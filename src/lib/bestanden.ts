@@ -430,11 +430,22 @@ export async function createFolder(
   ctx: BestandenContext = "user"
 ): Promise<FolderRow> {
   const supabase = await resolveClient(ctx);
+  const trimmed = name.trim();
+  // [L7] A folder must have a non-empty name.
+  if (!trimmed) throw new Error("Mapnaam mag niet leeg zijn");
+  // [Fo#2] Reserve the system-folder names. The client shows the "Gedeeld"/protected
+  // UI based on the folder NAME, while the server auto-shares on folder_type='shared'.
+  // A custom folder named "Gedeeld met boekhouder" would therefore look shared (badge,
+  // no delete) but never actually share — a silent trust bug. Block the impersonation.
+  const reserved = [SHARED_FOLDER_NAME, IMPORTED_FOLDER_NAME].map((s) => s.toLowerCase());
+  if (reserved.includes(trimmed.toLowerCase())) {
+    throw new Error("Deze mapnaam is gereserveerd");
+  }
   const { data, error } = await supabase
     .from("folders")
     .insert({
       user_id: userId,
-      name: name.trim(),
+      name: trimmed,
       parent_id: parentId ?? null,
       is_system: false,
       folder_type: "custom",
@@ -487,15 +498,22 @@ export async function deleteFolder(
   if (!folder) throw new Error("Map niet gevonden");
   if (folder.is_system) throw new Error("Systeemmappen kunnen niet worden verwijderd");
 
-  // Move documents to root
-  await supabase.from("documents").update({ folder_id: null })
+  // Move documents to root — [Fo#3] abort on error; never proceed to the delete
+  // with children still attached.
+  const { error: docErr } = await supabase.from("documents").update({ folder_id: null })
     .eq("folder_id", folderId).eq("user_id", userId);
+  if (docErr) throw new Error(docErr.message);
 
-  // Move sub-folders to root
-  await supabase.from("folders").update({ parent_id: null })
+  // Reparent sub-folders to root BEFORE deleting. The folders parent_id FK is
+  // ON DELETE CASCADE, so if this step were skipped or failed and we still deleted,
+  // the cascade would silently wipe the entire descendant subtree. Abort on error.
+  const { error: subErr } = await supabase.from("folders").update({ parent_id: null })
     .eq("parent_id", folderId).eq("user_id", userId);
+  if (subErr) throw new Error(subErr.message);
 
-  await supabase.from("folders").delete().eq("id", folderId).eq("user_id", userId);
+  const { error: delErr } = await supabase.from("folders").delete()
+    .eq("id", folderId).eq("user_id", userId);
+  if (delErr) throw new Error(delErr.message);
 }
 
 // ─── Move Document ────────────────────────────────────────────────────────────────
@@ -523,6 +541,26 @@ export async function moveFolder(
 ): Promise<void> {
   const supabase = await resolveClient(ctx);
   if (folderId === newParentId) throw new Error("Kan map niet in zichzelf verplaatsen");
+
+  // [Fo#1] Reject moving a folder INTO ITS OWN DESCENDANT. Such a move builds a
+  // parent_id cycle: the whole ring detaches from the root-anchored tree (buildTree
+  // only descends from parent_id=null → the subtree becomes invisible/unreachable),
+  // and the breadcrumb's upward parent-walk recurses forever → page crash. Walk up
+  // from the target's chain; if we reach folderId, the target is a descendant.
+  // The lookup also validates ownership (Fo#5): an unknown/foreign parent is rejected.
+  if (newParentId) {
+    let cursor: string | null = newParentId;
+    let guard = 0;
+    while (cursor && guard < 100) {
+      if (cursor === folderId) throw new Error("Kan een map niet naar een submap van zichzelf verplaatsen");
+      const { data: parent } = await supabase
+        .from("folders").select("parent_id").eq("id", cursor).eq("user_id", userId).maybeSingle();
+      if (!parent) throw new Error("Doelmap niet gevonden");
+      cursor = parent.parent_id as string | null;
+      guard++;
+    }
+  }
+
   const { error } = await supabase
     .from("folders").update({ parent_id: newParentId })
     .eq("id", folderId).eq("user_id", userId);
