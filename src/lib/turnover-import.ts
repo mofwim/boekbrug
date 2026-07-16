@@ -36,6 +36,13 @@ function num(v: Cell): number {
   if (typeof v !== "string") return 0;
   let s = v.trim();
   if (!s) return 0;
+  // [L1] Capture the SIGN before the separators are normalised and non-numerics stripped.
+  // Accounting/POS exports write a negative (a refund/correction day) as "(1.234,56)" or a
+  // leading/trailing minus. The old strip removed the brackets and dropped the sign, so a
+  // refund day was counted as POSITIVE omzet — an overstatement. Detect all three forms.
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1).trim(); }
+  if (/^-/.test(s) || /-$/.test(s)) negative = true;
   // Disambiguate NL ("1.234,56") vs EN ("1,234.56"): whichever separator appears LAST is
   // the decimal; the other is the thousands separator. This fixes EN thousands, which the
   // old "comma → decimal" rule misread ("1,234.56" → 1.23456). A bare comma (no dot) is
@@ -48,9 +55,12 @@ function num(v: Cell): number {
   } else if (lastComma >= 0) {
     s = s.replace(/\./g, "").replace(",", ".");
   }
-  s = s.replace(/[^\d.\-]/g, "");
+  // Sign is already captured — strip EVERYTHING non-numeric (incl. minus/brackets) so a
+  // stray "12-34" can't be misparsed; then re-apply the detected sign.
+  s = s.replace(/[^\d.]/g, "");
   const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
+  if (!Number.isFinite(n)) return 0;
+  return negative ? -n : n;
 }
 
 /** Normalize a header cell for matching: lowercase, collapse spaces, strip %/punct spacing. */

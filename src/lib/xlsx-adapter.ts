@@ -14,6 +14,24 @@ export function sheetBytesToMatrix(bytes: Uint8Array): Cell[][] {
   const firstName = wb.SheetNames[0];
   if (!firstName) return [];
   const sheet = wb.Sheets[firstName];
+  // [H2] sheet_to_json densifies the whole DECLARED range (!ref). A ~10KB file can declare
+  // <dimension ref="A1:XFD1048576"/> (16384×1048576) with two real cells and force a multi-
+  // GB allocation → server OOM that the caller's try/catch cannot stop. Clamp the declared
+  // range to a sane ceiling first. Real turnover/bank sheets are small and their data sits
+  // at the top-left, so clamping never drops a legitimate cell.
+  if (sheet && typeof sheet["!ref"] === "string") {
+    const MAX_ROWS = 100000, MAX_COLS = 200;
+    try {
+      const range = XLSX.utils.decode_range(sheet["!ref"] as string);
+      if (range.e.r - range.s.r > MAX_ROWS || range.e.c - range.s.c > MAX_COLS) {
+        range.e.r = Math.min(range.e.r, range.s.r + MAX_ROWS);
+        range.e.c = Math.min(range.e.c, range.s.c + MAX_COLS);
+        sheet["!ref"] = XLSX.utils.encode_range(range);
+      }
+    } catch {
+      // A malformed !ref — leave it; sheet_to_json will just read what it can.
+    }
+  }
   const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,        // array-of-arrays, not keyed objects
     raw: true,        // keep numbers as numbers
