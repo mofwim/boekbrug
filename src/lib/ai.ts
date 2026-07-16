@@ -58,6 +58,11 @@ export function shouldTreatAsCreditNote(
 ): boolean {
   if (taggedCredit === true) return true;
   const neg = (v: unknown) => typeof v === "number" && isFinite(v) && v < 0;
+  const pos = (v: unknown) => typeof v === "number" && isFinite(v) && v > 0;
+  // [HUNT-F2] A POSITIVE printed total is never a creditnota. A negative ex under a positive
+  // total is an extraction error (e.g. a discount/korting line mis-read into the base), not a
+  // credit — leave it for SAFECORE to flag rather than mis-classify it as a creditnota.
+  if (pos(rawIncl)) return false;
   return neg(rawIncl) || neg(rawEx);
 }
 
@@ -73,7 +78,16 @@ export function fixExInclConfusion(
   incl: number | undefined,
 ): number | undefined {
   if (ex === undefined || btw === undefined || incl === undefined) return ex;
-  if (Math.abs(btw) > 0.02 && Math.abs(ex - incl) < 0.02) return incl - btw;
+  if (Math.abs(btw) > 0.02 && Math.abs(ex - incl) < 0.02) {
+    const newEx = incl - btw;
+    // [HUNT-F1] Only accept the recomputation when the recovered base implies a PLAUSIBLE NL
+    // BTW rate. A reverse-charge / "BTW verlegd" memo captured into btw_amount (ex=1000,
+    // btw=210, incl=1000) would otherwise be silently "reconciled" into a fabricated €210
+    // deductible BTW + a wrong ex, AND make SAFECORE's sum check pass. Rejecting an out-of-band
+    // implied rate leaves ex untouched so SAFECORE holds the invoice for human review.
+    const impliedRate = Math.abs(newEx) > 0.005 ? Math.round(Math.abs(btw / newEx) * 100) : 0;
+    if (impliedRate >= 0 && impliedRate <= 21) return newEx;
+  }
   return ex;
 }
 

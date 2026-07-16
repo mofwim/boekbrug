@@ -16,6 +16,7 @@
 
 import { pnlRole } from "./bank-categories";
 import { turnoverNetOmzet, turnoverBtw, type DailyTurnover } from "./turnover";
+import { nearestLegalRate } from "./btw-rate";
 
 export interface ResultInvoice {
   direction: "outgoing" | "incoming" | null;
@@ -173,7 +174,9 @@ export function computeResult(
       // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
       // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
       // instead of falling to rate-0 and over-declaring BTW.
-      addSale(ex !== 0 ? Math.round((btw / ex) * 100) : 0, ex, btw);
+      // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
+      // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
+      addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
     } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
       kosten += ex;
       btwVoorbelasting += btw;

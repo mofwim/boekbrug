@@ -40,6 +40,17 @@ function toStoragePath(stored: string): string {
   return stored;
 }
 
+// [HUNT-Q4] Identify a file by its magic bytes — authoritative over a filename/extension
+// guess. Returns null when the header isn't one the classifier can read (leave the guess).
+function sniffMime(buf: Buffer): string | null {
+  if (buf.length >= 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return "application/pdf"; // %PDF
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 4 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return "image/gif"; // GIF8
+  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return null;
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -117,7 +128,13 @@ export async function POST(
     console.error("[REIMPORT] download failed", { invoiceId: id, storagePath, dlErr });
     return NextResponse.json({ error: "Kon het bestand niet lezen" }, { status: 500 });
   }
-  const base64 = Buffer.from(await blob.arrayBuffer()).toString("base64");
+  const buf = Buffer.from(await blob.arrayBuffer());
+  // [HUNT-Q4] The magic bytes are authoritative over the filename/extension guess above —
+  // a legacy image invoice on an extension-less path would otherwise be read as a PDF and
+  // fail the classifier's PDF-magic check. Override the mime when the bytes are unambiguous.
+  const sniffed = sniffMime(buf);
+  if (sniffed) mimeType = sniffed;
+  const base64 = buf.toString("base64");
 
   // Re-read with the CURRENT extractor (same path the import uses → identical behaviour).
   let c: Awaited<ReturnType<typeof classifyAttachment>>;
