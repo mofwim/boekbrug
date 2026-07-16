@@ -3,6 +3,7 @@
 // Upload → Supabase Storage, metadata → documents table
 // Server-only — nooit importeren in Client Components
 
+import { randomUUID } from "crypto";
 import { createServerSupabaseClient } from "./supabase-server";
 import { inferDocType } from "./documents-utils";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
@@ -81,7 +82,11 @@ export function buildStoragePath(
   // Prefix filename with today's date: YYYYMMDD_filename
   const today = new Date();
   const datePrefix = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
-  const namedFile = `${datePrefix}_${safe}`;
+  // [H1] Insert a short random token so two DIFFERENT files with the same name
+  // uploaded the same day into the same quarter don't collide on one object key
+  // (upload uses upsert:false → the second would otherwise fail). The content-hash
+  // dedup gate still blocks true duplicates before we ever reach this path.
+  const namedFile = `${datePrefix}_${randomUUID().slice(0, 8)}_${safe}`;
 
   return `${userId}/${year}/Q${quarter}/${namedFile}`;
 }
@@ -343,8 +348,9 @@ export async function deleteDocument(
   // Delete from storage (file_url is the raw path)
   await supabase.storage.from("documents").remove([doc.file_url]);
 
-  // Delete from DB
-  await supabase.from("documents").delete().eq("id", documentId);
+  // Delete from DB — [L8] scope by user_id too (defense-in-depth alongside RLS,
+  // consistent with every other mutation in this module).
+  await supabase.from("documents").delete().eq("id", documentId).eq("user_id", userId);
 
   return {};
 }

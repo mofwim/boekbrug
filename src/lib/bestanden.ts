@@ -230,14 +230,27 @@ export async function ensureYearStructure(
   const sharedExists = existing.some(f => f.folder_type === "shared" && f.parent_id === null);
   const importedExists = existing.some(f => f.folder_type === "imported" && f.parent_id === null);
 
-  // Quick completeness check: if the year folder exists AND it has 4 quarters
-  // AND the two root folders exist, assume the structure is complete.
+  // [M5] Completeness check on the FULL leaf count, not just quarters. A prior run
+  // could have been interrupted after creating the 4 quarter rows but before a
+  // quarter's Bank/months/Facturen/Kosten — "4 quarters" would then short-circuit
+  // forever and leave that subtree permanently missing. Verify every tier; if any
+  // leaf is absent we fall through to the idempotent build path, which re-creates
+  // only what's missing (INSERT + catch 23505) and self-heals.
   if (yearFolderId && sharedExists && importedExists) {
-    const quarterCount = existing.filter(
-      f => f.parent_id === yearFolderId && f.folder_type === "quarter"
+    const quarterIds = new Set(
+      existing.filter(f => f.parent_id === yearFolderId && f.folder_type === "quarter").map(f => f.id)
+    );
+    const bankCount = existing.filter(
+      f => f.folder_type === "bank" && f.parent_id && quarterIds.has(f.parent_id)
     ).length;
-    // 4 quarters present → deep structure was built in a prior call. Done.
-    if (quarterCount === 4) return;
+    const monthIdSet = new Set(
+      existing.filter(f => f.folder_type === "month" && f.parent_id && quarterIds.has(f.parent_id)).map(f => f.id)
+    );
+    const typeCount = existing.filter(
+      f => (f.folder_type === "facturen" || f.folder_type === "kosten") && f.parent_id && monthIdSet.has(f.parent_id)
+    ).length;
+    // Complete year subtree = 4 quarters + 4 bank + 12 months + 24 (facturen/kosten).
+    if (quarterIds.size === 4 && bankCount === 4 && monthIdSet.size === 12 && typeCount === 24) return;
   }
 
   // ── [BOEK-033] BUILD PATH ─────────────────────────────────────────────────
@@ -443,13 +456,17 @@ export async function renameFolder(
 ): Promise<void> {
   const supabase = await resolveClient(ctx);
 
+  // [L7] A folder must keep a non-empty name — reject blank/whitespace renames.
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("Mapnaam mag niet leeg zijn");
+
   // Guard: never rename system folders
   const { data: folder } = await supabase
     .from("folders").select("is_system").eq("id", folderId).eq("user_id", userId).single();
   if (folder?.is_system) throw new Error("Systeemmappen kunnen niet worden hernoemd");
 
   const { error } = await supabase
-    .from("folders").update({ name: newName.trim() })
+    .from("folders").update({ name: trimmed })
     .eq("id", folderId).eq("user_id", userId);
   if (error) throw new Error(error.message);
 }
@@ -538,12 +555,21 @@ export async function searchBestanden(
   const q = query.trim();
   if (!q) return [];
 
+  // [M3] Neutralise the user term before it is interpolated into the PostgREST
+  // `.or()` filter string. Commas and parentheses are STRUCTURAL there (an unescaped
+  // ")" or "," breaks out of the ilike list → malformed filter / injected predicates);
+  // "%", "_" and "\" are LIKE wildcards/escape that would silently over-match. Strip
+  // them so the term is matched literally. (user_id is ANDed outside the OR group, so
+  // this was never a cross-tenant leak — but it is query-breakage/DoS hardening.)
+  const safe = q.replace(/[,()%_\\]/g, " ").trim();
+  if (!safe) return [];
+
   const { data, error } = await supabase
     .from("documents")
     .select("id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, ai_suggested_folder, source, starred, trashed, shared")
     .eq("user_id", userId)
     .eq("trashed", false)
-    .or(`file_name.ilike.%${q}%,notes.ilike.%${q}%,ai_doc_type.ilike.%${q}%,doc_type.ilike.%${q}%`)
+    .or(`file_name.ilike.%${safe}%,notes.ilike.%${safe}%,ai_doc_type.ilike.%${safe}%,doc_type.ilike.%${safe}%`)
     .order("created_at", { ascending: false })
     .limit(50);
 

@@ -55,8 +55,15 @@ export async function POST(req: NextRequest) {
   }
 
   const now       = new Date();
-  const year      = Number(formData.get("year")    ?? now.getFullYear());
-  const quarter   = Number(formData.get("quarter") ?? Math.ceil((now.getMonth() + 1) / 3));
+  // [L9] Validate year/quarter — a non-numeric value would otherwise become NaN and
+  // flow into the storage path ("…/NaN/QNaN/…") and period ("NaN-QNaN"). Fall back to
+  // the current quarter for anything missing/out-of-range.
+  const rawYear    = Number(formData.get("year"));
+  const rawQuarter = Number(formData.get("quarter"));
+  const year      = Number.isInteger(rawYear) && rawYear >= 2000 && rawYear <= 2100
+    ? rawYear : now.getFullYear();
+  const quarter   = Number.isInteger(rawQuarter) && rawQuarter >= 1 && rawQuarter <= 4
+    ? rawQuarter : Math.ceil((now.getMonth() + 1) / 3);
   const invoiceId = (formData.get("invoice_id") as string | null) ?? undefined;
   const notes     = (formData.get("notes")     as string | null) ?? undefined;
   // [BESTANDEN-DUP] explicit "upload again" confirmation from the dup modal

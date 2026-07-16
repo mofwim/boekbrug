@@ -340,6 +340,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     if (folder !== null) setCurrentFolderId(folder);
     if (focus !== null) setFocusId(focus);
     setShowTrash(false);
+    setSmartView(null); // [BESTANDEN-SMART] a deep-link targets a real folder, leave any smart view
     setSearch("");
     setSearchResults(null);
     // Clean the URL so refresh/back don't re-trigger the deep-link.
@@ -473,9 +474,14 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       const fileIds = [...selectedIds].filter(k => k.startsWith("d:")).map(k => k.slice(2));
       const allIds  = [...selectedIds].map(k => k.slice(2));
 
+      // [BESTANDEN-SMART] Keyboard ops must target the VISIBLE list. In a smart view
+      // that is smartDocs (flat, no folders); in a normal folder it is docs + subFolders.
+      const viewDocs = smartView ? smartDocs : docs;
+      const viewFolders = smartView ? [] : subFolders;
+
       if ((e.ctrlKey || e.metaKey) && e.key === "a") {
         e.preventDefault();
-        setSelectedIds(new Set([...subFolders.map(f => `f:${f.id}`), ...docs.map(d => `d:${d.id}`)]));
+        setSelectedIds(new Set([...viewFolders.map(f => `f:${f.id}`), ...viewDocs.map(d => `d:${d.id}`)]));
         return;
       }
       if (selectedIds.size === 0) return;
@@ -515,19 +521,22 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           })
         )).then(() => {
           setDocs(p => p.filter(d => !fileIds.includes(d.id)));
+          setSmartDocs(p => p.filter(d => !fileIds.includes(d.id))); // [BESTANDEN-SMART] keep smart view in sync
           setSelectedIds(new Set());
+          refreshStorage(); // [BESTANDEN-SMART] meter reflects the trashed files
         });
       }
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
-  }, [selectedIds, currentFolderId, subFolders, docs]); // eslint-disable-line
+  }, [selectedIds, currentFolderId, subFolders, docs, smartView, smartDocs, refreshStorage]); // eslint-disable-line
 
   // ── Selection helpers ──
-  // [BESTANDEN-SORT] Sorted copy used for BOTH rendering and range-selection order,
-  // so Shift-click ranges follow exactly what the user sees.
-  const displayDocs = sortDocs(docs, sortField, sortDir);
-  const allItems = [...subFolders.map(f => `f:${f.id}`), ...displayDocs.map(d => `d:${d.id}`)];
+  // [BESTANDEN-SORT/SMART] Sorted copy of the ACTIVE list (smart view or folder),
+  // used for BOTH rendering and range-selection order — so Shift-click ranges follow
+  // exactly what the user sees in whichever view is active (folder, Recent, …).
+  const displayDocs = sortDocs(smartView ? smartDocs : docs, sortField, sortDir);
+  const allItems = [...(smartView ? [] : subFolders).map(f => `f:${f.id}`), ...displayDocs.map(d => `d:${d.id}`)];
 
   const handleSelect = (e: React.MouseEvent, itemKey: string) => {
     const id = itemKey.slice(2);
@@ -1342,7 +1351,9 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     })
                   ));
                   setDocs(p => p.filter(d => !idsToTrash.includes(d.id)));
+                  setSmartDocs(p => p.filter(d => !idsToTrash.includes(d.id))); // [BESTANDEN-SMART]
                   setSelectedIds(new Set());
+                  refreshStorage(); // [BESTANDEN-SMART] meter reflects the trashed files
                 }}
               >
                 <button onClick={() => navigateTo(null, { trash: true })} style={{
@@ -1458,7 +1469,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                   </div>
                 ) : viewMode === "grid" ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
-                    {sortDocs(smartDocs, sortField, sortDir).map(doc => (
+                    {displayDocs.map(doc => (
                       <div key={doc.id} style={{ borderRadius: T.lg }}>
                         <DocCard
                           doc={doc}
@@ -1475,7 +1486,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                   </div>
                 ) : (
                   <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
-                    {sortDocs(smartDocs, sortField, sortDir).map((doc, i) => {
+                    {displayDocs.map((doc, i) => {
                       const folderName = doc.folder_id
                         ? (allFolders.find(f => f.id === doc.folder_id)?.name ?? null)
                         : null;

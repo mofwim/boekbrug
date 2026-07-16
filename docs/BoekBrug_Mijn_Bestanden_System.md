@@ -200,17 +200,27 @@ is **teruggetrokken** (`[FIN-UNIFY]`), zodat er precies één bron van waarheid 
 
 ### Consistentie-fixes (bij deze analyse toegevoegd)
 
-1. **`[FIN-QUARTER]` — delen behoudt het juiste kwartaal.** Voorheen stempelde de
-   share-actie `period` op het *huidige* kwartaal. Een Q1-bon die in Q2 werd
-   gedeeld belandde zo in het Q2-pakket (en klopte niet met de map in `/brug`).
-   Nu geldt de prioriteit: expliciet gekozen kwartaal → het eigen `period` van
-   het document → pas als laatste het huidige kwartaal. Geldt voor de deel-knop
-   én voor het slepen in de map "Gedeeld met boekhouder"
-   (`src/app/api/bestanden/route.ts`).
-2. **`[FIN-DEDUP]` — geen dubbel bestand in de ZIP.** `buildClosingPackageZip`
-   houdt nu één `seenPath`-set aan over alle secties (facturen → bank → overige),
-   zodat hetzelfde opslagobject nooit twee keer in het pakket zit (bijv. een
-   gedeeld document dat óók het bewijsstuk van een inkoopfactuur is).
+1. **`[FIN-QUARTER]` — delen overschrijft `period` niet meer met "vandaag".**
+   Voorheen stempelde de share-actie `period` op het *huidige* kwartaal, wat een
+   in Q1 geüpload document bij delen in Q2 naar het Q2-pakket verplaatste. Nu
+   geldt de prioriteit: expliciet gekozen kwartaal → het eigen `period` van het
+   document (behouden) → pas als laatste het huidige kwartaal.
+   **Belangrijke nuance:** `documents.period` wordt op UPLOAD-tijd gezet
+   (upload-kwartaal), niet uit de eigen datum van de bon — er is geen stap die
+   `period` uit de documentdatum afleidt. Deze fix voorkomt dus vooral het
+   *bederven* van een correct upload-kwartaal; volledig correcte kwartaal­toewijzing
+   vereist nog een expliciete kwartaalkeuze bij delen (de `body.period`/FIN-9-haak
+   bestaat, maar de UI stuurt hem nog niet). Bankafschriften worden bij delen
+   **niet** opnieuw gestempeld (hun `period` hoort bij de bankinname).
+   (`src/app/api/bestanden/route.ts`)
+2. **`[FIN-DEDUP]` — geen dubbel bestand in de ZIP.** De sectie
+   "overige-documenten/" slaat elk bestand over dat al onder facturen of bank in
+   het pakket zit (bijv. een gedeeld document dat óók het bewijsstuk van een
+   inkoopfactuur is). Dedup gebeurt tegen de bestanden die **daadwerkelijk zijn
+   gedownload** (`pdfByInvoice` + `bankFiles`), niet tegen enkel *opgeloste*
+   paden — zodat een mislukte factuur-download een gedeeld bestand niet óók uit
+   overige verwijdert (het zou dan nergens in de ZIP zitten). Bankafschriften
+   dedupliceren binnen hun eigen twee queries.
 3. **`[FIN-UNIFY]` — dode deelmechaniek opgeruimd.** Het ongebruikte
    `?clientId=`-pad in `/api/files`, `listDocuments(sharedOnly)` en de
    `shared/`-opslagtak in `buildStoragePath` zijn verwijderd; delen loopt nu
