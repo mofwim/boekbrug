@@ -13,7 +13,7 @@ import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
-import { findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
+import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
@@ -220,9 +220,8 @@ export async function POST(req: NextRequest) {
 
   // [DATE-GATE] Honest date: null when none was extracted — no today fallback.
   // The confirm route blocks a null date until the reviewer enters it.
-  const invoiceDate = verification.invoice_date
-    ? new Date(verification.invoice_date).toISOString().split("T")[0]
-    : null;
+  // [DATE-ISO-SAFE / I6] Tolerant + never-throw (a DD-MM-YYYY used to 500 the upload).
+  const invoiceDate = normalizeToIso(verification.invoice_date);
 
   // [BOEK-011] Resolve correct folder via BOEK-033's function
   // ctx='user' — manual upload, user is logged in (RLS session active)

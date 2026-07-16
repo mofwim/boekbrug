@@ -19,6 +19,7 @@ import {
   isReliableVendor,
   normalizeVendor,
   normalizeInvoiceNumber,
+  normalizeToIso,
   deriveDueDate,
 } from '@/lib/safecore'
 
@@ -1849,7 +1850,7 @@ export async function syncUserEmails(userId: string): Promise<{
           typeof classification.invoiceDate === 'string' &&
           /^\d{4}-\d{2}-\d{2}/.test(classification.invoiceDate)
         const realDateIso = hasRealDate
-          ? new Date(classification.invoiceDate as string).toISOString().split('T')[0]
+          ? normalizeToIso(classification.invoiceDate as string)
           : null
 
         // Decide the key tier.
@@ -1994,9 +1995,9 @@ export async function syncUserEmails(userId: string): Promise<{
       // fall back to the e-mail's received date. A substituted date looks
       // confident and misfiles the expense's quarter; the verify queue forces
       // the human to enter the real date before confirming.
-      const invoiceDate = classification.invoiceDate
-        ? new Date(classification.invoiceDate).toISOString().split('T')[0]
-        : null
+      // [DATE-ISO-SAFE / I6] Tolerant + never-throw (a DD-MM-YYYY here used to throw and
+      // stick the whole message in a re-fetch loop forever). Invalid → null → verify queue.
+      const invoiceDate = normalizeToIso(classification.invoiceDate)
 
       // [BOEK-011] Step 1: store the PDF/image in Supabase Storage
       let documentId: string | null = null

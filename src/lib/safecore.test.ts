@@ -8,7 +8,7 @@
 //
 // Style: plain check() functions + process exit code — same as retention.test.ts.
 
-import { evaluateArithmetic, normalizeInvoiceNumber } from './safecore'
+import { evaluateArithmetic, normalizeInvoiceNumber, normalizeToIso } from './safecore'
 
 let failures = 0
 function check(name: string, cond: boolean, detail?: string) {
@@ -142,6 +142,19 @@ console.log('\n═══ [DEDUP-NUMBER-NORM] invoice-number normalization ══
   check('a genuinely different number does NOT fold', normalizeInvoiceNumber('26/3958') !== normalizeInvoiceNumber('26/3959'))
   check('a different separator is preserved (not merged)', normalizeInvoiceNumber('26/3958') !== normalizeInvoiceNumber('26-3958'))
   check('null → empty string', normalizeInvoiceNumber(null) === '')
+}
+
+console.log('\n═══ [DATE-ISO-SAFE / I6] tolerant date normalization (never throws) ═══\n')
+{
+  check('ISO passes through', normalizeToIso('2026-05-15') === '2026-05-15')
+  check('ISO with time → date part', normalizeToIso('2026-05-15T10:00:00Z') === '2026-05-15')
+  check('Dutch DD-MM-YYYY → ISO (the throw case)', normalizeToIso('15-05-2026') === '2026-05-15')
+  check('slash DD/MM/YYYY → ISO', normalizeToIso('15/05/2026') === '2026-05-15')
+  check('single-digit day/month pads', normalizeToIso('5-5-2026') === '2026-05-05')
+  check('invalid month → null (not a throw, not a wrong date)', normalizeToIso('15-13-2026') === null)
+  check('garbage → null', normalizeToIso('not a date') === null)
+  check('null → null', normalizeToIso(null) === null)
+  check('empty → null', normalizeToIso('') === null)
 }
 
 console.log(`\n${failures === 0 ? '✅ ALLE TESTS GESLAAGD' : `❌ ${failures} FAILURES`}`)

@@ -29,6 +29,7 @@ import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { normalizeToIso } from "@/lib/safecore";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -161,11 +162,11 @@ export async function POST(req: NextRequest) {
 
   // Money side: the BANK is the source of truth for the paid amount/date.
   const bankAmount = Math.abs(tx.amount ?? 0);
-  const invoiceDate = tx.date
-    ? new Date(tx.date).toISOString().split("T")[0]
-    : verification.invoice_date
-      ? new Date(verification.invoice_date).toISOString().split("T")[0]
-      : new Date().toISOString().split("T")[0];
+  // [DATE-ISO-SAFE / I6] Tolerant + never-throw for either source (a DD-MM-YYYY threw a 500).
+  const invoiceDate =
+    normalizeToIso(tx.date) ??
+    normalizeToIso(verification.invoice_date) ??
+    new Date().toISOString().split("T")[0];
 
   // Prefer the AI total when it agrees with the bank; otherwise trust the bank
   // amount (what actually moved) and flag a warning for the owner to verify.
