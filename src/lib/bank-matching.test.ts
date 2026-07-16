@@ -9,7 +9,12 @@ import {
   isEligible,
   isFullyCovered,
   coveredReferenceNumbers,
+  dedupeCandidates,
+  isPartialPaymentHint,
+  scorePair,
+  DEFAULT_OPTIONS,
   type InvoiceForMatching,
+  type MatchCandidate,
 } from "./bank-matching";
 
 let passed = 0;
@@ -256,6 +261,61 @@ console.log("\n— [BANK-SLOT-PERSIST] coveredReferenceNumbers reports the paid 
   check("none paid → empty", coveredReferenceNumbers("26302050, 26302362", new Set<string>()).length === 0);
   // Consistency with isFullyCovered: covered==refNumbers ⇔ fully covered.
   check("covered-all agrees with isFullyCovered", isFullyCovered("26302050, 26302362", new Set(["26302050", "26302362"])) === true);
+}
+
+console.log("\n— [BANK-DEDUP-CANDIDATES] a duplicate invoice is collapsed, a collision is not —");
+{
+  const cand = (invoiceId: string, invoiceNumber: string | null, amount: number | null, confidence: number): MatchCandidate =>
+    ({ invoiceId, invoiceNumber, amount, invoiceDate: "2026-05-06", confidence, signals: ["amount"], reason: "" });
+  // famzfood: same number (different whitespace) + same amount → one candidate kept (highest conf).
+  const deduped = dedupeCandidates([
+    cand("a", "26 / 3958", 630.15, 0.9),
+    cand("b", "26/3958", 630.15, 0.7),
+  ]);
+  check("same number+amount collapses to ONE", deduped.length === 1);
+  check("keeps the higher-confidence one", deduped[0].invoiceId === "a");
+  // Same number but DIFFERENT amount (a mere collision) → both kept, nothing hidden.
+  check("same number, different amount → both kept",
+    dedupeCandidates([cand("a", "INV1", 100, 0.9), cand("b", "INV1", 200, 0.8)]).length === 2);
+  // No usable number → never collapsed.
+  check("null-number candidates are never collapsed",
+    dedupeCandidates([cand("a", null, 100, 0.9), cand("b", null, 100, 0.8)]).length === 2);
+}
+
+console.log("\n— [BANK-DEDUP-CANDIDATES] matchTransactions shows a duplicate invoice once —");
+{
+  const r = matchTransactions(
+    [tx({ amount: -630.15, date: "2026-05-06", counterpartName: "famzfood", reference: "26 3958" })],
+    [
+      inv({ id: "d1", invoice_number: "26 / 3958", total_inc_btw: 630.15, direction: "incoming", client_name: "famzfood", invoice_date: "2026-05-06" }),
+      inv({ id: "d2", invoice_number: "26/3958", total_inc_btw: 630.15, direction: "incoming", client_name: "famzfood", invoice_date: "2026-05-06" }),
+    ],
+  );
+  check("only one candidate is offered (not the duplicate twice)", r.matches[0].candidates.length === 1);
+}
+
+console.log("\n— [BANK-PARTIAL] instalment references are detected and kept out of auto —");
+{
+  check("'Tweede deel factuur 26302050' → partial", isPartialPaymentHint("Tweede deel factuur 26302050") === true);
+  check("'2e termijn' → partial", isPartialPaymentHint("betaling 2e termijn") === true);
+  check("'deelbetaling' → partial", isPartialPaymentHint("deelbetaling order 99") === true);
+  check("'aanbetaling' → partial", isPartialPaymentHint("aanbetaling project") === true);
+  check("a normal payment is NOT partial", isPartialPaymentHint("betaling factuur 2026-014 voldaan") === false);
+  check("'termijnen' inside a word does not falsely fire", isPartialPaymentHint("kortermijnlening") === false);
+
+  // scorePair: a reference + exact amount would be 0.97 auto, but an instalment marker
+  // caps it to a human choice (<= 0.6), so it never one-taps the invoice fully paid.
+  const partial = scorePair(
+    tx({ amount: -500, reference: "26302050", description: "Tweede deel factuur 26302050" }),
+    inv({ invoice_number: "26302050", total_inc_btw: 500, direction: "incoming", status: "received" }),
+    DEFAULT_OPTIONS,
+  );
+  check("instalment ref caps confidence below auto (0.7)", partial.confidence <= 0.6);
+  check("a clean full payment still reaches auto", scorePair(
+    tx({ amount: -500, reference: "26302050", description: "betaling 26302050" }),
+    inv({ invoice_number: "26302050", total_inc_btw: 500, direction: "incoming", status: "received" }),
+    DEFAULT_OPTIONS,
+  ).confidence >= DEFAULT_OPTIONS.autoConfidence);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

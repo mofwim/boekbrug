@@ -1653,6 +1653,27 @@ function TxCard({
         </div>
       )}
 
+      {/* [BANK-PARTIAL] Underpayment / instalment warning — there is no partial-paid state,
+          so a one-tap confirm marks the WHOLE invoice paid. Never silently: if the paid
+          amount is below (or above) the selected invoice total, say so before the tap. */}
+      {!wasMulti && s.outcome !== 'none' && selectedCand && selectedCand.amount != null && (() => {
+        const txAbs = Math.abs(s.amount)
+        const invAbs = Math.abs(selectedCand.amount ?? 0)
+        const under = invAbs - txAbs > 0.01
+        const over = txAbs - invAbs > 0.01
+        if (!under && !over) return null
+        return (
+          <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: R.md, background: '#FEEFC3', color: '#7A4F00', fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>warning</span>
+            <span>
+              {under
+                ? <>Deelbetaling? Er is <strong>{eur.format(txAbs)}</strong> betaald, maar het factuurbedrag is <strong>{eur.format(invAbs)}</strong>. Bevestigen markeert de <strong>hele</strong> factuur als betaald.</>
+                : <>Er is <strong>{eur.format(txAbs)}</strong> betaald — méér dan het factuurbedrag <strong>{eur.format(invAbs)}</strong>. Controleer of dit de juiste factuur is.</>}
+            </span>
+          </div>
+        )
+      })()}
+
       {/* Confirm */}
       {!wasMulti && s.outcome !== 'none' && (
         <button

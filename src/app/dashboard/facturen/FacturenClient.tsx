@@ -11,6 +11,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
+import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
+import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
@@ -99,6 +101,8 @@ const fold = (s: string) => (s ?? '').toLowerCase().normalize('NFD').replace(/\p
 export default function FacturenClient({ profile }: { profile: any }) {
   const router   = useRouter()
   const supabase = createClient()
+  // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
+  const { byInvoice: recon } = useInvoiceReconciliation()
   // [BOEK-029] Navigation strategy — parent is always /dashboard for ZZP
   const parentHref = useParentPath(profile.role ?? 'zzper')
 
@@ -515,6 +519,9 @@ export default function FacturenClient({ profile }: { profile: any }) {
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
                             {inv.status === 'paid' ? 'Betaald' : inv.status === 'sent' ? 'Verzonden' : inv.status === 'overdue' ? 'Verlopen' : 'Concept'}
                           </span>
+                        )}
+                        {recon[inv.id] && (
+                          <ReconBadge recon={recon[inv.id]} mode="zzp" invoiceId={inv.id} onReconConfirm={() => router.push('/dashboard/bank')} />
                         )}
                       </div>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

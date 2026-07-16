@@ -331,6 +331,18 @@ export interface SemanticDedupResult {
  * `findMatch` performs the scoped DB read for a given tier and returns the first
  * matching original (or null). Kept injectable so safecore stays I/O-free.
  */
+/**
+ * [DEDUP-NUMBER-NORM] Normalize an invoice number for DUPLICATE comparison only (never
+ * for storage/display). Collapses whitespace and lowercases, so a re-generated PDF whose
+ * number renders as "26 / 3958" is recognized as the already-imported "26/3958" — the
+ * exact-string `.eq` missed this and inserted the bill twice (double cost, phantom
+ * voorbelasting). Punctuation is kept (a "/" vs "-" separator may be a real difference),
+ * so this only folds spacing, never merges genuinely different numbers.
+ */
+export function normalizeInvoiceNumber(n: string | null | undefined): string {
+  return (n ?? '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
 export async function findSemanticDuplicate(
   input: SemanticDedupInput,
   findMatch: (q: SemanticDedupQuery) => Promise<SemanticDedupMatch | null>

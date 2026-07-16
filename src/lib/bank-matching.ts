@@ -146,6 +146,21 @@ export function referenceMatches(
   return false;
 }
 
+// [BANK-PARTIAL] Dutch (and common) markers that a bank payment is only PART of an
+// invoice — an instalment / down-payment / "second part". Word-boundary matched so
+// "termijn" doesn't fire inside an unrelated word. Used to keep a partial payment out of
+// one-tap auto-confirm (which would mark the whole invoice paid).
+const PARTIAL_PAYMENT_RE =
+  /\b(deelbetaling|deelbetaald|gedeeltelijk|aanbetaling|termijn|termijnbetaling|\d+e?\s*termijn|\d+e\s*deel|deel\s*\d+|restbetaling|resterend|part\s*payment|installment|instalment)\b/i;
+
+/** Does the payment text look like an instalment / partial payment? */
+export function isPartialPaymentHint(text: string | null | undefined): boolean {
+  if (!text) return false;
+  // "tweede/eerste/derde deel" spelled out, plus the regex markers.
+  if (/\b(eerste|tweede|derde|vierde|laatste)\s+deel\b/i.test(text)) return true;
+  return PARTIAL_PAYMENT_RE.test(text);
+}
+
 /** Exact amount match within tolerance (compares absolute values). */
 export function amountMatches(
   txAmount: number,
@@ -328,9 +343,45 @@ export function scorePair(
     if (!amtOk) confidence = Math.min(confidence, 0.35);
   }
 
+  // [BANK-PARTIAL] A payment whose reference/description says it is an INSTALMENT
+  // ("2e termijn", "deelbetaling", "aanbetaling", "Tweede deel factuur …") must never be a
+  // one-tap 'auto' that marks the invoice fully paid — the amount is only part of the bill.
+  // Cap it to a human 'choice' so the owner sees it and decides; the UI also warns when the
+  // paid amount is below the invoice total (there is no partial-paid state in the model).
+  if (isPartialPaymentHint(`${tx.reference ?? ""} ${tx.description ?? ""}`)) {
+    confidence = Math.min(confidence, 0.6);
+    reasons.push("lijkt een deelbetaling — controleer");
+  }
+
   confidence = Math.min(1, Math.max(0, confidence));
   const reason = reasons.length ? reasons.join(" · ") : "geen duidelijke match";
   return { confidence, signals, reason };
+}
+
+/**
+ * [BANK-DEDUP-CANDIDATES] Collapse candidates that are the SAME bill re-imported twice —
+ * same normalized invoice number AND same gross amount to the cent (e.g. "26 / 3958" vs
+ * "26/3958" from a re-generated PDF, which the exact-string import dedup misses). Keeps
+ * the FIRST occurrence, so call AFTER sorting by confidence to keep the strongest. A
+ * candidate with no usable number/amount is never collapsed (can't prove it's a
+ * duplicate), and requiring the AMOUNT to match too means a mere invoice-number collision
+ * across two genuinely different bills is never hidden.
+ */
+export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[] {
+  const seen = new Set<string>();
+  const out: MatchCandidate[] = [];
+  for (const c of candidates) {
+    const num = normalizeRef(c.invoiceNumber ?? "");
+    if (num.length === 0 || c.amount == null || !Number.isFinite(c.amount)) {
+      out.push(c); // no safe identity → keep (never hide something we can't prove is a dup)
+      continue;
+    }
+    const key = `${num}|${Math.round(Math.abs(c.amount) * 100)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
 }
 
 // ─── Main entry ────────────────────────────────────────────────────────────────
@@ -366,7 +417,9 @@ export function matchTransactions(
     }
 
     candidates.sort((a, b) => b.confidence - a.confidence);
-    const trimmed = candidates.slice(0, opts.maxCandidates);
+    // [BANK-DEDUP-CANDIDATES] Collapse a duplicate invoice (same number+amount) so the
+    // owner never sees the same bill twice in "Kies de juiste factuur".
+    const trimmed = dedupeCandidates(candidates).slice(0, opts.maxCandidates);
 
     let outcome: MatchOutcome = "none";
     let best: MatchCandidate | null = null;

@@ -18,6 +18,7 @@ import {
   isPlaceholderInvoiceNumber,
   isReliableVendor,
   normalizeVendor,
+  normalizeInvoiceNumber,
   deriveDueDate,
 } from '@/lib/safecore'
 
@@ -1904,7 +1905,11 @@ export async function syncUserEmails(userId: string): Promise<{
             .eq('total_inc_btw', classification.totalIncBtw)
 
           if (tier.kind === 'number') {
-            contentQuery = contentQuery.eq('invoice_number', classification.invoiceNumber as string)
+            // [DEDUP-NUMBER-NORM] Do NOT filter invoice_number in-query. An exact `.eq`
+            // missed a re-generated PDF whose number renders "26 / 3958" vs the stored
+            // "26/3958" and booked the same bill TWICE. We fetch on total(+date) and
+            // compare the number WHITESPACE-NORMALIZED in code (below), so a spacing/case
+            // variant is still caught as the duplicate it is.
             // [TRUST-DEDUP] Vendor is compared in CODE (below), NOT with a DB `ilike`.
             // An `ilike` with no wildcards is exact-apart-from-case, so a re-arrival of
             // the SAME invoice under a slightly different vendor string ("Atapack B.V."
@@ -1942,7 +1947,10 @@ export async function syncUserEmails(userId: string): Promise<{
           const original =
             tier.kind === 'number'
               ? (existingByContent ?? []).find(
-                  (c) => !vendorsAreDifferent(classification.vendor, c.client_name),
+                  (c) =>
+                    normalizeInvoiceNumber(c.invoice_number) ===
+                      normalizeInvoiceNumber(classification.invoiceNumber as string) &&
+                    !vendorsAreDifferent(classification.vendor, c.client_name),
                 ) ?? null
               : (existingByContent && existingByContent.length > 0 ? existingByContent[0] : null)
 
