@@ -34,7 +34,7 @@ import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
-import { findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore"
+import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -398,9 +398,8 @@ export async function POST(req: NextRequest) {
   // substitute today — a fabricated date would look confident and land the
   // expense in the wrong quarter. The verify queue forces the human to enter it
   // before confirming (the confirm route blocks a null date).
-  const invoiceDate = v.invoice_date
-    ? new Date(v.invoice_date).toISOString().split("T")[0]
-    : null
+  // [DATE-ISO-SAFE / I6] Tolerant + never-throw (a DD-MM-YYYY used to 500 intake).
+  const invoiceDate = normalizeToIso(v.invoice_date)
 
   const folderId = await resolveImportTarget(user.id, v.invoice_date ?? null, "facturen", "pipeline")
 
