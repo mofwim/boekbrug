@@ -86,6 +86,12 @@ console.log("\n— robustness —");
     ][0].turnover_date === "2026-02-01");
   check("NL number strings parse",
     near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "1.089,00", "1.089,00"]]).rows[0].total_incl!, 1089));
+  // [L1] accounting-style negative (refund/correction day) keeps its sign — must NOT be
+  // read as positive omzet.
+  check("parenthesised negative keeps its sign",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "(1.089,00)", "0"]]).rows[0].total_incl!, -1089));
+  check("trailing-minus negative keeps its sign",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "50,00-", "0"]]).rows[0].total_incl!, -50));
 }
 
 console.log("\n— AUDIT FIX: a net-only sheet is not mistaken for gross —");

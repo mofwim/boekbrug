@@ -2,16 +2,14 @@
 // [BOEK-011] Outlook OAuth callback — exchange code for tokens, store via Vault helper
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
 import {
   exchangeOutlookCode,
   getOutlookUserEmail,
   saveEmailTokens,
 } from "@/lib/email-integration";
+import { verifyOAuthState, OAUTH_STATE_COOKIE } from "@/lib/oauth-state";
 
 export async function GET(req: NextRequest) {
-  const supabase = await createServerSupabaseClient();
-
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
   const error = req.nextUrl.searchParams.get("error");
@@ -29,29 +27,19 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Verify state
-  let stateData: { userId: string; provider: string };
-  try {
-    stateData = JSON.parse(Buffer.from(state, "base64").toString());
-  } catch {
+  // [MH1] Verify the CSRF nonce against the HttpOnly cookie set at /connect; the
+  // authoritative userId comes from the cookie, never from the forgeable state param.
+  const stateCheck = verifyOAuthState(
+    state,
+    req.cookies.get(OAUTH_STATE_COOKIE)?.value,
+    "outlook",
+  );
+  if (!stateCheck.ok) {
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/incoming?error=invalid_state`
     );
   }
-
-  // [BOEK-011] Same robustness as Gmail callback — trust state if session cookie
-  // didn't survive the OAuth redirect. CSRF is already verified by the state param.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const userId = user?.id ?? stateData.userId;
-
-  if (!userId) {
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_BASE_URL}/login`
-    );
-  }
+  const userId = stateCheck.userId;
 
   // Exchange code for tokens
   let tokens;

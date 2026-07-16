@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { buildGmailOAuthUrl, buildOutlookOAuthUrl } from "@/lib/email-integration";
+import { makeOAuthState, OAUTH_STATE_COOKIE, OAUTH_STATE_MAX_AGE } from "@/lib/oauth-state";
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -26,13 +27,23 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // State = userId — verified in callback to prevent CSRF
-  const state = Buffer.from(JSON.stringify({ userId: user.id, provider })).toString("base64");
+  // [MH1] CSRF-safe state: a random nonce goes in the `state` param AND in an HttpOnly
+  // cookie that also carries the initiating userId. The callback trusts the cookie's
+  // userId only when its nonce matches the returned state — a forged state has no cookie.
+  const { state, cookieValue } = makeOAuthState(user.id, provider);
 
   const redirectUrl =
     provider === "gmail"
       ? buildGmailOAuthUrl(state)
       : buildOutlookOAuthUrl(state);
 
-  return NextResponse.redirect(redirectUrl);
+  const res = NextResponse.redirect(redirectUrl);
+  res.cookies.set(OAUTH_STATE_COOKIE, cookieValue, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax", // survives the top-level redirect back from the provider
+    path: "/",
+    maxAge: OAUTH_STATE_MAX_AGE,
+  });
+  return res;
 }
