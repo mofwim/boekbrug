@@ -12,6 +12,7 @@ import Link from 'next/link'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
 import { InvoiceRowItem, STATUS_LABEL } from '@/components/invoice/InvoiceRow'
+import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { SearchBar } from '@/components/search/SearchBar'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 
@@ -82,6 +83,11 @@ export function InvoiceTable(props: InvoiceTableProps) {
   } = props
 
   const isAccountant = props.mode === 'accountant'
+
+  // [BANK-RECON-BADGE] Owner-facing reconciliation badges (never in accountant mode).
+  // Self-wired here so every consumer of the shared table gets them without prop threading.
+  const router = useRouter()
+  const { byInvoice: reconByInvoice } = useInvoiceReconciliation(!isAccountant)
 
   const emptyLabel = isAccountant
     ? statusFilter === 'all'
@@ -191,6 +197,8 @@ export function InvoiceTable(props: InvoiceTableProps) {
                     ? ((props as ZzpInvoiceTableProps).resendingId ?? null)
                     : null
                 }
+                recon={!isAccountant ? reconByInvoice[invoice.id] : undefined}
+                onReconConfirm={!isAccountant ? () => router.push('/dashboard/bank') : undefined}
               />
             ))}
           </InfiniteList>
