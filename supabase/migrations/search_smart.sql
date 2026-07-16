@@ -4,6 +4,13 @@
 -- schaars zijn ("bedoelde je …?"). Ze gebruiken de trigram-operator `%` (index-gedekt
 -- door search_engine.sql) zodat "mohamd" nog steeds "Mohamed" vindt.
 --
+-- Drempel: de default pg_trgm-drempel (0.3) is te streng voor KORTE queries met één
+-- weggevallen letter — bv. similarity('fmz','famz') ≈ 0.286 < 0.3 → gemist. Daarom
+-- verlagen we de drempel naar 0.2, maar ALLEEN binnen de functie-scope
+-- (`SET pg_trgm.similarity_threshold = 0.2` op de functie zelf). Zo blijft de `%`-
+-- operator de trigram-index gebruiken (snel) én worden korte typefouten gevonden,
+-- zonder dat de drempel voor enige andere query in de sessie verandert.
+--
 -- Veiligheid: SECURITY INVOKER (de default, hier expliciet) → de functie draait met
 -- de RLS-context van de aanroeper. Een gebruiker krijgt dus NOOIT rijen die hij niet
 -- sowieso al mag zien; RLS op invoices/clients blijft de grens. De query-parameter `q`
@@ -20,6 +27,7 @@ LANGUAGE sql
 STABLE
 SECURITY INVOKER
 SET search_path = public
+SET pg_trgm.similarity_threshold = 0.2
 AS $$
   SELECT i.*
   FROM public.invoices i
@@ -39,6 +47,7 @@ LANGUAGE sql
 STABLE
 SECURITY INVOKER
 SET search_path = public
+SET pg_trgm.similarity_threshold = 0.2
 AS $$
   SELECT c.*
   FROM public.clients c

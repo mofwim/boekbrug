@@ -927,9 +927,12 @@ $$;
 -- [SEARCH] Fuzzy (typo-tolerant) search via pg_trgm. SECURITY INVOKER → the caller's
 -- RLS applies, so only rows the user may already see are returned. Used by /api/search
 -- to augment sparse exact/substring results. Mirrored in supabase/migrations/search_smart.sql.
+-- Threshold 0.2 (function-scoped) catches short typo queries the default 0.3 misses,
+-- e.g. similarity('fmz','famz') ≈ 0.286. Scoped SET keeps the % operator index-backed
+-- and never affects other queries. See supabase/migrations/search_smart.sql.
 CREATE OR REPLACE FUNCTION public.search_invoices_fuzzy(q text)
 RETURNS SETOF public.invoices
-LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public SET pg_trgm.similarity_threshold = 0.2
 AS $$
   SELECT i.*
   FROM public.invoices i
@@ -944,7 +947,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.search_clients_fuzzy(q text)
 RETURNS SETOF public.clients
-LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public SET pg_trgm.similarity_threshold = 0.2
 AS $$
   SELECT c.*
   FROM public.clients c
