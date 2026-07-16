@@ -116,12 +116,27 @@ Doel: de zoekmachine **werkend, correct, veilig en snel** maken — alleen zoeke
 
 Deze staan hier gedocumenteerd als vervolgstappen.
 
-### Let op — verificatiestatus van de slimme laag
-- **Ranking** (JS) is volledig statisch getest (tsc/build) en pure logica.
-- **Fuzzy (RPC + `search_smart.sql`)** is standaard, idempotent SQL, maar is **niet op
-  een live database uitgevoerd** in deze omgeving (geen Supabase-credentials). De API
-  valt veilig terug op exact/substring als de functies ontbreken. Toepassen + live
-  testen (bv. op een Vercel-preview/staging) is de laatste stap vóór productie.
+### Fuzzy-ontwerp (definitief, live bevestigd) — 3 signalen
+Eén maat vangt niet alle typefouten, dus `search_smart.sql` combineert er drie
+(per veld, OR):
+1. `similarity()` ≥ 0.2 — hele-string trigram-gelijkenis (vervang-typefouten).
+2. `word_similarity()` ≥ 0.4 — beste-woord/deel trigram-gelijkenis.
+3. **subsequence-LIKE** — query-tekens in volgorde met gaten (`"fmz"` → `%f%m%z%`,
+   vanaf 3 tekens). Vangt WEGGELATEN letters/afkortingen waar trigrams falen: live
+   bleek `word_similarity('fmz','FAMZFOOD BV') = 0.25`, gelijk aan onverwante namen —
+   de subsequence matcht wél "FAMZFOOD" en NIET "Doyum Food"/"Vars Foods".
+
+Randvoorwaarden: de functies gebruiken de trigram-FUNCTIES (niet de `%`/`<%`-operatoren)
+met expliciete drempels, omdat Supabase `SET pg_trgm.*_threshold` in een functie-definitie
+verbiedt ("permission denied to set parameter"). `q` wordt tot `[a-z0-9]` gestript vóór de
+LIKE-tak → geen wildcard-/regex-injectie. SECURITY INVOKER → RLS blijft de grens.
+
+### Verificatiestatus
+- **Ranking** (JS): statisch getest (tsc/build), pure logica.
+- **Fuzzy**: **live bevestigd** op de productie-DB — "fmz" vindt nu "FAMZFOOD" en niet de
+  onverwante namen. De API valt nog steeds veilig terug op exact/substring als de functies
+  ontbreken. Fuzzy dekt op dit moment facturen (klantnaam/nummer) + eigen klanten
+  (naam/e-mail); documenten/mappen/accountant-profielen zijn een mogelijke uitbreiding.
 
 ---
 
