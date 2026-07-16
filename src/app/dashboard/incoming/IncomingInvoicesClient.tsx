@@ -1018,6 +1018,35 @@ function InvoiceCard({
 }) {
   const [loadingPdf, setLoadingPdf] = useState(false);
 
+  // [REIMPORT] Re-read this invoice's stored PDF with the current extractor. Only offered on
+  // a flagged item still in the queue; the server refuses anything already verified/archived.
+  const [reimporting, setReimporting] = useState(false);
+  const handleReimport = async () => {
+    if (reimporting) return;
+    setReimporting(true);
+    try {
+      const res = await fetch(`/api/email/reimport/${invoice.id}`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        window.location.reload(); // pick up the refreshed amounts + health
+        return;
+      }
+      if (data.notInvoice) {
+        alert(
+          "Bij het opnieuw inlezen bleek dit geen boekbare factuur te zijn" +
+            (data.reason ? ` (${data.reason})` : "") +
+            ". De gegevens zijn niet gewijzigd — je kunt hem negeren als hij niet klopt."
+        );
+      } else {
+        alert(data.error || "Opnieuw inlezen is niet gelukt — probeer het later opnieuw.");
+      }
+    } catch {
+      alert("Opnieuw inlezen is niet gelukt — probeer het later opnieuw.");
+    } finally {
+      setReimporting(false);
+    }
+  };
+
   const handleOpenPdf = async () => {
     setLoadingPdf(true);
     try {
@@ -1188,6 +1217,22 @@ function InvoiceCard({
                       .join(" · ")}
                     .
                   </div>
+                  {/* [REIMPORT] Self-heal: re-read the stored PDF with the current extractor.
+                      Safe — the server only refreshes an invoice still in this queue and never
+                      overwrites verified data. Falls back to manual Bewerken if it can't help. */}
+                  <button
+                    onClick={handleReimport}
+                    disabled={reimporting}
+                    style={{
+                      marginTop: 10, padding: "7px 12px", borderRadius: 9,
+                      background: reimporting ? "#f0d9b8" : "#fff", cursor: reimporting ? "default" : "pointer",
+                      border: "1px solid #e0a94f", color: "#9a5b00", fontWeight: 600, fontSize: 12.5,
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: 13 }}>↻</span>
+                    {reimporting ? "Bezig met opnieuw inlezen…" : "Opnieuw inlezen"}
+                  </button>
                 </div>
               </div>
             )}
