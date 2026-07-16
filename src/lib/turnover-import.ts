@@ -54,6 +54,14 @@ function num(v: Cell): number {
     else s = s.replace(/,/g, "");
   } else if (lastComma >= 0) {
     s = s.replace(/\./g, "").replace(",", ".");
+  } else if (lastDot >= 0) {
+    // [QF5] Lone dot, no comma. In NL data a dot is the THOUSANDS separator when it groups
+    // exactly 3 digits ("2.500" = 2500, "1.234.567" = 1234567); it is a decimal point
+    // otherwise ("2.5", "12.50", "1234.567"). Without this a whole-euro Z-report value like
+    // "2.500" imported as 2,50 — a 1000× understatement of omzet + BTW that the net+btw≈gross
+    // cross-check can't catch when the whole row scales the same way.
+    const digits = s.replace(/[^\d.]/g, "");
+    if (/^\d{1,3}(\.\d{3})+$/.test(digits)) s = s.replace(/\./g, ""); // NL thousands → strip dots
   }
   // Sign is already captured — strip EVERYTHING non-numeric (incl. minus/brackets) so a
   // stray "12-34" can't be misparsed; then re-apply the detected sign.

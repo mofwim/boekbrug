@@ -274,8 +274,12 @@ export function scorePair(
   let confidence: number;
 
   if (refOk) {
-    // Reference is near-identity: invoice number printed in the payment.
-    confidence = amtOk ? 0.97 : 0.9;
+    // Reference is near-identity: invoice number printed in the payment. BUT the amount is
+    // the money-truth: a €50 payment that merely quotes invoice 2026-014 (€500) must NOT
+    // auto-mark it fully paid. So a reference WITHOUT a matching amount stays below
+    // autoConfidence (0.7) → a human CHOICE (still a strong, listed candidate), never 'auto'.
+    // Only reference + exact amount reaches the one-click 'betaald' pre-selection.
+    confidence = amtOk ? 0.97 : 0.65;
     signals.push("reference");
     reasons.push(`factuurnummer ${inv.invoice_number} gevonden in omschrijving`);
     if (amtOk) {
