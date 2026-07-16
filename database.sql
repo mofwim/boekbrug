@@ -490,8 +490,10 @@ CREATE INDEX invoices_search_idx
   ON public.invoices USING gin (search_vector);
 
 -- [SEARCH] Trigram indexes so the global-search API's ILIKE '%term%' (leading
--- wildcard) predicates are index-backed instead of sequential scans. Requires the
--- pg_trgm extension (SECTION 9). Mirrored in supabase/migrations/search_engine.sql.
+-- wildcard) predicates are index-backed instead of sequential scans. Mirrored in
+-- supabase/migrations/search_engine.sql. Self-enables pg_trgm so a fresh provision
+-- of this file never fails on gin_trgm_ops even if the Dashboard step was skipped.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS invoices_invoice_number_trgm
   ON public.invoices USING gin (invoice_number gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS invoices_client_name_trgm
