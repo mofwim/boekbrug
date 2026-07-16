@@ -246,6 +246,23 @@ kwartaalpakket lezen de **`shared`-vlag**. De oude, op opslagpad gebaseerde
 mechaniek (`shared/`-pad + `listDocuments(sharedOnly)` + `/api/files?clientId=`)
 is **teruggetrokken** (`[FIN-UNIFY]`), zodat er precies één bron van waarheid is.
 
+### Beveiliging — de koppeling die "gedeeld" mogelijk maakt (`[SEC-LINK]`)
+Wie een client's gedeelde bestanden mag zien wordt bepaald door de
+`accountant_clients`-koppeling. Een security-jacht vond dat de INSERT-RLS
+(`WITH CHECK (accountant_id = auth.uid())`) **geen toestemming/uitnodiging
+eiste** — elke ingelogde gebruiker kon zichzelf via één directe PostgREST-insert
+als boekhouder van een willekeurige client koppelen en zo diens gedeelde stukken
+lezen. De legitieme accept-route koppelt via `service_role`, dus de policy was
+overbodig én open. **Fix:** `supabase/migrations/accountant_clients_insert_consent.sql`
+laat de open policy vallen (koppelen kan alleen nog via de geverifieerde accept-route).
+Bijkomend: `unlink-by-client` werkt nu ook als een client meerdere boekhouders
+heeft (was een `maybeSingle()`-404), en `subject-status` negeert getrashte docs.
+
+> **Open audit-punt (prod-drift):** `documents_accountant_read`, `documents.shared`
+> en de Storage-bucketpolicies staan **niet** in de repo (alleen in productie). De
+> document-deel-gate is dus niet reviewbaar; leg de live policy vast in een migratie
+> en controleer de exacte `USING`-clause (linked-client-predicaat).
+
 ### Consistentie-fixes (bij deze analyse toegevoegd)
 
 1. **`[FIN-QUARTER]` — delen overschrijft `period` niet meer met "vandaag".**

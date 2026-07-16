@@ -528,6 +528,9 @@ CREATE POLICY accountant_clients_select ON public.accountant_clients
   FOR SELECT TO authenticated
   USING ((accountant_id = auth.uid()) OR (zzper_id = auth.uid()));
 
+-- ⚠️ [SEC-LINK] DROPPED in supabase/migrations/accountant_clients_insert_consent.sql —
+--    this open policy let any authenticated user self-link as any client's accountant.
+--    Linking now happens only via the service_role accept route. Kept here for history.
 CREATE POLICY accountant_clients_insert ON public.accountant_clients
   FOR INSERT TO authenticated
   WITH CHECK (accountant_id = auth.uid());

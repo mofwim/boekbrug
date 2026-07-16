@@ -1,0 +1,57 @@
+-- =====================================================================
+-- [SEC-LINK] accountant_clients INSERT must not be a self-service link
+-- =====================================================================
+-- Problem (confirmed):
+--   The INSERT policy on public.accountant_clients was:
+--       CREATE POLICY accountant_clients_insert ON public.accountant_clients
+--         FOR INSERT TO authenticated
+--         WITH CHECK (accountant_id = auth.uid());
+--   → the ONLY requirement was that you name YOURSELF as the accountant.
+--     There was NO check for an accepted invitation and NO zzper_id consent.
+--   Any authenticated user could therefore link themselves as any client's
+--   accountant with a single direct PostgREST call (the anon key ships in the
+--   frontend), given only the victim's profile UUID (which leaks via invoice
+--   sender_id/receiver_id, messages, referrals, lapsed links, ...):
+--
+--       supabase.from('accountant_clients')
+--               .insert({ accountant_id: MY_ID, zzper_id: VICTIM_ID })
+--
+--   Once linked, the attacker immediately reads the victim's SHARED documents
+--   and invoices (documents_accountant_read / invoices_accountant_read gate on
+--   is_my_accountant_client()), and /brug signs the actual file bytes for them
+--   via service_role. A complete bypass of the consent model for the app's core
+--   trust boundary.
+--
+-- Why dropping the policy is SAFE (verified against every writer of the table):
+--   The ONLY code path that links an accountant to a client is
+--   src/app/api/invite/accept/route.ts, and it inserts via the SERVICE_ROLE
+--   client (createPipelineClient), which BYPASSES RLS entirely — see the
+--   "[SEC-INVITE] Insert via service_role" comment there. No authenticated
+--   (user-session) code path inserts into accountant_clients. Every other
+--   invite route (invite/accountant, invite/client, accountant/invite) writes
+--   to the `invitations` table, not this one. So removing the authenticated
+--   INSERT policy does not affect any legitimate flow — linking continues to
+--   happen only through the vetted, email-verified accept route.
+--
+-- Fix: drop the open policy. Linking is service_role-only (via accept).
+DROP POLICY IF EXISTS accountant_clients_insert ON public.accountant_clients;
+
+-- If authenticated (user-session) linking is ever reintroduced, it MUST be gated
+-- on an accepted invitation for THIS accountant/client pair, e.g.:
+--
+--   CREATE POLICY accountant_clients_insert ON public.accountant_clients
+--     FOR INSERT TO authenticated
+--     WITH CHECK (
+--       accountant_id = auth.uid()
+--       AND EXISTS (
+--         SELECT 1 FROM public.invitations i
+--         WHERE i.zzper_id = accountant_clients.zzper_id
+--           AND i.status = 'accepted'
+--           AND lower(i.accountant_email) = lower(auth.email())
+--       )
+--     );
+--
+-- (SELECT/UPDATE/DELETE policies on accountant_clients are unchanged: the client
+--  and the accountant can each still read the link, and either party can DELETE
+--  it — see accountant_clients_delete USING (accountant_id = auth.uid() OR
+--  zzper_id = auth.uid()).)
