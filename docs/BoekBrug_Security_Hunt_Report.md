@@ -147,7 +147,87 @@ spot-verified against the real code. Line numbers are indicative.
 
 ---
 
-## 8. Recommended fix order
+## 8b. Q2-2026 financial-correctness hunt (BTW / aangifte / reconciliation)
+
+Run specifically because Q2 numbers are about to go to the accountant. **Headline
+reassurance: the core engine is arithmetically SOUND** — `computeResult → buildAangifte
+→ /api/aangifte, /api/result, closing-package ZIP` rounds correctly (per-rubriek round-
+once, no `toFixed`-for-math), quarters Q2 = Apr 1–Jun 30 inclusive, subtracts
+voorbelasting with the right sign, and applies consistent status filters. The wrong
+numbers below live in **summary UIs that bypass that engine** + the **bank auto-match
+gate** — not in the aangifte itself. All REPORT-ONLY (accounting lane).
+
+### 🔴 QF1 — `/dashboard/quarterly` "BTW aangifte" panel ADDS voorbelasting instead of subtracting
+`src/lib/quarterly.ts:153-170` (`buildQuarterlySummary` does `totalBtw += btw` for **both**
+directions) → `src/components/quarterly/QuarterlyOverview.tsx:513-534`, fed by `/api/quarterly`
+accountant mode. Worked example (Q2): sales €10.000@21% (€2.100 BTW) + purchases €4.000@21%
+(€840 BTW) → panel shows **Totaal BTW €2.940** and "omzet €14.000"; correct aangifte is
+5a €2.100 − 5b €840 = **5g €1.260**. Overstated by €1.680 (2× voorbelasting) and mixes
+purchase costs into turnover. **Accountant-facing, labelled "BTW aangifte" — fix before
+anyone reads a total off this panel.** (The real aangifte via `/api/aangifte` is correct.)
+
+### 🔴 QF2 — per-client quarter tiles always show €0,00
+`src/app/dashboard/clients/[id]/kwartaal/page.tsx:169-177` reads `pnl.omzet` / `pnl.kosten`
+/ `btw.saldo`, but `/api/result` nests under `result` and `/api/aangifte` under `aangifte`.
+`Number(undefined)||0 = 0` → every client, every quarter shows **€ 0,00** for Omzet /
+Kosten / BTW te betalen. Fix: read `pnl.result.omzet`, `pnl.result.kosten`,
+`btw.aangifte.saldo`.
+
+### 🔴 QF3 — bank reference match marks an invoice fully paid regardless of amount
+`src/lib/bank-matching.ts:276-283` gives a reference-number match `confidence 0.9` **even
+when the amount doesn't match**, ≥ the 0.7 auto threshold → pre-selected "betaald"; and
+`confirm/route.ts:123` re-checks eligibility with `total_inc_btw: null`, so **no amount
+reconciliation happens on the paid-flip path**. Repro: a €50 deposit referencing invoice
+`2026-014` (€500) → one click marks the €500 invoice `paid`. Wrong "paid" → wrong BTW
+booked as settled → wrong quarter. Fix: gate `auto` on `amtOk` (mismatch ⇒ `choice`, not
+`auto`) and compare `tx.amount` vs `total_inc_btw` in confirm (the `attach-invoice` route
+already models `AMOUNT_TOLERANCE`).
+
+### 🟠 QF4 — one transfer marks multiple invoices paid by presence, no sum tie-out
+`bank-matching.ts:466-473` + `confirm/route.ts:160-202`: multi-invoice coverage is a
+presence check with "no amount arithmetic". A €100 transfer referencing two €100 invoices
+can mark both paid (€200 settled by €100). Human-confirmed, but no divergence warning.
+
+### 🟠 QF5 — Dutch thousands without decimals parsed 1000× too small (turnover & EFT)
+`src/lib/turnover-import.ts:34-44` and `src/lib/eft-parser.ts:47-56`: `num("2.500")` → **2.5**
+(strips grouping dots only when a comma is present). A Z-report/EFT whole-euro value like
+`2.500` imports as €2,50; if the whole row scales the same way the net+btw≈gross cross-check
+still passes → silently understated omzet + BTW. Fix: reuse `bank-csv.parseBankAmount` /
+`parse-nl.parseAmountNL`, which handle `d.ddd` (no comma) as thousands correctly.
+
+### 🟡 Lower
+- **QF6** mixed-rate outgoing invoice → whole invoice bucketed to rubriek 1c via a blended
+  header rate (`financial-result.ts:168`); **5a total is preserved**, only the 1a/1b/1c
+  split is wrong. `src/lib/export.ts:322-372` `calcBtwSummary`/`renderBtwAangiftePdf` have a
+  worse version (buckets any rate into 21%, no direction filter) but are **unwired/dead** —
+  flag before rewiring.
+- **QF7** attach-invoice double-count if two different files are attached to ONE payment
+  (`bank/attach-invoice/route.ts:225-297`) — user-error-triggered, no warning; the route is
+  otherwise careful (rolls back stored file+row on failure).
+- **QF8** `getQuarter`/`quarterEndDate` use local-time `new Date()` (`quarterly.ts:63-73`) —
+  fine on a UTC server, pin the server TZ to be safe. Not on the aangifte path.
+
+**Verified sound (money side):** comma-decimal parsing in the live bank paths, cents-vs-euro
+consistency (no stray ×100/÷100), one-to-one match guard, sign/direction + date-sanity
+guards, trashed/archived excluded from totals, server recomputes legal invoice totals before
+PDF/email. No `float === float` deciding "paid".
+
+**Before submitting Q2:** trust `/api/aangifte` + the closing-package ZIP (sound); do NOT read
+totals off `/dashboard/quarterly` (QF1) or the per-client tiles (QF2) until fixed; and
+re-verify any invoice auto-marked "paid" from a bank reference (QF3) actually matches on amount.
+
+## 8c. Client-state fixes (Mijn bestanden UI — MY-LANE, FIXED)
+
+Fire-and-forget mutations in `BestandenPage.tsx` — every write was optimistic with no
+`res.ok` check. **FIXED** (commit e990314): share/rename/delete/move/star/createFolder and
+all four bulk actions now update state only on success (a failed share no longer claims the
+accountant can see the doc); `loadContents` + search got sequence/cancel guards (no wrong-
+folder contents from a fast A→B nav); createFolder, bulk actions and the FAB uploader got
+double-submit guards. Money screens `IncomingInvoicesClient` (optimistic remove on failed
+pay) and `FacturenClient.executeDelete` (swallows failure) have the same class — REPORT-ONLY,
+their lane; `FacturenClient.executePay/executeSend` and `BankClient` already roll back correctly.
+
+## 9. Recommended fix order
 
 1. **C1** (xlsx upgrade) + **H2** (bound the sheet range) — a tiny authenticated upload crashes/corrupts the shared server today.
 2. **H1** (CSV `csvCell` in export.ts/account-export) — third-party Excel execution; trivial, reuses an existing helper.
