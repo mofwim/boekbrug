@@ -57,6 +57,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Ongeldig bericht' }, { status: 400 })
     }
 
+    // [SEC-MESSAGE] You may only message someone you are LINKED to (accountant ↔ client).
+    // Without this, any authenticated user could POST an arbitrary receiver_id and push an
+    // in-app notification + e-mail (via service_role) to ANY user — a spam/abuse vector.
+    // Fetch this user's own links (bounded) and check the pair IN CODE (receiver_id is never
+    // interpolated into a SQL filter → no PostgREST filter injection).
+    const { data: myLinks } = await supabase
+      .from('accountant_clients')
+      .select('accountant_id, zzper_id')
+      .or(`accountant_id.eq.${user.id},zzper_id.eq.${user.id}`)
+    const linked = (myLinks ?? []).some(
+      (l) =>
+        (l.accountant_id === user.id && l.zzper_id === receiver_id) ||
+        (l.zzper_id === user.id && l.accountant_id === receiver_id),
+    )
+    if (!linked) {
+      return NextResponse.json(
+        { error: 'Je kunt alleen berichten sturen naar een gekoppelde klant of boekhouder' },
+        { status: 403 },
+      )
+    }
+
     const { data: message, error } = await supabase
       .from('messages')
       .insert({

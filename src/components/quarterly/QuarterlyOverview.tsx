@@ -314,6 +314,15 @@ function AccountantView({ role }: { role: Role }) {
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [clientsLoading, setClientsLoading] = useState(false);
   const [packaging, setPackaging] = useState(false); // [CLOSING-PACKAGE]
+  // [TRUST-ACCOUNTANT] The RECONCILED figures (invoices + bank + cash + turnover) — the
+  // same source as the owner's screens, the closing package and clients/[id]/kwartaal. The
+  // money tiles + the BTW-aangifte block read these, NOT the invoices-only /api/quarterly
+  // summary (which for a cash/retail client shows a fraction of the real omzet/BTW and must
+  // never be presented as the aangifte). null → the tiles show "…" instead of a wrong number.
+  const [recon, setRecon] = useState<{
+    omzet: number; verschuldigd: number; voorbelasting: number; saldo: number;
+    salesByRate: { rate: number; omzet: number; btw: number }[];
+  } | null>(null);
 
   useEffect(() => {
     setClientsLoading(true);
@@ -340,6 +349,7 @@ function AccountantView({ role }: { role: Role }) {
     if (!selectedClientId) return;
     setLoading(true);
     setData(null);
+    setRecon(null);
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
@@ -349,6 +359,27 @@ function AccountantView({ role }: { role: Role }) {
       .then((r) => r.json())
       .then(setData)
       .finally(() => setLoading(false));
+
+    // [TRUST-ACCOUNTANT] Reconciled figures in parallel — same source as the owner + ZIP.
+    (async () => {
+      try {
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${params}`),
+          fetch(`/api/aangifte?${params}`),
+        ]);
+        if (!rRes.ok || !aRes.ok) return;
+        const r = await rRes.json();
+        const a = await aRes.json();
+        const omzet = Number(r?.result?.omzet);
+        const verschuldigd = Number(a?.aangifte?.verschuldigd);
+        const voorbelasting = Number(a?.aangifte?.voorbelasting);
+        const saldo = Number(a?.aangifte?.saldo);
+        const salesByRate = Array.isArray(r?.result?.salesByRate) ? r.result.salesByRate : [];
+        if ([omzet, verschuldigd, voorbelasting, saldo].every(Number.isFinite)) {
+          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate });
+        }
+      } catch { /* leave recon null → tiles show a dash, never a wrong number */ }
+    })();
   }, [year, quarter, selectedClientId]);
 
   async function handleExport() {
@@ -499,8 +530,9 @@ function AccountantView({ role }: { role: Role }) {
       {!loading && data && (
         <>
           <div className="grid grid-cols-2 gap-3">
-            <SummaryCard label="Excl. BTW" value={formatEur(data.totalExcl)} accent="default" />
-            <SummaryCard label="Totaal BTW" value={formatEur(data.totalBtw)} accent="default" />
+            {/* [TRUST-ACCOUNTANT] Reconciled omzet + BTW-saldo (5g), not invoices-only. */}
+            <SummaryCard label="Omzet (excl. BTW)" value={recon ? formatEur(recon.omzet) : "…"} accent="default" />
+            <SummaryCard label="BTW te betalen (5g)" value={recon ? formatEur(recon.saldo) : "…"} accent="default" />
             <SummaryCard label="Betaald" value={formatEur(data.paid)} accent="green" />
             <SummaryCard
               label="Openstaand"
@@ -510,24 +542,35 @@ function AccountantView({ role }: { role: Role }) {
             />
           </div>
 
-          {(data.btwBreakdown?.length ?? 0) > 0 && (
+          {/* [TRUST-ACCOUNTANT] The concept BTW-aangifte from the RECONCILED figures (all
+              channels), not the invoices-only breakdown — verschuldigd per tarief, minus
+              voorbelasting, = te betalen (5g). Same numbers as the owner + the closing ZIP. */}
+          {recon && (recon.salesByRate.length > 0 || recon.verschuldigd !== 0 || recon.voorbelasting !== 0) && (
             <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
               <div className="px-4 py-3 border-b">
-                <h3 className="text-sm font-semibold">BTW aangifte Q{quarter} {year}</h3>
+                <h3 className="text-sm font-semibold">Concept BTW-aangifte Q{quarter} {year}</h3>
               </div>
               <div className="divide-y">
-                {data.btwBreakdown.map((b) => (
+                {recon.salesByRate.filter((b) => b.omzet !== 0 || b.btw !== 0).map((b) => (
                   <div key={b.rate} className="flex items-center justify-between px-4 py-3.5">
                     <div>
-                      <p className="text-sm font-medium">BTW {b.rate}%</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.totalExcl)}</p>
+                      <p className="text-sm font-medium">Verschuldigd {b.rate}%</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.omzet)}</p>
                     </div>
-                    <p className="text-sm font-semibold tabular-nums">{formatEur(b.totalBtw)}</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatEur(b.btw)}</p>
                   </div>
                 ))}
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Verschuldigd (5a)</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatEur(recon.verschuldigd)}</p>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Voorbelasting (5b)</p>
+                  <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
+                </div>
                 <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
-                  <p className="text-sm font-semibold">Totaal BTW</p>
-                  <p className="text-sm font-bold tabular-nums">{formatEur(data.totalBtw)}</p>
+                  <p className="text-sm font-semibold">Te betalen (5g)</p>
+                  <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
                 </div>
               </div>
             </div>
