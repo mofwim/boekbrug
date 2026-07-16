@@ -173,6 +173,49 @@ in zijn eigen map blijven staan.
 
 ---
 
+## 5b. Eén kopie, geen dubbele bestanden (client ↔ boekhouder)
+
+De boekhouder ziet dezelfde bestanden, maar er bestaat **nooit een tweede
+fysieke kopie**. Dit is de kern van het ontwerp:
+
+- **Opslag:** één object in bucket `documents` op pad `{userId}/…`. Delen
+  **verplaatst noch kopieert** het object. Her-upload van hetzelfde bestand
+  wordt geblokkeerd door de byte-hash (`content_hash`).
+- **Database:** één `documents`-rij. Delen = `PATCH shared=true` op diezelfde rij
+  — geen aparte rij "voor de boekhouder".
+- **Boekhouder leest dezelfde rij + hetzelfde object:**
+  - **`/brug`** (`src/app/dashboard/brug/page.tsx`): selecteert `documents` onder
+    RLS `documents_accountant_read` (= `shared=true` van gekoppelde klanten) en
+    ondertekent hetzelfde opslagobject met `service_role` (tabellen-RLS geeft
+    leesrecht op de rij, storage-RLS wordt alleen voor die reeds-geautoriseerde
+    paden omzeild).
+  - **Kwartaalpakket** (`src/lib/closing-package.ts`, `buildClosingPackageZip`):
+    selecteert `shared=true` + `period='{jaar}-Q{n}'`, **downloadt** de bytes van
+    hetzelfde object in een tijdelijke ZIP — schrijft nooit terug naar opslag.
+
+**Drie meldingsvormen, één definitie van "gedeeld":** zowel `/brug` als het
+kwartaalpakket lezen de **`shared`-vlag**. De oude, op opslagpad gebaseerde
+mechaniek (`shared/`-pad + `listDocuments(sharedOnly)` + `/api/files?clientId=`)
+is **teruggetrokken** (`[FIN-UNIFY]`), zodat er precies één bron van waarheid is.
+
+### Consistentie-fixes (bij deze analyse toegevoegd)
+
+1. **`[FIN-QUARTER]` — delen behoudt het juiste kwartaal.** Voorheen stempelde de
+   share-actie `period` op het *huidige* kwartaal. Een Q1-bon die in Q2 werd
+   gedeeld belandde zo in het Q2-pakket (en klopte niet met de map in `/brug`).
+   Nu geldt de prioriteit: expliciet gekozen kwartaal → het eigen `period` van
+   het document → pas als laatste het huidige kwartaal. Geldt voor de deel-knop
+   én voor het slepen in de map "Gedeeld met boekhouder"
+   (`src/app/api/bestanden/route.ts`).
+2. **`[FIN-DEDUP]` — geen dubbel bestand in de ZIP.** `buildClosingPackageZip`
+   houdt nu één `seenPath`-set aan over alle secties (facturen → bank → overige),
+   zodat hetzelfde opslagobject nooit twee keer in het pakket zit (bijv. een
+   gedeeld document dat óók het bewijsstuk van een inkoopfactuur is).
+3. **`[FIN-UNIFY]` — dode deelmechaniek opgeruimd.** Het ongebruikte
+   `?clientId=`-pad in `/api/files`, `listDocuments(sharedOnly)` en de
+   `shared/`-opslagtak in `buildStoragePath` zijn verwijderd; delen loopt nu
+   uitsluitend via de `shared`-vlag.
+
 ## 6. Jaarexport / bewaarplicht (`kluis`)
 
 `GET /api/kluis/export?year=YYYY` bouwt een ZIP `administratie-{jaar}/` met alle
@@ -194,7 +237,7 @@ gemeld — niets verdwijnt stil.
 | `/api/bestanden/folders-tree` | GET | platte mappenlijst voor de zijbalkboom |
 | `/api/bestanden/classify` | POST | AI-classificatie (rate-limited) → voorgestelde map |
 | `/api/bestanden/trash` | GET/PATCH | prullenbak tonen / herstellen |
-| `/api/files` | POST/GET | upload (dedup, 50 MB) / lijst (ook boekhouder-modus) |
+| `/api/files` | POST/GET | upload (dedup, 50 MB) / eigen-lijst (owner-scoped) |
 | `/api/files/[id]` | GET | metadata (DELETE is uitgeschakeld → 410) |
 | `/api/files/[id]/url` | GET | signed URL (1 uur) |
 | `/api/kluis/export` | GET | `?year=` — jaararchief-ZIP |

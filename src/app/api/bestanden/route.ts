@@ -131,31 +131,45 @@ export async function PATCH(req: NextRequest) {
     patch.trashed_at = body.trashed ? new Date().toISOString() : null;
   }
 
+  // [FIN-9 / FIN-QUARTER] Resolve which quarter to stamp when a file BECOMES shared.
+  // The closing-package ZIP selects shared docs by documents.period ('YYYY-Qn'), so a
+  // wrong period sends a receipt into the wrong quarter's package (and disagrees with
+  // the file's folder shown in /brug). Priority, most trustworthy first:
+  //   1. explicit body.period the owner chose (FIN-9 quarter picker),
+  //   2. the document's OWN existing period (set at upload / classification) — NEVER
+  //      silently overwrite a real quarter with "today",
+  //   3. current quarter, only when the document has no valid period yet.
+  // Memoised so both share paths (explicit toggle + magic folder) share one lookup.
+  let sharePeriodCache: { period: string; year: number } | null = null;
+  const resolveSharePeriod = async (): Promise<{ period: string; year: number }> => {
+    if (sharePeriodCache) return sharePeriodCache;
+    const QRE = /^\d{4}-Q[1-4]$/;
+    if (typeof body.period === "string" && QRE.test(body.period)) {
+      sharePeriodCache = { period: body.period, year: Number(body.period.slice(0, 4)) };
+      return sharePeriodCache;
+    }
+    const { data: doc } = await supabase
+      .from("documents").select("period, year")
+      .eq("id", docId).eq("user_id", user.id).maybeSingle();
+    if (doc?.period && QRE.test(doc.period)) {
+      sharePeriodCache = { period: doc.period, year: doc.year ?? Number(doc.period.slice(0, 4)) };
+      return sharePeriodCache;
+    }
+    const now = new Date();
+    const y = now.getFullYear();
+    sharePeriodCache = { period: `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`, year: y };
+    return sharePeriodCache;
+  };
+
   // [BRUG-FILES-SHARED] Explicit share toggle. A file can be shared (or un-shared)
   // in place via the "Delen met boekhouder" / "Niet meer delen" button — no move.
-  // When sharing, stamp the current quarter so the ZIP can place it.
+  // When sharing, stamp its real quarter (see resolveSharePeriod) so the ZIP places it.
   if (typeof body.shared === "boolean") {
     patch.shared = body.shared;
     if (body.shared) {
-      // [FIN-9] Prefer the quarter the owner explicitly chose: a Q1 receipt is
-      // usually shared AFTER Q1 closes (in Q2), so stamping the *current* quarter
-      // made the file miss the Q1 closing package and wrongly land in Q2's. When
-      // the client sends a validated 'YYYY-Qn' we honour it; otherwise we fall
-      // back to the current quarter (unchanged legacy behaviour). Backward-
-      // compatible: callers sending only { shared: true } are unaffected.
-      const chosen =
-        typeof body.period === "string" && /^\d{4}-Q[1-4]$/.test(body.period)
-          ? body.period
-          : null;
-      if (chosen) {
-        patch.period = chosen;
-        patch.year = Number(chosen.slice(0, 4));
-      } else {
-        const now = new Date();
-        const y = now.getFullYear();
-        patch.period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
-        patch.year = y;
-      }
+      const { period, year } = await resolveSharePeriod();
+      patch.period = period;
+      patch.year = year;
     }
   }
 
@@ -180,11 +194,13 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (isSharedTarget) {
-      const now = new Date();
-      const y = now.getFullYear();
+      // [FIN-QUARTER] Same rule as the explicit toggle: keep the file's real quarter
+      // (from upload/classification) instead of stamping "today", so dropping a Q1
+      // receipt into the shared folder in Q2 still lands it in the Q1 package.
+      const { period, year } = await resolveSharePeriod();
       patch.shared = true;
-      patch.period = `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
-      patch.year   = y;
+      patch.period = period;
+      patch.year   = year;
     }
     // else: plain move — leave shared untouched.
   }

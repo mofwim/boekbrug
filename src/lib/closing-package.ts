@@ -1022,11 +1022,19 @@ export async function buildClosingPackageZip(args: {
     file_url: string | null;
     file_name: string | null;
   }>;
+  // [FIN-DEDUP] One storage object → exactly ONE ZIP section. The same file_url can
+  // surface in more than one section (e.g. a shared doc whose bytes are ALSO an
+  // incoming invoice's evidence via invoices.document_id, while documents.invoice_id
+  // is NULL). Without a cross-section guard the accountant gets the same PDF twice.
+  // Precedence: invoices (most specific) → bank → overige. Seed with the invoice
+  // paths already resolved above; each later section skips anything already claimed.
+  const seenPath = new Set<string>();
+  for (const { path } of pathByInvoice.values()) seenPath.add(path);
+
   const bankPaths: Array<{ path: string; name: string }> = [];
-  const seenBankPath = new Set<string>();
   for (const d of bankRows) {
-    if (!d.file_url || seenBankPath.has(d.file_url)) continue;
-    seenBankPath.add(d.file_url);
+    if (!d.file_url || seenPath.has(d.file_url)) continue;
+    seenPath.add(d.file_url);
     bankPaths.push({ path: d.file_url, name: d.file_name ?? "bankafschrift" });
   }
 
@@ -1088,8 +1096,10 @@ export async function buildClosingPackageZip(args: {
     doc_type: string | null;
     invoice_id: string | null;
   }>;
+  // [FIN-DEDUP] Skip any shared doc whose bytes already ship under facturen or bank
+  // (seenPath), so "overige-documenten/" never duplicates an invoice/statement file.
   const sharedPaths = sharedRows
-    .filter((d) => !!d.file_url && d.doc_type !== "bankafschrift")
+    .filter((d) => !!d.file_url && d.doc_type !== "bankafschrift" && !seenPath.has(d.file_url as string))
     .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "document" }));
   const sharedFilesRaw = await Promise.all(sharedPaths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);

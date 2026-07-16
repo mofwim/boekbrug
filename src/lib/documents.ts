@@ -64,16 +64,18 @@ export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Build storage path.
- * Private (ZZP only):  userId/2026/Q1/20260514_filename.pdf
- * Shared (ZZP+accountant): userId/shared/2026/Q1/20260514_filename.pdf
+ * Build storage path — always private to the owner: userId/2026/Q1/20260514_file.pdf
+ *
+ * [FIN-UNIFY] Sharing is a metadata flag (documents.shared), NOT a storage layout.
+ * The accountant reads the SAME object via RLS + a service_role-signed URL — there is
+ * never a second physical copy. The old `shared/` path branch (and the sharedOnly
+ * listing that read it) has been retired to keep exactly one definition of "shared".
  */
 export function buildStoragePath(
   userId: string,
   fileName: string,
   year: number,
-  quarter: number,
-  shared = false
+  quarter: number
 ): string {
   const safe = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   // Prefix filename with today's date: YYYYMMDD_filename
@@ -81,9 +83,6 @@ export function buildStoragePath(
   const datePrefix = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
   const namedFile = `${datePrefix}_${safe}`;
 
-  if (shared) {
-    return `${userId}/shared/${year}/Q${quarter}/${namedFile}`;
-  }
   return `${userId}/${year}/Q${quarter}/${namedFile}`;
 }
 
@@ -98,7 +97,6 @@ export async function uploadDocument(
     notes?: string;
     year: number;
     quarter: number;
-    shared?: boolean; // true = visible to linked accountant too
     // [BESTANDEN-DUP] When true, skip the byte-hash duplicate gate and upload
     // anyway. The personal file manager (Mijn bestanden) is the user's own
     // space — after an explicit "upload again" confirmation, they may keep a
@@ -124,7 +122,6 @@ export async function uploadDocument(
   }
 
   const supabase = await createServerSupabaseClient();
-  const shared = opts.shared ?? false;
 
   // [BRIDGE-EXTRACT] Byte-hash dedup gate — BEFORE Storage upload and DB insert.
   // Hash the raw file bytes (deterministic: identical bytes → identical hash).
@@ -184,7 +181,7 @@ export async function uploadDocument(
     }
   }
 
-  const path = buildStoragePath(userId, file.name, opts.year, opts.quarter, shared);
+  const path = buildStoragePath(userId, file.name, opts.year, opts.quarter);
 
   // 1. Upload to Storage
   const { error: storageError } = await supabase.storage
@@ -248,56 +245,21 @@ export async function uploadDocument(
     return { id: "", error: dbError.message };
   }
 
-  // 3. If shared → notify linked accountant
-  if (shared) {
-    await notifyAccountant(supabase, userId, file.name, data.id);
-  }
-
+  // [FIN-UNIFY] Upload never shares. Sharing is a separate, explicit step on the
+  // documents.shared flag (bestanden PATCH route) — that is where the accountant is
+  // granted access, so no accountant notification is emitted here.
   return { id: data.id };
-}
-
-
-/** Send notification to the accountant linked to this ZZP'er */
-async function notifyAccountant(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
-  zzperId: string,
-  fileName: string,
-  documentId: string
-): Promise<void> {
-  // Find the linked accountant
-  const { data: link } = await supabase
-    .from("accountant_clients")
-    .select("accountant_id")
-    .eq("zzper_id", zzperId)
-    .single();
-
-  if (!link?.accountant_id) return;
-
-  // Get ZZP'er name for the notification body
-  const { data: zzper } = await supabase
-    .from("profiles")
-    .select("full_name, company_name")
-    .eq("id", zzperId)
-    .single();
-
-  const senderName = zzper?.company_name || zzper?.full_name || "Een klant";
-
-  await supabase.from("notifications").insert({
-    user_id: link.accountant_id,
-    title: "Nieuw document geüpload",
-    body: `${senderName} heeft "${fileName}" gedeeld`,
-    type: "invoice",                              // 'invoice' is closest allowed type
-    read: false,
-    link: `/dashboard/documents`,
-  });
 }
 
 // ─── List ──────────────────────────────────────────────────────────────────────
 
 /**
- * List documents for a user.
- * sharedOnly = true → only files in the shared/ path (for accountant view)
+ * List a user's OWN documents (newest first, paginated).
+ *
+ * [FIN-UNIFY] The old `sharedOnly` storage-path filter (and the accountant view that
+ * used it) is retired. Accountant access to a client's shared files is granted by the
+ * documents.shared flag via RLS, read on /brug and in the closing package — a single
+ * source of truth. This helper is owner-scoped only.
  */
 export async function listDocuments(
   userId: string,
@@ -307,7 +269,6 @@ export async function listDocuments(
     docType?: string;
     limit?: number;
     cursor?: string;        // created_at for pagination
-    sharedOnly?: boolean;
   }
 ): Promise<{ documents: DocumentRow[]; hasMore: boolean }> {
   const supabase = await createServerSupabaseClient();
@@ -326,11 +287,6 @@ export async function listDocuments(
   if (opts.year && opts.quarter) q = q.eq("period", `${opts.year}-Q${opts.quarter}`);
   if (opts.docType) q = q.eq("doc_type", opts.docType);
   if (opts.cursor) q = q.lt("created_at", opts.cursor);
-
-  // Shared-only: filter by storage path prefix
-  if (opts.sharedOnly) {
-    q = q.like("file_url", `${userId}/shared/%`);
-  }
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
