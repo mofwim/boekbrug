@@ -36,8 +36,18 @@ function num(v: Cell): number {
   if (typeof v !== "string") return 0;
   let s = v.trim();
   if (!s) return 0;
-  // NL number: dot = thousands, comma = decimal. Only strip dots when a comma is present.
-  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+  // Disambiguate NL ("1.234,56") vs EN ("1,234.56"): whichever separator appears LAST is
+  // the decimal; the other is the thousands separator. This fixes EN thousands, which the
+  // old "comma → decimal" rule misread ("1,234.56" → 1.23456). A bare comma (no dot) is
+  // treated as an NL decimal — the norm for a Dutch POS export.
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+    else s = s.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  }
   s = s.replace(/[^\d.\-]/g, "");
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
