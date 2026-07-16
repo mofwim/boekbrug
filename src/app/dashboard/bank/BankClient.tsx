@@ -67,6 +67,7 @@ interface Candidate {
   invoiceId: string
   invoiceNumber: string | null
   amount: number | null // [BANK-BATCH-RECONCILE] invoice gross total, to sum-check a batch
+  invoiceDate: string | null // [BANK-CHOICE-CLARITY] tells same-amount candidates apart
   confidence: number
   signals: string[]
   reason: string
@@ -1604,20 +1605,32 @@ function TxCard({
 
       {!wasMulti && s.outcome === 'choice' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2 }}>Kies de juiste factuur:</div>
-          {s.candidates.map((c) => (
-            <button
+          {/* [BANK-CHOICE-CLARITY] Say WHY we're asking. The bank payment had no single
+              invoice number to match on (e.g. a recurring incasso), so several invoices
+              fit. Comparing bedrag + datum is how the owner picks the right one — the old
+              bare "Factuur VHF…" list gave nothing to compare and read as a guess. */}
+          <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, lineHeight: 1.45 }}>
+            Meerdere facturen passen bij deze betaling. Vergelijk <strong>bedrag</strong> en <strong>datum</strong> en kies de juiste.
+          </div>
+          {s.candidates.map((c) => {
+            const isSel = selectedInvoiceId === c.invoiceId
+            return (
+            <div
               key={c.invoiceId}
+              role="button"
+              tabIndex={0}
               onClick={() => onSelect(c.invoiceId)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(c.invoiceId) } }}
               style={{
-                textAlign: 'left', border: `1.5px solid ${selectedInvoiceId === c.invoiceId ? M3.primary : '#E0E0E0'}`,
-                background: selectedInvoiceId === c.invoiceId ? M3.primaryContainer : '#fff',
+                textAlign: 'left', border: `1.5px solid ${isSel ? M3.primary : '#E0E0E0'}`,
+                background: isSel ? M3.primaryContainer : '#fff',
                 borderRadius: R.md, padding: '8px 10px', cursor: 'pointer', fontFamily: FONT,
               }}
             >
-              <CandidateRow cand={c} selected={selectedInvoiceId === c.invoiceId} inline />
-            </button>
-          ))}
+              <CandidateRow cand={c} selected={isSel} inline onOpenFile={onOpenFile} />
+            </div>
+            )
+          })}
         </div>
       )}
 
@@ -1643,15 +1656,72 @@ function TxCard({
   )
 }
 
+// [BANK-CHOICE-CLARITY] Short, human date for a candidate invoice ("12 jun. 2026").
+// The differentiator when several candidates share one amount (monthly rent, etc.).
+const NL_MONTHS = ['jan.', 'feb.', 'mrt.', 'apr.', 'mei', 'jun.', 'jul.', 'aug.', 'sep.', 'okt.', 'nov.', 'dec.']
+function fmtInvoiceDate(iso: string | null): string {
+  if (!iso) return ''
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  if (!m) return ''
+  return `${Number(m[3])} ${NL_MONTHS[Number(m[2]) - 1]} ${m[1]}`
+}
+// [BANK-CHOICE-CLARITY] Plain-Dutch reason a candidate is offered, from the engine's own
+// match signals — so "why is this here?" is answered instead of a bare invoice number.
+const WHY_LABEL: Record<string, string> = {
+  amount: 'bedrag komt overeen',
+  counterpart: 'zelfde tegenpartij',
+  date: 'datum dichtbij',
+  reference: 'nummer in omschrijving',
+}
+
 function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void }) {
+  // [BANK-CHOICE-CLARITY] In the choice list, the engine's amount signal means this
+  // invoice's total equals the bank amount — the strongest hint, so highlight it.
+  const amountMatches = Array.isArray(cand.signals) && cand.signals.includes('amount')
+  const why = Array.isArray(cand.signals)
+    ? cand.signals.map((s) => WHY_LABEL[s]).filter(Boolean)
+    : []
   return (
     <div style={{ marginTop: emphasis ? 12 : 0, padding: emphasis ? '10px 12px' : 0, borderRadius: R.md, background: emphasis ? M3.successContainer : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface }}>
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>task_alt</span>}
           Factuur {cand.invoiceNumber ?? '—'}
         </span>
+        {/* [BANK-CHOICE-CLARITY] The amount, on the right — the first thing to compare
+            when picking between candidates. Green + check when it equals the debit. */}
+        {inline && cand.amount != null && (
+          <span style={{
+            fontFamily: FONT_NUM, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
+            color: amountMatches ? M3.success : M3.onSurface,
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+          }}>
+            {amountMatches && <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span>}
+            {eur.format(Math.abs(cand.amount))}
+          </span>
+        )}
       </div>
+      {/* [BANK-CHOICE-CLARITY] Second line for the choice list: the invoice date (the
+          differentiator for same-amount candidates), why it matched, and its PDF. */}
+      {inline && (
+        <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 11.5, color: '#5F6368' }}>
+          {fmtInvoiceDate(cand.invoiceDate) && <span>{fmtInvoiceDate(cand.invoiceDate)}</span>}
+          {why.length > 0 && <span style={{ color: amountMatches ? M3.success : '#5F6368', fontWeight: amountMatches ? 600 : 400 }}>· {why.join(' · ')}</span>}
+          {onOpenFile && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenFile(cand.invoiceId) }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 'auto',
+                border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+                fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+              Bekijk factuur
+            </button>
+          )}
+        </div>
+      )}
       {!inline && (
         <div style={{ marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
           {/* [BANK-PROOF-LINE] Instead of an algorithmic "97%" + cryptic Kenmerk/Bedrag
