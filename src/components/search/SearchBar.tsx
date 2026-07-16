@@ -438,7 +438,7 @@ function DropdownContent({
 
 // ─── Main SearchBar ───────────────────────────────────────────────────────────
 
-export function SearchBar() {
+export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launcher" } = {}) {
   const router = useRouter();
   const { query, setQuery, groups, totalCount, loading, error, clear } = useSearch({ debounceMs: 200 });
 
@@ -446,6 +446,9 @@ export function SearchBar() {
   const [selectedIdx, setSelectedIdx] = useState(-1);
   const [recent, setRecent] = useState<string[]>([]);
   const [isMobile, setIsMobile] = useState(false);
+  // [SEARCH] "launcher" variant (global floating search) uses the compact
+  // button + full-screen overlay on ALL viewports, not just mobile.
+  const compact = variant === "launcher" || isMobile;
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null);
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 0 });
 
@@ -494,24 +497,24 @@ export function SearchBar() {
   // [BOEK-012] Outside-click excludes portal div
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
-      if (isMobile) return;
+      if (compact) return;
       const inContainer = containerRef.current?.contains(e.target as Node);
       const inPortal = portalDropdownRef.current?.contains(e.target as Node);
       if (!inContainer && !inPortal) setOpen(false);
     }
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [isMobile]);
+  }, [compact]);
 
   useEffect(() => {
-    if (isMobile && open) {
+    if (compact && open) {
       document.body.style.overflow = "hidden";
       setTimeout(() => mobileInputRef.current?.focus(), 50);
     } else {
       document.body.style.overflow = "";
     }
     return () => { document.body.style.overflow = ""; };
-  }, [isMobile, open]);
+  }, [compact, open]);
 
   useEffect(() => { setSelectedIdx(-1); }, [flatResults.length, recent.length]);
 
@@ -519,8 +522,8 @@ export function SearchBar() {
 
   const openSearch = useCallback(() => {
     setOpen(true);
-    if (!isMobile) setTimeout(() => inputRef.current?.focus(), 10);
-  }, [isMobile]);
+    if (!compact) setTimeout(() => inputRef.current?.focus(), 10);
+  }, [compact]);
 
   const closeSearch = useCallback(() => {
     setOpen(false);
@@ -625,12 +628,12 @@ export function SearchBar() {
         ref={containerRef}
         style={{
           position: "relative", width: "100%", maxWidth: 320,
-          display: isMobile ? "none" : "block",
+          display: compact ? "none" : "block",
         }}
       >
         <SearchInput {...desktopInputProps} />
 
-        {!isMobile && open && (showRecent || showResults) && portalEl && createPortal(
+        {!compact && open && (showRecent || showResults) && portalEl && createPortal(
           <div
             ref={portalDropdownRef}
             id="bb-search-listbox"
@@ -663,24 +666,26 @@ export function SearchBar() {
         )}
       </div>
 
-      {/* Mobile tap-target */}
+      {/* Compact tap-target (mobile always; desktop only in launcher variant).
+          In launcher mode it's a floating action button; otherwise a header icon. */}
       <button
         aria-label="Zoeken openen"
         onClick={openSearch}
         style={{
-          display: isMobile ? "flex" : "none",
+          display: compact ? "flex" : "none",
           alignItems: "center", justifyContent: "center",
-          width: 40, height: 40, borderRadius: 12,
-          background: "#F5F5F5", border: "1px solid #E0E0E0",
-          cursor: "pointer", color: "#616161",
+          cursor: "pointer",
           WebkitTapHighlightColor: "transparent", flexShrink: 0,
+          ...(variant === "launcher"
+            ? { width: 52, height: 52, borderRadius: 26, background: "#1A73E8", border: "none", color: "#fff", boxShadow: "0 4px 14px rgba(26,115,232,0.45)" }
+            : { width: 40, height: 40, borderRadius: 12, background: "#F5F5F5", border: "1px solid #E0E0E0", color: "#616161" }),
         }}
       >
-        <IconSearch size={18} />
+        <IconSearch size={variant === "launcher" ? 22 : 18} />
       </button>
 
-      {/* Mobile overlay */}
-      {isMobile && open && (
+      {/* Full-screen overlay (compact mode) */}
+      {compact && open && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 200,
           background: "white", display: "flex", flexDirection: "column",
