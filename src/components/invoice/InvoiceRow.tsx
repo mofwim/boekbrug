@@ -122,7 +122,7 @@ function StatusChip({ status, mode }: { status: string; mode: 'zzp' | 'accountan
 // gevonden" (blue, tappable) when the engine confidently matches an unconfirmed payment.
 // The pending chip stops row-click propagation and routes to the bank page to confirm —
 // it never marks the invoice paid by itself.
-function ReconBadge({
+export function ReconBadge({
   recon, mode, invoiceId, onReconConfirm,
 }: {
   recon: InvoiceRecon

@@ -23,6 +23,8 @@
 
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
+import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { useParentPath } from '@/lib/navigation-hooks'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -117,6 +119,8 @@ export default function IncomingManageClient({
 }: { profile: any; initialInvoices: IncomingRow[] }) {
   const router   = useRouter()
   const supabase = createClient()
+  // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
+  const { byInvoice: recon } = useInvoiceReconciliation()
   const parentHref = useParentPath(profile.role ?? 'zzper')
 
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
@@ -530,6 +534,9 @@ export default function IncomingManageClient({
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
                             {CHIP[inv.status].label}
                           </span>
+                        )}
+                        {recon[inv.id] && (
+                          <ReconBadge recon={recon[inv.id]} mode="zzp" invoiceId={inv.id} onReconConfirm={() => router.push('/dashboard/bank')} />
                         )}
                         {/* [3b-2] accountant Verwerkt — READ-ONLY badge */}
                         {isVerwerkt && (
