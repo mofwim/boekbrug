@@ -17,6 +17,8 @@ check("already tagged credit stays credit", shouldTreatAsCreditNote(true, -4.84,
 
 console.log("\n— a normal positive invoice is NOT mis-flagged —");
 check("positive incl → not credit", shouldTreatAsCreditNote(false, 1210, 1000) === false);
+// [HUNT-F2] a positive printed total wins even if ex was mis-read negative (discount line).
+check("positive incl + negative ex (misread) → NOT credit", shouldTreatAsCreditNote(false, 11, -10) === false);
 check("zero total, untagged → not credit", shouldTreatAsCreditNote(false, 0, 0) === false);
 check("missing amounts, untagged → not credit", shouldTreatAsCreditNote(false, null, null) === false);
 check("NaN/Infinity are ignored (not treated as negative)", shouldTreatAsCreditNote(false, Infinity, NaN) === false);

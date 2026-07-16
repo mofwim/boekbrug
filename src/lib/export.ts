@@ -5,6 +5,7 @@
 // Structured for future UBL/XML (BOEK-020)
 
 import { csvCell } from "./csv-safe";
+import { nearestLegalRate } from "./btw-rate";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -91,7 +92,9 @@ export function calcBtwRate(
   total_ex_btw: number | null
 ): number {
   if (!total_ex_btw || total_ex_btw === 0) return 0;
-  return Math.round(((btw_amount ?? 0) / total_ex_btw) * 100);
+  // [HUNT-A/B] Snap the derived blend to a legal NL rate so a mixed 9%+0%-statiegeld invoice
+  // reads as 9%, not a bogus 8%, in the accountant overview / omzet_per_tarief / CSV / PDF.
+  return nearestLegalRate(Math.round(((btw_amount ?? 0) / total_ex_btw) * 100));
 }
 
 /** Format date ISO → dd-mm-yyyy (NL style) */
