@@ -61,6 +61,22 @@ export function shouldTreatAsCreditNote(
   return neg(rawIncl) || neg(rawEx);
 }
 
+// [EX-INCL-FIX] Some suppliers mislabel the GROSS total as "Subtotaal", so extraction ends up
+// with total_ex_btw == total_inc_btw while a real BTW is printed — an impossible combination
+// (equal ex and incl implies zero BTW). The incl / paid total and the BTW are the reliable
+// anchors (they match what left the bank), so recover the true base: ex = incl − btw. It fires
+// ONLY on that exact contradiction (ex ≈ incl with |btw| > 0), so it can never mask a genuine
+// mismatch. Sign-safe: on a creditnota (all negative) it yields the correct negative base.
+export function fixExInclConfusion(
+  ex: number | undefined,
+  btw: number | undefined,
+  incl: number | undefined,
+): number | undefined {
+  if (ex === undefined || btw === undefined || incl === undefined) return ex;
+  if (Math.abs(btw) > 0.02 && Math.abs(ex - incl) < 0.02) return incl - btw;
+  return ex;
+}
+
 // Base system prompt — shared by all functions
 const SYSTEM_BASE = `You are an AI assistant for BoekBrug, a financial workflow platform in the Netherlands.
 
@@ -964,6 +980,13 @@ STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees th
 - Returned deposits are NEGATIVE (e.g. "Retour container -408,00"): include them with their
   sign. If the net printed total ("Te voldoen") is therefore negative, return it negative.
 
+- EX/INCL identity: total_ex_btw + btw_amount MUST equal total_inc_btw. Some suppliers
+  mislabel the GROSS total as "Subtotaal", so you may see the same number on both the
+  "Subtotaal" and "Totaal incl. btw" lines while a real BTW is printed — that is impossible
+  (equal excl and incl means zero BTW). Trust the "Totaal incl."/"Reeds betaald"/paid total
+  and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
+  total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
+
 Per-field confidence rules:
 - field_confidence.vendor: how certain you are the vendor (sender) is correct.
   LOW (< 0.7) if sender/receiver were ambiguous, names were close, or the layout was unclear.
@@ -1286,6 +1309,11 @@ Return JSON only.`;
         parsed.btw_amount !== undefined) {
       parsed.total_ex_btw = parsed.total_inc_btw - parsed.btw_amount;
     }
+    // [EX-INCL-FIX] Recover a base that a mislabelled "Subtotaal" set equal to the incl total
+    // while a real BTW is printed (impossible). Trusts incl + btw → ex = incl − btw.
+    parsed.total_ex_btw = fixExInclConfusion(
+      parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw,
+    );
 
     // amount = total incl. BTW (kept for backward compatibility)
     parsed.amount = parsed.total_inc_btw ?? parsed.amount;
