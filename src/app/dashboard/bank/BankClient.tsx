@@ -680,14 +680,16 @@ export default function BankClient() {
       ? activeListRaw.filter((s) => {
           const raw = filterText.trim()
           const q = fold(raw)
-          // Amount: exact value ("1.500,00" / "45,50") or integer-substring ("150").
+          // Amount: exact value ("1.500,00" / "45,50") or exact whole-euro match ("15"
+          // → €15,xx). Uses === (not substring) so "15" doesn't also match 150/1.500 —
+          // that would pollute an ordinary text search that happens to contain a digit.
           const qDigits = raw.replace(/[^\d]/g, '')
           const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
           const an = Math.abs(s.amount)
           const amountMatch =
             qDigits.length > 0 &&
-            ((Number.isFinite(qNum) && Math.abs(an - qNum) < 0.005) ||
-              String(Math.trunc(an)).includes(qDigits))
+            ((Number.isFinite(qNum) && qNum > 0 && Math.abs(an - qNum) < 0.005) ||
+              String(Math.trunc(an)) === qDigits)
           return (
             fold(s.counterpart ?? '').includes(q) ||
             fold(s.reference ?? '').includes(q) ||

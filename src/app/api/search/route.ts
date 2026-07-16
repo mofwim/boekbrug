@@ -53,11 +53,14 @@ function normalizeQuery(q: string): string[] {
 // ("1.500,00" / "1.500" / "1500,00"). Only kick in for money-shaped queries so a
 // normal name/number search never triggers a spurious amount match.
 function amountConditions(q: string): string[] {
-  const trimmed = q.trim();
-  if (!/\d/.test(trimmed) || !/^[\d.,\s€]+$/.test(trimmed)) return [];
+  // Strip spaces first so "1 500" parses as 1500 (not 1). Gate to money-shaped input.
+  const trimmed = q.trim().replace(/\s/g, "");
+  if (!/\d/.test(trimmed) || !/^[\d.,€]+$/.test(trimmed)) return [];
   const n = parseAmountNL(trimmed);
-  if (!(n > 0)) return [];
-  const intPart = Math.trunc(n).toString(); // digits only → safe to interpolate
+  // Cap well below 1e21 where Number.toString() switches to exponential notation
+  // (which would emit a non-digit "1e+21" into the ILIKE pattern).
+  if (!(n > 0) || n >= 1e15) return [];
+  const intPart = Math.trunc(n).toString(); // digits only (n < 1e15) → safe to interpolate
   return [
     `total_inc_btw::text.ilike.${intPart}`,   // exact "1500"
     `total_inc_btw::text.ilike.${intPart}.%`, // "1500.00", "1500.5"
@@ -85,16 +88,21 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Higher = more relevant: exact > starts-with > word-boundary > substring > (fuzzy=0).
-// Scored against the whole typed query over the row's most identifying fields.
+// Higher = more relevant: exact > starts-with > word-boundary > substring, then
+// (for multi-word queries) token-coverage, then fuzzy=0.
+// The full query is scored against each single field first (strongest signal). If no
+// single field contains the whole string — the common multi-word case, e.g.
+// "2026-004 moha" — we fall back to how many query TOKENS appear across the fields,
+// so ranking still engages instead of degrading to pure recency.
 function rankScore(query: string, fields: Array<string | null | undefined>): number {
   const needle = fold(query).trim();
   if (!needle) return 0;
+  const folded = fields.map(fold).filter(Boolean);
+  if (folded.length === 0) return 0;
+
   const wb = new RegExp(`\\b${escapeRegex(needle)}`);
   let best = 0;
-  for (const f of fields) {
-    const v = fold(f);
-    if (!v) continue;
+  for (const v of folded) {
     let s = 0;
     if (v === needle) s = 1000;
     else if (v.startsWith(needle)) s = 800;
@@ -102,7 +110,17 @@ function rankScore(query: string, fields: Array<string | null | undefined>): num
     else if (v.includes(needle)) s = 400;
     if (s > best) best = s;
   }
-  return best;
+  if (best > 0) return best;
+
+  // Multi-token fallback: reward how many tokens are present across all fields.
+  const tokens = needle.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length > 1) {
+    const haystack = folded.join(" ");
+    const matched = tokens.filter((t) => haystack.includes(t)).length;
+    if (matched === tokens.length) return 350; // all tokens present (just below a contiguous substring)
+    if (matched > 0) return 100 + matched * 20; // partial coverage
+  }
+  return 0;
 }
 
 // Sort raw rows by relevance, then recency (newest first). Pure, no mutation.

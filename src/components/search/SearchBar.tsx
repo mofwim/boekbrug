@@ -630,7 +630,7 @@ export function SearchBar() {
       >
         <SearchInput {...desktopInputProps} />
 
-        {open && (showRecent || showResults) && portalEl && createPortal(
+        {!isMobile && open && (showRecent || showResults) && portalEl && createPortal(
           <div
             ref={portalDropdownRef}
             id="bb-search-listbox"
