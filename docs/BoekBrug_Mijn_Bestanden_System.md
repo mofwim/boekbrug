@@ -258,10 +258,14 @@ laat de open policy vallen (koppelen kan alleen nog via de geverifieerde accept-
 Bijkomend: `unlink-by-client` werkt nu ook als een client meerdere boekhouders
 heeft (was een `maybeSingle()`-404), en `subject-status` negeert getrashte docs.
 
-> **Open audit-punt (prod-drift):** `documents_accountant_read`, `documents.shared`
-> en de Storage-bucketpolicies staan **niet** in de repo (alleen in productie). De
-> document-deel-gate is dus niet reviewbaar; leg de live policy vast in een migratie
-> en controleer de exacte `USING`-clause (linked-client-predicaat).
+> **Audit-herstel (prod-drift):** `documents_accountant_read` is nu vastgelegd in
+> `supabase/migrations/documents_accountant_read_policy.sql` (idempotent, gespiegeld
+> aan `invoices_accountant_read` + `trashed`-hardening) en in de `database.sql`-snapshot.
+> Vóór deploy: diff tegen de LIVE policy (`pg_policy` op `public.documents`) om te
+> bevestigen dat de productie-`USING` het linked-client-predicaat bevat — als die
+> breder is, tightent deze migratie hem. **Nog wél prod-only:** het bestaan van de
+> `documents.shared`-kolom en de Storage-bucketpolicies (SECTION 8, alleen comments) —
+> die horen ook in een migratie zodat een fresh rebuild de volledige gate opzet.
 
 ### Consistentie-fixes (bij deze analyse toegevoegd)
 
