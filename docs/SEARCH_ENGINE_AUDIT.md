@@ -134,9 +134,11 @@ LIKE-tak → geen wildcard-/regex-injectie. SECURITY INVOKER → RLS blijft de g
 ### Verificatiestatus
 - **Ranking** (JS): statisch getest (tsc/build), pure logica.
 - **Fuzzy**: **live bevestigd** op de productie-DB — "fmz" vindt nu "FAMZFOOD" en niet de
-  onverwante namen. De API valt nog steeds veilig terug op exact/substring als de functies
-  ontbreken. Fuzzy dekt op dit moment facturen (klantnaam/nummer) + eigen klanten
-  (naam/e-mail); documenten/mappen/accountant-profielen zijn een mogelijke uitbreiding.
+  onverwante namen. De API/bestanden-zoek valt nog steeds veilig terug op exact/substring
+  als de functies ontbreken. Fuzzy dekt nu: **facturen** (klantnaam/nummer) + **eigen
+  klanten** (naam/e-mail) in de globale zoek; **documenten** (bestandsnaam/type) in de
+  globale zoek én de Bestanden-pagina; **mappen** (naam) in de Bestanden-pagina.
+  Accountant-profielen blijven een mogelijke uitbreiding.
 
 ---
 
