@@ -166,23 +166,19 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         fix: FIX.bank,
       });
     } else {
-      // [TRUST-READY] Both unresolved kinds lower the score and count as gaps: a cost
-      // still missing its bon, AND a received payment we can't tie to an invoice.
-      const openBank = s.undocumentedCount + s.unmatchedIncomeCount;
+      // [NO-CODEER] The per-line "give every bank debit a category" flow is intentionally
+      // NOT a readiness gap. For a retail administration costs belong on the INCOMING
+      // invoice (which carries the BTW you reclaim) and revenue on the Z-report/dagomzet —
+      // hand-coding a bare bank debit as a cost gives no voorbelasting and risks double
+      // counting the invoice you already booked. So undocumentedCount (uncoded cost debits)
+      // no longer lowers the score. The ONE bank signal that survives is unmatched INCOME:
+      // money in with no invoice behind it, which would silently understate omzet — that
+      // still blocks "klaar". (undocumentedCount stays computed for other surfaces; it just
+      // no longer drives readiness.)
+      const openBank = s.unmatchedIncomeCount;
       const resolved = Math.max(0, s.bankTxCount - openBank);
       subscore = clamp01(resolved / s.bankTxCount);
       detail = `${resolved} van ${s.bankTxCount} banktransacties verwerkt.`;
-      if (s.undocumentedCount > 0) {
-        missing.push({
-          severity: "missing",
-          title:
-            s.undocumentedCount === 1
-              ? "1 banktransactie wacht nog op een bon"
-              : `${s.undocumentedCount} banktransacties wachten nog op een bon`,
-          detail: "Uitgaven zonder document tellen niet mee als kosten en verlagen je aftrek.",
-          fix: FIX.bank,
-        });
-      }
       if (s.unmatchedIncomeCount > 0) {
         // The one thing a bank check exists to catch: money in with no invoice behind
         // it. A genuine gap — it blocks "klaar" so the owner links it or explains it.
