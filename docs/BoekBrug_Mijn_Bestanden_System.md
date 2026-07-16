@@ -189,9 +189,15 @@ fysieke kopie**. Dit is de kern van het ontwerp:
     ondertekent hetzelfde opslagobject met `service_role` (tabellen-RLS geeft
     leesrecht op de rij, storage-RLS wordt alleen voor die reeds-geautoriseerde
     paden omzeild).
-  - **Kwartaalpakket** (`src/lib/closing-package.ts`, `buildClosingPackageZip`):
-    selecteert `shared=true` + `period='{jaar}-Q{n}'`, **downloadt** de bytes van
+  - **Kwartaalpakket** (`src/lib/closing-package.ts`, **accountant-lane / `main`**):
+    de selectie van gedeelde documenten is daar gecentraliseerd in
+    `sharedDocsForQuarter(supabase, ownerId, year, quarter)` — filter
+    `shared=true, trashed=false, invoice_id IS NULL, doc_type != 'bankafschrift'`,
+    gebucket op `period='{jaar}-Q{n}'`. Het pakket **downloadt** de bytes van
     hetzelfde object in een tijdelijke ZIP — schrijft nooit terug naar opslag.
+    **Contract:** deze functie is het raakvlak tussen deze unit (die `shared` /
+    `period` / `trashed` zet) en het pakket; wijzig ik die semantiek, dan is dat
+    het punt om af te stemmen.
 
 **Drie meldingsvormen, één definitie van "gedeeld":** zowel `/brug` als het
 kwartaalpakket lezen de **`shared`-vlag**. De oude, op opslagpad gebaseerde
@@ -213,14 +219,14 @@ is **teruggetrokken** (`[FIN-UNIFY]`), zodat er precies één bron van waarheid 
    bestaat, maar de UI stuurt hem nog niet). Bankafschriften worden bij delen
    **niet** opnieuw gestempeld (hun `period` hoort bij de bankinname).
    (`src/app/api/bestanden/route.ts`)
-2. **`[FIN-DEDUP]` — geen dubbel bestand in de ZIP.** De sectie
-   "overige-documenten/" slaat elk bestand over dat al onder facturen of bank in
-   het pakket zit (bijv. een gedeeld document dat óók het bewijsstuk van een
-   inkoopfactuur is). Dedup gebeurt tegen de bestanden die **daadwerkelijk zijn
-   gedownload** (`pdfByInvoice` + `bankFiles`), niet tegen enkel *opgeloste*
-   paden — zodat een mislukte factuur-download een gedeeld bestand niet óók uit
-   overige verwijdert (het zou dan nergens in de ZIP zitten). Bankafschriften
-   dedupliceren binnen hun eigen twee queries.
+   > **Afstem-nota:** deze fix verandert de `period`-waarde die een gedeeld
+   > bestand draagt (upload-kwartaal behouden i.p.v. huidig kwartaal). Het pakket
+   > buckt daarop via `sharedDocsForQuarter` — dus dit beïnvloedt in welk
+   > kwartaalpakket een laat-gedeeld bestand valt. Bewust binnen het contract.
+2. **Kwartaalpakket-ZIP (dedup + `shared_outside_quarter`-waarschuwing)** valt in
+   de **accountant-lane (`main`)**, niet in deze unit. Bevindingen uit de review
+   zijn daar afgehandeld (`sharedDocsForQuarter` + `sharedOutsideWarning`); deze
+   unit raakt `closing-package.ts` niet aan, om botsing te voorkomen.
 3. **`[FIN-UNIFY]` — dode deelmechaniek opgeruimd.** Het ongebruikte
    `?clientId=`-pad in `/api/files`, `listDocuments(sharedOnly)` en de
    `shared/`-opslagtak in `buildStoragePath` zijn verwijderd; delen loopt nu

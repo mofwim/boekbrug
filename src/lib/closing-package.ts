@@ -1022,10 +1022,6 @@ export async function buildClosingPackageZip(args: {
     file_url: string | null;
     file_name: string | null;
   }>;
-  // Bank statements: dedup within their own two queries (tagged + legacy). Bank-vs-
-  // invoice collisions don't happen in practice (a statement isn't an invoice PDF), so
-  // this section is self-scoped — deliberately NOT cross-checked against invoice paths,
-  // which would risk dropping a statement if an unrelated invoice download failed.
   const bankPaths: Array<{ path: string; name: string }> = [];
   const seenBankPath = new Set<string>();
   for (const d of bankRows) {
@@ -1092,26 +1088,8 @@ export async function buildClosingPackageZip(args: {
     doc_type: string | null;
     invoice_id: string | null;
   }>;
-  // [FIN-DEDUP] Keep "overige-documenten/" free of files that ALREADY ship under
-  // facturen or bank — the common case being a shared doc whose bytes are also an
-  // incoming invoice's evidence (invoices.document_id → this file_url, while
-  // documents.invoice_id is NULL). Crucially, dedup against files that ACTUALLY
-  // shipped (downloaded: pdfByInvoice + bankFiles), NOT merely resolved paths — so a
-  // transient invoice-PDF download failure never also strips the object from overige,
-  // which would leave it in the ZIP nowhere. Also dedup within overige itself.
-  const shippedPaths = new Set<string>([
-    ...[...pdfByInvoice.values()].map((f) => f.path),
-    ...bankFiles.map((f) => f.path),
-  ]);
-  const sharedSeen = new Set<string>();
   const sharedPaths = sharedRows
-    .filter((d) => {
-      const url = d.file_url;
-      if (!url || d.doc_type === "bankafschrift") return false;
-      if (shippedPaths.has(url) || sharedSeen.has(url)) return false;
-      sharedSeen.add(url);
-      return true;
-    })
+    .filter((d) => !!d.file_url && d.doc_type !== "bankafschrift")
     .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "document" }));
   const sharedFilesRaw = await Promise.all(sharedPaths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
