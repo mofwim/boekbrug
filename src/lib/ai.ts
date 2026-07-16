@@ -940,13 +940,29 @@ Statement / reminder detection (NOT an invoice — prevents double counting):
 
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
-- total_ex_btw: the subtotal before BTW (excl. BTW / netto)
-- btw_amount: the BTW/VAT amount shown on the invoice
-- total_inc_btw: the final total to pay (incl. BTW / bruto)
-- btw_rate: the percentage — usually 21, sometimes 9 or 0
+- total_ex_btw: the FULL amount before BTW — the sum of ALL line bases across every rate,
+  INCLUDING any 0%-BTW lines. It must be chosen so that total_ex_btw + btw_amount =
+  total_inc_btw (the identity always holds). See STATIEGELD below.
+- btw_amount: the total BTW/VAT amount shown on the invoice (the sum across all rates).
+- total_inc_btw: the final total the invoice asks you to pay — the "Totaal", "Te voldoen",
+  "Totaalbedrag" or "Totaal te betalen" line. Return THIS printed final total even when it
+  does not equal a simple product subtotal (statiegeld, emballage and shipping are added on
+  top) and even when it is NEGATIVE (a return/creditnota where credited items exceed goods).
+- btw_rate: the percentage — usually 21, sometimes 9 or 0. On a MIXED invoice (e.g. 9% goods
+  plus 0% statiegeld) the effective blended rate is lower; that is normal, not an error.
 - If only the total is shown and BTW rate is known, calculate the breakdown
 - If a value genuinely cannot be found, set it to null — never guess
 - confidence: how certain you are (0 = no idea, 1 = absolutely certain)
+
+STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees this daily):
+- Many wholesale invoices add STATIEGELD (a returnable-packaging deposit), EMBALLAGE, or a
+  container/"Bijgel. container"/"Retour container" charge, usually at 0% BTW, ON TOP of the
+  goods. There may be a whole "Statiegeld" column, or a summary line, or a "Geen BTW" grondslag.
+- These deposit amounts ARE part of what is paid. Fold them into total_ex_btw as 0%-BTW base
+  so that total_ex_btw + btw_amount = total_inc_btw stays exact. Do NOT drop them, and do NOT
+  let them make excl + BTW disagree with the printed total.
+- Returned deposits are NEGATIVE (e.g. "Retour container -408,00"): include them with their
+  sign. If the net printed total ("Te voldoen") is therefore negative, return it negative.
 
 Per-field confidence rules:
 - field_confidence.vendor: how certain you are the vendor (sender) is correct.
