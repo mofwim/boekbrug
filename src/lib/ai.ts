@@ -37,6 +37,14 @@ const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 2000;
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
+// [STATEMENT-GUARD] An unmistakable statement-of-account filename — an OVERVIEW of MULTIPLE
+// invoices (with a summed total), never a single bookable invoice. Booking such a document
+// as one invoice double-counts the invoices it summarises. Narrow on purpose: it excludes
+// "aanmaning"/"herinnering", which can be a single-invoice reminder that IS bookable.
+export function isStatementFilename(filename: string): boolean {
+  return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
+}
+
 // Base system prompt — shared by all functions
 const SYSTEM_BASE = `You are an AI assistant for BoekBrug, a financial workflow platform in the Netherlands.
 
@@ -838,6 +846,24 @@ Rules for is_invoice = false:
 - Anything that is not a financial document
 - Set reason to a short Dutch explanation why it was rejected
 
+CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=false):
+- A "Rekeningoverzicht", "Openstaande posten", "Saldo-overzicht", "Overzicht openstaande
+  facturen", "Aanmaning" or "Betalingsherinnering" that LISTS MULTIPLE invoices is an
+  OVERVIEW, not a single invoice. Tell-tale signs, any of which is decisive:
+  · a title containing "overzicht", "openstaand", "aanmaning" or "herinnering";
+  · a TABLE whose columns are things like "Factuurnummer / Factuurbedrag / Reeds betaald /
+    Nog openstaand / Vervallen / Factuurdatum";
+  · TWO OR MORE different invoice numbers, each with its OWN amount and date;
+  · a "Totaal openstaand bedrag" (or similar) that is the SUM of the listed lines.
+- Booking such a document as one invoice is a SERIOUS error: its total DOUBLE-COUNTS the
+  individual invoices it summarises (which arrive separately), and it has no single valid
+  BTW breakdown (excl + BTW will never equal the total). So: is_invoice=false,
+  document_kind="other", and reason e.g. "Rekeningoverzicht — overzicht van meerdere
+  facturen, geen boekbare factuur".
+- Exception: a reminder that repeats ONE single invoice (one number, one amount, one date)
+  IS that invoice — treat it normally; the system de-duplicates it against the original.
+  The rule above is ONLY for an overview of TWO OR MORE invoices.
+
 Document kind + paid status (ALWAYS set these):
 - "document_kind" tells what this is:
   - "invoice": a payment REQUEST — has an invoice number, a vendor, a due date
@@ -1029,6 +1055,20 @@ Return JSON only.`;
 
     const parsed = safeParseJSON<VerifyInvoiceResult>(result);
     if (!parsed) return FALLBACK;
+
+    // [STATEMENT-GUARD] Deterministic backstop against booking a STATEMENT OF ACCOUNT as an
+    // invoice. A "Rekeningoverzicht" / "Openstaande posten" / "Saldo-overzicht" lists MANY
+    // invoices and a summed total — booking it as one invoice double-counts the invoices it
+    // summarises and carries no valid single BTW split. The prompt already teaches this, but
+    // an unmistakable filename forces the correct verdict even if the model wavers. Narrow on
+    // purpose: NOT "aanmaning/herinnering", which can be a single-invoice reminder.
+    if (parsed.is_invoice && isStatementFilename(filename)) {
+      return {
+        is_invoice: false,
+        confidence: 0.9, // confident it is NOT a bookable invoice → registered with the reason
+        reason: 'Rekeningoverzicht — overzicht van meerdere facturen, geen boekbare factuur',
+      };
+    }
 
     // Clamp confidence
     parsed.confidence = Math.min(1, Math.max(0, parsed.confidence ?? 0));
