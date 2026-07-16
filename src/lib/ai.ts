@@ -45,6 +45,22 @@ export function isStatementFilename(filename: string): boolean {
   return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
 }
 
+// [CREDIT-BACKSTOP] A document whose printed TOTAL is negative is a credit / correction, even
+// when the model did not tag it (e.g. an "expondo Factuurcorrectie — Full return" that never
+// writes the word "Creditnota"). Returns true when the row must be treated as a creditnota so
+// the negative amount is KEPT instead of being dropped to undefined (which turns a real
+// -1.123,14 credit into an empty €0 record). A normal invoice's totals are positive, so this
+// never mis-fires on a genuine purchase invoice.
+export function shouldTreatAsCreditNote(
+  taggedCredit: boolean | undefined,
+  rawIncl: unknown,
+  rawEx: unknown,
+): boolean {
+  if (taggedCredit === true) return true;
+  const neg = (v: unknown) => typeof v === "number" && isFinite(v) && v < 0;
+  return neg(rawIncl) || neg(rawEx);
+}
+
 // Base system prompt — shared by all functions
 const SYSTEM_BASE = `You are an AI assistant for BoekBrug, a financial workflow platform in the Netherlands.
 
@@ -885,8 +901,13 @@ Document kind + paid status (ALWAYS set these):
 Creditnota detection (ALWAYS set is_credit_note):
 - "is_credit_note" = true ONLY on explicit evidence this is a CREDIT NOTE:
   a title like "Creditnota", "Credit note", "Creditfactuur", "Credit invoice";
+  an INVOICE CORRECTION — "Factuurcorrectie", "Factuurcorrectienummer",
+  "Gecorrigeerd factuurdocument", "Correctiereden", "Credit memo", a "CM-…"
+  number prefix, a return/refund ("Full return", "Retour", "Terugbetaling");
   an invoice number with a credit prefix (e.g. "CR-…"); or the amounts printed
   as NEGATIVE / explicitly marked as credit ("te ontvangen", "credit").
+  A document that CORRECTS or REVERSES an earlier invoice (it names the original
+  invoice it corrects) with negative amounts IS a creditnota — set it true.
 - A creditnota is still a real financial document: is_invoice=true and
   document_kind="invoice" (it enters the same verify queue).
 - On a creditnota, return the amounts EXACTLY as printed — NEGATIVE when the
@@ -1214,6 +1235,15 @@ Return JSON only.`;
     // filtered (conditional, never permissive).
     const numSigned = (v: unknown): number | undefined =>
       typeof v === 'number' && isFinite(v) ? v : undefined;
+    // [CREDIT-BACKSTOP] Without this, num() below rejects a negative amount as a "stray
+    // negative" and drops it to undefined — turning a real -1.123,14 credit into an empty €0
+    // record flagged "totaalbedrag ontbreekt". A negative printed total means credit, so flip
+    // it before choosing the number normaliser (see shouldTreatAsCreditNote).
+    parsed.is_credit_note = shouldTreatAsCreditNote(
+      parsed.is_credit_note,
+      parsed.total_inc_btw,
+      parsed.total_ex_btw,
+    );
     const pickNum = parsed.is_credit_note === true ? numSigned : num;
 
     parsed.total_ex_btw = pickNum(parsed.total_ex_btw);
