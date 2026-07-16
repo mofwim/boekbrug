@@ -7,11 +7,16 @@
 -- Drempels: de default similarity-drempel (0.3) is te streng voor KORTE queries met
 -- één weggevallen letter — similarity('fmz','famz') ≈ 0.286 < 0.3 → gemist. Bovendien
 -- straft similarity() lengteverschil af, dus een typefout op één WOORD in een langere
--- naam ("famz" in "Famz Trading BV") scoort laag. Daarom matchen we met TWEE operatoren:
---   * `%`  (similarity)      — hele-string-gelijkenis, drempel 0.2
---   * `<%` (word_similarity) — beste-woord/deel-gelijkenis, drempel 0.4
--- Beide drempels zijn FUNCTIE-scoped (SET op de functie), dus de operatoren blijven
--- index-gedekt (snel) en geen enkele andere query in de sessie wordt beïnvloed.
+-- naam ("famz" in "Famz Trading BV") scoort laag. Daarom matchen we met TWEE maten:
+--   * similarity()      — hele-string-gelijkenis, drempel 0.2
+--   * word_similarity() — beste-woord/deel-gelijkenis, drempel 0.4
+--
+-- We gebruiken de FUNCTIES (niet de operatoren % / <%) met expliciete drempels, omdat
+-- Supabase het zetten van pg_trgm.similarity_threshold in een functie-SET verbiedt
+-- ("permission denied to set parameter"). De functie-vorm heeft geen GUC nodig. Kosten:
+-- de fuzzy-WHERE is niet index-gedekt (seq scan), maar draait alleen als de exacte/
+-- substring-resultaten schaars zijn, over de door RLS begrensde rijen van de gebruiker,
+-- met LIMIT — dus snel.
 --
 -- Veiligheid: SECURITY INVOKER (de default, hier expliciet) → de functie draait met
 -- de RLS-context van de aanroeper. Een gebruiker krijgt dus NOOIT rijen die hij niet
@@ -29,15 +34,15 @@ LANGUAGE sql
 STABLE
 SECURITY INVOKER
 SET search_path = public
-SET pg_trgm.similarity_threshold = 0.2
-SET pg_trgm.word_similarity_threshold = 0.4
 AS $$
   SELECT i.*
   FROM public.invoices i
   WHERE length(btrim(q)) >= 2
     AND (
-      i.client_name % q OR q <% coalesce(i.client_name, '')
-      OR i.invoice_number % q OR q <% coalesce(i.invoice_number, '')
+      similarity(coalesce(i.client_name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.client_name, '')) >= 0.4
+      OR similarity(coalesce(i.invoice_number, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.invoice_number, '')) >= 0.4
     )
   ORDER BY GREATEST(
       similarity(coalesce(i.client_name, ''), q),
@@ -55,15 +60,15 @@ LANGUAGE sql
 STABLE
 SECURITY INVOKER
 SET search_path = public
-SET pg_trgm.similarity_threshold = 0.2
-SET pg_trgm.word_similarity_threshold = 0.4
 AS $$
   SELECT c.*
   FROM public.clients c
   WHERE length(btrim(q)) >= 2
     AND (
-      c.name % q OR q <% coalesce(c.name, '')
-      OR coalesce(c.email, '') % q OR q <% coalesce(c.email, '')
+      similarity(coalesce(c.name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.name, '')) >= 0.4
+      OR similarity(coalesce(c.email, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.email, '')) >= 0.4
     )
   ORDER BY GREATEST(
       similarity(coalesce(c.name, ''), q),

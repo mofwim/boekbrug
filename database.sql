@@ -927,22 +927,25 @@ $$;
 -- [SEARCH] Fuzzy (typo-tolerant) search via pg_trgm. SECURITY INVOKER → the caller's
 -- RLS applies, so only rows the user may already see are returned. Used by /api/search
 -- to augment sparse exact/substring results. Mirrored in supabase/migrations/search_smart.sql.
--- Two operators for recall: % (similarity, whole-string, thr 0.2) and <% (word_similarity,
--- best-word/extent, thr 0.4) so both a short whole-word typo ("fmz"→"famz") and a typo on
--- one word inside a longer name ("famz" in "Famz Trading BV") match. Thresholds are
--- function-scoped so both operators stay index-backed and no other query is affected.
--- See supabase/migrations/search_smart.sql.
+-- Two measures for recall: similarity() (whole-string, thr 0.2) and word_similarity()
+-- (best-word/extent, thr 0.4) so both a short whole-word typo ("fmz"→"famz") and a typo
+-- on one word inside a longer name ("famz" in "Famz Trading BV") match. Uses the FUNCTIONS
+-- (not the % / <% operators) with explicit thresholds because Supabase forbids setting
+-- pg_trgm.*_threshold in a function SET. Cost: the fuzzy WHERE is a seq scan, but runs
+-- only when exact/substring results are sparse, over the caller's RLS-bounded rows, with
+-- LIMIT. See supabase/migrations/search_smart.sql.
 CREATE OR REPLACE FUNCTION public.search_invoices_fuzzy(q text)
 RETURNS SETOF public.invoices
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
-  SET pg_trgm.similarity_threshold = 0.2 SET pg_trgm.word_similarity_threshold = 0.4
 AS $$
   SELECT i.*
   FROM public.invoices i
   WHERE length(btrim(q)) >= 2
     AND (
-      i.client_name % q OR q <% coalesce(i.client_name, '')
-      OR i.invoice_number % q OR q <% coalesce(i.invoice_number, '')
+      similarity(coalesce(i.client_name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.client_name, '')) >= 0.4
+      OR similarity(coalesce(i.invoice_number, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.invoice_number, '')) >= 0.4
     )
   ORDER BY GREATEST(
       similarity(coalesce(i.client_name, ''), q),
@@ -956,14 +959,15 @@ $$;
 CREATE OR REPLACE FUNCTION public.search_clients_fuzzy(q text)
 RETURNS SETOF public.clients
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
-  SET pg_trgm.similarity_threshold = 0.2 SET pg_trgm.word_similarity_threshold = 0.4
 AS $$
   SELECT c.*
   FROM public.clients c
   WHERE length(btrim(q)) >= 2
     AND (
-      c.name % q OR q <% coalesce(c.name, '')
-      OR coalesce(c.email, '') % q OR q <% coalesce(c.email, '')
+      similarity(coalesce(c.name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.name, '')) >= 0.4
+      OR similarity(coalesce(c.email, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.email, '')) >= 0.4
     )
   ORDER BY GREATEST(
       similarity(coalesce(c.name, ''), q),
