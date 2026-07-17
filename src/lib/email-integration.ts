@@ -519,7 +519,13 @@ export async function fetchGmailAttachments(
   // attributed to the owner's own customer. `-in:sent -in:drafts -in:chats` drops those
   // while KEEPING a supplier invoice the owner forwarded to themselves (its Inbox copy
   // is not in Sent), so real incoming documents are not lost.
-  const query = `has:attachment after:${afterDate} -in:sent -in:drafts -in:chats`
+  // [SCAN-EVERYWHERE] `in:anywhere` also searches Spam and Trash — without it, a supplier
+  // invoice that a Gmail filter (or Google) routed to Spam, or that was soft-deleted, is never
+  // listed and silently missed. Custom labels / archived "All Mail" are already covered by a
+  // bare query; Spam+Trash are the one gap. For a bookkeeping tool, completeness wins: a
+  // recovered invoice only ever lands in the verify queue (never auto-booked), so surfacing a
+  // trashed one costs a glance, while missing a real one costs a deduction.
+  const query = `has:attachment after:${afterDate} in:anywhere -in:sent -in:drafts -in:chats`
 
   // 1. List message IDs — WITH pagination.
   //
@@ -677,7 +683,10 @@ async function fetchMessageAttachments(
 
       // [H2] Accept PDFs/images even when the server mislabelled the MIME — infer from the
       // extension so a genuine `factuur.pdf` sent as octet-stream is not dropped silently.
-      if (!filename || size === 0) continue
+      // [FUNNEL] Do NOT drop on size===0. The provider reports 0 for "unknown size" on some
+      // inline/forwarded parts; isLikelyInvoiceCandidate already treats 0 as "keep" (a PDF
+      // always passes). Dropping here first contradicted that and lost real attachments.
+      if (!filename) continue
       const mimeType = normalizeAttachmentMime(rawMime, filename)
       if (!mimeType) continue
 
@@ -697,7 +706,12 @@ async function fetchMessageAttachments(
     }
   }
 
-  walkParts(msg.payload?.parts || [])
+  // [FUNNEL] A message whose body IS a single PDF has no `payload.parts` — the PDF sits on
+  // `payload` itself (mimeType/filename/body.attachmentId). Passing only `parts` skipped those
+  // single-part invoices entirely (automated senders emit them often). Fall back to the payload
+  // itself when there are no parts so a single-attachment invoice is examined too.
+  const payload = msg.payload as { parts?: unknown[] } | undefined
+  walkParts(payload?.parts ?? (payload ? [payload] : []))
 
   // [BOEK-011] Resolve each attachment — fetch by ID or use inline data
   // Gmail always returns base64url → convert to standard base64 exactly once
@@ -885,74 +899,64 @@ export async function fetchOutlookAttachments(
     return !toAddrs.includes(owner)
   }
 
-  const messagesRaw: OutlookMessage[] = []
-  let nextUrl: string | null = firstUrl
-  let page = 0
-  // [BOEK-011] Raised 10→40 (2000 messages). Root cause found in production
-  // (2026-07-08): a ~250-message mailbox hit the old 500 cap and logged
-  // "capped at MAX_PAGES — fetch incomplete", so older invoices were never
-  // listed. Graph's /me/messages spans ALL folders and can return the SAME
-  // message multiple times (folder + AllItems views), inflating the effective
-  // count well beyond the real message total — so the cap must be generous.
-  // We de-duplicate by message id below, and the batch cap + watermark keep any
-  // single sync bounded in time regardless of how many pages we walk.
-  const MAX_PAGES = 40
+  // [FOLDER-DEDUP] Graph's /me/messages spans ALL folders and can return the SAME message
+  // more than once (per-folder view + the AllItems view). The OLD loop counted RAW pages
+  // against a page cap and de-duplicated only AFTERWARDS — so on a mailbox with MANY folders
+  // the duplicate folder-views filled the page budget and the listing was cut BEFORE reaching
+  // the older, still-in-window messages. Because we list newest-first and the watermark then
+  // advances, that older tail fell outside every future window: a permanent, silent miss — and
+  // "many folders" is exactly the shape the owner reported. Fix: de-duplicate INSIDE the loop
+  // and budget by UNIQUE messages, never raw pages, so folder-view repeats can't consume the
+  // ceiling. A hard API-call cap still bounds a pathological mailbox in wall-clock time.
+  const MAX_UNIQUE = 4000    // unique messages per sync — the real ceiling
+  const MAX_API_CALLS = 200  // safety bound on Graph list calls (folder dupes inflate paging)
 
-  // [BOEK-011 throttle×watermark] `complete` = the listing reached its natural
-  // end AND every attachment fetch succeeded. Production showed Graph
-  // throttling can stop pagination mid-range (page 6, ApplicationThrottled).
-  // Because we list newest-first, a truncated listing means the OLDER tail was
-  // never fetched — if the watermark advanced anyway, that tail would fall
-  // outside every future fetch window: permanent silent loss. So any early
-  // stop (throttle, error, MAX_PAGES cut) marks the fetch incomplete, and the
-  // caller HOLDS the watermark for this round. Saved invoices keep their
-  // progress; only the window refuses to shrink until a fully-covered pass.
+  const seenIds = new Set<string>()
+  const messages: OutlookMessage[] = []
+  let nextUrl: string | null = firstUrl
+  let apiCalls = 0
+
+  // [BOEK-011 throttle×watermark] `complete` = the listing reached its natural end AND every
+  // attachment fetch succeeded. Any early stop (throttle, error, ceiling) marks the fetch
+  // incomplete, and the caller HOLDS the watermark for this round — the older tail is never
+  // skipped; only the window refuses to shrink until a fully-covered pass.
   let listComplete = true
 
-  while (nextUrl && page < MAX_PAGES) {
+  while (nextUrl && messages.length < MAX_UNIQUE && apiCalls < MAX_API_CALLS) {
     const listRes: Response = await graphFetch(nextUrl, accessToken)
+    apiCalls++
 
     if (!listRes.ok) {
       const body = await listRes.text()
-      // First page failing is a real error; a later page failing shouldn't
-      // discard everything we already collected — but it DOES make the fetch
-      // incomplete (see note above).
-      if (page === 0) {
+      // First call failing is a real error; a later one shouldn't discard what we collected —
+      // but it DOES make the fetch incomplete (hold the watermark).
+      if (apiCalls === 1) {
         throw new Error(`Outlook list mislukt: ${body}`)
       }
-      console.error('[BOEK-011] Outlook pagination stopped early', { page, body })
+      console.error('[BOEK-011] Outlook pagination stopped early', { apiCalls, body })
       listComplete = false
       break
     }
 
     const listData = await listRes.json()
-    messagesRaw.push(...((listData.value || []) as OutlookMessage[]))
+    // De-duplicate as we page: a folder-view repeat never counts toward MAX_UNIQUE.
+    for (const m of ((listData.value || []) as OutlookMessage[])) {
+      if (m.id && !seenIds.has(m.id)) {
+        seenIds.add(m.id)
+        messages.push(m)
+      }
+    }
     nextUrl = (listData['@odata.nextLink'] as string | undefined) ?? null
-    page++
   }
 
-  // MAX_PAGES cut with more pages remaining → the older tail wasn't listed.
-  if (nextUrl && page >= MAX_PAGES) {
-    console.warn('[BOEK-011] Outlook listing capped at MAX_PAGES — fetch incomplete')
+  // Ceiling hit with more pages remaining → the older tail wasn't listed: hold the watermark.
+  if (nextUrl && (messages.length >= MAX_UNIQUE || apiCalls >= MAX_API_CALLS)) {
+    console.warn('[BOEK-011] Outlook listing capped (unique/api ceiling) — fetch incomplete')
     listComplete = false
   }
-
-  // [BOEK-011] De-duplicate by message id. Graph's /me/messages spans all
-  // folders and can return the same message more than once (folder view +
-  // AllItems view), which both wastes attachment fetches and inflates the page
-  // count against MAX_PAGES. Keep first occurrence of each id.
-  const seenIds = new Set<string>()
-  const messages: OutlookMessage[] = []
-  for (const m of messagesRaw) {
-    if (m.id && !seenIds.has(m.id)) {
-      seenIds.add(m.id)
-      messages.push(m)
-    }
-  }
   console.log('[BOEK-011] Outlook listing', {
-    rawRows: messagesRaw.length,
     uniqueMessages: messages.length,
-    pages: page,
+    apiCalls,
     complete: listComplete,
   })
 
