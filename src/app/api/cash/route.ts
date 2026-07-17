@@ -8,11 +8,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { computeCashBalance, isCashCategory } from "@/lib/cash";
+import { reconcileCashSettlements } from "@/lib/cash-settle";
 
 export async function GET() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  // [CASH-SETTLE] Before reading, make the kasboek reflect every invoice paid in cash — no
+  // matter which pay path booked it. Self-healing + best-effort (never blocks the read).
+  await reconcileCashSettlements(supabase, user.id);
 
   const { data: rows } = await supabase
     .from("cash_entries")
