@@ -388,6 +388,11 @@ export default function IncomingManageClient({
       patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null })
       showToast(`Betaling ongedaan gemaakt`)
     }
+    // [CASH-SETTLE] Keep the kasboek in sync with this cash pay/undo — create/heal the linked
+    // 'betaling' entry, or remove it on an undo. This UI updates the invoice directly (not via
+    // the confirm endpoint), so it must trigger the reconcile itself. Fire-and-forget; the
+    // invoice write already succeeded, and the kasboek load reconciles again as a backstop.
+    if (!error) fetch('/api/cash/settle', { method: 'POST' }).catch(() => {})
     setProcessingId(null)
   }
 

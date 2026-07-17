@@ -1,5 +1,5 @@
 // [CASH-LEDGER] Pure node test — run: npx tsx src/lib/cash.test.ts
-import { computeCashBalance, isCashCategory, buildCashSettlement, computeCashSettlementSync } from "./cash";
+import { computeCashBalance, isCashCategory, buildCashSettlement, computeCashSettlementSync, settlementGross } from "./cash";
 
 let passed = 0;
 let failed = 0;
@@ -39,32 +39,54 @@ console.log("\n— [CASH-SETTLE] buildCashSettlement (a cash-paid invoice → a 
   check("NO btw_rate — voorbelasting already came from the invoice", s?.btw_rate === null);
   check("linked to the invoice + dated on the payment day", s?.invoice_id === "inv1" && s?.entry_date === "2026-05-03");
   check("description names the invoice + vendor", (s?.description ?? "").includes("F-9") && (s?.description ?? "").includes("Sligro"));
-  check("a negative printed total is still an out-movement of its absolute value",
-    buildCashSettlement({ id: "x", total_inc_btw: -50 })?.amount === 50);
-  check("no total → null (never a €0/garbage settlement)", buildCashSettlement({ id: "x", total_inc_btw: null }) === null);
+  check("[F2] null total but ex+btw present → gross = ex+btw (kas still moves)",
+    buildCashSettlement({ id: "x", total_inc_btw: null, total_ex_btw: 100, btw_amount: 21 })?.amount === 121);
+  check("[F2] settlementGross prefers the stored gross over ex+btw",
+    settlementGross({ id: "x", total_inc_btw: 121, total_ex_btw: 100, btw_amount: 21 }) === 121);
+  check("a credit/refund (negative gross) → null (never a wrong-direction 'out' settlement)",
+    buildCashSettlement({ id: "x", total_inc_btw: -50 }) === null);
+  check("no total, no ex/btw → null (never a €0/garbage settlement)", buildCashSettlement({ id: "x", total_inc_btw: null }) === null);
   check("zero total → null", buildCashSettlement({ id: "x", total_inc_btw: 0 }) === null);
 }
 
-console.log("\n— [CASH-SETTLE] computeCashSettlementSync (self-healing, path-independent) —");
+console.log("\n— [CASH-SETTLE] computeCashSettlementSync (self-healing: create / heal / reverse) —");
 {
   const paid = [
     { id: "A", total_inc_btw: 100 },
     { id: "B", total_inc_btw: 200 },
   ];
   const existing = [
-    { id: "e1", invoice_id: "A" },   // already settled
-    { id: "e2", invoice_id: "Z" },   // orphan: Z is no longer paid-in-cash
-    { id: "e3", invoice_id: null },  // a manual betaling entry, not invoice-linked → left alone
+    { id: "e1", invoice_id: "A", amount: 100, entry_date: "2026-05-01" }, // already settled, in sync
+    { id: "e2", invoice_id: "Z", amount: 50 },                             // orphan: Z no longer paid-cash
+    { id: "e3", invoice_id: null, amount: 9 },                             // manual betaling entry → untouched
   ];
   const sync = computeCashSettlementSync(paid, existing);
   check("creates the missing settlement (B), not the already-settled one (A)",
     sync.toCreate.length === 1 && sync.toCreate[0].id === "B");
+  check("no spurious update when the amount already matches", sync.toUpdate.length === 0);
   check("deletes the orphaned settlement (Z un-paid) — the reversal",
     sync.toDeleteIds.length === 1 && sync.toDeleteIds[0] === "e2");
   check("a manual (unlinked) betaling entry is never touched",
-    !sync.toDeleteIds.includes("e3"));
+    !sync.toDeleteIds.includes("e3") && !sync.toUpdate.some((u) => u.id === "e3"));
+}
+
+console.log("\n— [CASH-SETTLE][F1] a corrected invoice amount HEALS the stale settlement —");
+{
+  // Invoice A was paid at 100, then re-reviewed to 121; the linked entry still says 100.
+  const sync = computeCashSettlementSync(
+    [{ id: "A", total_inc_btw: 121 }],
+    [{ id: "e1", invoice_id: "A", amount: 100, entry_date: "2026-05-01" }],
+  );
+  check("stale amount → toUpdate (not create, not delete)",
+    sync.toUpdate.length === 1 && sync.toUpdate[0].id === "e1" && sync.toCreate.length === 0 && sync.toDeleteIds.length === 0);
+  const dateHeal = computeCashSettlementSync(
+    [{ id: "A", total_inc_btw: 100, payment_date: "2026-06-02" }],
+    [{ id: "e1", invoice_id: "A", amount: 100, entry_date: "2026-05-01" }],
+  );
+  check("a corrected payment date also heals", dateHeal.toUpdate.length === 1);
   const none = computeCashSettlementSync([], []);
-  check("nothing paid, nothing existing → no-op", none.toCreate.length === 0 && none.toDeleteIds.length === 0);
+  check("nothing paid, nothing existing → no-op",
+    none.toCreate.length === 0 && none.toUpdate.length === 0 && none.toDeleteIds.length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
