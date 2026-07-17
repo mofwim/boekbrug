@@ -1592,11 +1592,14 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // [INTAKE-MULTI] Max files per batch — protects the server / AI from a huge drop.
   const MAX_BATCH = 20;
 
+  // [INTAKE-KEEP-ALL] Accept every common invoice/document format. PDFs and images go to the
+  // extractor; the rest (XML/UBL e-invoices, Office docs, CSV, e-mail files, bank exports) are
+  // kept in bestanden by the server so nothing is ever lost. Only clearly non-document binaries
+  // are refused here to avoid a pointless upload.
   const isOkType = (file: File) =>
     file.type === "application/pdf" ||
     file.type.startsWith("image/") ||
-    file.name.toLowerCase().endsWith(".pdf") ||
-    /\.(xml|mt940|sta|camt|053|txt)$/i.test(file.name);
+    /\.(pdf|xml|ubl|mt940|sta|camt|053|txt|csv|docx?|xlsx?|ods|odt|html?|eml|p7m)$/i.test(file.name);
 
   // [INTAKE-FEEDBACK] Upload one file via /api/intake and map the response to a
   // structured outcome (never throws) — the modal renders the destination.
@@ -1760,7 +1763,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         <input
           type="file"
           multiple
-          accept=".pdf,image/*,.xml,.mt940,.sta,.camt,.053,.txt"
+          accept=".pdf,image/*,.xml,.ubl,.mt940,.sta,.camt,.053,.txt,.csv,.doc,.docx,.xls,.xlsx,.ods,.odt,.html,.htm,.eml,.p7m"
           style={{ display: "none" }}
           disabled={uploading}
           onChange={(e) => {

@@ -105,11 +105,54 @@ export async function POST(req: NextRequest) {
     file.type === "application/pdf" ||
     file.type.startsWith("image/") ||
     file.name.toLowerCase().endsWith(".pdf")
+
+  // [INTAKE-KEEP-ALL] Never hard-reject a plausible document. A file the extractor can't read —
+  // an XML/UBL e-invoice, a Word/Excel document, a .csv that isn't a bank export — must NOT be
+  // lost: store it in bestanden so the accountant still receives it and the owner can act on it.
+  // Only the automatic EXTRACTION is skipped; the file itself is kept and visible. This upholds
+  // "no missing invoice" for every format.
   if (!okForAi) {
-    return NextResponse.json(
-      { error: "Niet-ondersteund bestand. Upload een foto, PDF of bankafschrift (MT940/CAMT)." },
-      { status: 400 }
-    )
+    const hash = computeContentHash(buffer)
+    const { data: dupDoc } = await supabase
+      .from("documents").select("id, folder_id")
+      .eq("user_id", user.id).eq("content_hash", hash).limit(1).maybeSingle()
+    if (dupDoc && !force) {
+      const bc = await buildFolderBreadcrumb(supabase, user.id, dupDoc.folder_id)
+      return NextResponse.json({
+        duplicate: true, destination: "document",
+        error: "Dit bestand staat al in je bestanden.",
+        existing: { id: dupDoc.id, folder_id: dupDoc.folder_id ?? null },
+        folder_name: bc.length ? bc[bc.length - 1] : null,
+      }, { status: 409 })
+    }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+    const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`
+    const contentType = file.type || "application/octet-stream"
+    const { error: upErr } = await supabase.storage
+      .from("documents").upload(storagePath, buffer, { contentType, upsert: false })
+    if (upErr) {
+      return NextResponse.json({ error: "Bestand kon niet worden opgeslagen — probeer het opnieuw." }, { status: 502 })
+    }
+    const folderId = await ensureImportedFolder(user.id, "pipeline")
+    const pipelineDoc = createPipelineClient()
+    const { data: doc, error: docErr } = await pipelineDoc
+      .from("documents").insert({
+        user_id: user.id, file_name: file.name, file_url: storagePath,
+        file_size: buffer.length, file_type: contentType,
+        doc_type: "overig", folder_id: folderId, source: "camera",
+        ai_processed: false, ai_doc_type: "unsupported_type", content_hash: hash,
+      })
+      .select("id").single()
+    if (docErr || !doc) {
+      await supabase.storage.from("documents").remove([storagePath])
+      return NextResponse.json({ error: "Opslaan in je bestanden is mislukt — probeer het opnieuw." }, { status: 500 })
+    }
+    const bc = await buildFolderBreadcrumb(supabase, user.id, folderId)
+    return NextResponse.json({
+      ok: true, destination: "document", document_id: doc.id, folder_id: folderId,
+      folder_name: bc.length ? bc[bc.length - 1] : null,
+      message: "We konden dit bestandstype niet automatisch uitlezen, maar het staat veilig in je bestanden — je accountant krijgt het en je kunt het zelf controleren.",
+    })
   }
 
   // ── Byte-hash dedup (cross-path: same hash as email / upload / bestanden) ───
