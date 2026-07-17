@@ -95,6 +95,16 @@ interface IncomingRow {
   // NOT a financial state — persists across the async pay round-trip so the
   // "Ik heb betaald" confirm CTA survives prepare → leave → pay → return.
   payment_prepared_at: string | null
+  // [AUTO-ADVANCE] jsonb — carries _auto_verified when the app booked this invoice
+  // without a manual tap, so the owner can review "wat is automatisch verwerkt".
+  field_confidence: Record<string, unknown> | null
+}
+
+// [AUTO-ADVANCE] True when the app auto-verified this invoice (clean + confident) instead of
+// the owner tapping confirm. Drives the review badge + filter — the opt-in double-check.
+function isAutoVerified(inv: IncomingRow): boolean {
+  const fc = inv.field_confidence
+  return !!(fc && typeof fc === 'object' && (fc as Record<string, unknown>)._auto_verified)
 }
 
 // Pay confirm context — payment fields only (defense in depth: never amounts)
@@ -106,11 +116,12 @@ interface PayCtx {
   paymentDate?: string
 }
 
-type FilterTab = 'all' | 'received' | 'paid'
+type FilterTab = 'all' | 'received' | 'paid' | 'auto'
 const FILTERS: { id: FilterTab; label: string }[] = [
-  { id: 'all',      label: 'Alle'       },
-  { id: 'received', label: 'Te betalen' },
-  { id: 'paid',     label: 'Betaald'    },
+  { id: 'all',      label: 'Alle'                  },
+  { id: 'received', label: 'Te betalen'            },
+  { id: 'paid',     label: 'Betaald'               },
+  { id: 'auto',     label: 'Automatisch verwerkt'  },
 ]
 
 // ─── [SORT] Ordering the list — the same options the market (Moneybird, e-Boekhouden,
@@ -251,9 +262,15 @@ export default function IncomingManageClient({
   }, [actionParam, focusId, invoices.length])
 
   const displayed = sortRows(
-    invoices.filter(inv => (filter === 'all' ? true : inv.status === filter)),
+    invoices.filter(inv =>
+      filter === 'all' ? true
+        : filter === 'auto' ? isAutoVerified(inv)
+        : inv.status === filter,
+    ),
     sortBy,
   )
+  // [AUTO-ADVANCE] Count for the review nudge — how many invoices the app booked for you.
+  const autoCount = invoices.filter(isAutoVerified).length
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
@@ -594,6 +611,16 @@ export default function IncomingManageClient({
 
       {/* ── List ── */}
       <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 100px' }}>
+        {/* [AUTO-ADVANCE] Review nudge — the opt-in double-check for what the app booked itself. */}
+        {autoCount > 0 && filter !== 'auto' && (
+          <button
+            onClick={() => { setFilter('auto'); setShowFilterMenu(false) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginBottom: 10, padding: '10px 14px', borderRadius: R.md, border: '1px solid #D2E3FC', background: '#E8F0FE', color: '#1A73E8', cursor: 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600, textAlign: 'left' }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>auto_awesome</span>
+            {autoCount === 1 ? '1 factuur is automatisch verwerkt — bekijk' : `${autoCount} facturen zijn automatisch verwerkt — bekijk`}
+          </button>
+        )}
         {displayed.length === 0 ? (
           <EmptyState />
         ) : (
@@ -650,6 +677,17 @@ export default function IncomingManageClient({
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
                             Betaald in {xq.paidQuarterLabel}
+                          </span>
+                        )}
+                        {/* [AUTO-ADVANCE] booked automatically (clean + confident) — a review cue,
+                            not an alarm. The owner can open the invoice and undo if it's wrong. */}
+                        {isAutoVerified(inv) && (
+                          <span
+                            title="Deze factuur was duidelijk leesbaar en is automatisch geverifieerd. Controleer indien je twijfelt."
+                            style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#E8F0FE', color: '#1A73E8', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_awesome</span>
+                            Automatisch
                           </span>
                         )}
                         {/* [3b-2] accountant Verwerkt — READ-ONLY badge */}

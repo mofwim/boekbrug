@@ -18,7 +18,7 @@ import IncomingManageClient from './IncomingManageClient'
 // Exactly the columns the management UI needs — payment fields + accountant_status
 // for the read-only 'Verwerkt' badge (3b-2). No amounts edited here, but shown.
 const COLS =
-  'id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, payment_method, payment_date, created_at, document_id, pdf_url, vendor_iban, payment_reference, payment_prepared_at'
+  'id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, payment_method, payment_date, created_at, document_id, pdf_url, vendor_iban, payment_reference, payment_prepared_at, field_confidence'
 
 export default async function Page() {
   const supabase = await createServerSupabaseClient()
