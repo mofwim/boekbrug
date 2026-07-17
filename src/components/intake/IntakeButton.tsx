@@ -82,21 +82,31 @@ export default function IntakeButton({
   }
   function closeMultiPage() { setMpMode(false); setMpPages([]) }
   async function combineAndUpload() {
-    if (mpPages.length === 0 || combining) return
+    if (mpPages.length === 0 || combining || busy) return
     setCombining(true)
     try {
       const pdf = await combineImagesToPdf(mpPages)
-      setMpMode(false); setMpPages([])
-      await handleFile(pdf) // same single-file path: dedup, extract → one invoice
-    } catch {
-      showToast('Combineren mislukt — voeg de pagina’s los toe')
+      const outcome = await handleFile(pdf) // same single-file path: dedup, extract → one invoice
+      if (outcome === 'error') {
+        // [MP-RETRY] Transient upload failure — KEEP the pages and reopen the sheet so the owner
+        // can retry without re-photographing. (handleFile closed the sheet on entry.)
+        setOpen(true)
+      } else {
+        // 'ok' or 'duplicate' — the invoice landed (or already exists); the pages are done.
+        setMpMode(false); setMpPages([])
+      }
+    } catch (e) {
+      // Combine failure names the failing page; keep the other pages for a quick redo.
+      showToast(e instanceof Error && /Pagina/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe')
     } finally {
       setCombining(false)
     }
   }
 
-  async function handleFile(file: File, force = false) {
-    if (busy) return
+  // Returns the outcome so the multi-page flow knows whether to KEEP the collected pages
+  // (a transient 'error') or clear them ('ok' | 'duplicate' — no point retrying the same pages).
+  async function handleFile(file: File, force = false): Promise<'ok' | 'duplicate' | 'error'> {
+    if (busy) return 'error'
     setBusy(true)
     setOpen(false)
     try {
@@ -115,6 +125,7 @@ export default function IntakeButton({
         //     (highlighted), consistent with a fresh non-invoice upload.
         //   - an invoice duplicate (data.original_id) → link to the invoice in
         //     the incoming manage view.
+        let outcome: 'duplicate' | 'error' = 'error'
         if (res.status === 409 && data.duplicate && (data.original_id || data.canForce)) {
           // SEMANTIC invoice duplicate (same invoice, DIFFERENT file — possibly a false
           // positive). Must be checked BEFORE data.existing: the semantic 409 usually ALSO
@@ -122,6 +133,7 @@ export default function IntakeButton({
           // to the file-location modal — hiding the "Toch toevoegen" override and
           // mislabelling a genuinely different file as "al toegevoegd".
           setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, file })
+          outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate && data.existing?.id) {
           // BYTE-HASH duplicate of a file (exact same bytes) → show where it already is.
           setDestModal({
@@ -132,13 +144,15 @@ export default function IntakeButton({
             documentId: data.existing.id,
             isDuplicate: true,
           })
+          outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate) {
           setDupModal({ message: data.error || 'Deze factuur bestaat al', originalId: data.original_id, canForce: !!data.canForce, file })
+          outcome = 'duplicate'
         } else {
           showToast(data.error || 'Toevoegen mislukt')
+          outcome = 'error'
         }
-        setBusy(false)
-        return
+        return outcome
       }
 
       // Destination-aware feedback + navigation.
@@ -167,8 +181,10 @@ export default function IntakeButton({
         showToast(data.message || 'Toegevoegd ✓')
         router.refresh()
       }
+      return 'ok'
     } catch {
       showToast('Toevoegen mislukt — probeer opnieuw')
+      return 'error'
     } finally {
       setBusy(false)
     }

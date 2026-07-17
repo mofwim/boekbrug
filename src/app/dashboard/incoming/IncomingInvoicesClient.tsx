@@ -1738,18 +1738,29 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const removeMpPage = (idx: number) => setMpPages((prev) => prev.filter((_, i) => i !== idx));
   const cancelMultiPage = () => { setMpOpen(false); setMpPages([]); };
   const combineAndUpload = async () => {
-    if (mpPages.length === 0 || combining) return;
+    // [MP-GUARD] Never run while a normal batch upload is in flight — both write the results
+    // modal, and the loser's outcome would silently vanish.
+    if (mpPages.length === 0 || combining || uploading) return;
     setCombining(true);
     try {
       const pdf = await combineImagesToPdf(mpPages);
       const result = await uploadOne(pdf);
+      // [MP-RETRY] On a transient upload failure, KEEP the collected pages + the panel so the
+      // owner can retry — never make them re-photograph every page.
+      if (result.status === "error") {
+        alert(result.message || "Uploaden mislukt — probeer het opnieuw.");
+        return;
+      }
       setMpOpen(false);
       setMpPages([]);
       onUploaded();
       setResults([result]);
       setShowResults(true);
-    } catch {
-      alert("Combineren mislukt. Maak duidelijkere foto's, of voeg de pagina's los toe.");
+    } catch (e) {
+      // A combine failure names the failing page — keep the pages so the owner redoes only that one.
+      alert(e instanceof Error && /Pagina/.test(e.message)
+        ? `${e.message} De andere pagina's blijven bewaard.`
+        : "Combineren mislukt. Maak duidelijkere foto's, of voeg de pagina's los toe.");
     } finally {
       setCombining(false);
     }
@@ -1933,10 +1944,10 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
               style={{ padding: "11px 16px", borderRadius: 12, border: "none", background: "#f1f3f4", color: "#5f6368", fontWeight: 600, fontSize: 14, cursor: combining ? "default" : "pointer" }}>
               Annuleer
             </button>
-            <button onClick={combineAndUpload} disabled={combining || mpPages.length === 0}
+            <button onClick={combineAndUpload} disabled={combining || uploading || mpPages.length === 0}
               style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
-                background: combining || mpPages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
-                cursor: combining || mpPages.length === 0 ? "default" : "pointer" }}>
+                background: combining || uploading || mpPages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
+                cursor: combining || uploading || mpPages.length === 0 ? "default" : "pointer" }}>
               {combining ? "Bezig…" : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? "" : "'s"} → één factuur` : "Voeg eerst pagina's toe"}
             </button>
           </div>

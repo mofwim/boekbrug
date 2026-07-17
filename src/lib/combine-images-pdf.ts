@@ -32,20 +32,38 @@ function isPng(b: Uint8Array): boolean {
   );
 }
 
+// A full-resolution phone photo (12–48 MP) drawn onto a canvas can EXCEED the mobile canvas
+// area limit (iOS Safari ≈ 16.7 MP); over that, the browser does not always throw — it can
+// yield an all-WHITE canvas, so toBlob returns a valid-but-blank JPEG and the page embeds
+// silently unreadable. Bounding the long edge keeps the canvas well under the limit so the
+// draw is real, and it keeps the AI read sane. A4 at 300dpi ≈ 2480×3508, so 2500 loses nothing.
+const MAX_EDGE = 2500;
+
 // Decode any browser-displayable image (WebP/HEIC/GIF/…) and re-encode as JPEG so pdf-lib can
 // embed it. Only used when the bytes are NOT already a JPG/PNG (those embed losslessly above).
 async function toJpegBytes(file: File): Promise<Uint8Array> {
   const bitmap = await createImageBitmap(file);
   try {
+    let w = bitmap.width;
+    let h = bitmap.height;
+    const longEdge = Math.max(w, h);
+    if (longEdge > MAX_EDGE) {
+      const k = MAX_EDGE / longEdge;
+      w = Math.max(1, Math.round(w * k));
+      h = Math.max(1, Math.round(h * k));
+    }
     const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
+    ctx.drawImage(bitmap, 0, 0, w, h); // scaled draw into the bounded canvas
     const blob: Blob = await new Promise((resolve, reject) =>
       canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas toBlob failed"))), "image/jpeg", 0.92),
     );
+    // A byte-trivial blob means the encode produced nothing real — refuse it rather than embed
+    // an empty page (belt-and-braces on top of the size bound above).
+    if (blob.size < 256) throw new Error("canvas produced an empty image");
     return new Uint8Array(await blob.arrayBuffer());
   } finally {
     bitmap.close();
@@ -85,8 +103,14 @@ async function embedOnePage(doc: PDFDocument, file: File): Promise<void> {
 export async function combineImagesToPdf(files: File[], outName = "factuur-meerdere-paginas.pdf"): Promise<File> {
   if (!files.length) throw new Error("Geen pagina's om te combineren.");
   const doc = await PDFDocument.create();
-  for (const file of files) {
-    await embedOnePage(doc, file); // sequential: one image in memory at a time
+  for (let i = 0; i < files.length; i++) {
+    try {
+      await embedOnePage(doc, files[i]); // sequential: one image in memory at a time
+    } catch {
+      // Abort the WHOLE combine on any unreadable page — never ship a PDF that silently drops
+      // a page. Name the page so the owner knows which photo to redo.
+      throw new Error(`Pagina ${i + 1} kon niet worden verwerkt — maak er een duidelijkere foto van.`);
+    }
   }
   const bytes = await doc.save();
   // Copy into a fresh ArrayBuffer so the File is backed by a plain ArrayBuffer (not a
