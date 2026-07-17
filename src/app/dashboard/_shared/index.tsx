@@ -233,6 +233,7 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
     <div ref={ref} style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(p => !p)}
+        aria-label="Profielmenu"
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           background: 'none', border: 'none', cursor: 'pointer',
@@ -342,6 +343,7 @@ function NotificationsBell({
     <div ref={bellRef} style={{ position: 'relative', flexShrink: 0 }}>
       <button
         onClick={onToggle}
+        aria-label="Meldingen"
         style={{
           position: 'relative', background: 'none', border: 'none',
           cursor: 'pointer', padding: 8, borderRadius: 8,
@@ -607,6 +609,7 @@ export function DashboardHeader({
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             onClick={onMessagesClick}
+            aria-label="Berichten"
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
               padding: 8, borderRadius: 8,

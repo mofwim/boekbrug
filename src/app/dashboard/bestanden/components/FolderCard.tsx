@@ -101,6 +101,7 @@ export function FolderCard({
       {hovered && !selected && (
         <button
           onClick={e => { e.stopPropagation(); onContextMenu(e, folder); }}
+          aria-label="Meer opties"
           style={{
             position: "absolute", top: 6, right: 6,
             width: 26, height: 26, border: "none",

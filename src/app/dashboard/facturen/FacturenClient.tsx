@@ -396,7 +396,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
               {sort === 'desc' ? 'Nieuwste' : 'Oudste'}
             </button>
             {/* Refresh */}
-            <button onClick={refresh} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button onClick={refresh} aria-label="Vernieuwen" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
             </button>
           </div>

@@ -221,7 +221,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
                 {failedFiles.length} bestand{failedFiles.length > 1 ? "en" : ""} niet geüpload
               </span>
             </div>
-            <button onClick={() => setFailedFiles([])}
+            <button onClick={() => setFailedFiles([])} aria-label="Sluiten"
               style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 2 }}>
               <Icon name="close" size={16} color={T.error} />
             </button>

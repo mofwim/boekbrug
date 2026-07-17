@@ -64,7 +64,7 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
               {formatSize(doc.file_size)} · {formatDate(doc.created_at)}
             </p>
           </div>
-          <button onClick={onClose} style={{
+          <button onClick={onClose} aria-label="Sluiten" style={{
             width: 36, height: 36, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer", flexShrink: 0,
