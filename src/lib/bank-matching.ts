@@ -97,7 +97,15 @@ export const DEFAULT_OPTIONS: MatchOptions = {
   maxCandidates: 5,
 };
 
-const EXCLUDED_STATUSES = new Set(["paid", "draft", "archived"]);
+// [BANK-MATCH-VERIFY] Statuses that must NEVER be offered as a bank-match candidate:
+//   paid/archived — already settled or closed; draft — not issued; processing — the
+//   verify queue (intake/email imports land here, "never auto-paid, even for receipts").
+// Why 'processing' matters: its number and amount come straight from OCR and are NOT yet
+// human-verified, so auto-booking one as paid would (a) trust an unverified figure and
+// (b) silently promote it out of the verify queue with no way back (unlink can only restore
+// by direction). An imported invoice becomes matchable the moment the owner verifies it
+// (→ received/sent). This keeps "verify first, then reconcile" — the correct order.
+const EXCLUDED_STATUSES = new Set(["paid", "draft", "archived", "processing"]);
 
 // ─── Text / number helpers (pure) ───────────────────────────────────────────
 

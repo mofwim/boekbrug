@@ -13,7 +13,7 @@ import { createClient } from "@/lib/supabase";
 const PAGE_SIZE = 20;
 
 const SELECT =
-  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type";
+  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type, payment_date";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,10 @@ export interface InvoiceRow {
   replaced_by_number?: string | null;
   // [BOEK-031] invoice_type for badge display — May 2026
   invoice_type?: string | null;
+  // [CROSS-QUARTER] The real settlement date (bank line's date, written on confirm/auto-
+  // confirm). Accrual is unchanged — this only lets the row show "Betaald in Q2" when a
+  // Q1 invoice was actually paid in Q2. Null while unpaid / paid without a recorded date.
+  payment_date?: string | null;
 }
 
 /** ZZP filter — on invoice status */

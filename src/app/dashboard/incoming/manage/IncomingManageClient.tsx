@@ -30,6 +30,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
+import { crossQuarterPayment } from '@/lib/quarter'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const M3 = {
@@ -507,6 +508,9 @@ export default function IncomingManageClient({
               // [PAY-SAFE-CONFIRM] prepared-but-unconfirmed: payment QR generated,
               // owner hasn't confirmed paying yet. Only meaningful while unpaid.
               const isPrepared = inv.status === 'received' && !!inv.payment_prepared_at
+              // [CROSS-QUARTER] Paid in a different quarter than booked → marker (accrual
+              // unchanged). null for same-quarter / unpaid / undated.
+              const xq = isPaid ? crossQuarterPayment(inv.invoice_date, inv.payment_date) : null
 
               return (
                 <div
@@ -537,6 +541,15 @@ export default function IncomingManageClient({
                         )}
                         {recon[inv.id] && (
                           <ReconBadge recon={recon[inv.id]} mode="zzp" invoiceId={inv.id} onReconConfirm={() => router.push('/dashboard/bank')} />
+                        )}
+                        {xq && (
+                          <span
+                            title={`Voor de btw telt deze factuur mee in ${xq.bookedQuarterLabel} (factuurdatum). De betaling kwam binnen in ${xq.paidQuarterLabel}.`}
+                            style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#FFF3E0', color: '#B26A00', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
+                            Betaald in {xq.paidQuarterLabel}
+                          </span>
                         )}
                         {/* [3b-2] accountant Verwerkt — READ-ONLY badge */}
                         {isVerwerkt && (

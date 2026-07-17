@@ -86,7 +86,7 @@ export async function POST() {
     //     quarter, so the owner and the accountant both see "paid in Q2".
     const { data: payData, error: payErr } = await supabase
       .from("invoices")
-      .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: m.transaction.date })
+      .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: m.transaction.date || null })
       .eq("id", invoiceId)
       .neq("status", "paid")
       .select("id");

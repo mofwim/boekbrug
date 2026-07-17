@@ -13,6 +13,7 @@ import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
+import { crossQuarterPayment } from '@/lib/quarter'
 
 const PDFDownloadLink = dynamic(
   () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
@@ -520,6 +521,9 @@ export default function InvoiceDetailPage() {
                     `Nummer: ${invoice.invoice_number || '—'}`,
                     `Datum: ${invoice.invoice_date ? NL_DATE.format(new Date(invoice.invoice_date)) : '—'}`,
                     `Vervaldatum: ${invoice.due_date ? NL_DATE.format(new Date(invoice.due_date)) : '—'}`,
+                    // [CROSS-QUARTER] Show the real settlement date when we recorded one, so
+                    // "when did this get paid" is answered on the invoice itself.
+                    invoice.payment_date ? `Betaald op: ${NL_DATE.format(new Date(invoice.payment_date))}` : '',
                   ]
                 },
               ].map(section => (
@@ -531,6 +535,21 @@ export default function InvoiceDetailPage() {
                 </div>
               ))}
             </div>
+            {/* [CROSS-QUARTER] When the money moved in a different quarter than the invoice
+                date, say so plainly — and make explicit that the btw quarter did NOT move,
+                so the owner is never confused into thinking their aangifte shifted. */}
+            {invoice.status === 'paid' && (() => {
+              const xq = crossQuarterPayment(invoice.invoice_date, invoice.payment_date)
+              if (!xq) return null
+              return (
+                <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#FFF3E0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', marginTop: 1 }}>event_available</span>
+                  <div style={{ fontSize: 12.5, color: '#7A4B00', lineHeight: 1.5 }}>
+                    <strong>Betaald in {xq.paidQuarterLabel}.</strong> Voor de btw telt deze factuur mee in {xq.bookedQuarterLabel} — de kwartaal­aangifte volgt de factuurdatum, niet de betaaldatum. Dit verandert daar niets aan; het laat alleen zien wanneer het geld binnenkwam.
+                  </div>
+                </div>
+              )
+            })()}
           </div>
 
           {/* [DS] Factuurregels — Material You card */}

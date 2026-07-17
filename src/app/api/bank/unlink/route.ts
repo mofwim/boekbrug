@@ -69,31 +69,47 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "verwerkt" }, { status: 409 });
   }
 
-  // 3. Restore the invoice to unpaid. SESSION client so the B.4 trigger has auth context.
+  // 3. Detach the bank line FIRST → back to pending, no invoice_id. Order matters: if the
+  //    invoice restore (step 4) then fails we roll THIS back, so we never end on the worse
+  //    half-state the reviewer flagged — a restored (unpaid) invoice with a bank line still
+  //    'matched' pointing at it, which the matcher (pending-only) would never resurface.
+  //    Only detach OUR link (invoice_id guard) so a concurrent re-link is never clobbered.
+  const { error: unlinkErr } = await pipeline
+    .from("bank_transactions")
+    .update({ status: "pending", invoice_id: null })
+    .eq("id", transactionId)
+    .eq("user_id", user.id)
+    .eq("invoice_id", invoiceId);
+  if (unlinkErr) {
+    return NextResponse.json({ error: "unlink_failed", detail: unlinkErr.message }, { status: 500 });
+  }
+
+  // 4. Restore the invoice to unpaid. SESSION client so the B.4 trigger has auth context.
   //    Only touch a still-'paid' invoice (idempotent). incoming → 'received', else 'sent'.
+  //    'overdue' is never stored (recomputed from due_date), and 'processing' invoices are
+  //    excluded from matching (isEligible), so by construction the prior status was
+  //    received/sent — restoring by direction is exact, not a guess.
+  //    Also clear payment_date (confirm/auto-confirm set it) so no stale settlement date lingers.
   const restoredStatus = inv.direction === "incoming" ? "received" : "sent";
   if (inv.status === "paid") {
     const { error: payErr } = await supabase
       .from("invoices")
-      .update({ status: restoredStatus, payment_method: null, marked_paid_at: null })
+      .update({ status: restoredStatus, payment_method: null, marked_paid_at: null, payment_date: null })
       .eq("id", invoiceId)
       .eq("status", "paid");
     if (payErr) {
+      // Restore failed → re-link the bank line to its captured prior state so we don't leave
+      // a detached line beside a still-paid invoice. Then surface the reason.
+      await pipeline
+        .from("bank_transactions")
+        .update({ status: tx.status, invoice_id: invoiceId })
+        .eq("id", transactionId)
+        .eq("user_id", user.id);
       if (payErr.message?.toLowerCase().includes("verwerkt")) {
         return NextResponse.json({ error: "verwerkt" }, { status: 409 });
       }
       return NextResponse.json({ error: "restore_failed", detail: payErr.message }, { status: 500 });
     }
-  }
-
-  // 4. Detach the bank line → back to pending, no invoice_id.
-  const { error: unlinkErr } = await pipeline
-    .from("bank_transactions")
-    .update({ status: "pending", invoice_id: null })
-    .eq("id", transactionId)
-    .eq("user_id", user.id);
-  if (unlinkErr) {
-    return NextResponse.json({ error: "unlink_failed", detail: unlinkErr.message }, { status: 500 });
   }
 
   await logAuditAction({
