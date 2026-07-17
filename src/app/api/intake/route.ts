@@ -28,6 +28,9 @@ import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
+import { reconcileCashSettlements } from "@/lib/cash-settle"
+import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
 // ingest, so every invoice lives as a PDF from day one (opens uniformly, can be
 // stamped by the closing package with no download-time conversion).
@@ -105,11 +108,54 @@ export async function POST(req: NextRequest) {
     file.type === "application/pdf" ||
     file.type.startsWith("image/") ||
     file.name.toLowerCase().endsWith(".pdf")
+
+  // [INTAKE-KEEP-ALL] Never hard-reject a plausible document. A file the extractor can't read —
+  // an XML/UBL e-invoice, a Word/Excel document, a .csv that isn't a bank export — must NOT be
+  // lost: store it in bestanden so the accountant still receives it and the owner can act on it.
+  // Only the automatic EXTRACTION is skipped; the file itself is kept and visible. This upholds
+  // "no missing invoice" for every format.
   if (!okForAi) {
-    return NextResponse.json(
-      { error: "Niet-ondersteund bestand. Upload een foto, PDF of bankafschrift (MT940/CAMT)." },
-      { status: 400 }
-    )
+    const hash = computeContentHash(buffer)
+    const { data: dupDoc } = await supabase
+      .from("documents").select("id, folder_id")
+      .eq("user_id", user.id).eq("content_hash", hash).limit(1).maybeSingle()
+    if (dupDoc && !force) {
+      const bc = await buildFolderBreadcrumb(supabase, user.id, dupDoc.folder_id)
+      return NextResponse.json({
+        duplicate: true, destination: "document",
+        error: "Dit bestand staat al in je bestanden.",
+        existing: { id: dupDoc.id, folder_id: dupDoc.folder_id ?? null },
+        folder_name: bc.length ? bc[bc.length - 1] : null,
+      }, { status: 409 })
+    }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+    const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`
+    const contentType = file.type || "application/octet-stream"
+    const { error: upErr } = await supabase.storage
+      .from("documents").upload(storagePath, buffer, { contentType, upsert: false })
+    if (upErr) {
+      return NextResponse.json({ error: "Bestand kon niet worden opgeslagen — probeer het opnieuw." }, { status: 502 })
+    }
+    const folderId = await ensureImportedFolder(user.id, "pipeline")
+    const pipelineDoc = createPipelineClient()
+    const { data: doc, error: docErr } = await pipelineDoc
+      .from("documents").insert({
+        user_id: user.id, file_name: file.name, file_url: storagePath,
+        file_size: buffer.length, file_type: contentType,
+        doc_type: "overig", folder_id: folderId, source: "camera",
+        ai_processed: false, ai_doc_type: "unsupported_type", content_hash: hash,
+      })
+      .select("id").single()
+    if (docErr || !doc) {
+      await supabase.storage.from("documents").remove([storagePath])
+      return NextResponse.json({ error: "Opslaan in je bestanden is mislukt — probeer het opnieuw." }, { status: 500 })
+    }
+    const bc = await buildFolderBreadcrumb(supabase, user.id, folderId)
+    return NextResponse.json({
+      ok: true, destination: "document", document_id: doc.id, folder_id: folderId,
+      folder_name: bc.length ? bc[bc.length - 1] : null,
+      message: "We konden dit bestandstype niet automatisch uitlezen, maar het staat veilig in je bestanden — je accountant krijgt het en je kunt het zelf controleren.",
+    })
   }
 
   // ── Byte-hash dedup (cross-path: same hash as email / upload / bestanden) ───
@@ -458,13 +504,47 @@ export async function POST(req: NextRequest) {
     if (decision.paidDate) fieldConfidence._intake_paid_date = decision.paidDate
   }
 
+  // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
+  // directly as 'received' (booked, UNPAID, reversible). Never for a receipt (its "probably paid"
+  // suggestion needs a human pay-confirm), never for a pen-mark paid suggestion, never for a
+  // statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI number
+  // (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the queue.
+  const autoAdv =
+    decision.destination === "invoice" && !decision.suggestPaid
+      ? shouldAutoAdvanceInvoice({
+          is_invoice: v.is_invoice,
+          is_statement: v.is_statement,
+          is_reminder: v.is_reminder,
+          is_credit_note: v.is_credit_note,
+          document_kind: v.document_kind ?? null,
+          invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
+          confidence: v.confidence,
+          // Raw gross only (no amount-fallback), and never auto-book a forced-through duplicate.
+          totalIncBtw: v.total_inc_btw ?? null,
+          forcedDuplicate: force === true,
+          health: {
+            total_ex_btw: v.total_ex_btw ?? 0,
+            btw_amount: v.btw_amount ?? 0,
+            total_inc_btw: v.total_inc_btw ?? v.amount ?? 0,
+            invoice_date: invoiceDate,
+            invoice_number: v.invoice_number ?? null,
+            invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
+            field_confidence: fieldConfidence,
+          },
+        })
+      : { advance: false, reason: "not_eligible" };
+  if (autoAdv.advance) {
+    fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
+  }
+
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
       sender_id: null,
       receiver_id: user.id,
       direction: "incoming",
-      status: "processing", // verify queue — never auto-paid, even for receipts
+      // [AUTO-ADVANCE] clean+confident → 'received' (booked, unpaid, reversible); else the queue.
+      status: autoAdv.advance ? "received" : "processing",
       source: "camera",
       client_name: v.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
@@ -505,15 +585,43 @@ export async function POST(req: NextRequest) {
     await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId)
   }
 
+  // [AUTO-ADVANCE] Side-effects of a clean auto-verify — mirror the confirm route, best-effort:
+  // audit the automatic booking (legal trail), settle any cash link + book a bank line that
+  // already paid it, and tell the owner what the app did (so the double-check stays available).
+  if (autoAdv.advance && invoice?.id) {
+    await logAuditAction({
+      userId: user.id,
+      action: "invoice.auto_verified",
+      entityType: "invoice",
+      entityId: invoice.id,
+      oldValue: { status: "processing" },
+      newValue: { status: "received", reason: autoAdv.reason, source: "intake_auto_advance" },
+      ipAddress: getClientIP(req),
+    }).catch(() => {})
+    try { await reconcileCashSettlements(pipeline, user.id) } catch { /* non-fatal */ }
+    try { await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: user.id }) } catch { /* non-fatal */ }
+    try {
+      await pipeline.from("notifications").insert({
+        user_id: user.id,
+        title: "Factuur automatisch verwerkt",
+        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en klaargezet voor de boekhouder. Controleer indien nodig.`.replace("  ", " "),
+        type: "invoice",
+      })
+    } catch { /* non-essential */ }
+  }
+
   return NextResponse.json({
     ok: true,
     destination: decision.destination, // 'invoice' | 'receipt'
     invoice_id: invoice?.id,
     suggest_paid: decision.suggestPaid,
+    auto_verified: autoAdv.advance,
     message:
       decision.destination === "receipt"
         ? "Bon herkend — controleer en bevestig (waarschijnlijk al betaald)."
-        : "Factuur herkend — controleer en bevestig.",
+        : autoAdv.advance
+          ? "Factuur herkend en automatisch verwerkt ✓ — klaar voor de boekhouder."
+          : "Factuur herkend — controleer en bevestig.",
   })
 }
 

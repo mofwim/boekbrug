@@ -43,6 +43,7 @@ export interface CardDayResult {
   tillPin: number | null;       // echo of the inputs, so the CSV/UI can show the row
   eftGross: number | null;
   bankNet: number | null;
+  ledgerPin?: number | null;    // echo — the bookkeeper's PIN grootboek witness (cross-check only)
   grossMatch: boolean | null;   // till == EFT (null when either side is missing)
   grossDiff: number | null;     // eftGross − tillPin
   commission: number | null;    // eftGross − bankNet (null when bankNet absent)
@@ -122,6 +123,7 @@ export function reconcileCardDay(input: CardDayInput): CardDayResult {
   return {
     date: input.date,
     tillPin: input.tillPin, eftGross: input.eftGross, bankNet: input.bankNet ?? null,
+    ledgerPin: input.ledgerPin ?? null,
     grossMatch, grossDiff, commission, status, breaks, notes,
   };
 }
@@ -157,9 +159,14 @@ export function reconcileCardPeriod(inputs: CardDayInput[]): CardPeriodResult {
   let grossMismatchDays = 0;
   let incompleteDays = 0;
   for (const d of days) {
-    // Only book commission on a day that fully ties out. A gross-mismatch day is suspect
-    // as a whole → its commission goes to review, not silently into the period cost.
-    if (d.status === "ok" && d.commission != null && d.commission > 0) totalCommission = r2(totalCommission + d.commission);
+    // Book commission (Leg B = eftGross − bankNet) unless a MONEY-relevant break makes the day
+    // suspect: a card_gross break (till ≠ terminal → the gross itself is uncertain) or an
+    // implausible commission. A ledger_pin break must NOT withhold it — the bookkeeper's PIN
+    // grootboek is an independent cross-check of the TILL, not of Leg B, so a ledger disagreement
+    // cannot make the eftGross−bankNet commission wrong. (It still surfaces as a break/exception.)
+    // This keeps the commission — a real, booked cost — decoupled from the ledger witness.
+    const moneyBreak = d.breaks.some((b) => b.kind === "card_gross" || b.kind === "commission_implausible");
+    if (!moneyBreak && d.commission != null && d.commission > 0) totalCommission = r2(totalCommission + d.commission);
     if (d.status === "gross_mismatch") grossMismatchDays += 1;
     if (d.status === "incomplete") incompleteDays += 1;
   }

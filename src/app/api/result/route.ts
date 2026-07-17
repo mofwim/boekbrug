@@ -6,8 +6,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
-import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
+import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
@@ -70,24 +70,16 @@ export async function GET(req: NextRequest) {
   // which keys the covered-day de-dup against the till turnover.
   const bankRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description")
+    .select("amount, category, invoice_id, date, description, counterpart_name")
     .eq("user_id", ownerId)
     .gte("date", start)
     .lte("date", end)
     .order("id", { ascending: true }).range(from, to));
 
-  const bankTx: ResultBankTx[] = bankRows.map((b) => {
-    // For a pos_income line, prefer the embedded takings date (DAT.); fall back to the
-    // booking date only when the bank omits it. Non-POS lines don't need a settleDate.
-    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
-    return {
-      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
-      // Exact only when the real takings date was printed; a booking-date fallback lets
-      // computeResult widen to a short backward settlement-lag window (never forward).
-      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
-    };
-  });
+  // The card-settlement de-dup (settleDate/settleExact/posSettlement) is derived by the shared
+  // toResultBankTx mapper so all four money surfaces agree. It also flags an acquirer payout
+  // the owner mis-tapped as 'omzet' as a settlement, so it can't double-count on a covered day.
+  const bankTx: ResultBankTx[] = bankRows.map(toResultBankTx);
 
   // Cash entries in the quarter.
   const cashRows = await fetchAllRows((from, to) => pipeline
@@ -176,7 +168,24 @@ export async function GET(req: NextRequest) {
   const netByDay = bankNetByDay(posBufRows.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
   for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
 
-  const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
+  // [LEDGER · Leg-A witness] The bookkeeper's PIN grootboek (ledger_daily kind='pin') is an
+  // independent GROSS cross-check of the till's PIN takings. It is fed to the triangle ONLY as
+  // pinLedgerByDay — reconcileTriangle raises a break when it disagrees with the till's PIN; it
+  // is NEVER a revenue/cost source (money stays in daily_turnover). In-quarter days only.
+  const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null; spent: number | null }>((from, to) => pipeline
+    .from("ledger_daily")
+    .select("ledger_date, received, spent")
+    .eq("user_id", ownerId)
+    .eq("kind", "pin")
+    .gte("ledger_date", start)
+    .lte("ledger_date", end)
+    .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+  // NET PIN (received − spent, card refunds under 'spent'): the till's pin_amount is net-of-
+  // refunds, so comparing net-to-net avoids a spurious break on a day with card refunds.
+  const pinLedgerByDay = new Map<string, number>();
+  for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
+
+  const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
 
   // Acquirer-fee invoices already booked as kosten — subtract them so the commission delta
   // isn't double-counted with the fee invoice. Computed from the RAW invoice rows (which
@@ -193,7 +202,16 @@ export async function GET(req: NextRequest) {
     .reduce((s, i) => s + (i.total_ex_btw ?? 0) + (i.btw_amount ?? 0), 0);
   const commissionToBook = netCommissionToBook(triangle.totalCommission, acquirerFeesBooked);
 
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, commissionToBook);
+  // [CARD-BUDGET] Per covered day, the max bank revenue it may suppress as till card takings —
+  // built from the SAME buffer-inclusive rows as coveredDates so prior-quarter days are bounded
+  // (their off-till excess still counts this quarter), not blindly suppressed.
+  const coveredBudget = new Map(
+    allTurnover
+      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, commissionToBook, coveredBudget);
 
   return NextResponse.json({
     ok: true,

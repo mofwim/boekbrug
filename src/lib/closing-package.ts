@@ -37,11 +37,15 @@ import {
 } from "./quarterly";
 import { calcBtwRate } from "./export";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
-import { turnoverNetOmzet, parsePosSettlement, type DailyTurnover } from "./turnover";
+import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
+import { buildKasboek, openingBalanceForQuarter, kasboekToMatrix, type KasEntry, type KasTurnoverDay, type Quarter as KasQuarter } from "./kasboek";
+import { matrixToXlsxBytes } from "./xlsx-adapter";
 import type { EftSettlement } from "./eft-parser";
 import {
   computeResult,
+  toResultBankTx,
+  cardBudgetBound,
   type ResultInvoice,
   type ResultCashEntry,
   type ResultBankTx,
@@ -52,6 +56,7 @@ import {
   type ConceptAangifte,
   type AangifteCompleteness,
 } from "./aangifte";
+import { fetchAllRows } from "./supabase-paginate";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -455,15 +460,16 @@ interface AssembleInput {
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
    *  sales data at all (nothing to declare yet). Never an invented filing. */
   conceptAangifte?: ConceptAangifte | null;
-  /** [CASH-EVIDENCE] The cash book (kasboek) as a CSV — a standalone evidence sheet for a
-   *  cash-heavy shop, so the accountant sees every kasboeking, not only the netted cash
-   *  figures inside the concept aangifte. null when the owner keeps no cash book. */
-  cashCsv?: string | null;
+  /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
+   *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
+   *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
+   *  has no life this quarter. */
+  kasboekXlsx?: Uint8Array | null;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, cashCsv } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, kasboekXlsx } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -575,8 +581,8 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // ── overzicht.csv is built LATER (after all warnings are collected) so the CSV's
   //    "Let op" section matches overzicht.json — see below. ──
 
-  // \u2500\u2500 kasboek.csv ([CASH-EVIDENCE] standalone cash-book sheet, when the owner keeps one) \u2500\u2500
-  if (cashCsv) zip.file("kasboek.csv", "\uFEFF" + cashCsv);
+  // \u2500\u2500 Kasboek.xlsx ([KASBOEK] running-balance cash book in the store's Kiwi layout) \u2500\u2500
+  if (kasboekXlsx) { zip.file(`Kasboek-Q${quarter}-${year}.xlsx`, kasboekXlsx); filesIncluded++; }
 
   // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
   const hasTurnover = !!turnoverClosing && turnoverClosing.summary.days > 0;
@@ -873,14 +879,21 @@ export async function summarizeClosingPackage(args: {
   const end = quarterEndDate(year, quarter);
   const warnings: ClosingPackageWarning[] = [];
 
-  const { data: invData, error: invErr } = await supabase
-    .from("invoices")
-    .select(INVOICE_FIELDS)
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .gte("invoice_date", start)
-    .lte("invoice_date", end)
-    .neq("status", "archived");
-  if (invErr) throw new Error(`[CLOSING-PACKAGE] summary query failed: ${invErr.message}`);
+  // [PAGINATION] Page past the ~1000-row PostgREST cap: a busy shop's quarter can exceed it,
+  // and a silent truncation would drop invoices from the count AND the readiness warning below.
+  const invData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from("invoices")
+      .select(INVOICE_FIELDS)
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .gte("invoice_date", start)
+      .lte("invoice_date", end)
+      .neq("status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e: unknown) => {
+    throw new Error(`[CLOSING-PACKAGE] summary query failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
   // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
@@ -893,6 +906,16 @@ export async function summarizeClosingPackage(args: {
   const verified = all.filter(isVerifiedForPackage);
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
+
+  // [PACKAGE-READINESS] Imported invoices dated in this quarter STILL in the verify queue
+  // (status 'processing') are real bills the owner hasn't confirmed. They don't count as
+  // verified above, so without this they'd vanish from the package with zero signal — the
+  // exact "missing invoice" the owner fears. Surface a warning so "afsluiten" is never auto-
+  // green while unverified invoices sit unbooked. (Readiness enforces the block; here we only
+  // report.) Only 'processing' — that IS the verify queue; a 'draft' is an unsent OUTGOING
+  // sales invoice (not a legal invoice yet, and often an abandoned draft), a different concern
+  // that must not falsely block the quarter close.
+  const unverifiedInQuarter = all.filter((i) => i.status === "processing").length;
 
   // Count how many verified invoices actually have a retrievable PDF path.
   // outgoing → pdf_url ; incoming → document_id (resolved to a file_url).
@@ -947,6 +970,17 @@ export async function summarizeClosingPackage(args: {
   // Honest warnings — the real gaps, listed specifically.
   if (verified.length === 0) {
     warnings.push({ code: "no_invoices", message: "Geen geverifieerde facturen in dit kwartaal." });
+  }
+  // [PACKAGE-READINESS] Unverified invoices dated in the quarter → the owner must clear the
+  // verify queue before closing, else these real bills never reach the accountant.
+  if (unverifiedInQuarter > 0) {
+    warnings.push({
+      code: "unverified_in_queue",
+      message:
+        unverifiedInQuarter === 1
+          ? "1 factuur staat nog in de verwerkingsrij — verifieer die voordat je afsluit."
+          : `${unverifiedInQuarter} facturen staan nog in de verwerkingsrij — verifieer ze voordat je afsluit.`,
+    });
   }
   if (missingPdf.length > 0) {
     warnings.push({
@@ -1005,14 +1039,21 @@ export async function buildClosingPackageZip(args: {
 
   // Invoices of the quarter (both directions). Filter on STORED status only
   // (verified sets), within the quarter date range.
-  const { data: invData, error: invErr } = await supabase
-    .from("invoices")
-    .select(INVOICE_FIELDS)
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .gte("invoice_date", start)
-    .lte("invoice_date", end)
-    .neq("status", "archived");
-  if (invErr) throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${invErr.message}`);
+  // [PAGINATION] Page past the ~1000-row cap — this set feeds BOTH the evidence PDFs and
+  // invoicesForResult (the concept aangifte money), so a silent truncation would understate it.
+  const invData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from("invoices")
+      .select(INVOICE_FIELDS)
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .gte("invoice_date", start)
+      .lte("invoice_date", end)
+      .neq("status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e: unknown) => {
+    throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
   // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
@@ -1216,7 +1257,18 @@ export async function buildClosingPackageZip(args: {
     // end-of-quarter day whose payout lands after quarter-end (DAT still in-quarter), not to
     // add prev/next-quarter rows to an accountant-facing sheet. Matches /api/result exactly.
     for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
-    const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
+    // [LEDGER · Leg-A witness] The bookkeeper's PIN grootboek (ledger_daily kind='pin') as an
+    // independent GROSS cross-check — fed to the triangle ONLY as pinLedgerByDay (a break on
+    // mismatch), never a money source. In-quarter days only, matching /api/result.
+    const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null; spent: number | null }>((from, to) =>
+      supabase.from("ledger_daily").select("ledger_date, received, spent")
+        .eq("user_id", ownerId).eq("kind", "pin")
+        .gte("ledger_date", start).lte("ledger_date", end)
+        .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+    // NET PIN (received − spent) — matches /api/result and the till's net-of-refunds pin_amount.
+    const pinLedgerByDay = new Map<string, number>();
+    for (const r of (pinLedgerRows ?? [])) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
+    const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
     // Only attach when there is a card figure to show (a terminal settlement or a payout).
     if (eftSettlements.length > 0 || netByDay.size > 0) cardReconciliation = tri;
   }
@@ -1228,12 +1280,20 @@ export async function buildClosingPackageZip(args: {
   // 'omzet'/'pos_income' with no invoice or Z-report IS revenue with no rate, and must be
   // surfaced as omzet-zonder-tarief here too (not silently dropped), so the ZIP matches
   // /api/result and /api/readiness. The covered-days set excludes takings the till counted.
-  const { data: cashAllRows } = await supabase
-    .from("cash_entries")
-    .select("direction, amount, category, btw_rate, entry_date")
-    .eq("user_id", ownerId)
-    .gte("entry_date", start)
-    .lte("entry_date", end);
+  // [PAGINATION] Busy shops book many cash entries a quarter — page past the cap so the
+  // reconciliation engine sees every one (a dropped row understates omzet/kosten).
+  const cashAllRows = await fetchAllRows<{
+    direction: string; amount: number | null; category: string | null; btw_rate: number | null; entry_date: string | null;
+  }>((from, to) =>
+    supabase
+      .from("cash_entries")
+      .select("direction, amount, category, btw_rate, entry_date")
+      .eq("user_id", ownerId)
+      .gte("entry_date", start)
+      .lte("entry_date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => []);
   const cashEntries: ResultCashEntry[] = (cashAllRows ?? []).map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount,
@@ -1241,20 +1301,23 @@ export async function buildClosingPackageZip(args: {
     btw_rate: c.btw_rate,
     date: c.entry_date,
   }));
-  const { data: bankAllRows } = await supabase
-    .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description")
-    .eq("user_id", ownerId)
-    .gte("date", start)
-    .lte("date", end);
-  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map((b) => {
-    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
-    return {
-      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
-      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
-    };
-  });
+  // [PAGINATION] Same for bank lines — a quarter of a busy account can exceed 1000 rows.
+  const bankAllRows = await fetchAllRows<{
+    amount: number | null; category: string | null; invoice_id: string | null; date: string | null; description: string | null;
+  }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("amount, category, invoice_id, date, description, counterpart_name")
+      .eq("user_id", ownerId)
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => []);
+  // [SETTLE] Shared mapper — identical card-settlement de-dup to /api/result, /api/aangifte and
+  // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
+  // package never double-counts a covered-day card settlement.
+  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map(toResultBankTx);
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
     status: i.status,
@@ -1266,7 +1329,10 @@ export async function buildClosingPackageZip(args: {
   const coveredDates = new Set(
     allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
   );
-  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates);
+  const coveredBudget = new Map(
+    allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget);
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),
@@ -1284,25 +1350,42 @@ export async function buildClosingPackageZip(args: {
     ? buildAangifte(result, completeness, `Q${quarter} ${year}`)
     : null;
 
-  // [CASH-EVIDENCE] Standalone kasboek sheet when the owner keeps a cash book — so a
-  // cash-heavy shop hands the accountant every kasboeking, not only the netted cash figures
-  // inside the concept aangifte. Injection-safe via esc(); null when there are no entries.
-  const cashCsv = (cashAllRows ?? []).length > 0
-    ? [
-        `BoekBrug — Kasboek Q${quarter} ${year}`,
-        "",
-        ["Datum", "Richting", "Categorie", "BTW-tarief", "Bedrag"].map(esc).join(";"),
-        ...(cashAllRows ?? []).map((c) =>
-          [
-            c.entry_date ?? "",
-            c.direction === "in" ? "In" : "Uit",
-            c.category ?? "",
-            c.btw_rate != null ? `${c.btw_rate}%` : "",
-            EUR(Number(c.amount) || 0),
-          ].map(esc).join(";"),
-        ),
-      ].join("\n")
-    : null;
+  // [KASBOEK] The cash book as the accountant's own running-balance sheet (Kiwi .xlsx layout),
+  // NOT a flat dump. It is a pure PROJECTION over the truth layer — the till's daily CASH takings
+  // (daily_turnover.cash_amount) + the cash-book movements — with the running drawer balance per
+  // day (Beginsaldo · Uitgaven · Ontvangsten · Eindsaldo). It books NOTHING into the P&L (the
+  // omzet is already counted once by the turnover engine), so there is no double-count with the
+  // concept aangifte. Same generator as the live /api/kasboek endpoint and the in-app screen.
+  //
+  // The Beginsaldo must carry from ALL prior periods, so the projection is fed the FULL history
+  // up to quarter-end (two small owner-scoped queries), not just this quarter's rows.
+  const kasEntriesRaw = await fetchAllRows<{
+    entry_date: string | null; direction: string; amount: number | null; category: string | null; description: string | null;
+  }>((from, to) =>
+    supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
+      .eq("user_id", ownerId).lte("entry_date", end)
+      .order("entry_date", { ascending: true }).range(from, to),
+  ).catch(() => []);
+  const kasEntries: KasEntry[] = (kasEntriesRaw ?? []).map((r) => ({
+    entry_date: r.entry_date, direction: r.direction === "in" ? "in" : "out",
+    amount: r.amount, category: r.category, description: r.description,
+  }));
+  const kasTurnoverRaw = await fetchAllRows<{ turnover_date: string; cash_amount: number | null }>((from, to) =>
+    supabase.from("daily_turnover").select("turnover_date, cash_amount")
+      .eq("user_id", ownerId).lte("turnover_date", end)
+      .order("turnover_date", { ascending: true }).range(from, to),
+  ).catch(() => []);
+  const kasTurnover: KasTurnoverDay[] = (kasTurnoverRaw ?? []) as KasTurnoverDay[];
+
+  // Only emit the sheet when the drawer has any life this quarter (takings or movements).
+  const kb = buildKasboek({
+    turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter,
+    openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter }),
+  });
+  const kasboekXlsx: Uint8Array | null =
+    kb.months.length > 0 || kb.openingBalance !== 0
+      ? matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`)
+      : null;
 
   return assembleClosingPackageZip({
     year,
@@ -1319,6 +1402,7 @@ export async function buildClosingPackageZip(args: {
     turnoverClosing,
     cardReconciliation,
     conceptAangifte,
+    kasboekXlsx,
     warnings,
   });
 }

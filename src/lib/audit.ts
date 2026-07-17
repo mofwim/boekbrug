@@ -39,6 +39,7 @@ export type AuditAction =
   | 'invoice.duplicated'              // ← v2: matches historical data
   | 'invoice.dedup_override'          // ← [INTAKE-FORCE] owner added despite a semantic-duplicate match ("toch toevoegen")
   | 'invoice.status_changed'
+  | 'invoice.auto_verified'           // ← [AUTO-ADVANCE] app moved a clean, confident invoice processing→received without a tap
   | 'invoice.reimported'              // ← [REIMPORT] owner re-read a queued invoice's PDF with the current extractor
   | 'bank.auto_confirmed'             // ← [BANK-AUTO-CONFIRM] app booked a near-certain bank↔invoice match without a tap
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)

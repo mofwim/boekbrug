@@ -12,8 +12,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { summarizeClosingPackage } from "@/lib/closing-package";
-import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
-import { turnoverNetOmzet, parsePosSettlement, type DailyTurnover } from "@/lib/turnover";
+import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { needsDocument } from "@/lib/bank-identity";
@@ -85,23 +85,30 @@ export async function GET(req: NextRequest) {
   // income, the "money in with no invoice" that readiness never used to see.
   let unmatchedIncomeCount = 0;
   for (const t of bank) {
-    if (t.status === "pending" && !t.invoice_id) {
-      if ((t.amount ?? 0) > 0 && t.category == null) {
-        unmatchedIncomeCount++;
-      } else {
-        const stillOpen =
-          t.category == null
-            ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
-            : t.category === "kosten";
-        if (stillOpen) undocumentedCount++;
-      }
+    const credit = (t.amount ?? 0) > 0;
+    // [TRUST-READY] Unexplained INCOME is a gap REGARDLESS of status: a credit with no
+    // linked invoice and no category is money-in we can't place. Restricting to 'pending'
+    // let a credit that was touched (status advanced by some other flow) but never
+    // categorised or linked slip through → a false "klaar" with unbooked revenue. Card
+    // takings are auto-categorised 'pos_income', so they carry a category and are excluded.
+    if (credit && !t.invoice_id && t.category == null) {
+      unmatchedIncomeCount++;
+      continue;
+    }
+    // Cost side stays pending-scoped: a categorised/confirmed debit is already resolved.
+    if (t.status === "pending" && !t.invoice_id && !credit) {
+      const stillOpen =
+        t.category == null
+          ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
+          : t.category === "kosten";
+      if (stillOpen) undocumentedCount++;
     }
   }
 
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
+    .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start).lte("invoice_date", end)
     .order("id", { ascending: true }).range(from, to));
@@ -116,6 +123,18 @@ export async function GET(req: NextRequest) {
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
   }));
+  // [PACKAGE-READINESS] Imported bills dated in the quarter still in the verify queue
+  // (status 'processing') must block "klaar" — they'd otherwise reach the accountant nowhere.
+  // Only 'processing' (the verify queue); a 'draft' is an unsent outgoing sales invoice, a
+  // separate concern that must not falsely block the close.
+  const unverifiedInvoiceCount = invRaw.filter((i) => i.status === "processing").length;
+  // [AUTO-ADVANCE] Invoices the app auto-verified (booked, but the owner should eyeball them
+  // at quarter close). field_confidence is jsonb; the _auto_verified marker is set by the
+  // intake/email auto-advance path.
+  const autoVerifiedCount = invRaw.filter((i) => {
+    const fc = i.field_confidence as Record<string, unknown> | null;
+    return !!(fc && typeof fc === "object" && fc._auto_verified);
+  }).length;
 
   const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
@@ -169,16 +188,16 @@ export async function GET(req: NextRequest) {
   // old bank=[]), a quarter whose only VAT gap is undeclared bank revenue could still score
   // "klaar" — while /api/result and /api/aangifte counted it. computeResult surfaces it as
   // omzet-zonder-tarief (cashOmzetZonderBtw), which blocks readiness, so all three agree.
-  // Card takings reconciled to a Z-report are excluded via settleDate + coveredDates.
-  const bankTx: ResultBankTx[] = bank.map((b) => {
-    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
-    return {
-      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
-      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
-    };
-  });
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates);
+  // Card takings reconciled to a Z-report are excluded via the shared toResultBankTx mapper
+  // (settleDate + coveredDates), which also catches an acquirer payout the owner mis-tapped
+  // as 'omzet' so readiness agrees exactly with /api/result and /api/aangifte.
+  const bankTx: ResultBankTx[] = bank.map(toResultBankTx);
+  const coveredBudget = new Map(
+    allTurnover
+      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget);
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
   const completeness: AangifteCompleteness = {
@@ -196,6 +215,8 @@ export async function GET(req: NextRequest) {
     quarterLabel,
     verifiedInvoiceCount,
     invoicesWithEvidence,
+    unverifiedInvoiceCount,
+    autoVerifiedCount,
     missingEvidence: [], // exact COUNT drives the score; specific numbers aren't surfaced here
     bankTxCount: bank.length,
     undocumentedCount,

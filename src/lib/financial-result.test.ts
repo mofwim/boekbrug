@@ -1,6 +1,8 @@
 // [RESULT] Pure node test — run: npx tsx src/lib/financial-result.test.ts
 import {
   computeResult,
+  toResultBankTx,
+  cardBudgetBound,
   type ResultInvoice, type ResultBankTx, type ResultCashEntry,
 } from "./financial-result";
 import type { DailyTurnover } from "./turnover";
@@ -166,6 +168,153 @@ console.log("\n— [SETTLE-LAG] fallback booking date reconciles to Z-report via
   const rff = computeResult([], bankFarFallback, [], turnover);
   check("fallback booking date beyond the lag window → counts (not silently suppressed)",
     near(rff.omzet, 1000 + 400) && near(rff.cashOmzetZonderBtw, 400));
+}
+
+console.log("\n— [FINDING-1] an acquirer payout MIS-TAPPED as 'omzet' on a covered day must NOT double-count —");
+{
+  // The R&D audit's HIGH bug: a Rabo OmniKassa / Worldline / Nets payout the auto-classifier
+  // missed → sign-fallback 'omzet' → the owner confirms 'omzet'. On a covered till day the
+  // till already counted those takings once; the old de-dup (keyed on the literal category
+  // "pos_income") let this 'omzet' line add a SECOND helping. Now toResultBankTx recognises the
+  // acquirer NAME and flags it as a settlement, so computeResult treats it as a covered witness.
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-07-03",
+    base_0: 0, base_9: 0, base_21: 2113, btw_9: 0, btw_21: 190,
+    total_incl: 2303.10, pin_amount: 2086.65, cash_amount: 216.45, other_amount: 0,
+  }];
+  // Owner (mis)categorised the OmniKassa payout as plain 'omzet'. Booked next day (T+1).
+  const rawMisTap = { amount: 2080, category: "omzet", invoice_id: null, date: "2026-07-04", description: "Rabo OmniKassa afrekening periode" };
+  const mapped = toResultBankTx(rawMisTap);
+  check("toResultBankTx flags an acquirer-named CREDIT as a settlement even when category='omzet'", mapped.posSettlement === true);
+  check("… and derives a settleDate (booking-date fallback) for the covered-day check", mapped.settleDate === "2026-07-04");
+  const rMis = computeResult([], [mapped], [], turnover);
+  check("covered-day OmniKassa 'omzet' payout is a witness → omzet = till net only (2113, NOT ~4193)", near(rMis.omzet, 2113));
+
+  // A genuine NON-acquirer bank 'omzet' on a covered day (e.g. a webshop transfer that never
+  // went through the till) has NO acquirer name → NOT a settlement → it must still COUNT, so
+  // real off-till revenue is never hidden.
+  const rawWebshop = { amount: 500, category: "omzet", invoice_id: null, date: "2026-07-03", description: "overboeking webshop bestelling 8842" };
+  const mappedWebshop = toResultBankTx(rawWebshop);
+  check("a non-acquirer 'omzet' credit is NOT flagged as a settlement", mappedWebshop.posSettlement === false);
+  const rShop = computeResult([], [mappedWebshop], [], turnover);
+  check("… so genuine off-till revenue on a covered day still counts (2113 + 500)", near(rShop.omzet, 2113 + 500));
+
+  // An acquirer-named DEBIT (a purchase AT a terminal) is not income → never a settlement.
+  const mappedDebit = toResultBankTx({ amount: -12.5, category: "kosten", invoice_id: null, date: "2026-07-03", description: "betaalautomaat CCV bloemen" });
+  check("an acquirer-named DEBIT is not a settlement (it's a purchase)", mappedDebit.posSettlement === false);
+
+  // The acquirer name often lives in counterpart_name, not description — the mapper must see it,
+  // else a mis-tapped 'omzet' payout would still double-count (adversarial review LOW #7/#8).
+  const cpOnly = toResultBankTx({ amount: 900, category: "omzet", invoice_id: null, date: "2026-07-03", description: "afrekening", counterpart_name: "Worldline" });
+  check("acquirer name in counterpart_name (not description) still flags a settlement", cpOnly.posSettlement === true);
+}
+
+console.log("\n— [CARD-BUDGET] suppression is bounded by pin_amount, so off-till (webshop) revenue is never hidden —");
+{
+  // The adversarial review's HIGH: an omnichannel store (physical till + webshop via the same
+  // PSP). Covered day pin €545; a Buckaroo payout of €800 arrives, tapped 'omzet'. Suppressing
+  // the WHOLE €800 would hide €255 of real off-till revenue. The budget suppresses only up to
+  // pin_amount; the €255 excess counts and is flagged.
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-07-06",
+    base_0: 0, base_9: 0, base_21: 500, btw_9: 0, btw_21: 105,
+    total_incl: 605, pin_amount: 545, cash_amount: 60, other_amount: 0,
+  }];
+  const buckaroo = toResultBankTx({ amount: 800, category: "omzet", invoice_id: null, date: "2026-07-06", description: "Buckaroo uitbetaling webshop" });
+  const r = computeResult([], [buckaroo], [], turnover);
+  check("only pin_amount (545) is suppressed; the €255 excess counts (till net 500 + 255)", near(r.omzet, 500 + 255));
+  check("the excess is flagged as omzet-zonder-tarief (blocks readiness, no false 'klaar')", near(r.cashOmzetZonderBtw, 255));
+
+  // When the till's OWN card settlement also appears, it consumes the budget and the full
+  // webshop payout counts — the reconciliation self-corrects and the total is order-independent.
+  const terminal = toResultBankTx({ amount: 545, category: "pos_income", invoice_id: null, date: "2026-07-06", description: "CCV afrek. transacties DAT. 20260706" });
+  const rBoth = computeResult([], [terminal, buckaroo], [], turnover);
+  const rBothRev = computeResult([], [buckaroo, terminal], [], turnover);
+  check("terminal (545) + webshop (800): budget consumed by the terminal → full webshop counts (500 + 800)", near(rBoth.omzet, 500 + 800));
+  check("… and the result is independent of statement order", near(rBoth.omzet, rBothRev.omzet));
+
+  // A pos_income line that itself exceeds the day's pin (terminal paid out more than the till
+  // rang, or a webshop settling via the terminal PSP) → the excess is not hidden.
+  const bigPos: ResultBankTx[] = [{ amount: 700, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true }];
+  const rBig = computeResult([], bigPos, [], turnover);
+  check("pos_income above pin (700 vs 545) → €155 excess counts, not hidden", near(rBig.omzet, 500 + 155));
+}
+
+console.log("\n— [RE-REVIEW] DAT-less / cross-quarter / null-pin / refund edges (2nd adversarial pass) —");
+{
+  // HIGH-1: two DAT-less payouts on CONSECUTIVE covered days must not collapse onto one day's
+  // budget (which leaked the 2nd as fake 'excess' → systematic double-count). The budget-aware
+  // backward match spreads them across both days' budgets.
+  const turnover: DailyTurnover[] = [
+    { turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 },
+    { turnover_date: "2026-07-07", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 },
+  ];
+  const twoPayouts: ResultBankTx[] = [
+    { amount: 1000, category: "pos_income", invoice_id: null, settleDate: "2026-07-08", settleExact: false }, // for 07-06 (T+2)
+    { amount: 1000, category: "pos_income", invoice_id: null, settleDate: "2026-07-09", settleExact: false }, // for 07-07 (T+2)
+  ];
+  const h1 = computeResult([], twoPayouts, [], turnover);
+  check("HIGH-1: consecutive DAT-less payouts don't double-count (omzet = 2× till net, not +1000)", near(h1.omzet, 826.45 * 2) && h1.cashOmzetZonderBtw === 0);
+
+  // HIGH-2: a prior-quarter (buffer) covered day must still get a budget, so a same-day WEBSHOP
+  // payout settling THIS quarter is counted here, not hidden in both quarters. (Terminal ≤ pin
+  // is suppressed as prior-quarter money.)
+  const jun30: DailyTurnover = { turnover_date: "2026-06-30", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 };
+  const coveredQ3 = new Set(["2026-06-30"]);
+  const budgetQ3 = new Map([["2026-06-30", cardBudgetBound(jun30)]]);
+  const terminal = toResultBankTx({ amount: 1000, category: "pos_income", invoice_id: null, date: "2026-07-02", description: "CCV afrek. DAT. 20260630" });
+  const webshop = toResultBankTx({ amount: 400, category: "omzet", invoice_id: null, date: "2026-07-02", description: "Mollie uitbetaling webshop" });
+  const h2 = computeResult([], [terminal, webshop], [], [], coveredQ3, 0, budgetQ3);
+  check("HIGH-2: cross-quarter webshop payout counts THIS quarter (400), terminal suppressed", near(h2.omzet, 400) && near(h2.cashOmzetZonderBtw, 400));
+
+  // MED-3: pin_amount null → the budget is the NON-CASH takings (gross − cash), so a same-day
+  // webshop payout is not absorbed up to the cash amount.
+  const nullPin: DailyTurnover[] = [{ turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: null, cash_amount: 400, other_amount: 0 }];
+  check("MED-3: null pin → bound = gross − cash (600), not gross (1000)", near(cardBudgetBound(nullPin[0]), 600));
+  const term600: ResultBankTx = { amount: 600, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true };
+  const shop400 = toResultBankTx({ amount: 400, category: "omzet", invoice_id: null, date: "2026-07-06", description: "Mollie webshop" });
+  const m3 = computeResult([], [term600, shop400], [], nullPin);
+  check("MED-3: the €400 webshop is not hidden by the cash portion (omzet = 826.45 + 400)", near(m3.omzet, 826.45 + 400) && near(m3.cashOmzetZonderBtw, 400));
+
+  // MED-4: a WINDOW-matched (DAT-less) negative reversal is NOT in the Z-report net → it must
+  // reduce omzet, not vanish (vanishing overstates omzet). An EXACT-dated same-day refund stays a witness.
+  const oneDay: DailyTurnover[] = [{ turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 }];
+  const laterReversal: ResultBankTx[] = [{ amount: -200, category: "pos_income", invoice_id: null, settleDate: "2026-07-07", settleExact: false }];
+  const m4 = computeResult([], laterReversal, [], oneDay);
+  check("MED-4: a window-matched later chargeback reduces omzet (826.45 − 200), not hidden", near(m4.omzet, 826.45 - 200));
+  const sameDayRefund: ResultBankTx[] = [{ amount: -200, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true }];
+  const m4b = computeResult([], sameDayRefund, [], oneDay);
+  check("MED-4: an exact same-day refund is still a witness of the till's net (omzet = 826.45)", near(m4b.omzet, 826.45));
+
+  // LOW: a 1-cent excess (pin 544.99 vs payout 545.00) is a rounding artifact → witness, no phantom flag.
+  const roundy: DailyTurnover[] = [{ turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 500, btw_9: 0, btw_21: 105, total_incl: 605, pin_amount: 544.99, cash_amount: 60, other_amount: 0 }];
+  const cent: ResultBankTx[] = [{ amount: 545.00, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true }];
+  const low = computeResult([], cent, [], roundy);
+  check("LOW: a €0.01 rounding excess is a witness, not a phantom zonder-tarief nudge", near(low.omzet, 500) && low.cashOmzetZonderBtw === 0);
+}
+
+console.log("\n— [FINDING-2] SETTLE_LAG widened to 5 days: a DAT-less T+5 payout still reconciles —");
+{
+  // A Jun 30 (Q2) sale whose DAT-less payout posts Jul 5 (T+5, over a long weekend + holiday),
+  // booked into Q3. Q3's revenue array has no Jun 30 row, but the caller's −5-day covered
+  // buffer includes it. With the OLD lag=3 the backward window reached only Jul 2 → the payout
+  // was NOT matched → the till's already-counted €900 was booked a SECOND time in Q3. lag=5
+  // reaches Jun 30 and suppresses it.
+  const bankT5: ResultBankTx[] = [
+    { amount: 1089, category: "pos_income", invoice_id: null, settleDate: "2026-07-05", settleExact: false },
+  ];
+  const covered = new Set(["2026-06-30"]);
+  const r = computeResult([], bankT5, [], [], covered);
+  check("T+5 DAT-less payout reconciles to the covered Z-report day → not re-counted in the new quarter",
+    r.omzet === 0 && r.cashOmzetZonderBtw === 0);
+
+  // A T+6 payout is beyond the 5-day window (and the 5-day buffer) → it is NOT suppressed and
+  // counts as real revenue rather than being silently hidden.
+  const bankT6: ResultBankTx[] = [
+    { amount: 500, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: false },
+  ];
+  const r6 = computeResult([], bankT6, [], [], covered);
+  check("T+6 (beyond the window) counts as revenue → never silently hidden", near(r6.omzet, 500));
 }
 
 console.log("\n— turnover cross-quarter settlement lag (R1) —");

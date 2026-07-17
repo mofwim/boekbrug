@@ -7,8 +7,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
-import { parsePosSettlement, turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
+import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
@@ -73,23 +73,13 @@ export async function GET(req: NextRequest) {
   // Bank + cash (same de-dup inputs as /api/result).
   const bankRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description")
+    .select("amount, category, invoice_id, date, description, counterpart_name")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
-  const bankTx: ResultBankTx[] = bankRows.map((b) => {
-    // [SETTLE-EXACT] Must match /api/result, /api/readiness AND the closing package: when a
-    // pos_income line has NO printed DAT. date, settleDate falls back to the booking date and
-    // the covered-day de-dup must widen backward — WITHOUT settleExact it wrongly treated the
-    // fallback as exact, silently absorbing a missing-Z-report card day into a neighbouring
-    // till day (understating omzet + hiding the omzet-zonder-tarief warning). Now all four
-    // surfaces agree on the same quarter.
-    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
-    return {
-      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
-      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
-    };
-  });
+  // [SETTLE] The card-settlement de-dup is derived by the shared toResultBankTx mapper, so
+  // /api/result, /api/readiness AND the closing package all agree on the same quarter and the
+  // same covered-day witness rule (incl. an acquirer payout the owner mis-tapped as 'omzet').
+  const bankTx: ResultBankTx[] = bankRows.map(toResultBankTx);
 
   const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
@@ -120,7 +110,12 @@ export async function GET(req: NextRequest) {
     allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
   );
 
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates);
+  const coveredBudget = new Map(
+    allTurnover
+      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget);
 
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);

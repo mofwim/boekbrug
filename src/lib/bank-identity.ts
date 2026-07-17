@@ -36,8 +36,29 @@ const FEE_RE =
   /\bbankkosten\b|kosten (?:betaal|zakelijke)?rekening|maandpakket|\bpakketkosten\b|debetrente|creditrente|\brente\b/;
 // PSP / card-terminal SETTLEMENT credits (money paid out TO you). NOT the same as a
 // "betaalautomaat" DEBIT, which is you paying at a terminal — that is a purchase.
+//
+// [ACQUIRER-COVERAGE] Two groups: (1) payout PHRASES that only ever appear on a settlement
+// credit (afrek., geldservice, ING DD&C, "…afrek"), and (2) the acquirer/PSP VENDOR names.
+// Group 2 mirrors card-reconcile.ACQUIRER_VENDOR_RE one-for-one so the classifier can NEVER
+// recognise fewer acquirers than the fee-dedup does — the old list missed Worldline,
+// Paysquare, Equens, Buckaroo, Nets, Klarna and (Rabo)OmniKassa, so their daily payout fell
+// through to the sign-based 'omzet' fallback and was double-counted on top of the till's
+// takings. A vendor name only classifies as income when the line is a CREDIT (guarded in
+// classifyBankTransaction / isPosPayoutDescription), so a purchase AT one of these terminals
+// (a debit) still correctly falls through to 'unknown'.
 const POS_PAYOUT_RE =
-  /ing dd&c|afrek\.|geldservice|\bccv\b.*afrek|stripe(?:\s+payout)?|mollie(?:\s+payout)?|adyen|sumup|zettle/;
+  /ing dd&c|afrek\.|geldservice|\bccv\b|stripe|mollie|adyen|sum\s?up|zettle|izettle|\bworldline\b|paysquare|\bequens\b|buckaroo|\bnets\b|klarna|rabo\s?omnikassa|omnikassa/;
+
+/**
+ * Does this line's text look like a card-acquirer / PSP PAYOUT (a settlement credit)?
+ * Pure pattern test — the caller must gate on a CREDIT (amount ≥ 0) for a true payout, as a
+ * debit at the same terminal is a purchase. Exported so the result engine can recognise a
+ * card settlement the owner may have (mis)categorised as plain 'omzet' and still treat it as
+ * a covered-day witness rather than a second helping of revenue.
+ */
+export function isPosPayoutDescription(description: string | null, counterpartName: string | null = null): boolean {
+  return POS_PAYOUT_RE.test(hay(counterpartName, description));
+}
 
 function hay(counterpartName: string | null, description: string | null): string {
   return `${counterpartName ?? ''} ${description ?? ''}`.toLowerCase();

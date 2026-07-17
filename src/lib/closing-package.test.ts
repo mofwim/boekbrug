@@ -205,7 +205,7 @@ test("[TRIANGLE] card reconciliation is written to the ZIP and a gross mismatch 
   const { zipBytes, summary } = await assembleClosingPackageZip({ ...emptyAssemble, cardReconciliation });
   const zip = await JSZip.loadAsync(zipBytes);
   const csv = await zip.file("kaart-reconciliatie.csv")!.async("string");
-  assert.match(csv, /1000,00;1000,00;985,00;15,00;sluit aan/, "the reconciled day shows in the CSV");
+  assert.match(csv, /1000,00;1000,00;;985,00;15,00;sluit aan/, "the reconciled day shows in the CSV");
   assert.match(csv, /verschil kassa\/terminal/, "the mismatch day is flagged");
   assert.ok(summary.warnings.some((w) => w.code === "card_gross_mismatch"), "a gross-mismatch warning is raised");
 });

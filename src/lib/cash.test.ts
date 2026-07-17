@@ -47,6 +47,17 @@ console.log("\n— [CASH-SETTLE] buildCashSettlement (a cash-paid invoice → a 
     buildCashSettlement({ id: "x", total_inc_btw: -50 }) === null);
   check("no total, no ex/btw → null (never a €0/garbage settlement)", buildCashSettlement({ id: "x", total_inc_btw: null }) === null);
   check("zero total → null", buildCashSettlement({ id: "x", total_inc_btw: 0 }) === null);
+  // [CASH-SETTLE-BIDIR] an OUTGOING (sales) invoice paid in cash raises the drawer ('in'),
+  // still category 'betaling' (P&L-neutral — the omzet already came from the invoice).
+  {
+    const out = buildCashSettlement({ id: "s1", direction: "outgoing", total_inc_btw: 500, invoice_number: "2026-020", client_name: "Klant BV" });
+    check("outgoing cash sale → direction 'in' (drawer up)", out?.direction === "in" && out?.amount === 500);
+    check("outgoing cash sale stays P&L-neutral (category 'betaling')", out?.category === "betaling" && out?.btw_rate === null);
+    check("outgoing description reads 'Ontvangen (contant)'", (out?.description ?? "").includes("Ontvangen (contant)"));
+    const inc = buildCashSettlement({ id: "p1", direction: "incoming", total_inc_btw: 121 });
+    check("incoming cash purchase → direction 'out' (drawer down)", inc?.direction === "out" && inc?.amount === 121);
+    check("default direction (unset) → 'out' (incoming, back-compat)", buildCashSettlement({ id: "z", total_inc_btw: 10 })?.direction === "out");
+  }
 }
 
 console.log("\n— [CASH-SETTLE] computeCashSettlementSync (self-healing: create / heal / reverse) —");
@@ -87,6 +98,12 @@ console.log("\n— [CASH-SETTLE][F1] a corrected invoice amount HEALS the stale 
   const none = computeCashSettlementSync([], []);
   check("nothing paid, nothing existing → no-op",
     none.toCreate.length === 0 && none.toUpdate.length === 0 && none.toDeleteIds.length === 0);
+  // [CASH-SETTLE-BIDIR] a legacy 'out' entry for what is actually an OUTGOING cash sale heals to 'in'.
+  const dirHeal = computeCashSettlementSync(
+    [{ id: "A", direction: "outgoing", total_inc_btw: 500 }],
+    [{ id: "e1", invoice_id: "A", amount: 500, entry_date: undefined, direction: "out" }],
+  );
+  check("wrong drawer direction → toUpdate (heals 'out' → 'in')", dirHeal.toUpdate.length === 1);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

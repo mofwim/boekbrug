@@ -1,0 +1,220 @@
+// src/lib/kasboek.ts
+// [KASBOEK] The cash book as LIVE DATA, not a hand-kept spreadsheet. This is a PURE PROJECTION —
+// it combines two sources the app already holds and computes the running drawer balance per day,
+// exactly like the store's "Kiwi Kasboek" file (Beginsaldo · Uitgaven · Ontvangsten · Eindsaldo,
+// per month). Crucially it PERSISTS NOTHING and books NOTHING into the P&L, so there is zero
+// double-count risk with the turnover engine:
+//
+//   Ontvangsten (cash IN)  = the till's daily CASH takings (daily_turnover.cash_amount)  ← revenue
+//                            + any manual cash-in entries (opname/withdrawal, correction)
+//   Uitgaven   (cash OUT)  = cash-book entries with direction 'out' (a cash-paid invoice's
+//                            'betaling' settlement, a cash expense, salaris, storting to bank …)
+//   Eindsaldo              = running balance from the opening balance
+//
+// The daily cash takings live in daily_turnover (where computeResult already books the omzet
+// ONCE). We NEVER copy them into cash_entries — that would double-count revenue. Instead the
+// drawer view reads both and adds them only for the BALANCE, never for the P&L. Same discipline
+// as readiness: a projection over the truth layer, not a new source of truth.
+//
+// Pure + node-testable (run: npx tsx src/lib/kasboek.test.ts).
+
+export type Quarter = 1 | 2 | 3 | 4;
+
+/** Minimal structural view of a daily_turnover row — only what the drawer needs. */
+export interface KasTurnoverDay {
+  turnover_date: string;      // ISO 'YYYY-MM-DD'
+  cash_amount: number | null; // the CASH portion of that day's gross takings
+}
+
+/** Minimal structural view of a cash_entries row. */
+export interface KasEntry {
+  entry_date: string | null;  // ISO 'YYYY-MM-DD'
+  direction: "in" | "out";
+  amount: number | null;
+  category: string | null;
+  description: string | null;
+}
+
+export interface KasRow {
+  date: string;               // ISO
+  beginsaldo: number;
+  ontvangsten: number;        // cash IN that day
+  uitgaven: number;           // cash OUT that day
+  descriptions: string[];     // human descriptions of the day's movements (Uitgaven first)
+  eindsaldo: number;
+}
+
+export interface KasMonth {
+  key: string;                // 'YYYY-MM'
+  label: string;              // Dutch month label e.g. 'jan 2026'
+  rows: KasRow[];
+  totalIn: number;
+  totalOut: number;
+}
+
+export interface Kasboek {
+  year: number;
+  quarter: Quarter;
+  openingBalance: number;     // Beginsaldo of the first day (carried from prior periods)
+  closingBalance: number;     // Eindsaldo of the last day
+  months: KasMonth[];
+  totalIn: number;
+  totalOut: number;
+}
+
+const MONTHS_NL = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+const nlDate = (iso: string) => { const [y, m, d] = iso.split("-"); return `${d}-${m}-${y}`; };
+const pad = (n: number) => String(n).padStart(2, "0");
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+function quarterRange(year: number, q: Quarter): { start: string; end: string } {
+  const startMonth = (q - 1) * 3; // 0-based
+  const start = `${year}-${pad(startMonth + 1)}-01`;
+  const endD = new Date(Date.UTC(year, startMonth + 3, 0)); // last day of the quarter
+  const end = `${endD.getUTCFullYear()}-${pad(endD.getUTCMonth() + 1)}-${pad(endD.getUTCDate())}`;
+  return { start, end };
+}
+
+const isoDay = (s: string | null | undefined): string | null =>
+  typeof s === "string" && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+
+/**
+ * The drawer's OPENING balance for a quarter = a configured starting balance PLUS every cash
+ * movement dated BEFORE the quarter start. Pure — same combine rule as the in-quarter rows, so
+ * the balance is continuous across quarter boundaries (Q2 opens where Q1 closed).
+ */
+export function openingBalanceForQuarter(args: {
+  turnover: KasTurnoverDay[];
+  entries: KasEntry[];
+  year: number;
+  quarter: Quarter;
+  startingBalance?: number;
+}): number {
+  const { turnover, entries, year, quarter, startingBalance = 0 } = args;
+  const { start } = quarterRange(year, quarter);
+  let bal = startingBalance;
+  for (const t of turnover) {
+    const d = isoDay(t.turnover_date);
+    if (d && d < start) bal += Number(t.cash_amount) || 0;
+  }
+  for (const e of entries) {
+    const d = isoDay(e.entry_date);
+    if (d && d < start) bal += (e.direction === "in" ? 1 : -1) * (Number(e.amount) || 0);
+  }
+  return r2(bal);
+}
+
+/**
+ * Build the running cash book for one quarter. A row is emitted for every day that has ANY cash
+ * movement (in or out); the balance only changes on those days, so this is complete and exact.
+ * Pure — no I/O, no persistence, no P&L effect.
+ */
+export function buildKasboek(args: {
+  turnover: KasTurnoverDay[];
+  entries: KasEntry[];
+  year: number;
+  quarter: Quarter;
+  openingBalance?: number;
+}): Kasboek {
+  const { turnover, entries, year, quarter, openingBalance = 0 } = args;
+  const { start, end } = quarterRange(year, quarter);
+
+  // Aggregate per day, in-quarter only.
+  type Day = { in: number; out: number; desc: string[] };
+  const byDay = new Map<string, Day>();
+  const get = (d: string): Day => {
+    let x = byDay.get(d);
+    if (!x) { x = { in: 0, out: 0, desc: [] }; byDay.set(d, x); }
+    return x;
+  };
+
+  for (const t of turnover) {
+    const d = isoDay(t.turnover_date);
+    if (!d || d < start || d > end) continue;
+    const cash = Number(t.cash_amount) || 0;
+    if (cash === 0) continue;
+    get(d).in += cash;
+    // (daily takings need no per-line description — it's the day's kassa-omzet)
+  }
+  for (const e of entries) {
+    const d = isoDay(e.entry_date);
+    if (!d || d < start || d > end) continue;
+    const amt = Number(e.amount) || 0;
+    if (amt === 0) continue;
+    const day = get(d);
+    if (e.direction === "in") day.in += amt;
+    else day.out += amt;
+    if (e.description && e.description.trim()) day.desc.push(e.description.trim());
+  }
+
+  const days = [...byDay.keys()].sort();
+  let running = r2(openingBalance);
+  const rows: KasRow[] = [];
+  for (const d of days) {
+    const day = byDay.get(d)!;
+    const begin = running;
+    const inn = r2(day.in);
+    const out = r2(day.out);
+    running = r2(begin + inn - out);
+    rows.push({ date: d, beginsaldo: begin, ontvangsten: inn, uitgaven: out, descriptions: day.desc, eindsaldo: running });
+  }
+
+  // Group into month blocks (like the real file's monthly Kasboek sections).
+  const months: KasMonth[] = [];
+  for (const row of rows) {
+    const key = row.date.slice(0, 7);
+    let m = months.find((x) => x.key === key);
+    if (!m) {
+      const mi = Number(key.slice(5, 7)) - 1;
+      m = { key, label: `${MONTHS_NL[mi]} ${key.slice(0, 4)}`, rows: [], totalIn: 0, totalOut: 0 };
+      months.push(m);
+    }
+    m.rows.push(row);
+    m.totalIn = r2(m.totalIn + row.ontvangsten);
+    m.totalOut = r2(m.totalOut + row.uitgaven);
+  }
+
+  const totalIn = r2(months.reduce((s, m) => s + m.totalIn, 0));
+  const totalOut = r2(months.reduce((s, m) => s + m.totalOut, 0));
+
+  return {
+    year,
+    quarter,
+    openingBalance: r2(openingBalance),
+    closingBalance: rows.length ? rows[rows.length - 1].eindsaldo : r2(openingBalance),
+    months,
+    totalIn,
+    totalOut,
+  };
+}
+
+/**
+ * Lay the Kasboek out as a cell matrix in the store's own format (monthly blocks: a title row,
+ * a header row, one row per active day — Datum · Beginsaldo · Uitgaven · Omschrijving ·
+ * Ontvangsten · Eindsaldo — then a month totals row). Pure: matrix in → matrix out; the SheetJS
+ * writer (xlsx-adapter.matrixToXlsxBytes) turns it into the .xlsx the accountant receives.
+ */
+export function kasboekToMatrix(kb: Kasboek): (string | number)[][] {
+  const rows: (string | number)[][] = [];
+  rows.push([`Kasboek — Q${kb.quarter} ${kb.year}`]);
+  rows.push([`Beginsaldo kwartaal`, kb.openingBalance]);
+  rows.push([]);
+  for (const m of kb.months) {
+    rows.push([m.label]);
+    rows.push(["Datum", "Beginsaldo", "Uitgaven", "Omschrijving", "Ontvangsten", "Eindsaldo"]);
+    for (const r of m.rows) {
+      rows.push([
+        nlDate(r.date),
+        r.beginsaldo,
+        r.uitgaven || "",
+        r.descriptions.join(" ; "),
+        r.ontvangsten || "",
+        r.eindsaldo,
+      ]);
+    }
+    rows.push(["Totaal", "", m.totalOut, "", m.totalIn, ""]);
+    rows.push([]);
+  }
+  rows.push(["Eindsaldo kwartaal", kb.closingBalance]);
+  return rows;
+}

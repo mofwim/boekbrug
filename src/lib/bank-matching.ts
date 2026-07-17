@@ -275,13 +275,22 @@ export function isEligible(
   // [BANK-MATCH-STRICT] Date sanity: a payment cannot happen meaningfully BEFORE
   // the invoice was issued. A €323,68 monthly fee invoice dated 15-06 must NOT
   // match a transaction from 30-05 or 17-04 (those paid EARLIER invoices, likely
-  // not in the system). Small grace window (3 days) for clock/booking skew.
+  // not in the system).
+  //
+  // [BANK-MATCH-ARREARS] Grace widened 3 → 10 days: a SEPA automatische incasso /
+  // subscription is often charged on the 1st while the supplier's invoice carries a
+  // LATER document date (bill-in-arrears) — e.g. debit on 01-06, invoice dated 05-06.
+  // At 3 days that real, imported invoice was excluded from the candidate list
+  // ENTIRELY (not just denied 'auto'), so the line stayed "Geen factuur" forever and
+  // the owner's only tool was attach-invoice → a duplicate. 10 days surfaces it as a
+  // `choice` (the score, not this gate, still gates 'auto'), while a genuinely earlier
+  // payment (16+ days, the previous month's bill) is still rejected.
   // tx.date and invoice_date are ISO "YYYY-MM-DD"; skip the check if either missing.
   if (tx.date && inv.invoice_date) {
     const txT = Date.parse(tx.date);
     const invT = Date.parse(inv.invoice_date);
     if (!Number.isNaN(txT) && !Number.isNaN(invT)) {
-      const GRACE_MS = 3 * 86_400_000; // 3 days
+      const GRACE_MS = 10 * 86_400_000; // 10 days (bill-in-arrears / incasso skew)
       if (txT < invT - GRACE_MS) return false; // payment predates the invoice
     }
   }
