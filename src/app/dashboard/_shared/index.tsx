@@ -114,7 +114,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
             style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)' }}
             className="hover:text-gray-500 transition-colors disabled:opacity-40"
           >
-            <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
+            <span className={`material-symbols-outlined ${refreshing ? 'animate-spin' : ''}`} style={{ fontSize: 20 }} aria-hidden>refresh</span>
           </button>
 
           {!isAccountant &&
