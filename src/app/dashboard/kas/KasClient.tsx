@@ -148,7 +148,13 @@ export default function KasClient() {
   // [CASH-SETTLE] 'betaling' is a system-managed settlement of a cash-paid invoice — labelled
   // for display, but never offered in the add form (CATS), and not manually deletable (undo the
   // payment on the invoice instead; the kasboek then reconciles it away).
-  const catLabel = (k: string) => (k === 'betaling' ? 'Factuurbetaling (contant)' : CATS.find((c) => c.key === k)?.label ?? k)
+  // A 'transfer' is disambiguated by DIRECTION so the accountant sees the real move: cash OUT of
+  // the drawer to the bank = storting, cash INTO the drawer from the bank = opname.
+  const catLabel = (k: string, dir?: 'in' | 'out') => {
+    if (k === 'betaling') return 'Factuurbetaling (contant)'
+    if (k === 'transfer') return dir === 'in' ? 'Opname (van bank)' : dir === 'out' ? 'Storting (naar bank)' : 'Naar/van bank'
+    return CATS.find((c) => c.key === k)?.label ?? k
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -192,7 +198,7 @@ export default function KasClient() {
                   style={{ padding: '7px 12px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: FONT,
                     background: active ? M3.primaryContainer : '#F1F3F4', color: active ? '#041E49' : M3.neutral,
                     border: active ? `1px solid ${M3.primary}` : '1px solid transparent' }}>
-                  {c.label}
+                  {c.key === 'transfer' ? (direction === 'in' ? 'Opname (van bank)' : 'Storting (naar bank)') : c.label}
                 </button>
               )
             })}
@@ -243,9 +249,9 @@ export default function KasClient() {
               <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none' }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {e.description?.trim() || catLabel(e.category)}
+                    {e.description?.trim() || catLabel(e.category, e.direction)}
                   </div>
-                  <div style={{ fontSize: 12, color: M3.neutral, marginTop: 1 }}>{formatDate(e.entry_date)} · {catLabel(e.category)}</div>
+                  <div style={{ fontSize: 12, color: M3.neutral, marginTop: 1 }}>{formatDate(e.entry_date)} · {catLabel(e.category, e.direction)}</div>
                 </div>
                 <div style={{ fontFamily: FONT_NUM, fontSize: 14.5, fontWeight: 700, color: e.direction === 'in' ? M3.success : M3.error, whiteSpace: 'nowrap' }}>
                   {e.direction === 'in' ? '+' : '−'}{eur.format(e.amount)}
