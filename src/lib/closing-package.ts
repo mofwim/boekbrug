@@ -1257,7 +1257,17 @@ export async function buildClosingPackageZip(args: {
     // end-of-quarter day whose payout lands after quarter-end (DAT still in-quarter), not to
     // add prev/next-quarter rows to an accountant-facing sheet. Matches /api/result exactly.
     for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
-    const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
+    // [LEDGER · Leg-A witness] The bookkeeper's PIN grootboek (ledger_daily kind='pin') as an
+    // independent GROSS cross-check — fed to the triangle ONLY as pinLedgerByDay (a break on
+    // mismatch), never a money source. In-quarter days only, matching /api/result.
+    const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null }>((from, to) =>
+      supabase.from("ledger_daily").select("ledger_date, received")
+        .eq("user_id", ownerId).eq("kind", "pin")
+        .gte("ledger_date", start).lte("ledger_date", end)
+        .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+    const pinLedgerByDay = new Map<string, number>();
+    for (const r of (pinLedgerRows ?? [])) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, Number(r.received) || 0);
+    const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
     // Only attach when there is a card figure to show (a terminal settlement or a payout).
     if (eftSettlements.length > 0 || netByDay.size > 0) cardReconciliation = tri;
   }

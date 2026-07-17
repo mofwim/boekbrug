@@ -30,6 +30,13 @@ interface TurnoverRow {
 interface Warning { row: number; code: string; message: string }
 interface Preview { rows: TurnoverRow[]; warnings: Warning[]; count: number }
 
+// [LEDGER] A bookkeeper grootboek export (Kiwi OVERZICHT/KASBOEK) — a CROSS-CHECK witness,
+// never money. Uploaded here too so the owner can just "throw" the file; it's routed to
+// /api/ledger/import when the Z-report parser recognises it as a ledger.
+interface LedgerRow { ledger_date: string; received: number; spent: number }
+interface LedgerPreview { kind: string; accountNr: string | null; title: string | null; rows: LedgerRow[]; warnings: { code: string; message: string }[]; count: number }
+const LEDGER_KIND_NL: Record<string, string> = { pin: 'PIN-grootboek (kaartbetalingen)', cash: 'Kas-grootboek (contant)', bank: 'Bank-grootboek', other: 'Grootboek' }
+
 const sum = (rows: TurnoverRow[], pick: (r: TurnoverRow) => number | null) =>
   rows.reduce((s, r) => s + (pick(r) ?? 0), 0)
 
@@ -38,23 +45,57 @@ export default function DagomzetImportClient() {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [done, setDone] = useState<{ committed: number } | null>(null)
+  const [done, setDone] = useState<{ committed: number; ledger?: string } | null>(null)
   const [refreshTick, setRefreshTick] = useState(0) // remounts the insights panel after a commit
+  const [ledgerPreview, setLedgerPreview] = useState<LedgerPreview | null>(null)
 
   async function handleFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = '' // allow re-selecting the same file
     if (!file) return
-    setError(''); setDone(null); setPreview(null); setFileName(file.name); setBusy(true)
+    setError(''); setDone(null); setPreview(null); setLedgerPreview(null); setFileName(file.name); setBusy(true)
     try {
       const fd = new FormData()
       fd.append('file', file)
       const res = await fetch('/api/turnover/import', { method: 'POST', body: fd })
       const json = await res.json()
+      // [LEDGER] The Z-report parser recognised a bookkeeper grootboek export → route the SAME
+      // file to the ledger import (a PIN/kas cross-check), not a dead-end error.
+      if (json?.wrongKind === 'ledger') { await previewLedger(file); return }
       if (!res.ok) { setError(json.error ?? 'Kon het bestand niet lezen'); return }
       setPreview({ rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError('Er ging iets mis bij het lezen van het bestand')
+    } finally { setBusy(false) }
+  }
+
+  async function previewLedger(file: File) {
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/ledger/import', { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!res.ok || !json.ok) { setError(json.error ?? 'Kon het grootboek niet lezen'); return }
+      setLedgerPreview({ kind: json.kind, accountNr: json.accountNr ?? null, title: json.title ?? null, rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
+    } catch {
+      setError('Er ging iets mis bij het lezen van het grootboek')
+    }
+  }
+
+  async function approveLedger() {
+    if (!ledgerPreview || ledgerPreview.rows.length === 0) return
+    setBusy(true); setError('')
+    try {
+      const res = await fetch('/api/ledger/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: ledgerPreview.kind, accountNr: ledgerPreview.accountNr, rows: ledgerPreview.rows }),
+      })
+      const json = await res.json()
+      if (!res.ok) { setError(json.error ?? 'Opslaan mislukt'); return }
+      setDone({ committed: json.committed ?? ledgerPreview.rows.length, ledger: ledgerPreview.kind })
+      setLedgerPreview(null); setFileName(null)
+    } catch {
+      setError('Opslaan mislukt')
     } finally { setBusy(false) }
   }
 
@@ -76,7 +117,7 @@ export default function DagomzetImportClient() {
     } finally { setBusy(false) }
   }
 
-  function reject() { setPreview(null); setFileName(null); setError('') }
+  function reject() { setPreview(null); setLedgerPreview(null); setFileName(null); setError('') }
 
   const rows = preview?.rows ?? []
   const totalTurnover = sum(rows, (r) => r.total_incl)
@@ -95,7 +136,9 @@ export default function DagomzetImportClient() {
         <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 4px' }}>Dagomzet importeren</h1>
         <p style={{ fontSize: 14, color: M3.neutral, margin: '0 0 20px', lineHeight: 1.5 }}>
           Upload het Z-rapport van de kassa (.xls, .xlsx of .csv). Je ziet eerst precies wat er is gelezen —
-          er wordt niets opgeslagen tot je op <b>Goedkeuren</b> klikt.
+          er wordt niets opgeslagen tot je op <b>Goedkeuren</b> klikt. Upload je een grootboek-overzicht
+          (OVERZICHT/KASBOEK van de boekhouder), dan wordt dat automatisch herkend en als <b>controle</b>
+          op je kassa bewaard — niet als omzet.
         </p>
 
         {/* Upload */}
@@ -118,7 +161,77 @@ export default function DagomzetImportClient() {
 
         {done && (
           <div style={{ background: '#E6F4EA', color: M3.success, borderRadius: 10, padding: '14px 16px', fontSize: 14.5, fontWeight: 600 }}>
-            ✓ {done.committed} {done.committed === 1 ? 'dag' : 'dagen'} dagomzet opgeslagen.
+            {done.ledger
+              ? `✓ ${done.committed} ${done.committed === 1 ? 'dag' : 'dagen'} ${LEDGER_KIND_NL[done.ledger] ?? 'grootboek'} opgeslagen als controle (telt niet mee als omzet).`
+              : `✓ ${done.committed} ${done.committed === 1 ? 'dag' : 'dagen'} dagomzet opgeslagen.`}
+          </div>
+        )}
+
+        {/* [LEDGER] Grootboek cross-check preview — the file was recognised as a bookkeeper
+            OVERZICHT/KASBOEK. It is a control witness, not omzet: stored to cross-check the till. */}
+        {ledgerPreview && (
+          <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
+            <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}` }}>
+              <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
+                Grootboek-controle uit {fileName}
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface }}>
+                {LEDGER_KIND_NL[ledgerPreview.kind] ?? 'Grootboek'}{ledgerPreview.accountNr ? ` · rekening ${ledgerPreview.accountNr}` : ''}
+              </div>
+              <div style={{ fontSize: 13, color: M3.neutral, marginTop: 6, lineHeight: 1.5 }}>
+                {ledgerPreview.count} {ledgerPreview.count === 1 ? 'dag' : 'dagen'} · totaal ontvangen{' '}
+                <b style={{ fontFamily: FONT_NUM, color: M3.onSurface }}>{eur.format(ledgerPreview.rows.reduce((s, r) => s + (r.received || 0), 0))}</b>.
+                Dit is een <b>controle</b> tegen je kassa (PIN/contant) — het wordt <b>niet</b> als omzet geteld en verandert je resultaat niet.
+              </div>
+            </div>
+
+            {ledgerPreview.warnings.length > 0 && (
+              <div style={{ padding: '14px 18px', background: M3.warningContainer, borderBottom: `1px solid ${M3.outlineVariant}` }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: M3.warning, marginBottom: 6 }}>
+                  ⚠ {ledgerPreview.warnings.length} {ledgerPreview.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}
+                </div>
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {ledgerPreview.warnings.map((w, i) => (
+                    <li key={i} style={{ fontSize: 13, color: M3.onSurface, lineHeight: 1.5 }}>{w.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {ledgerPreview.count > 0 && (
+              <div style={{ overflowX: 'auto', maxHeight: 260 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, fontFamily: FONT_NUM }}>
+                  <thead>
+                    <tr style={{ color: M3.neutral, textAlign: 'right' }}>
+                      <th style={thL}>Datum</th><th style={thR}>Ontvangen</th><th style={thR}>Uitgaven</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledgerPreview.rows.map((r) => (
+                      <tr key={r.ledger_date} style={{ borderTop: `1px solid ${M3.outlineVariant}` }}>
+                        <td style={{ ...tdL, fontFamily: FONT }}>{r.ledger_date}</td>
+                        <td style={tdR}>{eur.format(r.received)}</td>
+                        <td style={tdR}>{eur.format(r.spent)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, padding: '16px 18px' }}>
+              <button onClick={() => void approveLedger()} disabled={busy || ledgerPreview.count === 0}
+                style={{ flex: 1, background: ledgerPreview.count === 0 ? M3.outlineVariant : M3.primary, color: M3.onPrimary,
+                  border: 'none', borderRadius: 10, padding: '12px 0', fontSize: 15, fontWeight: 600,
+                  cursor: busy || ledgerPreview.count === 0 ? 'default' : 'pointer', fontFamily: FONT }}>
+                {busy ? 'Bezig…' : 'Opslaan als controle'}
+              </button>
+              <button onClick={reject} disabled={busy}
+                style={{ background: 'transparent', color: M3.neutral, border: `1px solid ${M3.outlineVariant}`,
+                  borderRadius: 10, padding: '12px 18px', fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
+                Afwijzen
+              </button>
+            </div>
           </div>
         )}
 

@@ -168,7 +168,22 @@ export async function GET(req: NextRequest) {
   const netByDay = bankNetByDay(posBufRows.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
   for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
 
-  const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay });
+  // [LEDGER · Leg-A witness] The bookkeeper's PIN grootboek (ledger_daily kind='pin') is an
+  // independent GROSS cross-check of the till's PIN takings. It is fed to the triangle ONLY as
+  // pinLedgerByDay — reconcileTriangle raises a break when it disagrees with the till's PIN; it
+  // is NEVER a revenue/cost source (money stays in daily_turnover). In-quarter days only.
+  const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null }>((from, to) => pipeline
+    .from("ledger_daily")
+    .select("ledger_date, received")
+    .eq("user_id", ownerId)
+    .eq("kind", "pin")
+    .gte("ledger_date", start)
+    .lte("ledger_date", end)
+    .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+  const pinLedgerByDay = new Map<string, number>();
+  for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, Number(r.received) || 0);
+
+  const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
 
   // Acquirer-fee invoices already booked as kosten — subtract them so the commission delta
   // isn't double-counted with the fee invoice. Computed from the RAW invoice rows (which
