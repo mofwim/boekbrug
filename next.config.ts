@@ -2,6 +2,14 @@ import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // [PERF] Strip console.* from PRODUCTION bundles only (dev keeps all logs).
+  // console.error / console.warn are preserved for real diagnostics + Sentry.
+  compiler: {
+    removeConsole:
+      process.env.NODE_ENV === "production"
+        ? { exclude: ["error", "warn"] }
+        : false,
+  },
   // [BOEK-COST] sharp is a native, server-only image library used in src/lib/ai.ts
   // to downscale invoice photos before sending them to Claude. ai.ts is also
   // pulled into some client components, so without this Next.js tries to bundle

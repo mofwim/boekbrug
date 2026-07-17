@@ -8,16 +8,10 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import { lastCompletedQuarter } from '@/lib/quarter'
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', track: '#EEF1F4', success: '#137333', successContainer: '#CEEAD6',
-  error: '#B3261E', errorContainer: '#F9DEDC', warning: '#7C5800', warningContainer: '#FEE8C4',
-  bg: '#F8F9FA',
-}
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
 type DimensionKey = 'invoices' | 'bank' | 'cash' | 'vat'
@@ -85,7 +79,7 @@ export default function KlaarClient() {
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+          <BackLink style={{ color: M3.primary }} />
           <button onClick={() => setReloadKey((k) => k + 1)} title="Vernieuwen" style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>Vernieuwen
           </button>
@@ -173,6 +167,12 @@ export default function KlaarClient() {
               <div style={{ fontSize: 11.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', padding: '12px 0 6px', fontWeight: 600 }}>
                 Waar de score op gebaseerd is
               </div>
+              {/* [DISAMBIGUATE] Each row shows two figures — the colored number is how
+                  COMPLETE that part is; the grey chip is how heavily it WEIGHS in the total.
+                  Two bare percentages side by side read as competing scores, so name them. */}
+              <div style={{ fontSize: 12, color: M3.neutral, lineHeight: 1.45, padding: '0 0 8px' }}>
+                Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>gekleurde percentage</b> is hoe compleet dit onderdeel is. Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>grijze label</b> is hoe zwaar het meetelt in je totaalscore.
+              </div>
               {report.dimensions.map((d, i) => (
                 <DimRow key={d.key} d={d} last={i === report.dimensions.length - 1} />
               ))}
@@ -254,16 +254,29 @@ function DimRow({ d, last }: { d: Dimension; last: boolean }) {
   const pct = d.applicable ? Math.round(d.subscore * 100) : null
   const barColor = pct == null ? M3.outlineVariant : pct >= 90 ? M3.success : pct >= 60 ? '#E37400' : M3.error
   return (
-    <div style={{ padding: '11px 0', borderBottom: last ? 'none' : `1px solid #F1F1F1` }}>
+    <div style={{ padding: '11px 0', borderBottom: last ? 'none' : `1px solid #f1f3f4` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.neutral }}>{DIM_ICON[d.key]}</span>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: M3.onSurface }}>{d.label}</span>
-        <span style={{ fontSize: 11, color: M3.neutral, fontWeight: 600 }}>{d.weight}%</span>
+        {/* Weight as a muted chip — reads as a label ("how much it counts"), not a score.
+            Hidden when n.v.t.: a non-applicable part is EXCLUDED from the score, so it
+            weighs nothing here — showing "weegt 20%" would contradict that. */}
+        {pct != null && (
+          <span style={{ fontSize: 10.5, color: M3.neutral, fontWeight: 600, background: '#f1f3f4', borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+            weegt {d.weight}%
+          </span>
+        )}
         <span style={{ fontSize: 13, fontWeight: 700, fontFamily: FONT_NUM, color: pct == null ? M3.neutral : barColor, minWidth: 44, textAlign: 'right' }}>
           {pct == null ? 'n.v.t.' : `${pct}%`}
         </span>
       </div>
-      <div style={{ fontSize: 12, color: M3.neutral, marginTop: 4, marginLeft: 30, lineHeight: 1.45 }}>{d.detail}</div>
+      {/* Thin fill bar — makes the colored percentage read as a completeness level. */}
+      {pct != null && (
+        <div style={{ height: 4, borderRadius: 2, background: '#f1f3f4', marginTop: 8, marginLeft: 30, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 2 }} />
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: M3.neutral, marginTop: 6, marginLeft: 30, lineHeight: 1.45 }}>{d.detail}</div>
     </div>
   )
 }

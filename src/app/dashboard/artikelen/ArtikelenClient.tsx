@@ -5,16 +5,16 @@
 // saved once and reused. Manage here; pick from it while making a factuur.
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
-import { type Article } from '@/lib/articles'
+import { BackLink } from '@/components/ui/BackLink'
+import { type Article, foldText } from '@/lib/articles'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#FFFBFE', onSurface: '#1C1B1F', surfaceVariant: '#E7E0EC', outline: '#79747E',
+  surface: '#ffffff', onSurface: '#202124', surfaceVariant: '#f1f3f4', outline: '#80868b',
   error: '#B3261E', neutral: '#5F6368',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -47,10 +47,10 @@ export default function ArtikelenClient() {
 
   const shown = useMemo(() => {
     // Reuse the same picker ranking the invoice uses, but include archived in the manage view.
-    const q = search.trim().toLowerCase()
+    const q = foldText(search.trim())
     if (!q) return [...articles].sort((a, b) => Number(b.active) - Number(a.active) || b.usage_count - a.usage_count)
     return articles.filter((a) =>
-      (a.code ?? '').toLowerCase().includes(q) || a.description.toLowerCase().includes(q))
+      foldText(a.code ?? '').includes(q) || foldText(a.description).includes(q))
   }, [articles, search])
 
   function openNew() { setForm(EMPTY); setEditingId(null); setError(null); setShowForm(true) }
@@ -104,7 +104,7 @@ export default function ArtikelenClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
 
         <header style={{ margin: '16px 0 18px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 2px' }}>Artikelen</h1>
@@ -138,14 +138,14 @@ export default function ArtikelenClient() {
               {error && <div style={{ color: M3.error, fontSize: 13 }}>{error}</div>}
               <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                 <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
-                <button onClick={save} disabled={saving || !form.description.trim()} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: saving || !form.description.trim() ? M3.surfaceVariant : M3.primary, color: saving || !form.description.trim() ? '#79747E' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>{saving ? 'Opslaan…' : 'Opslaan'}</button>
+                <button onClick={save} disabled={saving || !form.description.trim()} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: saving || !form.description.trim() ? M3.surfaceVariant : M3.primary, color: saving || !form.description.trim() ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>{saving ? 'Opslaan…' : 'Opslaan'}</button>
               </div>
             </div>
           </div>
         )}
 
         {loading ? (
-          <div style={{ height: 160, borderRadius: R.lg, background: '#F0F1F3' }} />
+          <div style={{ height: 160, borderRadius: R.lg, background: '#f1f3f4' }} />
         ) : shown.length === 0 ? (
           <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14, padding: '40px 0' }}>
             {search ? 'Geen artikel gevonden.' : 'Nog geen artikelen. Voeg je eerste vaste factuurregel toe.'}
@@ -172,7 +172,7 @@ export default function ArtikelenClient() {
       </div>
 
       {toast && (
-        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', padding: '10px 18px', borderRadius: R.full, fontSize: 13.5, fontFamily: FONT, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>{toast}</div>
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', padding: '10px 18px', borderRadius: R.full, fontSize: 13.5, fontFamily: FONT, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>{toast}</div>
       )}
     </div>
   )

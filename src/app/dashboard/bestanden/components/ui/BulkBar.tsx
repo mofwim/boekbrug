@@ -74,7 +74,7 @@ export function BulkBar({ selectedCount, onShare, onMove, onDelete, onStar, onCl
       </button>
 
       <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.2)", margin: "0 4px" }} />
-      <button onClick={onClear} style={{
+      <button onClick={onClear} aria-label="Selectie wissen" style={{
         width: 28, height: 28, border: "none", background: "none",
         cursor: "pointer", display: "flex", alignItems: "center",
         justifyContent: "center", borderRadius: T.full,

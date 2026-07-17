@@ -6,15 +6,15 @@
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 
 const M3 = {
-  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#1C1B1F', neutral: '#5F6368',
+  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
   surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
   primaryContainer: '#D3E3FD',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 const CATS: { key: string; label: string }[] = [
@@ -103,12 +103,15 @@ export default function KasClient() {
     try { await fetch(`/api/cash?id=${id}`, { method: 'DELETE' }); await load() } catch { await load() }
   }
 
-  const catLabel = (k: string) => CATS.find((c) => c.key === k)?.label ?? k
+  // [CASH-SETTLE] 'betaling' is a system-managed settlement of a cash-paid invoice — labelled
+  // for display, but never offered in the add form (CATS), and not manually deletable (undo the
+  // payment on the invoice instead; the kasboek then reconciles it away).
+  const catLabel = (k: string) => (k === 'betaling' ? 'Factuurbetaling (contant)' : CATS.find((c) => c.key === k)?.label ?? k)
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
 
         {/* Balance */}
         <div style={{ margin: '16px 0 20px' }}>
@@ -179,7 +182,7 @@ export default function KasClient() {
           {error && <div style={{ fontSize: 13, color: M3.error, marginBottom: 10 }}>{error}</div>}
 
           <button onClick={add} disabled={saving}
-            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', background: saving ? '#C7C7CC' : M3.primary, color: M3.onPrimary, fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
+            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', background: saving ? '#dadce0' : M3.primary, color: M3.onPrimary, fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
             {saving ? 'Bezig…' : 'Toevoegen'}
           </button>
         </div>
@@ -187,7 +190,7 @@ export default function KasClient() {
         {/* Ledger */}
         <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral, margin: '0 2px 10px' }}>BOEKINGEN</div>
         {loading ? (
-          <div style={{ height: 80, borderRadius: 16, background: '#F0F1F3' }} />
+          <div style={{ height: 80, borderRadius: 16, background: '#f1f3f4' }} />
         ) : entries.length === 0 ? (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
             Nog geen kasboekingen. Voeg je eerste contante ontvangst of uitgave toe.
@@ -195,7 +198,7 @@ export default function KasClient() {
         ) : (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, overflow: 'hidden' }}>
             {entries.map((e, i) => (
-              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none' }}>
+              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i > 0 ? '1px solid #e0e0e0' : 'none' }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {e.description?.trim() || catLabel(e.category)}
@@ -205,8 +208,13 @@ export default function KasClient() {
                 <div style={{ fontFamily: FONT_NUM, fontSize: 14.5, fontWeight: 700, color: e.direction === 'in' ? M3.success : M3.error, whiteSpace: 'nowrap' }}>
                   {e.direction === 'in' ? '+' : '−'}{eur.format(e.amount)}
                 </div>
-                <button onClick={() => remove(e.id)} aria-label="Verwijderen"
-                  style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                {e.category === 'betaling' ? (
+                  <span title="Automatisch: betaling van een contant betaalde factuur. Maak de betaling op de factuur ongedaan om dit te verwijderen."
+                    style={{ flexShrink: 0, color: '#9aa0a6', fontSize: 16, lineHeight: 1 }}>🔗</span>
+                ) : (
+                  <button onClick={() => remove(e.id)} aria-label="Verwijderen"
+                    style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                )}
               </div>
             ))}
           </div>

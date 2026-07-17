@@ -455,11 +455,15 @@ interface AssembleInput {
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
    *  sales data at all (nothing to declare yet). Never an invented filing. */
   conceptAangifte?: ConceptAangifte | null;
+  /** [CASH-EVIDENCE] The cash book (kasboek) as a CSV — a standalone evidence sheet for a
+   *  cash-heavy shop, so the accountant sees every kasboeking, not only the netted cash
+   *  figures inside the concept aangifte. null when the owner keeps no cash book. */
+  cashCsv?: string | null;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, cashCsv } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -568,9 +572,11 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     filesIncluded++;
   }
 
-  // ── overzicht.csv + overzicht.json ──
-  const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates);
-  zip.file("overzicht.csv", "\uFEFF" + overviewCsv);
+  // ── overzicht.csv is built LATER (after all warnings are collected) so the CSV's
+  //    "Let op" section matches overzicht.json — see below. ──
+
+  // \u2500\u2500 kasboek.csv ([CASH-EVIDENCE] standalone cash-book sheet, when the owner keeps one) \u2500\u2500
+  if (cashCsv) zip.file("kasboek.csv", "\uFEFF" + cashCsv);
 
   // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
   const hasTurnover = !!turnoverClosing && turnoverClosing.summary.days > 0;
@@ -597,6 +603,11 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
       });
     }
   }
+
+  // ── overzicht.csv — built HERE, after every warning (incl. turnover_exceptions and
+  //    card_gross_mismatch above) is in `warnings`, so its "Let op" section matches
+  //    overzicht.json instead of under-reporting the quarter's open points to the accountant.
+  zip.file("overzicht.csv", "﻿" + buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates));
 
   // ── concept-btw-aangifte.csv (the concept mapped to Belastingdienst rubrieken) ──
   // Travels WITH the evidence (invoice PDFs, dagomzet.csv, bank statement) in this same
@@ -780,6 +791,53 @@ async function bankStatementPaths(
   return out;
 }
 
+/**
+ * [BRUG-FILES-SHARED] Owner-shared general docs (kassabonnen, contracten, …) split into
+ * the ones tied to THIS quarter (go in the ZIP) and a count of the ones the owner shared
+ * but that belong to another quarter OR carry no quarter at all — those silently fall out
+ * of every package, so the summary/ZIP can WARN instead of dropping them unseen. Excludes
+ * invoices (own section) and bankafschriften (own section). Shared by the ZIP + the preview
+ * so both count and warn identically.
+ */
+async function sharedDocsForQuarter(
+  supabase: PipelineClient,
+  ownerId: string,
+  year: number,
+  quarter: Quarter,
+): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number }> {
+  const sharedPeriod = `${year}-Q${quarter}`;
+  const { data } = await supabase
+    .from("documents")
+    .select("file_url, file_name, doc_type, invoice_id, period")
+    .eq("user_id", ownerId)
+    .eq("shared", true)
+    .eq("trashed", false)
+    .is("invoice_id", null);
+  const rows = (data ?? []) as Array<{
+    file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
+  }>;
+  const paths: Array<{ path: string; name: string }> = [];
+  let outsideCount = 0;
+  for (const d of rows) {
+    if (!d.file_url || d.doc_type === "bankafschrift") continue; // not a general shared doc
+    if (d.period === sharedPeriod) paths.push({ path: d.file_url, name: d.file_name ?? "document" });
+    else outsideCount++; // shared, but another quarter / no quarter → not in THIS package
+  }
+  return { paths, outsideCount };
+}
+
+/** A warning for shared files that fall outside this quarter's package, or null. Shared by
+ *  the ZIP builder and the preview summary so both tell the SAME truth. */
+function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
+  if (outsideCount <= 0) return null;
+  return {
+    code: "shared_outside_quarter",
+    message:
+      `${outsideCount} gedeeld(e) bestand(en) hoort/horen bij een ander kwartaal of hebben geen ` +
+      `kwartaal, en zitten NIET in dit pakket — controleer of ze bij dit kwartaal thuishoren.`,
+  };
+}
+
 // [AANGIFTE] EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be
 // intra-EU (rubriek 4b), which the concept aangifte does NOT auto-compute. Mirrors
 // /api/aangifte so the closing package and the app screen never disagree.
@@ -881,6 +939,11 @@ export async function summarizeClosingPackage(args: {
   const bankFilePaths = await bankStatementPaths(supabase, ownerId, year, quarter);
   const bankStatementIncluded = bankFilePaths.length > 0;
 
+  // [C#3] Owner-shared general docs for this quarter — counted so the preview
+  // filesIncluded matches what the ZIP actually ships (invoices-with-PDF alone undercounted
+  // it, since the ZIP also carries bank + shared files). [C#2] outsideCount → a warning.
+  const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
+
   // Honest warnings — the real gaps, listed specifically.
   if (verified.length === 0) {
     warnings.push({ code: "no_invoices", message: "Geen geverifieerde facturen in dit kwartaal." });
@@ -904,12 +967,17 @@ export async function summarizeClosingPackage(args: {
   } else if (!bankStatementIncluded) {
     warnings.push({ code: "bank_file_missing", message: "Banktransacties zijn aanwezig, maar het originele bankafschrift-bestand is (nog) niet bijgevoegd — upload het bankafschrift." });
   }
+  // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  if (sharedOutside) warnings.push(sharedOutside);
 
   return {
     quarter: `Q${quarter} ${year}`,
     outgoingCount: outgoing.length,
     incomingCount: incoming.length,
-    filesIncluded: withPdf,
+    // [C#3] Match what the ZIP actually ships: invoices-with-PDF + bank statement file(s)
+    // + owner-shared docs for this quarter. (km is not a feature yet → 0.)
+    filesIncluded: withPdf + bankFilePaths.length + shared.paths.length,
     bankStatementIncluded,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -1070,47 +1138,38 @@ export async function buildClosingPackageZip(args: {
   const hasBankData = (bankTxRows ?? []).length > 0;
 
   // ── [BRUG-FILES-SHARED] Owner-shared general docs for this quarter ──
-  // shared=true (the field the accountant RLS reads), tied to the quarter via
-  // period='{year}-Q{n}'. Exclude invoices (invoice_id set) and bank statements
-  // (doc_type='bankafschrift') — those already have their own ZIP sections.
-  const sharedPeriod = `${year}-Q${quarter}`;
-  const { data: sharedDocs } = await supabase
-    .from("documents")
-    .select("file_url, file_name, doc_type, invoice_id")
-    .eq("user_id", ownerId)
-    .eq("shared", true)
-    .eq("period", sharedPeriod)
-    .eq("trashed", false)
-    .is("invoice_id", null);
-  const sharedRows = (sharedDocs ?? []) as unknown as Array<{
-    file_url: string | null;
-    file_name: string | null;
-    doc_type: string | null;
-    invoice_id: string | null;
-  }>;
-  const sharedPaths = sharedRows
-    .filter((d) => !!d.file_url && d.doc_type !== "bankafschrift")
-    .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "document" }));
-  const sharedFilesRaw = await Promise.all(sharedPaths.map((p) => dl(p.path, p.name)));
+  // Shared via the single helper (same split as the preview): in-quarter → the ZIP;
+  // outside-quarter → a [C#2] warning so a shared file that belongs elsewhere isn't
+  // silently absent. Invoices + bankafschriften are excluded (their own sections).
+  const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
+  const sharedFilesRaw = await Promise.all(shared.paths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  if (sharedOutside) warnings.push(sharedOutside);
 
   // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──
   const paidInvoices = [...outgoing, ...incoming].filter((i) => i.status === "paid");
   const paymentDates = await resolvePaymentDates(supabase, paidInvoices);
 
   // ── [TURNOVER-CLOSING] Retail till turnover for the quarter + its reconciliation ──
+  // [COVERED-BUFFER] Fetch a 5-day PRE-quarter buffer too, so the covered-day de-dup below
+  // matches /api/aangifte exactly: a card payout booked early this quarter that settles a
+  // PREVIOUS-quarter till day (settleExact) must be suppressed here — without the buffer the
+  // ZIP counted it AGAIN as omzet-zonder-tarief, disagreeing with the in-app concept.
   const { data: turnoverRows } = await supabase
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
     .eq("user_id", ownerId)
-    .gte("turnover_date", start)
+    .gte("turnover_date", shiftDays(start, -5))
     .lte("turnover_date", end);
-  const turnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
+  const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
     base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,
     btw_9: t.btw_9 ?? 0, btw_21: t.btw_21 ?? 0,
     total_incl: t.total_incl, pin_amount: t.pin_amount, cash_amount: t.cash_amount, other_amount: t.other_amount,
   }));
+  // dagomzet.csv + the triangle use strictly IN-quarter rows; the covered set uses the buffer.
+  const turnover: DailyTurnover[] = allTurnover.filter((t) => t.turnover_date >= start);
 
   let turnoverClosing: TurnoverClosing | null = null;
   let cardReconciliation: TriangleResult | null = null;
@@ -1202,8 +1261,10 @@ export async function buildClosingPackageZip(args: {
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
   }));
+  // [COVERED-BUFFER] Build from the BUFFERED set (incl. up to 5 pre-quarter days) so a
+  // settleExact card line paying a previous-quarter till day is suppressed — matching aangifte.
   const coveredDates = new Set(
-    turnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
+    allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
   );
   const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates);
   const completeness: AangifteCompleteness = {
@@ -1221,6 +1282,26 @@ export async function buildClosingPackageZip(args: {
     result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
   const conceptAangifte = hasDeclarable
     ? buildAangifte(result, completeness, `Q${quarter} ${year}`)
+    : null;
+
+  // [CASH-EVIDENCE] Standalone kasboek sheet when the owner keeps a cash book — so a
+  // cash-heavy shop hands the accountant every kasboeking, not only the netted cash figures
+  // inside the concept aangifte. Injection-safe via esc(); null when there are no entries.
+  const cashCsv = (cashAllRows ?? []).length > 0
+    ? [
+        `BoekBrug — Kasboek Q${quarter} ${year}`,
+        "",
+        ["Datum", "Richting", "Categorie", "BTW-tarief", "Bedrag"].map(esc).join(";"),
+        ...(cashAllRows ?? []).map((c) =>
+          [
+            c.entry_date ?? "",
+            c.direction === "in" ? "In" : "Uit",
+            c.category ?? "",
+            c.btw_rate != null ? `${c.btw_rate}%` : "",
+            EUR(Number(c.amount) || 0),
+          ].map(esc).join(";"),
+        ),
+      ].join("\n")
     : null;
 
   return assembleClosingPackageZip({

@@ -11,7 +11,10 @@ import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
+import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
+import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
+import { crossQuarterPayment } from '@/lib/quarter'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -19,10 +22,10 @@ const M3 = {
   onPrimary:         '#FFFFFF',
   primaryContainer:  '#D3E3FD',
   onPrimaryContainer:'#041E49',
-  surface:           '#FFFBFE',
-  onSurface:         '#1C1B1F',
-  surfaceVariant:    '#E7E0EC',
-  outline:           '#79747E',
+  surface:           '#ffffff',
+  onSurface:         '#202124',
+  surfaceVariant:    '#f1f3f4',
+  outline:           '#80868b',
   error:             '#B3261E',
   errorContainer:    '#F9DEDC',
   success:           '#34A853',
@@ -30,7 +33,7 @@ const M3 = {
   warning:           '#E37400',
   warningContainer:  '#FEE8C4',
 }
-const FONT     = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
@@ -40,7 +43,7 @@ const CHIP: Record<string, { bg: string; color: string }> = {
   paid:    { bg: '#CEEAD6', color: '#137333' },
   sent:    { bg: '#D3E3FD', color: '#1967D2' },
   overdue: { bg: '#F9DEDC', color: '#B3261E' },
-  draft:   { bg: '#E7E0EC', color: '#49454F' },
+  draft:   { bg: '#f1f3f4', color: '#5f6368' },
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -92,10 +95,15 @@ const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'credit',  label: 'Credit'   },
 ]
 
+// [SEARCH] Accent-insensitive fold ("José" ↔ "jose") for the quick-filter.
+const fold = (s: string) => (s ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function FacturenClient({ profile }: { profile: any }) {
   const router   = useRouter()
   const supabase = createClient()
+  // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
+  const { byInvoice: recon } = useInvoiceReconciliation()
   // [BOEK-029] Navigation strategy — parent is always /dashboard for ZZP
   const parentHref = useParentPath(profile.role ?? 'zzper')
 
@@ -119,6 +127,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const searchParams = useSearchParams()
   const focusId = searchParams.get('focus')
   const [highlightId, setHighlightId] = useState<string | null>(null)
+
+  // [SEARCH] Quick text-filter over the loaded invoices. Seeded from ?search= (set by
+  // the global search bar's Enter fallback). The global bar is now reachable on every
+  // page, so a ?search= push can arrive while we're already mounted on /dashboard/facturen
+  // (no remount) — sync on param change, not just at mount. Local typing doesn't change
+  // the param, so it never clobbers the user's input.
+  const searchParam = searchParams.get('search') ?? ''
+  const [search, setSearch] = useState(searchParam)
+  useEffect(() => { setSearch(searchParam) }, [searchParam])
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
@@ -159,11 +176,16 @@ export default function FacturenClient({ profile }: { profile: any }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, loading, invoices.length])
 
+  const sq = fold(search.trim())
   const displayed = invoices.filter(inv => {
     if (inv.status === 'archived') return false
     if (filter === 'offerte') return inv.invoice_type === 'pro_forma'
     if (filter === 'credit')  return inv.invoice_type === 'creditnota'
     return true
+  }).filter(inv => {
+    if (!sq) return true
+    return fold(inv.invoice_number ?? '').includes(sq)
+        || fold(inv.client_name ?? '').includes(sq)
   })
   const sorted = sort === 'desc' ? displayed : [...displayed].reverse()
 
@@ -369,15 +391,36 @@ export default function FacturenClient({ profile }: { profile: any }) {
           <div style={{ display: 'flex', gap: 6 }}>
             {/* Sort */}
             <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
-              style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#49454F', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+              style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
               {sort === 'desc' ? 'Nieuwste' : 'Oudste'}
             </button>
             {/* Refresh */}
-            <button onClick={refresh} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
+            <button onClick={refresh} aria-label="Vernieuwen" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
             </button>
           </div>
+        </div>
+
+        {/* [SEARCH] Quick text-filter (invoice number / client name) */}
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Zoek op factuurnummer of klant..."
+            aria-label="Facturen zoeken"
+            style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              aria-label="Zoekopdracht wissen"
+              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
+            </button>
+          )}
         </div>
 
         {/* [BOEK-029] Filter dropdown — works on all screen sizes */}
@@ -449,6 +492,11 @@ export default function FacturenClient({ profile }: { profile: any }) {
                 : inv.invoice_type === 'pro_forma' ? 'pro_forma'
                 : 'factuur'
 
+              // [CROSS-QUARTER] Only a paid invoice whose money actually moved in a different
+              // quarter than its invoice date gets the marker — accrual is unchanged, this is
+              // purely "when was it settled". null (no marker) for everything else.
+              const xq = isPaid ? crossQuarterPayment(inv.invoice_date, inv.payment_date) : null
+
               // Row tint
               const rowBg = isCredit ? '#FFF8F0' : isOfferte ? '#F8F9FA' : '#fff'
 
@@ -476,6 +524,18 @@ export default function FacturenClient({ profile }: { profile: any }) {
                         {CHIP[inv.status] && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
                             {inv.status === 'paid' ? 'Betaald' : inv.status === 'sent' ? 'Verzonden' : inv.status === 'overdue' ? 'Verlopen' : 'Concept'}
+                          </span>
+                        )}
+                        {recon[inv.id] && (
+                          <ReconBadge recon={recon[inv.id]} mode="zzp" invoiceId={inv.id} onReconConfirm={() => router.push('/dashboard/bank')} />
+                        )}
+                        {xq && (
+                          <span
+                            title={`De factuur telt voor de btw mee in ${xq.bookedQuarterLabel} (factuurdatum). De betaling kwam binnen in ${xq.paidQuarterLabel}.`}
+                            style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#FFF3E0', color: '#B26A00', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
+                            Betaald in {xq.paidQuarterLabel}
                           </span>
                         )}
                       </div>
@@ -545,7 +605,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
                             if (processingId === inv.id) return
                             setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur' })
                           }}
-                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#49454F', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
+                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : 'Betaald?'}
@@ -832,7 +892,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
       {toast && (
         <div style={{
           position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
-          background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500,
+          background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500,
           padding: '12px 20px', borderRadius: R.sm, zIndex: 300,
           boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap',
           animation: 'fadeInUp 0.2s ease', fontFamily: FONT,
@@ -857,7 +917,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   return (
     <div>
       <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2, fontWeight: 500 }}>{label}</p>
-      <p style={{ fontSize: 13, fontWeight: 600, color: '#1C1B1F', fontFamily: mono ? "'Roboto Mono', monospace" : 'inherit' }}>{value}</p>
+      <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: mono ? "'Roboto Mono', monospace" : 'inherit' }}>{value}</p>
     </div>
   )
 }
@@ -887,7 +947,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          background: '#FFFBFE',
+          background: '#ffffff',
           borderRadius: 28,
           padding: '28px 24px 24px',
           width: '100%',
@@ -896,8 +956,8 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
           fontFamily: FONT,
         }}
       >
-        <p style={{ fontSize: 20, fontWeight: 700, color: '#1C1B1F', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
-        <p style={{ fontSize: 14, color: '#49454F', textAlign: 'center', marginBottom: details && details.length > 0 ? 20 : 24, lineHeight: 1.5 }}>{body}</p>
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
+        <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: details && details.length > 0 ? 20 : 24, lineHeight: 1.5 }}>{body}</p>
 
         {/* [BOEK-029] Optional details list */}
         {details && details.length > 0 && (
@@ -905,7 +965,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             {details.map(d => (
               <div key={d.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 13, color: '#5F6368', flexShrink: 0 }}>{d.label}</span>
-                <span style={{ fontSize: 13, color: '#1C1B1F', fontWeight: 600, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.value}</span>
+                <span style={{ fontSize: 13, color: '#202124', fontWeight: 600, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.value}</span>
               </div>
             ))}
           </div>
@@ -923,13 +983,13 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
         {paymentChoice ? (
           <>
             {/* [BRIDGE-QUARTER] Real payment date — the day money actually moved */}
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#1C1B1F', marginBottom: 6 }}>Betaaldatum</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
             <input
               type="date"
               value={paymentDate}
               max={new Date().toISOString().slice(0, 10)}
               onChange={e => setPaymentDate(e.target.value)}
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#1C1B1F', background: '#fff', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
               <button
@@ -964,7 +1024,7 @@ function EmptyState() {
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
-      <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 4, fontFamily: FONT }}>Geen facturen</p>
+      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>Geen facturen</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>Maak je eerste factuur aan</p>
     </div>
   )
@@ -974,7 +1034,7 @@ function SkeletonList() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
       {[1,2,3,4].map(i => (
-        <div key={i} style={{ height: 72, borderRadius: R.lg, background: 'linear-gradient(90deg,#F8F9FA 25%,#E8EAED 50%,#F8F9FA 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite' }} />
+        <div key={i} style={{ height: 72, borderRadius: R.lg, background: 'linear-gradient(90deg,#F8F9FA 25%,#e0e0e0 50%,#F8F9FA 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite' }} />
       ))}
     </div>
   )

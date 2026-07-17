@@ -38,7 +38,11 @@ export interface ReadinessSignals {
 
   // ── BTW ──
   hasSales: boolean;                    // any sales source at all (invoices/cash/turnover)
-  cashOmzetZonderBtw: number;           // euros of cash omzet with NO rate assigned
+  cashOmzetZonderBtw: number;           // euros of omzet with NO rate assigned (cash + bank + till)
+  // Of cashOmzetZonderBtw, the portion from BANK revenue or an un-split till day. > 0 → the
+  // rate split needs the Z-report (dagomzet), so the fix points there, not to Kas. Optional
+  // so older callers keep compiling (undefined → treated as 0 → the old Kas/Dagomzet rule).
+  omzetZonderBtwNonCash?: number;
   quarterDays: number;                  // calendar days in the quarter
   hasUndecidableRate: boolean;          // a sale landed in rubriek 1c (mis-derived rate)
   hasEuPurchase: boolean;               // an EU inkoop (rubriek 4b — accountant handles)
@@ -162,23 +166,19 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         fix: FIX.bank,
       });
     } else {
-      // [TRUST-READY] Both unresolved kinds lower the score and count as gaps: a cost
-      // still missing its bon, AND a received payment we can't tie to an invoice.
-      const openBank = s.undocumentedCount + s.unmatchedIncomeCount;
+      // [NO-CODEER] The per-line "give every bank debit a category" flow is intentionally
+      // NOT a readiness gap. For a retail administration costs belong on the INCOMING
+      // invoice (which carries the BTW you reclaim) and revenue on the Z-report/dagomzet —
+      // hand-coding a bare bank debit as a cost gives no voorbelasting and risks double
+      // counting the invoice you already booked. So undocumentedCount (uncoded cost debits)
+      // no longer lowers the score. The ONE bank signal that survives is unmatched INCOME:
+      // money in with no invoice behind it, which would silently understate omzet — that
+      // still blocks "klaar". (undocumentedCount stays computed for other surfaces; it just
+      // no longer drives readiness.)
+      const openBank = s.unmatchedIncomeCount;
       const resolved = Math.max(0, s.bankTxCount - openBank);
       subscore = clamp01(resolved / s.bankTxCount);
       detail = `${resolved} van ${s.bankTxCount} banktransacties verwerkt.`;
-      if (s.undocumentedCount > 0) {
-        missing.push({
-          severity: "missing",
-          title:
-            s.undocumentedCount === 1
-              ? "1 banktransactie wacht nog op een bon"
-              : `${s.undocumentedCount} banktransacties wachten nog op een bon`,
-          detail: "Uitgaven zonder document tellen niet mee als kosten en verlagen je aftrek.",
-          fix: FIX.bank,
-        });
-      }
       if (s.unmatchedIncomeCount > 0) {
         // The one thing a bank check exists to catch: money in with no invoice behind
         // it. A genuine gap — it blocks "klaar" so the owner links it or explains it.
@@ -245,11 +245,20 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       const ratedOk = s.cashOmzetZonderBtw <= 0;
       checks.push(ratedOk);
       if (!ratedOk) {
+        // [FIX-ROUTING] Where the owner splits this omzet by tarief depends on its SOURCE,
+        // not just on whether the store keeps a till. Bank-received omzet (pin/card
+        // settlements) and un-split till days both get their 9%/21% split from the
+        // Z-report → the fix is Dagomzet. Only PLAIN cash (no bank, no till) is fixed at
+        // Kas. Routing bank omzet to "Naar Kas" sent the owner to the wrong screen — the
+        // common retail case (money arrives on the bank, the rate lives in the Z-report).
+        const fromZReport = (s.omzetZonderBtwNonCash ?? 0) > 0;
         missing.push({
           severity: "missing",
           title: `€${euro(s.cashOmzetZonderBtw)} omzet zonder BTW-tarief`,
-          detail: "Ken 9% of 21% toe — anders staat deze omzet in geen enkele rubriek.",
-          fix: s.usesTurnover ? FIX.dagomzet : FIX.kas,
+          detail: fromZReport
+            ? "Deze omzet kwam via de bank of een kassadag binnen zonder tarief. Importeer het Z-rapport bij Dagomzet zodat de 9%/21%-verdeling meekomt — anders staat deze omzet in geen enkele rubriek."
+            : "Ken 9% of 21% toe — anders staat deze omzet in geen enkele rubriek.",
+          fix: fromZReport || s.usesTurnover ? FIX.dagomzet : FIX.kas,
         });
         detailBits.push("omzet zonder tarief");
       }

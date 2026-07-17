@@ -75,13 +75,24 @@ console.log("\n— missing bank data is a real gap (bank → 0) —");
   check("almost, not ready", r.status === "almost");
 }
 
-console.log("\n— undocumented bank lines lower the bank ratio proportionally —");
+console.log("\n— [NO-CODEER] uncoded cost debits do NOT lower readiness (feature removed) —");
 {
-  // 120 tx, 12 undocumented → resolved 108/120 = 0.9 → bank 27. 30+27+20+20 = 97.
+  // 120 tx, 12 uncoded cost debits. Coding a bare bank debit gives no BTW and can
+  // double-count an invoice, so it is NOT a readiness gap. bank stays 30 → 100.
   const r = buildReadiness(perfect({ bankTxCount: 120, undocumentedCount: 12 }));
+  check("score = 100 (undocumented no longer drags bank)", r.score === 100);
+  check("no 'wacht nog op een bon' item is listed", !r.missing.some((m) => /wachten nog op een bon/.test(m.title)));
+  check("still ready", r.status === "ready");
+}
+
+console.log("\n— unmatched INCOME still lowers the bank ratio (revenue truth survives) —");
+{
+  // 120 tx, 12 received payments with no invoice behind them → resolved 108/120 = 0.9 →
+  // bank 27. 30+27+20+20 = 97. Money in with no invoice must never silently pass.
+  const r = buildReadiness(perfect({ bankTxCount: 120, unmatchedIncomeCount: 12 }));
   check("score = 97 (bank at 0.9)", r.score === 97);
-  check("a 'wacht nog op een bon' item is listed", r.missing.some((m) => /wachten nog op een bon/.test(m.title)));
-  check("not ready (a gap remains)", r.status !== "ready");
+  check("a 'zonder factuur' income item is listed", r.missing.some((m) => /zonder factuur/.test(m.title)));
+  check("not ready (unexplained income is a gap)", r.status !== "ready");
 }
 
 console.log("\n— reconciliation differences are RISKS (eyeball), not blocking gaps —");
@@ -102,6 +113,22 @@ console.log("\n— unrated cash omzet is a BTW gap (missing) —");
   check("vat dimension drops below 1", r.dimensions.find((d) => d.key === "vat")!.subscore < 1);
   check("'€250 omzet zonder BTW-tarief' listed", r.missing.some((m) => /250 omzet zonder BTW-tarief/.test(m.title)));
   check("not ready", r.status !== "ready");
+}
+
+console.log("\n— omzet-zonder-tarief fix routes by SOURCE, not just by till —");
+{
+  // Plain cash (no till, no bank-sourced omzet) → the owner sets the rate at Kas.
+  const cash = buildReadiness(perfect({ usesTurnover: false, turnoverDays: 0, cashOmzetZonderBtw: 250, omzetZonderBtwNonCash: 0 }));
+  const cashItem = cash.missing.find((m) => /omzet zonder BTW-tarief/.test(m.title));
+  check("plain cash omzet → fix points to Kas", cashItem?.fix?.href === "/dashboard/kas");
+
+  // Bank-received omzet (money on the bank, rate lives in the Z-report) → Dagomzet,
+  // even for a store with NO till rows yet. This was the live bug: €168k bank omzet
+  // pointed to 'Naar Kas'.
+  const bank = buildReadiness(perfect({ usesTurnover: false, turnoverDays: 0, cashOmzetZonderBtw: 168159, omzetZonderBtwNonCash: 168159 }));
+  const bankItem = bank.missing.find((m) => /omzet zonder BTW-tarief/.test(m.title));
+  check("bank-sourced omzet → fix points to Dagomzet (not Kas)", bankItem?.fix?.href === "/dashboard/dagomzet");
+  check("bank-sourced detail mentions the Z-rapport", /Z-rapport/.test(bankItem?.detail ?? ""));
 }
 
 console.log("\n— partial kassadag coverage is a BTW gap —");

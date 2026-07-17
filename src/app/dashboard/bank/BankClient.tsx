@@ -5,8 +5,12 @@
 // Flow: upload bankafschrift → /api/bank/upload → /api/bank/match → review suggestions → confirm.
 // Philosophy: AI suggests, the human confirms. 'auto' = pre-filled (still one tap to confirm).
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
+import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
+import { parsePaymentPeriod } from '@/lib/payment-period'
+import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
+import { isPartialPaymentHint } from '@/lib/bank-matching'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const M3 = {
@@ -14,17 +18,17 @@ const M3 = {
   onPrimary: '#FFFFFF',
   primaryContainer: '#D3E3FD',
   onPrimaryContainer: '#041E49',
-  surface: '#FFFBFE',
-  onSurface: '#1C1B1F',
-  surfaceVariant: '#E7E0EC',
-  outline: '#79747E',
+  surface: '#ffffff',
+  onSurface: '#202124',
+  surfaceVariant: '#f1f3f4',
+  outline: '#80868b',
   error: '#B3261E',
   errorContainer: '#F9DEDC',
   success: '#137333',
   successContainer: '#CEEAD6',
   warning: '#E37400',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
@@ -65,6 +69,8 @@ type Outcome = 'auto' | 'choice' | 'none'
 interface Candidate {
   invoiceId: string
   invoiceNumber: string | null
+  amount: number | null // [BANK-BATCH-RECONCILE] invoice gross total, to sum-check a batch
+  invoiceDate: string | null // [BANK-CHOICE-CLARITY] tells same-amount candidates apart
   confidence: number
   signals: string[]
   reason: string
@@ -84,6 +90,9 @@ interface Suggestion {
   // allCovered: every reference number is now paid (→ it's effectively done).
   partiallyLinked?: boolean
   allCovered?: boolean
+  // [BANK-SLOT-PERSIST] Server-computed reference numbers already paid against this tx,
+  // so a paid slot shows "Betaald" after a reload (session confirm state is gone).
+  coveredNumbers?: string[]
 }
 interface MatchResponse {
   ok: boolean
@@ -124,6 +133,14 @@ export default function BankClient() {
   // single-confirm. selectedForBatch holds the txIds the owner ticked.
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set())
   const [batchRunning, setBatchRunning] = useState(false)
+  // [BANK-AUTO-CONFIRM] "Quiet by default": the app books the near-certain matches itself.
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoDoneCount, setAutoDoneCount] = useState<number | null>(null)
+  // [BANK-AUTO-RUN] Guard so the app auto-handles the near-certain payments ONCE per page
+  // load, the moment they appear — the owner should never have to press a button for a
+  // payment the app is already certain of. Set before the async call so a re-render mid-flight
+  // (runMatch updates `data`) can't fire a second pass.
+  const autoRanRef = useRef(false)
   // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
   // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
   // dropdown of every counterpart. Matches counterpart name, reference, or date.
@@ -138,6 +155,10 @@ export default function BankClient() {
   const [initialLoading, setInitialLoading] = useState(true)
   // [BANK-TABS] Active tab — defaults to the one the owner acts on.
   const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'pin' | 'ignored' | 'done'>('confirm')
+  // [BANK-QUARTER] Which quarter's transactions to show. 'auto' resolves to the newest
+  // quarter that has data, so an owner working on Q2 lands on Q2 instead of an all-quarters
+  // pile (old Q1 uploads inflated "Geen factuur" to 335). 'all' shows every quarter.
+  const [quarterSel, setQuarterSel] = useState<string>('auto')
   // [BANK-IGNORE] Ignored transactions (status 'not_found'), loaded lazily when
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
@@ -163,6 +184,69 @@ export default function BankClient() {
     }
     setSelected(pre)
   }, [])
+
+  // [BANK-UNLINK] Undo a confirmed match — makes auto-confirm safe (every booking reversible).
+  const unlink = useCallback(async (txId: string) => {
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/unlink', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: txId }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) { await runMatch(); showToast('Koppeling ongedaan gemaakt.') }
+      else if (json.error === 'verwerkt') showToast('De boekhouder heeft deze factuur al verwerkt — vraag eerst om dat ongedaan te maken.')
+      else if (json.error === 'multi_invoice_unlink_unsupported') showToast('Ontkoppelen van een groepsbetaling kan hier nog niet.')
+      else showToast('Ontkoppelen mislukt.')
+    } catch { showToast('Ontkoppelen mislukt.') }
+    finally { setProcessingId(null) }
+  }, [runMatch])
+
+  // [BANK-AUTO-CONFIRM] Let the app handle the near-certain payments (reference number +
+  // exact amount, single invoice) so the owner only deals with what's genuinely ambiguous.
+  // The server decides the safe set (isSafeAutoConfirm); we just refresh afterwards.
+  const autoConfirm = useCallback(async () => {
+    setAutoRunning(true)
+    try {
+      const res = await fetch('/api/bank/auto-confirm', { method: 'POST' })
+      const json = await res.json()
+      if (res.ok) {
+        setAutoDoneCount(json.count ?? 0)
+        await runMatch() // the handled ones leave "Te bevestigen"
+      } else {
+        showToast('Automatisch afhandelen mislukt.')
+      }
+    } catch {
+      showToast('Automatisch afhandelen mislukt.')
+    } finally {
+      setAutoRunning(false)
+    }
+  }, [runMatch])
+
+  // [BANK-AUTO-RUN] The circle should run itself: when the matches load and the app finds
+  // near-certain payments (invoice number printed in the statement + exact amount, single
+  // invoice, no instalment hint), it books them WITHOUT waiting for a tap. This is the
+  // difference between the owner chasing the app and the app working in the background.
+  // The server (isSafeAutoConfirm) is authoritative and only ever touches that safe set;
+  // this effect just decides "are there any, and have I not run yet this load". autoRanRef
+  // makes it once-per-mount so the runMatch refresh inside autoConfirm can't loop it.
+  useEffect(() => {
+    if (autoRanRef.current) return
+    if (autoRunning) return
+    if (!data) return
+    const hasSafe = (data.suggestions ?? []).some(
+      (s) =>
+        s.outcome === 'auto' &&
+        !!s.best &&
+        s.best.signals.includes('reference') &&
+        s.best.signals.includes('amount') &&
+        (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
+        !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
+    )
+    if (!hasSafe) return
+    autoRanRef.current = true
+    void autoConfirm()
+  }, [data, autoRunning, autoConfirm])
 
   // [BANK-PERSIST] Initial load — show stored pending transactions on refresh.
   useEffect(() => {
@@ -240,12 +324,23 @@ export default function BankClient() {
         setFormatNotice({ name: file.name, kept: true })
       }
 
-      // Run matching (shared with initial load)
+      // [BANK-AUTO-RUN] Claim the once-per-load guard BEFORE the awaits below. runMatch()
+      // populates `data`, and React can commit that render during the very next await — if the
+      // guard were still false the load effect would fire its own autoConfirm() there, then we
+      // would fire a second one, racing two passes. Setting it first makes the load effect
+      // short-circuit so this upload owns exactly one pass.
+      autoRanRef.current = true
+      // Run matching (shared with initial load) — always, so `data` is populated even if
+      // the auto-confirm pass below finds nothing or fails (the screen must never stay empty).
       await runMatch()
       // [BANK-STATEMENT-DELETE] Refresh the uploaded-statements table so the file
       // just uploaded appears immediately — without it the table only updated on a
       // full page reload (it's populated by loadStatements on mount).
       await loadStatements()
+      // Book the near-certain payments from the statement we just uploaded, right now — the
+      // owner shouldn't have to reload for the app to handle the sure ones. The server books
+      // only the safe set (isSafeAutoConfirm); an empty or failed pass leaves the list as-is.
+      await autoConfirm()
     } catch {
       showToast('Er ging iets mis.')
     } finally {
@@ -614,7 +709,27 @@ export default function BankClient() {
     !isDone(s) &&
     (s.partiallyLinked === true ||
       (confirmed[s.transactionId] && confirmed[s.transactionId].allCovered === false))
-  const pending = data?.suggestions.filter((s) => !isDone(s)) ?? []
+  // [BANK-QUARTER] Quarters present across ALL loaded transactions (pending + done +
+  // ignored), newest first, with a per-quarter count for the chip. Filtering is by the BANK
+  // date (payment date), so a Q1 invoice paid in Q2 shows under Q2 and the matcher still
+  // offers the Q1 invoice — cross-quarter payments land in the quarter the money moved.
+  const quarters = quartersPresent([
+    ...((data?.suggestions ?? []).map((s) => s.date)),
+    ...((ignoredList ?? []).map((s) => s.date)),
+  ])
+  // [BANK-QUARTER] Default (via 'auto') to the app's shared quarter: the LAST COMPLETED
+  // quarter (the one whose BTW is due — what klaar/aangifte/resultaat also default to), so
+  // "I'm working on Q2" lands on Q2, not the newest half-open quarter. Fall back to the
+  // newest quarter present (or 'all') when the last-completed quarter has no bank data.
+  const lc = lastCompletedQuarter()
+  const defaultQuarterKey = `${lc.year}-Q${lc.quarter}`
+  const autoQuarter = quarters.some((q) => q.key === defaultQuarterKey)
+    ? defaultQuarterKey
+    : (quarters[0]?.key ?? 'all')
+  const effectiveQuarter = quarterSel === 'auto' ? autoQuarter : quarterSel
+  const inQ = (s: Suggestion) => matchesQuarter(s.date, effectiveQuarter)
+
+  const pending = (data?.suggestions.filter((s) => !isDone(s)) ?? []).filter(inQ)
 
   // [BANK-SORT] Stable order by date (newest first) so a restored transaction
   // returns to its logical position instead of jumping to the bottom.
@@ -651,36 +766,77 @@ export default function BankClient() {
   const noneAll = pending.filter((s) => s.outcome === 'none' && !isPartiallyLinked(s))
   const noMatch = noneAll.filter((s) => !isPosReceipt(s)).sort(byDateDesc)
   const posList = noneAll.filter(isPosReceipt).sort(byDateDesc)
-  const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).sort(byDateDesc)
+  // [BANK-SAFETY-NET] A DEBIT (money out, amount < 0) with no matching invoice is a payment for
+  // which we hold no purchase invoice — a MISSING INKOOPFACTUUR. It matters for the money: no
+  // invoice means the voorbelasting (deductible BTW) on that cost is not claimed, so the owner
+  // pays more BTW than they should. The bank line is the one signal that survives a silent
+  // import miss, so we turn it from a dead-end into a prompt to recover the document.
+  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0)
+  const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).filter(inQ).sort(byDateDesc)
+  // [BANK-QUARTER] Ignored tab, filtered to the selected quarter too.
+  const ignoredInQ = (ignoredList ?? []).filter(inQ)
   // [BANK-BATCH-CONFIRM] The subset of "Te bevestigen" that can be bulk-confirmed
   // (strong single-invoice auto matches), and how many of those are currently ticked.
   const batchEligibleList = toConfirm.filter((s) => isBatchEligible(s))
   const batchSelectedCount = batchEligibleList.filter((s) => selectedForBatch.has(s.transactionId)).length
 
+  // [BANK-AUTO-CONFIRM] How many of the shown (quarter-filtered) matches are near-certain
+  // enough for the app to book without a tap — mirrors the server's isSafeAutoConfirm:
+  // reference number + exact amount, single invoice, not an instalment. The server is
+  // authoritative; this only drives the "handle X automatically" offer.
+  const safeAutoCount = toConfirm.filter((s) =>
+    s.outcome === 'auto' &&
+    !!s.best &&
+    s.best.signals.includes('reference') &&
+    s.best.signals.includes('amount') &&
+    (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
+    !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
+  ).length
+
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
     { key: 'pin' as const, label: 'Pinontvangsten', icon: 'point_of_sale', count: posList.length },
-    { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredList?.length ?? 0 },
+    { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredInQ.length },
     { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
   ]
   const activeListRaw =
     bankTab === 'confirm' ? toConfirm
     : bankTab === 'none' ? noMatch
     : bankTab === 'pin' ? posList
-    : bankTab === 'ignored' ? (ignoredList ?? [])
+    : bankTab === 'ignored' ? ignoredInQ
     : confirmedList
 
-  // [BANK-FILTER] Only the "Geen factuur" tab is filtered (the long one). The
-  // filter is a simple case-insensitive substring over name + reference + date.
+  // [BANK-FILTER] Only the "Geen factuur" tab is filtered (the long one).
+  // [SEARCH] Now genuinely searches AMOUNT too (the placeholder promised "bedrag"
+  // but the filter ignored it), and folds accents on name/reference.
+  const fold = (x: string) => x.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
   const activeList =
     bankTab === 'none' && filterText.trim()
       ? activeListRaw.filter((s) => {
-          const q = filterText.trim().toLowerCase()
+          const raw = filterText.trim()
+          const q = fold(raw)
+          // Amount: only when the query is AMOUNT-LIKE (digits/separators/€ only) — a
+          // text query that merely contains a digit ("factuur 2") must NOT trigger it.
+          // Exact value ("1.500,00" / "45,50"), plus a whole-euro match ("15" → €15,xx)
+          // ONLY when no decimal was typed (so "1,5" means €1,50, not also €15,xx).
+          const amountLike = raw.length > 0 && !/[^\d.,\s€-]/.test(raw)
+          const qDigits = raw.replace(/[^\d]/g, '')
+          const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
+          // "whole euro" = the parsed value is an integer ("15","1.500","1.500,00"),
+          // NOT that the raw string lacks separators — a NL thousands-dot ("1.500")
+          // is still a whole number and must keep the whole-euro match.
+          const isWhole = Number.isInteger(qNum)
+          const an = Math.abs(s.amount)
+          const amountMatch =
+            amountLike && qDigits.length > 0 &&
+            ((Number.isFinite(qNum) && qNum > 0 && Math.abs(an - qNum) < 0.005) ||
+              (isWhole && String(Math.trunc(an)) === qDigits))
           return (
-            (s.counterpart ?? '').toLowerCase().includes(q) ||
-            (s.reference ?? '').toLowerCase().includes(q) ||
-            (s.date ?? '').toLowerCase().includes(q)
+            fold(s.counterpart ?? '').includes(q) ||
+            fold(s.reference ?? '').includes(q) ||
+            (s.date ?? '').toLowerCase().includes(raw.toLowerCase()) ||
+            amountMatch
           )
         })
       : activeListRaw
@@ -774,7 +930,7 @@ export default function BankClient() {
             </button>
           </div>
           {statements.map((st) => (
-            <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #F7F7F7' }}>
+            <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f8f9fa' }}>
               <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#9aa0a6', flexShrink: 0 }}>description</span>
                 <span style={{ fontSize: 13, color: '#3c4043', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -809,13 +965,85 @@ export default function BankClient() {
         </div>
       )}
 
+      {/* [BANK-AUTO-CONFIRM] "Quiet by default": the app offers to book the near-certain
+          payments itself, so the owner isn't tapping through hundreds of sure matches. The
+          server only books reference+exact-amount single-invoice matches, and every
+          booking is reversible — the ambiguous ones stay in the list for the human. */}
+      {safeAutoCount > 0 && (
+        <div style={{ marginTop: 18, borderRadius: R.lg, background: M3.primaryContainer, padding: '16px 18px', boxShadow: EL1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }}>bolt</span>
+            <div style={{ fontSize: 15, fontWeight: 700, color: M3.onPrimaryContainer }}>
+              {autoRunning
+                ? `Ik handel ${safeAutoCount} zekere ${safeAutoCount === 1 ? 'betaling' : 'betalingen'} voor je af…`
+                : `${safeAutoCount} zekere ${safeAutoCount === 1 ? 'betaling' : 'betalingen'} klaar om af te handelen`}
+            </div>
+          </div>
+          <div style={{ fontSize: 12.5, color: '#3c4043', margin: '6px 0 12px', lineHeight: 1.5 }}>
+            Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan handel ik zelf af — koppelen en als betaald markeren. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.
+          </div>
+          {/* [BANK-AUTO-RUN] The app already books these on load; this button is only a manual
+              re-trigger if the automatic pass was interrupted (e.g. a network hiccup). */}
+          <button
+            onClick={autoConfirm}
+            disabled={autoRunning}
+            style={{
+              padding: '11px 16px', borderRadius: R.full, border: 'none',
+              background: autoRunning ? '#dadce0' : M3.primary, color: '#fff',
+              fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: autoRunning ? 'default' : 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{autoRunning ? 'hourglass_empty' : 'auto_awesome'}</span>
+            {autoRunning ? 'Bezig…' : 'Nu afhandelen'}
+          </button>
+        </div>
+      )}
+      {autoDoneCount != null && autoDoneCount > 0 && safeAutoCount === 0 && (
+        <div style={{ marginTop: 18, borderRadius: R.lg, background: M3.successContainer, padding: '14px 16px' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: M3.success, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>task_alt</span>
+            Ik heb {autoDoneCount} {autoDoneCount === 1 ? 'betaling' : 'betalingen'} automatisch afgehandeld
+          </div>
+          <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 2 }}>Alleen wat jouw aandacht nodig heeft is overgebleven.</div>
+        </div>
+      )}
+
       {/* [BANK-TABS] Tabs — only once we have data with at least one transaction */}
       {data && (toConfirm.length + noMatch.length + posList.length + confirmedList.length + (ignoredList?.length ?? 0)) > 0 && (
         <>
+          {/* [BANK-QUARTER] Quarter filter — only when more than one quarter is loaded.
+              Defaults (via 'auto') to the newest quarter so the owner sees just the
+              quarter they're working on; "Alle" brings every quarter back. Counts are
+              per quarter so it's obvious no data was deleted — only filtered. */}
+          {quarters.length >= 2 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 18, alignItems: 'center' }}>
+              <span style={{ fontSize: 12.5, color: '#5F6368', fontWeight: 700 }}>Kwartaal:</span>
+              {([{ key: 'all', label: 'Alle', count: null as number | null }, ...quarters.map((q) => ({ key: q.key, label: quarterLabelOf(q.key), count: q.count }))]).map((q) => {
+                const active = q.key === 'all' ? quarterSel === 'all' : effectiveQuarter === q.key
+                return (
+                  <button
+                    key={q.key}
+                    onClick={() => setQuarterSel(q.key)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 11px',
+                      borderRadius: R.full, cursor: 'pointer', fontFamily: FONT, fontSize: 12.5, fontWeight: 600,
+                      border: `1px solid ${active ? M3.primary : '#E0E0E0'}`,
+                      background: active ? M3.primaryContainer : '#fff',
+                      color: active ? M3.onPrimaryContainer : '#5F6368',
+                    }}
+                  >
+                    {q.label}
+                    {q.count != null && <span style={{ opacity: 0.6, fontFamily: FONT_NUM }}>{q.count}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {/* [BANK-CHIPS] Chips grid instead of a horizontal scroll bar: every tab
               is visible at once and wraps to the next line on narrow screens — no
               hidden horizontal scroll the owner can miss. */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 18 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
             {tabs.map((t) => {
               const active = bankTab === t.key
               return (
@@ -842,6 +1070,35 @@ export default function BankClient() {
               )
             })}
           </div>
+
+          {/* [BANK-SAFETY-NET] Missing purchase invoices — a debit we can't match to any
+              invoice means the deductible BTW on that cost isn't claimed. The bank line is the
+              backstop that catches whatever import missed; turn it into a recovery prompt. */}
+          {bankTab === 'none' && missingPurchaseDebits.length > 0 && (
+            <div style={{ marginTop: 12, borderRadius: R.lg, background: '#FFF3E0', padding: '14px 16px', boxShadow: EL1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#B26A00' }}>receipt_long</span>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#7A4B00' }}>
+                  {missingPurchaseDebits.length} {missingPurchaseDebits.length === 1 ? 'betaling' : 'betalingen'} zonder inkoopfactuur
+                </div>
+              </div>
+              <div style={{ fontSize: 12.5, color: '#7A4B00', margin: '6px 0 12px', lineHeight: 1.5 }}>
+                Je hebt betaald, maar we hebben de factuur nog niet. Zonder factuur mis je de BTW-aftrek (voorbelasting) op deze kosten. Voeg de factuur toe, of haal je e-mail opnieuw op — dan koppelen we hem automatisch.
+              </div>
+              <Link
+                href="/dashboard/incoming"
+                style={{
+                  padding: '10px 16px', borderRadius: R.full, border: 'none',
+                  background: '#B26A00', color: '#fff', fontSize: 13.5, fontWeight: 600,
+                  fontFamily: FONT, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                  textDecoration: 'none',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 17 }}>add</span>
+                Factuur toevoegen of e-mail opnieuw ophalen
+              </Link>
+            </div>
+          )}
 
           {/* "Geen factuur" context — POS receipts naturally have no invoice */}
           {bankTab === 'none' && noMatch.length > 0 && (
@@ -927,7 +1184,7 @@ export default function BankClient() {
                   style={{
                     border: 'none', borderRadius: R.full, cursor: batchSelectedCount === 0 || batchRunning ? 'default' : 'pointer',
                     fontFamily: FONT, fontSize: 13, fontWeight: 600, padding: '8px 16px',
-                    background: batchSelectedCount === 0 || batchRunning ? '#C7D0DB' : M3.primary, color: '#fff',
+                    background: batchSelectedCount === 0 || batchRunning ? '#dadce0' : M3.primary, color: '#fff',
                   }}
                 >
                   {batchRunning ? 'Bezig…' : `Bevestig betaling (${batchSelectedCount})`}
@@ -958,6 +1215,8 @@ export default function BankClient() {
                 onIgnore={() => ignoreTx(s.transactionId)}
                 onRestore={() => restoreTx(s.transactionId)}
                 onOpenFile={openInvoiceFile}
+                isDoneTab={bankTab === 'done'}
+                onUnlink={() => unlink(s.transactionId)}
               />
             ))}
             {activeList.length === 0 && (
@@ -1091,7 +1350,7 @@ export default function BankClient() {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90vw', textAlign: 'center', fontFamily: FONT }}>
+        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90vw', textAlign: 'center', fontFamily: FONT }}>
           {toast}
         </div>
       )}
@@ -1111,7 +1370,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -1127,6 +1386,8 @@ function TxCard({
   onIgnore: () => void
   onRestore: () => void
   onOpenFile: (invoiceId: string) => void
+  isDoneTab?: boolean
+  onUnlink?: () => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
@@ -1176,9 +1437,25 @@ function TxCard({
   // a fully-dismissed transaction (e.g. Brabant Water, where every number was a
   // customer/postcode, not an invoice) can still be cleared. Slots are built from
   // the current refParts, so dismissed numbers simply disappear as rows.
-  const wasMulti = allRefParts.length > 1 && !isIgnoredTab
+  // [BANK-PSP-MATCH] A genuine multi-invoice batch = ≥2 of the bank's reference numbers
+  // resolve to REAL invoices (a live candidate, or a number already confirmed against this
+  // tx), OR the server flagged this tx as a partially-linked multi (one invoice already
+  // paid, others still open). A PSP / order-gateway reference (Mollie transaction hash +
+  // order number) resolves <2 real invoices, so it falls through to the normal match UI and
+  // the amount-matched invoice is offered instead of hidden. Counting RESOLVED references —
+  // not raw fragments (which forced the slot view on junk), and not any full-amount
+  // candidate (which let an UNRELATED invoice equal to the whole debit collapse a real
+  // batch and steer to the wrong pick — caught in adversarial review) — fixes both bugs.
+  const resolvedRefCount = countResolvedReferences(
+    allRefParts,
+    [...s.candidates.map((c) => c.invoiceNumber), ...confirmedNumbers, ...(s.coveredNumbers ?? [])],
+  )
+  const wasMulti = !isIgnoredTab && (resolvedRefCount >= 2 || s.partiallyLinked === true)
   // Equality — not substring — so "263" can't claim "26302050".
-  const confirmedSet = new Set(confirmedNumbers.map(normRef))
+  // [BANK-SLOT-PERSIST] Merge the SESSION's just-confirmed numbers with the server's
+  // covered numbers (paid invoices, reload-safe) so an already-paid slot shows "Betaald"
+  // after a refresh instead of a false "Koppelen" / "nog open" that would double-book it.
+  const confirmedSet = new Set([...confirmedNumbers, ...(s.coveredNumbers ?? [])].map(normRef))
   // [BANK-SLOT-DISMISS] Build slots whenever the transaction STARTED multi, so a
   // single remaining number (after others were dismissed) still shows its own
   // linkable row — not just an empty banner. Driven by wasMulti, not isMulti.
@@ -1191,9 +1468,36 @@ function TxCard({
       })
     : []
   const openCount = slots.filter((sl) => !sl.isConfirmed).length
+  // [BANK-BATCH-RECONCILE] Sum the matched invoices and check the total equals the bank
+  // debit. This is the honest proof a batch payment covers exactly these invoices — no
+  // single invoice amount appears in the statement, only the sum was debited. Only shown
+  // BEFORE any slot is confirmed: once the owner starts confirming, a paid invoice drops
+  // out of the candidate set (its amount is gone), so the sum can no longer be trusted —
+  // the "X/Y bevestigd" progress banner tells the story from there.
+  const batch = wasMulti
+    ? reconcileBatch(
+        slots.map((sl) => ({ refNum: sl.refNum, amount: sl.cand?.amount ?? null, isConfirmed: sl.isConfirmed })),
+        s.amount,
+      )
+    : null
+  const showReconcile = batch != null && !batch.anyConfirmed && slots.length > 0
 
   return (
     <div style={{ borderRadius: R.lg, background: M3.surface, boxShadow: EL1, padding: 14, border: `1px solid #EEE` }}>
+      {/* [BANK-UNLINK] On the Gekoppeld tab, one tap undoes the match — makes the app's
+          automatic booking safe: any auto-confirmed payment is reversible. */}
+      {isDoneTab && onUnlink && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button
+            onClick={onUnlink}
+            disabled={processing}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#9aa0a6', padding: '2px 4px' }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
+            {processing ? 'Bezig…' : 'Ontkoppelen'}
+          </button>
+        </div>
+      )}
       {/* Transaction row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
         <div style={{ display: 'flex', gap: 10, minWidth: 0, alignItems: 'flex-start' }}>
@@ -1229,6 +1533,22 @@ function TxCard({
                 {refLabel}
               </span>
             )}
+            {/* [BANK-PERIOD] A recurring debit (rent/lease/subscription) states the month
+                it covers. Surface it so the owner can match it to the right invoice among
+                same-amount candidates — we never auto-match it (invoices have no period). */}
+            {(() => {
+              const period = parsePaymentPeriod(s.description)
+              return period ? (
+                <span title="De periode die deze betaling dekt" style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
+                  borderRadius: R.full, background: '#E8F0FE', color: '#1967D2',
+                  fontSize: 11.5, fontWeight: 600, fontFamily: FONT,
+                }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event</span>
+                  {period.label}
+                </span>
+              ) : null
+            })()}
             {/* [BANK-DETAILS] Toggle the full original bank description. */}
             {hasDetails && (
               <button
@@ -1308,6 +1628,33 @@ function TxCard({
             )}
           </div>
 
+          {/* [BANK-BATCH-RECONCILE] Honest sum-check of the whole batch, shown before the
+              owner starts confirming. Green ONLY when every referenced invoice is in the
+              system AND their totals equal the debit to the cent; an amber warning when
+              they don't add up; a neutral note when some invoices are still missing. */}
+          {showReconcile && batch && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 6,
+              padding: '8px 10px', borderRadius: R.md, marginBottom: 10,
+              fontSize: 12.5, fontWeight: 500, lineHeight: 1.45,
+              background: batch.status === 'ties' ? M3.successContainer : batch.status === 'mismatch' ? '#FEEFC3' : M3.surfaceVariant,
+              color: batch.status === 'ties' ? M3.success : batch.status === 'mismatch' ? '#7A4F00' : '#3c4043',
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>
+                {batch.status === 'ties' ? 'verified' : batch.status === 'mismatch' ? 'error' : 'info'}
+              </span>
+              <span>
+                {batch.status === 'ties'
+                  ? (batch.matchedCount >= 2
+                      ? <><strong>Samen {eur.format(batch.total)}</strong> — precies gelijk aan de afschrijving. Alle {batch.slotCount} factuurnummers staan in je bankafschrift.</>
+                      : <><strong>{eur.format(batch.total)}</strong> en het factuurnummer staan in je bankafschrift.</>)
+                  : batch.status === 'mismatch'
+                    ? <>{batch.matchedCount >= 2 ? 'Samen ' : ''}<strong>{eur.format(batch.total)}</strong>, maar er is {eur.format(batch.bankAmount)} afgeschreven (verschil {eur.format(Math.abs(batch.diff))}). Controleer welke {batch.matchedCount >= 2 ? 'facturen' : 'factuur'} bij deze betaling {batch.matchedCount >= 2 ? 'horen' : 'hoort'}.</>
+                    : <>{batch.matchedCount} van {batch.slotCount} facturen staan in je administratie. De factuurnummers staan in je bankafschrift — koppel de ontbrekende.</>}
+              </span>
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {slots.map((sl) => (
               <div
@@ -1319,17 +1666,42 @@ function TxCard({
                   background: sl.isConfirmed ? M3.successContainer : '#fff',
                 }}
               >
-                <span style={{
-                  fontSize: 13, fontWeight: 600, fontFamily: FONT_NUM,
-                  color: sl.isConfirmed ? M3.success : M3.onSurface,
-                  display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0 }}>
-                    {sl.isConfirmed ? 'check_circle' : sl.cand ? 'pending' : 'upload_file'}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                  <span style={{
+                    fontSize: 13, fontWeight: 600, fontFamily: FONT_NUM,
+                    color: sl.isConfirmed ? M3.success : M3.onSurface,
+                    display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0 }}>
+                      {sl.isConfirmed ? 'check_circle' : sl.cand ? 'pending' : 'upload_file'}
+                    </span>
+                    {sl.refNum}
                   </span>
-                  {sl.refNum}
-                </span>
+                  {/* [BANK-BATCH-RECONCILE] Per-invoice amount + open its PDF — so the
+                      owner can check each factuur before confirming a batch payment. Only
+                      when a real invoice is matched to this number (else "Koppelen"). */}
+                  {sl.cand && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, paddingLeft: 22, flexWrap: 'wrap' }}>
+                      {sl.cand.amount != null && (
+                        <span style={{ fontSize: 12, fontWeight: 600, fontFamily: FONT_NUM, color: '#5F6368' }}>
+                          {eur.format(Math.abs(sl.cand.amount))}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => onOpenFile(sl.cand!.invoiceId)}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 3, border: 'none',
+                          background: 'none', cursor: 'pointer', fontFamily: FONT,
+                          fontSize: 12, fontWeight: 600, color: M3.primary, padding: 0,
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+                        Bekijk factuur
+                      </button>
+                    </span>
+                  )}
+                </div>
 
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                 {/* [BANK-SLOT-DISMISS] Remove a number that isn't an invoice (a
@@ -1517,22 +1889,55 @@ function TxCard({
 
       {!wasMulti && s.outcome === 'choice' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2 }}>Kies de juiste factuur:</div>
-          {s.candidates.map((c) => (
-            <button
+          {/* [BANK-CHOICE-CLARITY] Say WHY we're asking. The bank payment had no single
+              invoice number to match on (e.g. a recurring incasso), so several invoices
+              fit. Comparing bedrag + datum is how the owner picks the right one — the old
+              bare "Factuur VHF…" list gave nothing to compare and read as a guess. */}
+          <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, lineHeight: 1.45 }}>
+            Meerdere facturen passen bij deze betaling. Vergelijk <strong>bedrag</strong> en <strong>datum</strong> en kies de juiste.
+          </div>
+          {s.candidates.map((c) => {
+            const isSel = selectedInvoiceId === c.invoiceId
+            return (
+            <div
               key={c.invoiceId}
+              role="button"
+              tabIndex={0}
               onClick={() => onSelect(c.invoiceId)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(c.invoiceId) } }}
               style={{
-                textAlign: 'left', border: `1.5px solid ${selectedInvoiceId === c.invoiceId ? M3.primary : '#E0E0E0'}`,
-                background: selectedInvoiceId === c.invoiceId ? M3.primaryContainer : '#fff',
+                textAlign: 'left', border: `1.5px solid ${isSel ? M3.primary : '#E0E0E0'}`,
+                background: isSel ? M3.primaryContainer : '#fff',
                 borderRadius: R.md, padding: '8px 10px', cursor: 'pointer', fontFamily: FONT,
               }}
             >
-              <CandidateRow cand={c} selected={selectedInvoiceId === c.invoiceId} inline />
-            </button>
-          ))}
+              <CandidateRow cand={c} selected={isSel} inline onOpenFile={onOpenFile} />
+            </div>
+            )
+          })}
         </div>
       )}
+
+      {/* [BANK-PARTIAL] Underpayment / instalment warning — there is no partial-paid state,
+          so a one-tap confirm marks the WHOLE invoice paid. Never silently: if the paid
+          amount is below (or above) the selected invoice total, say so before the tap. */}
+      {!wasMulti && s.outcome !== 'none' && selectedCand && selectedCand.amount != null && (() => {
+        const txAbs = Math.abs(s.amount)
+        const invAbs = Math.abs(selectedCand.amount ?? 0)
+        const under = invAbs - txAbs > 0.01
+        const over = txAbs - invAbs > 0.01
+        if (!under && !over) return null
+        return (
+          <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: R.md, background: '#FEEFC3', color: '#7A4F00', fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>warning</span>
+            <span>
+              {under
+                ? <>Deelbetaling? Er is <strong>{eur.format(txAbs)}</strong> betaald, maar het factuurbedrag is <strong>{eur.format(invAbs)}</strong>. Bevestigen markeert de <strong>hele</strong> factuur als betaald.</>
+                : <>Er is <strong>{eur.format(txAbs)}</strong> betaald — méér dan het factuurbedrag <strong>{eur.format(invAbs)}</strong>. Controleer of dit de juiste factuur is.</>}
+            </span>
+          </div>
+        )
+      })()}
 
       {/* Confirm */}
       {!wasMulti && s.outcome !== 'none' && (
@@ -1556,15 +1961,75 @@ function TxCard({
   )
 }
 
+// [BANK-CHOICE-CLARITY] Short, human date for a candidate invoice ("12 jun. 2026").
+// The differentiator when several candidates share one amount (monthly rent, etc.).
+const NL_MONTHS = ['jan.', 'feb.', 'mrt.', 'apr.', 'mei', 'jun.', 'jul.', 'aug.', 'sep.', 'okt.', 'nov.', 'dec.']
+function fmtInvoiceDate(iso: string | null): string {
+  if (!iso) return ''
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  if (!m) return ''
+  return `${Number(m[3])} ${NL_MONTHS[Number(m[2]) - 1]} ${m[1]}`
+}
+// [BANK-CHOICE-CLARITY] Plain-Dutch reason a candidate is offered, from the engine's own
+// match signals — so "why is this here?" is answered instead of a bare invoice number.
+const WHY_LABEL: Record<string, string> = {
+  amount: 'bedrag komt overeen',
+  counterpart: 'zelfde tegenpartij',
+  date: 'datum dichtbij',
+  reference: 'nummer in omschrijving',
+}
+
 function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void }) {
+  // [BANK-CHOICE-CLARITY] In the choice list, the engine's amount signal means this
+  // invoice's total equals the bank amount — the strongest hint, so highlight it.
+  const amountMatches = Array.isArray(cand.signals) && cand.signals.includes('amount')
+  const why = Array.isArray(cand.signals)
+    ? cand.signals.map((s) => WHY_LABEL[s]).filter(Boolean)
+    : []
   return (
     <div style={{ marginTop: emphasis ? 12 : 0, padding: emphasis ? '10px 12px' : 0, borderRadius: R.md, background: emphasis ? M3.successContainer : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface }}>
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 4 }}>task_alt</span>}
           Factuur {cand.invoiceNumber ?? '—'}
         </span>
+        {/* [BANK-CHOICE-CLARITY] The amount, on the right — the first thing to compare
+            when picking between candidates. Green + check when it equals the debit. */}
+        {inline && cand.amount != null && (
+          <span style={{
+            fontFamily: FONT_NUM, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
+            color: amountMatches ? M3.success : M3.onSurface,
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+          }}>
+            {amountMatches && <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span>}
+            {eur.format(Math.abs(cand.amount))}
+          </span>
+        )}
       </div>
+      {/* [BANK-CHOICE-CLARITY] Second line for the choice list: the invoice date (the
+          differentiator for same-amount candidates), why it matched, and its PDF. */}
+      {inline && (
+        <div style={{ marginTop: 4, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 11.5, color: '#5F6368' }}>
+          {fmtInvoiceDate(cand.invoiceDate) && <span>{fmtInvoiceDate(cand.invoiceDate)}</span>}
+          {why.length > 0 && <span style={{ color: amountMatches ? M3.success : '#5F6368', fontWeight: amountMatches ? 600 : 400 }}>· {why.join(' · ')}</span>}
+          {onOpenFile && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenFile(cand.invoiceId) }}
+              // [A11Y] The row wrapper is a role=button that selects on Enter/Space; stop
+              // the key event here so opening the PDF doesn't ALSO select the candidate.
+              onKeyDown={(e) => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 'auto',
+                border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+                fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+              Bekijk factuur
+            </button>
+          )}
+        </div>
+      )}
       {!inline && (
         <div style={{ marginTop: 4, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
           {/* [BANK-PROOF-LINE] Instead of an algorithmic "97%" + cryptic Kenmerk/Bedrag
@@ -1575,7 +2040,13 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
               match; the choice list shows nothing extra. */}
           {emphasis && (
             <span style={{ fontSize: 11.5, color: M3.success, fontWeight: 500 }}>
-              Dit bedrag en factuurnummer staan in je bankafschrift
+              {/* [BANK-PSP-MATCH] Honest proof line: only claim the factuurnummer is in the
+                  statement when the reference signal actually fired. An amount+counterpart
+                  match (a PSP/order payment) has NO invoice number in the statement, so we
+                  say only that the amount matches — never invent a reference that isn't there. */}
+              {Array.isArray(cand.signals) && cand.signals.includes('reference')
+                ? 'Dit bedrag en factuurnummer staan in je bankafschrift'
+                : 'Dit bedrag komt overeen met je bankafschrift'}
             </span>
           )}
           {/* [BANK-INVOICE-FILE] Open the actual invoice PDF before confirming. */}

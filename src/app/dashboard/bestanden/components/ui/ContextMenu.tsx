@@ -53,7 +53,7 @@ export function ContextMenu({
         boxShadow: T.elev3,
         border: `1px solid ${T.surfaceVariant}`,
         minWidth: menuW, padding: "4px 0",
-        fontFamily: "'Google Sans','Roboto',sans-serif",
+        fontFamily: "'Roboto',sans-serif",
       }}
     >
       {items.map((item, i) => (

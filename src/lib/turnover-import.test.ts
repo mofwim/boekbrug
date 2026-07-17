@@ -86,6 +86,18 @@ console.log("\n— robustness —");
     ][0].turnover_date === "2026-02-01");
   check("NL number strings parse",
     near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "1.089,00", "1.089,00"]]).rows[0].total_incl!, 1089));
+  // [L1] accounting-style negative (refund/correction day) keeps its sign — must NOT be
+  // read as positive omzet.
+  check("parenthesised negative keeps its sign",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "(1.089,00)", "0"]]).rows[0].total_incl!, -1089));
+  check("trailing-minus negative keeps its sign",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "50,00-", "0"]]).rows[0].total_incl!, -50));
+  // [QF5] a whole-euro NL value with a thousands dot and no comma → 2500, not 2,50.
+  check("NL thousands dot without decimals → 2500 (not 2.5)",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "2.500", "0"]]).rows[0].total_incl!, 2500));
+  // a genuine decimal dot (2 trailing digits) stays a decimal.
+  check("genuine decimal dot stays decimal (12.50 → 12.5, not 1250)",
+    near(normalizeTurnoverSheet([["Datum", "Omzet incl.", "Base TC 9 %"], ["2026-02-01", "12.50", "0"]]).rows[0].total_incl!, 12.5));
 }
 
 console.log("\n— AUDIT FIX: a net-only sheet is not mistaken for gross —");
@@ -139,6 +151,26 @@ console.log("\n— REAL month.xls: Excel serial date (46206) parses to 2026-07-0
   const R: Cell[] = [46206, 2258.19, 2071.73, 2258.19];
   const { rows } = normalizeTurnoverSheet([H, R]);
   check("serial 46206 → 2026-07-03", rows[0]?.turnover_date === "2026-07-03");
+}
+
+// [ASYMMETRIC HT/TC] The silent-BTW bug: a sheet with HT for one rate (9%) but ONLY a
+// TC/gross column for another (21%). A global hasHT flag booked the TC-only rate's whole
+// gross as BTW (base=0, btw=gross), silently. Per-rate decision must derive its net.
+console.log("\n— asymmetric HT/TC columns (per-rate gross-vs-net) —");
+{
+  const H: Cell[] = [
+    "Datum", "Omzet incl.", "BTW", "Netto Omzet",
+    "Base HT 9 %", "Base TC 9 %", "Base TC 21 %", "Contant", "PIN",
+  ];
+  // 9% has HT(net 100)+TC(gross 109); 21% has ONLY TC (gross 121 → net 100, btw 21).
+  const DAY: Cell[] = ["2026-03-01", 230, 30, 200, 100, 109, 121, 115, 115];
+  const { rows } = normalizeTurnoverSheet([H, DAY]);
+  const d = rows[0];
+  check("9% (HT+TC): base = HT net 100", near(d.base_9, 100));
+  check("9% (HT+TC): btw = TC − HT = 9", near(d.btw_9, 9));
+  check("21% (TC-only): net derived from gross = 100 (NOT 0)", near(d.base_21, 100));
+  check("21% (TC-only): btw = 21 (NOT the whole gross 121)", near(d.btw_21, 21));
+  check("net + BTW reconstructs gross", near(d.base_9 + d.base_21 + d.btw_9 + d.btw_21, 230, 0.05));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

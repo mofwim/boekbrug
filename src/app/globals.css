@@ -1,40 +1,40 @@
 @import "tailwindcss";
 /*boek-015  015 BoekBrug onboarding implementation with AI layer on claude*/
 /* ── BoekBrug Design System ─────────────────────────────────────────────────  */
-/* iOS-based Fluent Design · Clean · Accessible · Fast                        */
+/* Material 3 · Clean · Accessible · Fast                                     */
 /* [Design System] Font: Roboto via next/font/google (variable: --font-sans)  */
 
 @theme {
-  /* Colors */
-  --color-bg:            #f2f2f7;
+  /* Colors — Material 3 (Google) palette */
+  --color-bg:            #f8f9fa;
   --color-surface:       #ffffff;
-  --color-surface-2:     #f9f9fb;
+  --color-surface-2:     #f1f3f4;
 
-  --color-text-primary:  #1c1c1e;
-  --color-text-secondary:#6b6b6e;
-  --color-text-tertiary: #8a8a8e;
-  --color-separator:     #e5e5ea;
+  --color-text-primary:  #202124;
+  --color-text-secondary:#5f6368;
+  --color-text-tertiary: #80868b;
+  --color-separator:     #e0e0e0;
 
-  --color-blue:          #007aff;
-  --color-blue-light:    #e8f1ff;
-  --color-green:         #34c759;
-  --color-green-light:   #f0fdf4;
-  --color-red:           #ff3b30;
-  --color-red-light:     #fff5f5;
-  --color-orange:        #ff9500;
-  --color-orange-light:  #fff8ee;
-  --color-purple:        #af52de;
-  --color-purple-light:  #f5f0ff;
+  --color-blue:          #1a73e8;
+  --color-blue-light:    #e8f0fe;
+  --color-green:         #34a853;
+  --color-green-light:   #e6f4ea;
+  --color-red:           #ea4335;
+  --color-red-light:     #fce8e6;
+  --color-orange:        #e37400;
+  --color-orange-light:  #fef7e0;
+  --color-purple:        #7b1fa2;
+  --color-purple-light:  #f3e8fd;
 
   /* Invoice status colors */
-  --color-status-paid-bg:    #f0fdf4;
-  --color-status-paid-bar:   #34c759;
+  --color-status-paid-bg:    #e6f4ea;
+  --color-status-paid-bar:   #34a853;
   --color-status-sent-bg:    #ffffff;
-  --color-status-sent-bar:   #007aff;
+  --color-status-sent-bar:   #1a73e8;
   --color-status-draft-bg:   #ffffff;
-  --color-status-draft-bar:  #c7c7cc;
-  --color-status-overdue-bg: #fff5f5;
-  --color-status-overdue-bar:#ff3b30;
+  --color-status-draft-bar:  #dadce0;
+  --color-status-overdue-bg: #fce8e6;
+  --color-status-overdue-bar:#ea4335;
 
   /* Radius */
   --radius-card:   16px;
@@ -127,7 +127,7 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
   border-color: var(--color-blue) !important;
   outline: none !important;
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.18) !important;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.18) !important;
 }
 
 input::placeholder, textarea::placeholder {
@@ -181,10 +181,10 @@ input::placeholder, textarea::placeholder {
   white-space: nowrap;
 }
 
-.badge-paid    { background: #dcfce7; color: #166534; }
-.badge-sent    { background: var(--color-blue-light); color: #1d4ed8; }
-.badge-draft   { background: #f4f4f5; color: #52525b; }
-.badge-overdue { background: var(--color-red-light); color: #dc2626; }
+.badge-paid    { background: #ceead6; color: #137333; }
+.badge-sent    { background: var(--color-blue-light); color: #1967d2; }
+.badge-draft   { background: #f1f3f4; color: #5f6368; }
+.badge-overdue { background: var(--color-red-light); color: #c5221f; }
 
 /* ── Stats Card ──────────────────────────────────────────────────────────────── */
 
@@ -212,11 +212,30 @@ input::placeholder, textarea::placeholder {
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────────────── */
+/* Visible, on-brand scrollbar. The old 5px #e0e0e0 thumb was the same tone as the
+   light surfaces (#f8f9fa / #fff) so it read as invisible. Now: a cool blue-grey
+   thumb (biased toward the app blue) that stands out on every light surface and
+   turns full blue on hover. Firefox uses scrollbar-width/color; WebKit/Chromium
+   uses the pseudo-elements. The transparent border + background-clip:padding-box
+   gives the thumb breathing room so it reads as a floating pill (iOS style). */
 
-::-webkit-scrollbar { width: 5px; height: 5px; }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #9aa0a6 transparent;
+}
+
+::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-separator); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }
+::-webkit-scrollbar-thumb {
+  background-color: #9aa0a6;
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  min-height: 44px;
+}
+::-webkit-scrollbar-thumb:hover  { background-color: var(--color-blue); }
+::-webkit-scrollbar-thumb:active { background-color: #1557b0; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* ── Animations ──────────────────────────────────────────────────────────────── */
 
@@ -238,18 +257,6 @@ input::placeholder, textarea::placeholder {
   vertical-align: middle;
   line-height: 1;
   user-select: none;
-}
-
-/* ── iOS-style input (BOEK-015 Onboarding) ───────────────────────────────────── */
-
-.ios-input {
-  width: 100%;
-  padding: 14px 16px;
-  border-radius: 14px !important;
-  font-size: 15px !important;
-  line-height: 1.4;
-  -webkit-appearance: none;
-  appearance: none;
 }
 
 /* ── Reduced motion ──────────────────────────────────────────────────────────── */

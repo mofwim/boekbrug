@@ -57,6 +57,11 @@ export function normalizeArticleInput(raw: unknown): NormalizeResult {
   };
 }
 
+// [SEARCH] Case- AND accent-insensitive fold so "café"/"cafe" and "José"/"jose" match.
+export function foldText(s: string): string {
+  return (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
 /**
  * Rank a catalog for the invoice-line picker against a query. An exact code match wins
  * ("22" → that article first); then code prefix; then description substring. Case- and
@@ -65,14 +70,14 @@ export function normalizeArticleInput(raw: unknown): NormalizeResult {
  */
 export function matchArticles(articles: Article[], query: string, limit = 8): Article[] {
   const actives = articles.filter((a) => a.active);
-  const q = query.trim().toLowerCase();
+  const q = foldText(query.trim());
   if (!q) {
     return [...actives].sort((a, b) => b.usage_count - a.usage_count).slice(0, limit);
   }
   const scored = actives
     .map((a) => {
-      const code = (a.code ?? "").toLowerCase();
-      const desc = a.description.toLowerCase();
+      const code = foldText(a.code ?? "");
+      const desc = foldText(a.description);
       let score = -1;
       if (code && code === q) score = 100;
       else if (code && code.startsWith(q)) score = 80;

@@ -4,6 +4,8 @@
 // [BOEK-014] Minor fix: exclude archived, add invoice_type column — May 2026
 // Structured for future UBL/XML (BOEK-020)
 
+import { csvCell } from "./csv-safe";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Existing interface — kept exactly as-is for backward compatibility */
@@ -89,6 +91,10 @@ export function calcBtwRate(
   total_ex_btw: number | null
 ): number {
   if (!total_ex_btw || total_ex_btw === 0) return 0;
+  // Return the TRUE derived rate here (no snapping): the raw per-invoice overview is
+  // accountant-facing, and surfacing a blended/odd rate (e.g. an 8% from a 9%+statiegeld mix,
+  // or a genuinely wrong 17%) lets them trace it — masking it into a clean 9% would hide it.
+  // The aangifte RUBRIEK bucketing snaps to a legal rate separately (financial-result.ts).
   return Math.round(((btw_amount ?? 0) / total_ex_btw) * 100);
 }
 
@@ -178,12 +184,9 @@ export function invoicesToCsv(rows: InvoiceExportRow[]): string {
     "Periode",
   ];
 
-  const escape = (v: string | number) => {
-    const s = String(v ?? "");
-    return s.includes(";") || s.includes("\n") || s.includes('"')
-      ? `"${s.replace(/"/g, '""')}"`
-      : s;
-  };
+  // [CSV-SAFE][H1] Neutralise formula leads (= + - @) too, not just RFC-4180 quoting —
+  // these CSVs are opened in the accountant's / owner's Excel.
+  const escape = (v: string | number) => csvCell(v);
 
   const lines = [
     headers.map(escape).join(";"),
@@ -239,12 +242,9 @@ export function invoicesToCsvAccountant(
     "Periode",
   ];
 
-  const escape = (v: string | number) => {
-    const s = String(v ?? "");
-    return s.includes(";") || s.includes("\n") || s.includes('"')
-      ? `"${s.replace(/"/g, '""')}"`
-      : s;
-  };
+  // [CSV-SAFE][H1] Neutralise formula leads (= + - @) too, not just RFC-4180 quoting —
+  // these CSVs are opened in the accountant's / owner's Excel.
+  const escape = (v: string | number) => csvCell(v);
 
   const lines = [
     headers.map(escape).join(";"),
@@ -391,8 +391,8 @@ export function invoicesToUbl(rows: InvoiceExportRowFull[]): string {
             xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
             xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
     <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
-    <cbc:ID>${r.invoice_number}</cbc:ID>
-    <cbc:IssueDate>${isoDate}</cbc:IssueDate>
+    <cbc:ID>${escapeXml(r.invoice_number)}</cbc:ID>
+    <cbc:IssueDate>${escapeXml(isoDate)}</cbc:IssueDate>
     <cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>
     <cac:AccountingCustomerParty>
       <cac:Party>

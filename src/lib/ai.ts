@@ -37,6 +37,102 @@ const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 2000;
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
+// [STATEMENT-GUARD] An unmistakable statement-of-account filename — an OVERVIEW of MULTIPLE
+// invoices (with a summed total), never a single bookable invoice. Booking such a document
+// as one invoice double-counts the invoices it summarises. Narrow on purpose: it excludes
+// "aanmaning"/"herinnering", which can be a single-invoice reminder that IS bookable.
+export function isStatementFilename(filename: string): boolean {
+  return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
+}
+
+// [REMINDER] A filename that unmistakably marks a payment REMINDER (not a fresh invoice). Used
+// as a deterministic backstop over the model's own is_reminder read, so a reminder whose PDF
+// the model booked as a plain invoice is still flagged for the human. Deliberately excludes
+// bare "factuur"/"invoice". A reminder is a real (single) invoice, so we do NOT reject it — we
+// only ensure it is FLAGGED so the human checks it isn't already booked (avoids double-count).
+export function isReminderFilename(filename: string): boolean {
+  return /betalings?[-_ ]?herinnering|(^|[^a-z])herinnering|aanmaning|(^|[^a-z])reminder([^a-z]|$)|payment[-_ ]?reminder/i.test(
+    filename || "",
+  );
+}
+
+// [TRUST-CONFIDENT-FALSE] The classifier (a small model) can be CONFIDENTLY wrong that a
+// document is "not an invoice" — the classic case is a collective invoice (verzamelfactuur:
+// many delivery-note lines with their own numbers/dates/amounts) read as a "rekeningoverzicht".
+// Silently discarding such a verdict loses a real, bookable invoice with NO trace the owner can
+// see. So: when a NOT-an-invoice verdict still carries a STRONG invoice signal — a vendor AND an
+// amount — and the filename is not an unmistakable statement, we do NOT trust the rejection. The
+// document is routed to the human verify queue flagged 'uncertain' instead of dropped. This is
+// money-safe: email/intake invoices enter as 'processing', excluded from BTW/omzet/kosten until
+// the human confirms or dismisses — a genuine non-invoice (newsletter, real statement) is simply
+// dismissed there, but a real invoice is never again lost unseen. Pure + testable.
+export function shouldRescueNonInvoice(
+  p: {
+    vendor?: string | null;
+    total_inc_btw?: number | null;
+    total_ex_btw?: number | null;
+    amount?: number | null;
+    // [STATEMENT] Set by the model when the document is an overview of MULTIPLE invoices. Such a
+    // document has a vendor + a (balance) amount, so WITHOUT this guard the rescue below would
+    // wrongly resurrect it as one bookable invoice and double-count the invoices it summarises.
+    is_statement?: boolean | null;
+  },
+  filename: string,
+): boolean {
+  if (p.is_statement === true) return false; // a statement of account is never a bookable invoice
+  if (isStatementFilename(filename)) return false; // an unmistakable statement stays rejected
+  const hasVendor = !!(p.vendor && String(p.vendor).trim());
+  const hasAmount =
+    p.total_inc_btw != null || p.total_ex_btw != null || p.amount != null;
+  return hasVendor && hasAmount;
+}
+
+// [CREDIT-BACKSTOP] A document whose printed TOTAL is negative is a credit / correction, even
+// when the model did not tag it (e.g. an "expondo Factuurcorrectie — Full return" that never
+// writes the word "Creditnota"). Returns true when the row must be treated as a creditnota so
+// the negative amount is KEPT instead of being dropped to undefined (which turns a real
+// -1.123,14 credit into an empty €0 record). A normal invoice's totals are positive, so this
+// never mis-fires on a genuine purchase invoice.
+export function shouldTreatAsCreditNote(
+  taggedCredit: boolean | undefined,
+  rawIncl: unknown,
+  rawEx: unknown,
+): boolean {
+  if (taggedCredit === true) return true;
+  const neg = (v: unknown) => typeof v === "number" && isFinite(v) && v < 0;
+  const pos = (v: unknown) => typeof v === "number" && isFinite(v) && v > 0;
+  // [HUNT-F2] A POSITIVE printed total is never a creditnota. A negative ex under a positive
+  // total is an extraction error (e.g. a discount/korting line mis-read into the base), not a
+  // credit — leave it for SAFECORE to flag rather than mis-classify it as a creditnota.
+  if (pos(rawIncl)) return false;
+  return neg(rawIncl) || neg(rawEx);
+}
+
+// [EX-INCL-FIX] Some suppliers mislabel the GROSS total as "Subtotaal", so extraction ends up
+// with total_ex_btw == total_inc_btw while a real BTW is printed — an impossible combination
+// (equal ex and incl implies zero BTW). The incl / paid total and the BTW are the reliable
+// anchors (they match what left the bank), so recover the true base: ex = incl − btw. It fires
+// ONLY on that exact contradiction (ex ≈ incl with |btw| > 0), so it can never mask a genuine
+// mismatch. Sign-safe: on a creditnota (all negative) it yields the correct negative base.
+export function fixExInclConfusion(
+  ex: number | undefined,
+  btw: number | undefined,
+  incl: number | undefined,
+): number | undefined {
+  if (ex === undefined || btw === undefined || incl === undefined) return ex;
+  if (Math.abs(btw) > 0.02 && Math.abs(ex - incl) < 0.02) {
+    const newEx = incl - btw;
+    // [HUNT-F1] Only accept the recomputation when the recovered base implies a PLAUSIBLE NL
+    // BTW rate. A reverse-charge / "BTW verlegd" memo captured into btw_amount (ex=1000,
+    // btw=210, incl=1000) would otherwise be silently "reconciled" into a fabricated €210
+    // deductible BTW + a wrong ex, AND make SAFECORE's sum check pass. Rejecting an out-of-band
+    // implied rate leaves ex untouched so SAFECORE holds the invoice for human review.
+    const impliedRate = Math.abs(newEx) > 0.005 ? Math.round(Math.abs(btw / newEx) * 100) : 0;
+    if (impliedRate >= 0 && impliedRate <= 21) return newEx;
+  }
+  return ex;
+}
+
 // Base system prompt — shared by all functions
 const SYSTEM_BASE = `You are an AI assistant for BoekBrug, a financial workflow platform in the Netherlands.
 
@@ -112,6 +208,13 @@ export interface VerifyInvoiceResult {
   // kassabon / pin-receipt (paid at the counter). The router uses this to
   // pre-suggest "paid" in the verify queue — the human still confirms (Pillar ⑤).
   is_paid?: boolean;
+  // [PEN-MARK] When the owner has WRITTEN on the paper (pen) or a shop STAMPED it — "betaald",
+  // "voldaan", "contant/kas", "bank", "pin", often with a date — read that annotation. These let
+  // the verify queue pre-suggest paid + how + when, so a snapped-and-thrown invoice needs one
+  // confirming tap instead of manual data entry. Null when there is no such mark. NEVER
+  // auto-books payment — it only pre-fills a suggestion the human confirms.
+  paid_method?: "bank" | "kas" | "pin" | null; // 'kas' = contant/cash
+  paid_date?: string | null;                    // the written/stamped payment date, "YYYY-MM-DD"
   // [BRIDGE-CREDITNOTA-SIGN] Is this a CREDITNOTA (credit note)? True only on
   // explicit evidence: a "Creditnota"/"Credit note" title, a CR-prefixed
   // number, or amounts printed negative. Routing is unaffected (a creditnota
@@ -120,6 +223,24 @@ export interface VerifyInvoiceResult {
   // sign-inverted SAFECORE gate. Amounts on a creditnota are kept NEGATIVE as
   // printed — matching the outgoing creditnota route [BOEK-031].
   is_credit_note?: boolean;
+  // [STATEMENT] Is this a STATEMENT OF ACCOUNT — a "rekeningoverzicht" / "openstaande facturen"
+  // that LISTS MULTIPLE separate invoices with a summed balance? It is NOT a bookable invoice:
+  // booking its total double-counts the individual invoices (which arrive on their own). True
+  // ONLY for a genuine overview of TWO OR MORE invoices; a single collective invoice
+  // (verzamelfactuur) is NOT a statement. When true we force is_invoice=false and never rescue it.
+  is_statement?: boolean;
+  // [REMINDER] Is this a payment REMINDER (betalingsherinnering / aanmaning) for an invoice
+  // that was already sent earlier — not a fresh invoice? A reminder restates an existing debt
+  // (often with added herinneringskosten), so booking it as a NEW invoice double-counts the
+  // cost. True on explicit evidence: a "herinnering"/"aanmaning"/"betalingsherinnering"/
+  // "reminder" title or a "2e/laatste herinnering" heading over a single restated invoice.
+  // We never discard it (it might be the first time we see that invoice), but we FLAG it so it
+  // lands in the verify queue marked "controleer of de factuur al geboekt is" — never booked
+  // silently as a second cost.
+  is_reminder?: boolean;
+  // [REMINDER] The ORIGINAL invoice number this is a reminder OF (when known), so the verify
+  // queue and dedup can point the owner at the invoice that may already be booked.
+  reminder_of_invoice_number?: string | null;
   reason?: string;           // why it was rejected (if is_invoice = false)
   // [BOEK-011] detailed BTW breakdown — extracted in the same call, zero extra cost
   total_ex_btw?: number;     // amount excluding BTW
@@ -767,7 +888,12 @@ Return only a JSON object with these exact keys:
   "payment_reference": string or null,
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
+  "paid_method": "bank" | "kas" | "pin" | null,
+  "paid_date": "YYYY-MM-DD" or null,
   "is_credit_note": boolean,
+  "is_statement": boolean,
+  "is_reminder": boolean,
+  "reminder_of_invoice_number": string or null,
   "total_ex_btw": number or null,
   "btw_amount": number or null,
   "total_inc_btw": number or null,
@@ -838,6 +964,34 @@ Rules for is_invoice = false:
 - Anything that is not a financial document
 - Set reason to a short Dutch explanation why it was rejected
 
+CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=false AND is_statement=true):
+- A "Rekeningoverzicht", "Openstaande posten", "Openstaande facturen", "Saldo-overzicht",
+  "Overzicht openstaande facturen", "Aanmaning" or "Betalingsherinnering" that LISTS MULTIPLE
+  invoices is an OVERVIEW, not a single invoice. Tell-tale signs, any of which is decisive:
+  · a title containing "overzicht", "openstaand", "openstaande facturen", "aanmaning" or "herinnering";
+  · a TABLE whose columns are things like "Nummer / Datum / Bedrag / Betaald / Rest / V.Dagen"
+    or "Factuurnummer / Factuurbedrag / Reeds betaald / Nog openstaand / Vervallen / Factuurdatum";
+  · TWO OR MORE different invoice/document numbers, each with its OWN amount and date
+    (including credit lines like a CR-number with a negative amount);
+  · a "Totaal openstaand bedrag", "Balans" or "Saldo" line that is the SUM of the listed lines.
+- Booking such a document as one invoice is a SERIOUS error: its total DOUBLE-COUNTS the
+  individual invoices it summarises (which arrive separately), and it has no single valid
+  BTW breakdown (excl + BTW will never equal the total). So: is_invoice=false, is_statement=true,
+  document_kind="other", and reason e.g. "Rekeningoverzicht — overzicht van meerdere
+  facturen, geen boekbare factuur".
+- Set is_statement=false for a normal single invoice, a single collective invoice
+  (verzamelfactuur: ONE invoice number covering multiple delivery lines), and a receipt.
+- Exception: a reminder that repeats ONE single invoice (one number, one amount, one date)
+  IS that invoice — set is_invoice=true and extract it normally. BUT also set is_reminder=true
+  and put the ORIGINAL invoice number in reminder_of_invoice_number, because the original was
+  very likely already received earlier — booking the reminder as a second invoice would
+  double-count. Signs of a single-invoice reminder: a "Betalingsherinnering", "Herinnering",
+  "Aanmaning", "2e/laatste herinnering" or "Reminder" heading above what is otherwise ONE
+  invoice's details (one number, one amount). Extract the ORIGINAL invoice's amount, NOT any
+  added herinneringskosten line, as the total. (The rule ABOVE — is_invoice=false — is ONLY
+  for an overview of TWO OR MORE invoices.)
+- For anything that is NOT a reminder, set is_reminder=false and reminder_of_invoice_number=null.
+
 Document kind + paid status (ALWAYS set these):
 - "document_kind" tells what this is:
   - "invoice": a payment REQUEST — has an invoice number, a vendor, a due date
@@ -853,14 +1007,29 @@ Document kind + paid status (ALWAYS set these):
   normal unpaid invoice (a request to pay), set is_paid=false. When unsure,
   set is_paid=false — it is safer to ask the human to confirm payment than to
   mark something paid that is not.
+- HANDWRITTEN / STAMPED PAYMENT MARKS: a business owner often processes a PAPER invoice by
+  WRITING on it with pen or applying a shop STAMP — e.g. "betaald", "voldaan", "contant",
+  "kas", "bank", "pin", a bank/giro note, and/or a DATE. Read these marks even though they are
+  handwritten or stamped (they may be in a corner, diagonal, or over the print). When such a
+  mark clearly indicates the invoice was PAID, set is_paid=true and fill:
+    · "paid_method": "bank" (giro/overschrijving/"bank"), "kas" (contant/cash/"kas"),
+      "pin" (pin/card), or null if the method isn't written.
+    · "paid_date": the written/stamped payment date as "YYYY-MM-DD", or null if no date is written.
+  If there is NO such mark, set is_paid=false, paid_method=null, paid_date=null. Do NOT infer
+  payment from an unmarked invoice. A printed "te betalen"/due date is NOT a payment mark.
 - A receipt is still a real financial document: keep is_invoice=true for both
   "invoice" and "receipt" (both enter the pipeline); only "other" is false.
 
 Creditnota detection (ALWAYS set is_credit_note):
 - "is_credit_note" = true ONLY on explicit evidence this is a CREDIT NOTE:
   a title like "Creditnota", "Credit note", "Creditfactuur", "Credit invoice";
+  an INVOICE CORRECTION — "Factuurcorrectie", "Factuurcorrectienummer",
+  "Gecorrigeerd factuurdocument", "Correctiereden", "Credit memo", a "CM-…"
+  number prefix, a return/refund ("Full return", "Retour", "Terugbetaling");
   an invoice number with a credit prefix (e.g. "CR-…"); or the amounts printed
   as NEGATIVE / explicitly marked as credit ("te ontvangen", "credit").
+  A document that CORRECTS or REVERSES an earlier invoice (it names the original
+  invoice it corrects) with negative amounts IS a creditnota — set it true.
 - A creditnota is still a real financial document: is_invoice=true and
   document_kind="invoice" (it enters the same verify queue).
 - On a creditnota, return the amounts EXACTLY as printed — NEGATIVE when the
@@ -893,13 +1062,36 @@ Statement / reminder detection (NOT an invoice — prevents double counting):
 
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
-- total_ex_btw: the subtotal before BTW (excl. BTW / netto)
-- btw_amount: the BTW/VAT amount shown on the invoice
-- total_inc_btw: the final total to pay (incl. BTW / bruto)
-- btw_rate: the percentage — usually 21, sometimes 9 or 0
+- total_ex_btw: the FULL amount before BTW — the sum of ALL line bases across every rate,
+  INCLUDING any 0%-BTW lines. It must be chosen so that total_ex_btw + btw_amount =
+  total_inc_btw (the identity always holds). See STATIEGELD below.
+- btw_amount: the total BTW/VAT amount shown on the invoice (the sum across all rates).
+- total_inc_btw: the final total the invoice asks you to pay — the "Totaal", "Te voldoen",
+  "Totaalbedrag" or "Totaal te betalen" line. Return THIS printed final total even when it
+  does not equal a simple product subtotal (statiegeld, emballage and shipping are added on
+  top) and even when it is NEGATIVE (a return/creditnota where credited items exceed goods).
+- btw_rate: the percentage — usually 21, sometimes 9 or 0. On a MIXED invoice (e.g. 9% goods
+  plus 0% statiegeld) the effective blended rate is lower; that is normal, not an error.
 - If only the total is shown and BTW rate is known, calculate the breakdown
 - If a value genuinely cannot be found, set it to null — never guess
 - confidence: how certain you are (0 = no idea, 1 = absolutely certain)
+
+STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees this daily):
+- Many wholesale invoices add STATIEGELD (a returnable-packaging deposit), EMBALLAGE, or a
+  container/"Bijgel. container"/"Retour container" charge, usually at 0% BTW, ON TOP of the
+  goods. There may be a whole "Statiegeld" column, or a summary line, or a "Geen BTW" grondslag.
+- These deposit amounts ARE part of what is paid. Fold them into total_ex_btw as 0%-BTW base
+  so that total_ex_btw + btw_amount = total_inc_btw stays exact. Do NOT drop them, and do NOT
+  let them make excl + BTW disagree with the printed total.
+- Returned deposits are NEGATIVE (e.g. "Retour container -408,00"): include them with their
+  sign. If the net printed total ("Te voldoen") is therefore negative, return it negative.
+
+- EX/INCL identity: total_ex_btw + btw_amount MUST equal total_inc_btw. Some suppliers
+  mislabel the GROSS total as "Subtotaal", so you may see the same number on both the
+  "Subtotaal" and "Totaal incl. btw" lines while a real BTW is printed — that is impossible
+  (equal excl and incl means zero BTW). Trust the "Totaal incl."/"Reeds betaald"/paid total
+  and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
+  total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
 
 Per-field confidence rules:
 - field_confidence.vendor: how certain you are the vendor (sender) is correct.
@@ -1030,6 +1222,35 @@ Return JSON only.`;
     const parsed = safeParseJSON<VerifyInvoiceResult>(result);
     if (!parsed) return FALLBACK;
 
+    // [STATEMENT-GUARD] Deterministic backstop against booking a STATEMENT OF ACCOUNT as an
+    // invoice. A "Rekeningoverzicht" / "Openstaande posten" / "Saldo-overzicht" lists MANY
+    // invoices and a summed total — booking it as one invoice double-counts the invoices it
+    // summarises and carries no valid single BTW split. The prompt already teaches this, but
+    // an unmistakable filename forces the correct verdict even if the model wavers. Narrow on
+    // purpose: NOT "aanmaning/herinnering", which can be a single-invoice reminder.
+    if (parsed.is_invoice && isStatementFilename(filename)) {
+      return {
+        is_invoice: false,
+        confidence: 0.9, // confident it is NOT a bookable invoice → registered with the reason
+        reason: 'Rekeningoverzicht — overzicht van meerdere facturen, geen boekbare factuur',
+      };
+    }
+
+    // [STATEMENT] The model flagged this as a statement of account (an overview of MULTIPLE
+    // invoices with a summed balance — e.g. "OPENSTAANDE FACTUREN" with Betaald/Rest/Balans).
+    // Booking its total double-counts the individual invoices, so force the verdict here and
+    // return EARLY — before the confidence banding or the [TRUST-CONFIDENT-FALSE] rescue can
+    // resurrect it as one bookable invoice (it has a vendor + a balance amount that would
+    // otherwise pass the rescue). Registered in the skip list, so it stays visible, not booked.
+    if (parsed.is_statement === true) {
+      return {
+        is_invoice: false,
+        is_statement: true,
+        confidence: Math.max(parsed.confidence ?? 0, 0.8),
+        reason: parsed.reason || 'Rekeningoverzicht — overzicht van meerdere facturen, geen boekbare factuur',
+      };
+    }
+
     // Clamp confidence
     parsed.confidence = Math.min(1, Math.max(0, parsed.confidence ?? 0));
 
@@ -1129,10 +1350,30 @@ Return JSON only.`;
         ? parsed.document_kind
         : "invoice";
     parsed.is_paid = parsed.is_paid === true;
+    // [PEN-MARK] Normalize the pen/stamp payment hints. Only keep them when the doc is actually
+    // marked paid — a method/date without is_paid is noise. paid_method must be one of the three
+    // known values; paid_date is tolerated in either ISO or DD-MM-YYYY and normalized (null-safe).
+    if (parsed.is_paid) {
+      parsed.paid_method =
+        parsed.paid_method === "bank" || parsed.paid_method === "kas" || parsed.paid_method === "pin"
+          ? parsed.paid_method
+          : null;
+      parsed.paid_date =
+        typeof parsed.paid_date === "string" && /^\d{4}-\d{2}-\d{2}/.test(parsed.paid_date)
+          ? parsed.paid_date.slice(0, 10)
+          : null;
+    } else {
+      parsed.paid_method = null;
+      parsed.paid_date = null;
+    }
     // [BRIDGE-CREDITNOTA-SIGN] Strict boolean; unknown → false (safe side:
     // a normal invoice with a stray negative stays blocked by num() below +
     // the SAFECORE gate — never silently treated as a creditnota).
     parsed.is_credit_note = parsed.is_credit_note === true;
+    // [REMINDER] Strict boolean, OR-ed with a deterministic filename backstop so a reminder
+    // the model booked as a plain invoice is still flagged. Not a rejection — a reminder is a
+    // real (single) invoice; the flag only routes it to the human to check it isn't a duplicate.
+    parsed.is_reminder = parsed.is_reminder === true || isReminderFilename(filename);
 
     // [TRUST-UNCERTAIN] Confidence banding — never silently drop a real-but-hard
     // invoice. Below the hard floor (or with no invoice signal at all) it's spam /
@@ -1163,6 +1404,21 @@ Return JSON only.`;
       };
     }
 
+    // [TRUST-CONFIDENT-FALSE] A CONFIDENT "not an invoice" (accept band, so it skipped the
+    // 'review' rescue above) that still carries a strong invoice signal (vendor + amount) and
+    // is not a statement filename is most likely a mis-judged real invoice — a verzamelfactuur
+    // read as a statement. Rescue it to the verify queue flagged 'uncertain' instead of letting
+    // the caller discard it unseen. Held as 'processing' downstream ⇒ never booked as a cost
+    // until the human confirms. (The low-confidence 'skip' band already returned above.)
+    if (parsed.is_invoice === false && shouldRescueNonInvoice(parsed, filename)) {
+      parsed.is_invoice = true;
+      parsed.uncertain = true;
+      parsed.field_confidence = {
+        ...(parsed.field_confidence ?? {}),
+        amount: Math.min(parsed.field_confidence?.amount ?? 0.4, 0.4),
+      };
+    }
+
     // [BOEK-011] Normalize and reconcile amounts — never let bad numbers reach DB
     const num = (v: unknown): number | undefined =>
       typeof v === 'number' && isFinite(v) && v >= 0 ? v : undefined;
@@ -1174,6 +1430,15 @@ Return JSON only.`;
     // filtered (conditional, never permissive).
     const numSigned = (v: unknown): number | undefined =>
       typeof v === 'number' && isFinite(v) ? v : undefined;
+    // [CREDIT-BACKSTOP] Without this, num() below rejects a negative amount as a "stray
+    // negative" and drops it to undefined — turning a real -1.123,14 credit into an empty €0
+    // record flagged "totaalbedrag ontbreekt". A negative printed total means credit, so flip
+    // it before choosing the number normaliser (see shouldTreatAsCreditNote).
+    parsed.is_credit_note = shouldTreatAsCreditNote(
+      parsed.is_credit_note,
+      parsed.total_inc_btw,
+      parsed.total_ex_btw,
+    );
     const pickNum = parsed.is_credit_note === true ? numSigned : num;
 
     parsed.total_ex_btw = pickNum(parsed.total_ex_btw);
@@ -1200,6 +1465,11 @@ Return JSON only.`;
         parsed.btw_amount !== undefined) {
       parsed.total_ex_btw = parsed.total_inc_btw - parsed.btw_amount;
     }
+    // [EX-INCL-FIX] Recover a base that a mislabelled "Subtotaal" set equal to the incl total
+    // while a real BTW is printed (impossible). Trusts incl + btw → ex = incl − btw.
+    parsed.total_ex_btw = fixExInclConfusion(
+      parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw,
+    );
 
     // amount = total incl. BTW (kept for backward compatibility)
     parsed.amount = parsed.total_inc_btw ?? parsed.amount;

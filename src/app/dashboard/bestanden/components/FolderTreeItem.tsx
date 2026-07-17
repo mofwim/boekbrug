@@ -41,6 +41,7 @@ export function FolderTreeItem({ node, depth, activeFolderId, onSelect, onRename
         {/* Expand/collapse */}
         <button
           onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+          aria-label="Uitklappen"
           style={{
             width: 20, height: 20, border: "none", background: "none",
             cursor: node.children.length ? "pointer" : "default",
@@ -70,12 +71,14 @@ export function FolderTreeItem({ node, depth, activeFolderId, onSelect, onRename
           <div style={{ display: "flex", gap: 1, flexShrink: 0 }}>
             <button
               onClick={e => { e.stopPropagation(); onRename(node.id, node.name); }}
+              aria-label="Naam wijzigen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: T.sm }}
             >
               <Icon name="edit" size={13} color={T.outline} />
             </button>
             <button
               onClick={e => { e.stopPropagation(); onDelete(node.id); }}
+              aria-label="Verwijderen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: T.sm }}
             >
               <Icon name="delete" size={13} color={T.error} />

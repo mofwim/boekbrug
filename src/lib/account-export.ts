@@ -23,6 +23,10 @@ import { toExportRowFull, invoicesToCsv, type InvRow } from "./export";
 export interface AccountExportSummary {
   invoiceCount: number;
   fileCount: number; // files successfully included
+  bankCount: number;
+  cashCount: number;
+  turnoverCount: number;
+  messageCount: number;
   skipped: { name: string; reason: string }[];
   generatedAt: string; // ISO
 }
@@ -44,6 +48,12 @@ interface AssembleInput {
   profile: unknown; // profile row, dumped verbatim as JSON
   invoices: InvRow[];
   files: ExportFile[];
+  // [EXPORT-COMPLETE] The rest of the user's own data, dumped verbatim as JSON so the
+  // GDPR export actually contains "al je gegevens" — not just invoices/docs/profile.
+  bankTransactions?: unknown[];
+  cashEntries?: unknown[];
+  dailyTurnover?: unknown[];
+  messages?: unknown[];
   skipped?: { name: string; reason: string }[];
 }
 
@@ -76,6 +86,10 @@ export async function assembleAccountExportZip(
   input: AssembleInput,
 ): Promise<AccountExportResult> {
   const { userId, profile, invoices, files } = input;
+  const bankTransactions = input.bankTransactions ?? [];
+  const cashEntries = input.cashEntries ?? [];
+  const dailyTurnover = input.dailyTurnover ?? [];
+  const messages = input.messages ?? [];
   const skipped = [...(input.skipped ?? [])];
   const zip = new JSZip();
 
@@ -97,10 +111,21 @@ export async function assembleAccountExportZip(
     fileCount++;
   }
 
-  // 4. manifest.json — transparency: what's inside + what was skipped.
+  // 4. The rest of the user's own ledgers/data, verbatim JSON, so the export is
+  //    genuinely "al je gegevens" (not just invoices/docs/profile).
+  zip.file("bank.json", JSON.stringify(bankTransactions, null, 2));
+  zip.file("kas.json", JSON.stringify(cashEntries, null, 2));
+  zip.file("dagomzet.json", JSON.stringify(dailyTurnover, null, 2));
+  zip.file("berichten.json", JSON.stringify(messages, null, 2));
+
+  // 5. manifest.json — transparency: what's inside + what was skipped.
   const summary: AccountExportSummary = {
     invoiceCount: invoices.length,
     fileCount,
+    bankCount: bankTransactions.length,
+    cashCount: cashEntries.length,
+    turnoverCount: dailyTurnover.length,
+    messageCount: messages.length,
     skipped,
     generatedAt: new Date().toISOString(),
   };
@@ -109,10 +134,14 @@ export async function assembleAccountExportZip(
     JSON.stringify(
       {
         beschrijving:
-          "Export van je BoekBrug-account: facturen, documenten en profiel.",
+          "Export van je BoekBrug-account: facturen, documenten, profiel, bank, kas, dagomzet en berichten.",
         gegenereerd_op: summary.generatedAt,
         aantal_facturen: summary.invoiceCount,
         aantal_bestanden: summary.fileCount,
+        aantal_banktransacties: summary.bankCount,
+        aantal_kasboekingen: summary.cashCount,
+        aantal_dagomzetdagen: summary.turnoverCount,
+        aantal_berichten: summary.messageCount,
         overgeslagen_bestanden: summary.skipped,
       },
       null,
@@ -215,5 +244,27 @@ export async function buildAccountExportZip(args: {
     else skipped.push({ name: r.name, reason: r.reason });
   }
 
-  return assembleAccountExportZip({ userId, profile, invoices, files, skipped });
+  // [EXPORT-COMPLETE] The remaining owner-scoped data, so the ZIP is genuinely complete.
+  // Each scoped to this userId (service_role bypasses RLS). A query error must not silently
+  // drop a whole ledger from a GDPR export → throw (the caller surfaces it), never []-swallow.
+  const [bankRes, cashRes, turnoverRes, msgRes] = await Promise.all([
+    supabase.from("bank_transactions").select("*").eq("user_id", userId),
+    supabase.from("cash_entries").select("*").eq("user_id", userId),
+    supabase.from("daily_turnover").select("*").eq("user_id", userId),
+    supabase.from("messages").select("*").or(`sender_id.eq.${userId},receiver_id.eq.${userId}`),
+  ]);
+  for (const [label, res] of [
+    ["bank_transactions", bankRes], ["cash_entries", cashRes],
+    ["daily_turnover", turnoverRes], ["messages", msgRes],
+  ] as const) {
+    if (res.error) throw new Error(`[BOEK-032] ${label} query failed: ${res.error.message}`);
+  }
+
+  return assembleAccountExportZip({
+    userId, profile, invoices, files, skipped,
+    bankTransactions: bankRes.data ?? [],
+    cashEntries: cashRes.data ?? [],
+    dailyTurnover: turnoverRes.data ?? [],
+    messages: msgRes.data ?? [],
+  });
 }

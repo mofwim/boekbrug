@@ -19,6 +19,8 @@ import {
   isPlaceholderInvoiceNumber,
   isReliableVendor,
   normalizeVendor,
+  normalizeInvoiceNumber,
+  normalizeToIso,
   deriveDueDate,
 } from '@/lib/safecore'
 
@@ -518,7 +520,13 @@ export async function fetchGmailAttachments(
   // attributed to the owner's own customer. `-in:sent -in:drafts -in:chats` drops those
   // while KEEPING a supplier invoice the owner forwarded to themselves (its Inbox copy
   // is not in Sent), so real incoming documents are not lost.
-  const query = `has:attachment after:${afterDate} -in:sent -in:drafts -in:chats`
+  // [SCAN-EVERYWHERE] `in:anywhere` also searches Spam and Trash — without it, a supplier
+  // invoice that a Gmail filter (or Google) routed to Spam, or that was soft-deleted, is never
+  // listed and silently missed. Custom labels / archived "All Mail" are already covered by a
+  // bare query; Spam+Trash are the one gap. For a bookkeeping tool, completeness wins: a
+  // recovered invoice only ever lands in the verify queue (never auto-booked), so surfacing a
+  // trashed one costs a glance, while missing a real one costs a deduction.
+  const query = `has:attachment after:${afterDate} in:anywhere -in:sent -in:drafts -in:chats`
 
   // 1. List message IDs — WITH pagination.
   //
@@ -670,13 +678,18 @@ async function fetchMessageAttachments(
         continue
       }
 
-      const mimeType = p.mimeType || ''
+      const rawMime = p.mimeType || ''
       const filename = p.filename || ''
       const size = p.body?.size || 0
 
-      // Only process PDFs and images
-      if (!filename || size === 0) continue
-      if (mimeType !== 'application/pdf' && !mimeType.startsWith('image/')) continue
+      // [H2] Accept PDFs/images even when the server mislabelled the MIME — infer from the
+      // extension so a genuine `factuur.pdf` sent as octet-stream is not dropped silently.
+      // [FUNNEL] Do NOT drop on size===0. The provider reports 0 for "unknown size" on some
+      // inline/forwarded parts; isLikelyInvoiceCandidate already treats 0 as "keep" (a PDF
+      // always passes). Dropping here first contradicted that and lost real attachments.
+      if (!filename) continue
+      const mimeType = normalizeAttachmentMime(rawMime, filename)
+      if (!mimeType) continue
 
       // [BOEK-011 PERF] Same signature/logo pre-filter as Outlook. Gmail's
       // has:attachment already hides most inline images, so this rarely fires
@@ -684,7 +697,8 @@ async function fetchMessageAttachments(
       // no surprise if Gmail starts surfacing inline parts.
       if (!isLikelyInvoiceCandidate({ filename, mimeType, size })) continue
 
-      // [BOEK-011] Store with explicit flag — never confuse ID with data
+      // [BOEK-011] Store with explicit flag — never confuse ID with data. The
+      // NORMALISED mime is stored so the classifier downstream gets a type it can read.
       if (p.body?.attachmentId) {
         pending.push({ filename, mimeType, size, attachmentId: p.body.attachmentId })
       } else if (p.body?.data) {
@@ -693,7 +707,12 @@ async function fetchMessageAttachments(
     }
   }
 
-  walkParts(msg.payload?.parts || [])
+  // [FUNNEL] A message whose body IS a single PDF has no `payload.parts` — the PDF sits on
+  // `payload` itself (mimeType/filename/body.attachmentId). Passing only `parts` skipped those
+  // single-part invoices entirely (automated senders emit them often). Fall back to the payload
+  // itself when there are no parts so a single-attachment invoice is examined too.
+  const payload = msg.payload as { parts?: unknown[] } | undefined
+  walkParts(payload?.parts ?? (payload ? [payload] : []))
 
   // [BOEK-011] Resolve each attachment — fetch by ID or use inline data
   // Gmail always returns base64url → convert to standard base64 exactly once
@@ -881,74 +900,64 @@ export async function fetchOutlookAttachments(
     return !toAddrs.includes(owner)
   }
 
-  const messagesRaw: OutlookMessage[] = []
-  let nextUrl: string | null = firstUrl
-  let page = 0
-  // [BOEK-011] Raised 10→40 (2000 messages). Root cause found in production
-  // (2026-07-08): a ~250-message mailbox hit the old 500 cap and logged
-  // "capped at MAX_PAGES — fetch incomplete", so older invoices were never
-  // listed. Graph's /me/messages spans ALL folders and can return the SAME
-  // message multiple times (folder + AllItems views), inflating the effective
-  // count well beyond the real message total — so the cap must be generous.
-  // We de-duplicate by message id below, and the batch cap + watermark keep any
-  // single sync bounded in time regardless of how many pages we walk.
-  const MAX_PAGES = 40
+  // [FOLDER-DEDUP] Graph's /me/messages spans ALL folders and can return the SAME message
+  // more than once (per-folder view + the AllItems view). The OLD loop counted RAW pages
+  // against a page cap and de-duplicated only AFTERWARDS — so on a mailbox with MANY folders
+  // the duplicate folder-views filled the page budget and the listing was cut BEFORE reaching
+  // the older, still-in-window messages. Because we list newest-first and the watermark then
+  // advances, that older tail fell outside every future window: a permanent, silent miss — and
+  // "many folders" is exactly the shape the owner reported. Fix: de-duplicate INSIDE the loop
+  // and budget by UNIQUE messages, never raw pages, so folder-view repeats can't consume the
+  // ceiling. A hard API-call cap still bounds a pathological mailbox in wall-clock time.
+  const MAX_UNIQUE = 4000    // unique messages per sync — the real ceiling
+  const MAX_API_CALLS = 200  // safety bound on Graph list calls (folder dupes inflate paging)
 
-  // [BOEK-011 throttle×watermark] `complete` = the listing reached its natural
-  // end AND every attachment fetch succeeded. Production showed Graph
-  // throttling can stop pagination mid-range (page 6, ApplicationThrottled).
-  // Because we list newest-first, a truncated listing means the OLDER tail was
-  // never fetched — if the watermark advanced anyway, that tail would fall
-  // outside every future fetch window: permanent silent loss. So any early
-  // stop (throttle, error, MAX_PAGES cut) marks the fetch incomplete, and the
-  // caller HOLDS the watermark for this round. Saved invoices keep their
-  // progress; only the window refuses to shrink until a fully-covered pass.
+  const seenIds = new Set<string>()
+  const messages: OutlookMessage[] = []
+  let nextUrl: string | null = firstUrl
+  let apiCalls = 0
+
+  // [BOEK-011 throttle×watermark] `complete` = the listing reached its natural end AND every
+  // attachment fetch succeeded. Any early stop (throttle, error, ceiling) marks the fetch
+  // incomplete, and the caller HOLDS the watermark for this round — the older tail is never
+  // skipped; only the window refuses to shrink until a fully-covered pass.
   let listComplete = true
 
-  while (nextUrl && page < MAX_PAGES) {
+  while (nextUrl && messages.length < MAX_UNIQUE && apiCalls < MAX_API_CALLS) {
     const listRes: Response = await graphFetch(nextUrl, accessToken)
+    apiCalls++
 
     if (!listRes.ok) {
       const body = await listRes.text()
-      // First page failing is a real error; a later page failing shouldn't
-      // discard everything we already collected — but it DOES make the fetch
-      // incomplete (see note above).
-      if (page === 0) {
+      // First call failing is a real error; a later one shouldn't discard what we collected —
+      // but it DOES make the fetch incomplete (hold the watermark).
+      if (apiCalls === 1) {
         throw new Error(`Outlook list mislukt: ${body}`)
       }
-      console.error('[BOEK-011] Outlook pagination stopped early', { page, body })
+      console.error('[BOEK-011] Outlook pagination stopped early', { apiCalls, body })
       listComplete = false
       break
     }
 
     const listData = await listRes.json()
-    messagesRaw.push(...((listData.value || []) as OutlookMessage[]))
+    // De-duplicate as we page: a folder-view repeat never counts toward MAX_UNIQUE.
+    for (const m of ((listData.value || []) as OutlookMessage[])) {
+      if (m.id && !seenIds.has(m.id)) {
+        seenIds.add(m.id)
+        messages.push(m)
+      }
+    }
     nextUrl = (listData['@odata.nextLink'] as string | undefined) ?? null
-    page++
   }
 
-  // MAX_PAGES cut with more pages remaining → the older tail wasn't listed.
-  if (nextUrl && page >= MAX_PAGES) {
-    console.warn('[BOEK-011] Outlook listing capped at MAX_PAGES — fetch incomplete')
+  // Ceiling hit with more pages remaining → the older tail wasn't listed: hold the watermark.
+  if (nextUrl && (messages.length >= MAX_UNIQUE || apiCalls >= MAX_API_CALLS)) {
+    console.warn('[BOEK-011] Outlook listing capped (unique/api ceiling) — fetch incomplete')
     listComplete = false
   }
-
-  // [BOEK-011] De-duplicate by message id. Graph's /me/messages spans all
-  // folders and can return the same message more than once (folder view +
-  // AllItems view), which both wastes attachment fetches and inflates the page
-  // count against MAX_PAGES. Keep first occurrence of each id.
-  const seenIds = new Set<string>()
-  const messages: OutlookMessage[] = []
-  for (const m of messagesRaw) {
-    if (m.id && !seenIds.has(m.id)) {
-      seenIds.add(m.id)
-      messages.push(m)
-    }
-  }
   console.log('[BOEK-011] Outlook listing', {
-    rawRows: messagesRaw.length,
     uniqueMessages: messages.length,
-    pages: page,
+    apiCalls,
     complete: listComplete,
   })
 
@@ -956,15 +965,19 @@ export async function fetchOutlookAttachments(
 
   // [BOEK-011] Only messages that actually have attachments — the check moved
   // here from the $filter (see InefficientFilter note above).
-  // [BOEK-011 throttle] AND drop messages already fully processed — skipping
-  // their per-message attachment fetch is what keeps a 995-message backfill from
-  // re-hammering Graph (and tripping 429) on every sync. A message is only
-  // skipped when ALL its known keys are done; partially-done messages still get
-  // fetched so their remaining attachments import. `done` is prefix-matched on
-  // messageId because source_message_id = `${messageId}:${filename}`.
+  // [H3] The old code ALSO skipped any message whose id was in alreadyDoneMessageIds —
+  // but that set is prefix-matched on messageId, so a message entered it the moment ANY
+  // ONE of its attachments was stored. On a multi-attachment email where invoice A imported
+  // but invoice B failed (transient DB error, or B fell past SYNC_BATCH_MAX while A was in
+  // it), the whole message was then skipped forever and the watermark advanced past it —
+  // invoice B was lost silently, the exact opposite of the comment's claim. We now fetch
+  // every in-window message with attachments and let the per-attachment dedup (knownKeys)
+  // skip the already-stored ones cheaply, so no pending attachment can be stranded.
+  // Correctness over the throttle micro-optimisation: once the watermark advances, done
+  // messages leave the window, so the re-fetch stays bounded to the current frontier.
+  void alreadyDoneMessageIds
   const withAttachments = messages.filter((m) => {
     if (!m.hasAttachments) return false
-    if (alreadyDoneMessageIds && alreadyDoneMessageIds.has(m.id)) return false
     if (isOwnOutbound(m)) return false // [OWN-SENT] owner's own outbound mail — not incoming
     return true
   })
@@ -1050,10 +1063,13 @@ async function fetchOutlookMessageAttachments(
     if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') continue
     if (!att.contentBytes) continue
 
-    const mimeType = att.contentType || ''
+    const rawMime = att.contentType || ''
     const filename = att.name || ''
     if (!filename) continue
-    if (mimeType !== 'application/pdf' && !mimeType.startsWith('image/')) continue
+    // [H2] Same mislabelled-MIME recovery as Gmail — a real PDF/image sent with a generic
+    // content-type is normalised by extension instead of being dropped unseen.
+    const mimeType = normalizeAttachmentMime(rawMime, filename)
+    if (!mimeType) continue
 
     // [BOEK-011 PERF] Drop signature/logo images before they cost a Claude call.
     // Conservative: PDFs always pass, only tiny/chrome-named images are dropped.
@@ -1111,6 +1127,10 @@ export interface AttachmentClassification {
   // SAFECORE gate + invoice_type='creditnota' at insert. Amounts stay NEGATIVE
   // as printed (matching outgoing creditnota [BOEK-031]).
   isCreditNote?: boolean
+  // [REMINDER] This attachment is a payment reminder for an invoice sent earlier — a real
+  // single invoice, but likely already booked, so it is flagged (not booked as a 2nd cost).
+  isReminder?: boolean
+  reminderOfInvoiceNumber?: string | null
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -1159,6 +1179,9 @@ export async function classifyAttachment(
     paymentReference: result.payment_reference,
     // [BRIDGE-CREDITNOTA-SIGN] creditnota signal from the same Claude call
     isCreditNote: result.is_credit_note,
+    // [REMINDER] reminder signal (+ the original invoice number when known)
+    isReminder: result.is_reminder,
+    reminderOfInvoiceNumber: result.reminder_of_invoice_number ?? null,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -1204,6 +1227,26 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 // emails the owner a large PDF causes an unbounded Storage write + a Claude call —
 // storage-growth / AI-spend DoS from untrusted mail.
 const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+// [H2] A real supplier invoice often arrives with a CORRECT filename but a WRONG or
+// generic MIME type — many mail servers stamp attachments application/octet-stream (or an
+// empty type). The old MIME gate then dropped a genuine `factuur.pdf` silently. Trust the
+// filename extension in that case and return the media type verifyInvoiceFromPdf can read
+// (application/pdf or an image/*), or null when it is a type we cannot classify — the
+// caller then leaves it for the could-not-read / skip path rather than losing it unseen.
+export function normalizeAttachmentMime(mimeType: string, filename: string): string | null {
+  const mt = (mimeType || "").toLowerCase()
+  if (mt === "application/pdf") return "application/pdf"
+  if (mt.startsWith("image/")) return mt // existing broad image behaviour is preserved
+  // Wrong/generic MIME → infer from the extension. Only the types the classifier reads.
+  const ext = (filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "")
+  if (ext === "pdf") return "application/pdf"
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg"
+  if (ext === "png") return "image/png"
+  if (ext === "webp") return "image/webp"
+  if (ext === "gif") return "image/gif"
+  return null
+}
 
 export function isLikelyInvoiceCandidate(att: {
   filename: string
@@ -1286,7 +1329,14 @@ export type EmailProvider = 'gmail' | 'outlook'
  * 4. Claude reads each PDF/image — real invoice or not
  * 5. Save verified invoices with status='received'
  */
-export async function syncUserEmails(userId: string): Promise<{
+export async function syncUserEmails(
+  userId: string,
+  // [BACKFILL] Optional re-scan window. `fromMs` fetches from an explicit date instead of the
+  // incremental watermark (so an already-passed email can be re-listed and imported); when set,
+  // `holdWatermark` keeps the normal incremental mark untouched so a backfill is purely additive
+  // and never rewinds or advances the daily window. Absent ⇒ exactly the previous behaviour.
+  opts?: { fromMs?: number; holdWatermark?: boolean },
+): Promise<{
   provider: EmailProvider
   fetched: number
   verified: number
@@ -1387,12 +1437,19 @@ export async function syncUserEmails(userId: string): Promise<{
       ?.last_synced_email_at ?? null
 
   const WATERMARK_OVERLAP_MS = 24 * 60 * 60 * 1000 // 24h — cheap, bulletproof
-  const syncAfterMs = watermarkIso
-    ? Math.max(floorMs, new Date(watermarkIso).getTime() - WATERMARK_OVERLAP_MS)
-    : floorMs
+  // [BACKFILL] An explicit re-scan window (fromMs) bypasses the watermark clamp entirely:
+  // the whole point is to reach emails the incremental mark has already passed. PHASE-0
+  // dedup (byte-hash + message-id + semantic) still guarantees nothing is imported twice,
+  // so a re-scan only ever fills gaps. Absent ⇒ the normal incremental/floor window.
+  const syncAfterMs =
+    opts?.fromMs != null
+      ? opts.fromMs
+      : watermarkIso
+        ? Math.max(floorMs, new Date(watermarkIso).getTime() - WATERMARK_OVERLAP_MS)
+        : floorMs
 
   console.log('[BOEK-011] Sync window', {
-    mode: watermarkIso ? 'incremental (watermark)' : 'full (floor)',
+    mode: opts?.fromMs != null ? 'backfill (explicit)' : watermarkIso ? 'incremental (watermark)' : 'full (floor)',
     watermark: watermarkIso,
     fetchFrom: new Date(syncAfterMs).toISOString(),
   })
@@ -1406,41 +1463,11 @@ export async function syncUserEmails(userId: string): Promise<{
     return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
-  // [BOEK-011 throttle] Build the set of message IDs already fully processed,
-  // so the fetcher can skip their per-message attachment calls (the throttle
-  // hot spot on a large backfill). Cheap: two indexed reads of source_message_id
-  // scoped to this user. We extract the messageId prefix (before the last ':').
-  // NOTE: this is a PERFORMANCE skip; PHASE 0/2 dedup remains the correctness
-  // guarantee. A message with SOME attachments still pending won't be in this
-  // set only if none of its keys are stored yet — partially-imported messages
-  // are rare (usually all-or-nothing per email) and, if they occur, simply get
-  // re-fetched, which is safe.
-  const doneMessageIds = new Set<string>()
-  {
-    const extractMsgId = (smid: string | null): string | null => {
-      if (!smid) return null
-      const i = smid.lastIndexOf(':')
-      return i > 0 ? smid.slice(0, i) : smid
-    }
-    const { data: invRows } = await supabase
-      .from('invoices')
-      .select('source_message_id')
-      .eq('receiver_id', userId)
-      .eq('source', 'email')
-    for (const r of (invRows ?? []) as Array<{ source_message_id: string | null }>) {
-      const id = extractMsgId(r.source_message_id)
-      if (id) doneMessageIds.add(id)
-    }
-    const { data: skipRows } = await supabase
-      .from('email_skipped_attachments')
-      .select('source_message_id')
-      .eq('user_id', userId)
-    for (const r of (skipRows ?? []) as Array<{ source_message_id: string | null }>) {
-      const id = extractMsgId(r.source_message_id)
-      if (id) doneMessageIds.add(id)
-    }
-    console.log('[BOEK-011] Pre-fetch done-message skip set', { size: doneMessageIds.size })
-  }
+  // [H3] The per-message "already done" skip set was removed — it was prefix-matched on
+  // messageId and so stranded pending attachments on partially-imported multi-attachment
+  // emails (see the note at the Outlook filter). Correctness now rests entirely on the
+  // per-attachment dedup (knownKeys, built in PHASE 0) which skips already-stored
+  // attachments cheaply while every in-window message is still fetched.
 
   // Fetch attachments after registration date
   // [BOEK-011 throttle×watermark] fetchComplete = the provider listing reached
@@ -1460,7 +1487,7 @@ export async function syncUserEmails(userId: string): Promise<{
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
-      const r = await fetchOutlookAttachments(accessToken, syncAfterMs, doneMessageIds, tokens.email)
+      const r = await fetchOutlookAttachments(accessToken, syncAfterMs, undefined, tokens.email)
       attachments = r.attachments
       fetchComplete = r.complete
       messageIndex = r.messageIndex
@@ -1883,7 +1910,7 @@ export async function syncUserEmails(userId: string): Promise<{
           typeof classification.invoiceDate === 'string' &&
           /^\d{4}-\d{2}-\d{2}/.test(classification.invoiceDate)
         const realDateIso = hasRealDate
-          ? new Date(classification.invoiceDate as string).toISOString().split('T')[0]
+          ? normalizeToIso(classification.invoiceDate as string)
           : null
 
         // Decide the key tier.
@@ -1939,7 +1966,11 @@ export async function syncUserEmails(userId: string): Promise<{
             .eq('total_inc_btw', classification.totalIncBtw)
 
           if (tier.kind === 'number') {
-            contentQuery = contentQuery.eq('invoice_number', classification.invoiceNumber as string)
+            // [DEDUP-NUMBER-NORM] Do NOT filter invoice_number in-query. An exact `.eq`
+            // missed a re-generated PDF whose number renders "26 / 3958" vs the stored
+            // "26/3958" and booked the same bill TWICE. We fetch on total(+date) and
+            // compare the number WHITESPACE-NORMALIZED in code (below), so a spacing/case
+            // variant is still caught as the duplicate it is.
             // [TRUST-DEDUP] Vendor is compared in CODE (below), NOT with a DB `ilike`.
             // An `ilike` with no wildcards is exact-apart-from-case, so a re-arrival of
             // the SAME invoice under a slightly different vendor string ("Atapack B.V."
@@ -1974,12 +2005,20 @@ export async function syncUserEmails(userId: string): Promise<{
           // Number tier: fetch SEVERAL candidates (number+total+date can legitimately
           // repeat across different vendors) and pick the first that isn't a genuinely
           // different vendor. Vendor tier already constrains the vendor in-query → 1 row.
-          const { data: existingByContent } = await contentQuery.limit(tier.kind === 'number' ? 25 : 1)
+          // [DEDUP-WINDOW] Number tier compares the number normalized in code (no in-query
+          // .eq), so order deterministically and use a wide cap — the match must never fall
+          // outside the window for a shop with many same-total invoices. Vendor tier stays 1.
+          const { data: existingByContent } = await contentQuery
+            .order('id', { ascending: false })
+            .limit(tier.kind === 'number' ? 200 : 1)
 
           const original =
             tier.kind === 'number'
               ? (existingByContent ?? []).find(
-                  (c) => !vendorsAreDifferent(classification.vendor, c.client_name),
+                  (c) =>
+                    normalizeInvoiceNumber(c.invoice_number) ===
+                      normalizeInvoiceNumber(classification.invoiceNumber as string) &&
+                    !vendorsAreDifferent(classification.vendor, c.client_name),
                 ) ?? null
               : (existingByContent && existingByContent.length > 0 ? existingByContent[0] : null)
 
@@ -2023,9 +2062,9 @@ export async function syncUserEmails(userId: string): Promise<{
       // fall back to the e-mail's received date. A substituted date looks
       // confident and misfiles the expense's quarter; the verify queue forces
       // the human to enter the real date before confirming.
-      const invoiceDate = classification.invoiceDate
-        ? new Date(classification.invoiceDate).toISOString().split('T')[0]
-        : null
+      // [DATE-ISO-SAFE / I6] Tolerant + never-throw (a DD-MM-YYYY here used to throw and
+      // stick the whole message in a re-fetch loop forever). Invalid → null → verify queue.
+      const invoiceDate = normalizeToIso(classification.invoiceDate)
 
       // [BOEK-011] Step 1: store the PDF/image in Supabase Storage
       let documentId: string | null = null
@@ -2131,9 +2170,13 @@ export async function syncUserEmails(userId: string): Promise<{
       // pre-SAFECORE behaviour for clean invoices — no empty {} churn).
       const aiConfidence = classification.fieldConfidence ?? null
       let fieldConfidenceValue: Record<string, unknown> | null = aiConfidence
-      // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) so
-      // the audit/human-review trail records WHY this invoice skipped dedup.
-      if (!verdict.ok || dedupNote) {
+      // [REMINDER] A payment reminder is a real single invoice but the original was very
+      // likely already booked — flag it so the verify queue warns "controleer of de factuur
+      // al geboekt is" and it is never bulk-confirmed as a second cost.
+      const isReminder = classification.isReminder === true
+      // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) and the reminder
+      // flag so the audit/human-review trail records WHY this invoice needs a human look.
+      if (!verdict.ok || dedupNote || isReminder) {
         const safecore: Record<string, unknown> = {}
         if (!verdict.ok) {
           safecore.arithmetic_ok = false
@@ -2144,6 +2187,12 @@ export async function syncUserEmails(userId: string): Promise<{
         if (dedupNote) {
           safecore.dedup = dedupNote.dedup
           safecore.dedup_reason = dedupNote.reason
+        }
+        if (isReminder) {
+          safecore.reminder = true
+          if (classification.reminderOfInvoiceNumber) {
+            safecore.reminder_of = classification.reminderOfInvoiceNumber
+          }
         }
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),
@@ -2319,21 +2368,25 @@ export async function syncUserEmails(userId: string): Promise<{
     // never-fetched older mail outside every future window — permanent loss.
     // Progress already saved (invoices / skip registry) is untouched; only the
     // window refuses to shrink until one fully-covered pass succeeds.
-    if (!fetchComplete) {
+    if (opts?.holdWatermark) {
+      // [BACKFILL] A re-scan is additive — it must never move the incremental mark (which
+      // tracks the newest fully-processed email for the daily window). Leave it untouched.
+      console.log('[BACKFILL] Watermark held — re-scan pass does not touch the incremental mark')
+    } else if (!fetchComplete) {
       console.log(
         '[BOEK-011] Watermark held — fetch incomplete (throttle/cap); window unchanged this round'
       )
     } else {
     // [BOEK-011] Walk the FULL message timeline (messageIndex), not just
-    // fetched attachments. When we skip done-messages' attachment fetches (the
-    // throttle optimisation), their attachments aren't in `attachments` — a
-    // walk over `attachments` alone would be empty on a fully-backfilled repeat
-    // sync and the mark would never advance. messageIndex lists every message
-    // (id + date) that was LISTED this round, so the timeline is complete.
+    // fetched attachments. messageIndex lists every message (id + date) that was
+    // LISTED this round, so the timeline is complete even for a message whose
+    // attachment parts were all filtered out (logos/signatures) and contributes
+    // nothing to `attachments`.
     //
     // Per-message completeness:
-    //   · done-skipped (in doneMessageIds) → complete (already imported/skipped)
     //   · has fetched attachments → complete iff all are known/completed
+    //     (a previously-imported attachment is in knownKeys; one imported this run
+    //      is in completedKeys; a failed one is in neither → incomplete → held)
     //   · NO fetched attachments → complete. We only reach this walk when
     //     fetchComplete===true (every attachment fetch succeeded), so a listed
     //     message contributing zero attachments means its parts were filtered
@@ -2353,7 +2406,10 @@ export async function syncUserEmails(userId: string): Promise<{
     }
 
     const messageComplete = (messageId: string): boolean => {
-      if (doneMessageIds.has(messageId)) return true
+      // [H3] No doneMessageIds short-circuit: now that every in-window message is re-fetched,
+      // completeness is judged PURELY per-attachment. A previously-done message that carries
+      // a newly-failed attachment this run must read as incomplete so the watermark holds and
+      // it is retried — the old short-circuit would have advanced past it and lost that file.
       const atts = attsByMsg.get(messageId)
       // No fetched attachments for this listed message → its parts were filtered
       // out (not a failed fetch — we're inside fetchComplete===true). Nothing to

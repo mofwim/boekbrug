@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { searchBestanden, ensureSharedFolder } from "@/lib/bestanden";
+import { searchBestanden, searchFolders, ensureSharedFolder } from "@/lib/bestanden";
 import type { Database } from "@/types/database.types";
 
 type DocumentUpdate = Database["public"]["Tables"]["documents"]["Update"];
@@ -60,11 +60,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ documents: data ?? [] });
   }
 
-  // ── Search ──
+  // ── Search ── (documents + folders)
   if (search.trim()) {
     try {
-      const results = await searchBestanden(user.id, search);
-      return NextResponse.json({ results });
+      const [results, folders] = await Promise.all([
+        searchBestanden(user.id, search),
+        searchFolders(user.id, search),
+      ]);
+      return NextResponse.json({ results, folders });
     } catch (err) {
       return NextResponse.json({ error: err instanceof Error ? err.message : "Fout" }, { status: 500 });
     }

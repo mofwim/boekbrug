@@ -230,13 +230,13 @@ export default function InvoiceEditPage() {
 
   // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <p className="text-gray-400 text-sm">Laden...</p>
     </div>
   )
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
+    <div className="min-h-screen bg-[#f8f9fa]">
 
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
@@ -503,14 +503,14 @@ export default function InvoiceEditPage() {
               </button>
             </>
           ) : (
-            // [BOEK-031] Sent: only Save (changes are limited by backend PUT validation) — May 2026
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving ? 'Opslaan...' : 'Wijzigingen opslaan'}
-            </button>
+            // [ART-35] A verstuurde/uitgegeven factuur is wettelijk vastgelegd en kan NIET
+            // meer worden gewijzigd — de server-PUT weigert elke niet-draft met 409. Toon
+            // dat eerlijk in plaats van een "Wijzigingen opslaan"-knop die altijd faalt; een
+            // correctie loopt via een creditnota (op de factuurpagina).
+            <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+              Deze factuur is verstuurd en wettelijk vastgelegd — wijzigen kan niet meer.
+              Maak een <strong>creditnota</strong> aan om te corrigeren.
+            </p>
           )}
           {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
           <Link

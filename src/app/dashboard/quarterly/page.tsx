@@ -1,9 +1,11 @@
 // app/dashboard/quarterly/page.tsx
 // Quarterly overview page (BOEK-013)
 
+import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
-import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";import Link from "next/link";
+import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";
+import { getParentPath } from "@/lib/navigation";
 
 export const metadata = {
   title: "Kwartaaloverzicht — BoekBrug",
@@ -27,14 +29,14 @@ export default async function QuarterlyPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <div className="mb-6">
+        {/* [NAVIGATION] Server component → resolve the parent with the pure
+            getParentPath helper and render a plain <Link>. Role-aware, central,
+            and never router.back(). */}
         <Link
-          href="/dashboard"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
+          href={getParentPath("/dashboard/quarterly", role)}
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4 no-underline"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Terug naar dashboard
+          <span aria-hidden>←</span> Terug naar dashboard
         </Link>
         <h1 className="text-2xl font-semibold">Kwartaaloverzicht</h1>
         <p className="text-muted-foreground text-sm mt-1">

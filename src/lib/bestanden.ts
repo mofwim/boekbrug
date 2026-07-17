@@ -592,13 +592,33 @@ export async function renameDocument(
 
 // ─── Search ───────────────────────────────────────────────────────────────────────
 
+// [SEARCH] Neutralise PostgREST .or()/ILIKE metacharacters. A comma or paren in the
+// query broke the .or() grammar; %/_ act as wildcards. Replace them with spaces so a
+// query like "factuur, mei (2026)" no longer errors or mis-matches.
+function sanitizeLike(q: string): string {
+  return q.replace(/[,()%_*\\":]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// [SEARCH] The fuzzy RPCs (search_smart.sql) aren't in the generated Supabase types.
+// Narrow cast that keeps `this` bound; returns [] on any error so search never breaks.
+type RpcCaller = { rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }> };
+async function fuzzyRpc(client: unknown, fn: string, query: string): Promise<any[]> {
+  try {
+    const { data, error } = await (client as RpcCaller).rpc(fn, { q: query.trim() });
+    if (error) return [];
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function searchBestanden(
   userId: string,
   query: string,
   ctx: BestandenContext = "user"
 ): Promise<SearchResult[]> {
   const supabase = await resolveClient(ctx);
-  const q = query.trim();
+  const q = sanitizeLike(query);
   if (!q) return [];
 
   // [M3] Neutralise the user term before it is interpolated into the PostgREST
@@ -620,7 +640,14 @@ export async function searchBestanden(
     .limit(50);
 
   if (error) throw new Error(error.message);
-  const docs = (data ?? []) as BestandRow[];
+  let docs = (data ?? []) as BestandRow[];
+
+  // [SEARCH] Typo-tolerant fallback when exact/substring found nothing — only for
+  // NAME-like queries (a numeric query is exact-match territory; trigram-fuzzy on
+  // numbers yields garbage).
+  if (docs.length === 0 && /\p{L}/u.test(query)) {
+    docs = (await fuzzyRpc(supabase, "search_documents_fuzzy", query)) as BestandRow[];
+  }
 
   const folderIds = [...new Set(docs.map(d => d.folder_id).filter(Boolean))] as string[];
   let folderMap: Record<string, string> = {};
@@ -631,6 +658,42 @@ export async function searchBestanden(
   }
 
   return docs.map(d => ({ ...d, folder_name: d.folder_id ? (folderMap[d.folder_id] ?? null) : null }));
+}
+
+// [SEARCH] Folders are findable by name too (previously only documents were).
+export interface FolderSearchResult {
+  id: string;
+  name: string;
+  parent_id: string | null;
+}
+
+export async function searchFolders(
+  userId: string,
+  query: string,
+  ctx: BestandenContext = "user"
+): Promise<FolderSearchResult[]> {
+  const supabase = await resolveClient(ctx);
+  const q = sanitizeLike(query);
+  if (!q) return [];
+
+  const { data, error } = await supabase
+    .from("folders")
+    .select("id, name, parent_id")
+    .eq("user_id", userId)
+    .ilike("name", `%${q}%`)
+    .order("name", { ascending: true })
+    .limit(20);
+
+  if (error) throw new Error(error.message);
+  let folders = (data ?? []) as FolderSearchResult[];
+
+  // [SEARCH] Typo-tolerant fallback when the exact/substring name match found nothing —
+  // name-like queries only (no trigram-fuzzy on numeric queries).
+  if (folders.length === 0 && /\p{L}/u.test(query)) {
+    folders = (await fuzzyRpc(supabase, "search_folders_fuzzy", query)) as FolderSearchResult[];
+  }
+
+  return folders;
 }
 
 // ─── Find folder by path ──────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import {
   getGmailUserEmail,
   saveEmailTokens,
 } from "@/lib/email-integration";
+import { verifyOAuthState, OAUTH_STATE_COOKIE } from "@/lib/oauth-state";
 
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -29,31 +30,21 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Verify state
-  let stateData: { userId: string; provider: string };
-  try {
-    stateData = JSON.parse(Buffer.from(state, "base64").toString());
-  } catch {
+  // [MH1] Verify the CSRF nonce: the returned state must match the HttpOnly cookie set at
+  // /connect, and the authoritative userId comes from that cookie — never from the state
+  // param, which is attacker-forgeable. This still survives a lost Supabase session cookie
+  // (BOEK-015): the nonce cookie is our own first-party cookie and rides the redirect back.
+  const stateCheck = verifyOAuthState(
+    state,
+    req.cookies.get(OAUTH_STATE_COOKIE)?.value,
+    "gmail",
+  );
+  if (!stateCheck.ok) {
     return NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/incoming?error=invalid_state`
     );
   }
-
-  // [BOEK-015] fix: use userId from state directly — session cookie may not transfer
-  // across OAuth redirect, causing false mismatch and redirect to /login
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  // Use stateData.userId as the authoritative user — it was set when OAuth was initiated
-  // If session user exists and matches, great. If not, trust the state (CSRF already verified by state param)
-  const userId = user?.id ?? stateData.userId;
-
-  if (!userId) {
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_BASE_URL}/login`
-    );
-  }
+  const userId = stateCheck.userId;
 
   // Exchange code for tokens
   let tokens;

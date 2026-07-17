@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 // [Design System] theme-color drives the browser UI tint (mobile address bar,
 // PWA chrome). Uses the BoekBrug blue accent.
 export const viewport: Viewport = {
-  themeColor: "#007aff",
+  themeColor: "#1a73e8",
 };
 
 export default function RootLayout({
@@ -46,11 +46,21 @@ export default function RootLayout({
       className={`${roboto.variable} h-full antialiased`}
     >
       <head>
-        {/* [Design System] Material Symbols — icon font only, CDN is acceptable */}
+        {/* [Design System] Material Symbols — icon font, CDN.
+            PERFORMANCE: icon_names= subsets the font to ONLY the glyphs the app
+            uses (88 icons), cutting the download from ~313 KB to ~9 KB (~97%).
+            display=block keeps the font invisible while loading then swaps in,
+            so users never see the raw ligature text ("arrow_back") flash.
+
+            ⚠ MAINTENANCE: this is an explicit subset. If you add a NEW
+            material-symbols icon anywhere in the app, ADD its name to the
+            icon_names list below — otherwise it renders as its raw text name.
+            The list is validated: an unknown name makes Google return HTTP 400
+            (all icons break), so keep names exact and alphabetical. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=account_balance,add,add_a_photo,arrow_back,arrow_downward,arrow_forward,arrow_upward,attach_file,auto_awesome,bar_chart,block,bolt,calculate,check,check_circle,checklist,chevron_left,chevron_right,close,content_copy,content_cut,create_new_folder,cut,delete,delete_forever,description,done_all,download,drive_file_move,drive_file_rename_outline,edit,error,error_outline,event,event_available,expand_less,expand_more,fact_check,folder,folder_open,folder_special,forward_to_inbox,grid_view,groups,help,home,hourglass_empty,inbox,info,insert_drive_file,inventory_2,link,link_off,mark_email_unread,more_vert,open_in_new,payments,pending,people,person,person_add,photo_camera,picture_as_pdf,point_of_sale,qr_code_2,radio_button_unchecked,receipt_long,refresh,restore,schedule,search,search_off,send,settings,share,shield,star,task_alt,undo,upload,upload_file,uppercase,verified,view_list,visibility,visibility_off,warning,work&display=block"
           rel="stylesheet"
         />
       </head>

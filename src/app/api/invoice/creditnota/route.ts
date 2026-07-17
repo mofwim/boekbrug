@@ -153,6 +153,19 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (insertError || !creditnota) {
+      // [IN1] The DB partial-unique index (invoices_one_creditnota_per_original) is the real
+      // guard against the SELECT-then-INSERT race above: a concurrent second creditnota for
+      // the same invoice fails with SQLSTATE 23505. Surface that as the same clean 409 the
+      // pre-check returns, not a generic 500 — a double credit is a legal filing error.
+      const isDuplicate =
+        (insertError as { code?: string } | null)?.code === '23505' ||
+        (typeof insertError?.message === 'string' && /duplicate key value|unique constraint/i.test(insertError.message))
+      if (isDuplicate) {
+        return NextResponse.json(
+          { error: 'Er bestaat al een creditnota voor deze factuur' },
+          { status: 409 }
+        )
+      }
       console.error('[FACTUUR-A] Creditnota insert failed', { original_invoice_id, insertError })
       return NextResponse.json({ error: 'Creditnota aanmaken mislukt' }, { status: 500 })
     }

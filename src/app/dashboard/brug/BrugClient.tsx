@@ -40,15 +40,15 @@ const M3 = {
   primary:          '#1A73E8',
   onPrimary:        '#FFFFFF',
   primaryContainer: '#D3E3FD',
-  surface:          '#FFFBFE',
-  onSurface:        '#1C1B1F',
-  surfaceVariant:   '#E7E0EC',
-  outline:          '#79747E',
+  surface:          '#ffffff',
+  onSurface:        '#202124',
+  surfaceVariant:   '#f1f3f4',
+  outline:          '#80868b',
   success:          '#34A853',
   error:            '#B3261E',
   warning:          '#E37400',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
@@ -63,7 +63,7 @@ const TONE: Record<NodeBadge['tone'], { bg: string; color: string }> = {
   warning: { bg: '#FEE8C4', color: '#7C5800' },
   error:   { bg: '#F9DEDC', color: '#B3261E' },
   info:    { bg: '#D3E3FD', color: '#1967D2' },
-  neutral: { bg: '#E7E0EC', color: '#49454F' },
+  neutral: { bg: '#f1f3f4', color: '#5f6368' },
 }
 
 // [BRIDGE-POLISH 3a-1] Direction marker — reuses existing TONE swatches so no
@@ -719,7 +719,7 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
 
   const teBetalen = concept.saldo >= 0
   const line = (label: string, value: string, opts: { color?: string; strong?: boolean; top?: boolean } = {}) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderTop: opts.top ? '1px solid #eef1f4' : 'none', marginTop: opts.top ? 4 : 0 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderTop: opts.top ? '1px solid #f1f3f4' : 'none', marginTop: opts.top ? 4 : 0 }}>
       <span style={{ fontSize: opts.strong ? 14.5 : 13.5, fontWeight: opts.strong ? 700 : 500, color: opts.color ?? M3.onSurface }}>{label}</span>
       <span style={{ fontSize: opts.strong ? 18 : 15, fontWeight: opts.strong ? 700 : 600, color: opts.color ?? M3.onSurface }}>{value}</span>
     </div>

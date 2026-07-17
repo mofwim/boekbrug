@@ -13,6 +13,7 @@ import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
+import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
@@ -141,6 +142,65 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // [DEDUP-SEMANTIC / I2] The byte-hash gate above only blocks an IDENTICAL file. A
+  // re-photographed paper invoice or a re-generated PDF (different bytes, same bill)
+  // slipped past and DOUBLE-BOOKED the cost — intake and email-sync run a graded semantic
+  // dedup, but manual upload did not. Run the same check here, with a "toch toevoegen"
+  // (force) escape so a genuine second document is never permanently blocked.
+  const force = formData.get("force") === "true";
+  const dup = await findSemanticDuplicate(
+    {
+      invoiceNumber: verification.invoice_number,
+      vendor: verification.vendor,
+      totalIncBtw: verification.total_inc_btw ?? verification.amount,
+      invoiceDate: verification.invoice_date,
+    },
+    async (q) => {
+      let query = supabase
+        .from("invoices")
+        .select("id, invoice_number, client_name")
+        .eq("receiver_id", user.id)
+        .eq("direction", "incoming")
+        .eq("total_inc_btw", q.total);
+      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", q.vendor);
+      if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
+      // [DEDUP-NUMBER-NORM] Compare the number whitespace-normalized in code (an exact .eq
+      // missed "26 / 3958" vs "26/3958"); the candidate set is already pinned by total(+date).
+      // [DEDUP-WINDOW] Deterministic order + a wide cap so the number match never falls
+      // outside the window (dropping the .eq removed the natural bound).
+      const { data } = await query.order("id", { ascending: false }).limit(200);
+      const rows = data ?? [];
+      const hit =
+        q.tier === "number" && q.invoiceNumber
+          ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
+          : rows[0];
+      return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null;
+    }
+  );
+  if (dup.duplicate && dup.match && !force) {
+    return NextResponse.json(
+      {
+        error: `Deze factuur (${verification.invoice_number ?? "onbekend nummer"}) lijkt al toegevoegd.`,
+        duplicate: true,
+        semantic: true,
+        matchedOn: dup.tier,
+        existing: { id: dup.match.id, invoice_number: dup.match.invoice_number },
+      },
+      { status: 409 }
+    );
+  }
+  if (dup.duplicate && dup.match && force) {
+    // The owner already saw "bestaat al" and chose to add anyway — record the override.
+    await logAuditAction({
+      userId: user.id,
+      action: "invoice.dedup_override",
+      entityType: "invoice",
+      entityId: dup.match.id,
+      newValue: { reason: "user_forced_add", matched_on: dup.tier, invoice_number: verification.invoice_number ?? null, path: "manual_upload" },
+      ipAddress: getClientIP(req),
+    });
+  }
+
   // Store the file in Supabase Storage
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`;
@@ -162,9 +222,8 @@ export async function POST(req: NextRequest) {
 
   // [DATE-GATE] Honest date: null when none was extracted — no today fallback.
   // The confirm route blocks a null date until the reviewer enters it.
-  const invoiceDate = verification.invoice_date
-    ? new Date(verification.invoice_date).toISOString().split("T")[0]
-    : null;
+  // [DATE-ISO-SAFE / I6] Tolerant + never-throw (a DD-MM-YYYY used to 500 the upload).
+  const invoiceDate = normalizeToIso(verification.invoice_date);
 
   // [BOEK-011] Resolve correct folder via BOEK-033's function
   // ctx='user' — manual upload, user is logged in (RLS session active)
@@ -233,6 +292,11 @@ export async function POST(req: NextRequest) {
       payment_reference: verification.payment_reference ?? null,
       // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields
       field_confidence: verification.field_confidence ?? null,
+      // [DEDUP-CREDITNOTA / I3] A creditnota keeps NEGATIVE amounts (numSigned) and must be
+      // TYPED as one, exactly like the email-sync and intake paths — otherwise the read-time
+      // health classifier picks the positive-expecting arithmetic gate and a legitimately
+      // negative credit reads as an error / aggregates with the wrong sign.
+      invoice_type: verification.is_credit_note === true ? "creditnota" : "factuur",
     })
     .select("id")
     .single();

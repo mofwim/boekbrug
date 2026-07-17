@@ -136,6 +136,7 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         }}
       >
         <button onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+          aria-label="Uitklappen"
           style={{ width: 20, height: 20, border: "none", background: "none", cursor: node.children.length ? "pointer" : "default", opacity: node.children.length ? 0.6 : 0, display: "flex", alignItems: "center", justifyContent: "center", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
           <Icon name="expand_more" size={16} />
         </button>
@@ -162,10 +163,12 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         {!isSystem && hovered && (
           <div style={{ display: "flex", gap: 1, flexShrink: 0 }}>
             <button onClick={e => { e.stopPropagation(); onRename(node.id, node.name); }}
+              aria-label="Naam wijzigen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="edit" size={13} color={T.outline} />
             </button>
             <button onClick={e => { e.stopPropagation(); onDelete(node.id); }}
+              aria-label="Verwijderen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="delete" size={13} color={T.error} />
             </button>
@@ -248,6 +251,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  // [SEARCH] Matching folders (by name) shown above file results.
+  const [folderResults, setFolderResults] = useState<{ id: string; name: string; parent_id: string | null }[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
   // ── Modals ──
@@ -343,6 +348,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setSmartView(null); // [BESTANDEN-SMART] a deep-link targets a real folder, leave any smart view
     setSearch("");
     setSearchResults(null);
+    setFolderResults([]);
     // Clean the URL so refresh/back don't re-trigger the deep-link.
     window.history.replaceState({}, "", "/dashboard/bestanden");
   }, [searchParams]);
@@ -457,21 +463,22 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // otherwise. The URL is now read inline in useState above — single source
   // of truth, no ordering issues.
 
-  // ── Search ──
+  // ── Search ── (documents + folders)
   useEffect(() => {
-    if (!search.trim()) { setSearchResults(null); return; }
-    let cancelled = false; // [race] don't let a slow "a" response overwrite "ab"
+    if (!search.trim()) { setSearchResults(null); setFolderResults([]); return; }
+    // [SEARCH] `active` guards against out-of-order responses: a superseded query's
+    // in-flight fetch must not overwrite the newer query's results.
+    let active = true;
     const t = setTimeout(async () => {
       setSearchLoading(true);
-      try {
-        const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
-        const json = await res.json() as { results?: SearchResult[] };
-        if (!cancelled) setSearchResults(json.results ?? []);
-      } finally {
-        if (!cancelled) setSearchLoading(false);
-      }
+      const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
+      const json = await res.json() as { results?: SearchResult[]; folders?: { id: string; name: string; parent_id: string | null }[] };
+      if (!active) return;
+      setSearchResults(json.results ?? []);
+      setFolderResults(json.folders ?? []);
+      setSearchLoading(false);
     }, 300);
-    return () => { cancelled = true; clearTimeout(t); };
+    return () => { active = false; clearTimeout(t); };
   }, [search]);
 
   useEffect(() => { if (newFolderInline) setTimeout(() => newFolderRef.current?.focus(), 50); }, [newFolderInline]);
@@ -929,7 +936,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     <div style={{
       height: "100dvh", background: "#F8F9FA",
       display: "flex", flexDirection: "column",
-      fontFamily: "'Google Sans','Roboto',-apple-system,sans-serif",
+      fontFamily: "'Roboto',-apple-system,sans-serif",
       overflow: "hidden", // [BOEK-033] nothing escapes
     }}>
 
@@ -943,7 +950,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           zIndex: 500, background: "#323232", color: "#fff",
           padding: "12px 20px", borderRadius: 24, fontSize: 14, fontWeight: 500,
           boxShadow: "0 4px 16px rgba(0,0,0,0.28)", display: "flex", alignItems: "center", gap: 8,
-          fontFamily: "'Google Sans','Roboto',sans-serif", whiteSpace: "nowrap",
+          fontFamily: "'Roboto',sans-serif", whiteSpace: "nowrap",
           pointerEvents: "none",
         }}>
           <Icon name="share" size={16} color="#fff" />
@@ -987,6 +994,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           <Icon name={clipboardDisplay.op === "cut" ? "content_cut" : "content_copy"} size={16} color="white" />
           {clipboardDisplay.count} item{clipboardDisplay.count > 1 ? "s" : ""} {clipboardDisplay.op === "cut" ? "geknipt" : "gekopieerd"} — Ctrl+V om te plakken
           <button onClick={() => { clipboardRef.current = null; setClipboardDisplay(null); }}
+            aria-label="Sluiten"
             style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 0 }}>
             <Icon name="close" size={14} color="rgba(255,255,255,0.7)" />
           </button>
@@ -1017,11 +1025,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           width: "100%", boxSizing: "border-box",
           maxWidth: "100%", overflow: "hidden",
         }}>
-          {/* Back — internal if history exists, external otherwise */}
+          {/* Back — internal folder history if it exists, else the page's
+              canonical parent (role home). Never router.back() — that could
+              loop back onto a dead entry. */}
           <button
             onClick={() => {
               if (navHistoryRef.current.length > 0) navigateBack();
-              else router.back();
+              else router.push(logoHref);
             }}
             style={{
               display: "flex", alignItems: "center", gap: 4,
@@ -1039,6 +1049,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
           {/* Sidebar toggle mobile */}
           <button onClick={() => setSidebarOpen(v => !v)} className="flex lg:hidden"
+            aria-label="Mappen tonen"
             style={{ width: 36, height: 36, border: "none", background: "none", alignItems: "center", justifyContent: "center", cursor: "pointer", borderRadius: T.full, flexShrink: 0 }}>
             <Icon name="folder_open" size={22} color={T.warning} />
           </button>
@@ -1058,7 +1069,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               onBlur={e => (e.currentTarget.style.boxShadow = "none")}
             />
             {search && (
-              <button onClick={() => setSearch("")} style={{
+              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen" style={{
                 position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
                 width: 18, height: 18, border: "none", background: T.outline,
                 borderRadius: T.full, display: "flex", alignItems: "center",
@@ -1136,7 +1147,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           {/* View toggle */}
           <div style={{ display: "flex", background: "#F1F3F4", borderRadius: T.md, padding: 3, flexShrink: 0 }}>
             {(["grid", "list"] as ViewMode[]).map(mode => (
-              <button key={mode} onClick={() => setViewMode(mode)} style={{
+              <button key={mode} onClick={() => setViewMode(mode)} aria-label={mode === "grid" ? "Rasterweergave" : "Lijstweergave"} style={{
                 width: 32, height: 32, border: "none", cursor: "pointer",
                 borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center",
                 background: viewMode === mode ? "white" : "transparent",
@@ -1328,7 +1339,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               <span style={{
                 fontSize: 22, fontWeight: 700, color: T.primary,
                 letterSpacing: "-0.02em", cursor: "pointer",
-                fontFamily: "'Google Sans','Roboto',sans-serif",
+                fontFamily: "'Roboto',sans-serif",
               }}>
                 BoekBrug
               </span>
@@ -1594,16 +1605,38 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               /* ── Search results ── */
               <div>
                 <p style={{ fontSize: 12, fontWeight: 600, color: T.outline, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 16px" }}>
-                  {searchLoading ? "Zoeken..." : `${searchResults?.length ?? 0} resultaten voor "${search}"`}
+                  {searchLoading ? "Zoeken..." : `${(searchResults?.length ?? 0) + folderResults.length} resultaten voor "${search}"`}
                 </p>
                 {searchLoading ? (
                   <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner size={32} /></div>
-                ) : !(searchResults?.length) ? (
+                ) : !(searchResults?.length) && folderResults.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "48px 24px" }}>
                     <Icon name="search_off" size={48} color={T.outline} style={{ display: "block", margin: "0 auto 12px" }} />
-                    <p style={{ fontSize: 14, color: T.outline }}>Geen bestanden gevonden</p>
+                    <p style={{ fontSize: 14, color: T.outline }}>Niets gevonden</p>
                   </div>
                 ) : (
+                  <>
+                  {/* [SEARCH] Matching folders — click to open. */}
+                  {folderResults.length > 0 && (
+                    <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden", marginBottom: 16 }}>
+                      {folderResults.map((f, i) => (
+                        <button
+                          key={f.id}
+                          onClick={() => { setSearch(""); setSearchResults(null); setFolderResults([]); navigateTo(f.id); }}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center", gap: 12,
+                            padding: "12px 16px", textAlign: "left", cursor: "pointer",
+                            background: "transparent", border: "none",
+                            borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none",
+                          }}
+                        >
+                          <Icon name="folder" size={22} color={T.primary} />
+                          <span style={{ fontSize: 14, color: T.onSurface, fontWeight: 500 }}>{f.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {searchResults && searchResults.length > 0 && (
                   <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
                     {searchResults!.map((doc, i) => (
                       <div
@@ -1633,6 +1666,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                       </div>
                     ))}
                   </div>
+                  )}
+                  </>
                 )}
               </div>
             ) : (

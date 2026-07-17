@@ -8,11 +8,14 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
+import Link from 'next/link'
 import dynamic from 'next/dynamic'
+import { getParentPath } from '@/lib/navigation'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
+import { crossQuarterPayment } from '@/lib/quarter'
 
 const PDFDownloadLink = dynamic(
   () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
@@ -21,7 +24,7 @@ const PDFDownloadLink = dynamic(
 
 // [DS] Design System v1.0 — Status chip colors (ZZP = pill, same values)
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  draft:      { label: 'Concept',        bg: '#E7E0EC', color: '#49454F' },
+  draft:      { label: 'Concept',        bg: '#f1f3f4', color: '#5f6368' },
   sent:       { label: 'Verzonden',      bg: '#D3E3FD', color: '#1967D2' },
   paid:       { label: 'Betaald',        bg: '#CEEAD6', color: '#137333' },
   overdue:    { label: 'Verlopen',       bg: '#F9DEDC', color: '#B3261E' },
@@ -78,20 +81,12 @@ export default function InvoiceDetailPage() {
     if (d === 'pdf_failed' || d === 'email_failed') setDeliveryWarning(d)
   }, [searchParams])
 
-  // [BOEK-031] Context-aware back navigation — May 2026
-  // If accountant opened invoice from a client's kwartaal page, return there.
-  // Otherwise (ZZP default), go to /dashboard/facturen.
-  const fromParam     = searchParams.get('from')
-  const clientIdParam = searchParams.get('clientId')
-  const qParam        = searchParams.get('q')
-  const yearParam     = searchParams.get('year')
-  const terugHref =
-    fromParam === 'client' && clientIdParam
-      ? `/dashboard/clients/${clientIdParam}/kwartaal${qParam || yearParam ? `?${new URLSearchParams({
-          ...(qParam ? { q: qParam } : {}),
-          ...(yearParam ? { year: yearParam } : {}),
-        }).toString()}` : ''}`
-      : '/dashboard/facturen'
+  // [NAVIGATION] Back target = the page's canonical parent, resolved centrally
+  // by getParentPath. The invoice/[id] rule already folds in the "opened from a
+  // client's kwartaal page" context (?from=client&clientId=…&q=&year=), so this
+  // stays a single explicit ancestor href — a <Link>, never router.back(), so it
+  // cannot loop.
+  const terugHref = getParentPath(pathname, 'zzper', searchParams)
 
   // [FACTUUR-A] Resend handler — calls /api/invoice/send with resend:true — June 2026
   // Re-delivers PDF+email; does NOT touch invoice_number or status.
@@ -178,13 +173,16 @@ export default function InvoiceDetailPage() {
       if (linesData) setLines(linesData)
       if (ownProfile) setViewerProfile(ownProfile) // [ACC-INVOICE-VIEW]
 
-      // [BOEK-031] Controleer of er al een creditnota bestaat voor deze factuur
-      // receiver_id wordt gebruikt als link naar de originele factuur
+      // [BOEK-031] Is deze factuur al gecrediteerd? The creditnota stores its link to the
+      // original in `original_invoice_id` (the real FK the creditnota route writes + guards
+      // on). The old lookup used `receiver_id` — a USER-id FK, not the invoice link — so it
+      // was ALWAYS null: the "Gecrediteerd via …" banner never appeared and the "Creditnota"
+      // button stayed on an already-credited invoice, dead-ending on the server's 409.
       if (CREDITABLE_STATUSES.includes(invoiceData.status) && invoiceData.invoice_type === 'factuur') {
         const { data: creditnota } = await supabase
           .from('invoices')
           .select('id, invoice_number, status, created_at')
-          .eq('receiver_id', invoiceId)
+          .eq('original_invoice_id', invoiceId)
           .eq('invoice_type', 'creditnota')
           .maybeSingle()
 
@@ -295,9 +293,12 @@ export default function InvoiceDetailPage() {
       }}>
         <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [DS] Back button — Material You circular tonal */}
-            <button
-              onClick={() => router.push(terugHref)} // [BOEK-031] context-aware: client→kwartaal | ZZP→facturen
+            {/* [DS] Back button — Material You circular tonal.
+                [NAVIGATION] <Link> to the canonical parent (terugHref), never
+                router.back() — cannot loop. */}
+            <Link
+              href={terugHref}
+              aria-label="Terug"
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -307,13 +308,14 @@ export default function InvoiceDetailPage() {
                 color: '#5F6368',
                 cursor: 'pointer',
                 fontSize: 18,
+                textDecoration: 'none',
                 transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
               }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</button>
+            >←</Link>
             {loading ? (
-              <div style={{ height: 16, width: 144, backgroundColor: '#E7E0EC', borderRadius: 9999 }} />
+              <div style={{ height: 16, width: 144, backgroundColor: '#f1f3f4', borderRadius: 9999 }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>
@@ -517,6 +519,9 @@ export default function InvoiceDetailPage() {
                     `Nummer: ${invoice.invoice_number || '—'}`,
                     `Datum: ${invoice.invoice_date ? NL_DATE.format(new Date(invoice.invoice_date)) : '—'}`,
                     `Vervaldatum: ${invoice.due_date ? NL_DATE.format(new Date(invoice.due_date)) : '—'}`,
+                    // [CROSS-QUARTER] Show the real settlement date when we recorded one, so
+                    // "when did this get paid" is answered on the invoice itself.
+                    invoice.payment_date ? `Betaald op: ${NL_DATE.format(new Date(invoice.payment_date))}` : '',
                   ]
                 },
               ].map(section => (
@@ -528,6 +533,21 @@ export default function InvoiceDetailPage() {
                 </div>
               ))}
             </div>
+            {/* [CROSS-QUARTER] When the money moved in a different quarter than the invoice
+                date, say so plainly — and make explicit that the btw quarter did NOT move,
+                so the owner is never confused into thinking their aangifte shifted. */}
+            {invoice.status === 'paid' && (() => {
+              const xq = crossQuarterPayment(invoice.invoice_date, invoice.payment_date)
+              if (!xq) return null
+              return (
+                <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#FFF3E0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', marginTop: 1 }}>event_available</span>
+                  <div style={{ fontSize: 12.5, color: '#7A4B00', lineHeight: 1.5 }}>
+                    <strong>Betaald in {xq.paidQuarterLabel}.</strong> Voor de btw telt deze factuur mee in {xq.bookedQuarterLabel} — de kwartaal­aangifte volgt de factuurdatum, niet de betaaldatum. Dit verandert daar niets aan; het laat alleen zien wanneer het geld binnenkwam.
+                  </div>
+                </div>
+              )
+            })()}
           </div>
 
           {/* [DS] Factuurregels — Material You card */}

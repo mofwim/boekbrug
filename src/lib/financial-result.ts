@@ -16,6 +16,7 @@
 
 import { pnlRole } from "./bank-categories";
 import { turnoverNetOmzet, turnoverBtw, type DailyTurnover } from "./turnover";
+import { nearestLegalRate } from "./btw-rate";
 
 export interface ResultInvoice {
   direction: "outgoing" | "incoming" | null;
@@ -53,6 +54,9 @@ export interface FinancialResult {
   btwVoorbelasting: number;   // BTW you reclaim (documented purchases)
   btwSaldo: number;           // verschuldigd − voorbelasting (what you pay/receive)
   cashOmzetZonderBtw: number; // cash sales recorded without a BTW rate — a nudge, not counted in BTW
+  // Of cashOmzetZonderBtw, the portion from BANK revenue or an un-split till day (not plain
+  // cash). > 0 → the rate split needs the Z-report → readiness points the fix at Dagomzet.
+  omzetZonderBtwNonCash: number;
   // [TURNOVER] BTW verschuldigd from the till Z-report, split per rate for aangifte
   // rubriek 1a (21%) / 1b (9%). Turnover-only: invoice/cash BTW is NOT yet rate-split
   // here, so these do NOT sum to btwVerschuldigd — that scalar stays the authoritative
@@ -125,6 +129,11 @@ export function computeResult(
   let btwVerschuldigd = 0;
   let btwVoorbelasting = 0;
   let cashOmzetZonderBtw = 0;
+  // [ZONDER-TARIEF-SOURCE] Of the omzet-zonder-tarief total, how much comes from BANK
+  // revenue or an un-split till day (vs. plain cash). Bank/till revenue needs the Z-report
+  // rate split to know 9%/21% — so the fix guidance points to Dagomzet, not Kas. Pure cash
+  // omzet's rate is assigned at Kas. Lets readiness route the "fix" link to the right screen.
+  let omzetZonderBtwNonCash = 0;
   let turnoverBtw9 = 0;
   let turnoverBtw21 = 0;
 
@@ -165,7 +174,9 @@ export function computeResult(
       // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
       // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
       // instead of falling to rate-0 and over-declaring BTW.
-      addSale(ex !== 0 ? Math.round((btw / ex) * 100) : 0, ex, btw);
+      // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
+      // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
+      addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
     } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
       kosten += ex;
       btwVoorbelasting += btw;
@@ -188,18 +199,28 @@ export function computeResult(
     // line still counts (the owner's stated intent), and if it lacks a rate it is surfaced
     // below as omzet-zonder-tarief rather than silently zero-rated.
     if (t.category === "pos_income" && posSettlesCoveredDay(t, covered)) continue;
-    const amt = Math.abs(t.amount ?? 0);
+    // [SIGN] Keep the SIGN of the bank amount — do NOT Math.abs it. A card refund/chargeback
+    // settles as a NEGATIVE pos_income and a supplier refund as a POSITIVE kosten credit;
+    // abs would book money leaving the business as money arriving (and vice-versa). The stored
+    // convention is credit(+)/debit(−), so a normal cost (debit, negative) becomes a positive
+    // kosten via -raw, while a refund correctly reduces it. (sumPosSettlements keeps the sign
+    // for the same reason.)
+    const raw = t.amount ?? 0;
     const role = pnlRole(t.category);
     if (role === "omzet") {
-      omzet += amt;
+      omzet += raw;
       // A bank revenue line (pos_income takings on an un-covered day, or a manual 'omzet'
       // chip) carries NO BTW rate — it must NOT silently declare €0 BTW in 5a. Surface it
       // exactly like unrated cash: counted in omzet, flagged as omzet-zonder-tarief, which
       // blocks readiness and appears in the aangifte note so a rate is assigned before
-      // filing. (Card takings reconciled to a Z-report were already excluded above.)
-      cashOmzetZonderBtw += amt;
+      // filing. Only a POSITIVE unrated line adds to the nudge — a refund reduces omzet but
+      // must not inflate the zonder-tarief warning or block readiness.
+      if (raw > 0) {
+        cashOmzetZonderBtw += raw;
+        omzetZonderBtwNonCash += raw; // bank-sourced → the rate split comes from the Z-report
+      }
     }
-    else if (role === "kosten") kosten += amt;
+    else if (role === "kosten") kosten += -raw; // debit(−) → positive cost; refund(+) reduces it
     // transfer / prive / tax / fee → excluded
   }
 
@@ -258,6 +279,7 @@ export function computeResult(
       if (unrated > Math.max(0.10, 0.001 * Math.abs(t.total_incl))) {
         omzet += unrated;
         cashOmzetZonderBtw += unrated;
+        omzetZonderBtwNonCash += unrated; // till day with an un-imported rate → fix at Dagomzet
       }
     }
   }
@@ -274,6 +296,7 @@ export function computeResult(
     btwVoorbelasting,
     btwSaldo: btwVerschuldigd - btwVoorbelasting,
     cashOmzetZonderBtw,
+    omzetZonderBtwNonCash,
     turnoverBtw9,
     turnoverBtw21,
     salesByRate: [...salesRate.entries()]

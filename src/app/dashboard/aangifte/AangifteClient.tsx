@@ -6,17 +6,11 @@
 // state exactly what each depends on. It is loudly a CONCEPT — never a filing.
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', track: '#EEF1F4', success: '#137333', error: '#B3261E',
-  warning: '#7C5800', warningContainer: '#FEE8C4',
-}
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
 interface Row { code: string; label: string; omzet: number; btw: number }
@@ -57,7 +51,7 @@ export default function AangifteClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
         <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 8px' }}>
           Concept BTW-aangifte {data ? `— ${data.quarterLabel}` : ''}
         </h1>
@@ -150,12 +144,12 @@ export default function AangifteClient() {
 
 function TotRow({ label, value, strong, color }: { label: string; value: string; strong?: boolean; color?: string }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 0', borderBottom: '1px solid #F0F0F4' }}>
-      <span style={{ fontSize: strong ? 15 : 14, fontWeight: strong ? 700 : 500, color: color ?? '#1C1B1F' }}>{label}</span>
-      <span style={{ fontSize: strong ? 20 : 15, fontWeight: strong ? 700 : 600, color: color ?? '#1C1B1F', fontFamily: FONT_NUM }}>{value}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 0', borderBottom: '1px solid #f1f3f4' }}>
+      <span style={{ fontSize: strong ? 15 : 14, fontWeight: strong ? 700 : 500, color: color ?? '#202124' }}>{label}</span>
+      <span style={{ fontSize: strong ? 20 : 15, fontWeight: strong ? 700 : 600, color: color ?? '#202124', fontFamily: FONT_NUM }}>{value}</span>
     </div>
   )
 }
 
 const th = { padding: '10px 14px', textAlign: 'left' as const, fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '.03em' }
-const td = { padding: '11px 14px', color: '#1C1B1F', verticalAlign: 'top' as const }
+const td = { padding: '11px 14px', color: '#202124', verticalAlign: 'top' as const }

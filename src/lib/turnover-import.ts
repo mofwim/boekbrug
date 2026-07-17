@@ -36,11 +36,39 @@ function num(v: Cell): number {
   if (typeof v !== "string") return 0;
   let s = v.trim();
   if (!s) return 0;
-  // NL number: dot = thousands, comma = decimal. Only strip dots when a comma is present.
-  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
-  s = s.replace(/[^\d.\-]/g, "");
+  // [L1] Capture the SIGN before the separators are normalised and non-numerics stripped.
+  // Accounting/POS exports write a negative (a refund/correction day) as "(1.234,56)" or a
+  // leading/trailing minus. The old strip removed the brackets and dropped the sign, so a
+  // refund day was counted as POSITIVE omzet — an overstatement. Detect all three forms.
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1).trim(); }
+  if (/^-/.test(s) || /-$/.test(s)) negative = true;
+  // Disambiguate NL ("1.234,56") vs EN ("1,234.56"): whichever separator appears LAST is
+  // the decimal; the other is the thousands separator. This fixes EN thousands, which the
+  // old "comma → decimal" rule misread ("1,234.56" → 1.23456). A bare comma (no dot) is
+  // treated as an NL decimal — the norm for a Dutch POS export.
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+    else s = s.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (lastDot >= 0) {
+    // [QF5] Lone dot, no comma. In NL data a dot is the THOUSANDS separator when it groups
+    // exactly 3 digits ("2.500" = 2500, "1.234.567" = 1234567); it is a decimal point
+    // otherwise ("2.5", "12.50", "1234.567"). Without this a whole-euro Z-report value like
+    // "2.500" imported as 2,50 — a 1000× understatement of omzet + BTW that the net+btw≈gross
+    // cross-check can't catch when the whole row scales the same way.
+    const digits = s.replace(/[^\d.]/g, "");
+    if (/^\d{1,3}(\.\d{3})+$/.test(digits)) s = s.replace(/\./g, ""); // NL thousands → strip dots
+  }
+  // Sign is already captured — strip EVERYTHING non-numeric (incl. minus/brackets) so a
+  // stray "12-34" can't be misparsed; then re-apply the detected sign.
+  s = s.replace(/[^\d.]/g, "");
   const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
+  if (!Number.isFinite(n)) return 0;
+  return negative ? -n : n;
 }
 
 /** Normalize a header cell for matching: lowercase, collapse spaces, strip %/punct spacing. */
@@ -161,16 +189,27 @@ export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
     let base0: number;
 
     if (hasHT) {
-      // Pair mode (month.xls): HT is the NET base; BTW = TC (gross) − HT, exact — no
-      // division rounding. Statiegeld/beltegoed live in the 0% HT column(s) → base_0 with
-      // zero BTW (0% = zero-tax). HT and TC are the SAME money in two views — never summed.
-      const net9 = sumCols(row, cols.htRate9);
-      const net21 = sumCols(row, cols.htRate21);
-      const gross9 = sumCols(row, cols.otherRate9);
-      const gross21 = sumCols(row, cols.otherRate21);
-      s9 = { base: r2(net9), btw: cols.otherRate9.length ? r2(gross9 - net9) : r2(net9 * 0.09) };
-      s21 = { base: r2(net21), btw: cols.otherRate21.length ? r2(gross21 - net21) : r2(net21 * 0.21) };
-      base0 = r2(sumCols(row, cols.htRate0));
+      // Pair mode (month.xls): HT is the NET base, TC is the GROSS. Decide gross-vs-net
+      // PER RATE, not globally — a single global hasHT flag mis-booked a rate that appears
+      // ONLY as a TC (gross) column: its HT sum was 0, so btw = gross − 0 = the WHOLE gross
+      // and net omzet vanished, silently (net+btw still equalled gross, so the cross-check
+      // passed). Per rate: HT+TC → btw = TC − HT (exact); HT only → btw = net·rate; TC only →
+      // derive net arithmetically from the gross (net = gross/(1+rate); btw = gross − net).
+      const splitRate = (htCols: number[], tcCols: number[], rate: number): { base: number; btw: number } => {
+        const net = sumCols(row, htCols);
+        const gross = sumCols(row, tcCols);
+        if (htCols.length && tcCols.length) return { base: r2(net), btw: r2(gross - net) };
+        if (htCols.length) return { base: r2(net), btw: r2((net * rate) / 100) };
+        if (tcCols.length) {
+          const n = gross / (1 + rate / 100);
+          return { base: r2(n), btw: r2(gross - n) };
+        }
+        return { base: 0, btw: 0 };
+      };
+      s9 = splitRate(cols.htRate9, cols.otherRate9, 9);
+      s21 = splitRate(cols.htRate21, cols.otherRate21, 21);
+      // 0% carries no BTW; HT and TC are the same money there — prefer HT, else TC.
+      base0 = r2(cols.htRate0.length ? sumCols(row, cols.htRate0) : sumCols(row, cols.otherRate0));
     } else {
       // Legacy single-set (feb.xls / a net-only POS): one "Base" set, gross-vs-net decided
       // by arithmetic. With a Netto column, pick the closer of gross/net; without one, only

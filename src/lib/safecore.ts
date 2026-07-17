@@ -331,6 +331,18 @@ export interface SemanticDedupResult {
  * `findMatch` performs the scoped DB read for a given tier and returns the first
  * matching original (or null). Kept injectable so safecore stays I/O-free.
  */
+/**
+ * [DEDUP-NUMBER-NORM] Normalize an invoice number for DUPLICATE comparison only (never
+ * for storage/display). Collapses whitespace and lowercases, so a re-generated PDF whose
+ * number renders as "26 / 3958" is recognized as the already-imported "26/3958" — the
+ * exact-string `.eq` missed this and inserted the bill twice (double cost, phantom
+ * voorbelasting). Punctuation is kept (a "/" vs "-" separator may be a real difference),
+ * so this only folds spacing, never merges genuinely different numbers.
+ */
+export function normalizeInvoiceNumber(n: string | null | undefined): string {
+  return (n ?? '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
 export async function findSemanticDuplicate(
   input: SemanticDedupInput,
   findMatch: (q: SemanticDedupQuery) => Promise<SemanticDedupMatch | null>
@@ -345,7 +357,7 @@ export async function findSemanticDuplicate(
   const hasRealDate =
     typeof input.invoiceDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(input.invoiceDate)
   const dateIso = hasRealDate
-    ? new Date(input.invoiceDate as string).toISOString().split('T')[0]
+    ? normalizeToIso(input.invoiceDate as string)
     : null
 
   if (numberIsReal) {
@@ -447,7 +459,13 @@ export function deriveDueDate(
  * ("2026-05-27", optionally with a time part) or Dutch "DD-MM-YYYY"
  * ("27-05-2026"). Returns null for empty/unparseable input. Pure.
  */
-function normalizeToIso(raw: string | null | undefined): string | null {
+// [DATE-ISO-SAFE / I6] Tolerant date→ISO for STORAGE. The write paths used
+// `new Date(x).toISOString()`, which THROWS on a Dutch "15-05-2026" (Invalid Date). In
+// the email loop that throw is caught as a per-message error, the watermark is held, and
+// the same invoice is re-fetched and re-thrown every sync forever — never imported, never
+// surfaced (and re-billed each run). This returns null instead of throwing, so a mis-shaped
+// date simply becomes "no date" (the verify queue then asks the human), never a stuck loop.
+export function normalizeToIso(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null
   const s = raw.trim()
   if (!s) return null

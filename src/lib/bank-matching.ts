@@ -40,6 +40,15 @@ export type MatchSignal = "reference" | "amount" | "date" | "counterpart";
 export interface MatchCandidate {
   invoiceId: string;
   invoiceNumber: string | null;
+  // [BANK-BATCH-RECONCILE] The invoice's own gross total (total_inc_btw). The UI needs
+  // it to reconcile a multi-invoice payment: sum the referenced invoices and check the
+  // total equals the bank debit — the honest proof that a batch payment covers exactly
+  // these invoices (no per-invoice amount appears in the statement, only the sum does).
+  amount: number | null;
+  // [BANK-CHOICE-CLARITY] The invoice date. When several candidates share the same
+  // amount (e.g. monthly rent), the DATE is the only thing that tells them apart — so the
+  // "kies de juiste factuur" list must show it, or the owner is guessing between numbers.
+  invoiceDate: string | null;
   confidence: number; // 0..1
   signals: MatchSignal[];
   reason: string; // short Dutch explanation
@@ -88,7 +97,15 @@ export const DEFAULT_OPTIONS: MatchOptions = {
   maxCandidates: 5,
 };
 
-const EXCLUDED_STATUSES = new Set(["paid", "draft", "archived"]);
+// [BANK-MATCH-VERIFY] Statuses that must NEVER be offered as a bank-match candidate:
+//   paid/archived — already settled or closed; draft — not issued; processing — the
+//   verify queue (intake/email imports land here, "never auto-paid, even for receipts").
+// Why 'processing' matters: its number and amount come straight from OCR and are NOT yet
+// human-verified, so auto-booking one as paid would (a) trust an unverified figure and
+// (b) silently promote it out of the verify queue with no way back (unlink can only restore
+// by direction). An imported invoice becomes matchable the moment the owner verifies it
+// (→ received/sent). This keeps "verify first, then reconcile" — the correct order.
+const EXCLUDED_STATUSES = new Set(["paid", "draft", "archived", "processing"]);
 
 // ─── Text / number helpers (pure) ───────────────────────────────────────────
 
@@ -120,15 +137,36 @@ export function referenceMatches(
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, "")
     .replace(/\s+/g, " ");
-  if (!/^[0-9]+$/.test(needle)) return haystack.includes(needle);
+  // [TRUST-MATCH-ALNUM] The digit-boundary guard now applies to ALPHANUMERIC invoice
+  // numbers too, not only pure digits. Previously an alphanumeric needle fell back to a
+  // raw substring test, so invoice "MF26" matched reference "MF260" (a DIFFERENT invoice,
+  // one sequence number later) → a 0.97 'auto' + a false "factuurnummer staat in
+  // bankafschrift" line + one tap paid the WRONG invoice. A trailing/leading DIGIT extends
+  // the number and changes identity, so it is never a clean boundary; a LETTER before the
+  // number is fine (a printed prefix like "INV2050" still matches invoice "2050").
   for (let idx = haystack.indexOf(needle); idx >= 0; idx = haystack.indexOf(needle, idx + 1)) {
     const before = idx > 0 ? haystack[idx - 1] : "";
     const after = idx + needle.length < haystack.length ? haystack[idx + needle.length] : "";
-    // A space (or string edge) is a clean boundary; only an adjacent DIGIT means the
-    // needle is a slice of a bigger number.
+    // A space (or string edge) is a clean boundary; an adjacent DIGIT means the needle is a
+    // slice of a bigger number ("2050"⊂"26302050", "MF26"⊂"MF260") → not a real match.
     if (!/[0-9]/.test(before) && !/[0-9]/.test(after)) return true;
   }
   return false;
+}
+
+// [BANK-PARTIAL] Dutch (and common) markers that a bank payment is only PART of an
+// invoice — an instalment / down-payment / "second part". Word-boundary matched so
+// "termijn" doesn't fire inside an unrelated word. Used to keep a partial payment out of
+// one-tap auto-confirm (which would mark the whole invoice paid).
+const PARTIAL_PAYMENT_RE =
+  /\b(deelbetaling|deelbetaald|gedeeltelijk|aanbetaling|termijn|termijnbetaling|\d+e?\s*termijn|\d+e\s*deel|deel\s*\d+|restbetaling|resterend|part\s*payment|installment|instalment)\b/i;
+
+/** Does the payment text look like an instalment / partial payment? */
+export function isPartialPaymentHint(text: string | null | undefined): boolean {
+  if (!text) return false;
+  // "tweede/eerste/derde deel" spelled out, plus the regex markers.
+  if (/\b(eerste|tweede|derde|vierde|laatste)\s+deel\b/i.test(text)) return true;
+  return PARTIAL_PAYMENT_RE.test(text);
 }
 
 /** Exact amount match within tolerance (compares absolute values). */
@@ -274,8 +312,12 @@ export function scorePair(
   let confidence: number;
 
   if (refOk) {
-    // Reference is near-identity: invoice number printed in the payment.
-    confidence = amtOk ? 0.97 : 0.9;
+    // Reference is near-identity: invoice number printed in the payment. BUT the amount is
+    // the money-truth: a €50 payment that merely quotes invoice 2026-014 (€500) must NOT
+    // auto-mark it fully paid. So a reference WITHOUT a matching amount stays below
+    // autoConfidence (0.7) → a human CHOICE (still a strong, listed candidate), never 'auto'.
+    // Only reference + exact amount reaches the one-click 'betaald' pre-selection.
+    confidence = amtOk ? 0.97 : 0.65;
     signals.push("reference");
     reasons.push(`factuurnummer ${inv.invoice_number} gevonden in omschrijving`);
     if (amtOk) {
@@ -309,9 +351,69 @@ export function scorePair(
     if (!amtOk) confidence = Math.min(confidence, 0.35);
   }
 
+  // [BANK-PARTIAL] A payment whose reference/description says it is an INSTALMENT
+  // ("2e termijn", "deelbetaling", "aanbetaling", "Tweede deel factuur …") must never be a
+  // one-tap 'auto' that marks the invoice fully paid — the amount is only part of the bill.
+  // Cap it to a human 'choice' so the owner sees it and decides; the UI also warns when the
+  // paid amount is below the invoice total (there is no partial-paid state in the model).
+  if (isPartialPaymentHint(`${tx.reference ?? ""} ${tx.description ?? ""}`)) {
+    confidence = Math.min(confidence, 0.6);
+    reasons.push("lijkt een deelbetaling — controleer");
+  }
+
   confidence = Math.min(1, Math.max(0, confidence));
   const reason = reasons.length ? reasons.join(" · ") : "geen duidelijke match";
   return { confidence, signals, reason };
+}
+
+/**
+ * [BANK-DEDUP-CANDIDATES] Collapse candidates that are the SAME bill re-imported twice —
+ * same normalized invoice number AND same gross amount to the cent (e.g. "26 / 3958" vs
+ * "26/3958" from a re-generated PDF, which the exact-string import dedup misses). Keeps
+ * the FIRST occurrence, so call AFTER sorting by confidence to keep the strongest. A
+ * candidate with no usable number/amount is never collapsed (can't prove it's a
+ * duplicate), and requiring the AMOUNT to match too means a mere invoice-number collision
+ * across two genuinely different bills is never hidden.
+ */
+export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[] {
+  const seen = new Set<string>();
+  const out: MatchCandidate[] = [];
+  for (const c of candidates) {
+    const num = normalizeRef(c.invoiceNumber ?? "");
+    if (num.length === 0 || c.amount == null || !Number.isFinite(c.amount)) {
+      out.push(c); // no safe identity → keep (never hide something we can't prove is a dup)
+      continue;
+    }
+    const key = `${num}|${Math.round(Math.abs(c.amount) * 100)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
+}
+
+/**
+ * [BANK-AUTO-CONFIRM] Is this match near-certain enough for the app to book it WITHOUT a
+ * human tap? The whole point of "quiet by default": the owner shouldn't chase hundreds of
+ * one-tap confirms — the app should silently handle the sure ones and reserve attention for
+ * the genuinely ambiguous. Safe ONLY when:
+ *   - outcome is 'auto' with a best candidate,
+ *   - the invoice NUMBER is printed in the statement AND the amount matches to the cent
+ *     (both signals → the 0.97 match; either alone is not enough),
+ *   - it is a SINGLE invoice (a multi-invoice batch needs the owner to allocate),
+ *   - the payment is not flagged as an instalment/deelbetaling.
+ * BTW/omzet/kosten are on accrual (invoice date), so this only sets the paid/linked status
+ * — never a tax figure — and it is fully reversible. Anything short of certain stays human.
+ */
+export function isSafeAutoConfirm(m: TransactionMatch): boolean {
+  if (m.outcome !== "auto" || !m.best) return false;
+  const sig = m.best.signals;
+  if (!sig.includes("reference") || !sig.includes("amount")) return false;
+  if (parseReferenceNumbers(m.transaction.reference).length > 1) return false;
+  if (isPartialPaymentHint(`${m.transaction.reference ?? ""} ${m.transaction.description ?? ""}`)) {
+    return false;
+  }
+  return true;
 }
 
 // ─── Main entry ────────────────────────────────────────────────────────────────
@@ -338,6 +440,8 @@ export function matchTransactions(
       candidates.push({
         invoiceId: inv.id,
         invoiceNumber: inv.invoice_number,
+        amount: inv.total_inc_btw,
+        invoiceDate: inv.invoice_date,
         confidence,
         signals,
         reason,
@@ -345,7 +449,9 @@ export function matchTransactions(
     }
 
     candidates.sort((a, b) => b.confidence - a.confidence);
-    const trimmed = candidates.slice(0, opts.maxCandidates);
+    // [BANK-DEDUP-CANDIDATES] Collapse a duplicate invoice (same number+amount) so the
+    // owner never sees the same bill twice in "Kies de juiste factuur".
+    const trimmed = dedupeCandidates(candidates).slice(0, opts.maxCandidates);
 
     let outcome: MatchOutcome = "none";
     let best: MatchCandidate | null = null;
@@ -404,9 +510,13 @@ export function matchTransactions(
     } else {
       m.outcome = "choice";
       m.best = null;
-      // For 'choice' we claim the TOP candidate so it can't auto-match elsewhere,
-      // but still show the full free list so the owner can pick.
-      claimed.add(top.invoiceId);
+      // [BANK-CHOICE-NOCLAIM] Do NOT claim a 'choice' candidate. The human hasn't picked
+      // yet, and claiming the ARBITRARY top of a near-tie removed that invoice from every
+      // other transaction — turning a genuine second payment into a false "geen factuur",
+      // or forcing the remaining single candidate into a one-tap 'auto' on a pick that was
+      // actually ambiguous. Only a confident 'auto' (an invoice is paid once) claims; a
+      // 'choice' keeps every candidate available until the owner confirms one (after which
+      // it becomes paid and drops out of the next match on its own).
     }
     m.candidates = free;
   }
@@ -471,4 +581,24 @@ export function isFullyCovered(
   if (refNumbers.length <= 1) return true; // single-invoice case — one link completes it
   const paidSet = paidNumbers instanceof Set ? paidNumbers : new Set(paidNumbers);
   return refNumbers.every((n) => paidSet.has(n));
+}
+
+/**
+ * Which of a transaction's reference numbers are already backed by a PAID invoice —
+ * the normalized subset of parseReferenceNumbers(reference) that is in paidNumbers.
+ *
+ * [BANK-SLOT-PERSIST] The multi-invoice card marks a slot "Betaald" from the SESSION's
+ * confirmed set, which is lost on reload; the paid invoice is then excluded from the
+ * matcher's candidates (paid), so its slot had no candidate and showed "Koppelen" /
+ * "0/N bevestigd" — a false "unpaid", and re-uploading it would double-book the bill.
+ * The match route returns this list per partially-linked tx so the UI can mark those
+ * slots paid on reload. Consistent with isFullyCovered (same paidSet, same equality).
+ */
+export function coveredReferenceNumbers(
+  reference: string | null,
+  paidNumbers: Iterable<string>
+): string[] {
+  const refNumbers = parseReferenceNumbers(reference);
+  const paidSet = paidNumbers instanceof Set ? paidNumbers : new Set(paidNumbers);
+  return refNumbers.filter((n) => paidSet.has(n));
 }

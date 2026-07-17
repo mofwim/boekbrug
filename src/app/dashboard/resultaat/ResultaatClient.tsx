@@ -6,16 +6,11 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
-  warning: '#7C5800', warningContainer: '#FEE8C4', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-}
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 interface Result {
@@ -57,7 +52,7 @@ export default function ResultaatClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
 
         <header style={{ margin: '16px 0 20px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 2px' }}>Resultaat</h1>
@@ -82,7 +77,7 @@ export default function ResultaatClient() {
         </div>
 
         {loading ? (
-          <div style={{ height: 220, borderRadius: 16, background: '#F0F1F3' }} />
+          <div style={{ height: 220, borderRadius: 16, background: '#f1f3f4' }} />
         ) : !data?.ok ? (
           <div style={{ color: M3.neutral, fontSize: 14 }}>Kon het resultaat niet laden.</div>
         ) : (

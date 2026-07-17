@@ -72,7 +72,7 @@ export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType,
         onClick={handleExport}
         disabled={state === 'loading'}
         title="Exporteer als UBL 2.1 (e-factuur) voor je boekhoudprogramma"
-        className="text-sm text-[#1967D2] hover:text-[#174EA6] px-3 py-1.5 rounded-xl hover:bg-[#E8F0FE] transition-colors disabled:opacity-50"
+        className="text-sm text-[#1967D2] hover:text-[#1967d2] px-3 py-1.5 rounded-xl hover:bg-[#E8F0FE] transition-colors disabled:opacity-50"
       >
         {label}
       </button>

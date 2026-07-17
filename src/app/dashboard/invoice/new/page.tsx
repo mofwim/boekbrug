@@ -14,7 +14,7 @@ import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL } from '@/lib/format-nl'
-import { matchArticles, type Article } from '@/lib/articles'
+import { matchArticles, foldText, type Article } from '@/lib/articles'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -560,9 +560,12 @@ function NewInvoicePageContent() {
 
   // ─── Client autocomplete ───────────────────────────────────────────────────
 
+  // [SEARCH] Accent-insensitive so "café"/"cafe" match; also searches KVK.
+  const clientQ = foldText(clientSearch)
   const filteredClients = clients.filter(c =>
-    c.name.toLowerCase().includes(clientSearch.toLowerCase()) ||
-    (c.email ?? '').toLowerCase().includes(clientSearch.toLowerCase())
+    foldText(c.name).includes(clientQ) ||
+    foldText(c.email ?? '').includes(clientQ) ||
+    foldText((c as { kvk_number?: string | null }).kvk_number ?? '').includes(clientQ)
   ).slice(0, 6)
 
   function selectClient(c: Client) {
@@ -1007,7 +1010,7 @@ function NewInvoicePageContent() {
             {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
             <Link href={parentHref}
               style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s', textDecoration: 'none' }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >←</Link>
             {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}

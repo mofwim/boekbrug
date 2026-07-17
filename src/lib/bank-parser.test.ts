@@ -49,6 +49,27 @@ console.log("\n— CAMT.053: an entry missing its amount is counted as an error 
   check("parseBankFile routes .xml to the CAMT parser", parseBankFile(camt, "afschrift.xml").format === "CAMT053");
 }
 
+console.log("\n— [H3/M4] a CAMT entry with a non-finite amount or bad date is dropped, not written —");
+{
+  const camt = [
+    '<BkToCstmrStmt>',
+    '<Acct><Id><IBAN>NL91ABNA0417164300</IBAN></Id></Acct>',
+    // good
+    '<Ntry><Amt Ccy="EUR">100.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-01-02</Dt></ValDt></Ntry>',
+    // non-finite amount (Infinity) — must NOT reach the DB
+    '<Ntry><Amt Ccy="EUR">1e309</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-01-03</Dt></ValDt></Ntry>',
+    // garbage amount (NaN)
+    '<Ntry><Amt Ccy="EUR">abc</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-01-04</Dt></ValDt></Ntry>',
+    // impossible date — would fail the batch INSERT if it slipped through
+    '<Ntry><Amt Ccy="EUR">50.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>9999-99-99</Dt></ValDt></Ntry>',
+    '</BkToCstmrStmt>',
+  ].join("\n");
+  const r = parseCAMT053(camt);
+  check("only the one clean entry parses", r.transactions.length === 1 && r.transactions[0].amount === 100);
+  check("every non-finite amount is finite in the output", r.transactions.every((t) => Number.isFinite(t.amount)));
+  check("the three bad entries are each recorded as a parse error", r.parseErrors.length === 3);
+}
+
 console.log("\n— a fully-clean statement has zero parse errors (no false positives) —");
 {
   const clean = [

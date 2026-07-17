@@ -45,15 +45,15 @@ const COPY: Record<Locale, {
 }
 
 const s = {
-  card: { backgroundColor: '#ffffff', borderRadius: 20, padding: 24, boxShadow: '0 4px 24px rgba(0,0,0,0.06)', border: '1px solid #ececf1' } as React.CSSProperties,
+  card: { backgroundColor: '#ffffff', borderRadius: 20, padding: 24, boxShadow: '0 4px 24px rgba(0,0,0,0.06)', border: '1px solid #e0e0e0' } as React.CSSProperties,
   group: { marginBottom: 18 } as React.CSSProperties,
-  label: { fontSize: 13, fontWeight: 600, color: '#6b6b6e', marginBottom: 4 } as React.CSSProperties,
-  hint: { fontSize: 12, color: '#aeaeb2', marginBottom: 8 } as React.CSSProperties,
-  field: { display: 'flex', alignItems: 'center', border: '1px solid #e5e5ea', borderRadius: 12, backgroundColor: '#f9f9fb', padding: '0 14px' } as React.CSSProperties,
-  prefix: { fontSize: 18, color: '#aeaeb2', marginRight: 8 } as React.CSSProperties,
-  input: { flex: 1, fontSize: 19, fontWeight: 600, padding: '13px 0', border: 'none', outline: 'none', background: 'transparent', color: '#1c1c1e', width: '100%', fontFamily: 'inherit' } as React.CSSProperties,
-  suffix: { fontSize: 13, color: '#aeaeb2', marginLeft: 8, whiteSpace: 'nowrap' } as React.CSSProperties,
-  row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f0f0f4' } as React.CSSProperties,
+  label: { fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 4 } as React.CSSProperties,
+  hint: { fontSize: 12, color: '#bdc1c6', marginBottom: 8 } as React.CSSProperties,
+  field: { display: 'flex', alignItems: 'center', border: '1px solid #e0e0e0', borderRadius: 12, backgroundColor: '#f8f9fa', padding: '0 14px' } as React.CSSProperties,
+  prefix: { fontSize: 18, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
+  input: { flex: 1, fontSize: 19, fontWeight: 600, padding: '13px 0', border: 'none', outline: 'none', background: 'transparent', color: '#202124', width: '100%', fontFamily: 'inherit' } as React.CSSProperties,
+  suffix: { fontSize: 13, color: '#bdc1c6', marginLeft: 8, whiteSpace: 'nowrap' } as React.CSSProperties,
+  row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f1f3f4' } as React.CSSProperties,
 }
 
 export default function BtwAangifteCalculator({ locale = 'nl' }: { locale?: Locale }) {
@@ -76,7 +76,7 @@ export default function BtwAangifteCalculator({ locale = 'nl' }: { locale?: Loca
   }, [omzet21, omzet9, voorbelasting])
 
   const teBetalen = r.saldo >= 0
-  const panelColor = teBetalen ? 'linear-gradient(135deg, #ff9500, #f0730a)' : 'linear-gradient(135deg, #34c759, #24a148)'
+  const panelColor = teBetalen ? 'linear-gradient(135deg, #e37400, #f0730a)' : 'linear-gradient(135deg, #34a853, #34a853)'
 
   return (
     <div style={s.card}>
@@ -118,33 +118,33 @@ export default function BtwAangifteCalculator({ locale = 'nl' }: { locale?: Loca
 
       <div style={{ marginTop: 18 }}>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>{t.vat21}</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(r.btw21)}</span>
+          <span style={{ color: '#5f6368' }}>{t.vat21}</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>{fmt(r.btw21)}</span>
         </div>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>{t.vat9}</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(r.btw9)}</span>
+          <span style={{ color: '#5f6368' }}>{t.vat9}</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>{fmt(r.btw9)}</span>
         </div>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>{t.due}</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(r.verschuldigd)}</span>
+          <span style={{ color: '#5f6368' }}>{t.due}</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>{fmt(r.verschuldigd)}</span>
         </div>
         <div style={s.row}>
-          <span style={{ color: '#6b6b6e' }}>{t.inputVat}</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>− {fmt(r.voor)}</span>
+          <span style={{ color: '#5f6368' }}>{t.inputVat}</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>− {fmt(r.voor)}</span>
         </div>
         <div style={{ ...s.row, borderBottom: 'none' }}>
-          <span style={{ color: '#1c1c1e', fontWeight: 700 }}>{t.balance}</span>
-          <span style={{ fontWeight: 800, color: '#1c1c1e' }}>{fmt(r.saldo)}</span>
+          <span style={{ color: '#202124', fontWeight: 700 }}>{t.balance}</span>
+          <span style={{ fontWeight: 800, color: '#202124' }}>{fmt(r.saldo)}</span>
         </div>
       </div>
 
-      <div style={{ marginTop: 22, background: '#f9f9fb', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 14, color: '#3c3c43' }}>
+      <div style={{ marginTop: 22, background: '#f8f9fa', border: '1px solid #e0e0e0', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 14, color: '#3c4043' }}>
           {t.ctaText}{' '}
-          <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
+          <strong style={{ color: '#202124' }}>{t.ctaStrong}</strong>
         </div>
-        <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+        <Link href="/register" style={{ backgroundColor: '#1a73e8', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
           {t.ctaBtn}
         </Link>
       </div>

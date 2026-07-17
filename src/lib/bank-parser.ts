@@ -493,11 +493,21 @@ export function parseCAMT053(content: string): ParseResult {
   const nameMatch = content.match(/<Nm>([^<]+)<\/Nm>/);
   if (nameMatch) accountName = nameMatch[1].trim();
 
-  // Extract all <Ntry> blocks
+  // Extract all <Ntry> blocks. [M5] Bound the entry count: a crafted file within the upload
+  // size cap can pack a huge number of tiny entries, and per-entry regex work then burns the
+  // request's CPU for seconds-to-minutes. A real quarterly statement is well under this cap;
+  // once reached we stop and report rather than parse an abusive file to completion.
+  const MAX_CAMT_ENTRIES = 50000;
   const ntryPattern = /<Ntry>([\s\S]*?)<\/Ntry>/g;
   let ntryMatch: RegExpExecArray | null;
+  let scanned = 0; // count every <Ntry> scanned, not just the ones that parsed to a tx
 
   while ((ntryMatch = ntryPattern.exec(content)) !== null) {
+    if (scanned >= MAX_CAMT_ENTRIES) {
+      errors.push(`CAMT.053 bevat meer dan ${MAX_CAMT_ENTRIES} transacties — verwerking gestopt; splits het bestand.`);
+      break;
+    }
+    scanned++;
     const block = ntryMatch[1];
     const tx = parseCAMT053Entry(block, currency, errors);
     if (tx) transactions.push(tx);
@@ -513,6 +523,17 @@ export function parseCAMT053(content: string): ParseResult {
   };
 }
 
+// [M4] YYYY-MM-DD that is also a real calendar date (rejects 9999-99-99, 2026-13-40, a
+// datetime, or trailing junk). Kept local so the CAMT date guard cannot drift.
+function isValidIsoDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
 function parseCAMT053Entry(
   block: string,
   defaultCurrency: string,
@@ -526,6 +547,14 @@ function parseCAMT053Entry(
   }
   const currency = amtMatch[1] ?? defaultCurrency;
   const rawAmount = parseFloat(amtMatch[2]);
+  // [H3] A non-finite amount (NaN from "abc", Infinity from "1e309") must NEVER reach the
+  // database — it poisons every downstream sum (reconciliation, quarter totals). Drop the
+  // single entry with a clear error rather than write a corrupt figure. MT940/CSV/EFT guard
+  // the same way.
+  if (!Number.isFinite(rawAmount)) {
+    errors.push(`Ongeldig transactiebedrag in CAMT.053 entry: "${amtMatch[2]}"`);
+    return null;
+  }
 
   // Credit or debit
   const cdMatch = block.match(/<CdtDbtInd>([^<]+)<\/CdtDbtInd>/);
@@ -540,6 +569,14 @@ function parseCAMT053Entry(
 
   if (!date) {
     errors.push("Transactiedatum ontbreekt in CAMT.053 entry");
+    return null;
+  }
+  // [M4] Validate the date SHAPE before it flows to a Postgres `date` column. A single
+  // malformed value ("9999-99-99", a datetime, garbage) would fail the whole batch INSERT,
+  // which the ingest swallows → every transaction silently dropped while the file still
+  // reads "verwerkt". Drop just this entry and warn instead of losing the batch.
+  if (!isValidIsoDate(date)) {
+    errors.push(`Ongeldige transactiedatum in CAMT.053 entry: "${date}"`);
     return null;
   }
 

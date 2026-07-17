@@ -12,6 +12,7 @@ import Link from 'next/link'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
 import { InvoiceRowItem, STATUS_LABEL } from '@/components/invoice/InvoiceRow'
+import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { SearchBar } from '@/components/search/SearchBar'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 
@@ -83,6 +84,11 @@ export function InvoiceTable(props: InvoiceTableProps) {
 
   const isAccountant = props.mode === 'accountant'
 
+  // [BANK-RECON-BADGE] Owner-facing reconciliation badges (never in accountant mode).
+  // Self-wired here so every consumer of the shared table gets them without prop threading.
+  const router = useRouter()
+  const { byInvoice: reconByInvoice } = useInvoiceReconciliation(!isAccountant)
+
   const emptyLabel = isAccountant
     ? statusFilter === 'all'
       ? 'Geen betaalde facturen'
@@ -108,7 +114,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
             style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)' }}
             className="hover:text-gray-500 transition-colors disabled:opacity-40"
           >
-            <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
+            <span className={`material-symbols-outlined ${refreshing ? 'animate-spin' : ''}`} style={{ fontSize: 20 }} aria-hidden>refresh</span>
           </button>
 
           {!isAccountant &&
@@ -116,7 +122,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
             (props as ZzpInvoiceTableProps).onNewInvoice && (
               <button
                 onClick={(props as ZzpInvoiceTableProps).onNewInvoice}
-                className="bg-[#007aff] text-white text-sm px-4 py-2 rounded-xl hover:opacity-90 transition-opacity font-semibold"
+                className="bg-[#1a73e8] text-white text-sm px-4 py-2 rounded-xl hover:opacity-90 transition-opacity font-semibold"
               >
                 + Nieuwe factuur
               </button>
@@ -191,6 +197,8 @@ export function InvoiceTable(props: InvoiceTableProps) {
                     ? ((props as ZzpInvoiceTableProps).resendingId ?? null)
                     : null
                 }
+                recon={!isAccountant ? reconByInvoice[invoice.id] : undefined}
+                onReconConfirm={!isAccountant ? () => router.push('/dashboard/bank') : undefined}
               />
             ))}
           </InfiniteList>
@@ -225,6 +233,7 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
     <div ref={ref} style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(p => !p)}
+        aria-label="Profielmenu"
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           background: 'none', border: 'none', cursor: 'pointer',
@@ -334,6 +343,7 @@ function NotificationsBell({
     <div ref={bellRef} style={{ position: 'relative', flexShrink: 0 }}>
       <button
         onClick={onToggle}
+        aria-label="Meldingen"
         style={{
           position: 'relative', background: 'none', border: 'none',
           cursor: 'pointer', padding: 8, borderRadius: 8,
@@ -562,7 +572,7 @@ export function DashboardHeader({
       alignItems: 'center',
       padding: '0 16px',
       gap: 8,
-      fontFamily: "'Google Sans', 'Roboto', sans-serif",
+      fontFamily: "'Roboto', sans-serif",
     }}>
 
       {/* Logo — [INTEGRATION] next/link + role-aware href — May 2026 */}
@@ -572,7 +582,7 @@ export function DashboardHeader({
           fontWeight: 700, fontSize: 17, color: '#1A73E8',
           flexShrink: 0, letterSpacing: '-0.3px', lineHeight: 1,
           textDecoration: 'none', cursor: 'pointer',
-          fontFamily: "'Google Sans', 'Roboto', sans-serif",
+          fontFamily: "'Roboto', sans-serif",
           transition: 'opacity 0.15s',
         }}
         onMouseEnter={e => ((e.currentTarget as HTMLAnchorElement).style.opacity = '0.75')}
@@ -599,6 +609,7 @@ export function DashboardHeader({
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             onClick={onMessagesClick}
+            aria-label="Berichten"
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
               padding: 8, borderRadius: 8,

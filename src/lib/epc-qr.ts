@@ -88,7 +88,12 @@ export function buildEpcQrPayload(input: EpcQrInput): EpcQrResult {
     return { ok: false, error: 'IBAN ontbreekt of is ongeldig — geen QR mogelijk' }
   }
 
-  const name = (input.name ?? '').trim().slice(0, 70)
+  // [M3] Strip CR/LF from the beneficiary name BEFORE it goes on line 6 of the newline-
+  // delimited EPC payload. Without this, a name like "Legit BV\nNL91...ATTACKER" would
+  // shift the following lines and place an attacker IBAN on the IBAN line of the QR the
+  // owner scans, while the on-screen IBAN still shows the real one. The remittance line
+  // below already strips the same way.
+  const name = (input.name ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 70)
   if (!name) {
     return { ok: false, error: 'Naam van de leverancier ontbreekt' }
   }

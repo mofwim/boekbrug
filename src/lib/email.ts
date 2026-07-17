@@ -16,6 +16,20 @@ function getResend(): Resend {
   return _resend
 }
 
+// [M2] Escape any user-controlled string interpolated into an HTML email body. Client
+// names, invoice numbers, message text and accountant names all reach third parties
+// (customers, accountants), so a name like <b>… or an injected link must render as
+// literal text, never as markup. Scripts are already stripped by mail clients (no XSS),
+// but this closes phishing/spoofing/hidden-text injection. Subjects are plain-text
+// headers and are deliberately NOT passed through this.
+function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
   toEmail,
@@ -32,11 +46,11 @@ export async function sendAccountantInvite({
     subject: `${zzperName} wil je toevoegen als boekhouder`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Je bent uitgenodigd</h2>
-        <p style="color: #555;">${zzperName} wil je toevoegen als boekhouder via BoekBrug.</p>
-        <p style="color: #555;">Als je accepteert, zie je automatisch alle facturen van ${zzperName} in jouw dashboard.</p>
+        <h2 style="color: #202124;">Je bent uitgenodigd</h2>
+        <p style="color: #555;">${escapeHtml(zzperName)} wil je toevoegen als boekhouder via BoekBrug.</p>
+        <p style="color: #555;">Als je accepteert, zie je automatisch alle facturen van ${escapeHtml(zzperName)} in jouw dashboard.</p>
         <a href="${acceptUrl}"
-           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
+           style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
@@ -66,11 +80,11 @@ export async function sendClientInvite({
     subject: `${accountantName} nodigt je uit op BoekBrug`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Je bent uitgenodigd</h2>
-        <p style="color: #555;">Je boekhouder <strong>${accountantName}</strong> nodigt je uit om BoekBrug te gebruiken.</p>
+        <h2 style="color: #202124;">Je bent uitgenodigd</h2>
+        <p style="color: #555;">Je boekhouder <strong>${escapeHtml(accountantName)}</strong> nodigt je uit om BoekBrug te gebruiken.</p>
         <p style="color: #555;">Via BoekBrug kun je eenvoudig facturen delen met je boekhouder — geen WhatsApp meer, geen e-mail zoeken.</p>
         <a href="${acceptUrl}"
-           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
+           style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
@@ -118,11 +132,11 @@ export async function sendInvoiceToClient({
   const numberLabel = isCreditnota ? 'Creditnotanummer' : 'Factuurnummer'
 
   const invoiceDateRow = invoiceDate
-    ? `<p style="margin:4px 0; color:#1c1c1e;"><strong>${isCreditnota ? 'Datum' : 'Factuurdatum'}:</strong> ${formatDateNL(invoiceDate)}</p>`
+    ? `<p style="margin:4px 0; color:#202124;"><strong>${isCreditnota ? 'Datum' : 'Factuurdatum'}:</strong> ${formatDateNL(invoiceDate)}</p>`
     : ''
   const dueDateRow = isCreditnota
     ? ''
-    : `<p style="margin:4px 0; color:#1c1c1e;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>`
+    : `<p style="margin:4px 0; color:#202124;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>`
 
   const attachmentLine = pdfBuffer
     ? `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.</p>`
@@ -139,12 +153,12 @@ export async function sendInvoiceToClient({
     subject: `${docLabel} ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">${isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
-        <p style="color: #555;">Beste ${clientName},</p>
-        <p style="color: #555;">Je hebt een ${docLabel.toLowerCase()} ontvangen van <strong>${zzperName}</strong>.</p>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0;">
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>${numberLabel}:</strong> ${invoiceNumber}</p>
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Bedrag:</strong> ${formatEuroNL(totalInc)}</p>
+        <h2 style="color: #202124;">${isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
+        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
+        <p style="color: #555;">Je hebt een ${docLabel.toLowerCase()} ontvangen van <strong>${escapeHtml(zzperName)}</strong>.</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0;">
+          <p style="margin:4px 0; color:#202124;"><strong>${numberLabel}:</strong> ${escapeHtml(invoiceNumber)}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Bedrag:</strong> ${formatEuroNL(totalInc)}</p>
           ${invoiceDateRow}
           ${dueDateRow}
         </div>
@@ -191,14 +205,14 @@ export async function sendMessageNotification({
     subject: `Nieuw bericht van ${senderName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Nieuw bericht</h2>
-        <p style="color: #555;">Beste ${receiverName},</p>
-        <p style="color: #555;"><strong>${senderName}</strong> heeft je een bericht gestuurd via BoekBrug.</p>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #007aff;">
-          <p style="margin:0; color:#1c1c1e; font-style: italic;">"${messagePreview}"</p>
+        <h2 style="color: #202124;">Nieuw bericht</h2>
+        <p style="color: #555;">Beste ${escapeHtml(receiverName)},</p>
+        <p style="color: #555;"><strong>${escapeHtml(senderName)}</strong> heeft je een bericht gestuurd via BoekBrug.</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #1a73e8;">
+          <p style="margin:0; color:#202124; font-style: italic;">"${escapeHtml(messagePreview)}"</p>
         </div>
         <a href="${conversationUrl}"
-           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">
+           style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">
           Bericht bekijken
         </a>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
@@ -222,9 +236,9 @@ export async function sendAccountantUnlinkedNotification({
     subject: `${clientName} heeft de koppeling beëindigd`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Koppeling beëindigd</h2>
-        <p style="color: #555;">Beste ${accountantName},</p>
-        <p style="color: #555;"><strong>${clientName}</strong> heeft de koppeling met jou als boekhouder beëindigd via BoekBrug.</p>
+        <h2 style="color: #202124;">Koppeling beëindigd</h2>
+        <p style="color: #555;">Beste ${escapeHtml(accountantName)},</p>
+        <p style="color: #555;"><strong>${escapeHtml(clientName)}</strong> heeft de koppeling met jou als boekhouder beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je hebt geen toegang meer tot nieuwe facturen of documenten van deze klant. Historische gegevens waar je eerder aan hebt gewerkt, blijven beschikbaar voor je administratie.</p>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
@@ -248,9 +262,9 @@ export async function sendClientUnlinkedNotification({
     subject: `${accountantName} heeft de koppeling beëindigd`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Koppeling beëindigd</h2>
-        <p style="color: #555;">Beste ${clientName},</p>
-        <p style="color: #555;">Je boekhouder <strong>${accountantName}</strong> heeft de koppeling met jou beëindigd via BoekBrug.</p>
+        <h2 style="color: #202124;">Koppeling beëindigd</h2>
+        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
+        <p style="color: #555;">Je boekhouder <strong>${escapeHtml(accountantName)}</strong> heeft de koppeling met jou beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je facturen en documenten blijven volledig van jou en blijven beschikbaar in je account. Je kunt op elk moment een nieuwe boekhouder uitnodigen via je instellingen.</p>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
@@ -263,7 +277,7 @@ export async function sendClientUnlinkedNotification({
 // pre-approved by Tech Lead. email.ts is the single home for all Resend sends,
 // so the Draft Queue letter is sent from here (no second Resend client).
 //
-// House style matches the existing templates in this file (#007aff brand, same
+// House style matches the existing templates in this file (#1a73e8 brand, same
 // footer) — emails are brand-level, not the Workspace dashboard palette.
 // The AI/edited body is plain text with \n line breaks; we HTML-escape it and
 // convert newlines to <br> so arbitrary content can't break the markup.
@@ -282,13 +296,7 @@ export async function sendDraftQueueEmail({
   subject: string
   body: string
 }) {
-  const escape = (s: string) =>
-    s.replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-
-  const safeBody = escape(body).replace(/\r?\n/g, '<br>')
+  const safeBody = escapeHtml(body).replace(/\r?\n/g, '<br>')
 
   await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
@@ -296,8 +304,8 @@ export async function sendDraftQueueEmail({
     subject,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Bericht van je boekhouder</h2>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0; color:#1c1c1e; line-height:1.5;">
+        <h2 style="color: #202124;">Bericht van je boekhouder</h2>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; color:#202124; line-height:1.5;">
           ${safeBody}
         </div>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">
@@ -315,7 +323,7 @@ export async function sendDraftQueueEmail({
 // Do NOT rewrite the rest of the file — surgical, tagged addition, pre-approved
 // by Tech Lead. email.ts is the single home for all Resend sends.
 //
-// House style matches the existing templates (#007aff brand, same footer) —
+// House style matches the existing templates (#1a73e8 brand, same footer) —
 // emails are brand-level, not the dashboard palette. All values here are
 // numbers/dates (no user free text), so no HTML escaping is required.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -345,11 +353,11 @@ export async function sendAccountExportSummary({
     subject: 'Je BoekBrug-gegevensexport',
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Je gegevensexport is klaar</h2>
+        <h2 style="color: #202124;">Je gegevensexport is klaar</h2>
         <p style="color: #555;">Je hebt een export van je BoekBrug-gegevens gedownload op ${datum}.</p>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0;">
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Facturen:</strong> ${invoiceCount}</p>
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Documenten:</strong> ${fileCount}</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0;">
+          <p style="margin:4px 0; color:#202124;"><strong>Facturen:</strong> ${invoiceCount}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Documenten:</strong> ${fileCount}</p>
         </div>
         ${skippedLine}
         <p style="color: #555; font-size: 13px;">Heb je deze export niet zelf aangevraagd? Neem dan direct contact met ons op.</p>

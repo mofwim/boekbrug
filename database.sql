@@ -489,6 +489,40 @@ CREATE INDEX idx_invoices_message_id
 CREATE INDEX invoices_search_idx
   ON public.invoices USING gin (search_vector);
 
+-- [SEARCH] Trigram indexes so the global-search API's ILIKE '%term%' (leading
+-- wildcard) predicates are index-backed instead of sequential scans. Mirrored in
+-- supabase/migrations/search_engine.sql. Self-enables pg_trgm so a fresh provision
+-- of this file never fails on gin_trgm_ops even if the Dashboard step was skipped.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS invoices_invoice_number_trgm
+  ON public.invoices USING gin (invoice_number gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_name_trgm
+  ON public.invoices USING gin (client_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_email_trgm
+  ON public.invoices USING gin (client_email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_description_trgm
+  ON public.invoice_lines USING gin (description gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_invoice_id_idx
+  ON public.invoice_lines USING btree (invoice_id);
+CREATE INDEX IF NOT EXISTS documents_file_name_trgm
+  ON public.documents USING gin (file_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_doc_type_trgm
+  ON public.documents USING gin (doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_ai_doc_type_trgm
+  ON public.documents USING gin (ai_doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_notes_trgm
+  ON public.documents USING gin (notes gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_full_name_trgm
+  ON public.profiles USING gin (full_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_company_name_trgm
+  ON public.profiles USING gin (company_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_email_trgm
+  ON public.profiles USING gin (email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_name_trgm
+  ON public.clients USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_email_trgm
+  ON public.clients USING gin (email gin_trgm_ops);
+
 -- rate_limits
 CREATE INDEX idx_rate_limits_cleanup
   ON public.rate_limits USING btree (window_start);
@@ -904,6 +938,122 @@ BEGIN
 END;
 $$;
 
+-- [SEARCH] Fuzzy (typo-tolerant) search via pg_trgm. SECURITY INVOKER → the caller's
+-- RLS applies, so only rows the user may already see are returned. Used by /api/search
+-- to augment sparse exact/substring results. Mirrored in supabase/migrations/search_smart.sql.
+-- Three signals for typo recall: similarity() (whole-string trigram, 0.2),
+-- word_similarity() (best-word trigram, 0.4), and a subsequence-LIKE ('fmz' → '%f%m%z%',
+-- ≥3 chars) that catches DROPPED letters/abbreviations where trigrams fail — "fmz" matches
+-- "FAMZFOOD" but not "Doyum Food"/"Vars Foods". Uses FUNCTIONS (not % / <% operators) with
+-- explicit thresholds because Supabase forbids setting pg_trgm.*_threshold in a function SET.
+-- q is stripped to [a-z0-9] for the LIKE branch → no wildcard/regex injection. Seq scan, but
+-- only when results are sparse, over RLS-bounded rows, with LIMIT. See search_smart.sql.
+CREATE OR REPLACE FUNCTION public.search_invoices_fuzzy(q text)
+RETURNS SETOF public.invoices
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT i.*
+  FROM public.invoices i,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND (
+      similarity(coalesce(i.client_name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.client_name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(i.client_name, '')) LIKE p.pat)
+      OR similarity(coalesce(i.invoice_number, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.invoice_number, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(i.invoice_number, '')) LIKE p.pat)
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(i.client_name, ''), q),
+      word_similarity(q, coalesce(i.client_name, '')),
+      similarity(coalesce(i.invoice_number, ''), q),
+      word_similarity(q, coalesce(i.invoice_number, ''))
+    ) DESC
+  LIMIT 8;
+$$;
+
+CREATE OR REPLACE FUNCTION public.search_clients_fuzzy(q text)
+RETURNS SETOF public.clients
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT c.*
+  FROM public.clients c,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND (
+      similarity(coalesce(c.name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(c.name, '')) LIKE p.pat)
+      OR similarity(coalesce(c.email, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.email, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(c.email, '')) LIKE p.pat)
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(c.name, ''), q),
+      word_similarity(q, coalesce(c.name, '')),
+      similarity(coalesce(c.email, ''), q),
+      word_similarity(q, coalesce(c.email, ''))
+    ) DESC
+  LIMIT 5;
+$$;
+
+-- Fuzzy document-match (own, non-trashed) on file_name/type; same 3-signal approach.
+CREATE OR REPLACE FUNCTION public.search_documents_fuzzy(q text)
+RETURNS SETOF public.documents
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT d.*
+  FROM public.documents d,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND d.trashed = false
+    AND (
+      similarity(coalesce(d.file_name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(d.file_name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(d.file_name, '')) LIKE p.pat)
+      OR word_similarity(q, coalesce(d.ai_doc_type, '')) >= 0.4
+      OR word_similarity(q, coalesce(d.doc_type, '')) >= 0.4
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(d.file_name, ''), q),
+      word_similarity(q, coalesce(d.file_name, '')),
+      word_similarity(q, coalesce(d.ai_doc_type, '')),
+      word_similarity(q, coalesce(d.doc_type, ''))
+    ) DESC
+  LIMIT 6;
+$$;
+
+-- Fuzzy folder-match on folder name.
+CREATE OR REPLACE FUNCTION public.search_folders_fuzzy(q text)
+RETURNS SETOF public.folders
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT f.*
+  FROM public.folders f,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND (
+      similarity(coalesce(f.name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(f.name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(f.name, '')) LIKE p.pat)
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(f.name, ''), q),
+      word_similarity(q, coalesce(f.name, ''))
+    ) DESC
+  LIMIT 10;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.search_invoices_fuzzy(text)  TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_clients_fuzzy(text)   TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_documents_fuzzy(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_folders_fuzzy(text)   TO authenticated;
+
 -- ── Invoice Numbering ───────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.generate_invoice_number(user_id uuid)
@@ -1164,6 +1314,7 @@ CREATE TRIGGER prevent_accountant_amount_changes
 --     - pgsodium      (for vault encryption)
 --     - supabase_vault (for encrypted secrets)
 --     - pg_cron       (for cleanup_old_rate_limits scheduling)
+--     - pg_trgm       (for ILIKE '%..%' search trigram indexes — see SECTION 3 / search_engine.sql)
 --
 -- pg_cron job for rate_limits cleanup (in production: daily):
 --   SELECT cron.schedule(
