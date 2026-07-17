@@ -64,7 +64,7 @@ export function Trash({ onBack }: TrashProps) {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={onBack} style={{
+          <button onClick={onBack} aria-label="Terug" style={{
             width: 36, height: 36, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer",
@@ -130,7 +130,7 @@ export function Trash({ onBack }: TrashProps) {
           }}>
             <Icon name="delete_forever" size={16} color="white" /> Verwijderen
           </button>
-          <button onClick={() => setSelected(new Set())} style={{
+          <button onClick={() => setSelected(new Set())} aria-label="Selectie wissen" style={{
             width: 28, height: 28, border: "none", background: "none",
             cursor: "pointer", borderRadius: T.full,
             display: "flex", alignItems: "center", justifyContent: "center",

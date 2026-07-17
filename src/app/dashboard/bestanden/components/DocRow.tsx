@@ -129,6 +129,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
       {hovered && !selected && (
         <button
           onClick={e => { e.stopPropagation(); onContextMenu(e); }}
+          aria-label="Meer opties"
           style={{
             width: 30, height: 30, border: "none", background: "none",
             cursor: "pointer", display: "flex", alignItems: "center",

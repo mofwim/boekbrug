@@ -10,15 +10,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { BackLink } from '@/components/ui/BackLink'
 import { lastCompletedQuarter } from '@/lib/quarter'
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', track: '#f1f3f4', success: '#137333', successContainer: '#CEEAD6',
-  error: '#B3261E', errorContainer: '#F9DEDC', warning: '#7C5800', warningContainer: '#FEE8C4',
-  bg: '#F8F9FA',
-}
-const FONT = "'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
 type DimensionKey = 'invoices' | 'bank' | 'cash' | 'vat'

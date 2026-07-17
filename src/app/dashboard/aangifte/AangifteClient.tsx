@@ -9,14 +9,8 @@ import { useEffect, useState } from 'react'
 import { BackLink } from '@/components/ui/BackLink'
 import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', track: '#f1f3f4', success: '#137333', error: '#B3261E',
-  warning: '#7C5800', warningContainer: '#FEE8C4',
-}
-const FONT = "'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
 interface Row { code: string; label: string; omzet: number; btw: number }

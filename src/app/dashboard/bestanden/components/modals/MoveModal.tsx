@@ -74,7 +74,7 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
           <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: 0 }}>
             Verplaatsen naar
           </p>
-          <button onClick={onClose} style={{
+          <button onClick={onClose} aria-label="Sluiten" style={{
             width: 32, height: 32, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer",

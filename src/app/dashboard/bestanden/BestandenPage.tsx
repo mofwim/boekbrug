@@ -107,6 +107,7 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         }}
       >
         <button onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+          aria-label="Uitklappen"
           style={{ width: 20, height: 20, border: "none", background: "none", cursor: node.children.length ? "pointer" : "default", opacity: node.children.length ? 0.6 : 0, display: "flex", alignItems: "center", justifyContent: "center", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
           <Icon name="expand_more" size={16} />
         </button>
@@ -133,10 +134,12 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         {!isSystem && hovered && (
           <div style={{ display: "flex", gap: 1, flexShrink: 0 }}>
             <button onClick={e => { e.stopPropagation(); onRename(node.id, node.name); }}
+              aria-label="Naam wijzigen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="edit" size={13} color={T.outline} />
             </button>
             <button onClick={e => { e.stopPropagation(); onDelete(node.id); }}
+              aria-label="Verwijderen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="delete" size={13} color={T.error} />
             </button>
@@ -792,6 +795,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           <Icon name={clipboardDisplay.op === "cut" ? "content_cut" : "content_copy"} size={16} color="white" />
           {clipboardDisplay.count} item{clipboardDisplay.count > 1 ? "s" : ""} {clipboardDisplay.op === "cut" ? "geknipt" : "gekopieerd"} — Ctrl+V om te plakken
           <button onClick={() => { clipboardRef.current = null; setClipboardDisplay(null); }}
+            aria-label="Sluiten"
             style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 0 }}>
             <Icon name="close" size={14} color="rgba(255,255,255,0.7)" />
           </button>
@@ -846,6 +850,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
           {/* Sidebar toggle mobile */}
           <button onClick={() => setSidebarOpen(v => !v)} className="flex lg:hidden"
+            aria-label="Mappen tonen"
             style={{ width: 36, height: 36, border: "none", background: "none", alignItems: "center", justifyContent: "center", cursor: "pointer", borderRadius: T.full, flexShrink: 0 }}>
             <Icon name="folder_open" size={22} color={T.warning} />
           </button>
@@ -865,7 +870,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               onBlur={e => (e.currentTarget.style.boxShadow = "none")}
             />
             {search && (
-              <button onClick={() => setSearch("")} style={{
+              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen" style={{
                 position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
                 width: 18, height: 18, border: "none", background: T.outline,
                 borderRadius: T.full, display: "flex", alignItems: "center",
@@ -879,7 +884,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           {/* View toggle */}
           <div style={{ display: "flex", background: "#F1F3F4", borderRadius: T.md, padding: 3, flexShrink: 0 }}>
             {(["grid", "list"] as ViewMode[]).map(mode => (
-              <button key={mode} onClick={() => setViewMode(mode)} style={{
+              <button key={mode} onClick={() => setViewMode(mode)} aria-label={mode === "grid" ? "Rasterweergave" : "Lijstweergave"} style={{
                 width: 32, height: 32, border: "none", cursor: "pointer",
                 borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center",
                 background: viewMode === mode ? "white" : "transparent",

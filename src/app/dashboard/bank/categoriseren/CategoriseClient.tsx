@@ -12,15 +12,8 @@
 import { useEffect, useState } from 'react'
 import { BackLink } from '@/components/ui/BackLink'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD',
-  onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', success: '#137333', successContainer: '#CEEAD6',
-  warn: '#B26A00', warnContainer: '#FEEFC3',
-}
-const FONT = "'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 // Triage categories offered to the owner (Dutch), from the single source of truth.
