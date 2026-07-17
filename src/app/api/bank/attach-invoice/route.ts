@@ -191,32 +191,38 @@ export async function POST(req: NextRequest) {
   //     any storage/insert, keyed on the AI-read fields against invoices in THIS direction.
   //     A `force` escape lets the owner add it anyway (genuinely two bills, same total).
   if (!force) {
-    const dedupTotal = verification.total_inc_btw ?? verification.amount ?? bankAmount;
-    const dup = await findSemanticDuplicate(
-      {
-        invoiceNumber: verification.invoice_number,
-        vendor: verification.vendor,
-        totalIncBtw: dedupTotal,
-        invoiceDate: verification.invoice_date,
-      },
-      async (q) => {
-        let query = pipeline
-          .from("invoices")
-          .select("id, invoice_number, client_name, status")
-          .eq("direction", direction)
-          .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
-          .eq("total_inc_btw", q.total);
-        if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", q.vendor);
-        if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
-        const { data } = await query.order("id", { ascending: false }).limit(200);
-        const rows = data ?? [];
-        const hit =
-          q.tier === "number" && q.invoiceNumber
-            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
-            : rows[0];
-        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null;
-      }
+    const findMatch = async (q: { tier: string; total: number; invoiceNumber?: string; vendor?: string; dateIso?: string | null }) => {
+      let query = pipeline
+        .from("invoices")
+        .select("id, invoice_number, client_name, status")
+        .eq("direction", direction)
+        .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
+        .eq("total_inc_btw", q.total);
+      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", q.vendor);
+      if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
+      const { data } = await query.order("id", { ascending: false }).limit(200);
+      const rows = data ?? [];
+      const hit =
+        q.tier === "number" && q.invoiceNumber
+          ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
+          : rows[0];
+      return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null;
+    };
+    // Probe TWICE so an OCR-total drift between the two reads of the same bill can't hide a
+    // duplicate: first the photo's OCR total, then the BANK amount (the money that actually
+    // moved — usually equal to the stored invoice total, so it catches the case where this
+    // photo read a cent differently than the email import did). Either hit blocks the re-book.
+    const ocrTotal = verification.total_inc_btw ?? verification.amount ?? bankAmount;
+    let dup = await findSemanticDuplicate(
+      { invoiceNumber: verification.invoice_number, vendor: verification.vendor, totalIncBtw: ocrTotal, invoiceDate: verification.invoice_date },
+      findMatch
     );
+    if ((!dup.duplicate || !dup.match) && Math.abs(bankAmount - ocrTotal) > AMOUNT_TOLERANCE && bankAmount > 0) {
+      dup = await findSemanticDuplicate(
+        { invoiceNumber: verification.invoice_number, vendor: verification.vendor, totalIncBtw: bankAmount, invoiceDate: verification.invoice_date },
+        findMatch
+      );
+    }
     if (dup.duplicate && dup.match) {
       return NextResponse.json(
         {

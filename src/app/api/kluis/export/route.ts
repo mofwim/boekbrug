@@ -60,8 +60,12 @@ export async function GET(req: NextRequest) {
         .eq('user_id', user.id)
         .eq('year', year)
         .eq('trashed', false)
+        // [PAGINATION-STABLE] Final tiebreak on the PRIMARY KEY: created_at/file_url can tie
+        // (bulk imports, null file_url), and a non-unique order across separate page requests
+        // would duplicate or SKIP rows at the 1000-boundary — a silent hole in the legal
+        // archive. The id tiebreak makes the page order total + deterministic.
         .order('created_at', { ascending: true })
-        .order('file_url', { ascending: true })
+        .order('id', { ascending: true })
         .range(from, to),
     ),
     fetchAllRows<{
@@ -82,8 +86,11 @@ export async function GET(req: NextRequest) {
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .gte('invoice_date', `${year}-01-01`)
         .lte('invoice_date', `${year}-12-31`)
+        // [PAGINATION-STABLE] Tiebreak on the PRIMARY KEY — invoice_date/invoice_number are
+        // non-unique (and invoice_number nullable), so without id a same-date cluster
+        // straddling the 1000-boundary could drop invoices from the archive.
         .order('invoice_date', { ascending: true })
-        .order('invoice_number', { ascending: true })
+        .order('id', { ascending: true })
         .range(from, to),
     ),
   ])
