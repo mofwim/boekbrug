@@ -81,9 +81,12 @@ export async function POST() {
     if (!isEligible(m.transaction, inv)) continue;
 
     // (a) invoice → paid (SESSION client; .select detects a concurrent pay → 0 rows → skip).
+    //     [BANK-PAYDATE] Record the REAL settlement date (the bank line's date), not just
+    //     marked_paid_at=now(): a Q1 invoice paid in Q2 then carries its true payment day/
+    //     quarter, so the owner and the accountant both see "paid in Q2".
     const { data: payData, error: payErr } = await supabase
       .from("invoices")
-      .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString() })
+      .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: m.transaction.date })
       .eq("id", invoiceId)
       .neq("status", "paid")
       .select("id");
@@ -91,18 +94,22 @@ export async function POST() {
     if (!payData || payData.length === 0) continue; // concurrently paid — not ours to link
 
     // (b) link the bank line → matched (single invoice ⇒ fully covered). Pipeline, user-pinned.
-    const { error: linkErr } = await pipeline
+    //     [BANK-LINK-RACE] .select() the link write: a 0-row update (the tx was grabbed by a
+    //     concurrent confirm) returns no error, and treating that as success would leave the
+    //     invoice paid with NO bank line. 0 rows ⇒ roll the invoice back, same as an error.
+    const { data: linkData, error: linkErr } = await pipeline
       .from("bank_transactions")
       .update({ status: "matched", invoice_id: invoiceId })
       .eq("id", txId)
       .eq("user_id", user.id)
-      .eq("status", "pending");
+      .eq("status", "pending")
+      .select("id");
 
-    if (linkErr) {
+    if (linkErr || !linkData || linkData.length === 0) {
       // Roll the invoice back so we never leave a paid invoice with no bank line.
       await supabase
         .from("invoices")
-        .update({ status: inv.status, payment_method: null, marked_paid_at: null })
+        .update({ status: inv.status, payment_method: null, marked_paid_at: null, payment_date: null })
         .eq("id", invoiceId)
         .eq("status", "paid");
       continue;
