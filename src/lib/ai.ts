@@ -208,6 +208,13 @@ export interface VerifyInvoiceResult {
   // kassabon / pin-receipt (paid at the counter). The router uses this to
   // pre-suggest "paid" in the verify queue — the human still confirms (Pillar ⑤).
   is_paid?: boolean;
+  // [PEN-MARK] When the owner has WRITTEN on the paper (pen) or a shop STAMPED it — "betaald",
+  // "voldaan", "contant/kas", "bank", "pin", often with a date — read that annotation. These let
+  // the verify queue pre-suggest paid + how + when, so a snapped-and-thrown invoice needs one
+  // confirming tap instead of manual data entry. Null when there is no such mark. NEVER
+  // auto-books payment — it only pre-fills a suggestion the human confirms.
+  paid_method?: "bank" | "kas" | "pin" | null; // 'kas' = contant/cash
+  paid_date?: string | null;                    // the written/stamped payment date, "YYYY-MM-DD"
   // [BRIDGE-CREDITNOTA-SIGN] Is this a CREDITNOTA (credit note)? True only on
   // explicit evidence: a "Creditnota"/"Credit note" title, a CR-prefixed
   // number, or amounts printed negative. Routing is unaffected (a creditnota
@@ -881,6 +888,8 @@ Return only a JSON object with these exact keys:
   "payment_reference": string or null,
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
+  "paid_method": "bank" | "kas" | "pin" | null,
+  "paid_date": "YYYY-MM-DD" or null,
   "is_credit_note": boolean,
   "is_statement": boolean,
   "is_reminder": boolean,
@@ -998,6 +1007,16 @@ Document kind + paid status (ALWAYS set these):
   normal unpaid invoice (a request to pay), set is_paid=false. When unsure,
   set is_paid=false — it is safer to ask the human to confirm payment than to
   mark something paid that is not.
+- HANDWRITTEN / STAMPED PAYMENT MARKS: a business owner often processes a PAPER invoice by
+  WRITING on it with pen or applying a shop STAMP — e.g. "betaald", "voldaan", "contant",
+  "kas", "bank", "pin", a bank/giro note, and/or a DATE. Read these marks even though they are
+  handwritten or stamped (they may be in a corner, diagonal, or over the print). When such a
+  mark clearly indicates the invoice was PAID, set is_paid=true and fill:
+    · "paid_method": "bank" (giro/overschrijving/"bank"), "kas" (contant/cash/"kas"),
+      "pin" (pin/card), or null if the method isn't written.
+    · "paid_date": the written/stamped payment date as "YYYY-MM-DD", or null if no date is written.
+  If there is NO such mark, set is_paid=false, paid_method=null, paid_date=null. Do NOT infer
+  payment from an unmarked invoice. A printed "te betalen"/due date is NOT a payment mark.
 - A receipt is still a real financial document: keep is_invoice=true for both
   "invoice" and "receipt" (both enter the pipeline); only "other" is false.
 
@@ -1331,6 +1350,22 @@ Return JSON only.`;
         ? parsed.document_kind
         : "invoice";
     parsed.is_paid = parsed.is_paid === true;
+    // [PEN-MARK] Normalize the pen/stamp payment hints. Only keep them when the doc is actually
+    // marked paid — a method/date without is_paid is noise. paid_method must be one of the three
+    // known values; paid_date is tolerated in either ISO or DD-MM-YYYY and normalized (null-safe).
+    if (parsed.is_paid) {
+      parsed.paid_method =
+        parsed.paid_method === "bank" || parsed.paid_method === "kas" || parsed.paid_method === "pin"
+          ? parsed.paid_method
+          : null;
+      parsed.paid_date =
+        typeof parsed.paid_date === "string" && /^\d{4}-\d{2}-\d{2}/.test(parsed.paid_date)
+          ? parsed.paid_date.slice(0, 10)
+          : null;
+    } else {
+      parsed.paid_method = null;
+      parsed.paid_date = null;
+    }
     // [BRIDGE-CREDITNOTA-SIGN] Strict boolean; unknown → false (safe side:
     // a normal invoice with a stray negative stays blocked by num() below +
     // the SAFECORE gate — never silently treated as a creditnota).

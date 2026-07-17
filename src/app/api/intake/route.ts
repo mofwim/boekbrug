@@ -162,6 +162,9 @@ export async function POST(req: NextRequest) {
     is_invoice: v.is_invoice,
     document_kind: v.document_kind,
     is_paid: v.is_paid,
+    // [PEN-MARK] carry the handwritten/stamped payment hints into the routing decision.
+    paid_method: v.paid_method ?? null,
+    paid_date: v.paid_date ?? null,
     confidence: v.confidence,
   })
 
@@ -445,6 +448,14 @@ export async function POST(req: NextRequest) {
   if (decision.destination === "receipt") {
     fieldConfidence._intake_kind = "receipt"
     if (decision.suggestPaid) fieldConfidence._intake_suggest = "paid"
+  }
+  // [PEN-MARK] A paid suggestion — from a receipt OR an invoice the owner marked paid by
+  // hand/stamp — carries HOW and WHEN so the verify queue can pre-fill method + date. Still a
+  // SUGGESTION: the human confirms, we never write status='paid' here.
+  if (decision.suggestPaid) {
+    fieldConfidence._intake_suggest = "paid"
+    if (decision.paidMethod) fieldConfidence._intake_paid_method = decision.paidMethod
+    if (decision.paidDate) fieldConfidence._intake_paid_date = decision.paidDate
   }
 
   const { data: invoice, error: dbError } = await pipeline
