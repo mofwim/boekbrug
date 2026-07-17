@@ -32,6 +32,7 @@ interface ImportHealth {
     vendor: boolean;
     invoiceNumber: boolean;
     invoiceDate: boolean;
+    reminder: boolean;
   };
 }
 

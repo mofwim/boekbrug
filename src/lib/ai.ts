@@ -45,6 +45,17 @@ export function isStatementFilename(filename: string): boolean {
   return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
 }
 
+// [REMINDER] A filename that unmistakably marks a payment REMINDER (not a fresh invoice). Used
+// as a deterministic backstop over the model's own is_reminder read, so a reminder whose PDF
+// the model booked as a plain invoice is still flagged for the human. Deliberately excludes
+// bare "factuur"/"invoice". A reminder is a real (single) invoice, so we do NOT reject it — we
+// only ensure it is FLAGGED so the human checks it isn't already booked (avoids double-count).
+export function isReminderFilename(filename: string): boolean {
+  return /betalings?[-_ ]?herinnering|(^|[^a-z])herinnering|aanmaning|(^|[^a-z])reminder([^a-z]|$)|payment[-_ ]?reminder/i.test(
+    filename || "",
+  );
+}
+
 // [TRUST-CONFIDENT-FALSE] The classifier (a small model) can be CONFIDENTLY wrong that a
 // document is "not an invoice" — the classic case is a collective invoice (verzamelfactuur:
 // many delivery-note lines with their own numbers/dates/amounts) read as a "rekeningoverzicht".
@@ -200,6 +211,18 @@ export interface VerifyInvoiceResult {
   // sign-inverted SAFECORE gate. Amounts on a creditnota are kept NEGATIVE as
   // printed — matching the outgoing creditnota route [BOEK-031].
   is_credit_note?: boolean;
+  // [REMINDER] Is this a payment REMINDER (betalingsherinnering / aanmaning) for an invoice
+  // that was already sent earlier — not a fresh invoice? A reminder restates an existing debt
+  // (often with added herinneringskosten), so booking it as a NEW invoice double-counts the
+  // cost. True on explicit evidence: a "herinnering"/"aanmaning"/"betalingsherinnering"/
+  // "reminder" title or a "2e/laatste herinnering" heading over a single restated invoice.
+  // We never discard it (it might be the first time we see that invoice), but we FLAG it so it
+  // lands in the verify queue marked "controleer of de factuur al geboekt is" — never booked
+  // silently as a second cost.
+  is_reminder?: boolean;
+  // [REMINDER] The ORIGINAL invoice number this is a reminder OF (when known), so the verify
+  // queue and dedup can point the owner at the invoice that may already be booked.
+  reminder_of_invoice_number?: string | null;
   reason?: string;           // why it was rejected (if is_invoice = false)
   // [BOEK-011] detailed BTW breakdown — extracted in the same call, zero extra cost
   total_ex_btw?: number;     // amount excluding BTW
@@ -848,6 +871,8 @@ Return only a JSON object with these exact keys:
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
   "is_credit_note": boolean,
+  "is_reminder": boolean,
+  "reminder_of_invoice_number": string or null,
   "total_ex_btw": number or null,
   "btw_amount": number or null,
   "total_inc_btw": number or null,
@@ -933,8 +958,15 @@ CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=fa
   document_kind="other", and reason e.g. "Rekeningoverzicht — overzicht van meerdere
   facturen, geen boekbare factuur".
 - Exception: a reminder that repeats ONE single invoice (one number, one amount, one date)
-  IS that invoice — treat it normally; the system de-duplicates it against the original.
-  The rule above is ONLY for an overview of TWO OR MORE invoices.
+  IS that invoice — set is_invoice=true and extract it normally. BUT also set is_reminder=true
+  and put the ORIGINAL invoice number in reminder_of_invoice_number, because the original was
+  very likely already received earlier — booking the reminder as a second invoice would
+  double-count. Signs of a single-invoice reminder: a "Betalingsherinnering", "Herinnering",
+  "Aanmaning", "2e/laatste herinnering" or "Reminder" heading above what is otherwise ONE
+  invoice's details (one number, one amount). Extract the ORIGINAL invoice's amount, NOT any
+  added herinneringskosten line, as the total. (The rule ABOVE — is_invoice=false — is ONLY
+  for an overview of TWO OR MORE invoices.)
+- For anything that is NOT a reminder, set is_reminder=false and reminder_of_invoice_number=null.
 
 Document kind + paid status (ALWAYS set these):
 - "document_kind" tells what this is:
@@ -1273,6 +1305,10 @@ Return JSON only.`;
     // a normal invoice with a stray negative stays blocked by num() below +
     // the SAFECORE gate — never silently treated as a creditnota).
     parsed.is_credit_note = parsed.is_credit_note === true;
+    // [REMINDER] Strict boolean, OR-ed with a deterministic filename backstop so a reminder
+    // the model booked as a plain invoice is still flagged. Not a rejection — a reminder is a
+    // real (single) invoice; the flag only routes it to the human to check it isn't a duplicate.
+    parsed.is_reminder = parsed.is_reminder === true || isReminderFilename(filename);
 
     // [TRUST-UNCERTAIN] Confidence banding — never silently drop a real-but-hard
     // invoice. Below the hard floor (or with no invoice signal at all) it's spam /

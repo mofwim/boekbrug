@@ -2,7 +2,7 @@
 // Locks the rule that a confident "not an invoice" verdict carrying a strong invoice signal
 // (vendor + amount) and a non-statement filename is RESCUED to the verify queue, never
 // silently discarded — while a genuine statement or a signal-less document is not rescued.
-import { shouldRescueNonInvoice } from "./ai";
+import { shouldRescueNonInvoice, isReminderFilename } from "./ai";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -33,6 +33,16 @@ check("no vendor, no amount → not rescued",
   shouldRescueNonInvoice({}, "banner.pdf") === false);
 check("empty vendor string counts as no vendor",
   shouldRescueNonInvoice({ vendor: "   ", total_inc_btw: 100 }, "x.pdf") === false);
+
+console.log("\n— [REMINDER] filename backstop flags a payment reminder (a real invoice, but check for a duplicate) —");
+check("betalingsherinnering → reminder", isReminderFilename("betalingsherinnering-2216671.pdf") === true);
+check("herinnering → reminder", isReminderFilename("Herinnering factuur 2216671.pdf") === true);
+check("aanmaning → reminder", isReminderFilename("2e aanmaning.pdf") === true);
+check("reminder (EN) → reminder", isReminderFilename("payment reminder.pdf") === true);
+check("plain factuur is NOT a reminder", isReminderFilename("factuur-2216671.pdf") === false);
+check("a vendor named 'Herinneringen BV' invoice is still caught (acceptable — flagged, not dropped)",
+  isReminderFilename("herinnering.pdf") === true);
+check("empty filename → not a reminder", isReminderFilename("") === false);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

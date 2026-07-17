@@ -85,5 +85,17 @@ console.log('\n— existing guards still hold —')
   check('clean negative creditnota → clean (not falsely flagged)', credit.level === 'clean')
 }
 
+console.log('\n— [REMINDER] a payment reminder is flagged for a human check (never silently confirmed) —')
+{
+  const rem = classifyImportHealth(inv({ field_confidence: { _safecore: { reminder: true } } }))
+  check('reminder → needs-review', rem.level === 'needs-review' && rem.flags.reminder === true)
+  check('reminder → owner-facing reason mentions checking the original',
+    rem.reasons.some((r) => r.includes('herinnering') && r.includes('geboekt')))
+  const remOf = classifyImportHealth(inv({ field_confidence: { _safecore: { reminder: true, reminder_of: '2216671' } } }))
+  check('reminder_of names the original invoice number', remOf.reasons.some((r) => r.includes('2216671')))
+  // A clean invoice that is NOT a reminder keeps calm.
+  check('no reminder flag on a normal invoice', classifyImportHealth(inv({})).flags.reminder === false)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

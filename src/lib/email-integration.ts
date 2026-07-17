@@ -1126,6 +1126,10 @@ export interface AttachmentClassification {
   // SAFECORE gate + invoice_type='creditnota' at insert. Amounts stay NEGATIVE
   // as printed (matching outgoing creditnota [BOEK-031]).
   isCreditNote?: boolean
+  // [REMINDER] This attachment is a payment reminder for an invoice sent earlier — a real
+  // single invoice, but likely already booked, so it is flagged (not booked as a 2nd cost).
+  isReminder?: boolean
+  reminderOfInvoiceNumber?: string | null
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -1174,6 +1178,9 @@ export async function classifyAttachment(
     paymentReference: result.payment_reference,
     // [BRIDGE-CREDITNOTA-SIGN] creditnota signal from the same Claude call
     isCreditNote: result.is_credit_note,
+    // [REMINDER] reminder signal (+ the original invoice number when known)
+    isReminder: result.is_reminder,
+    reminderOfInvoiceNumber: result.reminder_of_invoice_number ?? null,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -2126,9 +2133,13 @@ export async function syncUserEmails(
       // pre-SAFECORE behaviour for clean invoices — no empty {} churn).
       const aiConfidence = classification.fieldConfidence ?? null
       let fieldConfidenceValue: Record<string, unknown> | null = aiConfidence
-      // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) so
-      // the audit/human-review trail records WHY this invoice skipped dedup.
-      if (!verdict.ok || dedupNote) {
+      // [REMINDER] A payment reminder is a real single invoice but the original was very
+      // likely already booked — flag it so the verify queue warns "controleer of de factuur
+      // al geboekt is" and it is never bulk-confirmed as a second cost.
+      const isReminder = classification.isReminder === true
+      // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) and the reminder
+      // flag so the audit/human-review trail records WHY this invoice needs a human look.
+      if (!verdict.ok || dedupNote || isReminder) {
         const safecore: Record<string, unknown> = {}
         if (!verdict.ok) {
           safecore.arithmetic_ok = false
@@ -2139,6 +2150,12 @@ export async function syncUserEmails(
         if (dedupNote) {
           safecore.dedup = dedupNote.dedup
           safecore.dedup_reason = dedupNote.reason
+        }
+        if (isReminder) {
+          safecore.reminder = true
+          if (classification.reminderOfInvoiceNumber) {
+            safecore.reminder_of = classification.reminderOfInvoiceNumber
+          }
         }
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),
