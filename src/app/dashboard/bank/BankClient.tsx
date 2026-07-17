@@ -324,12 +324,20 @@ export default function BankClient() {
         setFormatNotice({ name: file.name, kept: true })
       }
 
-      // Run matching (shared with initial load)
+      // Run matching (shared with initial load) — always, so `data` is populated even if
+      // the auto-confirm pass below finds nothing or fails (the screen must never stay empty).
       await runMatch()
       // [BANK-STATEMENT-DELETE] Refresh the uploaded-statements table so the file
       // just uploaded appears immediately — without it the table only updated on a
       // full page reload (it's populated by loadStatements on mount).
       await loadStatements()
+      // [BANK-AUTO-RUN] Book the near-certain payments from the statement we just uploaded,
+      // right now — the owner shouldn't have to reload for the app to handle the sure ones.
+      // We own the pass here and set the once-per-load guard so the load effect doesn't also
+      // fire on the same data. The server books only the safe set (isSafeAutoConfirm); an
+      // empty or failed pass leaves the freshly matched list untouched.
+      autoRanRef.current = true
+      await autoConfirm()
     } catch {
       showToast('Er ging iets mis.')
     } finally {
