@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { summarizeClosingPackage } from "@/lib/closing-package";
-import { computeResult, toResultBankTx, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
@@ -192,7 +192,12 @@ export async function GET(req: NextRequest) {
   // (settleDate + coveredDates), which also catches an acquirer payout the owner mis-tapped
   // as 'omzet' so readiness agrees exactly with /api/result and /api/aangifte.
   const bankTx: ResultBankTx[] = bank.map(toResultBankTx);
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates);
+  const coveredBudget = new Map(
+    allTurnover
+      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget);
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
   const completeness: AangifteCompleteness = {

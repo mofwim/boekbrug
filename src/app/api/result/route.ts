@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { computeResult, toResultBankTx, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
@@ -185,7 +185,16 @@ export async function GET(req: NextRequest) {
     .reduce((s, i) => s + (i.total_ex_btw ?? 0) + (i.btw_amount ?? 0), 0);
   const commissionToBook = netCommissionToBook(triangle.totalCommission, acquirerFeesBooked);
 
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, commissionToBook);
+  // [CARD-BUDGET] Per covered day, the max bank revenue it may suppress as till card takings —
+  // built from the SAME buffer-inclusive rows as coveredDates so prior-quarter days are bounded
+  // (their off-till excess still counts this quarter), not blindly suppressed.
+  const coveredBudget = new Map(
+    allTurnover
+      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, commissionToBook, coveredBudget);
 
   return NextResponse.json({
     ok: true,

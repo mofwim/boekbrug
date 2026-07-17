@@ -127,19 +127,31 @@ export interface SalesRateBucket { rate: number; omzet: number; btw: number }
 // already-counted revenue be booked a SECOND time in the next quarter.
 const SETTLE_LAG_DAYS = 5;
 
+// Excess below this many euro is a per-line rounding artifact, not real off-till revenue —
+// treated as a witness so a €0.01 gap can't fabricate a phantom omzet-zonder-tarief nudge.
+const EXCESS_EPS = 0.02;
+
 // WHICH covered takings day does this settlement line reconcile to (or null)? Exact takings
-// date (settleExact) → exact covered match. Fallback booking date → also accept a covered day
-// up to SETTLE_LAG_DAYS earlier (the sale happened before the payout posted). Returns the
-// matched covered date so the caller can consume that day's card-takings budget (see below).
-function matchedCoveredDay(t: ResultBankTx, covered: Set<string>): string | null {
+// date (settleExact) → exact covered match. Fallback booking date (no printed DAT.) → accept a
+// covered day up to SETTLE_LAG_DAYS earlier (the sale happened before the payout posted). In
+// that fuzzy window we PREFER the nearest covered day that still has card-takings budget left,
+// so two DAT-less payouts on consecutive trading days don't both collapse onto ONE day's budget
+// (which would strand the other day's budget and leak the second payout as fake "excess" omzet —
+// a systematic double-count). When every in-window covered day is exhausted we return the
+// nearest, so the genuinely-excess amount correctly counts.
+function matchedCoveredDay(t: ResultBankTx, covered: Set<string>, remaining: Map<string, number>): string | null {
   if (!t.settleDate) return null;
-  if (covered.has(t.settleDate)) return t.settleDate;
-  if (t.settleExact) return null; // exact date: no widening — never hide real revenue
+  if (covered.has(t.settleDate)) return t.settleDate; // exact/known takings date — consume its own day
+  if (t.settleExact) return null; // exact date not covered → real revenue, never widen (never hide)
+  let firstCovered: string | null = null;
   for (let back = 1; back <= SETTLE_LAG_DAYS; back++) {
     const d = isoMinusDays(t.settleDate, back);
-    if (covered.has(d)) return d;
+    if (!covered.has(d)) continue;
+    if (firstCovered === null) firstCovered = d;
+    const rem = remaining.get(d);
+    if (rem === undefined || rem > 0.005) return d; // still has budget (undefined = prior-quarter day)
   }
-  return null;
+  return firstCovered;
 }
 
 // Subtract whole days from a 'YYYY-MM-DD' string via UTC (no local-TZ drift). Returns
@@ -159,6 +171,29 @@ function isoMinusDays(iso: string, days: number): string {
 const OUTGOING_OK = new Set(["paid", "sent", "overdue"]);
 const INCOMING_OK = new Set(["paid", "received"]);
 
+/**
+ * The card-takings budget for one covered day: the MOST bank revenue that day may suppress as
+ * "already counted by the till". Best is pin_amount (the Z-report's CARD total). When it is
+ * missing we use the NON-CASH takings (total_incl − cash − other) — never plain gross, because
+ * gross includes the cash portion and a card/PSP settlement can never be the cash takings, so
+ * bounding by gross would wrongly absorb a same-day webshop payout up to the cash amount. Only
+ * when the cash split is also unknown do we fall back to gross (documented residual). Exported so
+ * the route can build a buffer-inclusive budget map identical to this rule.
+ */
+export function cardBudgetBound(t: DailyTurnover): number {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  if (t.pin_amount != null && t.pin_amount > 0) return r2(t.pin_amount);
+  const gross = t.total_incl ?? 0;
+  if (gross > 0) {
+    if (t.cash_amount != null) {
+      const nonCash = gross - t.cash_amount - (t.other_amount ?? 0);
+      return r2(Math.max(0, nonCash));
+    }
+    return r2(gross); // cash split unknown → gross bound (best available)
+  }
+  return r2(turnoverNetOmzet(t) + turnoverBtw(t).total);
+}
+
 export function computeResult(
   invoices: ResultInvoice[],
   bankTx: ResultBankTx[],
@@ -172,6 +207,14 @@ export function computeResult(
   // the same fee is counted twice. The caller (route) owns that de-dup; here it is a plain
   // cost with no BTW (the reclaimable BTW comes from the acquirer's invoice, not invented).
   acquirerCommission = 0,
+  // [CARD-BUDGET] Per covered day, the MAX bank revenue that day may suppress as "already
+  // counted by the till" = its card takings (see cardBudgetBound). The caller SHOULD build this
+  // from the SAME buffer-inclusive turnover as coveredDates, so a prior-quarter (buffer) covered
+  // day also gets a budget: its terminal settlement (≤ pin) is suppressed as prior-quarter money
+  // while a same-day webshop payout's EXCESS is still counted in THIS quarter — never hidden in
+  // both. When omitted, the budget is derived from the in-quarter `turnover` only (buffer days
+  // then suppress in full — correct when there is no off-till excess, e.g. in unit tests).
+  coveredBudget?: Map<string, number>,
 ): FinancialResult {
   let omzet = 0;
   let kosten = 0;
@@ -219,26 +262,19 @@ export function computeResult(
   // hidden. So suppression is BUDGET-BOUNDED, not all-or-nothing: for each covered day we
   // suppress settlement credits only until pin_amount is exhausted, then count the rest.
   //
-  // The budget is built from the IN-QUARTER turnover rows only. A covered day that is NOT in
-  // `turnover` (a prior-quarter day reached via the caller's −5-day buffer) has no budget entry
-  // → its settlement is suppressed IN FULL here, because that revenue belongs to the PRIOR
-  // quarter (it was counted there), not this one. When pin_amount is missing we fall back to the
-  // day's gross (total_incl, else net+BTW) — a card settlement can never exceed the day's total
-  // takings, so this bound still never double-counts; it only widens what a Z-report without a
-  // PIN split may absorb, and any excess is still surfaced.
-  const cardRemaining = new Map<string, number>();
-  for (const t of turnover) {
-    const net = turnoverNetOmzet(t);
-    const gross = t.total_incl ?? 0;
-    if (!(net > 0 || gross > 0)) continue; // not a revenue (covered) day
-    const bound =
-      t.pin_amount != null && t.pin_amount > 0
-        ? t.pin_amount
-        : gross > 0
-          ? gross
-          : net + turnoverBtw(t).total;
-    cardRemaining.set(t.turnover_date, Math.round(bound * 100) / 100);
-  }
+  // Prefer the caller's buffer-inclusive budget (so prior-quarter days are bounded too, not
+  // suppressed in full — see coveredBudget). Otherwise derive from the in-quarter turnover.
+  const cardRemaining = coveredBudget
+    ? new Map(coveredBudget)
+    : (() => {
+        const m = new Map<string, number>();
+        for (const t of turnover) {
+          const net = turnoverNetOmzet(t);
+          if (!(net > 0 || (t.total_incl ?? 0) > 0)) continue; // not a revenue (covered) day
+          m.set(t.turnover_date, cardBudgetBound(t));
+        }
+        return m;
+      })();
 
   // 1) Invoices — the BTW-exact core.
   for (const inv of invoices) {
@@ -284,25 +320,31 @@ export function computeResult(
     // against that budget: the part within budget is suppressed (already counted by the till),
     // any EXCESS is off-till revenue (e.g. a same-day webshop payout via the same PSP) and is
     // COUNTED + flagged, never hidden. A NON-acquirer 'omzet' line (a webshop transfer with no
-    // acquirer name) is not a settlement → it always counts. Only positive credits consume the
-    // budget; a covered-day refund (raw ≤ 0) is a witness of the till's already-net figure and
-    // is fully suppressed.
+    // acquirer name) is not a settlement → it always counts.
     const isSettlement = role === "omzet" && (t.posSettlement || t.category === "pos_income");
     if (isSettlement) {
-      const day = matchedCoveredDay(t, covered);
-      if (day) {
-        if (raw <= 0) continue; // covered-day refund/chargeback → witness of the till's net
-        if (!cardRemaining.has(day)) continue; // prior-quarter buffer day → belongs to that quarter
-        const rem = Math.max(0, cardRemaining.get(day) ?? 0);
-        const suppressed = Math.min(raw, rem);
-        cardRemaining.set(day, Math.round((rem - suppressed) * 100) / 100);
-        const excess = Math.round((raw - suppressed) * 100) / 100;
-        if (excess <= 0) continue; // fully within the till's card takings → witness only
-        // The part beyond the till's card takings is real off-till revenue with no BTW rate.
-        omzet += excess;
-        cashOmzetZonderBtw += excess;
-        omzetZonderBtwNonCash += excess;
-        continue;
+      if (raw <= 0) {
+        // A refund/chargeback is a witness of the till's ALREADY-NET figure ONLY when it exactly
+        // matches the takings day (the reversal was rung at the till that day). A later,
+        // bank-initiated reversal only WINDOW-matched to a nearby covered day is NOT in that
+        // Z-report net → it must reduce omzet, not silently vanish (which would overstate omzet).
+        if (t.settleExact && t.settleDate && covered.has(t.settleDate)) continue;
+        // else fall through → the negative reduces omzet below.
+      } else {
+        const day = matchedCoveredDay(t, covered, cardRemaining);
+        if (day) {
+          if (!cardRemaining.has(day)) continue; // prior-quarter buffer day w/o budget → belongs there
+          const rem = Math.max(0, cardRemaining.get(day) ?? 0);
+          const suppressed = Math.min(raw, rem);
+          cardRemaining.set(day, Math.round((rem - suppressed) * 100) / 100);
+          const excess = Math.round((raw - suppressed) * 100) / 100;
+          if (excess <= EXCESS_EPS) continue; // within the till's card takings (+rounding) → witness
+          // The part beyond the till's card takings is real off-till revenue with no BTW rate.
+          omzet += excess;
+          cashOmzetZonderBtw += excess;
+          omzetZonderBtwNonCash += excess;
+          continue;
+        }
       }
     }
 

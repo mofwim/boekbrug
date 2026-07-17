@@ -43,6 +43,7 @@ import type { EftSettlement } from "./eft-parser";
 import {
   computeResult,
   toResultBankTx,
+  cardBudgetBound,
   type ResultInvoice,
   type ResultCashEntry,
   type ResultBankTx,
@@ -1314,7 +1315,10 @@ export async function buildClosingPackageZip(args: {
   const coveredDates = new Set(
     allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
   );
-  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates);
+  const coveredBudget = new Map(
+    allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget);
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),

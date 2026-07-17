@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { computeResult, toResultBankTx, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
@@ -110,7 +110,12 @@ export async function GET(req: NextRequest) {
     allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
   );
 
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates);
+  const coveredBudget = new Map(
+    allTurnover
+      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget);
 
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);

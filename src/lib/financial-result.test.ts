@@ -2,6 +2,7 @@
 import {
   computeResult,
   toResultBankTx,
+  cardBudgetBound,
   type ResultInvoice, type ResultBankTx, type ResultCashEntry,
 } from "./financial-result";
 import type { DailyTurnover } from "./turnover";
@@ -237,6 +238,59 @@ console.log("\n— [CARD-BUDGET] suppression is bounded by pin_amount, so off-ti
   const bigPos: ResultBankTx[] = [{ amount: 700, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true }];
   const rBig = computeResult([], bigPos, [], turnover);
   check("pos_income above pin (700 vs 545) → €155 excess counts, not hidden", near(rBig.omzet, 500 + 155));
+}
+
+console.log("\n— [RE-REVIEW] DAT-less / cross-quarter / null-pin / refund edges (2nd adversarial pass) —");
+{
+  // HIGH-1: two DAT-less payouts on CONSECUTIVE covered days must not collapse onto one day's
+  // budget (which leaked the 2nd as fake 'excess' → systematic double-count). The budget-aware
+  // backward match spreads them across both days' budgets.
+  const turnover: DailyTurnover[] = [
+    { turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 },
+    { turnover_date: "2026-07-07", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 },
+  ];
+  const twoPayouts: ResultBankTx[] = [
+    { amount: 1000, category: "pos_income", invoice_id: null, settleDate: "2026-07-08", settleExact: false }, // for 07-06 (T+2)
+    { amount: 1000, category: "pos_income", invoice_id: null, settleDate: "2026-07-09", settleExact: false }, // for 07-07 (T+2)
+  ];
+  const h1 = computeResult([], twoPayouts, [], turnover);
+  check("HIGH-1: consecutive DAT-less payouts don't double-count (omzet = 2× till net, not +1000)", near(h1.omzet, 826.45 * 2) && h1.cashOmzetZonderBtw === 0);
+
+  // HIGH-2: a prior-quarter (buffer) covered day must still get a budget, so a same-day WEBSHOP
+  // payout settling THIS quarter is counted here, not hidden in both quarters. (Terminal ≤ pin
+  // is suppressed as prior-quarter money.)
+  const jun30: DailyTurnover = { turnover_date: "2026-06-30", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 };
+  const coveredQ3 = new Set(["2026-06-30"]);
+  const budgetQ3 = new Map([["2026-06-30", cardBudgetBound(jun30)]]);
+  const terminal = toResultBankTx({ amount: 1000, category: "pos_income", invoice_id: null, date: "2026-07-02", description: "CCV afrek. DAT. 20260630" });
+  const webshop = toResultBankTx({ amount: 400, category: "omzet", invoice_id: null, date: "2026-07-02", description: "Mollie uitbetaling webshop" });
+  const h2 = computeResult([], [terminal, webshop], [], [], coveredQ3, 0, budgetQ3);
+  check("HIGH-2: cross-quarter webshop payout counts THIS quarter (400), terminal suppressed", near(h2.omzet, 400) && near(h2.cashOmzetZonderBtw, 400));
+
+  // MED-3: pin_amount null → the budget is the NON-CASH takings (gross − cash), so a same-day
+  // webshop payout is not absorbed up to the cash amount.
+  const nullPin: DailyTurnover[] = [{ turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: null, cash_amount: 400, other_amount: 0 }];
+  check("MED-3: null pin → bound = gross − cash (600), not gross (1000)", near(cardBudgetBound(nullPin[0]), 600));
+  const term600: ResultBankTx = { amount: 600, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true };
+  const shop400 = toResultBankTx({ amount: 400, category: "omzet", invoice_id: null, date: "2026-07-06", description: "Mollie webshop" });
+  const m3 = computeResult([], [term600, shop400], [], nullPin);
+  check("MED-3: the €400 webshop is not hidden by the cash portion (omzet = 826.45 + 400)", near(m3.omzet, 826.45 + 400) && near(m3.cashOmzetZonderBtw, 400));
+
+  // MED-4: a WINDOW-matched (DAT-less) negative reversal is NOT in the Z-report net → it must
+  // reduce omzet, not vanish (vanishing overstates omzet). An EXACT-dated same-day refund stays a witness.
+  const oneDay: DailyTurnover[] = [{ turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 826.45, btw_9: 0, btw_21: 173.55, total_incl: 1000, pin_amount: 1000, cash_amount: 0, other_amount: 0 }];
+  const laterReversal: ResultBankTx[] = [{ amount: -200, category: "pos_income", invoice_id: null, settleDate: "2026-07-07", settleExact: false }];
+  const m4 = computeResult([], laterReversal, [], oneDay);
+  check("MED-4: a window-matched later chargeback reduces omzet (826.45 − 200), not hidden", near(m4.omzet, 826.45 - 200));
+  const sameDayRefund: ResultBankTx[] = [{ amount: -200, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true }];
+  const m4b = computeResult([], sameDayRefund, [], oneDay);
+  check("MED-4: an exact same-day refund is still a witness of the till's net (omzet = 826.45)", near(m4b.omzet, 826.45));
+
+  // LOW: a 1-cent excess (pin 544.99 vs payout 545.00) is a rounding artifact → witness, no phantom flag.
+  const roundy: DailyTurnover[] = [{ turnover_date: "2026-07-06", base_0: 0, base_9: 0, base_21: 500, btw_9: 0, btw_21: 105, total_incl: 605, pin_amount: 544.99, cash_amount: 60, other_amount: 0 }];
+  const cent: ResultBankTx[] = [{ amount: 545.00, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true }];
+  const low = computeResult([], cent, [], roundy);
+  check("LOW: a €0.01 rounding excess is a witness, not a phantom zonder-tarief nudge", near(low.omzet, 500) && low.cashOmzetZonderBtw === 0);
 }
 
 console.log("\n— [FINDING-2] SETTLE_LAG widened to 5 days: a DAT-less T+5 payout still reconciles —");
