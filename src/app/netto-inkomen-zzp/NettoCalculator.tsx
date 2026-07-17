@@ -103,7 +103,7 @@ const s = {
   field: { display: 'flex', alignItems: 'center', border: '1px solid #e0e0e0', borderRadius: 12, backgroundColor: '#f8f9fa', padding: '0 14px', marginBottom: 18 } as React.CSSProperties,
   input: { flex: 1, fontSize: 22, fontWeight: 700, padding: '14px 0', border: 'none', outline: 'none', background: 'transparent', color: '#202124', width: '100%', fontFamily: 'inherit' } as React.CSSProperties,
   toggleRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 2px' } as React.CSSProperties,
-  row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f0f0f4' } as React.CSSProperties,
+  row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f1f3f4' } as React.CSSProperties,
 }
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {

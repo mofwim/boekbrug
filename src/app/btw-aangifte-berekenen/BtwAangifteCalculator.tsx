@@ -53,7 +53,7 @@ const s = {
   prefix: { fontSize: 18, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
   input: { flex: 1, fontSize: 19, fontWeight: 600, padding: '13px 0', border: 'none', outline: 'none', background: 'transparent', color: '#202124', width: '100%', fontFamily: 'inherit' } as React.CSSProperties,
   suffix: { fontSize: 13, color: '#bdc1c6', marginLeft: 8, whiteSpace: 'nowrap' } as React.CSSProperties,
-  row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f0f0f4' } as React.CSSProperties,
+  row: { display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f1f3f4' } as React.CSSProperties,
 }
 
 export default function BtwAangifteCalculator({ locale = 'nl' }: { locale?: Locale }) {

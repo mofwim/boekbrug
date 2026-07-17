@@ -298,7 +298,7 @@ export default function DraftQueue({ clients }: Props) {
                 onChange={e => selectClient(e.target.value)}
                 style={{
                   width: '100%', height: 36, fontSize: 14, padding: '0 10px',
-                  border: '1px solid #BDBDBD', borderRadius: 8, background: '#F8F9FA',
+                  border: '1px solid #dadce0', borderRadius: 8, background: '#F8F9FA',
                   color: '#202124', outline: 'none',
                 }}
               >
@@ -357,7 +357,7 @@ export default function DraftQueue({ clients }: Props) {
                     placeholder="Punt toevoegen…"
                     style={{
                       flex: 1, height: 36, fontSize: 14, padding: '0 10px',
-                      border: '1px solid #BDBDBD', borderRadius: 8, background: '#F8F9FA',
+                      border: '1px solid #dadce0', borderRadius: 8, background: '#F8F9FA',
                       color: '#202124', outline: 'none',
                     }}
                   />
@@ -387,7 +387,7 @@ export default function DraftQueue({ clients }: Props) {
                       placeholder="Onderwerp van de e-mail…"
                       style={{
                         height: 34, fontSize: 13, padding: '0 8px',
-                        border: '1px solid #BDBDBD', borderRadius: 6, background: '#FFFFFF', color: '#202124', outline: 'none',
+                        border: '1px solid #dadce0', borderRadius: 6, background: '#FFFFFF', color: '#202124', outline: 'none',
                       }}
                     />
                     <label style={labelStyle}>Bericht</label>
@@ -398,7 +398,7 @@ export default function DraftQueue({ clients }: Props) {
                       placeholder="Schrijf hier je bericht, of gebruik 'AI opstellen'…"
                       style={{
                         fontSize: 13, padding: 8, lineHeight: 1.5, resize: 'vertical',
-                        border: '1px solid #BDBDBD', borderRadius: 6, background: '#FFFFFF',
+                        border: '1px solid #dadce0', borderRadius: 6, background: '#FFFFFF',
                         color: '#202124', outline: 'none', fontFamily: 'inherit',
                       }}
                     />
@@ -433,7 +433,7 @@ export default function DraftQueue({ clients }: Props) {
                     onClick={discardDraft}
                     disabled={(!subject && !bodyText) || sending}
                     style={{
-                      background: '#FFFFFF', color: '#5F6368', border: '1px solid #BDBDBD',
+                      background: '#FFFFFF', color: '#5F6368', border: '1px solid #dadce0',
                       borderRadius: 8, padding: '0 16px', height: 36, fontSize: 14, fontWeight: 500,
                       cursor: 'pointer', opacity: ((!subject && !bodyText) || sending) ? 0.5 : 1, marginLeft: 'auto',
                     }}

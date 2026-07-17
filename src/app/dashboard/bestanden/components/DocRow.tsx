@@ -54,7 +54,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
         style={{
           width: 20, height: 20, borderRadius: T.full, flexShrink: 0,
           background: selected ? T.primary : "transparent",
-          border: `2px solid ${selected ? T.primary : "#BDBDBD"}`,
+          border: `2px solid ${selected ? T.primary : "#dadce0"}`,
           display: "flex", alignItems: "center", justifyContent: "center",
           opacity: selected || hovered ? 1 : 0, transition: "all 0.15s", cursor: "pointer",
         }}

@@ -25,15 +25,15 @@ const RECENT_KEY = "bb_recent_searches";
 const MAX_RECENT = 5;
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  draft:   { label: "Concept",   bg: "#F1EFE8", text: "#5F5E5A" },
-  sent:    { label: "Verzonden", bg: "#E6F1FB", text: "#185FA5" },
-  paid:    { label: "Betaald",   bg: "#EAF3DE", text: "#3B6D11" },
-  overdue: { label: "Verlopen",  bg: "#FCEBEB", text: "#A32D2D" },
+  draft:   { label: "Concept",   bg: "#f1f3f4", text: "#5f6368" },
+  sent:    { label: "Verzonden", bg: "#e8f0fe", text: "#1967d2" },
+  paid:    { label: "Betaald",   bg: "#e6f4ea", text: "#137333" },
+  overdue: { label: "Verlopen",  bg: "#fce8e6", text: "#b3261e" },
 };
 
 const TYPE_CONFIG: Record<string, { bg: string; color: string }> = {
-  invoice:  { bg: "#E6F1FB", color: "#185FA5" },
-  document: { bg: "#EAF3DE", color: "#3B6D11" },
+  invoice:  { bg: "#e8f0fe", color: "#1967d2" },
+  document: { bg: "#e6f4ea", color: "#137333" },
   client:   { bg: "#F3EFFE", color: "#6B21A8" },
 };
 
@@ -154,7 +154,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
     <div style={{
       padding: "10px 16px 4px", fontSize: 11, fontWeight: 600,
       letterSpacing: "0.06em", textTransform: "uppercase" as const,
-      color: "#9E9E9E", userSelect: "none" as const,
+      color: "#80868b", userSelect: "none" as const,
     }}>
       {children}
     </div>
@@ -165,9 +165,9 @@ function Kbd({ children }: { children: React.ReactNode }) {
   return (
     <kbd style={{
       display: "inline-flex", alignItems: "center",
-      padding: "1px 5px", background: "#FAFAFA",
+      padding: "1px 5px", background: "#f8f9fa",
       border: "0.5px solid #E0E0E0", borderRadius: 4,
-      fontSize: 10, color: "#757575",
+      fontSize: 10, color: "#5f6368",
     }}>
       {children}
     </kbd>
@@ -205,7 +205,7 @@ function ResultRow({
       style={{
         width: "100%", display: "flex", alignItems: "center", gap: 12,
         padding: "11px 16px", textAlign: "left",
-        background: selected ? "#F5F5F5" : "transparent",
+        background: selected ? "#f1f3f4" : "transparent",
         border: "none", cursor: "pointer",
         transition: "background 0.1s",
         WebkitTapHighlightColor: "transparent",
@@ -214,7 +214,7 @@ function ResultRow({
       <TypeIcon type={item.type} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const }}>
-          <span style={{ fontSize: 14, fontWeight: 500, color: "#212121" }}>
+          <span style={{ fontSize: 14, fontWeight: 500, color: "#202124" }}>
             <Highlight text={item.title} query={query} />
           </span>
           {item.type === "invoice" && st && (
@@ -227,19 +227,19 @@ function ResultRow({
           )}
         </div>
         <p style={{
-          fontSize: 13, color: "#757575", margin: 0, marginTop: 1,
+          fontSize: 13, color: "#5f6368", margin: 0, marginTop: 1,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
           <Highlight text={item.subtitle} query={query} />
-          {item.meta ? <span style={{ color: "#9E9E9E" }}> · {item.meta}</span> : null}
+          {item.meta ? <span style={{ color: "#80868b" }}> · {item.meta}</span> : null}
         </p>
       </div>
       {item.type === "invoice" && item.meta ? (
-        <span style={{ fontSize: 14, fontWeight: 600, color: "#212121", flexShrink: 0 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: "#202124", flexShrink: 0 }}>
           {item.meta}
         </span>
       ) : (
-        <span style={{ color: "#BDBDBD", flexShrink: 0 }}><IconChevron /></span>
+        <span style={{ color: "#dadce0", flexShrink: 0 }}><IconChevron /></span>
       )}
     </button>
   );
@@ -271,11 +271,11 @@ function SearchInput({
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 8,
-      padding: "8px 12px", background: "#F5F5F5", borderRadius: 12,
-      border: open ? "1px solid #BDBDBD" : "1px solid #E0E0E0",
+      padding: "8px 12px", background: "#f1f3f4", borderRadius: 12,
+      border: open ? "1px solid #dadce0" : "1px solid #E0E0E0",
       transition: "border-color 0.15s", flex: 1,
     }}>
-      <span style={{ color: "#9E9E9E", flexShrink: 0 }}>
+      <span style={{ color: "#80868b", flexShrink: 0 }}>
         {loading ? <IconSpinner size={16} /> : <IconSearch size={16} />}
       </span>
       <input
@@ -294,7 +294,7 @@ function SearchInput({
         aria-activedescendant={activeId}
         style={{
           flex: 1, background: "transparent", border: "none", outline: "none",
-          fontSize, color: "#212121", minWidth: 0,
+          fontSize, color: "#202124", minWidth: 0,
         }}
         onChange={(e) => onChange(e.target.value)}
         onFocus={onFocus}
@@ -309,7 +309,7 @@ function SearchInput({
             background: "#E0E0E0", border: "none", borderRadius: "50%",
             width: 18, height: 18, display: "flex",
             alignItems: "center", justifyContent: "center",
-            cursor: "pointer", color: "#757575", flexShrink: 0,
+            cursor: "pointer", color: "#5f6368", flexShrink: 0,
           }}
         >
           <IconX size={10} />
@@ -360,13 +360,13 @@ function DropdownContent({
               style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 10,
                 padding: "10px 16px", textAlign: "left",
-                background: selectedIdx === i ? "#F5F5F5" : "transparent",
+                background: selectedIdx === i ? "#f1f3f4" : "transparent",
                 border: "none", cursor: "pointer",
                 WebkitTapHighlightColor: "transparent",
               }}
             >
-              <span style={{ color: "#BDBDBD", flexShrink: 0 }}><IconClock /></span>
-              <span style={{ fontSize: 14, color: "#757575" }}>{term}</span>
+              <span style={{ color: "#dadce0", flexShrink: 0 }}><IconClock /></span>
+              <span style={{ fontSize: 14, color: "#5f6368" }}>{term}</span>
             </button>
           ))}
         </>
@@ -375,10 +375,10 @@ function DropdownContent({
       {/* Error state — a backend/network failure must not masquerade as "no results" */}
       {showResults && error && (
         <div role="status" style={{ padding: "28px 16px", textAlign: "center" }}>
-          <p style={{ fontSize: 14, color: "#A32D2D", margin: 0, fontWeight: 500 }}>
+          <p style={{ fontSize: 14, color: "#b3261e", margin: 0, fontWeight: 500 }}>
             Zoeken mislukt
           </p>
-          <p style={{ fontSize: 13, color: "#9E9E9E", margin: "4px 0 0" }}>
+          <p style={{ fontSize: 13, color: "#80868b", margin: "4px 0 0" }}>
             Controleer je verbinding en probeer het opnieuw.
           </p>
         </div>
@@ -387,9 +387,9 @@ function DropdownContent({
       {/* Empty state */}
       {showResults && !loading && !error && totalCount === 0 && (
         <div style={{ padding: "32px 16px", textAlign: "center" }}>
-          <p style={{ fontSize: 14, color: "#9E9E9E", margin: 0 }}>
+          <p style={{ fontSize: 14, color: "#80868b", margin: 0 }}>
             Geen resultaten voor{" "}
-            <strong style={{ color: "#616161", fontWeight: 500 }}>
+            <strong style={{ color: "#5f6368", fontWeight: 500 }}>
               &ldquo;{query}&rdquo;
             </strong>
           </p>
@@ -673,10 +673,10 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
             </div>
             <div style={{
               display: "flex", gap: 12, padding: "8px 16px",
-              borderTop: "1px solid #F0F0F0", background: "#FAFAFA",
+              borderTop: "1px solid #f1f3f4", background: "#f8f9fa",
             }}>
               {[["↑↓", "navigeren"], ["↵", "openen"], ["Esc", "sluiten"]].map(([key, label]) => (
-                <span key={key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#9E9E9E" }}>
+                <span key={key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#80868b" }}>
                   <Kbd>{key}</Kbd> {label}
                 </span>
               ))}
@@ -698,7 +698,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
           WebkitTapHighlightColor: "transparent", flexShrink: 0,
           ...(variant === "launcher"
             ? { width: 52, height: 52, borderRadius: 26, background: "#1A73E8", border: "none", color: "#fff", boxShadow: "0 4px 14px rgba(26,115,232,0.45)" }
-            : { width: 40, height: 40, borderRadius: 12, background: "#F5F5F5", border: "1px solid #E0E0E0", color: "#616161" }),
+            : { width: 40, height: 40, borderRadius: 12, background: "#f1f3f4", border: "1px solid #E0E0E0", color: "#5f6368" }),
         }}
       >
         <IconSearch size={variant === "launcher" ? 22 : 18} />
@@ -713,7 +713,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
         }}>
           <div style={{
             paddingTop: "env(safe-area-inset-top, 0px)",
-            borderBottom: "1px solid #F0F0F0",
+            borderBottom: "1px solid #f1f3f4",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px" }}>
               <SearchInput {...mobileInputProps} />

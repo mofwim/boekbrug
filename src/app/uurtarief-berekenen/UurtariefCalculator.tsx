@@ -94,7 +94,7 @@ const s = {
     justifyContent: 'space-between',
     fontSize: 14,
     padding: '10px 0',
-    borderBottom: '1px solid #f0f0f4',
+    borderBottom: '1px solid #f1f3f4',
   } as React.CSSProperties,
 }
 

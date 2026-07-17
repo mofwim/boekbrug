@@ -75,7 +75,7 @@ const s = {
   drop: { border: '2px dashed #dadce0', borderRadius: 16, padding: '40px 20px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8f9fa', transition: 'border-color 0.15s, background 0.15s' } as React.CSSProperties,
   dropActive: { borderColor: '#1a73e8', backgroundColor: '#eef5ff' } as React.CSSProperties,
   primary: { backgroundColor: '#1a73e8', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' } as React.CSSProperties,
-  row: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f0f0f4' } as React.CSSProperties,
+  row: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f1f3f4' } as React.CSSProperties,
   key: { color: '#5f6368', flexShrink: 0 } as React.CSSProperties,
   val: { color: '#202124', fontWeight: 600, textAlign: 'right', wordBreak: 'break-word' } as React.CSSProperties,
 }

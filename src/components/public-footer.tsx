@@ -43,7 +43,7 @@ export default function PublicFooter() {
           <Link href="/cookies" style={link}>Cookiebeleid</Link>
         </div>
       </div>
-      <div style={{ borderTop: '1px solid #f0f0f4', padding: '16px 20px', textAlign: 'center', fontSize: 12, color: '#bdc1c6' }}>
+      <div style={{ borderTop: '1px solid #f1f3f4', padding: '16px 20px', textAlign: 'center', fontSize: 12, color: '#bdc1c6' }}>
         © {new Date().getFullYear()} BoekBrug — voor ZZP’ers en boekhouders in Nederland.
       </div>
     </footer>

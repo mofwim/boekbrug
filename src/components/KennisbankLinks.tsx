@@ -87,7 +87,7 @@ export default function KennisbankLinks({ tool }: { tool: string }) {
             </li>
           ))}
         </ul>
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #f0f0f4' }}>
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #f1f3f4' }}>
           <Link href="/blog" style={{ fontSize: 14, color: '#5f6368', textDecoration: 'none' }}>
             Alle artikelen in de kennisbank →
           </Link>

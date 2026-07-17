@@ -48,7 +48,7 @@ const components: Components = {
     <th style={{ textAlign: 'left', padding: '9px 12px', background: '#f8f9fa', borderBottom: '1px solid #e0e0e0', fontWeight: 700, color: '#202124', whiteSpace: 'nowrap' }} {...omitNode(p)} />
   ),
   td: (p) => (
-    <td style={{ padding: '9px 12px', borderBottom: '1px solid #f0f0f4', color: '#3c4043', verticalAlign: 'top' }} {...omitNode(p)} />
+    <td style={{ padding: '9px 12px', borderBottom: '1px solid #f1f3f4', color: '#3c4043', verticalAlign: 'top' }} {...omitNode(p)} />
   ),
   blockquote: (p) => (
     <blockquote style={{ borderLeft: '3px solid #dadce0', margin: '0 0 14px', padding: '4px 0 4px 16px', color: '#5f6368' }} {...omitNode(p)} />
