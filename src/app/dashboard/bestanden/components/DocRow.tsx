@@ -50,7 +50,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
         // Only affects off-screen items; on-screen rows (the ones you can
         // drag/click) render and behave identically.
         contentVisibility: "auto",
-        containIntrinsicSize: "auto 44px",
+        containIntrinsicSize: "auto 52px",
       }}
     >
       {/* Checkbox */}
