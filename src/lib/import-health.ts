@@ -47,6 +47,7 @@ export interface ImportHealth {
     vendor: boolean // AI unsure about the supplier
     invoiceNumber: boolean // AI unsure about the invoice number
     invoiceDate: boolean // AI unsure about the date
+    reminder: boolean // [REMINDER] a payment reminder — check the original isn't already booked
   }
 }
 
@@ -92,6 +93,10 @@ export interface FieldConfidence {
     held_at?: string
     dedup?: string
     dedup_reason?: string
+    // [REMINDER] This invoice was read as a payment reminder — the original may already be
+    // booked, so it needs a human check (never bulk-confirmed as a second cost).
+    reminder?: boolean
+    reminder_of?: string
   }
 }
 
@@ -108,6 +113,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     vendor: false,
     invoiceNumber: false,
     invoiceDate: false,
+    reminder: false,
   }
 
   const fc = inv.field_confidence
@@ -117,6 +123,18 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // recompute over the stored amounts (upload path never ran the gate). Either
   // way the source of truth is the same evaluateArithmetic logic.
   const storedSafecore = fc?._safecore
+  // ── Reminder axis ────────────────────────────────────────────────────────
+  // [REMINDER] A payment reminder is a real single invoice, but the original was very likely
+  // already received — so this needs a human check before it's confirmed, to avoid booking the
+  // same debt twice. Flag it (→ needs-review, excluded from bulk-confirm) with a clear reason.
+  if (storedSafecore?.reminder === true) {
+    flags.reminder = true
+    reasons.push(
+      storedSafecore.reminder_of
+        ? `dit lijkt een herinnering voor factuur ${storedSafecore.reminder_of} — controleer of die al geboekt is`
+        : 'dit lijkt een betalingsherinnering — controleer of de originele factuur al geboekt is'
+    )
+  }
   if (storedSafecore && storedSafecore.arithmetic_ok === false) {
     flags.arithmetic = true
     // The stored reason is already owner-facing Dutch (e.g. "excl + BTW ≠ totaal").
@@ -214,7 +232,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
 
   const level: HealthLevel =
-    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate
+    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder
       ? 'needs-review'
       : 'clean'
 
