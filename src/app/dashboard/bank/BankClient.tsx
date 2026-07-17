@@ -766,6 +766,12 @@ export default function BankClient() {
   const noneAll = pending.filter((s) => s.outcome === 'none' && !isPartiallyLinked(s))
   const noMatch = noneAll.filter((s) => !isPosReceipt(s)).sort(byDateDesc)
   const posList = noneAll.filter(isPosReceipt).sort(byDateDesc)
+  // [BANK-SAFETY-NET] A DEBIT (money out, amount < 0) with no matching invoice is a payment for
+  // which we hold no purchase invoice — a MISSING INKOOPFACTUUR. It matters for the money: no
+  // invoice means the voorbelasting (deductible BTW) on that cost is not claimed, so the owner
+  // pays more BTW than they should. The bank line is the one signal that survives a silent
+  // import miss, so we turn it from a dead-end into a prompt to recover the document.
+  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0)
   const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).filter(inQ).sort(byDateDesc)
   // [BANK-QUARTER] Ignored tab, filtered to the selected quarter too.
   const ignoredInQ = (ignoredList ?? []).filter(inQ)
@@ -1064,6 +1070,35 @@ export default function BankClient() {
               )
             })}
           </div>
+
+          {/* [BANK-SAFETY-NET] Missing purchase invoices — a debit we can't match to any
+              invoice means the deductible BTW on that cost isn't claimed. The bank line is the
+              backstop that catches whatever import missed; turn it into a recovery prompt. */}
+          {bankTab === 'none' && missingPurchaseDebits.length > 0 && (
+            <div style={{ marginTop: 12, borderRadius: R.lg, background: '#FFF3E0', padding: '14px 16px', boxShadow: EL1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#B26A00' }}>receipt_long</span>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#7A4B00' }}>
+                  {missingPurchaseDebits.length} {missingPurchaseDebits.length === 1 ? 'betaling' : 'betalingen'} zonder inkoopfactuur
+                </div>
+              </div>
+              <div style={{ fontSize: 12.5, color: '#7A4B00', margin: '6px 0 12px', lineHeight: 1.5 }}>
+                Je hebt betaald, maar we hebben de factuur nog niet. Zonder factuur mis je de BTW-aftrek (voorbelasting) op deze kosten. Voeg de factuur toe, of haal je e-mail opnieuw op — dan koppelen we hem automatisch.
+              </div>
+              <Link
+                href="/dashboard/incoming"
+                style={{
+                  padding: '10px 16px', borderRadius: R.full, border: 'none',
+                  background: '#B26A00', color: '#fff', fontSize: 13.5, fontWeight: 600,
+                  fontFamily: FONT, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                  textDecoration: 'none',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 17 }}>add</span>
+                Factuur toevoegen of e-mail opnieuw ophalen
+              </Link>
+            </div>
+          )}
 
           {/* "Geen factuur" context — POS receipts naturally have no invoice */}
           {bankTab === 'none' && noMatch.length > 0 && (
