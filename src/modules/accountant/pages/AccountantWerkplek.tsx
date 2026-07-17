@@ -75,7 +75,7 @@ export default function AccountantWerkplek() {
   const parentHref = useParentPath('accountant')
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Header */}
       <div style={{

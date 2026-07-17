@@ -46,11 +46,14 @@ export default function RootLayout({
       className={`${roboto.variable} h-full antialiased`}
     >
       <head>
-        {/* [Design System] Material Symbols — icon font only, CDN is acceptable */}
+        {/* [Design System] Material Symbols — icon font only, CDN is acceptable.
+            display=block => the font stays invisible while loading and then
+            swaps in, so users never see the raw ligature text ("arrow_back")
+            flash before the glyph renders. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=block"
           rel="stylesheet"
         />
       </head>

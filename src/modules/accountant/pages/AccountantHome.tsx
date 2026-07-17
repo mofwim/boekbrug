@@ -172,7 +172,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
   const unreadNotifCount = notifications.filter(n => !n.read).length
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Header — unchanged */}
       <DashboardHeader

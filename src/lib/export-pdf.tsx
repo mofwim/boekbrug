@@ -40,7 +40,7 @@ const shared = StyleSheet.create({
   },
   brandSub: {
     fontSize: 9,
-    color: "#9ca3af",
+    color: "#9aa0a6",
     marginTop: 2,
   },
   docTitle: {
@@ -51,7 +51,7 @@ const shared = StyleSheet.create({
   },
   docSub: {
     fontSize: 10,
-    color: "#6b7280",
+    color: "#5f6368",
     textAlign: "right",
     marginTop: 3,
   },
@@ -68,7 +68,7 @@ const shared = StyleSheet.create({
   },
   infoLabel: {
     fontSize: 9,
-    color: "#9ca3af",
+    color: "#9aa0a6",
     width: 120,
   },
   infoValue: {
@@ -81,7 +81,7 @@ const shared = StyleSheet.create({
   sectionLabel: {
     fontSize: 9,
     fontFamily: "Helvetica-Bold",
-    color: "#9ca3af",
+    color: "#9aa0a6",
     textTransform: "uppercase",
     letterSpacing: 1,
     marginBottom: 8,
@@ -111,7 +111,7 @@ const shared = StyleSheet.create({
   headerText: {
     fontSize: 9,
     fontFamily: "Helvetica-Bold",
-    color: "#6b7280",
+    color: "#5f6368",
   },
   cellText: {
     fontSize: 9,
@@ -130,7 +130,7 @@ const shared = StyleSheet.create({
   },
   totalLabel: {
     fontSize: 10,
-    color: "#6b7280",
+    color: "#5f6368",
   },
   totalValue: {
     fontSize: 10,

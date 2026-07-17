@@ -84,7 +84,7 @@ const s = {
   } as React.CSSProperties,
   resultPanel: {
     marginTop: 8,
-    background: 'linear-gradient(135deg, #9334e6, #7d3ac1)',
+    background: 'linear-gradient(135deg, #7b1fa2, #7d3ac1)',
     borderRadius: 16,
     padding: '22px 24px',
     color: '#fff',
@@ -163,7 +163,7 @@ export default function UurtariefCalculator({ locale = 'nl' }: { locale?: Locale
         <button
           onClick={() => setUseBuffer((v) => !v)}
           aria-pressed={useBuffer}
-          style={{ width: 52, height: 30, borderRadius: 9999, border: 'none', cursor: 'pointer', backgroundColor: useBuffer ? '#9334e6' : '#e0e0e0', position: 'relative', transition: 'background 0.15s', flexShrink: 0 }}
+          style={{ width: 52, height: 30, borderRadius: 9999, border: 'none', cursor: 'pointer', backgroundColor: useBuffer ? '#7b1fa2' : '#e0e0e0', position: 'relative', transition: 'background 0.15s', flexShrink: 0 }}
         >
           <span style={{ position: 'absolute', top: 3, left: useBuffer ? 25 : 3, width: 24, height: 24, borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
         </button>

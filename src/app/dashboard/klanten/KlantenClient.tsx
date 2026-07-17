@@ -26,7 +26,7 @@ const M3 = {
   error:             '#B3261E',
   errorContainer:    '#F9DEDC',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 

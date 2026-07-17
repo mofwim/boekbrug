@@ -19,8 +19,8 @@ const M3 = {
   outlineVariant: '#E0E0E0', success: '#137333', successContainer: '#CEEAD6',
   warn: '#B26A00', warnContainer: '#FEEFC3',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 // Triage categories offered to the owner (Dutch), from the single source of truth.

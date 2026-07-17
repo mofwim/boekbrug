@@ -13,8 +13,8 @@ const M3 = {
   surface: '#ffffff', onSurface: '#202124', surfaceVariant: '#f1f3f4', outline: '#80868b',
   error: '#B3261E', neutral: '#5F6368',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })

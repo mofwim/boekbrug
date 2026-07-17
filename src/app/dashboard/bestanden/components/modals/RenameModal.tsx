@@ -54,7 +54,7 @@ export function RenameModal({ currentName, type, onConfirm, onClose }: RenameMod
       <div onClick={e => e.stopPropagation()} style={{
         background: T.surface, borderRadius: T.xl,
         boxShadow: T.elev3, padding: 24, width: "100%", maxWidth: 400,
-        fontFamily: "'Google Sans','Roboto',sans-serif",
+        fontFamily: "'Roboto',sans-serif",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
           <div style={{ width: 40, height: 40, borderRadius: T.lg, background: T.primaryContainer, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>

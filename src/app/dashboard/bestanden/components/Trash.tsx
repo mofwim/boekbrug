@@ -59,7 +59,7 @@ export function Trash({ onBack }: TrashProps) {
   const emptyTrash = () => permanentDelete(items.map(i => i.id));
 
   return (
-    <div style={{ fontFamily: "'Google Sans','Roboto',sans-serif" }}>
+    <div style={{ fontFamily: "'Roboto',sans-serif" }}>
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>

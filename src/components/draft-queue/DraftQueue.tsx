@@ -232,7 +232,7 @@ export default function DraftQueue({ clients }: Props) {
     <>
       {/* Responsive + skeleton rules — SSR-stable, no client-only branching */}
       <style>{`
-        .bq-dq-root { font-family: 'Google Sans','Roboto',sans-serif; }
+        .bq-dq-root { font-family: 'Roboto',sans-serif; }
         @keyframes bq-shimmer { 0% { background-position: -240px 0; } 100% { background-position: 240px 0; } }
         .bq-skel {
           background: #ECEFF1;

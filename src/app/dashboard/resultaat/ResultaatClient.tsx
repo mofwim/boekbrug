@@ -15,8 +15,8 @@ const M3 = {
   outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
   warning: '#7C5800', warningContainer: '#FEE8C4', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 interface Result {

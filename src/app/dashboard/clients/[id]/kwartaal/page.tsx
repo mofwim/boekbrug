@@ -288,7 +288,7 @@ export default function KwartaalPage() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Sticky header */}
       <div style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '12px 24px' }}>
@@ -330,7 +330,7 @@ export default function KwartaalPage() {
             // owner). While they load, show "…" rather than a wrong invoices-only sum.
             { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: '#34A853' },
             { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: '#EA4335' },
-            { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#9334E6' },
+            { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#7b1fa2' },
           ].map(s => (
             <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, textAlign: 'center' }}>
               <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>

@@ -30,8 +30,8 @@ const M3 = {
   outlineVariant:     '#E0E0E0',
   hairline:           '#ECEFF1',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const R = { lg: 16, full: 999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 const LONG_OPEN_DAYS = 30

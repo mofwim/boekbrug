@@ -16,8 +16,8 @@ const M3 = {
   surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
   warning: '#7C5800', warningContainer: '#FEE8C4', primaryContainer: '#D3E3FD',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 interface TurnoverRow {
@@ -210,8 +210,8 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   return (
     <div>
       <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', fontFamily: "'Google Sans','Roboto Mono',monospace" }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, fontFamily: "'Google Sans','Roboto Mono',monospace" }}>{sub}</div>}
+      <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', fontFamily: "'Roboto Mono',monospace" }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, fontFamily: "'Roboto Mono',monospace" }}>{sub}</div>}
     </div>
   )
 }

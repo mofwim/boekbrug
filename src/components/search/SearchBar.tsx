@@ -34,7 +34,7 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }>
 const TYPE_CONFIG: Record<string, { bg: string; color: string }> = {
   invoice:  { bg: "#e8f0fe", color: "#1967d2" },
   document: { bg: "#e6f4ea", color: "#137333" },
-  client:   { bg: "#F3EFFE", color: "#6B21A8" },
+  client:   { bg: "#F3EFFE", color: "#7b1fa2" },
 };
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────

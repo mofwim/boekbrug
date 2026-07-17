@@ -30,7 +30,7 @@ const M3 = {
   outline:           '#80868b',
   error:             '#B3261E',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
 
@@ -194,7 +194,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
           {/* [TURNOVER-IMPORT] Dagomzet — import the till Z-report (per-BTW-rate daily
               turnover), the retail store's authoritative revenue. */}
           <ActionCard
-            icon="point_of_sale" iconBg="#6A1B9A" iconColor="#fff"
+            icon="point_of_sale" iconBg="#7b1fa2" iconColor="#fff"
             label="Dagomzet" sub="Kassa Z-rapport importeren"
             onClick={() => router.push('/dashboard/dagomzet')}
           />
@@ -394,7 +394,7 @@ function Fab({ onClick }: { onClick: () => void }) {
         border: 'none', cursor: 'pointer',
         boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
         display: 'flex', alignItems: 'center', gap: 8,
-        fontFamily: "'Google Sans', 'Roboto', sans-serif",
+        fontFamily: "'Roboto', sans-serif",
         zIndex: 50,
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
       }}

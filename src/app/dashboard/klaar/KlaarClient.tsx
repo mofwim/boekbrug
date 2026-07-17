@@ -17,8 +17,8 @@ const M3 = {
   error: '#B3261E', errorContainer: '#F9DEDC', warning: '#7C5800', warningContainer: '#FEE8C4',
   bg: '#F8F9FA',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
 type DimensionKey = 'invoices' | 'bank' | 'cash' | 'vat'

@@ -22,7 +22,7 @@ const M3 = {
   surfaceVariant: '#f1f3f4',
   success: '#34A853', error: '#B3261E',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const R = { md: 12, lg: 16, full: 9999 }
 
 type Variant = 'card' | 'fab' | 'compact'
