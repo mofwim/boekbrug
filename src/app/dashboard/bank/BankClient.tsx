@@ -324,6 +324,12 @@ export default function BankClient() {
         setFormatNotice({ name: file.name, kept: true })
       }
 
+      // [BANK-AUTO-RUN] Claim the once-per-load guard BEFORE the awaits below. runMatch()
+      // populates `data`, and React can commit that render during the very next await — if the
+      // guard were still false the load effect would fire its own autoConfirm() there, then we
+      // would fire a second one, racing two passes. Setting it first makes the load effect
+      // short-circuit so this upload owns exactly one pass.
+      autoRanRef.current = true
       // Run matching (shared with initial load) — always, so `data` is populated even if
       // the auto-confirm pass below finds nothing or fails (the screen must never stay empty).
       await runMatch()
@@ -331,12 +337,9 @@ export default function BankClient() {
       // just uploaded appears immediately — without it the table only updated on a
       // full page reload (it's populated by loadStatements on mount).
       await loadStatements()
-      // [BANK-AUTO-RUN] Book the near-certain payments from the statement we just uploaded,
-      // right now — the owner shouldn't have to reload for the app to handle the sure ones.
-      // We own the pass here and set the once-per-load guard so the load effect doesn't also
-      // fire on the same data. The server books only the safe set (isSafeAutoConfirm); an
-      // empty or failed pass leaves the freshly matched list untouched.
-      autoRanRef.current = true
+      // Book the near-certain payments from the statement we just uploaded, right now — the
+      // owner shouldn't have to reload for the app to handle the sure ones. The server books
+      // only the safe set (isSafeAutoConfirm); an empty or failed pass leaves the list as-is.
       await autoConfirm()
     } catch {
       showToast('Er ging iets mis.')

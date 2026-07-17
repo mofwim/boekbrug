@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
 import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
+import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1780,7 +1781,15 @@ export default function IncomingInvoicesClient({
           body: JSON.stringify({ action: "verify", ...amounts }),
         });
         if (res.ok) {
-          showToast("✓ Factuur geverifieerd");
+          // [BANK-AUTO-RUN] The invoice is now verified ('received') and matchable. If the
+          // bank line that paid it is already waiting, book that link right here — the owner
+          // never has to open /bank to connect a payment that's already in. Best-effort.
+          const booked = await triggerBankAutoConfirm();
+          showToast(
+            booked > 0
+              ? `✓ Geverifieerd · ${booked} betaling${booked > 1 ? "en" : ""} automatisch gekoppeld`
+              : "✓ Factuur geverifieerd"
+          );
         } else {
           showToast("Verificatie mislukt — ververs de pagina");
         }
@@ -1868,9 +1877,14 @@ export default function IncomingInvoicesClient({
     setBulkRunning(false);
     setSelectMode(false);
     setSelected(new Set());
+    // [BANK-AUTO-RUN] ONE auto-confirm pass after the whole batch (never per invoice — that
+    // would re-scan the full set N times). Everything just verified is now matchable; any bank
+    // lines already waiting for them get booked in a single sweep.
+    const booked = ok > 0 ? await triggerBankAutoConfirm() : 0;
     const heldNote = flagged.length > 0 ? ` · ${flagged.length} met aandacht overgeslagen` : "";
+    const bookedNote = booked > 0 ? ` · ${booked} betaling${booked > 1 ? "en" : ""} gekoppeld` : "";
     if (failedNames.length === 0) {
-      showToast(`✓ ${ok} factuur${ok > 1 ? "en" : ""} geverifieerd${heldNote}`);
+      showToast(`✓ ${ok} factuur${ok > 1 ? "en" : ""} geverifieerd${bookedNote}${heldNote}`);
     } else {
       showToast(`${ok} geverifieerd · ${failedNames.length} mislukt${heldNote} — ververs de pagina`);
     }

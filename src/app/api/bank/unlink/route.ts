@@ -74,14 +74,22 @@ export async function POST(req: Request) {
   //    half-state the reviewer flagged — a restored (unpaid) invoice with a bank line still
   //    'matched' pointing at it, which the matcher (pending-only) would never resurface.
   //    Only detach OUR link (invoice_id guard) so a concurrent re-link is never clobbered.
-  const { error: unlinkErr } = await pipeline
+  const { data: detachData, error: unlinkErr } = await pipeline
     .from("bank_transactions")
     .update({ status: "pending", invoice_id: null })
     .eq("id", transactionId)
     .eq("user_id", user.id)
-    .eq("invoice_id", invoiceId);
+    .eq("invoice_id", invoiceId)
+    .select("id");
   if (unlinkErr) {
     return NextResponse.json({ error: "unlink_failed", detail: unlinkErr.message }, { status: 500 });
+  }
+  // [BANK-UNLINK-RACE] A 0-row detach (no error) means the tx was re-linked away from this
+  // invoice between our fetch and this write. We must NOT then un-pay the invoice — its bank
+  // line was never detached here, so restoring it would leave an inconsistent state. Bail as a
+  // conflict; nothing was changed, so the owner can safely retry once the state settles.
+  if (!detachData || detachData.length === 0) {
+    return NextResponse.json({ error: "conflict" }, { status: 409 });
   }
 
   // 4. Restore the invoice to unpaid. SESSION client so the B.4 trigger has auth context.
