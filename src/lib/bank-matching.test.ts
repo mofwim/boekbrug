@@ -11,6 +11,7 @@ import {
   coveredReferenceNumbers,
   dedupeCandidates,
   isPartialPaymentHint,
+  isSafeAutoConfirm,
   scorePair,
   DEFAULT_OPTIONS,
   type InvoiceForMatching,
@@ -336,6 +337,46 @@ console.log("\n— [BANK-CHOICE-NOCLAIM] an ambiguous choice does not steal a ca
   check("first tx is a choice (not forced auto)", r.matches[0].outcome === "choice");
   check("second tx is NOT 'none' (candidate wasn't stolen)", r.matches[1].outcome !== "none");
   check("both txns keep both candidates", r.matches[0].candidates.length === 2 && r.matches[1].candidates.length === 2);
+}
+
+console.log("\n— [BANK-AUTO-CONFIRM] only a near-certain single match is safe to auto-book —");
+{
+  const safe = matchTransactions(
+    [tx({ amount: 1210, reference: "001-2026" })],
+    [inv({ invoice_number: "001-2026", total_inc_btw: 1210 })],
+  );
+  check("reference + exact amount, single invoice → safe", isSafeAutoConfirm(safe.matches[0]) === true);
+
+  // Amount + counterpart only (no invoice number in the statement) → NOT safe to auto-book.
+  const amountOnly = matchTransactions(
+    [tx({ amount: 1210, date: "2026-02-12", counterpartName: "Jansen BV" })],
+    [inv({ invoice_number: "X-9", total_inc_btw: 1210, client_name: "Jansen BV", invoice_date: "2026-02-01" })],
+  );
+  check("amount+counterpart only → NOT safe (no reference)", isSafeAutoConfirm(amountOnly.matches[0]) === false);
+
+  // A multi-invoice batch (two reference numbers) → NOT safe (needs allocation).
+  const multi = matchTransactions(
+    [tx({ amount: 1210, reference: "001-2026, 002-2026" })],
+    [
+      inv({ id: "a", invoice_number: "001-2026", total_inc_btw: 700 }),
+      inv({ id: "b", invoice_number: "002-2026", total_inc_btw: 510 }),
+    ],
+  );
+  check("multi-invoice batch → NOT safe", isSafeAutoConfirm(multi.matches[0]) === false);
+
+  // Reference + amount BUT flagged an instalment → NOT safe (stays human).
+  const instalment = matchTransactions(
+    [tx({ amount: 1210, reference: "001-2026", description: "2e termijn factuur 001-2026" })],
+    [inv({ invoice_number: "001-2026", total_inc_btw: 1210 })],
+  );
+  check("instalment reference → NOT safe", isSafeAutoConfirm(instalment.matches[0]) === false);
+
+  // Reference without a matching amount (a €50 quote of a €500 invoice) → choice → NOT safe.
+  const wrongAmount = matchTransactions(
+    [tx({ amount: 50, reference: "001-2026" })],
+    [inv({ invoice_number: "001-2026", total_inc_btw: 500 })],
+  );
+  check("reference but wrong amount → NOT safe", isSafeAutoConfirm(wrongAmount.matches[0]) === false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
