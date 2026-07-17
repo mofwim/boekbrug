@@ -15,23 +15,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-const M3 = {
-  primary:            '#1A73E8',
-  onPrimaryContainer: '#041E49',
-  primaryContainer:   '#D3E3FD',
-  surface:            '#FFFFFF',
-  onSurface:          '#202124',
-  success:            '#137333',
-  successContainer:   '#CEEAD6',
-  warning:            '#7C5800',
-  warningContainer:   '#FEE8C4',
-  error:              '#B3261E',
-  neutral:            '#5F6368',
-  outlineVariant:     '#E0E0E0',
-  hairline:           '#e0e0e0',
-}
-const FONT = "'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Roboto Mono', monospace"
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+
 const R = { lg: 16, full: 999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 const LONG_OPEN_DAYS = 30
