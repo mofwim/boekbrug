@@ -902,14 +902,15 @@ export async function summarizeClosingPackage(args: {
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
 
-  // [PACKAGE-READINESS] Invoices dated in this quarter that are STILL in the verify queue
-  // (processing/draft) are real bills the owner hasn't confirmed. They don't count as verified
-  // above, so without this they'd vanish from the package with zero signal — the exact "missing
-  // invoice" the owner fears. Surface a warning so "afsluiten" is never auto-green while unverified
-  // invoices sit unbooked. (Readiness enforces the block; here we only report.)
-  const unverifiedInQuarter = all.filter(
-    (i) => i.status === "processing" || i.status === "draft",
-  ).length;
+  // [PACKAGE-READINESS] Imported invoices dated in this quarter STILL in the verify queue
+  // (status 'processing') are real bills the owner hasn't confirmed. They don't count as
+  // verified above, so without this they'd vanish from the package with zero signal — the
+  // exact "missing invoice" the owner fears. Surface a warning so "afsluiten" is never auto-
+  // green while unverified invoices sit unbooked. (Readiness enforces the block; here we only
+  // report.) Only 'processing' — that IS the verify queue; a 'draft' is an unsent OUTGOING
+  // sales invoice (not a legal invoice yet, and often an abandoned draft), a different concern
+  // that must not falsely block the quarter close.
+  const unverifiedInQuarter = all.filter((i) => i.status === "processing").length;
 
   // Count how many verified invoices actually have a retrievable PDF path.
   // outgoing → pdf_url ; incoming → document_id (resolved to a file_url).

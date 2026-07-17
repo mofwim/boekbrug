@@ -123,11 +123,11 @@ export async function GET(req: NextRequest) {
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
   }));
-  // [PACKAGE-READINESS] Real bills dated in the quarter still in the verify queue — they
-  // must block "klaar" (they'd otherwise reach the accountant nowhere).
-  const unverifiedInvoiceCount = invRaw.filter(
-    (i) => i.status === "processing" || i.status === "draft",
-  ).length;
+  // [PACKAGE-READINESS] Imported bills dated in the quarter still in the verify queue
+  // (status 'processing') must block "klaar" — they'd otherwise reach the accountant nowhere.
+  // Only 'processing' (the verify queue); a 'draft' is an unsent outgoing sales invoice, a
+  // separate concern that must not falsely block the close.
+  const unverifiedInvoiceCount = invRaw.filter((i) => i.status === "processing").length;
 
   const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
