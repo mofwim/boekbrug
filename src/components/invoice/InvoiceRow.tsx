@@ -272,6 +272,9 @@ export function InvoiceRowItem({
           opacity: 0.4,
           borderBottom: '1px solid #E0E0E0',
           backgroundColor: '#F8F9FA',
+          // [PERF] native list virtualization: skip rendering off-screen rows.
+          contentVisibility: 'auto',
+          containIntrinsicSize: 'auto 56px',
         }}
       >
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -310,6 +313,9 @@ export function InvoiceRowItem({
         backgroundColor: 'white',
         borderLeft: `3px solid ${accountantBorderColor}`,
         transition: isAccountantMode ? 'background 0.1s ease' : 'all 0.15s ease',
+        // [PERF] native list virtualization: skip rendering off-screen rows.
+        contentVisibility: 'auto',
+        containIntrinsicSize: 'auto 56px',
       }}
       onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = '#F8F9FA' }}
       onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'white' }}
