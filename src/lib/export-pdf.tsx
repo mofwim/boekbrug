@@ -36,7 +36,7 @@ const shared = StyleSheet.create({
   brandName: {
     fontSize: 16,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
   },
   brandSub: {
     fontSize: 9,
@@ -46,7 +46,7 @@ const shared = StyleSheet.create({
   docTitle: {
     fontSize: 18,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
     textAlign: "right",
   },
   docSub: {
@@ -74,7 +74,7 @@ const shared = StyleSheet.create({
   infoValue: {
     fontSize: 9,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
     flex: 1,
   },
   // Section label
@@ -115,7 +115,7 @@ const shared = StyleSheet.create({
   },
   cellText: {
     fontSize: 9,
-    color: "#1c1c1e",
+    color: "#202124",
   },
   // Totals
   totalsBlock: {
@@ -134,7 +134,7 @@ const shared = StyleSheet.create({
   },
   totalValue: {
     fontSize: 10,
-    color: "#1c1c1e",
+    color: "#202124",
   },
   totalFinalRow: {
     flexDirection: "row",
@@ -143,17 +143,17 @@ const shared = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 2,
-    borderTopColor: "#1c1c1e",
+    borderTopColor: "#202124",
   },
   totalFinalLabel: {
     fontSize: 12,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
   },
   totalFinalValue: {
     fontSize: 12,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
   },
   // Footer
   footer: {

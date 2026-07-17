@@ -182,7 +182,7 @@ export default function KasClient() {
           {error && <div style={{ fontSize: 13, color: M3.error, marginBottom: 10 }}>{error}</div>}
 
           <button onClick={add} disabled={saving}
-            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', background: saving ? '#C7C7CC' : M3.primary, color: M3.onPrimary, fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
+            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', background: saving ? '#dadce0' : M3.primary, color: M3.onPrimary, fontSize: 15, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
             {saving ? 'Bezig…' : 'Toevoegen'}
           </button>
         </div>

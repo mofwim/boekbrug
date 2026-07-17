@@ -175,10 +175,10 @@ function RegisterContent() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
         <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
           <div aria-hidden="true" style={{ fontSize: "48px", marginBottom: "16px" }}>📧</div>
-          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#1c1c1e", margin: "0 0 8px" }}>
+          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#202124", margin: "0 0 8px" }}>
             Controleer je e-mail
           </h1>
-          <p style={{ fontSize: "15px", color: "#6b6b6e", margin: "0 0 24px" }}>
+          <p style={{ fontSize: "15px", color: "#5f6368", margin: "0 0 24px" }}>
             We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
             Klik op de link om je account te activeren.
           </p>

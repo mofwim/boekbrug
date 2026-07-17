@@ -33,7 +33,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Helvetica',
     fontSize: 10,
     padding: 44,
-    color: '#1c1c1e',
+    color: '#202124',
     backgroundColor: '#ffffff',
     lineHeight: 1.4,
   },
@@ -70,13 +70,13 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   partyName: { fontSize: 11, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
-  partyText: { fontSize: 10, color: '#3c3c43', marginBottom: 1 },
+  partyText: { fontSize: 10, color: '#3c4043', marginBottom: 1 },
 
   // Heading + meta
   heading: { fontSize: 18, fontFamily: 'Helvetica-Bold', marginBottom: 10 },
   metaRow: { flexDirection: 'row', marginBottom: 2 },
-  metaLabel: { width: 96, fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#1c1c1e' },
-  metaValue: { fontSize: 10, color: '#3c3c43' },
+  metaLabel: { width: 96, fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#202124' },
+  metaValue: { fontSize: 10, color: '#3c4043' },
 
   // Table
   table: { marginTop: 26 },
@@ -97,14 +97,14 @@ const styles = StyleSheet.create({
   colOmschrijving: { flex: 1, fontSize: 10, paddingRight: 8 },
   colPrijs: { width: 78, fontSize: 10, textAlign: 'right' },
   colTotaal: { width: 84, fontSize: 10, textAlign: 'right' },
-  headerText: { fontFamily: 'Helvetica-Bold', color: '#1c1c1e' },
+  headerText: { fontFamily: 'Helvetica-Bold', color: '#202124' },
 
   // Totals
   totalsWrap: { alignItems: 'flex-end', marginTop: 14 },
   totalsBlock: { width: 300 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
-  totalLabel: { fontSize: 10, color: '#3c3c43', flexShrink: 1, paddingRight: 12 },
-  totalValue: { fontSize: 10, color: '#1c1c1e' },
+  totalLabel: { fontSize: 10, color: '#3c4043', flexShrink: 1, paddingRight: 12 },
+  totalValue: { fontSize: 10, color: '#202124' },
   totalFinalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
   totalFinalValue: { fontSize: 12, fontFamily: 'Helvetica-Bold' },
 
   // Payment
-  payment: { marginTop: 34, fontSize: 10, color: '#3c3c43', lineHeight: 1.5 },
+  payment: { marginTop: 34, fontSize: 10, color: '#3c4043', lineHeight: 1.5 },
 
   footer: {
     position: 'absolute',

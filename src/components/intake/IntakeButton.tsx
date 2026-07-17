@@ -327,20 +327,20 @@ export default function IntakeButton({
               width: '100%', maxWidth: 430,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 19, color: '#1c1c1e', marginBottom: 4 }}>
+            <div style={{ fontWeight: 700, fontSize: 19, color: '#202124', marginBottom: 4 }}>
               {destModal.isDuplicate ? 'Dit bestand bestaat al' : 'Bestand toegevoegd'}
             </div>
-            <div style={{ fontSize: 14, color: '#8e8e93', marginBottom: 16 }}>
+            <div style={{ fontSize: 14, color: '#9aa0a6', marginBottom: 16 }}>
               {destModal.isDuplicate ? 'Je hebt dit bestand al eerder toegevoegd:' : 'Dit is er met je bestand gebeurd:'}
             </div>
 
             <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: '#f7f7f9', marginBottom: 20 }}>
               <span style={{ fontSize: 16, lineHeight: '20px' }}>{destModal.isDuplicate ? 'ℹ️' : '📁'}</span>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <p style={{ fontSize: 13, fontWeight: 600, color: '#1c1c1e', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {destModal.fileName}
                 </p>
-                <p style={{ fontSize: 12, color: '#007aff', margin: 0 }}>
+                <p style={{ fontSize: 12, color: '#1a73e8', margin: 0 }}>
                   {destModal.folderName ? `Dit bestand staat in: ${destModal.folderName}` : destModal.message}
                 </p>
                 {destModal.documentId && (
@@ -358,7 +358,7 @@ export default function IntakeButton({
                       setDestModal(null)
                       router.push(url)
                     }}
-                    style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#007aff', fontSize: 12, fontWeight: 600, textDecoration: 'underline' }}
+                    style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#1a73e8', fontSize: 12, fontWeight: 600, textDecoration: 'underline' }}
                   >
                     Bekijk in bestanden →
                   </button>
@@ -370,7 +370,7 @@ export default function IntakeButton({
               onClick={() => setDestModal(null)}
               style={{
                 width: '100%', padding: '16px', borderRadius: 14,
-                background: '#34c759', color: '#fff', border: 'none',
+                background: '#34a853', color: '#fff', border: 'none',
                 fontWeight: 700, fontSize: 16, cursor: 'pointer', fontFamily: FONT,
               }}
             >

@@ -230,13 +230,13 @@ export default function InvoiceEditPage() {
 
   // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <p className="text-gray-400 text-sm">Laden...</p>
     </div>
   )
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
+    <div className="min-h-screen bg-[#f8f9fa]">
 
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">

@@ -56,11 +56,11 @@ const s = {
     boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
     border: '1px solid #ececf1',
   } as React.CSSProperties,
-  label: { fontSize: 13, fontWeight: 600, color: '#6b6b6e', marginBottom: 8 } as React.CSSProperties,
+  label: { fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 8 } as React.CSSProperties,
   segRow: {
     display: 'flex',
     gap: 4,
-    backgroundColor: '#f2f2f7',
+    backgroundColor: '#f8f9fa',
     padding: 4,
     borderRadius: 12,
     marginBottom: 20,
@@ -75,20 +75,20 @@ const s = {
     cursor: 'pointer',
     border: 'none',
     backgroundColor: active ? '#ffffff' : 'transparent',
-    color: active ? '#007aff' : '#6b6b6e',
+    color: active ? '#1a73e8' : '#5f6368',
     boxShadow: active ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
     transition: 'all 0.12s ease',
   }),
   amountWrap: {
     display: 'flex',
     alignItems: 'center',
-    border: '1px solid #e5e5ea',
+    border: '1px solid #e0e0e0',
     borderRadius: 12,
-    backgroundColor: '#f9f9fb',
+    backgroundColor: '#f8f9fa',
     padding: '0 14px',
     marginBottom: 20,
   } as React.CSSProperties,
-  euro: { fontSize: 22, color: '#aeaeb2', marginRight: 8 } as React.CSSProperties,
+  euro: { fontSize: 22, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
   amountInput: {
     flex: 1,
     fontSize: 24,
@@ -97,7 +97,7 @@ const s = {
     border: 'none',
     outline: 'none',
     background: 'transparent',
-    color: '#1c1c1e',
+    color: '#202124',
     width: '100%',
     fontFamily: 'inherit',
   } as React.CSSProperties,
@@ -107,15 +107,15 @@ const s = {
     fontSize: 14,
     fontWeight: 600,
     cursor: 'pointer',
-    border: active ? '1.5px solid #007aff' : '1.5px solid #e5e5ea',
-    backgroundColor: active ? '#e8f1ff' : '#ffffff',
-    color: active ? '#007aff' : '#3c3c43',
+    border: active ? '1.5px solid #1a73e8' : '1.5px solid #e0e0e0',
+    backgroundColor: active ? '#e8f0fe' : '#ffffff',
+    color: active ? '#1a73e8' : '#3c4043',
   }),
   customInput: {
     width: 64,
     padding: '9px 10px',
     borderRadius: 9999,
-    border: '1.5px solid #e5e5ea',
+    border: '1.5px solid #e0e0e0',
     fontSize: 14,
     fontWeight: 600,
     outline: 'none',
@@ -124,7 +124,7 @@ const s = {
   } as React.CSSProperties,
   resultPanel: {
     marginTop: 24,
-    background: 'linear-gradient(135deg, #007aff, #0a63d6)',
+    background: 'linear-gradient(135deg, #1a73e8, #0a63d6)',
     borderRadius: 16,
     padding: '22px 24px',
     color: '#fff',
@@ -205,13 +205,13 @@ export default function BtwCalculator({ locale = 'nl' }: { locale?: Locale }) {
             {r}%
           </button>
         ))}
-        <span style={{ color: '#aeaeb2', fontSize: 13 }}>{t.or}</span>
+        <span style={{ color: '#bdc1c6', fontSize: 13 }}>{t.or}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <input
             style={{
               ...s.customInput,
-              borderColor: customActive ? '#007aff' : '#e5e5ea',
-              backgroundColor: customActive ? '#e8f1ff' : '#fff',
+              borderColor: customActive ? '#1a73e8' : '#e0e0e0',
+              backgroundColor: customActive ? '#e8f0fe' : '#fff',
             }}
             value={customRate}
             onChange={(e) => {
@@ -223,7 +223,7 @@ export default function BtwCalculator({ locale = 'nl' }: { locale?: Locale }) {
             placeholder={t.customPh}
             aria-label={t.customAria}
           />
-          <span style={{ color: '#3c3c43', fontSize: 14, fontWeight: 600 }}>%</span>
+          <span style={{ color: '#3c4043', fontSize: 14, fontWeight: 600 }}>%</span>
         </div>
       </div>
 
@@ -236,16 +236,16 @@ export default function BtwCalculator({ locale = 'nl' }: { locale?: Locale }) {
       {/* Breakdown */}
       <div style={{ marginTop: 18 }}>
         <div style={s.breakdownRow}>
-          <span style={{ color: '#6b6b6e' }}>{t.bExcl}</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(ex)}</span>
+          <span style={{ color: '#5f6368' }}>{t.bExcl}</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>{fmt(ex)}</span>
         </div>
         <div style={s.breakdownRow}>
-          <span style={{ color: '#6b6b6e' }}>{t.bVat} ({effRate}%)</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(btw)}</span>
+          <span style={{ color: '#5f6368' }}>{t.bVat} ({effRate}%)</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>{fmt(btw)}</span>
         </div>
         <div style={{ ...s.breakdownRow, borderBottom: 'none' }}>
-          <span style={{ color: '#1c1c1e', fontWeight: 700 }}>{t.bIncl}</span>
-          <span style={{ fontWeight: 800, color: '#1c1c1e' }}>{fmt(inc)}</span>
+          <span style={{ color: '#202124', fontWeight: 700 }}>{t.bIncl}</span>
+          <span style={{ fontWeight: 800, color: '#202124' }}>{fmt(inc)}</span>
         </div>
       </div>
 
@@ -253,7 +253,7 @@ export default function BtwCalculator({ locale = 'nl' }: { locale?: Locale }) {
       <div
         style={{
           marginTop: 22,
-          background: '#f9f9fb',
+          background: '#f8f9fa',
           border: '1px solid #ececf1',
           borderRadius: 14,
           padding: 16,
@@ -264,14 +264,14 @@ export default function BtwCalculator({ locale = 'nl' }: { locale?: Locale }) {
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ fontSize: 14, color: '#3c3c43' }}>
+        <div style={{ fontSize: 14, color: '#3c4043' }}>
           {t.ctaText}{' '}
-          <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
+          <strong style={{ color: '#202124' }}>{t.ctaStrong}</strong>
         </div>
         <Link
           href={t.ctaHref}
           style={{
-            backgroundColor: '#007aff',
+            backgroundColor: '#1a73e8',
             color: '#fff',
             fontSize: 14,
             fontWeight: 600,

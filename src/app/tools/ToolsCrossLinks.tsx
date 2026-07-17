@@ -15,7 +15,7 @@ export default function ToolsCrossLinks({ currentSlug }: { currentSlug: string }
 
   return (
     <section style={{ ...wrap, marginTop: 8, paddingBottom: 56 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: '#6b6b6e', margin: '0 0 12px' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#5f6368', margin: '0 0 12px' }}>
         Meer gratis tools
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
@@ -30,15 +30,15 @@ export default function ToolsCrossLinks({ currentSlug }: { currentSlug: string }
             }}
           >
             <span style={{ fontSize: 22 }} aria-hidden>{t.emoji}</span>
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#1c1c1e' }}>{t.title}</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#202124' }}>{t.title}</span>
           </Link>
         ))}
         <Link
           href="/tools"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            background: '#f2f2f7', border: '1px solid #ececf1', borderRadius: 14,
-            padding: '12px 14px', textDecoration: 'none', fontSize: 14, fontWeight: 600, color: '#007aff',
+            background: '#f8f9fa', border: '1px solid #ececf1', borderRadius: 14,
+            padding: '12px 14px', textDecoration: 'none', fontSize: 14, fontWeight: 600, color: '#1a73e8',
           }}
         >
           Alle tools →

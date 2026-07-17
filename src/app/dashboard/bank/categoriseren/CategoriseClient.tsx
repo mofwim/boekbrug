@@ -295,7 +295,7 @@ export default function CategoriseClient() {
                   disabled={busy === it.id}
                   style={{
                     marginTop: 12, width: '100%', padding: '11px', borderRadius: 12, border: 'none',
-                    background: busy === it.id ? '#C7C7CC' : M3.primary, color: M3.onPrimary,
+                    background: busy === it.id ? '#dadce0' : M3.primary, color: M3.onPrimary,
                     fontSize: 15, fontWeight: 600, cursor: busy === it.id ? 'default' : 'pointer', fontFamily: FONT,
                   }}
                 >

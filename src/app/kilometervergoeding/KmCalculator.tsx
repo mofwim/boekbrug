@@ -50,17 +50,17 @@ const s = {
     boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
     border: '1px solid #ececf1',
   } as React.CSSProperties,
-  label: { fontSize: 13, fontWeight: 600, color: '#6b6b6e', marginBottom: 8 } as React.CSSProperties,
+  label: { fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 8 } as React.CSSProperties,
   field: {
     display: 'flex',
     alignItems: 'center',
-    border: '1px solid #e5e5ea',
+    border: '1px solid #e0e0e0',
     borderRadius: 12,
-    backgroundColor: '#f9f9fb',
+    backgroundColor: '#f8f9fa',
     padding: '0 14px',
     marginBottom: 18,
   } as React.CSSProperties,
-  prefix: { fontSize: 18, color: '#aeaeb2', marginRight: 8 } as React.CSSProperties,
+  prefix: { fontSize: 18, color: '#bdc1c6', marginRight: 8 } as React.CSSProperties,
   input: {
     flex: 1,
     fontSize: 20,
@@ -69,7 +69,7 @@ const s = {
     border: 'none',
     outline: 'none',
     background: 'transparent',
-    color: '#1c1c1e',
+    color: '#202124',
     width: '100%',
     fontFamily: 'inherit',
   } as React.CSSProperties,
@@ -82,7 +82,7 @@ const s = {
   } as React.CSSProperties,
   resultPanel: {
     marginTop: 22,
-    background: 'linear-gradient(135deg, #34c759, #24a148)',
+    background: 'linear-gradient(135deg, #34a853, #24a148)',
     borderRadius: 16,
     padding: '22px 24px',
     color: '#fff',
@@ -143,7 +143,7 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
       </div>
 
       <div style={s.toggleRow}>
-        <span style={{ fontSize: 15, color: '#1c1c1e', fontWeight: 500 }}>{t.returnLabel}</span>
+        <span style={{ fontSize: 15, color: '#202124', fontWeight: 500 }}>{t.returnLabel}</span>
         <button
           onClick={() => setRetour((v) => !v)}
           aria-pressed={retour}
@@ -153,7 +153,7 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
             borderRadius: 9999,
             border: 'none',
             cursor: 'pointer',
-            backgroundColor: retour ? '#34c759' : '#e5e5ea',
+            backgroundColor: retour ? '#34a853' : '#e0e0e0',
             position: 'relative',
             transition: 'background 0.15s',
           }}
@@ -196,21 +196,21 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
 
       <div style={{ marginTop: 18 }}>
         <div style={s.breakdownRow}>
-          <span style={{ color: '#6b6b6e' }}>{t.totalKm}</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>
+          <span style={{ color: '#5f6368' }}>{t.totalKm}</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>
             {totalKm.toLocaleString(locale === 'en' ? 'en-IE' : 'nl-NL')} km
           </span>
         </div>
         <div style={{ ...s.breakdownRow, borderBottom: 'none' }}>
-          <span style={{ color: '#6b6b6e' }}>{t.ratePerKm}</span>
-          <span style={{ fontWeight: 600, color: '#1c1c1e' }}>{fmt(perKm)}</span>
+          <span style={{ color: '#5f6368' }}>{t.ratePerKm}</span>
+          <span style={{ fontWeight: 600, color: '#202124' }}>{fmt(perKm)}</span>
         </div>
       </div>
 
       <div
         style={{
           marginTop: 22,
-          background: '#f9f9fb',
+          background: '#f8f9fa',
           border: '1px solid #ececf1',
           borderRadius: 14,
           padding: 16,
@@ -221,14 +221,14 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ fontSize: 14, color: '#3c3c43' }}>
+        <div style={{ fontSize: 14, color: '#3c4043' }}>
           {t.ctaText}{' '}
-          <strong style={{ color: '#1c1c1e' }}>{t.ctaStrong}</strong>
+          <strong style={{ color: '#202124' }}>{t.ctaStrong}</strong>
         </div>
         <Link
           href={t.ctaHref}
           style={{
-            backgroundColor: '#007aff',
+            backgroundColor: '#1a73e8',
             color: '#fff',
             fontSize: 14,
             fontWeight: 600,

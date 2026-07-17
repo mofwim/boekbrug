@@ -103,10 +103,10 @@ export default function BankConverter() {
     <main style={{ maxWidth: 820, margin: '0 auto', padding: '32px 16px 64px', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <div style={{ textAlign: 'center', marginBottom: 28 }}>
         <div style={{ fontSize: 40, marginBottom: 8 }} aria-hidden>🏦→📊</div>
-        <h1 style={{ fontSize: 32, fontWeight: 800, color: '#1c1c1e', margin: '0 0 10px', letterSpacing: -0.5 }}>
+        <h1 style={{ fontSize: 32, fontWeight: 800, color: '#202124', margin: '0 0 10px', letterSpacing: -0.5 }}>
           Bankafschrift naar Excel
         </h1>
-        <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto', maxWidth: 560, lineHeight: 1.55 }}>
+        <p style={{ fontSize: 17, color: '#5f6368', margin: '0 auto', maxWidth: 560, lineHeight: 1.55 }}>
           Zet je bankafschrift (CSV, MT940 of CAMT.053) om naar een nette Excel. Werkt met ING,
           Rabobank, bunq en veel andere Nederlandse banken. Gratis, geen account.
         </p>
@@ -123,17 +123,17 @@ export default function BankConverter() {
             tabIndex={0}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click() }}
             style={{
-              border: `2px dashed ${dragOver ? '#007aff' : '#c9c9ce'}`,
+              border: `2px dashed ${dragOver ? '#1a73e8' : '#c9c9ce'}`,
               background: dragOver ? '#f0f7ff' : '#fff',
               borderRadius: 18, padding: '48px 24px', textAlign: 'center', cursor: 'pointer',
               transition: 'all .15s', outline: 'none',
             }}
           >
             <div style={{ fontSize: 34, marginBottom: 12 }} aria-hidden>📎</div>
-            <div style={{ fontSize: 17, fontWeight: 600, color: '#1c1c1e', marginBottom: 6 }}>
+            <div style={{ fontSize: 17, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
               {busy ? 'Bezig met lezen…' : 'Sleep je afschrift hierheen of klik om te kiezen'}
             </div>
-            <div style={{ fontSize: 14, color: '#8e8e93' }}>CSV, MT940 (.sta) of CAMT.053 (.xml) — max 8 MB</div>
+            <div style={{ fontSize: 14, color: '#9aa0a6' }}>CSV, MT940 (.sta) of CAMT.053 (.xml) — max 8 MB</div>
             <input
               ref={inputRef} type="file" accept=".csv,.txt,.sta,.mt940,.xml,.camt,.053,text/csv,text/plain,application/xml"
               style={{ display: 'none' }}
@@ -159,11 +159,11 @@ export default function BankConverter() {
           <div style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: 22, boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 13, color: '#8e8e93' }}>{parsed.fileName} · {parsed.result.format}</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: '#1c1c1e' }}>{txs.length} transacties gevonden</div>
-                {dates.length > 0 && <div style={{ fontSize: 13.5, color: '#6b6b6e' }}>{dateNL(dates[0])} — {dateNL(dates[dates.length - 1])}</div>}
+                <div style={{ fontSize: 13, color: '#9aa0a6' }}>{parsed.fileName} · {parsed.result.format}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: '#202124' }}>{txs.length} transacties gevonden</div>
+                {dates.length > 0 && <div style={{ fontSize: 13.5, color: '#5f6368' }}>{dateNL(dates[0])} — {dateNL(dates[dates.length - 1])}</div>}
               </div>
-              <button onClick={reset} style={{ background: '#f2f2f7', border: 'none', borderRadius: 999, padding: '9px 16px', fontSize: 13.5, fontWeight: 600, color: '#1c1c1e', cursor: 'pointer' }}>
+              <button onClick={reset} style={{ background: '#f8f9fa', border: 'none', borderRadius: 999, padding: '9px 16px', fontSize: 13.5, fontWeight: 600, color: '#202124', cursor: 'pointer' }}>
                 Ander bestand
               </button>
             </div>
@@ -174,10 +174,10 @@ export default function BankConverter() {
             </div>
 
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button onClick={downloadXlsx} style={{ background: '#007aff', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 22px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
+              <button onClick={downloadXlsx} style={{ background: '#1a73e8', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 22px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
                 ⬇︎ Download als Excel (.xlsx)
               </button>
-              <button onClick={downloadCsv} style={{ background: '#fff', color: '#007aff', border: '1px solid #007aff', borderRadius: 10, padding: '13px 22px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
+              <button onClick={downloadCsv} style={{ background: '#fff', color: '#1a73e8', border: '1px solid #1a73e8', borderRadius: 10, padding: '13px 22px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
                 ⬇︎ Download als CSV
               </button>
             </div>
@@ -191,13 +191,13 @@ export default function BankConverter() {
 
           {/* Preview — first 8 rows */}
           <div style={{ marginTop: 18, background: '#fff', border: '1px solid #ececf1', borderRadius: 16, overflow: 'hidden' }}>
-            <div style={{ padding: '12px 16px', fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#8e8e93', borderBottom: '1px solid #f2f2f7' }}>
+            <div style={{ padding: '12px 16px', fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#9aa0a6', borderBottom: '1px solid #f8f9fa' }}>
               VOORBEELD (eerste {Math.min(8, txs.length)} van {txs.length})
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                 <thead>
-                  <tr style={{ color: '#8e8e93', textAlign: 'left' }}>
+                  <tr style={{ color: '#9aa0a6', textAlign: 'left' }}>
                     <th style={{ padding: '8px 16px', fontWeight: 600 }}>Datum</th>
                     <th style={{ padding: '8px 16px', fontWeight: 600 }}>Tegenpartij</th>
                     <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'right' }}>Bedrag</th>
@@ -205,9 +205,9 @@ export default function BankConverter() {
                 </thead>
                 <tbody>
                   {[...txs].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 8).map((t, i) => (
-                    <tr key={i} style={{ borderTop: '1px solid #f2f2f7' }}>
-                      <td style={{ padding: '9px 16px', color: '#6b6b6e', whiteSpace: 'nowrap' }}>{dateNL(t.date)}</td>
-                      <td style={{ padding: '9px 16px', color: '#1c1c1e' }}>{t.counterpartName || t.description || '—'}</td>
+                    <tr key={i} style={{ borderTop: '1px solid #f8f9fa' }}>
+                      <td style={{ padding: '9px 16px', color: '#5f6368', whiteSpace: 'nowrap' }}>{dateNL(t.date)}</td>
+                      <td style={{ padding: '9px 16px', color: '#202124' }}>{t.counterpartName || t.description || '—'}</td>
                       <td style={{ padding: '9px 16px', textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap', color: t.amount < 0 ? '#b3261e' : '#137333' }}>{eur.format(t.amount)}</td>
                     </tr>
                   ))}
@@ -218,11 +218,11 @@ export default function BankConverter() {
 
           {/* Soft hand-off — no lock */}
           <section style={{ marginTop: 22, background: '#f0f7ff', border: '1px solid #d3e3fd', borderRadius: 16, padding: 22, textAlign: 'center' }}>
-            <div style={{ fontSize: 17, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>Wil je dit niet elke maand opnieuw doen?</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#202124', marginBottom: 6 }}>Wil je dit niet elke maand opnieuw doen?</div>
             <div style={{ fontSize: 14.5, color: '#5b5b60', marginBottom: 16, maxWidth: 520, margin: '0 auto 16px', lineHeight: 1.55 }}>
               In BoekBrug staan je afschriften, facturen en BTW bij elkaar. Je bank koppelen we automatisch aan je facturen — klaar voor je aangifte en je boekhouder.
             </div>
-            <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 24px', borderRadius: 9999, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/register" style={{ backgroundColor: '#1a73e8', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 24px', borderRadius: 9999, textDecoration: 'none', display: 'inline-block' }}>
               Gratis account maken
             </Link>
           </section>
@@ -235,7 +235,7 @@ export default function BankConverter() {
 function Stat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div style={{ flex: 1, minWidth: 150, background: '#f8f9fb', borderRadius: 12, padding: '12px 16px' }}>
-      <div style={{ fontSize: 12.5, color: '#8e8e93', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 12.5, color: '#9aa0a6', marginBottom: 3 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 700, color }}>{value}</div>
     </div>
   )

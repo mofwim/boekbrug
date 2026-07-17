@@ -172,8 +172,8 @@ function emptyLine(): Line {
 const s = {
   page: {
     minHeight: '100vh',
-    backgroundColor: '#f2f2f7',
-    color: '#1c1c1e',
+    backgroundColor: '#f8f9fa',
+    color: '#202124',
     fontFamily: 'var(--font-sans), -apple-system, system-ui, sans-serif',
   } as React.CSSProperties,
   wrap: {
@@ -182,7 +182,7 @@ const s = {
     padding: '24px 16px 64px',
   } as React.CSSProperties,
   h1: { fontSize: 28, fontWeight: 700, margin: '0 0 4px' } as React.CSSProperties,
-  sub: { fontSize: 14, color: '#6b6b6e', margin: '0 0 24px' } as React.CSSProperties,
+  sub: { fontSize: 14, color: '#5f6368', margin: '0 0 24px' } as React.CSSProperties,
   card: {
     backgroundColor: '#ffffff',
     borderRadius: 16,
@@ -195,20 +195,20 @@ const s = {
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: 1,
-    color: '#aeaeb2',
+    color: '#bdc1c6',
     margin: '0 0 14px',
   } as React.CSSProperties,
   // Paired fields collapse to one column on narrow screens (auto-fit) instead
   // of forcing a rigid 2-column grid that overflows a phone.
   grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 } as React.CSSProperties,
   field: { display: 'flex', flexDirection: 'column', gap: 4 } as React.CSSProperties,
-  label: { fontSize: 12, color: '#6b6b6e', fontWeight: 500 } as React.CSSProperties,
+  label: { fontSize: 12, color: '#5f6368', fontWeight: 500 } as React.CSSProperties,
   input: {
     fontSize: 15,
     padding: '10px 12px',
     borderRadius: 10,
-    border: '1px solid #e5e5ea',
-    backgroundColor: '#f9f9fb',
+    border: '1px solid #e0e0e0',
+    backgroundColor: '#f8f9fa',
     outline: 'none',
     width: '100%',
     minWidth: 0,
@@ -216,7 +216,7 @@ const s = {
     fontFamily: 'inherit',
   } as React.CSSProperties,
   btnPrimary: {
-    backgroundColor: '#007aff',
+    backgroundColor: '#1a73e8',
     color: '#fff',
     fontSize: 15,
     fontWeight: 600,
@@ -229,12 +229,12 @@ const s = {
   } as React.CSSProperties,
   btnGhost: {
     backgroundColor: 'transparent',
-    color: '#007aff',
+    color: '#1a73e8',
     fontSize: 14,
     fontWeight: 600,
     padding: '8px 12px',
     borderRadius: 9999,
-    border: '1px solid #007aff',
+    border: '1px solid #1a73e8',
     cursor: 'pointer',
   } as React.CSSProperties,
   // The line-item table keeps its column layout; on narrow screens it scrolls
@@ -520,13 +520,13 @@ export default function GratisFactuur() {
             <div style={s.field}>
               <label style={s.label}>BTW-nummer</label>
               <input
-                style={{ ...s.input, borderColor: btwWarn ? '#ff9500' : '#e5e5ea' }}
+                style={{ ...s.input, borderColor: btwWarn ? '#e37400' : '#e0e0e0' }}
                 value={sender.btw_number}
                 onChange={setS('btw_number')}
                 placeholder="NL123456789B01"
               />
               {btwWarn && (
-                <span style={{ fontSize: 11, color: '#ff9500' }}>
+                <span style={{ fontSize: 11, color: '#e37400' }}>
                   Ziet er niet uit als een geldig NL BTW-id (NL + 9 cijfers + B + 2).
                 </span>
               )}
@@ -636,7 +636,7 @@ export default function GratisFactuur() {
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#ff3b30',
+                      color: '#ea4335',
                       fontSize: 20,
                       cursor: 'pointer',
                       opacity: lines.length === 1 ? 0.3 : 1,
@@ -652,13 +652,13 @@ export default function GratisFactuur() {
             + Regel toevoegen
           </button>
 
-          <div style={{ marginTop: 20, borderTop: '1px solid #e5e5ea', paddingTop: 12 }}>
+          <div style={{ marginTop: 20, borderTop: '1px solid #e0e0e0', paddingTop: 12 }}>
             <div style={s.totalRow}>
-              <span style={{ color: '#6b6b6e' }}>Subtotaal excl. BTW</span>
+              <span style={{ color: '#5f6368' }}>Subtotaal excl. BTW</span>
               <span>{formatEuroNL(totals.ex)}</span>
             </div>
             <div style={s.totalRow}>
-              <span style={{ color: '#6b6b6e' }}>BTW</span>
+              <span style={{ color: '#5f6368' }}>BTW</span>
               <span>{formatEuroNL(totals.btw)}</span>
             </div>
             <div style={{ ...s.totalRow, fontWeight: 700, fontSize: 16 }}>
@@ -689,17 +689,17 @@ export default function GratisFactuur() {
           )}
         </div>
         {!canDownload && (
-          <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 8 }}>
+          <p style={{ textAlign: 'center', fontSize: 12, color: '#bdc1c6', marginTop: 8 }}>
             Vul je naam, de klant en minstens één regel in.
           </p>
         )}
 
         {/* ── Peak-intent register CTA (only real features) ── */}
         <div style={{ ...s.card, marginTop: 24, textAlign: 'center' }}>
-          <div style={{ fontSize: 17, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: '#202124', marginBottom: 6 }}>
             Wil je deze factuur bewaren en versturen?
           </div>
-          <div style={{ fontSize: 14, color: '#6b6b6e', marginBottom: 16 }}>
+          <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>
             Maak een gratis account. Bewaar je facturen en houd je BTW bij.
           </div>
           <Link href="/register" style={s.btnPrimary}>
@@ -707,7 +707,7 @@ export default function GratisFactuur() {
           </Link>
         </div>
 
-        <p style={{ textAlign: 'center', fontSize: 12, color: '#aeaeb2', marginTop: 40 }}>
+        <p style={{ textAlign: 'center', fontSize: 12, color: '#bdc1c6', marginTop: 40 }}>
           Gemaakt met BoekBrug — de brug tussen jou en je boekhouder.
         </p>
 

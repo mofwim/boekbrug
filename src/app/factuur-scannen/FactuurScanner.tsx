@@ -72,12 +72,12 @@ const euro = (v: number | null | undefined) => (typeof v === 'number' && !Number
 
 const s = {
   card: { backgroundColor: '#ffffff', borderRadius: 20, padding: 24, boxShadow: '0 4px 24px rgba(0,0,0,0.06)', border: '1px solid #ececf1' } as React.CSSProperties,
-  drop: { border: '2px dashed #c7c7cc', borderRadius: 16, padding: '40px 20px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f9f9fb', transition: 'border-color 0.15s, background 0.15s' } as React.CSSProperties,
-  dropActive: { borderColor: '#007aff', backgroundColor: '#eef5ff' } as React.CSSProperties,
-  primary: { backgroundColor: '#007aff', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' } as React.CSSProperties,
+  drop: { border: '2px dashed #dadce0', borderRadius: 16, padding: '40px 20px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8f9fa', transition: 'border-color 0.15s, background 0.15s' } as React.CSSProperties,
+  dropActive: { borderColor: '#1a73e8', backgroundColor: '#eef5ff' } as React.CSSProperties,
+  primary: { backgroundColor: '#1a73e8', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' } as React.CSSProperties,
   row: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 14, padding: '9px 0', borderBottom: '1px solid #f0f0f4' } as React.CSSProperties,
-  key: { color: '#6b6b6e', flexShrink: 0 } as React.CSSProperties,
-  val: { color: '#1c1c1e', fontWeight: 600, textAlign: 'right', wordBreak: 'break-word' } as React.CSSProperties,
+  key: { color: '#5f6368', flexShrink: 0 } as React.CSSProperties,
+  val: { color: '#202124', fontWeight: 600, textAlign: 'right', wordBreak: 'break-word' } as React.CSSProperties,
 }
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -178,14 +178,14 @@ export default function FactuurScanner() {
           >
             {busy ? (
               <>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#1c1c1e' }}>Bezig met scannen…</div>
-                <div style={{ fontSize: 13, color: '#aeaeb2', marginTop: 6 }}>{fileName}</div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#202124' }}>Bezig met scannen…</div>
+                <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 6 }}>{fileName}</div>
               </>
             ) : (
               <>
                 <div style={{ fontSize: 40, marginBottom: 8 }} aria-hidden="true">📄</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#1c1c1e' }}>Sleep je factuur hierheen of klik om te uploaden</div>
-                <div style={{ fontSize: 13, color: '#aeaeb2', marginTop: 6 }}>PDF, JPG, PNG of WebP · max 8 MB</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#202124' }}>Sleep je factuur hierheen of klik om te uploaden</div>
+                <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 6 }}>PDF, JPG, PNG of WebP · max 8 MB</div>
               </>
             )}
           </div>
@@ -196,7 +196,7 @@ export default function FactuurScanner() {
             style={{ display: 'none' }}
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = '' }}
           />
-          <div style={{ fontSize: 12, color: '#aeaeb2', marginTop: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 12, color: '#bdc1c6', marginTop: 12, textAlign: 'center' }}>
             {remaining > 0
               ? `Nog ${remaining} gratis ${remaining === 1 ? 'scan' : 'scans'} vandaag`
               : 'Je gratis scans voor vandaag zijn op'}
@@ -220,7 +220,7 @@ export default function FactuurScanner() {
             </div>
           )}
 
-          <div style={{ fontSize: 13, fontWeight: 600, color: '#6b6b6e', marginBottom: 8 }}>Uitgelezen gegevens</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 8 }}>Uitgelezen gegevens</div>
 
           <Field label="Leverancier" value={result.vendor_name} />
           <Field label="BTW-nummer" value={result.vendor_vat} />
@@ -239,13 +239,13 @@ export default function FactuurScanner() {
           ))}
           <Field label="BTW totaal" value={euro(result.btw_total)} />
           <div style={{ ...s.row, borderBottom: 'none' }}>
-            <span style={{ ...s.key, color: '#1c1c1e', fontWeight: 700 }}>Totaal (incl. BTW)</span>
+            <span style={{ ...s.key, color: '#202124', fontWeight: 700 }}>Totaal (incl. BTW)</span>
             <span style={{ ...s.val, fontWeight: 800 }}>{euro(result.total_incl_btw)}</span>
           </div>
 
           {(result.line_items?.length ?? 0) > 0 && (
             <div style={{ marginTop: 18 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#6b6b6e', marginBottom: 8 }}>Regels</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 8 }}>Regels</div>
               {result.line_items!.map((li, i) => (
                 <div key={i} style={{ ...s.row }}>
                   <span style={s.key}>{li.description || `Regel ${i + 1}`}</span>
@@ -259,19 +259,19 @@ export default function FactuurScanner() {
             <button style={s.primary} onClick={() => { setResult(null); setError(null); setFileName(null) }}>
               Nog een factuur scannen
             </button>
-            <Link href="/factuur-maken" style={{ ...s.primary, backgroundColor: '#fff', color: '#007aff', border: '1.5px solid #007aff' }}>
+            <Link href="/factuur-maken" style={{ ...s.primary, backgroundColor: '#fff', color: '#1a73e8', border: '1.5px solid #1a73e8' }}>
               Zelf een factuur maken →
             </Link>
           </div>
         </div>
       )}
 
-      <div style={{ marginTop: 22, background: '#f9f9fb', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 14, color: '#3c3c43' }}>
+      <div style={{ marginTop: 22, background: '#f8f9fa', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 14, color: '#3c4043' }}>
           Onbeperkt scannen en alles op één plek?{' '}
-          <strong style={{ color: '#1c1c1e' }}>BoekBrug doet het voor je.</strong>
+          <strong style={{ color: '#202124' }}>BoekBrug doet het voor je.</strong>
         </div>
-        <Link href="/register" style={{ backgroundColor: '#007aff', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+        <Link href="/register" style={{ backgroundColor: '#1a73e8', color: '#fff', fontSize: 14, fontWeight: 600, padding: '10px 18px', borderRadius: 9999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
           Gratis proberen →
         </Link>
       </div>

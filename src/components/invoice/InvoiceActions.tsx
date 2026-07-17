@@ -124,7 +124,7 @@ const canRequestPayment =
           <button
             onClick={openBetaalverzoek}
             disabled={bvLoading}
-            className="text-sm text-[#007aff] hover:text-[#0051d5] px-3 py-1.5 rounded-xl hover:bg-blue-50 transition-colors disabled:opacity-50"
+            className="text-sm text-[#1a73e8] hover:text-[#0051d5] px-3 py-1.5 rounded-xl hover:bg-blue-50 transition-colors disabled:opacity-50"
           >
             {bvLoading ? 'Bezig…' : '💶 Betaalverzoek'}
           </button>
@@ -198,7 +198,7 @@ const canRequestPayment =
               <input readOnly value={bv.url} className="flex-1 bg-transparent text-sm text-gray-700 px-2 outline-none" onFocus={(e) => e.currentTarget.select()} />
               <button
                 onClick={() => bvCopy(bv.url, 'link')}
-                className="shrink-0 bg-[#007aff] hover:bg-[#0051d5] text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                className="shrink-0 bg-[#1a73e8] hover:bg-[#0051d5] text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
               >
                 {bvCopied === 'link' ? 'Gekopieerd' : 'Kopieer link'}
               </button>

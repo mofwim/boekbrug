@@ -75,20 +75,20 @@ export default function KennisbankLinks({ tool }: { tool: string }) {
   return (
     <section style={{ maxWidth: 680, margin: '0 auto', padding: '8px 16px 40px' }}>
       <div style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: '22px 24px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: '#8a8a8e', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#9aa0a6', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
           Lees ook in onze kennisbank
         </div>
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {items.map((a) => (
             <li key={a.href}>
-              <Link href={a.href} style={{ fontSize: 15, fontWeight: 600, color: '#007aff', textDecoration: 'none' }}>
+              <Link href={a.href} style={{ fontSize: 15, fontWeight: 600, color: '#1a73e8', textDecoration: 'none' }}>
                 {a.title} →
               </Link>
             </li>
           ))}
         </ul>
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #f0f0f4' }}>
-          <Link href="/blog" style={{ fontSize: 14, color: '#6b6b6e', textDecoration: 'none' }}>
+          <Link href="/blog" style={{ fontSize: 14, color: '#5f6368', textDecoration: 'none' }}>
             Alle artikelen in de kennisbank →
           </Link>
         </div>

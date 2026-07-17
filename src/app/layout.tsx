@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 // [Design System] theme-color drives the browser UI tint (mobile address bar,
 // PWA chrome). Uses the BoekBrug blue accent.
 export const viewport: Viewport = {
-  themeColor: "#007aff",
+  themeColor: "#1a73e8",
 };
 
 export default function RootLayout({

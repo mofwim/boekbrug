@@ -11,7 +11,7 @@ import { BackLink } from '@/components/ui/BackLink'
 
 export default function DashboardNotFound() {
   return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center px-6">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center px-6">
       <div className="text-center space-y-4 max-w-sm">
 
         <p className="text-6xl font-bold text-gray-200">404</p>

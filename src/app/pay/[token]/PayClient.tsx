@@ -66,13 +66,13 @@ export default function PayClient({ token }: { token: string }) {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 16px 64px' }}>
+    <div style={{ minHeight: '100vh', background: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 16px 64px' }}>
       <div style={{ width: '100%', maxWidth: 440 }}>
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#1c1c1e', letterSpacing: -0.4 }}>Betaalverzoek</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#202124', letterSpacing: -0.4 }}>Betaalverzoek</div>
         </div>
 
-        {loading && <Card><div style={{ textAlign: 'center', color: '#8e8e93', padding: '30px 0' }}>Laden…</div></Card>}
+        {loading && <Card><div style={{ textAlign: 'center', color: '#9aa0a6', padding: '30px 0' }}>Laden…</div></Card>}
 
         {!loading && error && (
           <Card><div style={{ textAlign: 'center', color: '#b3261e', padding: '24px 8px', fontSize: 15, lineHeight: 1.5 }}>{error}</div></Card>
@@ -88,23 +88,23 @@ export default function PayClient({ token }: { token: string }) {
 
             <Card>
               <div style={{ textAlign: 'center', paddingBottom: 6 }}>
-                <div style={{ fontSize: 13, color: '#8e8e93' }}>Te betalen aan</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', margin: '2px 0 10px' }}>{view.beneficiaryName}</div>
-                <div style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', letterSpacing: -1 }}>{eur.format(view.amount)}</div>
-                {view.invoiceNumber && <div style={{ fontSize: 13.5, color: '#6b6b6e', marginTop: 4 }}>Factuur {view.invoiceNumber}{view.clientName ? ` · ${view.clientName}` : ''}</div>}
-                {dateNL(view.dueDate) && <div style={{ fontSize: 13, color: '#8e8e93', marginTop: 2 }}>Vervaldatum {dateNL(view.dueDate)}</div>}
+                <div style={{ fontSize: 13, color: '#9aa0a6' }}>Te betalen aan</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '2px 0 10px' }}>{view.beneficiaryName}</div>
+                <div style={{ fontSize: 34, fontWeight: 800, color: '#202124', letterSpacing: -1 }}>{eur.format(view.amount)}</div>
+                {view.invoiceNumber && <div style={{ fontSize: 13.5, color: '#5f6368', marginTop: 4 }}>Factuur {view.invoiceNumber}{view.clientName ? ` · ${view.clientName}` : ''}</div>}
+                {dateNL(view.dueDate) && <div style={{ fontSize: 13, color: '#9aa0a6', marginTop: 2 }}>Vervaldatum {dateNL(view.dueDate)}</div>}
               </div>
 
               {qr && !view.alreadyPaid && (
                 <div style={{ textAlign: 'center', margin: '18px 0 6px' }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={qr} alt="Betaal-QR" width={200} height={200} style={{ borderRadius: 12 }} />
-                  <div style={{ fontSize: 13, color: '#6b6b6e', marginTop: 6 }}>Scan met je bankapp om te betalen</div>
+                  <div style={{ fontSize: 13, color: '#5f6368', marginTop: 6 }}>Scan met je bankapp om te betalen</div>
                 </div>
               )}
             </Card>
 
-            <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#8e8e93', margin: '18px 4px 8px' }}>OF MAAK ZELF OVER</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#9aa0a6', margin: '18px 4px 8px' }}>OF MAAK ZELF OVER</div>
             <Card>
               <CopyRow label="IBAN" value={fmtIban(view.iban)} raw={view.iban} onCopy={copy} copied={copied} />
               <CopyRow label="Bedrag" value={eur.format(view.amount)} raw={view.amount.toFixed(2)} onCopy={copy} copied={copied} />
@@ -112,7 +112,7 @@ export default function PayClient({ token }: { token: string }) {
               {view.reference && <CopyRow label="Kenmerk" value={view.reference} raw={view.reference} onCopy={copy} copied={copied} last />}
             </Card>
 
-            <p style={{ fontSize: 12, color: '#8e8e93', textAlign: 'center', lineHeight: 1.6, marginTop: 18, padding: '0 8px' }}>
+            <p style={{ fontSize: 12, color: '#9aa0a6', textAlign: 'center', lineHeight: 1.6, marginTop: 18, padding: '0 8px' }}>
               Vermeld het kenmerk bij je betaling, dan herkent de ontvanger de betaling meteen bij deze factuur.
               BoekBrug verwerkt de betaling niet — je betaalt rechtstreeks vanuit je eigen bank.
             </p>
@@ -133,12 +133,12 @@ function CopyRow({ label, value, raw, onCopy, copied, last }: {
   label: string; value: string; raw: string; onCopy: (v: string, l: string) => void; copied: string; last?: boolean
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 0', borderBottom: last ? 'none' : '1px solid #f2f2f7' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 0', borderBottom: last ? 'none' : '1px solid #f8f9fa' }}>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: '#8e8e93' }}>{label}</div>
-        <div style={{ fontSize: 15, fontWeight: 600, color: '#1c1c1e', wordBreak: 'break-all' }}>{value}</div>
+        <div style={{ fontSize: 12, color: '#9aa0a6' }}>{label}</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: '#202124', wordBreak: 'break-all' }}>{value}</div>
       </div>
-      <button onClick={() => onCopy(raw, label)} style={{ flexShrink: 0, background: '#f2f2f7', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, color: copied === label ? '#137333' : '#007aff', cursor: 'pointer' }}>
+      <button onClick={() => onCopy(raw, label)} style={{ flexShrink: 0, background: '#f8f9fa', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, color: copied === label ? '#137333' : '#1a73e8', cursor: 'pointer' }}>
         {copied === label ? 'Gekopieerd' : 'Kopieer'}
       </button>
     </div>
