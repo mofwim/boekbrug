@@ -39,6 +39,8 @@ import { calcBtwRate } from "./export";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
+import { buildKasboek, openingBalanceForQuarter, kasboekToMatrix, type KasEntry, type KasTurnoverDay, type Quarter as KasQuarter } from "./kasboek";
+import { matrixToXlsxBytes } from "./xlsx-adapter";
 import type { EftSettlement } from "./eft-parser";
 import {
   computeResult,
@@ -458,15 +460,16 @@ interface AssembleInput {
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
    *  sales data at all (nothing to declare yet). Never an invented filing. */
   conceptAangifte?: ConceptAangifte | null;
-  /** [CASH-EVIDENCE] The cash book (kasboek) as a CSV — a standalone evidence sheet for a
-   *  cash-heavy shop, so the accountant sees every kasboeking, not only the netted cash
-   *  figures inside the concept aangifte. null when the owner keeps no cash book. */
-  cashCsv?: string | null;
+  /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
+   *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
+   *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
+   *  has no life this quarter. */
+  kasboekXlsx?: Uint8Array | null;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, cashCsv } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, kasboekXlsx } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -578,8 +581,8 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // ── overzicht.csv is built LATER (after all warnings are collected) so the CSV's
   //    "Let op" section matches overzicht.json — see below. ──
 
-  // \u2500\u2500 kasboek.csv ([CASH-EVIDENCE] standalone cash-book sheet, when the owner keeps one) \u2500\u2500
-  if (cashCsv) zip.file("kasboek.csv", "\uFEFF" + cashCsv);
+  // \u2500\u2500 Kasboek.xlsx ([KASBOEK] running-balance cash book in the store's Kiwi layout) \u2500\u2500
+  if (kasboekXlsx) { zip.file(`Kasboek-Q${quarter}-${year}.xlsx`, kasboekXlsx); filesIncluded++; }
 
   // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
   const hasTurnover = !!turnoverClosing && turnoverClosing.summary.days > 0;
@@ -1336,25 +1339,42 @@ export async function buildClosingPackageZip(args: {
     ? buildAangifte(result, completeness, `Q${quarter} ${year}`)
     : null;
 
-  // [CASH-EVIDENCE] Standalone kasboek sheet when the owner keeps a cash book — so a
-  // cash-heavy shop hands the accountant every kasboeking, not only the netted cash figures
-  // inside the concept aangifte. Injection-safe via esc(); null when there are no entries.
-  const cashCsv = (cashAllRows ?? []).length > 0
-    ? [
-        `BoekBrug — Kasboek Q${quarter} ${year}`,
-        "",
-        ["Datum", "Richting", "Categorie", "BTW-tarief", "Bedrag"].map(esc).join(";"),
-        ...(cashAllRows ?? []).map((c) =>
-          [
-            c.entry_date ?? "",
-            c.direction === "in" ? "In" : "Uit",
-            c.category ?? "",
-            c.btw_rate != null ? `${c.btw_rate}%` : "",
-            EUR(Number(c.amount) || 0),
-          ].map(esc).join(";"),
-        ),
-      ].join("\n")
-    : null;
+  // [KASBOEK] The cash book as the accountant's own running-balance sheet (Kiwi .xlsx layout),
+  // NOT a flat dump. It is a pure PROJECTION over the truth layer — the till's daily CASH takings
+  // (daily_turnover.cash_amount) + the cash-book movements — with the running drawer balance per
+  // day (Beginsaldo · Uitgaven · Ontvangsten · Eindsaldo). It books NOTHING into the P&L (the
+  // omzet is already counted once by the turnover engine), so there is no double-count with the
+  // concept aangifte. Same generator as the live /api/kasboek endpoint and the in-app screen.
+  //
+  // The Beginsaldo must carry from ALL prior periods, so the projection is fed the FULL history
+  // up to quarter-end (two small owner-scoped queries), not just this quarter's rows.
+  const kasEntriesRaw = await fetchAllRows<{
+    entry_date: string | null; direction: string; amount: number | null; category: string | null; description: string | null;
+  }>((from, to) =>
+    supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
+      .eq("user_id", ownerId).lte("entry_date", end)
+      .order("entry_date", { ascending: true }).range(from, to),
+  ).catch(() => []);
+  const kasEntries: KasEntry[] = (kasEntriesRaw ?? []).map((r) => ({
+    entry_date: r.entry_date, direction: r.direction === "in" ? "in" : "out",
+    amount: r.amount, category: r.category, description: r.description,
+  }));
+  const kasTurnoverRaw = await fetchAllRows<{ turnover_date: string; cash_amount: number | null }>((from, to) =>
+    supabase.from("daily_turnover").select("turnover_date, cash_amount")
+      .eq("user_id", ownerId).lte("turnover_date", end)
+      .order("turnover_date", { ascending: true }).range(from, to),
+  ).catch(() => []);
+  const kasTurnover: KasTurnoverDay[] = (kasTurnoverRaw ?? []) as KasTurnoverDay[];
+
+  // Only emit the sheet when the drawer has any life this quarter (takings or movements).
+  const kb = buildKasboek({
+    turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter,
+    openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter }),
+  });
+  const kasboekXlsx: Uint8Array | null =
+    kb.months.length > 0 || kb.openingBalance !== 0
+      ? matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`)
+      : null;
 
   return assembleClosingPackageZip({
     year,
@@ -1371,6 +1391,7 @@ export async function buildClosingPackageZip(args: {
     turnoverClosing,
     cardReconciliation,
     conceptAangifte,
+    kasboekXlsx,
     warnings,
   });
 }
