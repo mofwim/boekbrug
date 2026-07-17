@@ -36,6 +36,18 @@ interface ImportHealth {
   };
 }
 
+// [OBSERVABILITY] Map a stored skip reason to a short, owner-facing line. Known codes get a
+// friendly phrase; a Dutch reason the AI already wrote (e.g. "rekeningoverzicht — …") is shown
+// as-is (trimmed). Never a raw technical token the owner can't understand.
+function friendlySkipReason(reason: string): string {
+  const r = (reason || "").toLowerCase();
+  if (r === "could_not_read") return "kon niet gelezen worden — staat in je bestanden";
+  if (r === "not_invoice") return "leek geen factuur";
+  if (r.startsWith("portal_link") || r.includes("geen bijlage")) return "e-mail zonder leesbare bijlage";
+  // An AI-written Dutch reason is already human — show it, capped.
+  return reason.length > 80 ? `${reason.slice(0, 77)}…` : reason;
+}
+
 interface IncomingInvoice {
   id: string;
   client_name: string;
@@ -135,6 +147,14 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
   const [backfillDate, setBackfillDate] = useState<string>(
     () => `${new Date().getFullYear()}-01-01`
   );
+  // [OBSERVABILITY] "Overgeslagen bij import" — transparency into what the pipeline did NOT
+  // turn into an invoice, so nothing is silently lost. Loaded on demand when opened.
+  const [skippedOpen, setSkippedOpen] = useState(false);
+  const [skippedLoading, setSkippedLoading] = useState(false);
+  const [skippedItems, setSkippedItems] = useState<
+    { filename: string; reason: string; createdAt: string }[] | null
+  >(null);
+  const [couldNotReadCount, setCouldNotReadCount] = useState(0);
 
   // [BOEK-011] One tap = full import. The server caps each call at 25 new
   // invoices (function time limit); it reports `remaining` and we simply call
@@ -272,6 +292,27 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     window.location.reload();
   };
 
+  // [OBSERVABILITY] Load the "overgeslagen bij import" list the first time it's opened.
+  const openSkipped = async () => {
+    setSkippedOpen(true);
+    if (skippedItems !== null || skippedLoading) return;
+    setSkippedLoading(true);
+    try {
+      const res = await fetch("/api/email/skipped");
+      const data = await res.json();
+      if (res.ok) {
+        setSkippedItems(data.skipped ?? []);
+        setCouldNotReadCount(data.couldNotReadCount ?? 0);
+      } else {
+        setSkippedItems([]);
+      }
+    } catch {
+      setSkippedItems([]);
+    } finally {
+      setSkippedLoading(false);
+    }
+  };
+
   if (status.connected) {
     const providerName = status.provider === "gmail" ? "Gmail" : "Outlook";
 
@@ -404,6 +445,66 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             {syncResult}
           </div>
         )}
+
+        {/* [OBSERVABILITY] What did import NOT turn into an invoice, and why. Read-only
+            transparency so a misjudged or unreadable document is never invisibly lost. */}
+        <div style={{ marginTop: 10 }}>
+          {!skippedOpen ? (
+            <button
+              onClick={openSkipped}
+              style={{
+                background: "transparent", border: "none", color: "#8e8e93",
+                fontSize: 12.5, cursor: "pointer", padding: 0,
+              }}
+            >
+              Bekijk wat is overgeslagen bij het importeren
+            </button>
+          ) : (
+            <div style={{ background: "#fff", borderRadius: 10, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#1c1c1e" }}>Overgeslagen bij import</span>
+                <button
+                  onClick={() => setSkippedOpen(false)}
+                  style={{ background: "transparent", border: "none", color: "#8e8e93", fontSize: 13, cursor: "pointer" }}
+                >
+                  Sluit
+                </button>
+              </div>
+              {skippedLoading ? (
+                <div style={{ fontSize: 13, color: "#8e8e93" }}>Laden…</div>
+              ) : (
+                <>
+                  {couldNotReadCount > 0 && (
+                    <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
+                      {couldNotReadCount} {couldNotReadCount === 1 ? "bestand konden" : "bestanden konden"} we niet lezen — {couldNotReadCount === 1 ? "het staat" : "ze staan"} in je bestanden, controleer {couldNotReadCount === 1 ? "het" : "ze"} even.
+                    </div>
+                  )}
+                  {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
+                    <div style={{ fontSize: 12.5, color: "#8e8e93" }}>
+                      Niets overgeslagen — alles wat binnenkwam is verwerkt.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {(skippedItems ?? []).map((s, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
+                          <span style={{ color: "#1c1c1e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                            {s.filename}
+                          </span>
+                          <span style={{ color: "#8e8e93", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {friendlySkipReason(s.reason)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 8, lineHeight: 1.5 }}>
+                    Mis je hier een echte factuur? Gebruik &ldquo;Oudere e-mails opnieuw ophalen&rdquo; hierboven, of voeg hem toe met een foto.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
