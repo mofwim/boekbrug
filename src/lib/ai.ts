@@ -72,9 +72,14 @@ export function shouldRescueNonInvoice(
     total_inc_btw?: number | null;
     total_ex_btw?: number | null;
     amount?: number | null;
+    // [STATEMENT] Set by the model when the document is an overview of MULTIPLE invoices. Such a
+    // document has a vendor + a (balance) amount, so WITHOUT this guard the rescue below would
+    // wrongly resurrect it as one bookable invoice and double-count the invoices it summarises.
+    is_statement?: boolean | null;
   },
   filename: string,
 ): boolean {
+  if (p.is_statement === true) return false; // a statement of account is never a bookable invoice
   if (isStatementFilename(filename)) return false; // an unmistakable statement stays rejected
   const hasVendor = !!(p.vendor && String(p.vendor).trim());
   const hasAmount =
@@ -211,6 +216,12 @@ export interface VerifyInvoiceResult {
   // sign-inverted SAFECORE gate. Amounts on a creditnota are kept NEGATIVE as
   // printed — matching the outgoing creditnota route [BOEK-031].
   is_credit_note?: boolean;
+  // [STATEMENT] Is this a STATEMENT OF ACCOUNT — a "rekeningoverzicht" / "openstaande facturen"
+  // that LISTS MULTIPLE separate invoices with a summed balance? It is NOT a bookable invoice:
+  // booking its total double-counts the individual invoices (which arrive on their own). True
+  // ONLY for a genuine overview of TWO OR MORE invoices; a single collective invoice
+  // (verzamelfactuur) is NOT a statement. When true we force is_invoice=false and never rescue it.
+  is_statement?: boolean;
   // [REMINDER] Is this a payment REMINDER (betalingsherinnering / aanmaning) for an invoice
   // that was already sent earlier — not a fresh invoice? A reminder restates an existing debt
   // (often with added herinneringskosten), so booking it as a NEW invoice double-counts the
@@ -871,6 +882,7 @@ Return only a JSON object with these exact keys:
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
   "is_credit_note": boolean,
+  "is_statement": boolean,
   "is_reminder": boolean,
   "reminder_of_invoice_number": string or null,
   "total_ex_btw": number or null,
@@ -943,20 +955,23 @@ Rules for is_invoice = false:
 - Anything that is not a financial document
 - Set reason to a short Dutch explanation why it was rejected
 
-CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=false):
-- A "Rekeningoverzicht", "Openstaande posten", "Saldo-overzicht", "Overzicht openstaande
-  facturen", "Aanmaning" or "Betalingsherinnering" that LISTS MULTIPLE invoices is an
-  OVERVIEW, not a single invoice. Tell-tale signs, any of which is decisive:
-  · a title containing "overzicht", "openstaand", "aanmaning" or "herinnering";
-  · a TABLE whose columns are things like "Factuurnummer / Factuurbedrag / Reeds betaald /
-    Nog openstaand / Vervallen / Factuurdatum";
-  · TWO OR MORE different invoice numbers, each with its OWN amount and date;
-  · a "Totaal openstaand bedrag" (or similar) that is the SUM of the listed lines.
+CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=false AND is_statement=true):
+- A "Rekeningoverzicht", "Openstaande posten", "Openstaande facturen", "Saldo-overzicht",
+  "Overzicht openstaande facturen", "Aanmaning" or "Betalingsherinnering" that LISTS MULTIPLE
+  invoices is an OVERVIEW, not a single invoice. Tell-tale signs, any of which is decisive:
+  · a title containing "overzicht", "openstaand", "openstaande facturen", "aanmaning" or "herinnering";
+  · a TABLE whose columns are things like "Nummer / Datum / Bedrag / Betaald / Rest / V.Dagen"
+    or "Factuurnummer / Factuurbedrag / Reeds betaald / Nog openstaand / Vervallen / Factuurdatum";
+  · TWO OR MORE different invoice/document numbers, each with its OWN amount and date
+    (including credit lines like a CR-number with a negative amount);
+  · a "Totaal openstaand bedrag", "Balans" or "Saldo" line that is the SUM of the listed lines.
 - Booking such a document as one invoice is a SERIOUS error: its total DOUBLE-COUNTS the
   individual invoices it summarises (which arrive separately), and it has no single valid
-  BTW breakdown (excl + BTW will never equal the total). So: is_invoice=false,
+  BTW breakdown (excl + BTW will never equal the total). So: is_invoice=false, is_statement=true,
   document_kind="other", and reason e.g. "Rekeningoverzicht — overzicht van meerdere
   facturen, geen boekbare factuur".
+- Set is_statement=false for a normal single invoice, a single collective invoice
+  (verzamelfactuur: ONE invoice number covering multiple delivery lines), and a receipt.
 - Exception: a reminder that repeats ONE single invoice (one number, one amount, one date)
   IS that invoice — set is_invoice=true and extract it normally. BUT also set is_reminder=true
   and put the ORIGINAL invoice number in reminder_of_invoice_number, because the original was
@@ -1199,6 +1214,21 @@ Return JSON only.`;
         is_invoice: false,
         confidence: 0.9, // confident it is NOT a bookable invoice → registered with the reason
         reason: 'Rekeningoverzicht — overzicht van meerdere facturen, geen boekbare factuur',
+      };
+    }
+
+    // [STATEMENT] The model flagged this as a statement of account (an overview of MULTIPLE
+    // invoices with a summed balance — e.g. "OPENSTAANDE FACTUREN" with Betaald/Rest/Balans).
+    // Booking its total double-counts the individual invoices, so force the verdict here and
+    // return EARLY — before the confidence banding or the [TRUST-CONFIDENT-FALSE] rescue can
+    // resurrect it as one bookable invoice (it has a vendor + a balance amount that would
+    // otherwise pass the rescue). Registered in the skip list, so it stays visible, not booked.
+    if (parsed.is_statement === true) {
+      return {
+        is_invoice: false,
+        is_statement: true,
+        confidence: Math.max(parsed.confidence ?? 0, 0.8),
+        reason: parsed.reason || 'Rekeningoverzicht — overzicht van meerdere facturen, geen boekbare factuur',
       };
     }
 

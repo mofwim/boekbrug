@@ -18,11 +18,15 @@ check("vendor + total_ex_btw only → rescue",
 check("vendor + legacy amount field → rescue",
   shouldRescueNonInvoice({ vendor: "Sligro", amount: 812.5 }, "bon.pdf") === true);
 
-console.log("\n— NOT rescued: an unmistakable statement filename stays rejected (no double-count) —");
+console.log("\n— NOT rescued: a STATEMENT of account is never resurrected as one invoice (no double-count) —");
+check("is_statement flag → not rescued even with vendor + balance amount (the OPENSTAANDE FACTUREN bug)",
+  shouldRescueNonInvoice({ vendor: "Dutch Sweets Company B.V.", total_inc_btw: 1338.96, is_statement: true }, "factuur.pdf") === false);
 check("rekeningoverzicht filename → not rescued even with signal",
   shouldRescueNonInvoice({ vendor: "HVO meat bv", total_inc_btw: 3186.42 }, "rekeningoverzicht-mei.pdf") === false);
 check("openstaande posten filename → not rescued",
   shouldRescueNonInvoice({ vendor: "HVO meat bv", total_inc_btw: 3186.42 }, "openstaande posten.pdf") === false);
+check("a genuine verzamelfactuur (is_statement false) IS still rescued",
+  shouldRescueNonInvoice({ vendor: "HVO meat bv", total_inc_btw: 3186.42, is_statement: false }, "2216671.pdf") === true);
 
 console.log("\n— NOT rescued: weak signal (a newsletter/ad is genuinely not an invoice) —");
 check("vendor but NO amount → not rescued",
