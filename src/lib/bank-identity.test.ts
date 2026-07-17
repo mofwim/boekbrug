@@ -4,6 +4,7 @@ import {
   needsDocument,
   counterpartKey,
   suggestIdentity,
+  isPosPayoutDescription,
   type TxIdentity,
 } from "./bank-identity";
 
@@ -29,6 +30,23 @@ eq("Private withdrawal", null, "Prive opname", -800, "prive");
 eq("Bank fees", "ING Bank", "Kosten betaalrekening", -1.9, "fee");
 eq("POS payout (ING DD&C) credit", "ING DD&C", "Afrek. transacties", 842.15, "pos_income");
 eq("SumUp payout credit", "SUMUP PAYOUT", "SumUp", 210.5, "pos_income");
+
+console.log("\n— [FINDING-1] acquirer coverage matches ACQUIRER_VENDOR_RE (no missed double-count) —");
+// These acquirers were in the fee-dedup regex but NOT the classifier, so their daily payout
+// fell to the sign-based 'omzet' fallback and was double-counted on top of the till takings.
+eq("Rabo OmniKassa payout credit", "Rabo OmniKassa", "afrekening periode 27", 2086.65, "pos_income");
+eq("Worldline payout credit", "Worldline", "settlement", 1540.0, "pos_income");
+eq("Nets payout credit", "Nets", "uitbetaling", 733.2, "pos_income");
+eq("Buckaroo payout credit", "Buckaroo", "uitbetaling webshop", 410.0, "pos_income");
+eq("Equens payout credit", "Equens", "CTAP afrekening", 999.9, "pos_income");
+eq("Paysquare payout credit", "Paysquare", "afrekening", 512.0, "pos_income");
+eq("Klarna payout credit", "Klarna", "uitbetaling", 305.5, "pos_income");
+// The CREDIT gate must hold: a purchase AT one of these terminals (a DEBIT) is a cost, not takings.
+eq("Worldline DEBIT (a purchase) is not takings", "Worldline", "betaalautomaat", -12.5, "unknown");
+check("isPosPayoutDescription matches an acquirer name (for the omzet-mistap safety net)",
+  isPosPayoutDescription("Rabo OmniKassa afrekening periode") === true);
+check("isPosPayoutDescription is false for a non-acquirer transfer",
+  isPosPayoutDescription("overboeking webshop bestelling 8842") === false);
 
 console.log("\n— the tricky ones (correctness the old POS heuristic got wrong) —");
 // A "betaalautomaat" DEBIT is a card PURCHASE — a real cost that needs a receipt,

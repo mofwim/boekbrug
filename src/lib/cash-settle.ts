@@ -23,28 +23,32 @@ import { buildCashSettlement, computeCashSettlementSync, type SettleableInvoice 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function reconcileCashSettlements(supabase: SupabaseClient<any>, userId: string): Promise<void> {
   try {
-    // Invoices the owner currently owes-and-has-paid in cash: incoming, paid, method 'kas'.
+    // Invoices settled in cash, BOTH directions: an incoming (purchase) paid in cash (drawer ↓)
+    // AND an outgoing (sales) invoice paid in cash (drawer ↑). Owner-scoped via the RLS .or so a
+    // cash sale finally reaches the drawer instead of being invisible. Both stay P&L-neutral.
     const { data: invRows, error: invErr } = await supabase
       .from("invoices")
-      .select("id, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name")
-      .eq("receiver_id", userId)
-      .eq("direction", "incoming")
+      .select("id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name")
+      .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
       .eq("status", "paid")
       .eq("payment_method", "kas");
     if (invErr) return;
 
     // Existing invoice-linked settlement entries (the ones this reconcile owns). We read amount +
-    // entry_date so a corrected invoice amount/date can HEAL the linked entry (not only create/delete).
+    // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
     const { data: entryRows, error: entryErr } = await supabase
       .from("cash_entries")
-      .select("id, invoice_id, amount, entry_date")
+      .select("id, invoice_id, amount, entry_date, direction")
       .eq("user_id", userId)
       .eq("category", "betaling")
       .not("invoice_id", "is", null);
     if (entryErr) return;
 
-    const paid = (invRows ?? []) as SettleableInvoice[];
-    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; amount?: number | null; entry_date?: string | null }>;
+    const paid = (invRows ?? []).map((r) => ({
+      ...r,
+      direction: r.direction === "outgoing" ? "outgoing" : "incoming",
+    })) as SettleableInvoice[];
+    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
     const { toCreate, toUpdate, toDeleteIds } = computeCashSettlementSync(paid, existing);
 
     // Create the missing settlements. Insert one at a time so a single bad row (or the unique
@@ -79,6 +83,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         .from("cash_entries")
         .update({
           amount: s.amount,
+          direction: s.direction, // [CASH-SETTLE-BIDIR] heal the drawer direction too
           description: s.description,
           ...(s.entry_date ? { entry_date: s.entry_date } : {}),
         })

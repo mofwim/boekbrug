@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import JSZip from 'jszip'
 import { keepThroughYear } from '@/lib/compliance-vault'
+import { fetchAllRows } from '@/lib/supabase-paginate'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,27 +45,54 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Ongeldig jaar' }, { status: 400 })
   }
 
-  // The year's records — owner-scoped.
-  const [{ data: documents }, { data: invoices }] = await Promise.all([
-    supabase
-      .from('documents')
-      .select('file_name, file_url, file_type, doc_type, period, invoice_id, created_at')
-      .eq('user_id', user.id)
-      .eq('year', year)
-      .eq('trashed', false),
-    supabase
-      .from('invoices')
-      .select('invoice_number, invoice_date, direction, invoice_type, client_name, total_ex_btw, btw_amount, total_inc_btw, status')
-      // [TRUST-ARCHIVE] BOTH directions. Outgoing invoices are the owner's as
-      // sender_id; incoming (purchase) invoices are stored with sender_id NULL and
-      // receiver_id = the owner, so a sender_id-only query silently dropped every
-      // purchase record — while the README claimed 'in en uit'. The .or matches the
-      // invoices RLS policy (sender_id = auth.uid() OR receiver_id = auth.uid()), so
-      // it stays owner-scoped. Without incoming, the accountant cannot reconstruct
-      // voorbelasting from the 7-year archive.
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-      .gte('invoice_date', `${year}-01-01`)
-      .lte('invoice_date', `${year}-12-31`),
+  // The year's records — owner-scoped. [PAGINATION] Page past the ~1000-row PostgREST cap:
+  // a full year of a busy administratie can exceed it, and a silent truncation would drop
+  // documents/invoices from the 7-year archive AND its manifest — the exact opposite of the
+  // "whole year exports cleanly, nothing left out" promise the README makes.
+  const [documents, invoices] = await Promise.all([
+    fetchAllRows<{
+      file_name: string | null; file_url: string | null; file_type: string | null;
+      doc_type: string | null; period: string | null; invoice_id: string | null; created_at: string | null;
+    }>((from, to) =>
+      supabase
+        .from('documents')
+        .select('file_name, file_url, file_type, doc_type, period, invoice_id, created_at')
+        .eq('user_id', user.id)
+        .eq('year', year)
+        .eq('trashed', false)
+        // [PAGINATION-STABLE] Final tiebreak on the PRIMARY KEY: created_at/file_url can tie
+        // (bulk imports, null file_url), and a non-unique order across separate page requests
+        // would duplicate or SKIP rows at the 1000-boundary — a silent hole in the legal
+        // archive. The id tiebreak makes the page order total + deterministic.
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<{
+      invoice_number: string | null; invoice_date: string | null; direction: string | null;
+      invoice_type: string | null; client_name: string | null; total_ex_btw: number | null;
+      btw_amount: number | null; total_inc_btw: number | null; status: string | null;
+    }>((from, to) =>
+      supabase
+        .from('invoices')
+        .select('invoice_number, invoice_date, direction, invoice_type, client_name, total_ex_btw, btw_amount, total_inc_btw, status')
+        // [TRUST-ARCHIVE] BOTH directions. Outgoing invoices are the owner's as
+        // sender_id; incoming (purchase) invoices are stored with sender_id NULL and
+        // receiver_id = the owner, so a sender_id-only query silently dropped every
+        // purchase record — while the README claimed 'in en uit'. The .or matches the
+        // invoices RLS policy (sender_id = auth.uid() OR receiver_id = auth.uid()), so
+        // it stays owner-scoped. Without incoming, the accountant cannot reconstruct
+        // voorbelasting from the 7-year archive.
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .gte('invoice_date', `${year}-01-01`)
+        .lte('invoice_date', `${year}-12-31`)
+        // [PAGINATION-STABLE] Tiebreak on the PRIMARY KEY — invoice_date/invoice_number are
+        // non-unique (and invoice_number nullable), so without id a same-date cluster
+        // straddling the 1000-boundary could drop invoices from the archive.
+        .order('invoice_date', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
   ])
 
   const docs = documents ?? []

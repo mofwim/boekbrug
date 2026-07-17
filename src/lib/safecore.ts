@@ -241,11 +241,14 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
 
 /**
  * A placeholder invoice number is a generated stand-in, not a real number.
- * Prefix-agnostic across both ingestion paths (UPLOAD-/EMAIL- + timestamp).
+ * Prefix-agnostic across ALL ingestion paths (UPLOAD-/EMAIL-/CAMERA- + timestamp).
+ * [AUTO-ADVANCE] CAMERA- was missing here, so a photographed invoice with no readable
+ * number read "clean" with a fabricated number — which would let it auto-book. Adding it
+ * keeps such an invoice in the verify queue (needs a real number before it counts).
  */
 export function isPlaceholderInvoiceNumber(n: string | null | undefined): boolean {
   if (!n) return true // null/empty is itself "no real number"
-  return /^(UPLOAD|EMAIL)-\d+$/.test(n.trim())
+  return /^(UPLOAD|EMAIL|CAMERA)-\d+$/.test(n.trim())
 }
 
 /**

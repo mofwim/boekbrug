@@ -23,6 +23,7 @@ import {
   normalizeToIso,
   deriveDueDate,
 } from '@/lib/safecore'
+import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 
 // Legal suffixes / entity noise stripped when comparing two vendor names for the
 // duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
@@ -1131,6 +1132,10 @@ export interface AttachmentClassification {
   // single invoice, but likely already booked, so it is flagged (not booked as a 2nd cost).
   isReminder?: boolean
   reminderOfInvoiceNumber?: string | null
+  // [AUTO-ADVANCE] Defense-in-depth signals so the email auto-advance gate has the SAME inputs
+  // as the intake gate — a statement/other-kind read as an invoice must never auto-book.
+  isStatement?: boolean
+  documentKind?: string | null
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -1182,6 +1187,9 @@ export async function classifyAttachment(
     // [REMINDER] reminder signal (+ the original invoice number when known)
     isReminder: result.is_reminder,
     reminderOfInvoiceNumber: result.reminder_of_invoice_number ?? null,
+    // [AUTO-ADVANCE] statement / kind — defense-in-depth for the auto-advance gate.
+    isStatement: result.is_statement,
+    documentKind: result.document_kind ?? null,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -2209,7 +2217,43 @@ export async function syncUserEmails(
       // 'received'), which made email invoices bypass confirmation entirely.
       // The _safecore hold data above is still recorded for problem invoices —
       // the queue's health badge uses it to flag which ones need extra care.
-      const invoiceStatus = 'processing'
+      //
+      // [AUTO-ADVANCE] A confident, clean, ordinary email invoice may skip the manual verify tap
+      // and land as 'received' (booked, UNPAID, reversible, tagged _auto_verified) — the same bar
+      // and safety contract as the intake path (see auto-advance.ts). Never when the reader was
+      // 'uncertain'; statements are already filtered out above (is_invoice=false); _safecore
+      // (arithmetic / reminder / dedup) flows into the health check and holds anything doubtful.
+      // The near-certain bank/cash links are closed by the hourly reconcile cron.
+      const autoAdv = !classification.uncertain
+        ? shouldAutoAdvanceInvoice({
+            is_invoice: classification.isInvoice,
+            is_statement: classification.isStatement,
+            is_reminder: classification.isReminder,
+            is_credit_note: classification.isCreditNote,
+            document_kind: classification.documentKind ?? null,
+            confidence: classification.confidence,
+            invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
+            // Raw gross only — never auto-book a total derived from the 'amount' fallback (that
+            // path also bypasses the dedup gate, which keys on totalIncBtw).
+            totalIncBtw: typeof classification.totalIncBtw === 'number' ? classification.totalIncBtw : null,
+            health: {
+              total_ex_btw: classification.totalExBtw ?? 0,
+              btw_amount: classification.btwAmount ?? 0,
+              total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,
+              invoice_date: invoiceDate,
+              invoice_number: classification.invoiceNumber ?? null,
+              invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
+              field_confidence: fieldConfidenceValue,
+            },
+          })
+        : { advance: false, reason: 'uncertain' }
+      if (autoAdv.advance) {
+        fieldConfidenceValue = {
+          ...(fieldConfidenceValue ?? {}),
+          _auto_verified: { at: new Date().toISOString(), reason: autoAdv.reason },
+        }
+      }
+      const invoiceStatus = autoAdv.advance ? 'received' : 'processing'
 
       const insertPipeline = createPipelineClient()
       const { data: insertedInvoice, error: dbError } = await insertPipeline

@@ -41,6 +41,17 @@ console.log("\n— real cross-check pair: till PIN 2086.65 == bookkeeper PIN led
   check("no ledger_pin break (ledger confirms till)", !r.breaks.some((b) => b.kind === "ledger_pin"));
   const bad = reconcileCardDay({ date: "2026-07-03", tillPin: 2086.65, eftGross: 2086.65, ledgerPin: 2000 });
   check("ledger disagreement raises ledger_pin break", bad.breaks.some((b) => b.kind === "ledger_pin"));
+
+  // [RE-REVIEW MED-1] A ledger disagreement must NOT withhold the day's commission from the
+  // booked period cost. Leg B (eftGross − bankNet) is independent of the till/ledger cross-check.
+  const p = reconcileCardPeriod([
+    { date: "2026-07-03", tillPin: 2086.65, eftGross: 2086.65, bankNet: 2000.00, ledgerPin: 2000 }, // ledger disagrees (86.65 off)
+  ]);
+  check("ledger disagreement does NOT withhold the €86.65 commission", Math.abs(p.totalCommission - 86.65) < 0.005);
+  check("ledger disagreement is still surfaced (a break exists)", p.days[0].breaks.some((b) => b.kind === "ledger_pin"));
+  // A genuine card_gross break (till ≠ terminal) DOES still withhold the commission (day suspect).
+  const susp = reconcileCardPeriod([{ date: "d", tillPin: 1000, eftGross: 900, bankNet: 880 }]);
+  check("a real till≠terminal break still withholds commission", susp.totalCommission === 0);
 }
 
 console.log("\n— commission plausibility guards —");

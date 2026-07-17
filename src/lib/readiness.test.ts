@@ -41,6 +41,20 @@ console.log("\n— [TRUST-READY] a received payment with no invoice blocks 'klaa
   check("zero unmatched income → still ready (no false alarm)", clean.status === "ready");
 }
 
+console.log("\n— [PACKAGE-READINESS] invoices still in the verify queue block 'klaar' —");
+{
+  // A real bill dated in the quarter but not yet verified reaches the accountant nowhere —
+  // it must block "klaar" until the owner confirms it (the "geen ontbrekende factuur" rule).
+  const r = buildReadiness(perfect({ unverifiedInvoiceCount: 3 }));
+  check("not ready while invoices sit in the verify queue", r.status !== "ready" && r.ready === false);
+  check("surfaced as a MISSING gap naming the verwerkingsrij", r.missing.some((m) => /verwerkingsrij/.test(m.title)));
+  check("the gap deep-links to the invoices screen", r.missing.some((m) => m.fix?.href === "/dashboard/incoming"));
+  const clean = buildReadiness(perfect({ unverifiedInvoiceCount: 0 }));
+  check("zero unverified → still ready (no false alarm)", clean.status === "ready");
+  const legacy = buildReadiness(perfect());
+  check("undefined unverified count → treated as 0 (older callers keep working)", legacy.status === "ready");
+}
+
 console.log("\n— the weighted mean is exact (30/30/20/20) —");
 {
   // invoices 20/40 = 0.5 → 15; bank 1 → 30; cash 1 → 20; vat 1 → 20; = 85/100.

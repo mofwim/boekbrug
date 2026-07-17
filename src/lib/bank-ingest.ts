@@ -20,6 +20,7 @@ import { sheetBytesToMatrix } from "./xlsx-adapter";
 import { dedupTransactions, mapToRows, dateRange, type ExistingTxKey } from "./bank-import";
 import { computeContentHash } from "./content-hash";
 import { resolveImportTarget } from "./bestanden";
+import { runBankAutoConfirm } from "./bank-auto-confirm";
 
 export interface BankImportResult {
   format: string | null;
@@ -96,6 +97,19 @@ export async function importBankStatement(args: {
       const rows = mapToRows(dd.toInsert, userId);
       const { error } = await pipeline.from("bank_transactions").insert(rows);
       if (!error) inserted = rows.length;
+    }
+  }
+
+  // [BANK-CIRCLE-SERVER] Close the circle on the SERVER the moment new transactions land —
+  // book the near-certain payments (reference printed + amount to the cent) without waiting
+  // for the owner to open /dashboard/bank. No session here, so the pay write uses the
+  // service-role pipeline; the isEligible guard inside is authoritative. Best-effort: a
+  // reconcile hiccup must never fail the import (the /bank load pass remains the backstop).
+  if (inserted > 0) {
+    try {
+      await runBankAutoConfirm({ payClient: pipeline, pipeline, userId });
+    } catch (e) {
+      console.error("[BANK-INGEST] auto-confirm after import failed (non-fatal)", e);
     }
   }
 

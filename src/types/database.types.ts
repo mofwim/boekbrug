@@ -484,6 +484,63 @@ export type Database = {
           },
         ]
       }
+      ledger_daily: {
+        Row: {
+          account_nr: string | null
+          created_at: string | null
+          document_id: string | null
+          id: string
+          kind: string
+          ledger_date: string
+          received: number
+          source: string
+          spent: number
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          account_nr?: string | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          kind: string
+          ledger_date: string
+          received?: number
+          source?: string
+          spent?: number
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          account_nr?: string | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          kind?: string
+          ledger_date?: string
+          received?: number
+          source?: string
+          spent?: number
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledger_daily_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_daily_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           address: string | null
