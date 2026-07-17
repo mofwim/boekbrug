@@ -25,6 +25,12 @@ export function isCashCategory(v: unknown): v is CashCategory {
 
 export interface SettleableInvoice {
   id: string;
+  // [CASH-SETTLE-BIDIR] Which way the cash moved the drawer. An INCOMING (purchase) invoice paid
+  // in cash → money LEAVES the drawer ('out'). An OUTGOING (sales) invoice paid in cash → money
+  // ENTERS the drawer ('in'). Either way the entry is category 'betaling' → P&L-NEUTRAL, because
+  // the cost (incoming) / the omzet (outgoing) was ALREADY booked on accrual by the invoice. So
+  // the drawer moves but nothing is double-counted. Default 'incoming' for older callers.
+  direction?: "incoming" | "outgoing";
   total_inc_btw: number | null;
   // [CASH-SETTLE] Fallback components: when total_inc_btw is null but ex + btw are present, the
   // gross paid = ex + btw. Without this, a cash-paid invoice with a null gross booked its cost
@@ -51,7 +57,7 @@ export function settlementGross(inv: SettleableInvoice): number | null {
 
 export interface CashSettlementRow {
   invoice_id: string;
-  direction: "out";
+  direction: "in" | "out";
   amount: number;
   category: "betaling";
   btw_rate: null;
@@ -60,17 +66,22 @@ export interface CashSettlementRow {
 }
 
 /** The kasboek settlement entry for one cash-paid invoice, or null when its total is unusable
- *  (never write a €0/garbage settlement). Pure. */
+ *  (never write a €0/garbage settlement). Pure. Direction follows the invoice: an outgoing (sales)
+ *  invoice paid in cash raises the drawer ('in'); an incoming (purchase) invoice lowers it ('out').
+ *  Both are category 'betaling' (P&L-neutral) — the omzet/cost already came from the invoice. */
 export function buildCashSettlement(inv: SettleableInvoice): CashSettlementRow | null {
   const amount = settlementGross(inv);
   if (amount === null) return null;
-  const label = ["Betaling factuur", inv.invoice_number ?? ""].join(" ").trim();
+  const outgoing = inv.direction === "outgoing";
+  const dir: "in" | "out" = outgoing ? "in" : "out";
+  const verb = outgoing ? "Ontvangen (contant) factuur" : "Betaling factuur";
+  const label = [verb, inv.invoice_number ?? ""].join(" ").trim();
   const desc = inv.client_name ? `${label} — ${inv.client_name}` : label;
   const iso =
     inv.payment_date && /^\d{4}-\d{2}-\d{2}/.test(inv.payment_date) ? inv.payment_date.slice(0, 10) : undefined;
   return {
     invoice_id: inv.id,
-    direction: "out",
+    direction: dir,
     amount,
     category: "betaling",
     btw_rate: null,
@@ -92,6 +103,7 @@ export interface ExistingSettlement {
   invoice_id: string | null;
   amount?: number | null;
   entry_date?: string | null;
+  direction?: "in" | "out" | null;
 }
 
 export function computeCashSettlementSync(
@@ -118,7 +130,10 @@ export function computeCashSettlementSync(
     const amountDrift =
       typeof existingEntry.amount === "number" ? Math.abs(existingEntry.amount - s.amount) > 0.005 : true;
     const dateDrift = !!s.entry_date && (existingEntry.entry_date ?? null) !== s.entry_date;
-    if (amountDrift || dateDrift) toUpdate.push({ id: existingEntry.id, inv });
+    // [CASH-SETTLE-BIDIR] Heal the direction too: if an invoice's direction was corrected (or a
+    // legacy 'out' entry predates the bidirectional model), the drawer would move the wrong way.
+    const directionDrift = !!existingEntry.direction && existingEntry.direction !== s.direction;
+    if (amountDrift || dateDrift || directionDrift) toUpdate.push({ id: existingEntry.id, inv });
   }
 
   const toDeleteIds = existing.filter((e) => e.invoice_id && !paidIds.has(e.invoice_id)).map((e) => e.id);

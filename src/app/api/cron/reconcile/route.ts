@@ -39,18 +39,20 @@ export async function GET(req: NextRequest) {
     fetchAllRows<{ user_id: string | null }>((from, to) =>
       pipeline.from("bank_transactions").select("user_id").eq("status", "pending")
         .order("id", { ascending: true }).range(from, to)),
-    fetchAllRows<{ receiver_id: string | null }>((from, to) =>
-      pipeline.from("invoices").select("receiver_id")
-        .eq("status", "paid").eq("payment_method", "kas").eq("direction", "incoming")
+    // BOTH directions of cash-paid invoices — a cash SALE (sender_id) must settle into the
+    // drawer too, not only a cash purchase (receiver_id).
+    fetchAllRows<{ sender_id: string | null; receiver_id: string | null }>((from, to) =>
+      pipeline.from("invoices").select("sender_id, receiver_id")
+        .eq("status", "paid").eq("payment_method", "kas")
         .order("id", { ascending: true }).range(from, to)),
     fetchAllRows<{ user_id: string | null }>((from, to) =>
       pipeline.from("cash_entries").select("user_id").eq("category", "betaling")
         .order("id", { ascending: true }).range(from, to)),
-  ]).catch(() => [[], [], []] as [{ user_id: string | null }[], { receiver_id: string | null }[], { user_id: string | null }[]]);
+  ]).catch(() => [[], [], []] as [{ user_id: string | null }[], { sender_id: string | null; receiver_id: string | null }[], { user_id: string | null }[]]);
 
   const userIds = new Set<string>();
   for (const r of pendingTx) if (r.user_id) userIds.add(r.user_id);
-  for (const r of kasInv) if (r.receiver_id) userIds.add(r.receiver_id);
+  for (const r of kasInv) { if (r.receiver_id) userIds.add(r.receiver_id); if (r.sender_id) userIds.add(r.sender_id); }
   for (const r of betaling) if (r.user_id) userIds.add(r.user_id);
 
   let usersProcessed = 0;
