@@ -172,7 +172,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
   const unreadNotifCount = notifications.filter(n => !n.read).length
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Header — unchanged */}
       <DashboardHeader
@@ -384,7 +384,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
               onChange={e => setAiPrompt(e.target.value)}
               rows={3}
               placeholder="bijv. bereid BTW aangifte voor klant Jansen BV..."
-              style={{ width: '100%', fontSize: 14, padding: '8px 12px', border: '1px solid #BDBDBD', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124', resize: 'none', boxSizing: 'border-box' }}
+              style={{ width: '100%', fontSize: 14, padding: '8px 12px', border: '1px solid #dadce0', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124', resize: 'none', boxSizing: 'border-box' }}
             />
             <button
               onClick={handleAiPrompt}
@@ -403,7 +403,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                     Kopiëren
                   </button>
                   <button onClick={() => { setAiResult(null); setAiPrompt('') }}
-                    style={{ backgroundColor: '#F8F9FA', color: '#202124', border: '1px solid #BDBDBD', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+                    style={{ backgroundColor: '#F8F9FA', color: '#202124', border: '1px solid #dadce0', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
                     Opnieuw
                   </button>
                 </div>

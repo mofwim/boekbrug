@@ -86,7 +86,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
           position: "absolute", top: 8, left: 8, zIndex: 2,
           width: 20, height: 20, borderRadius: T.full,
           background: selected ? T.primary : "rgba(255,255,255,0.92)",
-          border: `2px solid ${selected ? T.primary : "#BDBDBD"}`,
+          border: `2px solid ${selected ? T.primary : "#dadce0"}`,
           display: "flex", alignItems: "center", justifyContent: "center",
           opacity: selected || hovered ? 1 : 0,
           transition: "all 0.15s", cursor: "pointer", boxShadow: T.elev1,
@@ -122,6 +122,7 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
         {hovered && !selected && !isDragging && (
           <button
             onClick={e => { e.stopPropagation(); onContextMenu(e); }}
+            aria-label="Meer opties"
             style={{
               position: "absolute", top: 6, right: 6,
               width: 26, height: 26, border: "none",

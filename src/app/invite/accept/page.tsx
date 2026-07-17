@@ -58,13 +58,13 @@ function AcceptInviteContent() {
   }
 
   if (status === 'loading') return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <p className="text-gray-400 text-sm">Laden...</p>
     </div>
   )
 
   if (status === 'error') return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <div className="bg-white rounded-2xl p-8 shadow-sm text-center max-w-sm">
         <p className="text-2xl mb-3">❌</p>
         <p className="font-semibold text-gray-900">Uitnodiging ongeldig</p>
@@ -78,7 +78,7 @@ function AcceptInviteContent() {
   )
 
   if (status === 'accepted') return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <div className="bg-white rounded-2xl p-8 shadow-sm text-center max-w-sm">
         <p className="text-2xl mb-3">✅</p>
         <p className="font-semibold text-gray-900">Uitnodiging geaccepteerd!</p>
@@ -88,7 +88,7 @@ function AcceptInviteContent() {
   )
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <div className="bg-white rounded-2xl p-8 shadow-sm text-center max-w-sm w-full">
         <p className="text-3xl mb-4">🤝</p>
         <h1 className="text-lg font-bold text-gray-900 mb-1">Je bent uitgenodigd</h1>
@@ -134,7 +134,7 @@ function AcceptInviteContent() {
 export default function AcceptInvitePage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+      <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
         <p className="text-gray-400 text-sm">Laden...</p>
       </div>
     }>

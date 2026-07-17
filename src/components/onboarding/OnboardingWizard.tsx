@@ -370,22 +370,22 @@ export function OnboardingWizard({
         padding: "16px 20px 0",
       }}>
         <a href="/" style={{ textDecoration: "none" }}>
-          <span style={{ fontSize: "20px", fontWeight: 700, color: "#007aff", letterSpacing: "-0.5px" }}>
+          <span style={{ fontSize: "20px", fontWeight: 700, color: "#1a73e8", letterSpacing: "-0.5px" }}>
             BoekBrug
           </span>
         </a>
-        <span style={{ fontSize: "13px", color: "#aeaeb2" }}>
+        <span style={{ fontSize: "13px", color: "#bdc1c6" }}>
           Stap {counter.n} van {counter.total}
         </span>
       </div>
 
       {/* Progress bar */}
-      <div style={{ height: "3px", background: "#e5e5ea", marginTop: "12px" }}>
+      <div style={{ height: "3px", background: "#e0e0e0", marginTop: "12px" }}>
         <div
           style={{
             height: "3px",
             width: `${progress}%`,
-            background: "#007aff",
+            background: "#1a73e8",
             transition: "width 0.4s ease",
           }}
         />
@@ -459,7 +459,7 @@ export function OnboardingWizard({
           {showSkip && (
             <button
               onClick={handleSkip}
-              style={{ width: "100%", padding: "12px", fontSize: "15px", color: "#8e8e93", background: "none", border: "none", cursor: "pointer" }}
+              style={{ width: "100%", padding: "12px", fontSize: "15px", color: "#5f6368", background: "none", border: "none", cursor: "pointer" }}
             >
               Sla over
             </button>
@@ -470,7 +470,7 @@ export function OnboardingWizard({
             <button
               onClick={() => setShowResetConfirm(true)}
               disabled={resetting || saving}
-              style={{ width: "100%", padding: "8px", fontSize: "13px", color: "#c7c7cc", background: "none", border: "none", cursor: "pointer" }}
+              style={{ width: "100%", padding: "8px", fontSize: "13px", color: "#dadce0", background: "none", border: "none", cursor: "pointer" }}
             >
               Opnieuw beginnen
             </button>
@@ -489,10 +489,10 @@ export function OnboardingWizard({
             background: "#fff", borderRadius: "20px 20px 0 0",
             padding: "24px 20px 32px", width: "100%", maxWidth: "480px",
           }}>
-            <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 700, color: "#1c1c1e", textAlign: "center" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: "18px", fontWeight: 700, color: "#202124", textAlign: "center" }}>
               Opnieuw beginnen?
             </h3>
-            <p style={{ margin: "0 0 24px", fontSize: "15px", color: "#6b6b6e", textAlign: "center" }}>
+            <p style={{ margin: "0 0 24px", fontSize: "15px", color: "#5f6368", textAlign: "center" }}>
               Je ingevoerde gegevens worden gewist. Gmail blijft gekoppeld.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -501,7 +501,7 @@ export function OnboardingWizard({
                 disabled={resetting}
                 style={{
                   padding: "16px", borderRadius: "14px", fontSize: "16px",
-                  fontWeight: 600, background: "#ff3b30", color: "#fff",
+                  fontWeight: 600, background: "#ea4335", color: "#fff",
                   border: "none", cursor: resetting ? "not-allowed" : "pointer",
                   opacity: resetting ? 0.6 : 1,
                 }}
@@ -513,7 +513,7 @@ export function OnboardingWizard({
                 disabled={resetting}
                 style={{
                   padding: "16px", borderRadius: "14px", fontSize: "16px",
-                  fontWeight: 600, background: "#f2f2f7", color: "#1c1c1e",
+                  fontWeight: 600, background: "#f8f9fa", color: "#202124",
                   border: "none", cursor: "pointer",
                 }}
               >
@@ -544,8 +544,8 @@ function Btn({ onClick, loading, children, secondary, disabled }: {
         borderRadius: "16px",
         fontSize: "16px",
         fontWeight: 600,
-        background: isOff ? "#c7c7cc" : secondary ? "#f2f2f7" : "#007aff",
-        color: secondary ? "#007aff" : "#fff",
+        background: isOff ? "#dadce0" : secondary ? "#f8f9fa" : "#1a73e8",
+        color: secondary ? "#1a73e8" : "#fff",
         border: "none",
         cursor: isOff ? "not-allowed" : "pointer",
         transition: "transform 0.1s, background 0.15s",
@@ -566,7 +566,7 @@ function Input({ label, placeholder, value, onChange, inputMode, maxLength, erro
 }) {
   return (
     <div>
-      <label style={{ display: "block", fontSize: "14px", fontWeight: 500, color: "#1c1c1e", marginBottom: "8px" }}>
+      <label style={{ display: "block", fontSize: "14px", fontWeight: 500, color: "#202124", marginBottom: "8px" }}>
         {label}
       </label>
       <input
@@ -581,15 +581,15 @@ function Input({ label, placeholder, value, onChange, inputMode, maxLength, erro
           padding: "14px 16px",
           fontSize: "16px", // iOS zoom prevention
           borderRadius: "14px",
-          border: `1.5px solid ${error ? "#ff3b30" : "#e5e5ea"}`,
+          border: `1.5px solid ${error ? "#ea4335" : "#e0e0e0"}`,
           background: "#fff",
-          color: "#1c1c1e",
+          color: "#202124",
           fontFamily: "inherit",
           outline: "none",
           boxSizing: "border-box",
         }}
       />
-      {error && <p style={{ fontSize: "13px", color: "#ff3b30", marginTop: "6px" }}>{error}</p>}
+      {error && <p style={{ fontSize: "13px", color: "#ea4335", marginTop: "6px" }}>{error}</p>}
     </div>
   );
 }
@@ -608,7 +608,7 @@ function ChoiceCard({ active, onClick, icon, title, desc }: {
         padding: "18px 20px",
         borderRadius: "18px",
         border: "none",
-        background: active ? "#007aff" : "#f2f2f7",
+        background: active ? "#1a73e8" : "#f8f9fa",
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
@@ -618,8 +618,8 @@ function ChoiceCard({ active, onClick, icon, title, desc }: {
     >
       <span style={{ fontSize: "26px" }}>{icon}</span>
       <div style={{ flex: 1 }}>
-        <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: active ? "#fff" : "#1c1c1e" }}>{title}</p>
-        <p style={{ margin: "2px 0 0", fontSize: "14px", color: active ? "rgba(255,255,255,0.75)" : "#6b6b6e" }}>{desc}</p>
+        <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: active ? "#fff" : "#202124" }}>{title}</p>
+        <p style={{ margin: "2px 0 0", fontSize: "14px", color: active ? "rgba(255,255,255,0.75)" : "#5f6368" }}>{desc}</p>
       </div>
       {active && <span style={{ color: "#fff", fontSize: "16px" }}>✓</span>}
     </button>
@@ -633,18 +633,18 @@ function StepWelcome({ firstName }: { firstName: string }) {
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       <span style={{ fontSize: "52px" }}>👋</span>
       <div>
-        <h1 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+        <h1 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
           Welkom bij BoekBrug, {firstName}!
         </h1>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
           Laten we je account in 3 minuten instellen.
         </p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         {["Alle facturen op één plek", "AI leest je documenten automatisch", "Nooit meer een factuur kwijt"].map((t) => (
           <div key={t} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ color: "#34c759", fontSize: "16px" }}>✓</span>
-            <span style={{ fontSize: "15px", color: "#6b6b6e" }}>{t}</span>
+            <span style={{ color: "#34a853", fontSize: "16px" }}>✓</span>
+            <span style={{ fontSize: "15px", color: "#5f6368" }}>{t}</span>
           </div>
         ))}
       </div>
@@ -656,8 +656,8 @@ function StepRole({ role, setRole }: { role: Role; setRole: (r: Role) => void })
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Wie ben jij?</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>We passen BoekBrug aan op jouw situatie.</p>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Wie ben jij?</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>We passen BoekBrug aan op jouw situatie.</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         <ChoiceCard active={role === "zzp"} onClick={() => setRole("zzp")} icon="💼" title="Ik ben ZZP'er" desc="Ik stuur en ontvang facturen" />
@@ -676,10 +676,10 @@ function StepInvoiceStart({ value, onChange, error }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
           Met welk factuurnummer wil je beginnen?
         </h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
           Kom je van een ander programma? Vul je volgende factuurnummer in —
           wij gaan verder waar jij gebleven bent.
         </p>
@@ -695,23 +695,23 @@ function StepInvoiceStart({ value, onChange, error }: {
 
       {/* live confirmation — the "understanding loop" */}
       {!trimmed && (
-        <div style={{ fontSize: "14px", color: "#8e8e93" }}>
+        <div style={{ fontSize: "14px", color: "#5f6368" }}>
           Laat leeg om bij <strong>{year}0001</strong> te beginnen.
         </div>
       )}
       {trimmed && preview && preview.ok && (
         <div style={{
-          background: "#e9f9ef", border: "1px solid #34c759", borderRadius: "14px",
-          padding: "14px 16px", fontSize: "15px", color: "#1c1c1e",
+          background: "#e9f9ef", border: "1px solid #34a853", borderRadius: "14px",
+          padding: "14px 16px", fontSize: "15px", color: "#202124",
         }}>
           <div>✓ Je eerste factuur wordt: <strong>{preview.first}</strong></div>
-          <div style={{ marginTop: "4px", color: "#6b6b6e" }}>De volgende: {preview.next}</div>
+          <div style={{ marginTop: "4px", color: "#5f6368" }}>De volgende: {preview.next}</div>
         </div>
       )}
       {trimmed && preview && !preview.ok && preview.reason !== "empty" && (
         <div style={{
-          background: "#fff4e5", border: "1px solid #ff9500", borderRadius: "14px",
-          padding: "14px 16px", fontSize: "14px", color: "#1c1c1e",
+          background: "#fff4e5", border: "1px solid #e37400", borderRadius: "14px",
+          padding: "14px 16px", fontSize: "14px", color: "#202124",
         }}>
           {reasonToDutch(preview.reason)}
         </div>
@@ -729,8 +729,8 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Jouw bedrijf</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Alleen de naam is verplicht om verder te gaan. BTW-nummer, adres en IBAN heb je nodig om facturen te versturen — vul ze nu in (dat mag ook later in Instellingen).</p>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Jouw bedrijf</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>Alleen de naam is verplicht om verder te gaan. BTW-nummer, adres en IBAN heb je nodig om facturen te versturen — vul ze nu in (dat mag ook later in Instellingen).</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <Input label="Wat is je bedrijfsnaam?" placeholder="Mohammad BV" value={company.company_name}
@@ -748,7 +748,7 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
       {/* [COLD-START] Explain WHY "Volgende" is greyed out — a disabled button with
           no reason reads as "broken" to a first-time user. */}
       {!company.company_name.trim() && (
-        <p style={{ margin: 0, fontSize: "13px", color: "#8e8e93" }}>
+        <p style={{ margin: 0, fontSize: "13px", color: "#5f6368" }}>
           Vul je bedrijfsnaam in om verder te gaan.
         </p>
       )}
@@ -763,8 +763,8 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Jouw kantoor</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>Alleen de naam is nodig — de rest kun je later aanpassen.</p>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Jouw kantoor</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>Alleen de naam is nodig — de rest kun je later aanpassen.</p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         <Input label="Naam van je kantoor" placeholder="Bakker Boekhouders" value={company.company_name}
@@ -775,7 +775,7 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
       </div>
       {/* [COLD-START] Explain WHY "Volgende" is greyed out (name is required). */}
       {!company.company_name.trim() && (
-        <p style={{ margin: 0, fontSize: "13px", color: "#8e8e93" }}>
+        <p style={{ margin: 0, fontSize: "13px", color: "#5f6368" }}>
           Vul de naam van je kantoor in om verder te gaan.
         </p>
       )}
@@ -807,10 +807,10 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "20px" }}>
         <span style={{ fontSize: "52px" }}>✅</span>
         <div>
-          <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+          <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
             Gmail succesvol gekoppeld!
           </h2>
-          <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+          <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#5f6368" }}>
             We importeren je facturen automatisch op de achtergrond.
           </p>
         </div>
@@ -819,13 +819,13 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
           onClick={onNext}
           style={{
             width: "100%", padding: "16px", borderRadius: "16px",
-            fontSize: "16px", fontWeight: 600, background: "#007aff",
+            fontSize: "16px", fontWeight: 600, background: "#1a73e8",
             color: "#fff", border: "none", cursor: "pointer",
           }}
         >
           Volgende →
         </button>
-        <p style={{ fontSize: "14px", color: "#8e8e93" }}>Of wacht even, je gaat automatisch verder…</p>
+        <p style={{ fontSize: "14px", color: "#5f6368" }}>Of wacht even, je gaat automatisch verder…</p>
       </div>
     );
   }
@@ -833,8 +833,8 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Wil je je Gmail koppelen?</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Wil je je Gmail koppelen?</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
           We importeren automatisch je facturen. Jij hoeft niets te doen.
         </p>
       </div>
@@ -842,11 +842,11 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
       {/* [BOEK-011] Fix 3: loading spinner while waiting for OAuth */}
       {loading ? (
         <div style={{
-          padding: "20px", borderRadius: "18px", background: "#f2f2f7",
+          padding: "20px", borderRadius: "18px", background: "#f8f9fa",
           display: "flex", alignItems: "center", justifyContent: "center", gap: "12px",
         }}>
           <span style={{ fontSize: "20px" }}>⏳</span>
-          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>
+          <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#202124" }}>
             Gmail openen…
           </p>
         </div>
@@ -857,20 +857,20 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
             window.location.href = "/api/email/connect?provider=gmail&redirect=/onboarding";
           }}
           style={{
-            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f2f2f7",
+            textAlign: "left", padding: "20px", borderRadius: "18px", background: "#f8f9fa",
             border: "none", cursor: "pointer", width: "100%", display: "flex", alignItems: "flex-start", gap: "16px",
           }}
         >
           <span style={{ width: "40px", height: "40px", borderRadius: "50%", background: "#EA4335", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "16px", flexShrink: 0 }}>G</span>
           <div>
-            <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#1c1c1e" }}>Ja, koppel mijn Gmail</p>
-            <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#6b6b6e" }}>We importeren automatisch je facturen.</p>
-            <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#8e8e93" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
+            <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#202124" }}>Ja, koppel mijn Gmail</p>
+            <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#5f6368" }}>We importeren automatisch je facturen.</p>
+            <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#5f6368" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
           </div>
         </button>
       )}
 
-      <p style={{ textAlign: "center", fontSize: "14px", color: "#8e8e93" }}>
+      <p style={{ textAlign: "center", fontSize: "14px", color: "#5f6368" }}>
         Tik op &ldquo;Sla over&rdquo; om dit later in te stellen
       </p>
     </div>
@@ -883,8 +883,8 @@ function StepAccountant({ accountantEmail, setAccountantEmail }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Heb je een boekhouder?</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Heb je een boekhouder?</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
           Stuur een uitnodiging — hij kan dan al je facturen inzien.
         </p>
       </div>
@@ -900,8 +900,8 @@ function StepInviteClient({ clientEmail, setClientEmail }: {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>Voeg je eerste klant toe</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Voeg je eerste klant toe</h2>
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
           Je klant ontvangt een e-mail om zijn account aan te maken.
         </p>
       </div>
@@ -921,10 +921,10 @@ function StepDone({ firstName, role, missingSendFields }: { firstName: string; r
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "16px" }}>
       <span style={{ fontSize: "60px" }}>{needsMore ? "👍" : "🎉"}</span>
       <div>
-        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#1c1c1e" }}>
+        <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
           {needsMore ? `Bijna klaar, ${firstName}!` : `Je bent klaar, ${firstName}!`}
         </h2>
-        <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#6b6b6e" }}>
+        <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#5f6368" }}>
           {role === "accountant"
             ? "Nodig klanten uit en beheer alles op één plek."
             : needsMore
@@ -937,7 +937,7 @@ function StepDone({ firstName, role, missingSendFields }: { firstName: string; r
           Vul nog je <strong>{missingSendFields.join(", ")}</strong> in bij <strong>Instellingen</strong> — dat is wettelijk verplicht op een factuur. Zonder deze gegevens kun je nog geen factuur versturen.
         </div>
       ) : (
-        <div style={{ background: "#f2f2f7", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#6b6b6e", textAlign: "left", width: "100%" }}>
+        <div style={{ background: "#f8f9fa", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#5f6368", textAlign: "left", width: "100%" }}>
           💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden
         </div>
       )}

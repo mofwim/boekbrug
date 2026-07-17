@@ -40,9 +40,9 @@ const ACCOUNTANT_FILTERS: {
   activeClass: string
 }[] = [
   { value: 'all',            label: 'Alle',             activeClass: 'bg-gray-900 text-white' },
-  { value: 'verwerkt',       label: '✓ Verwerkt',        activeClass: 'bg-[#dcfce7] text-[#166534] border border-[#bbf7d0]' },
-  { value: 'in_behandeling', label: '⏳ In behandeling', activeClass: 'bg-[#dbeafe] text-[#1e40af] border border-[#bfdbfe]' },
-  { value: 'vraag',          label: '? Vraag',           activeClass: 'bg-[#ffedd5] text-[#9a3412] border border-[#fed7aa]' },
+  { value: 'verwerkt',       label: '✓ Verwerkt',        activeClass: 'bg-[#ceead6] text-[#137333] border border-[#a8dab5]' },
+  { value: 'in_behandeling', label: '⏳ In behandeling', activeClass: 'bg-[#d3e3fd] text-[#1967d2] border border-[#a8c7fa]' },
+  { value: 'vraag',          label: '? Vraag',           activeClass: 'bg-[#fef7e0] text-[#b06000] border border-[#fde293]' },
 ]
 
 // ── Shared badge ──────────────────────────────────────────────────────────────

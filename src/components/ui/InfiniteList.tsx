@@ -219,7 +219,7 @@ export function InfiniteList({
           align-items: center;
           justify-content: center;
           height: 36px;
-          color: #6b7280;
+          color: #5f6368;
           background: transparent;
         }
         .bb-ptr-spin {
@@ -240,7 +240,7 @@ export function InfiniteList({
           justify-content: center;
           width: 36px;
           height: 36px;
-          color: #6b7280;
+          color: #5f6368;
           pointer-events: none;
           transition: opacity 0.1s;
           z-index: 10;
@@ -252,7 +252,7 @@ export function InfiniteList({
           align-items: center;
           justify-content: center;
           padding: 48px 24px;
-          color: #9ca3af;
+          color: #9aa0a6;
           font-size: 0.9rem;
           text-align: center;
         }
@@ -263,7 +263,7 @@ export function InfiniteList({
           align-items: center;
           justify-content: space-between;
           padding: 12px 16px;
-          color: #ef4444;
+          color: #ea4335;
           font-size: 0.875rem;
           background: #fef2f2;
           border-radius: 10px;
@@ -272,7 +272,7 @@ export function InfiniteList({
         .bb-retry-btn {
           font-size: 0.8rem;
           font-weight: 600;
-          color: #ef4444;
+          color: #ea4335;
           background: none;
           border: none;
           cursor: pointer;
@@ -280,16 +280,16 @@ export function InfiniteList({
           border-radius: 6px;
         }
         .bb-retry-btn:active {
-          background: #fee2e2;
+          background: #fce8e6;
         }
 
         /* Skeleton rows */
         .bb-skeleton-row {
           padding: 14px 16px;
-          border-bottom: 1px solid #f3f4f6;
+          border-bottom: 1px solid #f1f3f4;
         }
         .bb-skeleton {
-          background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+          background: linear-gradient(90deg, #f1f3f4 25%, #e0e0e0 50%, #f1f3f4 75%);
           background-size: 200% 100%;
           border-radius: 6px;
           animation: bb-shimmer 1.4s ease-in-out infinite;
@@ -312,7 +312,7 @@ export function InfiniteList({
         .bb-end-label {
           text-align: center;
           font-size: 0.78rem;
-          color: #d1d5db;
+          color: #dadce0;
           padding: 20px 0 8px;
           letter-spacing: 0.02em;
         }

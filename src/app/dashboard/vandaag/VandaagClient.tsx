@@ -181,7 +181,7 @@ export default function VandaagClient({ payable, remind }: Props) {
         margin: "0 auto",
         padding: "24px 16px 64px",
         fontFamily:
-          "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
       <header style={{ marginBottom: 24 }}>

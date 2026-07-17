@@ -11,6 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
+import { BackLink } from '@/components/ui/BackLink'
 
 // ─────────────────────────────────────────────────────────
 // Types & constants
@@ -287,17 +288,13 @@ export default function KwartaalPage() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Sticky header */}
       <div style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '12px 24px' }}>
         <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => router.push(`/dashboard/clients/${clientId}`)}
-              style={{ fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              ← Terug
-            </button>
+            <BackLink style={{ fontWeight: 500, whiteSpace: 'nowrap' }} />
             <div className="min-w-0">
               <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Q{q} {year} — {client?.company_name || client?.full_name}
@@ -333,7 +330,7 @@ export default function KwartaalPage() {
             // owner). While they load, show "…" rather than a wrong invoices-only sum.
             { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: '#34A853' },
             { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: '#EA4335' },
-            { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#9334E6' },
+            { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#7b1fa2' },
           ].map(s => (
             <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, textAlign: 'center' }}>
               <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>
@@ -480,9 +477,9 @@ export default function KwartaalPage() {
                                 onClick={() => handleAction(invoice.id, null)}
                                 style={{
                                   padding: '8px', borderRadius: 6, fontSize: 12, fontWeight: 500,
-                                  backgroundColor: !invoice.accountant_status ? '#E7E0EC' : '#FFFFFF',
-                                  color: !invoice.accountant_status ? '#49454F' : '#5F6368',
-                                  border: !invoice.accountant_status ? '1px solid #49454F' : '1px solid #E0E0E0',
+                                  backgroundColor: !invoice.accountant_status ? '#f1f3f4' : '#FFFFFF',
+                                  color: !invoice.accountant_status ? '#5f6368' : '#5F6368',
+                                  border: !invoice.accountant_status ? '1px solid #5f6368' : '1px solid #E0E0E0',
                                   cursor: 'pointer',
                                 }}>
                                 Niet verwerkt

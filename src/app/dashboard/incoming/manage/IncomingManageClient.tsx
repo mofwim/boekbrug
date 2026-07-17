@@ -38,10 +38,10 @@ const M3 = {
   onPrimary:         '#FFFFFF',
   primaryContainer:  '#D3E3FD',
   onPrimaryContainer:'#041E49',
-  surface:           '#FFFBFE',
-  onSurface:         '#1C1B1F',
-  surfaceVariant:    '#E7E0EC',
-  outline:           '#79747E',
+  surface:           '#ffffff',
+  onSurface:         '#202124',
+  surfaceVariant:    '#f1f3f4',
+  outline:           '#80868b',
   error:             '#B3261E',
   errorContainer:    '#F9DEDC',
   success:           '#34A853',
@@ -49,7 +49,7 @@ const M3 = {
   warning:           '#E37400',
   warningContainer:  '#FEE8C4',
 }
-const FONT     = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
@@ -541,7 +541,7 @@ export default function IncomingManageClient({
           </Link>
           <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center' }}>Inkoopfacturen</h1>
           <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F' }}>inbox</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
           </Link>
         </div>
 
@@ -731,7 +731,7 @@ export default function IncomingManageClient({
                             fontSize: 12, fontWeight: isPrepared ? 600 : 500, borderRadius: R.full,
                             border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT,
                             background: isPrepared ? M3.primary : M3.surfaceVariant,
-                            color: isPrepared ? M3.onPrimary : '#49454F',
+                            color: isPrepared ? M3.onPrimary : '#5f6368',
                             display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
                           }}>
                           {processingId === inv.id || checkingId === inv.id
@@ -894,7 +894,7 @@ export default function IncomingManageClient({
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 8px' }}>
               Je hebt mogelijk al een factuur van dezelfde leverancier voor hetzelfde bedrag betaald:
             </p>
-            <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#1C1B1F' }}>
+            <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#202124' }}>
               <div style={{ fontWeight: 600 }}>{dupWarn.match.client_name ?? '—'}</div>
               <div style={{ color: '#5F6368', marginTop: 2 }}>
                 {dupWarn.match.invoice_number ? `Factuur ${dupWarn.match.invoice_number} · ` : ''}
@@ -933,7 +933,7 @@ export default function IncomingManageClient({
 
       {/* ── Toast ── */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
+        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
           {toast}
         </div>
       )}
@@ -953,7 +953,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   return (
     <div>
       <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2, fontWeight: 500 }}>{label}</p>
-      <p style={{ fontSize: 13, fontWeight: 600, color: '#1C1B1F', fontFamily: mono ? "'Roboto Mono', monospace" : 'inherit' }}>{value}</p>
+      <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: mono ? "'Roboto Mono', monospace" : 'inherit' }}>{value}</p>
     </div>
   )
 }
@@ -975,19 +975,19 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
   return (
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#FFFBFE', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
-        <p style={{ fontSize: 20, fontWeight: 700, color: '#1C1B1F', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
-        <p style={{ fontSize: 14, color: '#49454F', textAlign: 'center', marginBottom: 24, lineHeight: 1.5 }}>{body}</p>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
+        <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: 24, lineHeight: 1.5 }}>{body}</p>
 
         {paymentChoice ? (
           <>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#1C1B1F', marginBottom: 6 }}>Betaaldatum</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
             <input
               type="date"
               value={paymentDate}
               max={new Date().toISOString().slice(0, 10)}
               onChange={e => setPaymentDate(e.target.value)}
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#1C1B1F', background: '#fff', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
               <button onClick={() => paymentChoice('bank', paymentDate)} style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
@@ -1005,7 +1005,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             {secondaryAction && (
               <button
                 onClick={secondaryAction.onClick}
-                style={{ width: '100%', padding: '13px', borderRadius: R.full, background: '#fff', color: '#49454F', fontSize: 15, fontWeight: 600, border: '1px solid #DADCE0', cursor: 'pointer', fontFamily: FONT, marginBottom: 10 }}
+                style={{ width: '100%', padding: '13px', borderRadius: R.full, background: '#fff', color: '#5f6368', fontSize: 15, fontWeight: 600, border: '1px solid #DADCE0', cursor: 'pointer', fontFamily: FONT, marginBottom: 10 }}
               >
                 {secondaryAction.label}
               </button>
@@ -1027,7 +1027,7 @@ function EmptyState() {
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
-      <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 4, fontFamily: FONT }}>Geen inkoopfacturen</p>
+      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>Geen inkoopfacturen</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>Bevestigde inkoopfacturen verschijnen hier</p>
     </div>
   )
@@ -1098,9 +1098,9 @@ function PreparePaymentSheet({
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#FFFBFE', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
-        <p style={{ fontSize: 20, fontWeight: 700, color: '#1C1B1F', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>Betalen</p>
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>Betalen</p>
         <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
           Scan met je bankapp of kopieer de gegevens. Je betaalt in je eigen bank.
         </p>
@@ -1137,13 +1137,13 @@ function PreparePaymentSheet({
         {/* [PAY-SAFE-CONFIRM] Closing the QR ≠ paid. Ask directly — "Ja" routes
             to the Bank/Contant + date flow; "Nog niet" just closes (stays unpaid).
             Wording = "verstuurd" (sent), not "aangekomen" — SEPA takes time. */}
-        <p style={{ fontSize: 15, fontWeight: 700, color: '#1C1B1F', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
+        <p style={{ fontSize: 15, fontWeight: 700, color: '#202124', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
           Heb je de betaling verstuurd?
         </p>
         <button onClick={onConfirmPaid} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
           Ja, ik heb betaald
         </button>
-        <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.surfaceVariant, color: '#49454F', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
+        <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.surfaceVariant, color: '#5f6368', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
           Nog niet
         </button>
       </div>
@@ -1161,7 +1161,7 @@ function CopyRow({ label, value, raw, onCopy }: {
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: '#F8F9FA', borderRadius: R.md, marginBottom: 8 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ fontSize: 11, color: '#5F6368', fontWeight: 500, marginBottom: 2 }}>{label}</p>
-        <p style={{ fontSize: 14, fontWeight: 600, color: '#1C1B1F', fontFamily: FONT_NUM, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</p>
+        <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', fontFamily: FONT_NUM, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</p>
       </div>
       <button
         onClick={() => onCopy(raw, label)}

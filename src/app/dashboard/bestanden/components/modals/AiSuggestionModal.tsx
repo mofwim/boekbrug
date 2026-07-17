@@ -26,7 +26,7 @@ export function AiSuggestionModal({
         background: T.surface,
         borderRadius: `${T.xl} ${T.xl} 0 0`,
         boxShadow: "0 -4px 32px rgba(0,0,0,0.18)",
-        fontFamily: "'Google Sans','Roboto',sans-serif",
+        fontFamily: "'Roboto',sans-serif",
         overflow: "hidden",
       }}>
         {/* Drag handle */}

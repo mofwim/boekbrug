@@ -1010,7 +1010,7 @@ function NewInvoicePageContent() {
             {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
             <Link href={parentHref}
               style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s', textDecoration: 'none' }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >←</Link>
             {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}

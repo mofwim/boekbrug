@@ -36,22 +36,22 @@ const shared = StyleSheet.create({
   brandName: {
     fontSize: 16,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
   },
   brandSub: {
     fontSize: 9,
-    color: "#9ca3af",
+    color: "#9aa0a6",
     marginTop: 2,
   },
   docTitle: {
     fontSize: 18,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
     textAlign: "right",
   },
   docSub: {
     fontSize: 10,
-    color: "#6b7280",
+    color: "#5f6368",
     textAlign: "right",
     marginTop: 3,
   },
@@ -68,20 +68,20 @@ const shared = StyleSheet.create({
   },
   infoLabel: {
     fontSize: 9,
-    color: "#9ca3af",
+    color: "#9aa0a6",
     width: 120,
   },
   infoValue: {
     fontSize: 9,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
     flex: 1,
   },
   // Section label
   sectionLabel: {
     fontSize: 9,
     fontFamily: "Helvetica-Bold",
-    color: "#9ca3af",
+    color: "#9aa0a6",
     textTransform: "uppercase",
     letterSpacing: 1,
     marginBottom: 8,
@@ -90,7 +90,7 @@ const shared = StyleSheet.create({
   // Table
   tableHeader: {
     flexDirection: "row",
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#f1f3f4",
     padding: 8,
     borderRadius: 4,
     marginBottom: 2,
@@ -99,23 +99,23 @@ const shared = StyleSheet.create({
     flexDirection: "row",
     padding: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
+    borderBottomColor: "#f1f3f4",
   },
   tableRowAlt: {
     flexDirection: "row",
     padding: 8,
-    backgroundColor: "#fafafa",
+    backgroundColor: "#f8f9fa",
     borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
+    borderBottomColor: "#f1f3f4",
   },
   headerText: {
     fontSize: 9,
     fontFamily: "Helvetica-Bold",
-    color: "#6b7280",
+    color: "#5f6368",
   },
   cellText: {
     fontSize: 9,
-    color: "#1c1c1e",
+    color: "#202124",
   },
   // Totals
   totalsBlock: {
@@ -130,11 +130,11 @@ const shared = StyleSheet.create({
   },
   totalLabel: {
     fontSize: 10,
-    color: "#6b7280",
+    color: "#5f6368",
   },
   totalValue: {
     fontSize: 10,
-    color: "#1c1c1e",
+    color: "#202124",
   },
   totalFinalRow: {
     flexDirection: "row",
@@ -143,17 +143,17 @@ const shared = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 2,
-    borderTopColor: "#1c1c1e",
+    borderTopColor: "#202124",
   },
   totalFinalLabel: {
     fontSize: 12,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
   },
   totalFinalValue: {
     fontSize: 12,
     fontFamily: "Helvetica-Bold",
-    color: "#1c1c1e",
+    color: "#202124",
   },
   // Footer
   footer: {
@@ -165,7 +165,7 @@ const shared = StyleSheet.create({
     fontSize: 8,
     color: "#d1d5db",
     borderTopWidth: 1,
-    borderTopColor: "#f3f4f6",
+    borderTopColor: "#f1f3f4",
     paddingTop: 8,
   },
 });

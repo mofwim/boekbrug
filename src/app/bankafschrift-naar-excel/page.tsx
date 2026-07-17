@@ -90,12 +90,12 @@ export default function BankafschriftNaarExcelPage() {
 
       {/* FAQ — indexable, matches the JSON-LD above */}
       <section style={{ ...wrap, paddingBottom: 8 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 800, color: '#1c1c1e', margin: '8px 0 16px' }}>Veelgestelde vragen</h2>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: '#202124', margin: '8px 0 16px' }}>Veelgestelde vragen</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {faq.map((f) => (
-            <div key={f.q} style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 14, padding: '16px 18px' }}>
-              <div style={{ fontSize: 15.5, fontWeight: 700, color: '#1c1c1e', marginBottom: 6 }}>{f.q}</div>
-              <div style={{ fontSize: 14.5, color: '#5b5b60', lineHeight: 1.6 }}>{f.a}</div>
+            <div key={f.q} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: '16px 18px' }}>
+              <div style={{ fontSize: 15.5, fontWeight: 700, color: '#202124', marginBottom: 6 }}>{f.q}</div>
+              <div style={{ fontSize: 14.5, color: '#5f6368', lineHeight: 1.6 }}>{f.a}</div>
             </div>
           ))}
         </div>
@@ -103,13 +103,13 @@ export default function BankafschriftNaarExcelPage() {
 
       {/* Cross-links to the other free tools */}
       <section style={{ ...wrap, padding: '28px 16px 48px' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.4, color: '#8e8e93', marginBottom: 12 }}>MEER GRATIS TOOLS</div>
+        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.4, color: '#5f6368', marginBottom: 12 }}>MEER GRATIS TOOLS</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
           {related.map((t) => (
-            <Link key={t.slug} href={t.slug} style={{ display: 'block', background: '#fff', border: '1px solid #ececf1', borderRadius: 14, padding: 16, textDecoration: 'none' }}>
+            <Link key={t.slug} href={t.slug} style={{ display: 'block', background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: 16, textDecoration: 'none' }}>
               <div style={{ fontSize: 24, marginBottom: 6 }} aria-hidden>{t.emoji}</div>
-              <div style={{ fontSize: 15.5, fontWeight: 700, color: '#1c1c1e', marginBottom: 4 }}>{t.title}</div>
-              <div style={{ fontSize: 13.5, color: '#6b6b6e', lineHeight: 1.5 }}>{t.tagline}</div>
+              <div style={{ fontSize: 15.5, fontWeight: 700, color: '#202124', marginBottom: 4 }}>{t.title}</div>
+              <div style={{ fontSize: 13.5, color: '#5f6368', lineHeight: 1.5 }}>{t.tagline}</div>
             </Link>
           ))}
         </div>
