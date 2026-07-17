@@ -243,7 +243,7 @@ export async function GET(req: NextRequest) {
           .from("documents")
           .select("id, file_name, doc_type, ai_doc_type, period, year, notes, folder_id, created_at")
           .eq("user_id", user.id)
-          .eq("trashed", false)
+          .eq("trashed", false) // [T#3] don't surface soft-deleted files in global search
           .or(buildOr(["file_name", "doc_type", "ai_doc_type", "notes"], terms))
           .order("created_at", { ascending: false })
           .limit(4)

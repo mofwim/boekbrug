@@ -35,6 +35,28 @@ export function escapeSearchTerm(input: string): string {
 }
 
 /**
+ * Escapes a value passed DIRECTLY to `.ilike(column, value)` / `.like(...)`.
+ *
+ * Unlike `escapeSearchTerm`, this does NOT touch `,` `(` `)`: a direct
+ * `.ilike(col, val)` sends the value as a bound parameter, so PostgREST never
+ * parses those as `.or()` syntax — escaping them would corrupt legitimate names
+ * (and `\,` is even an invalid LIKE escape sequence). We neutralise ONLY the LIKE
+ * wildcards so the match is literal:
+ *   - `\` first (the LIKE escape char itself)
+ *   - `%` `_` — LIKE/ILIKE wildcards
+ *
+ * @example
+ *   query.ilike('client_name', escapeLikeValue(vendor))
+ */
+export function escapeLikeValue(input: string): string {
+  if (typeof input !== 'string') return ''
+  return input
+    .replace(/\\/g, '\\\\')
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_')
+}
+
+/**
  * Builds a safe .or() filter string for Supabase from a sanitized query.
  * Convenience wrapper to avoid forgetting the escape.
  *

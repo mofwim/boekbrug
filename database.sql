@@ -562,6 +562,9 @@ CREATE POLICY accountant_clients_select ON public.accountant_clients
   FOR SELECT TO authenticated
   USING ((accountant_id = auth.uid()) OR (zzper_id = auth.uid()));
 
+-- ⚠️ [SEC-LINK] DROPPED in supabase/migrations/accountant_clients_insert_consent.sql —
+--    this open policy let any authenticated user self-link as any client's accountant.
+--    Linking now happens only via the service_role accept route. Kept here for history.
 CREATE POLICY accountant_clients_insert ON public.accountant_clients
   FOR INSERT TO authenticated
   WITH CHECK (accountant_id = auth.uid());
@@ -625,6 +628,17 @@ CREATE POLICY documents_update_own ON public.documents
 
 CREATE POLICY documents_delete_own ON public.documents
   FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- [SEC-DOCS-RLS] Accountant read of a linked client's SHARED, non-trashed docs.
+-- Captured/versioned in supabase/migrations/documents_accountant_read_policy.sql
+-- (was prod-only). Mirrors invoices_accountant_read; additive to documents_select_own.
+CREATE POLICY documents_accountant_read ON public.documents
+  FOR SELECT TO authenticated
+  USING (
+    shared = true
+    AND trashed IS NOT TRUE
+    AND is_my_accountant_client(user_id)
+  );
 
 -- ── draft_queue (4) ─────────────────────────────────────
 CREATE POLICY draft_queue_select_own ON public.draft_queue

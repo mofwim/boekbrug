@@ -64,15 +64,25 @@ export async function DELETE(_req: NextRequest) {
       .ilike("file_name", "onboarding-%");  // files named "onboarding-{timestamp}.ext"
 
     if (docs && docs.length > 0) {
-      // Delete from Storage
-      const paths = docs.map((d) => d.file_url).filter(Boolean);
+      const paths = docs.map((d) => d.file_url).filter(Boolean) as string[];
+      const ids = docs.map((d) => d.id);
+
+      // [reset#2] Delete the DB rows FIRST, scoped by user_id (defense-in-depth),
+      // aborting on error — mirrors the hardened order in deleteDocument. Doing storage
+      // first (the old order, with unchecked results) risked dangling rows pointing at
+      // removed objects (404 signed URLs) or orphaned objects on a silent failure.
+      const { error: delErr } = await serviceSupabase
+        .from("documents").delete().in("id", ids).eq("user_id", user.id);
+      if (delErr) {
+        console.error("[BOEK-015] reset row delete failed:", delErr);
+        return NextResponse.json({ error: "Reset mislukt" }, { status: 500 });
+      }
+
+      // Then remove the storage objects. A failed remove leaves orphans (reclaimable)
+      // but never a dangling row.
       if (paths.length > 0) {
         await serviceSupabase.storage.from("documents").remove(paths);
       }
-
-      // Delete from DB
-      const ids = docs.map((d) => d.id);
-      await serviceSupabase.from("documents").delete().in("id", ids);
     }
 
     return NextResponse.json({ ok: true });

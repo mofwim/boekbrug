@@ -54,10 +54,15 @@ export async function POST(req: NextRequest) {
 
     if (!doc) return NextResponse.json({ type: "unknown", folderId: null, folderPath: "" });
 
-    // Call AI classification
+    // Call AI classification.
+    // [AI-ARGS] classifyDocument(fileContent, fileName): this route does not fetch
+    // the file's text (it's a filename-based folder SUGGESTION only), so the filename
+    // is the sole signal — pass it as fileName (was mistakenly `doc.file_type`, the
+    // MIME type, which made the model classify off "application/pdf"). Content is the
+    // filename too, since that's the only text we have here.
     const classification = await classifyDocument(
       doc.file_name,
-      doc.file_type
+      doc.file_name
     );
 
     // Map AI result to folder path
@@ -71,14 +76,18 @@ export async function POST(req: NextRequest) {
     const quarter = monthToQuarter(month);
 
     // [BOEK-033] Map AI result to folder type
-    // 'bank' is not in classifyDocument union — detect via filename instead
+    // 'bank' is not in classifyDocument union — detect via filename instead.
+    // [I#4] Tightened: (a) match bank tokens on WORD boundaries so vendor names like
+    // "Rabobank_factuur" / "ABN bankgarantie" don't get filed as statements, and
+    // (b) never let a filename token override a confident invoice/receipt — a real
+    // statement is classified 'unknown', so gating on that keeps detection working
+    // while stopping false positives that would silently move a file into Bank.
     const lowerName = (doc.file_name ?? body.fileName ?? "").toLowerCase();
+    const bankTokens = /(bankafschrift|bankstatement|camt|mt940|afschrift|\bbank\b|\bstatement\b)/;
     const isBankFile =
-      lowerName.includes("bank") ||
-      lowerName.includes("camt") ||
-      lowerName.includes("afschrift") ||
-      lowerName.includes("statement") ||
-      (classification.type === "unknown" && lowerName.includes("mt940"));
+      bankTokens.test(lowerName) &&
+      classification.type !== "invoice" &&
+      classification.type !== "receipt";
 
     let folderType: "facturen" | "kosten" | "bank" | undefined;
     if (isBankFile)                              folderType = "bank";

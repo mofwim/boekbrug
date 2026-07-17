@@ -7,6 +7,7 @@ import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { BestandRow } from "../types";
 import { fileEmoji, formatDate } from "../helpers";
+import { getSignedUrl } from "../signedUrl";
 
 interface DocCardProps {
   doc: BestandRow;
@@ -38,16 +39,12 @@ export function DocCard({ doc, selected, onPreview, onSelect, onContextMenu, onD
   useEffect(() => {
     if (!isImage(doc.file_type)) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch(`/api/files/${doc.id}/url`);
-        const { url } = await r.json() as { url?: string };
-        if (!cancelled && url) setThumbUrl(url);
-        else if (!cancelled) setThumbFailed(true);
-      } catch {
-        if (!cancelled) setThumbFailed(true);
-      }
-    })();
+    // [F#1] Shared, deduped, concurrency-capped fetch (see signedUrl.ts) — no more
+    // one-request-per-card storm, and remounts reuse the cached URL.
+    getSignedUrl(doc.id).then((url) => {
+      if (cancelled) return;
+      if (url) setThumbUrl(url); else setThumbFailed(true);
+    });
     return () => { cancelled = true; };
   }, [doc.id, doc.file_type]);
 

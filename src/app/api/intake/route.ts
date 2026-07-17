@@ -28,6 +28,7 @@ import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
@@ -237,7 +238,9 @@ export async function POST(req: NextRequest) {
           .eq("direction", "incoming")
           .eq("total_inc_btw", q.total)
         if (q.tier === "vendor" && q.vendor) {
-          query = query.ilike("client_name", q.vendor)
+          // [L2] Escape LIKE wildcards — an AI/OCR-parsed vendor containing `%`/`_`
+          // would otherwise act as a wildcard and broaden this dedup match.
+          query = query.ilike("client_name", escapeLikeValue(q.vendor))
         }
         if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
         // [DEDUP-NUMBER-NORM] The candidate set is already pinned by total (+date); for the
