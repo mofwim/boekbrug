@@ -103,7 +103,10 @@ export default function KasClient() {
     try { await fetch(`/api/cash?id=${id}`, { method: 'DELETE' }); await load() } catch { await load() }
   }
 
-  const catLabel = (k: string) => CATS.find((c) => c.key === k)?.label ?? k
+  // [CASH-SETTLE] 'betaling' is a system-managed settlement of a cash-paid invoice — labelled
+  // for display, but never offered in the add form (CATS), and not manually deletable (undo the
+  // payment on the invoice instead; the kasboek then reconciles it away).
+  const catLabel = (k: string) => (k === 'betaling' ? 'Factuurbetaling (contant)' : CATS.find((c) => c.key === k)?.label ?? k)
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -205,8 +208,13 @@ export default function KasClient() {
                 <div style={{ fontFamily: FONT_NUM, fontSize: 14.5, fontWeight: 700, color: e.direction === 'in' ? M3.success : M3.error, whiteSpace: 'nowrap' }}>
                   {e.direction === 'in' ? '+' : '−'}{eur.format(e.amount)}
                 </div>
-                <button onClick={() => remove(e.id)} aria-label="Verwijderen"
-                  style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                {e.category === 'betaling' ? (
+                  <span title="Automatisch: betaling van een contant betaalde factuur. Maak de betaling op de factuur ongedaan om dit te verwijderen."
+                    style={{ flexShrink: 0, color: '#9aa0a6', fontSize: 16, lineHeight: 1 }}>🔗</span>
+                ) : (
+                  <button onClick={() => remove(e.id)} aria-label="Verwijderen"
+                    style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                )}
               </div>
             ))}
           </div>

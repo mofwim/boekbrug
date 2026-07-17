@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+// [CASH-SETTLE] keep the kasboek in sync when an invoice is paid/undone in cash
+import { reconcileCashSettlements } from "@/lib/cash-settle";
 // [BRIDGE-B] legal trail for verify/pay state changes
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import type { Database } from "@/types/database.types";
@@ -202,6 +204,14 @@ export async function POST(
     },
     ipAddress: getClientIP(req),
   });
+
+  // [CASH-SETTLE] If this pay was in cash (or an earlier cash payment was just undone),
+  // keep the kasboek in sync immediately — create the linked 'betaling' entry (balance-only,
+  // never a cost) or remove an orphan. Self-healing + best-effort; the kasboek load also
+  // reconciles, so this only makes it instant.
+  if (action === "pay" || action === "verify") {
+    await reconcileCashSettlements(supabase, user.id);
+  }
 
   // ── Notify (service_role — notifications has no authenticated INSERT policy) ──
   const { data: link } = await supabase
