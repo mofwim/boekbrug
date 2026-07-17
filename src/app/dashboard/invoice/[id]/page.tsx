@@ -24,7 +24,7 @@ const PDFDownloadLink = dynamic(
 
 // [DS] Design System v1.0 — Status chip colors (ZZP = pill, same values)
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  draft:      { label: 'Concept',        bg: '#E7E0EC', color: '#49454F' },
+  draft:      { label: 'Concept',        bg: '#f1f3f4', color: '#5f6368' },
   sent:       { label: 'Verzonden',      bg: '#D3E3FD', color: '#1967D2' },
   paid:       { label: 'Betaald',        bg: '#CEEAD6', color: '#137333' },
   overdue:    { label: 'Verlopen',       bg: '#F9DEDC', color: '#B3261E' },
@@ -311,11 +311,11 @@ export default function InvoiceDetailPage() {
                 textDecoration: 'none',
                 transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
               }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >←</Link>
             {loading ? (
-              <div style={{ height: 16, width: 144, backgroundColor: '#E7E0EC', borderRadius: 9999 }} />
+              <div style={{ height: 16, width: 144, backgroundColor: '#f1f3f4', borderRadius: 9999 }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>

@@ -20,7 +20,7 @@ const M3 = {
   onPrimaryContainer: '#041E49',
   primaryContainer:   '#D3E3FD',
   surface:            '#FFFFFF',
-  onSurface:          '#1C1B1F',
+  onSurface:          '#202124',
   success:            '#137333',
   successContainer:   '#CEEAD6',
   warning:            '#7C5800',

@@ -71,7 +71,7 @@ function bumpUsage(): void {
 const euro = (v: number | null | undefined) => (typeof v === 'number' && !Number.isNaN(v) ? formatEuroNL(v) : '—')
 
 const s = {
-  card: { backgroundColor: '#ffffff', borderRadius: 20, padding: 24, boxShadow: '0 4px 24px rgba(0,0,0,0.06)', border: '1px solid #ececf1' } as React.CSSProperties,
+  card: { backgroundColor: '#ffffff', borderRadius: 20, padding: 24, boxShadow: '0 4px 24px rgba(0,0,0,0.06)', border: '1px solid #e0e0e0' } as React.CSSProperties,
   drop: { border: '2px dashed #dadce0', borderRadius: 16, padding: '40px 20px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8f9fa', transition: 'border-color 0.15s, background 0.15s' } as React.CSSProperties,
   dropActive: { borderColor: '#1a73e8', backgroundColor: '#eef5ff' } as React.CSSProperties,
   primary: { backgroundColor: '#1a73e8', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' } as React.CSSProperties,
@@ -266,7 +266,7 @@ export default function FactuurScanner() {
         </div>
       )}
 
-      <div style={{ marginTop: 22, background: '#f8f9fa', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ marginTop: 22, background: '#f8f9fa', border: '1px solid #e0e0e0', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c4043' }}>
           Onbeperkt scannen en alles op één plek?{' '}
           <strong style={{ color: '#202124' }}>BoekBrug doet het voor je.</strong>

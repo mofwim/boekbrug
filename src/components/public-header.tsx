@@ -11,7 +11,7 @@ const btnPrimary: React.CSSProperties = { backgroundColor: '#1a73e8', color: '#f
 
 export default function PublicHeader() {
   return (
-    <header style={{ background: 'rgba(242,242,247,0.8)', backdropFilter: 'saturate(180%) blur(20px)', borderBottom: '1px solid #ececf1', position: 'sticky', top: 0, zIndex: 10 }}>
+    <header style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 10 }}>
       <div style={{ ...wrap, display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 60 }}>
         <Link href="/" style={{ fontSize: 20, fontWeight: 800, color: '#202124', textDecoration: 'none', letterSpacing: -0.5 }}>BoekBrug</Link>
         <nav style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

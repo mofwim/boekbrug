@@ -459,7 +459,7 @@ export function OnboardingWizard({
           {showSkip && (
             <button
               onClick={handleSkip}
-              style={{ width: "100%", padding: "12px", fontSize: "15px", color: "#9aa0a6", background: "none", border: "none", cursor: "pointer" }}
+              style={{ width: "100%", padding: "12px", fontSize: "15px", color: "#5f6368", background: "none", border: "none", cursor: "pointer" }}
             >
               Sla over
             </button>
@@ -695,7 +695,7 @@ function StepInvoiceStart({ value, onChange, error }: {
 
       {/* live confirmation — the "understanding loop" */}
       {!trimmed && (
-        <div style={{ fontSize: "14px", color: "#9aa0a6" }}>
+        <div style={{ fontSize: "14px", color: "#5f6368" }}>
           Laat leeg om bij <strong>{year}0001</strong> te beginnen.
         </div>
       )}
@@ -748,7 +748,7 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
       {/* [COLD-START] Explain WHY "Volgende" is greyed out — a disabled button with
           no reason reads as "broken" to a first-time user. */}
       {!company.company_name.trim() && (
-        <p style={{ margin: 0, fontSize: "13px", color: "#9aa0a6" }}>
+        <p style={{ margin: 0, fontSize: "13px", color: "#5f6368" }}>
           Vul je bedrijfsnaam in om verder te gaan.
         </p>
       )}
@@ -775,7 +775,7 @@ function StepOfficeDetails({ company, setCompany, kvkError, setKvkError }: {
       </div>
       {/* [COLD-START] Explain WHY "Volgende" is greyed out (name is required). */}
       {!company.company_name.trim() && (
-        <p style={{ margin: 0, fontSize: "13px", color: "#9aa0a6" }}>
+        <p style={{ margin: 0, fontSize: "13px", color: "#5f6368" }}>
           Vul de naam van je kantoor in om verder te gaan.
         </p>
       )}
@@ -825,7 +825,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
         >
           Volgende →
         </button>
-        <p style={{ fontSize: "14px", color: "#9aa0a6" }}>Of wacht even, je gaat automatisch verder…</p>
+        <p style={{ fontSize: "14px", color: "#5f6368" }}>Of wacht even, je gaat automatisch verder…</p>
       </div>
     );
   }
@@ -865,12 +865,12 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
           <div>
             <p style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#202124" }}>Ja, koppel mijn Gmail</p>
             <p style={{ margin: "6px 0 0", fontSize: "14px", color: "#5f6368" }}>We importeren automatisch je facturen.</p>
-            <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#9aa0a6" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
+            <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#5f6368" }}>🔒 We lezen alleen factuur-bijlagen. Nooit persoonlijke e-mails.</p>
           </div>
         </button>
       )}
 
-      <p style={{ textAlign: "center", fontSize: "14px", color: "#9aa0a6" }}>
+      <p style={{ textAlign: "center", fontSize: "14px", color: "#5f6368" }}>
         Tik op &ldquo;Sla over&rdquo; om dit later in te stellen
       </p>
     </div>

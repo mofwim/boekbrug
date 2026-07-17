@@ -21,13 +21,13 @@ const M3 = {
   onPrimaryContainer:'#041E49',
   tertiary:          '#7B1FA2',
   tertiaryContainer: '#E1BEE7',
-  surface:           '#FFFBFE',
-  onSurface:         '#1C1B1F',
+  surface:           '#ffffff',
+  onSurface:         '#202124',
   success:           '#34A853',
   successContainer:  '#CEEAD6',
   warning:           '#E37400',
   warningContainer:  '#FEE8C4',
-  outline:           '#79747E',
+  outline:           '#80868b',
   error:             '#B3261E',
 }
 const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
@@ -248,7 +248,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                 placeholder='"factuur voor Mohammed voor dakdekken, 3 uur à 85 euro"'
                 style={{
                   width: '100%', borderRadius: R.md,
-                  border: `2px solid ${aiPrompt ? M3.tertiary : '#79747E'}`,
+                  border: `2px solid ${aiPrompt ? M3.tertiary : '#80868b'}`,
                   padding: '14px 16px', fontSize: 16, resize: 'none',
                   fontFamily: FONT, outline: 'none', boxSizing: 'border-box',
                   background: M3.surface, color: M3.onSurface,
@@ -262,8 +262,8 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                   marginTop: 12, width: '100%', padding: '14px',
                   borderRadius: R.full, border: 'none',
                   cursor: aiLoading || !aiPrompt.trim() ? 'default' : 'pointer',
-                  background: aiLoading || !aiPrompt.trim() ? '#E7E0EC' : M3.tertiary,
-                  color: aiLoading || !aiPrompt.trim() ? '#79747E' : '#fff',
+                  background: aiLoading || !aiPrompt.trim() ? '#f1f3f4' : M3.tertiary,
+                  color: aiLoading || !aiPrompt.trim() ? '#80868b' : '#fff',
                   fontSize: 15, fontWeight: 600, transition: 'all 0.15s',
                 }}
                 onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
@@ -317,10 +317,10 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
         <span className="material-symbols-outlined" style={{ color: iconColor, fontSize: 24 }}>{icon}</span>
       </div>
       <div style={{ flex: 1 }}>
-        <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 2 }}>{label}</p>
+        <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 2 }}>{label}</p>
         <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
       </div>
-      <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+      <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
     </button>
   )
 }
@@ -369,10 +369,10 @@ function ActionCardBadge({ icon, iconBg, iconColor, label, sub, badge, onClick }
         )}
       </div>
       <div style={{ flex: 1 }}>
-        <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 2 }}>{label}</p>
+        <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 2 }}>{label}</p>
         <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
       </div>
-      <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+      <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
     </button>
   )
 }

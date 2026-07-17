@@ -87,7 +87,7 @@ export default async function Home() {
       <section style={{ ...wrap, paddingBottom: 56 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
           {features.map((f) => (
-            <div key={f.title} style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: 24 }}>
+            <div key={f.title} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: 24 }}>
               <div style={{ fontSize: 30, marginBottom: 12 }} aria-hidden>{f.emoji}</div>
               <div style={{ fontSize: 17, fontWeight: 700, color: '#202124', marginBottom: 6 }}>{f.title}</div>
               <div style={{ fontSize: 14, lineHeight: 1.6, color: '#5f6368' }}>{f.body}</div>
@@ -104,7 +104,7 @@ export default async function Home() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
           {TOOLS.map((t) => (
-            <Link key={t.slug} href={t.slug} style={{ display: 'block', background: '#fff', border: '1px solid #ececf1', borderRadius: 16, padding: 20, textDecoration: 'none' }}>
+            <Link key={t.slug} href={t.slug} style={{ display: 'block', background: '#fff', border: '1px solid #e0e0e0', borderRadius: 16, padding: 20, textDecoration: 'none' }}>
               <div style={{ fontSize: 26, marginBottom: 8 }} aria-hidden>{t.emoji}</div>
               <div style={{ fontSize: 16, fontWeight: 700, color: '#202124', marginBottom: 4 }}>{t.title}</div>
               <div style={{ fontSize: 13, lineHeight: 1.5, color: '#5f6368' }}>{t.tagline}</div>

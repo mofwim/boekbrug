@@ -1,6 +1,6 @@
 // src/components/blog/ArticleCard.tsx
 // [BLOG] One item in the blog index list. Reuses the white rounded-card look of
-// the tools hub (#fff, 1px #ececf1 border, 18px radius, soft shadow). Shows an
+// the tools hub (#fff, 1px #e0e0e0 border, 18px radius, soft shadow). Shows an
 // optional cover image, title, description and the published date.
 
 import Link from 'next/link'
@@ -28,7 +28,7 @@ export default function ArticleCard({ post, locale }: { post: Post; locale: Loca
       style={{
         display: 'block',
         background: '#fff',
-        border: '1px solid #ececf1',
+        border: '1px solid #e0e0e0',
         borderRadius: 18,
         overflow: 'hidden',
         textDecoration: 'none',

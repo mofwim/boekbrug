@@ -74,7 +74,7 @@ export default function KennisbankLinks({ tool }: { tool: string }) {
   const items = LINKS[tool] ?? FALLBACK
   return (
     <section style={{ maxWidth: 680, margin: '0 auto', padding: '8px 16px 40px' }}>
-      <div style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: '22px 24px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
+      <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: '22px 24px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: '#9aa0a6', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
           Lees ook in onze kennisbank
         </div>

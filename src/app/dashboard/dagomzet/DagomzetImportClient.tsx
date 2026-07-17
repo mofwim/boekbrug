@@ -12,7 +12,7 @@ import { BackLink } from '@/components/ui/BackLink'
 import TurnoverInsights from './TurnoverInsights'
 
 const M3 = {
-  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#1C1B1F', neutral: '#5F6368',
+  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
   surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
   warning: '#7C5800', warningContainer: '#FEE8C4', primaryContainer: '#D3E3FD',
 }
@@ -210,7 +210,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   return (
     <div>
       <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: '#1C1B1F', fontFamily: "'Google Sans','Roboto Mono',monospace" }}>{value}</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', fontFamily: "'Google Sans','Roboto Mono',monospace" }}>{value}</div>
       {sub && <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, fontFamily: "'Google Sans','Roboto Mono',monospace" }}>{sub}</div>}
     </div>
   )
@@ -218,5 +218,5 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 
 const thL: CSSProperties = { textAlign: 'left', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
 const thR: CSSProperties = { textAlign: 'right', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
-const tdL: CSSProperties = { textAlign: 'left', padding: '9px 14px', color: '#1C1B1F' }
-const tdR: CSSProperties = { textAlign: 'right', padding: '9px 14px', color: '#1C1B1F' }
+const tdL: CSSProperties = { textAlign: 'left', padding: '9px 14px', color: '#202124' }
+const tdR: CSSProperties = { textAlign: 'right', padding: '9px 14px', color: '#202124' }

@@ -59,7 +59,7 @@ export default function ToolsHubPage() {
               key={t.slug}
               href={t.slug}
               style={{
-                display: 'block', background: '#fff', border: '1px solid #ececf1', borderRadius: 18,
+                display: 'block', background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18,
                 padding: 22, textDecoration: 'none', boxShadow: '0 2px 14px rgba(0,0,0,0.04)',
               }}
             >
@@ -70,7 +70,7 @@ export default function ToolsHubPage() {
           ))}
         </div>
 
-        <section style={{ marginTop: 40, background: '#ffffff', border: '1px solid #ececf1', borderRadius: 18, padding: 28, textAlign: 'center' }}>
+        <section style={{ marginTop: 40, background: '#ffffff', border: '1px solid #e0e0e0', borderRadius: 18, padding: 28, textAlign: 'center' }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 8 }}>Alles op één plek met BoekBrug</div>
           <div style={{ fontSize: 15, color: '#5f6368', marginBottom: 18, maxWidth: 520, margin: '0 auto 18px' }}>
             Deze tools zijn een voorproefje. In BoekBrug staan je facturen, BTW en documenten bij elkaar.

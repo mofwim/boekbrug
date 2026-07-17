@@ -120,7 +120,7 @@ export default function EnUurtariefPage() {
           ))}
         </section>
 
-        <section style={{ marginTop: 32, background: '#ffffff', border: '1px solid #ececf1', borderRadius: 16, padding: 24, textAlign: 'center' }}>
+        <section style={{ marginTop: 32, background: '#ffffff', border: '1px solid #e0e0e0', borderRadius: 16, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', marginBottom: 6 }}>Invoice your rate?</div>
           <div style={{ fontSize: 15, color: '#5f6368', marginBottom: 16 }}>
             Put your hourly rate straight onto a tidy invoice with BoekBrug. The VAT is calculated

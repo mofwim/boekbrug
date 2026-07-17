@@ -15,7 +15,7 @@ import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD',
-  onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
+  onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
   outlineVariant: '#E0E0E0', success: '#137333', successContainer: '#CEEAD6',
   warn: '#B26A00', warnContainer: '#FEEFC3',
 }

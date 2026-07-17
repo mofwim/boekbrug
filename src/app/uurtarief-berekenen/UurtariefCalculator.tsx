@@ -50,7 +50,7 @@ const s = {
     borderRadius: 20,
     padding: 24,
     boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
-    border: '1px solid #ececf1',
+    border: '1px solid #e0e0e0',
   } as React.CSSProperties,
   label: { fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 6 } as React.CSSProperties,
   hint: { fontSize: 12, color: '#bdc1c6', marginBottom: 8 } as React.CSSProperties,
@@ -193,7 +193,7 @@ export default function UurtariefCalculator({ locale = 'nl' }: { locale?: Locale
         </div>
       </div>
 
-      <div style={{ marginTop: 22, background: '#f8f9fa', border: '1px solid #ececf1', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ marginTop: 22, background: '#f8f9fa', border: '1px solid #e0e0e0', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c4043' }}>
           {t.ctaText} <strong style={{ color: '#202124' }}>{t.ctaStrong}</strong>
         </div>

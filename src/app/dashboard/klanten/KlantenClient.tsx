@@ -19,10 +19,10 @@ const M3 = {
   onPrimary:         '#FFFFFF',
   primaryContainer:  '#D3E3FD',
   onPrimaryContainer:'#041E49',
-  surface:           '#FFFBFE',
-  onSurface:         '#1C1B1F',
-  surfaceVariant:    '#E7E0EC',
-  outline:           '#79747E',
+  surface:           '#ffffff',
+  onSurface:         '#202124',
+  surfaceVariant:    '#f1f3f4',
+  outline:           '#80868b',
   error:             '#B3261E',
   errorContainer:    '#F9DEDC',
 }
@@ -236,7 +236,7 @@ export default function KlantenClient({ profile }: { profile: any }) {
                 Annuleren
               </button>
               <button onClick={handleSave} disabled={saving}
-                style={{ flex: 1, padding: '12px', borderRadius: R.full, border: 'none', background: saving ? M3.surfaceVariant : M3.primary, color: saving ? '#79747E' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
+                style={{ flex: 1, padding: '12px', borderRadius: R.full, border: 'none', background: saving ? M3.surfaceVariant : M3.primary, color: saving ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>
                 {saving ? 'Opslaan...' : editingId ? 'Bijwerken' : 'Opslaan'}
               </button>
             </div>
@@ -280,7 +280,7 @@ export default function KlantenClient({ profile }: { profile: any }) {
                       <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{client.name}</p>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? 'Geen e-mail'}</p>
                     </div>
-                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#79747E', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
                   </div>
 
                   {/* Inline expand */}
@@ -327,7 +327,7 @@ export default function KlantenClient({ profile }: { profile: any }) {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
+        <div style={{ position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
           {toast}
         </div>
       )}
@@ -370,7 +370,7 @@ function InfoLine({ label, value }: { label: string; value: string | null | unde
   return (
     <div>
       <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2, fontWeight: 500 }}>{label}</p>
-      <p style={{ fontSize: 13, fontWeight: 600, color: '#1C1B1F', fontFamily: FONT }}>{value}</p>
+      <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT }}>{value}</p>
     </div>
   )
 }

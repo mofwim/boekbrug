@@ -11,7 +11,7 @@ import { BackLink } from '@/components/ui/BackLink'
 import type { YearSummary } from '@/lib/compliance-vault'
 
 const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
+  primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
   outlineVariant: '#E0E0E0', success: '#137333', warning: '#7C5800', error: '#B3261E', vault: '#455A64',
 }
 const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"

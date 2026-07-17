@@ -339,7 +339,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 }}
               />
             </div>
-            <div style={{ fontSize: 13, color: "#9aa0a6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 13, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {status.email}
             </div>
           </div>
@@ -352,7 +352,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             style={{
               flex: 1,
               background: syncing ? "#e0e0e0" : "#1a73e8",
-              color: syncing ? "#9aa0a6" : "#fff",
+              color: syncing ? "#5f6368" : "#fff",
               border: "none", borderRadius: 10, padding: "10px 0",
               fontWeight: 600, fontSize: 14,
               cursor: syncing ? "not-allowed" : "pointer",
@@ -412,7 +412,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                   disabled={syncing || !backfillDate}
                   style={{
                     background: syncing ? "#e0e0e0" : "#1a73e8",
-                    color: syncing ? "#9aa0a6" : "#fff",
+                    color: syncing ? "#5f6368" : "#fff",
                     border: "none", borderRadius: 8, padding: "8px 16px",
                     fontWeight: 600, fontSize: 14,
                     cursor: syncing || !backfillDate ? "not-allowed" : "pointer",
@@ -424,7 +424,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                   onClick={() => setBackfillOpen(false)}
                   disabled={syncing}
                   style={{
-                    background: "transparent", border: "none", color: "#9aa0a6",
+                    background: "transparent", border: "none", color: "#5f6368",
                     fontSize: 13, cursor: syncing ? "default" : "pointer", padding: "8px 4px",
                   }}
                 >
@@ -453,7 +453,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             <button
               onClick={openSkipped}
               style={{
-                background: "transparent", border: "none", color: "#9aa0a6",
+                background: "transparent", border: "none", color: "#5f6368",
                 fontSize: 12.5, cursor: "pointer", padding: 0,
               }}
             >
@@ -465,13 +465,13 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#202124" }}>Overgeslagen bij import</span>
                 <button
                   onClick={() => setSkippedOpen(false)}
-                  style={{ background: "transparent", border: "none", color: "#9aa0a6", fontSize: 13, cursor: "pointer" }}
+                  style={{ background: "transparent", border: "none", color: "#5f6368", fontSize: 13, cursor: "pointer" }}
                 >
                   Sluit
                 </button>
               </div>
               {skippedLoading ? (
-                <div style={{ fontSize: 13, color: "#9aa0a6" }}>Laden…</div>
+                <div style={{ fontSize: 13, color: "#5f6368" }}>Laden…</div>
               ) : (
                 <>
                   {couldNotReadCount > 0 && (
@@ -480,7 +480,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                     </div>
                   )}
                   {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
-                    <div style={{ fontSize: 12.5, color: "#9aa0a6" }}>
+                    <div style={{ fontSize: 12.5, color: "#5f6368" }}>
                       Niets overgeslagen — alles wat binnenkwam is verwerkt.
                     </div>
                   ) : (
@@ -490,7 +490,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                           <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
                             {s.filename}
                           </span>
-                          <span style={{ color: "#9aa0a6", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <span style={{ color: "#5f6368", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {friendlySkipReason(s.reason)}
                           </span>
                         </div>
@@ -523,7 +523,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
       </div>
       <div
         style={{
-          fontSize: 14, color: "#9aa0a6", lineHeight: 1.5,
+          fontSize: 14, color: "#5f6368", lineHeight: 1.5,
           maxWidth: 280, margin: "0 auto 24px",
         }}
       >
@@ -681,7 +681,7 @@ function ConfirmPaidModal({
             <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
               Factuur bevestigen
             </div>
-            <div style={{ fontSize: 14, color: "#9aa0a6", marginBottom: 20 }}>
+            <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
               Controleer de bedragen. AI heeft ze automatisch uitgelezen.
             </div>
 
@@ -1008,7 +1008,7 @@ function ConfirmPaidModal({
             <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
               Hoe is deze factuur betaald?
             </div>
-            <div style={{ fontSize: 14, color: "#9aa0a6", marginBottom: 20 }}>
+            <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
               De factuur wordt als betaald gemarkeerd en doorgestuurd naar je boekhouder.
             </div>
 
@@ -1034,7 +1034,7 @@ function ConfirmPaidModal({
             {/* [BRIDGE-QUARTER] Confirmation amount — UI only for now (not stored).
                 Explicit defer per brief §2: helps the user sanity-check, no DB write. */}
             <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#202124", marginBottom: 6 }}>
-              Betaald bedrag <span style={{ color: "#9aa0a6", fontWeight: 400 }}>(optioneel)</span>
+              Betaald bedrag <span style={{ color: "#5f6368", fontWeight: 400 }}>(optioneel)</span>
             </label>
             <input
               type="number"
@@ -1085,7 +1085,7 @@ function ConfirmPaidModal({
               disabled={submitting}
               style={{
                 width: "100%", padding: "14px", borderRadius: 14,
-                background: "transparent", color: "#9aa0a6", border: "none",
+                background: "transparent", color: "#5f6368", border: "none",
                 fontWeight: 600, fontSize: 15, cursor: "pointer",
               }}
             >
@@ -1151,7 +1151,7 @@ function ConfirmDialog({
           onClick={onCancel}
           style={{
             width: "100%", padding: "12px", borderRadius: 12,
-            background: "transparent", color: "#9aa0a6", border: "none",
+            background: "transparent", color: "#5f6368", border: "none",
             fontWeight: 600, fontSize: 15, cursor: "pointer",
           }}
         >
@@ -1294,7 +1294,7 @@ function InvoiceCard({
           >
             {invoice.client_name || "Onbekende afzender"}
           </div>
-          <div style={{ fontSize: 13, color: "#9aa0a6" }}>
+          <div style={{ fontSize: 13, color: "#5f6368" }}>
             {formatDate(invoice.invoice_date)}
           </div>
           {/* [BRIDGE-CREDITNOTA-SIGN] Creditnota badge — a credit note is a
@@ -1341,7 +1341,7 @@ function InvoiceCard({
                 }}
               >
                 <span style={{ fontSize: 11, color: "#34a853" }}>✓</span>
-                <span style={{ fontSize: 12, color: "#9aa0a6" }}>
+                <span style={{ fontSize: 12, color: "#5f6368" }}>
                   Klaar om te bevestigen
                 </span>
               </div>
@@ -1488,7 +1488,7 @@ function InvoiceCard({
                 onClick={onIgnore}
                 style={{
                   flex: 1, padding: "13px 0", borderRadius: 12,
-                  background: "#f8f9fa", border: "none", color: "#9aa0a6",
+                  background: "#f8f9fa", border: "none", color: "#5f6368",
                   fontWeight: 600, fontSize: 14, cursor: "pointer",
                 }}
               >
@@ -1539,7 +1539,7 @@ function InvoiceCard({
 function DetailRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-      <span style={{ fontSize: 13, color: "#9aa0a6" }}>{label}</span>
+      <span style={{ fontSize: 13, color: "#5f6368" }}>{label}</span>
       <span
         style={{
           fontSize: 13, color: "#202124",
@@ -1573,7 +1573,7 @@ const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string 
   invoice:   { icon: "✓",  color: "#34a853" },
   document:  { icon: "📁", color: "#1a73e8" },
   bank:      { icon: "🏦", color: "#1a73e8" },
-  duplicate: { icon: "ℹ️", color: "#9aa0a6" },
+  duplicate: { icon: "ℹ️", color: "#5f6368" },
   error:     { icon: "⚠️", color: "#b3261e" },
 };
 
@@ -1706,7 +1706,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     <div style={{ marginBottom: 32 }}>
       <div
         style={{
-          fontSize: 13, fontWeight: 600, color: "#9aa0a6",
+          fontSize: 13, fontWeight: 600, color: "#5f6368",
           textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
         }}
       >
@@ -1769,12 +1769,12 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           }}
         />
         <span style={{ fontSize: 28 }}>{uploading ? "⏳" : "📎"}</span>
-        <span style={{ fontSize: 14, color: uploading ? "#9aa0a6" : "#1a73e8", fontWeight: 600 }}>
+        <span style={{ fontSize: 14, color: uploading ? "#5f6368" : "#1a73e8", fontWeight: 600 }}>
           {uploading
             ? (total > 1 ? `${current} van ${total} verwerkt…` : "Verwerken…")
             : "Kies bestanden of sleep hier naartoe"}
         </span>
-        <span style={{ fontSize: 12, color: "#9aa0a6" }}>
+        <span style={{ fontSize: 12, color: "#5f6368" }}>
           PDF, afbeelding of bankafschrift — meerdere tegelijk
         </span>
 
@@ -1809,7 +1809,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                 ? `${addedCount} bestand${addedCount > 1 ? "en" : ""} toegevoegd`
                 : "Klaar"}
             </div>
-            <div style={{ fontSize: 14, color: "#9aa0a6", marginBottom: 16 }}>
+            <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 16 }}>
               Dit is er met je {results.length > 1 ? "bestanden" : "bestand"} gebeurd:
             </div>
 
@@ -2163,7 +2163,7 @@ export default function IncomingInvoicesClient({
     <div
       style={{
         maxWidth: 430, margin: "0 auto", padding: "0 0 100px",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif",
+        fontFamily: 'var(--font-sans)',
       }}
     >
       {/* [BOEK-011] Header — Logo Universal Click + Terug via <Link>
@@ -2224,7 +2224,7 @@ export default function IncomingInvoicesClient({
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}
         {pending.length === 0 ? (
-          <p style={{ fontSize: 14, color: "#9aa0a6", margin: "4px 0 0" }}>
+          <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
             Alles verwerkt
           </p>
         ) : needsAttentionCount > 0 ? (
@@ -2233,13 +2233,13 @@ export default function IncomingInvoicesClient({
             {needsAttentionCount === 1 ? "factuur heeft" : "facturen hebben"} je
             aandacht nodig
             {readyToConfirmCount > 0 && (
-              <span style={{ color: "#9aa0a6", fontWeight: 400 }}>
+              <span style={{ color: "#5f6368", fontWeight: 400 }}>
                 {" "}· {readyToConfirmCount} klaar om te bevestigen
               </span>
             )}
           </p>
         ) : (
-          <p style={{ fontSize: 14, color: "#9aa0a6", margin: "4px 0 0" }}>
+          <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
             <span style={{ color: "#34a853", fontWeight: 600 }}>
               Niets om te corrigeren
             </span>{" "}
@@ -2283,7 +2283,7 @@ export default function IncomingInvoicesClient({
               style={{
                 flex: 1, padding: "9px 0", borderRadius: 9, border: "none",
                 background: tab === key ? "#fff" : "transparent",
-                color: tab === key ? "#202124" : "#9aa0a6",
+                color: tab === key ? "#202124" : "#5f6368",
                 fontWeight: 600, fontSize: 14, cursor: "pointer",
                 boxShadow: tab === key ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
               }}
@@ -2360,7 +2360,7 @@ export default function IncomingInvoicesClient({
             ))}
           </div>
         ) : (
-          <div style={{ textAlign: "center", padding: "48px 24px", color: "#9aa0a6" }}>
+          <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>
             <div style={{ fontSize: 52, marginBottom: 16 }}>
               {tab === "pending" ? "✅" : "📭"}
             </div>
@@ -2452,7 +2452,7 @@ export default function IncomingInvoicesClient({
             <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
               {selected.size} factuur{selected.size > 1 ? "en" : ""} bevestigen?
             </div>
-            <div style={{ fontSize: 14, color: "#9aa0a6", marginBottom: 20 }}>
+            <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
               De geselecteerde facturen worden geverifieerd en als Crediteur naar je boekhouder gestuurd. De bedragen worden overgenomen zoals uitgelezen.
             </div>
             <button

@@ -11,7 +11,7 @@ import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
 
 const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
+  primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
   outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
   warning: '#7C5800', warningContainer: '#FEE8C4', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
 }

@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react'
 import { BackLink } from '@/components/ui/BackLink'
 
 const M3 = {
-  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#1C1B1F', neutral: '#5F6368',
+  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
   surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
   primaryContainer: '#D3E3FD',
 }

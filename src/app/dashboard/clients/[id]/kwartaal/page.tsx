@@ -477,9 +477,9 @@ export default function KwartaalPage() {
                                 onClick={() => handleAction(invoice.id, null)}
                                 style={{
                                   padding: '8px', borderRadius: 6, fontSize: 12, fontWeight: 500,
-                                  backgroundColor: !invoice.accountant_status ? '#E7E0EC' : '#FFFFFF',
-                                  color: !invoice.accountant_status ? '#49454F' : '#5F6368',
-                                  border: !invoice.accountant_status ? '1px solid #49454F' : '1px solid #E0E0E0',
+                                  backgroundColor: !invoice.accountant_status ? '#f1f3f4' : '#FFFFFF',
+                                  color: !invoice.accountant_status ? '#5f6368' : '#5F6368',
+                                  border: !invoice.accountant_status ? '1px solid #5f6368' : '1px solid #E0E0E0',
                                   cursor: 'pointer',
                                 }}>
                                 Niet verwerkt

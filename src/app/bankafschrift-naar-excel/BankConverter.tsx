@@ -133,7 +133,7 @@ export default function BankConverter() {
             <div style={{ fontSize: 17, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
               {busy ? 'Bezig met lezen…' : 'Sleep je afschrift hierheen of klik om te kiezen'}
             </div>
-            <div style={{ fontSize: 14, color: '#9aa0a6' }}>CSV, MT940 (.sta) of CAMT.053 (.xml) — max 8 MB</div>
+            <div style={{ fontSize: 14, color: '#5f6368' }}>CSV, MT940 (.sta) of CAMT.053 (.xml) — max 8 MB</div>
             <input
               ref={inputRef} type="file" accept=".csv,.txt,.sta,.mt940,.xml,.camt,.053,text/csv,text/plain,application/xml"
               style={{ display: 'none' }}
@@ -156,10 +156,10 @@ export default function BankConverter() {
 
       {parsed && (
         <div>
-          <div style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: 22, boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
+          <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: 22, boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 13, color: '#9aa0a6' }}>{parsed.fileName} · {parsed.result.format}</div>
+                <div style={{ fontSize: 13, color: '#5f6368' }}>{parsed.fileName} · {parsed.result.format}</div>
                 <div style={{ fontSize: 20, fontWeight: 700, color: '#202124' }}>{txs.length} transacties gevonden</div>
                 {dates.length > 0 && <div style={{ fontSize: 13.5, color: '#5f6368' }}>{dateNL(dates[0])} — {dateNL(dates[dates.length - 1])}</div>}
               </div>
@@ -190,14 +190,14 @@ export default function BankConverter() {
           </div>
 
           {/* Preview — first 8 rows */}
-          <div style={{ marginTop: 18, background: '#fff', border: '1px solid #ececf1', borderRadius: 16, overflow: 'hidden' }}>
-            <div style={{ padding: '12px 16px', fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#9aa0a6', borderBottom: '1px solid #f8f9fa' }}>
+          <div style={{ marginTop: 18, background: '#fff', border: '1px solid #e0e0e0', borderRadius: 16, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#5f6368', borderBottom: '1px solid #f8f9fa' }}>
               VOORBEELD (eerste {Math.min(8, txs.length)} van {txs.length})
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
                 <thead>
-                  <tr style={{ color: '#9aa0a6', textAlign: 'left' }}>
+                  <tr style={{ color: '#5f6368', textAlign: 'left' }}>
                     <th style={{ padding: '8px 16px', fontWeight: 600 }}>Datum</th>
                     <th style={{ padding: '8px 16px', fontWeight: 600 }}>Tegenpartij</th>
                     <th style={{ padding: '8px 16px', fontWeight: 600, textAlign: 'right' }}>Bedrag</th>
@@ -235,7 +235,7 @@ export default function BankConverter() {
 function Stat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div style={{ flex: 1, minWidth: 150, background: '#f8f9fb', borderRadius: 12, padding: '12px 16px' }}>
-      <div style={{ fontSize: 12.5, color: '#9aa0a6', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 12.5, color: '#5f6368', marginBottom: 3 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 700, color }}>{value}</div>
     </div>
   )

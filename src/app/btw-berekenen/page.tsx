@@ -140,7 +140,7 @@ export default function BtwBerekenenPage() {
           style={{
             marginTop: 32,
             background: '#ffffff',
-            border: '1px solid #ececf1',
+            border: '1px solid #e0e0e0',
             borderRadius: 16,
             padding: 24,
             textAlign: 'center',

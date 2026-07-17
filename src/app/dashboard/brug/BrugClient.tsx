@@ -40,10 +40,10 @@ const M3 = {
   primary:          '#1A73E8',
   onPrimary:        '#FFFFFF',
   primaryContainer: '#D3E3FD',
-  surface:          '#FFFBFE',
-  onSurface:        '#1C1B1F',
-  surfaceVariant:   '#E7E0EC',
-  outline:          '#79747E',
+  surface:          '#ffffff',
+  onSurface:        '#202124',
+  surfaceVariant:   '#f1f3f4',
+  outline:          '#80868b',
   success:          '#34A853',
   error:            '#B3261E',
   warning:          '#E37400',
@@ -63,7 +63,7 @@ const TONE: Record<NodeBadge['tone'], { bg: string; color: string }> = {
   warning: { bg: '#FEE8C4', color: '#7C5800' },
   error:   { bg: '#F9DEDC', color: '#B3261E' },
   info:    { bg: '#D3E3FD', color: '#1967D2' },
-  neutral: { bg: '#E7E0EC', color: '#49454F' },
+  neutral: { bg: '#f1f3f4', color: '#5f6368' },
 }
 
 // [BRIDGE-POLISH 3a-1] Direction marker — reuses existing TONE swatches so no

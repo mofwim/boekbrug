@@ -18,8 +18,8 @@ import { useRouter } from 'next/navigation'
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF',
   primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#FFFBFE', onSurface: '#1C1B1F',
-  surfaceVariant: '#E7E0EC',
+  surface: '#ffffff', onSurface: '#202124',
+  surfaceVariant: '#f1f3f4',
   success: '#34A853', error: '#B3261E',
 }
 const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
@@ -200,7 +200,7 @@ export default function IntakeButton({
           <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>Bon of factuur toevoegen</p>
           <p style={{ fontSize: 13, color: '#5F6368' }}>Maak een foto of upload — AI sorteert het</p>
         </div>
-        <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+        <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
       </button>
     )
 
@@ -330,7 +330,7 @@ export default function IntakeButton({
             <div style={{ fontWeight: 700, fontSize: 19, color: '#202124', marginBottom: 4 }}>
               {destModal.isDuplicate ? 'Dit bestand bestaat al' : 'Bestand toegevoegd'}
             </div>
-            <div style={{ fontSize: 14, color: '#9aa0a6', marginBottom: 16 }}>
+            <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>
               {destModal.isDuplicate ? 'Je hebt dit bestand al eerder toegevoegd:' : 'Dit is er met je bestand gebeurd:'}
             </div>
 
@@ -381,7 +381,7 @@ export default function IntakeButton({
       )}
 
       {toast && (
-        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.md, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90%', textAlign: 'center', fontFamily: FONT }}>
+        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.md, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90%', textAlign: 'center', fontFamily: FONT }}>
           {toast}
         </div>
       )}

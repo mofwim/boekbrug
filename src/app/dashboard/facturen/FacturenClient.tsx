@@ -22,10 +22,10 @@ const M3 = {
   onPrimary:         '#FFFFFF',
   primaryContainer:  '#D3E3FD',
   onPrimaryContainer:'#041E49',
-  surface:           '#FFFBFE',
-  onSurface:         '#1C1B1F',
-  surfaceVariant:    '#E7E0EC',
-  outline:           '#79747E',
+  surface:           '#ffffff',
+  onSurface:         '#202124',
+  surfaceVariant:    '#f1f3f4',
+  outline:           '#80868b',
   error:             '#B3261E',
   errorContainer:    '#F9DEDC',
   success:           '#34A853',
@@ -43,7 +43,7 @@ const CHIP: Record<string, { bg: string; color: string }> = {
   paid:    { bg: '#CEEAD6', color: '#137333' },
   sent:    { bg: '#D3E3FD', color: '#1967D2' },
   overdue: { bg: '#F9DEDC', color: '#B3261E' },
-  draft:   { bg: '#E7E0EC', color: '#49454F' },
+  draft:   { bg: '#f1f3f4', color: '#5f6368' },
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -391,13 +391,13 @@ export default function FacturenClient({ profile }: { profile: any }) {
           <div style={{ display: 'flex', gap: 6 }}>
             {/* Sort */}
             <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
-              style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#49454F', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+              style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
               {sort === 'desc' ? 'Nieuwste' : 'Oudste'}
             </button>
             {/* Refresh */}
             <button onClick={refresh} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
             </button>
           </div>
         </div>
@@ -416,7 +416,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
             <button
               onClick={() => setSearch('')}
               aria-label="Zoekopdracht wissen"
-              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#49454F' }}
+              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
             </button>
@@ -605,7 +605,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
                             if (processingId === inv.id) return
                             setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur' })
                           }}
-                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#49454F', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
+                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
                             ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
                             : 'Betaald?'}
@@ -892,7 +892,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
       {toast && (
         <div style={{
           position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
-          background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500,
+          background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500,
           padding: '12px 20px', borderRadius: R.sm, zIndex: 300,
           boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap',
           animation: 'fadeInUp 0.2s ease', fontFamily: FONT,
@@ -917,7 +917,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   return (
     <div>
       <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2, fontWeight: 500 }}>{label}</p>
-      <p style={{ fontSize: 13, fontWeight: 600, color: '#1C1B1F', fontFamily: mono ? "'Roboto Mono', monospace" : 'inherit' }}>{value}</p>
+      <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: mono ? "'Roboto Mono', monospace" : 'inherit' }}>{value}</p>
     </div>
   )
 }
@@ -947,7 +947,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          background: '#FFFBFE',
+          background: '#ffffff',
           borderRadius: 28,
           padding: '28px 24px 24px',
           width: '100%',
@@ -956,8 +956,8 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
           fontFamily: FONT,
         }}
       >
-        <p style={{ fontSize: 20, fontWeight: 700, color: '#1C1B1F', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
-        <p style={{ fontSize: 14, color: '#49454F', textAlign: 'center', marginBottom: details && details.length > 0 ? 20 : 24, lineHeight: 1.5 }}>{body}</p>
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
+        <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: details && details.length > 0 ? 20 : 24, lineHeight: 1.5 }}>{body}</p>
 
         {/* [BOEK-029] Optional details list */}
         {details && details.length > 0 && (
@@ -965,7 +965,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             {details.map(d => (
               <div key={d.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 13, color: '#5F6368', flexShrink: 0 }}>{d.label}</span>
-                <span style={{ fontSize: 13, color: '#1C1B1F', fontWeight: 600, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.value}</span>
+                <span style={{ fontSize: 13, color: '#202124', fontWeight: 600, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.value}</span>
               </div>
             ))}
           </div>
@@ -983,13 +983,13 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
         {paymentChoice ? (
           <>
             {/* [BRIDGE-QUARTER] Real payment date — the day money actually moved */}
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#1C1B1F', marginBottom: 6 }}>Betaaldatum</label>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>Betaaldatum</label>
             <input
               type="date"
               value={paymentDate}
               max={new Date().toISOString().slice(0, 10)}
               onChange={e => setPaymentDate(e.target.value)}
-              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#1C1B1F', background: '#fff', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
               <button
@@ -1024,7 +1024,7 @@ function EmptyState() {
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
       <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
-      <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 4, fontFamily: FONT }}>Geen facturen</p>
+      <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>Geen facturen</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>Maak je eerste factuur aan</p>
     </div>
   )

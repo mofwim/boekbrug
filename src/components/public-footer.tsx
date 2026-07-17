@@ -12,7 +12,7 @@ const link: React.CSSProperties = { fontSize: 14, color: '#5f6368', textDecorati
 
 export default function PublicFooter() {
   return (
-    <footer style={{ background: '#fff', borderTop: '1px solid #ececf1', marginTop: 'auto' }}>
+    <footer style={{ background: '#fff', borderTop: '1px solid #e0e0e0', marginTop: 'auto' }}>
       <div style={{ maxWidth: 980, margin: '0 auto', padding: '40px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 28 }}>
         <div style={col}>
           <Link href="/" style={{ fontSize: 17, fontWeight: 800, color: '#202124', textDecoration: 'none' }}>BoekBrug</Link>

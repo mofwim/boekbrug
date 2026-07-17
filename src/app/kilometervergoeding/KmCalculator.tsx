@@ -48,7 +48,7 @@ const s = {
     borderRadius: 20,
     padding: 24,
     boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
-    border: '1px solid #ececf1',
+    border: '1px solid #e0e0e0',
   } as React.CSSProperties,
   label: { fontSize: 13, fontWeight: 600, color: '#5f6368', marginBottom: 8 } as React.CSSProperties,
   field: {
@@ -211,7 +211,7 @@ export default function KmCalculator({ locale = 'nl' }: { locale?: Locale }) {
         style={{
           marginTop: 22,
           background: '#f8f9fa',
-          border: '1px solid #ececf1',
+          border: '1px solid #e0e0e0',
           borderRadius: 14,
           padding: 16,
           display: 'flex',

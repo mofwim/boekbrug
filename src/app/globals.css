@@ -221,13 +221,13 @@ input::placeholder, textarea::placeholder {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #9aa3b5 transparent;
+  scrollbar-color: #9aa0a6 transparent;
 }
 
 ::-webkit-scrollbar { width: 12px; height: 12px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background-color: #9aa3b5;
+  background-color: #9aa0a6;
   border-radius: 10px;
   border: 3px solid transparent;
   background-clip: padding-box;
@@ -257,18 +257,6 @@ input::placeholder, textarea::placeholder {
   vertical-align: middle;
   line-height: 1;
   user-select: none;
-}
-
-/* ── iOS-style input (BOEK-015 Onboarding) ───────────────────────────────────── */
-
-.ios-input {
-  width: 100%;
-  padding: 14px 16px;
-  border-radius: 14px !important;
-  font-size: 15px !important;
-  line-height: 1.4;
-  -webkit-appearance: none;
-  appearance: none;
 }
 
 /* ── Reduced motion ──────────────────────────────────────────────────────────── */

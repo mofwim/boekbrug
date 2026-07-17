@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation'
 
 const M3 = {
   primary:  '#1A73E8', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface:  '#FFFBFE', onSurface: '#1C1B1F',
+  surface:  '#ffffff', onSurface: '#202124',
   success:  '#34A853', warning: '#E37400', tertiary: '#7B1FA2',
 }
 const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
@@ -75,7 +75,7 @@ export default function WerkplekClient() {
                 <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{item.label}</p>
                 <p style={{ fontSize: 13, color: '#5F6368' }}>{item.sub}</p>
               </div>
-              <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
             </button>
           ))}
         </div>

@@ -11,7 +11,7 @@ import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
 
 const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
+  primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
   outlineVariant: '#E0E0E0', track: '#EEF1F4', success: '#137333', error: '#B3261E',
   warning: '#7C5800', warningContainer: '#FEE8C4',
 }
@@ -151,11 +151,11 @@ export default function AangifteClient() {
 function TotRow({ label, value, strong, color }: { label: string; value: string; strong?: boolean; color?: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 0', borderBottom: '1px solid #F0F0F4' }}>
-      <span style={{ fontSize: strong ? 15 : 14, fontWeight: strong ? 700 : 500, color: color ?? '#1C1B1F' }}>{label}</span>
-      <span style={{ fontSize: strong ? 20 : 15, fontWeight: strong ? 700 : 600, color: color ?? '#1C1B1F', fontFamily: FONT_NUM }}>{value}</span>
+      <span style={{ fontSize: strong ? 15 : 14, fontWeight: strong ? 700 : 500, color: color ?? '#202124' }}>{label}</span>
+      <span style={{ fontSize: strong ? 20 : 15, fontWeight: strong ? 700 : 600, color: color ?? '#202124', fontFamily: FONT_NUM }}>{value}</span>
     </div>
   )
 }
 
 const th = { padding: '10px 14px', textAlign: 'left' as const, fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '.03em' }
-const td = { padding: '11px 14px', color: '#1C1B1F', verticalAlign: 'top' as const }
+const td = { padding: '11px 14px', color: '#202124', verticalAlign: 'top' as const }

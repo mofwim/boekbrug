@@ -25,7 +25,7 @@ export default function ToolsCrossLinks({ currentSlug }: { currentSlug: string }
             href={t.slug}
             style={{
               display: 'flex', alignItems: 'center', gap: 10, background: '#fff',
-              border: '1px solid #ececf1', borderRadius: 14, padding: '12px 14px',
+              border: '1px solid #e0e0e0', borderRadius: 14, padding: '12px 14px',
               textDecoration: 'none',
             }}
           >
@@ -37,7 +37,7 @@ export default function ToolsCrossLinks({ currentSlug }: { currentSlug: string }
           href="/tools"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            background: '#f8f9fa', border: '1px solid #ececf1', borderRadius: 14,
+            background: '#f8f9fa', border: '1px solid #e0e0e0', borderRadius: 14,
             padding: '12px 14px', textDecoration: 'none', fontSize: 14, fontWeight: 600, color: '#1a73e8',
           }}
         >

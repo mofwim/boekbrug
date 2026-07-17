@@ -18,10 +18,10 @@ const M3 = {
   onPrimary: '#FFFFFF',
   primaryContainer: '#D3E3FD',
   onPrimaryContainer: '#041E49',
-  surface: '#FFFBFE',
-  onSurface: '#1C1B1F',
-  surfaceVariant: '#E7E0EC',
-  outline: '#79747E',
+  surface: '#ffffff',
+  onSurface: '#202124',
+  surfaceVariant: '#f1f3f4',
+  outline: '#80868b',
   error: '#B3261E',
   errorContainer: '#F9DEDC',
   success: '#137333',
@@ -1350,7 +1350,7 @@ export default function BankClient() {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90vw', textAlign: 'center', fontFamily: FONT }}>
+        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90vw', textAlign: 'center', fontFamily: FONT }}>
           {toast}
         </div>
       )}

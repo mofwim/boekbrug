@@ -72,7 +72,7 @@ export default function PayClient({ token }: { token: string }) {
           <div style={{ fontSize: 22, fontWeight: 800, color: '#202124', letterSpacing: -0.4 }}>Betaalverzoek</div>
         </div>
 
-        {loading && <Card><div style={{ textAlign: 'center', color: '#9aa0a6', padding: '30px 0' }}>Laden…</div></Card>}
+        {loading && <Card><div style={{ textAlign: 'center', color: '#5f6368', padding: '30px 0' }}>Laden…</div></Card>}
 
         {!loading && error && (
           <Card><div style={{ textAlign: 'center', color: '#b3261e', padding: '24px 8px', fontSize: 15, lineHeight: 1.5 }}>{error}</div></Card>
@@ -88,11 +88,11 @@ export default function PayClient({ token }: { token: string }) {
 
             <Card>
               <div style={{ textAlign: 'center', paddingBottom: 6 }}>
-                <div style={{ fontSize: 13, color: '#9aa0a6' }}>Te betalen aan</div>
+                <div style={{ fontSize: 13, color: '#5f6368' }}>Te betalen aan</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '2px 0 10px' }}>{view.beneficiaryName}</div>
                 <div style={{ fontSize: 34, fontWeight: 800, color: '#202124', letterSpacing: -1 }}>{eur.format(view.amount)}</div>
                 {view.invoiceNumber && <div style={{ fontSize: 13.5, color: '#5f6368', marginTop: 4 }}>Factuur {view.invoiceNumber}{view.clientName ? ` · ${view.clientName}` : ''}</div>}
-                {dateNL(view.dueDate) && <div style={{ fontSize: 13, color: '#9aa0a6', marginTop: 2 }}>Vervaldatum {dateNL(view.dueDate)}</div>}
+                {dateNL(view.dueDate) && <div style={{ fontSize: 13, color: '#5f6368', marginTop: 2 }}>Vervaldatum {dateNL(view.dueDate)}</div>}
               </div>
 
               {qr && !view.alreadyPaid && (
@@ -104,7 +104,7 @@ export default function PayClient({ token }: { token: string }) {
               )}
             </Card>
 
-            <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#9aa0a6', margin: '18px 4px 8px' }}>OF MAAK ZELF OVER</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.4, color: '#5f6368', margin: '18px 4px 8px' }}>OF MAAK ZELF OVER</div>
             <Card>
               <CopyRow label="IBAN" value={fmtIban(view.iban)} raw={view.iban} onCopy={copy} copied={copied} />
               <CopyRow label="Bedrag" value={eur.format(view.amount)} raw={view.amount.toFixed(2)} onCopy={copy} copied={copied} />
@@ -112,7 +112,7 @@ export default function PayClient({ token }: { token: string }) {
               {view.reference && <CopyRow label="Kenmerk" value={view.reference} raw={view.reference} onCopy={copy} copied={copied} last />}
             </Card>
 
-            <p style={{ fontSize: 12, color: '#9aa0a6', textAlign: 'center', lineHeight: 1.6, marginTop: 18, padding: '0 8px' }}>
+            <p style={{ fontSize: 12, color: '#5f6368', textAlign: 'center', lineHeight: 1.6, marginTop: 18, padding: '0 8px' }}>
               Vermeld het kenmerk bij je betaling, dan herkent de ontvanger de betaling meteen bij deze factuur.
               BoekBrug verwerkt de betaling niet — je betaalt rechtstreeks vanuit je eigen bank.
             </p>
@@ -126,7 +126,7 @@ export default function PayClient({ token }: { token: string }) {
 }
 
 function Card({ children }: { children: React.ReactNode }) {
-  return <div style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: 20, boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>{children}</div>
+  return <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: 20, boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>{children}</div>
 }
 
 function CopyRow({ label, value, raw, onCopy, copied, last }: {
@@ -135,7 +135,7 @@ function CopyRow({ label, value, raw, onCopy, copied, last }: {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 0', borderBottom: last ? 'none' : '1px solid #f8f9fa' }}>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: '#9aa0a6' }}>{label}</div>
+        <div style={{ fontSize: 12, color: '#5f6368' }}>{label}</div>
         <div style={{ fontSize: 15, fontWeight: 600, color: '#202124', wordBreak: 'break-all' }}>{value}</div>
       </div>
       <button onClick={() => onCopy(raw, label)} style={{ flexShrink: 0, background: '#f8f9fa', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, color: copied === label ? '#137333' : '#1a73e8', cursor: 'pointer' }}>

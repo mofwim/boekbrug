@@ -38,18 +38,18 @@ const components: Components = {
   li: (p) => <li style={{ margin: '5px 0' }} {...omitNode(p)} />,
   strong: (p) => <strong style={{ color: '#202124', fontWeight: 700 }} {...omitNode(p)} />,
   em: (p) => <em {...omitNode(p)} />,
-  hr: () => <hr style={{ border: 'none', borderTop: '1px solid #ececf1', margin: '30px 0' }} />,
+  hr: () => <hr style={{ border: 'none', borderTop: '1px solid #e0e0e0', margin: '30px 0' }} />,
   a: (p) => <a style={{ color: '#1a73e8', textDecoration: 'underline' }} {...omitNode(p)} />,
   code: (p) => (
     <code style={{ background: '#f8f9fa', borderRadius: 5, padding: '1px 6px', fontSize: 14, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#202124' }} {...omitNode(p)} />
   ),
   table: (p) => (
-    <div style={{ overflowX: 'auto', margin: '0 0 18px', border: '1px solid #ececf1', borderRadius: 10 }}>
+    <div style={{ overflowX: 'auto', margin: '0 0 18px', border: '1px solid #e0e0e0', borderRadius: 10 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }} {...omitNode(p)} />
     </div>
   ),
   th: (p) => (
-    <th style={{ textAlign: 'left', padding: '9px 12px', background: '#f8f9fa', borderBottom: '1px solid #ececf1', fontWeight: 700, color: '#202124', whiteSpace: 'nowrap' }} {...omitNode(p)} />
+    <th style={{ textAlign: 'left', padding: '9px 12px', background: '#f8f9fa', borderBottom: '1px solid #e0e0e0', fontWeight: 700, color: '#202124', whiteSpace: 'nowrap' }} {...omitNode(p)} />
   ),
   td: (p) => (
     <td style={{ padding: '9px 12px', borderBottom: '1px solid #f0f0f4', color: '#3c4043', verticalAlign: 'top' }} {...omitNode(p)} />
@@ -100,7 +100,7 @@ export default function ArticleLayout({
           <span>{frontmatter.title}</span>
         </nav>
 
-        <article style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: '32px 28px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
+        <article style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: '32px 28px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
           {/* 2. Title */}
           <h1 style={{ fontSize: 32, fontWeight: 800, color: '#202124', letterSpacing: -0.5, lineHeight: 1.2, margin: '0 0 14px' }}>
             {frontmatter.title}
@@ -178,7 +178,7 @@ export default function ArticleLayout({
                 <Link
                   key={s.frontmatter.slug}
                   href={articlePath(locale, s.frontmatter.slug)}
-                  style={{ display: 'block', background: '#fff', border: '1px solid #ececf1', borderRadius: 12, padding: '14px 16px', textDecoration: 'none', boxShadow: '0 1px 8px rgba(0,0,0,0.03)' }}
+                  style={{ display: 'block', background: '#fff', border: '1px solid #e0e0e0', borderRadius: 12, padding: '14px 16px', textDecoration: 'none', boxShadow: '0 1px 8px rgba(0,0,0,0.03)' }}
                 >
                   <span style={{ fontSize: 15, fontWeight: 600, color: '#202124', lineHeight: 1.35 }}>{s.frontmatter.title}</span>
                 </Link>

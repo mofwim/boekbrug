@@ -10,7 +10,7 @@ import { type Article, foldText } from '@/lib/articles'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#FFFBFE', onSurface: '#1C1B1F', surfaceVariant: '#E7E0EC', outline: '#79747E',
+  surface: '#ffffff', onSurface: '#202124', surfaceVariant: '#f1f3f4', outline: '#80868b',
   error: '#B3261E', neutral: '#5F6368',
 }
 const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
@@ -138,7 +138,7 @@ export default function ArtikelenClient() {
               {error && <div style={{ color: M3.error, fontSize: 13 }}>{error}</div>}
               <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                 <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
-                <button onClick={save} disabled={saving || !form.description.trim()} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: saving || !form.description.trim() ? M3.surfaceVariant : M3.primary, color: saving || !form.description.trim() ? '#79747E' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>{saving ? 'Opslaan…' : 'Opslaan'}</button>
+                <button onClick={save} disabled={saving || !form.description.trim()} style={{ flex: 1, padding: 12, borderRadius: R.full, border: 'none', background: saving || !form.description.trim() ? M3.surfaceVariant : M3.primary, color: saving || !form.description.trim() ? '#80868b' : '#fff', fontSize: 14, fontWeight: 600, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}>{saving ? 'Opslaan…' : 'Opslaan'}</button>
               </div>
             </div>
           </div>
@@ -172,7 +172,7 @@ export default function ArtikelenClient() {
       </div>
 
       {toast && (
-        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', padding: '10px 18px', borderRadius: R.full, fontSize: 13.5, fontFamily: FONT, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>{toast}</div>
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', padding: '10px 18px', borderRadius: R.full, fontSize: 13.5, fontFamily: FONT, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>{toast}</div>
       )}
     </div>
   )
