@@ -37,14 +37,23 @@ export async function GET(req: NextRequest) {
 
   let synced = 0, failed = 0, saved = 0;
   // Sequential + error-isolated: one user's failure (expired token, provider hiccup) must
-  // not stop the rest. Per-run cost is bounded by SYNC_BATCH_MAX inside syncUserEmails (not
-  // a rate-limit). SCALE NOTE: this processes ALL connected mailboxes sequentially within
+  // not stop the rest. SCALE NOTE: this processes ALL connected mailboxes sequentially within
   // maxDuration; past a few dozen active mailboxes the window can truncate and later users
   // starve — add pagination / a per-run continuation cursor before scaling beyond a pilot.
   for (const uid of userIds) {
     try {
-      const r = await syncUserEmails(uid);
+      let r = await syncUserEmails(uid);
       if (r) { synced += 1; saved += r.saved; }
+      // [CRON-DRAIN] syncUserEmails caps NEW classifications per call (SYNC_BATCH_MAX). Once a
+      // day that meant a fresh 200-invoice mailbox took days to import. Keep syncing while items
+      // remain, bounded by a round cap so one huge mailbox can't consume the whole invocation
+      // and starve later users — the next hourly run picks up any tail.
+      let rounds = 0;
+      while (r && r.remaining > 0 && rounds < 5) {
+        rounds++;
+        r = await syncUserEmails(uid);
+        if (r) saved += r.saved;
+      }
     } catch {
       failed += 1;
     }
