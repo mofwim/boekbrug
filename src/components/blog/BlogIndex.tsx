@@ -31,21 +31,21 @@ const COPY: Record<Locale, { heading: string; intro: string; empty: string; tool
 export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Locale }) {
   const t = COPY[locale]
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
 
       <div style={{ maxWidth: 820, margin: '0 auto', padding: '0 16px' }}>
         <div style={{ paddingTop: 48, textAlign: 'center' }}>
-          <h1 style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', margin: '0 0 10px', letterSpacing: -0.5 }}>
+          <h1 style={{ fontSize: 34, fontWeight: 800, color: '#202124', margin: '0 0 10px', letterSpacing: -0.5 }}>
             {t.heading}
           </h1>
-          <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto 18px', maxWidth: 560 }}>{t.intro}</p>
+          <p style={{ fontSize: 17, color: '#5f6368', margin: '0 auto 18px', maxWidth: 560 }}>{t.intro}</p>
           {/* Language switch — makes the other-locale blog discoverable from the index.
               A big, filled button so it stands out clearly at the top of the index. */}
           <div style={{ marginBottom: 32 }}>
             <Link
               href={t.switchHref}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 17, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '13px 28px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.30)' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 17, fontWeight: 700, color: '#fff', background: '#1a73e8', borderRadius: 9999, padding: '13px 28px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(26,115,232,0.30)' }}
             >
               <span aria-hidden="true" style={{ fontSize: 19 }}>🌐</span>
               {t.switchLabel} →
@@ -55,7 +55,7 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
 
         <div style={{ paddingBottom: 48 }}>
           {posts.length === 0 ? (
-            <p style={{ textAlign: 'center', color: '#8a8a8e', fontSize: 15 }}>{t.empty}</p>
+            <p style={{ textAlign: 'center', color: '#9aa0a6', fontSize: 15 }}>{t.empty}</p>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
               {posts.map((post) => (
@@ -65,7 +65,7 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
           )}
 
           <p style={{ textAlign: 'center', marginTop: 40 }}>
-            <Link href="/tools" style={{ fontSize: 15, fontWeight: 600, color: '#007aff', textDecoration: 'none' }}>
+            <Link href="/tools" style={{ fontSize: 15, fontWeight: 600, color: '#1a73e8', textDecoration: 'none' }}>
               {t.tools}
             </Link>
           </p>

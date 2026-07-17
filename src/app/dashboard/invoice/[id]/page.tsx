@@ -8,7 +8,9 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
+import Link from 'next/link'
 import dynamic from 'next/dynamic'
+import { getParentPath } from '@/lib/navigation'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
@@ -22,7 +24,7 @@ const PDFDownloadLink = dynamic(
 
 // [DS] Design System v1.0 — Status chip colors (ZZP = pill, same values)
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  draft:      { label: 'Concept',        bg: '#E7E0EC', color: '#49454F' },
+  draft:      { label: 'Concept',        bg: '#f1f3f4', color: '#5f6368' },
   sent:       { label: 'Verzonden',      bg: '#D3E3FD', color: '#1967D2' },
   paid:       { label: 'Betaald',        bg: '#CEEAD6', color: '#137333' },
   overdue:    { label: 'Verlopen',       bg: '#F9DEDC', color: '#B3261E' },
@@ -79,20 +81,12 @@ export default function InvoiceDetailPage() {
     if (d === 'pdf_failed' || d === 'email_failed') setDeliveryWarning(d)
   }, [searchParams])
 
-  // [BOEK-031] Context-aware back navigation — May 2026
-  // If accountant opened invoice from a client's kwartaal page, return there.
-  // Otherwise (ZZP default), go to /dashboard/facturen.
-  const fromParam     = searchParams.get('from')
-  const clientIdParam = searchParams.get('clientId')
-  const qParam        = searchParams.get('q')
-  const yearParam     = searchParams.get('year')
-  const terugHref =
-    fromParam === 'client' && clientIdParam
-      ? `/dashboard/clients/${clientIdParam}/kwartaal${qParam || yearParam ? `?${new URLSearchParams({
-          ...(qParam ? { q: qParam } : {}),
-          ...(yearParam ? { year: yearParam } : {}),
-        }).toString()}` : ''}`
-      : '/dashboard/facturen'
+  // [NAVIGATION] Back target = the page's canonical parent, resolved centrally
+  // by getParentPath. The invoice/[id] rule already folds in the "opened from a
+  // client's kwartaal page" context (?from=client&clientId=…&q=&year=), so this
+  // stays a single explicit ancestor href — a <Link>, never router.back(), so it
+  // cannot loop.
+  const terugHref = getParentPath(pathname, 'zzper', searchParams)
 
   // [FACTUUR-A] Resend handler — calls /api/invoice/send with resend:true — June 2026
   // Re-delivers PDF+email; does NOT touch invoice_number or status.
@@ -299,9 +293,12 @@ export default function InvoiceDetailPage() {
       }}>
         <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [DS] Back button — Material You circular tonal */}
-            <button
-              onClick={() => router.push(terugHref)} // [BOEK-031] context-aware: client→kwartaal | ZZP→facturen
+            {/* [DS] Back button — Material You circular tonal.
+                [NAVIGATION] <Link> to the canonical parent (terugHref), never
+                router.back() — cannot loop. */}
+            <Link
+              href={terugHref}
+              aria-label="Terug"
               style={{
                 width: 36, height: 36,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -311,13 +308,14 @@ export default function InvoiceDetailPage() {
                 color: '#5F6368',
                 cursor: 'pointer',
                 fontSize: 18,
+                textDecoration: 'none',
                 transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
               }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</button>
+            >←</Link>
             {loading ? (
-              <div style={{ height: 16, width: 144, backgroundColor: '#E7E0EC', borderRadius: 9999 }} />
+              <div style={{ height: 16, width: 144, backgroundColor: '#f1f3f4', borderRadius: 9999 }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>

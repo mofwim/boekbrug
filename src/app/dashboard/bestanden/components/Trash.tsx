@@ -59,7 +59,7 @@ export function Trash({ onBack }: TrashProps) {
   const emptyTrash = () => permanentDelete(items.map(i => i.id));
 
   return (
-    <div style={{ fontFamily: "'Google Sans','Roboto',sans-serif" }}>
+    <div style={{ fontFamily: "'Roboto',sans-serif" }}>
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
@@ -185,7 +185,7 @@ export function Trash({ onBack }: TrashProps) {
                 <div style={{
                   width: 20, height: 20, borderRadius: T.full, flexShrink: 0,
                   background: isSelected ? T.primary : "transparent",
-                  border: `2px solid ${isSelected ? T.primary : "#BDBDBD"}`,
+                  border: `2px solid ${isSelected ? T.primary : "#dadce0"}`,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   transition: "all 0.15s",
                 }}>

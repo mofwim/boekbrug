@@ -21,7 +21,7 @@ const DS = {
     received:{ bg: '#FEF7E0', color: '#B26A00' }, // [BRIDGE-A] incoming unpaid (Crediteuren)
     processing:{ bg: '#FEF7E0', color: '#EA8600' }, // [BRIDGE-B] incoming awaiting human verification
     overdue: { bg: '#F9DEDC', color: '#B3261E' },
-    draft:   { bg: '#E7E0EC', color: '#49454F' },
+    draft:   { bg: '#f1f3f4', color: '#5f6368' },
     credit:  { bg: '#FCE8E6', color: '#C5221F' },
   },
   // Accountant action chips — Workspace palette
@@ -208,7 +208,7 @@ function ZzpButton({
 }) {
   // [DS] Material You — tonal buttons, pill shape
   const styles: Record<string, React.CSSProperties> = {
-    default:  { backgroundColor: '#E7E0EC', color: '#49454F' },
+    default:  { backgroundColor: '#f1f3f4', color: '#5f6368' },
     danger:   { backgroundColor: '#F9DEDC', color: '#B3261E' },
     success:  { backgroundColor: '#CEEAD6', color: '#137333' },
     primary:  { backgroundColor: '#D3E3FD', color: '#1967D2' },

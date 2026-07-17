@@ -62,7 +62,7 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
         borderRadius: 16,
         boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
         display: "flex", flexDirection: "column",
-        fontFamily: "'Google Sans','Roboto',sans-serif",
+        fontFamily: "'Roboto',sans-serif",
         overflow: "hidden",
       }}>
         {/* Header */}

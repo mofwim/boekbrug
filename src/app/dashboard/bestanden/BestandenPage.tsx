@@ -734,7 +734,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     <div style={{
       height: "100dvh", background: "#F8F9FA",
       display: "flex", flexDirection: "column",
-      fontFamily: "'Google Sans','Roboto',-apple-system,sans-serif",
+      fontFamily: "'Roboto',-apple-system,sans-serif",
       overflow: "hidden", // [BOEK-033] nothing escapes
     }}>
 
@@ -748,7 +748,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           zIndex: 500, background: "#323232", color: "#fff",
           padding: "12px 20px", borderRadius: 24, fontSize: 14, fontWeight: 500,
           boxShadow: "0 4px 16px rgba(0,0,0,0.28)", display: "flex", alignItems: "center", gap: 8,
-          fontFamily: "'Google Sans','Roboto',sans-serif", whiteSpace: "nowrap",
+          fontFamily: "'Roboto',sans-serif", whiteSpace: "nowrap",
           pointerEvents: "none",
         }}>
           <Icon name="share" size={16} color="#fff" />
@@ -822,11 +822,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           width: "100%", boxSizing: "border-box",
           maxWidth: "100%", overflow: "hidden",
         }}>
-          {/* Back — internal if history exists, external otherwise */}
+          {/* Back — internal folder history if it exists, else the page's
+              canonical parent (role home). Never router.back() — that could
+              loop back onto a dead entry. */}
           <button
             onClick={() => {
               if (navHistoryRef.current.length > 0) navigateBack();
-              else router.back();
+              else router.push(logoHref);
             }}
             style={{
               display: "flex", alignItems: "center", gap: 4,
@@ -1061,7 +1063,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               <span style={{
                 fontSize: 22, fontWeight: 700, color: T.primary,
                 letterSpacing: "-0.02em", cursor: "pointer",
-                fontFamily: "'Google Sans','Roboto',sans-serif",
+                fontFamily: "'Roboto',sans-serif",
               }}>
                 BoekBrug
               </span>

@@ -4,7 +4,7 @@
 // react-markdown + remark-gfm (tables/strikethrough) + rehype-slug (auto heading
 // ids for anchor links) — the same rendering stack the legal pages use, so the
 // blog matches the rest of the product. Reuses PublicHeader/PublicFooter and the
-// #f2f2f7 page shell from the tools pages for one consistent design system.
+// #f8f9fa page shell from the tools pages for one consistent design system.
 
 import Link from 'next/link'
 import Image from 'next/image'
@@ -24,38 +24,38 @@ function omitNode<P extends { node?: unknown }>(props: P): Omit<P, 'node'> {
   return rest
 }
 
-const bodyText: React.CSSProperties = { color: '#3c3c43', fontSize: 16, lineHeight: 1.75 }
+const bodyText: React.CSSProperties = { color: '#3c4043', fontSize: 16, lineHeight: 1.75 }
 
 const components: Components = {
   // h1 is rendered by the layout itself (from frontmatter), so in-body H1s are
   // downgraded visually to keep a single page <h1>.
-  h1: (p) => <h2 style={{ fontSize: 24, fontWeight: 700, color: '#1c1c1e', margin: '34px 0 12px' }} {...omitNode(p)} />,
-  h2: (p) => <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1c1c1e', margin: '34px 0 12px', scrollMarginTop: 76 }} {...omitNode(p)} />,
-  h3: (p) => <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', margin: '24px 0 8px', scrollMarginTop: 76 }} {...omitNode(p)} />,
+  h1: (p) => <h2 style={{ fontSize: 24, fontWeight: 700, color: '#202124', margin: '34px 0 12px' }} {...omitNode(p)} />,
+  h2: (p) => <h2 style={{ fontSize: 22, fontWeight: 700, color: '#202124', margin: '34px 0 12px', scrollMarginTop: 76 }} {...omitNode(p)} />,
+  h3: (p) => <h3 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '24px 0 8px', scrollMarginTop: 76 }} {...omitNode(p)} />,
   p: (p) => <p style={{ ...bodyText, margin: '0 0 16px' }} {...omitNode(p)} />,
   ul: (p) => <ul style={{ ...bodyText, margin: '0 0 16px', paddingLeft: 22 }} {...omitNode(p)} />,
   ol: (p) => <ol style={{ ...bodyText, margin: '0 0 16px', paddingLeft: 22 }} {...omitNode(p)} />,
   li: (p) => <li style={{ margin: '5px 0' }} {...omitNode(p)} />,
-  strong: (p) => <strong style={{ color: '#1c1c1e', fontWeight: 700 }} {...omitNode(p)} />,
+  strong: (p) => <strong style={{ color: '#202124', fontWeight: 700 }} {...omitNode(p)} />,
   em: (p) => <em {...omitNode(p)} />,
-  hr: () => <hr style={{ border: 'none', borderTop: '1px solid #ececf1', margin: '30px 0' }} />,
-  a: (p) => <a style={{ color: '#007aff', textDecoration: 'underline' }} {...omitNode(p)} />,
+  hr: () => <hr style={{ border: 'none', borderTop: '1px solid #e0e0e0', margin: '30px 0' }} />,
+  a: (p) => <a style={{ color: '#1a73e8', textDecoration: 'underline' }} {...omitNode(p)} />,
   code: (p) => (
-    <code style={{ background: '#f2f2f7', borderRadius: 5, padding: '1px 6px', fontSize: 14, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#1c1c1e' }} {...omitNode(p)} />
+    <code style={{ background: '#f8f9fa', borderRadius: 5, padding: '1px 6px', fontSize: 14, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#202124' }} {...omitNode(p)} />
   ),
   table: (p) => (
-    <div style={{ overflowX: 'auto', margin: '0 0 18px', border: '1px solid #ececf1', borderRadius: 10 }}>
+    <div style={{ overflowX: 'auto', margin: '0 0 18px', border: '1px solid #e0e0e0', borderRadius: 10 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }} {...omitNode(p)} />
     </div>
   ),
   th: (p) => (
-    <th style={{ textAlign: 'left', padding: '9px 12px', background: '#f9f9fb', borderBottom: '1px solid #ececf1', fontWeight: 700, color: '#1c1c1e', whiteSpace: 'nowrap' }} {...omitNode(p)} />
+    <th style={{ textAlign: 'left', padding: '9px 12px', background: '#f8f9fa', borderBottom: '1px solid #e0e0e0', fontWeight: 700, color: '#202124', whiteSpace: 'nowrap' }} {...omitNode(p)} />
   ),
   td: (p) => (
-    <td style={{ padding: '9px 12px', borderBottom: '1px solid #f0f0f4', color: '#3c3c43', verticalAlign: 'top' }} {...omitNode(p)} />
+    <td style={{ padding: '9px 12px', borderBottom: '1px solid #f1f3f4', color: '#3c4043', verticalAlign: 'top' }} {...omitNode(p)} />
   ),
   blockquote: (p) => (
-    <blockquote style={{ borderLeft: '3px solid #d1d1d6', margin: '0 0 16px', padding: '4px 0 4px 16px', color: '#6b6b6e' }} {...omitNode(p)} />
+    <blockquote style={{ borderLeft: '3px solid #dadce0', margin: '0 0 16px', padding: '4px 0 4px 16px', color: '#5f6368' }} {...omitNode(p)} />
   ),
 }
 
@@ -89,25 +89,25 @@ export default function ArticleLayout({
   const siblings = getClusterSiblings(post)
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
 
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 72px' }}>
         {/* 1. Breadcrumb: Blog › [article title] */}
-        <nav aria-label="Breadcrumb" style={{ fontSize: 13, color: '#8a8a8e', marginBottom: 20 }}>
-          <Link href={indexPath(locale)} style={{ color: '#007aff', textDecoration: 'none' }}>{t.blog}</Link>
+        <nav aria-label="Breadcrumb" style={{ fontSize: 13, color: '#9aa0a6', marginBottom: 20 }}>
+          <Link href={indexPath(locale)} style={{ color: '#1a73e8', textDecoration: 'none' }}>{t.blog}</Link>
           <span style={{ margin: '0 8px' }}>›</span>
           <span>{frontmatter.title}</span>
         </nav>
 
-        <article style={{ background: '#fff', border: '1px solid #ececf1', borderRadius: 18, padding: '32px 28px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
+        <article style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: '32px 28px', boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>
           {/* 2. Title */}
-          <h1 style={{ fontSize: 32, fontWeight: 800, color: '#1c1c1e', letterSpacing: -0.5, lineHeight: 1.2, margin: '0 0 14px' }}>
+          <h1 style={{ fontSize: 32, fontWeight: 800, color: '#202124', letterSpacing: -0.5, lineHeight: 1.2, margin: '0 0 14px' }}>
             {frontmatter.title}
           </h1>
 
           {/* 3. Meta line: date · reading time · author */}
-          <div style={{ fontSize: 13, color: '#8a8a8e', marginBottom: alternatePath ? 12 : 24 }}>
+          <div style={{ fontSize: 13, color: '#9aa0a6', marginBottom: alternatePath ? 12 : 24 }}>
             {formatDate(frontmatter.publishedAt, locale)}
             {' · '}{readingMinutes} {t.readTime}
             {' · '}{t.by} {frontmatter.author}
@@ -118,7 +118,7 @@ export default function ArticleLayout({
             <div style={{ marginBottom: 16 }}>
               <Link
                 href={articlePath(locale, frontmatter.pillarSlug)}
-                style={{ display: 'inline-block', fontSize: 12, fontWeight: 600, color: '#007aff', background: '#e8f1ff', border: '1px solid #cfe1ff', borderRadius: 9999, padding: '5px 12px', textDecoration: 'none' }}
+                style={{ display: 'inline-block', fontSize: 12, fontWeight: 600, color: '#1a73e8', background: '#e8f0fe', border: '1px solid #d3e3fd', borderRadius: 9999, padding: '5px 12px', textDecoration: 'none' }}
               >
                 {t.partOf}: {frontmatter.pillarTitle} →
               </Link>
@@ -131,7 +131,7 @@ export default function ArticleLayout({
             <div style={{ marginBottom: 24 }}>
               <Link
                 href={alternatePath}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '11px 24px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.30)' }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 700, color: '#fff', background: '#1a73e8', borderRadius: 9999, padding: '11px 24px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(26,115,232,0.30)' }}
               >
                 <span aria-hidden="true" style={{ fontSize: 18 }}>🌐</span>
                 {t.switchTo} →
@@ -141,7 +141,7 @@ export default function ArticleLayout({
 
           {/* 4. Optional cover image */}
           {frontmatter.coverImage && (
-            <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 12, overflow: 'hidden', margin: '0 0 24px', background: '#f2f2f7' }}>
+            <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', borderRadius: 12, overflow: 'hidden', margin: '0 0 24px', background: '#f8f9fa' }}>
               <Image
                 src={frontmatter.coverImage}
                 alt={frontmatter.title}
@@ -170,7 +170,7 @@ export default function ArticleLayout({
             topic mesh and spreads internal-link equity to sibling articles. */}
         {siblings.length > 0 && (
           <section style={{ marginTop: 28 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#8a8a8e', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#9aa0a6', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
               {t.more}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
@@ -178,9 +178,9 @@ export default function ArticleLayout({
                 <Link
                   key={s.frontmatter.slug}
                   href={articlePath(locale, s.frontmatter.slug)}
-                  style={{ display: 'block', background: '#fff', border: '1px solid #ececf1', borderRadius: 12, padding: '14px 16px', textDecoration: 'none', boxShadow: '0 1px 8px rgba(0,0,0,0.03)' }}
+                  style={{ display: 'block', background: '#fff', border: '1px solid #e0e0e0', borderRadius: 12, padding: '14px 16px', textDecoration: 'none', boxShadow: '0 1px 8px rgba(0,0,0,0.03)' }}
                 >
-                  <span style={{ fontSize: 15, fontWeight: 600, color: '#1c1c1e', lineHeight: 1.35 }}>{s.frontmatter.title}</span>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: '#202124', lineHeight: 1.35 }}>{s.frontmatter.title}</span>
                 </Link>
               ))}
             </div>
@@ -189,7 +189,7 @@ export default function ArticleLayout({
 
         {/* 7. Back to blog */}
         <div style={{ marginTop: 28 }}>
-          <Link href={indexPath(locale)} style={{ fontSize: 14, color: '#007aff', textDecoration: 'none' }}>
+          <Link href={indexPath(locale)} style={{ fontSize: 14, color: '#1a73e8', textDecoration: 'none' }}>
             {t.back}
           </Link>
         </div>

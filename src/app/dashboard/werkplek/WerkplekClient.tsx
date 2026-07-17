@@ -8,10 +8,10 @@ import { useRouter } from 'next/navigation'
 
 const M3 = {
   primary:  '#1A73E8', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface:  '#FFFBFE', onSurface: '#1C1B1F',
+  surface:  '#ffffff', onSurface: '#202124',
   success:  '#34A853', warning: '#E37400', tertiary: '#7B1FA2',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const R    = { md: 12, lg: 16, xl: 24 }
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 
@@ -75,7 +75,7 @@ export default function WerkplekClient() {
                 <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{item.label}</p>
                 <p style={{ fontSize: 13, color: '#5F6368' }}>{item.sub}</p>
               </div>
-              <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
             </button>
           ))}
         </div>
@@ -94,7 +94,7 @@ export default function WerkplekClient() {
           border: 'none', cursor: 'pointer',
           boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
           display: 'flex', alignItems: 'center', gap: 8,
-          fontFamily: "'Google Sans', 'Roboto', sans-serif", zIndex: 50,
+          fontFamily: "'Roboto', sans-serif", zIndex: 50,
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
         onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}

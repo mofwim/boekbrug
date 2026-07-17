@@ -7,22 +7,22 @@
 // export always works — so retention is the pull, never a cage.
 
 import { useState } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import type { YearSummary } from '@/lib/compliance-vault'
 
 const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
+  primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
   outlineVariant: '#E0E0E0', success: '#137333', warning: '#7C5800', error: '#B3261E', vault: '#455A64',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
 export default function KluisClient({ summaries, currentYear }: { summaries: YearSummary[]; currentYear: number }) {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <Link href="/dashboard/werkplek" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Werkplek</Link>
+        <BackLink label="Werkplek" style={{ color: M3.primary }} />
 
         <header style={{ margin: '16px 0 8px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Compliance-kluis</h1>
@@ -81,7 +81,7 @@ function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface }}>{s.year}</div>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12.5, fontWeight: 600, color: s.withinRetention ? M3.vault : M3.neutral, background: s.withinRetention ? '#ECEFF1' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12.5, fontWeight: 600, color: s.withinRetention ? M3.vault : M3.neutral, background: s.withinRetention ? '#e0e0e0' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
             🛡️ {retentionLabel}
           </div>
         </div>

@@ -18,17 +18,17 @@ const M3 = {
   onPrimary: '#FFFFFF',
   primaryContainer: '#D3E3FD',
   onPrimaryContainer: '#041E49',
-  surface: '#FFFBFE',
-  onSurface: '#1C1B1F',
-  surfaceVariant: '#E7E0EC',
-  outline: '#79747E',
+  surface: '#ffffff',
+  onSurface: '#202124',
+  surfaceVariant: '#f1f3f4',
+  outline: '#80868b',
   error: '#B3261E',
   errorContainer: '#F9DEDC',
   success: '#137333',
   successContainer: '#CEEAD6',
   warning: '#E37400',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
@@ -930,7 +930,7 @@ export default function BankClient() {
             </button>
           </div>
           {statements.map((st) => (
-            <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #F7F7F7' }}>
+            <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f8f9fa' }}>
               <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#9aa0a6', flexShrink: 0 }}>description</span>
                 <span style={{ fontSize: 13, color: '#3c4043', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -989,7 +989,7 @@ export default function BankClient() {
             disabled={autoRunning}
             style={{
               padding: '11px 16px', borderRadius: R.full, border: 'none',
-              background: autoRunning ? '#C7D0DB' : M3.primary, color: '#fff',
+              background: autoRunning ? '#dadce0' : M3.primary, color: '#fff',
               fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: autoRunning ? 'default' : 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
@@ -1184,7 +1184,7 @@ export default function BankClient() {
                   style={{
                     border: 'none', borderRadius: R.full, cursor: batchSelectedCount === 0 || batchRunning ? 'default' : 'pointer',
                     fontFamily: FONT, fontSize: 13, fontWeight: 600, padding: '8px 16px',
-                    background: batchSelectedCount === 0 || batchRunning ? '#C7D0DB' : M3.primary, color: '#fff',
+                    background: batchSelectedCount === 0 || batchRunning ? '#dadce0' : M3.primary, color: '#fff',
                   }}
                 >
                   {batchRunning ? 'Bezig…' : `Bevestig betaling (${batchSelectedCount})`}
@@ -1350,7 +1350,7 @@ export default function BankClient() {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#1C1B1F', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90vw', textAlign: 'center', fontFamily: FONT }}>
+        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90vw', textAlign: 'center', fontFamily: FONT }}>
           {toast}
         </div>
       )}

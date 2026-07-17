@@ -125,7 +125,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
   // ─────────────────────────────────────────────────────────
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Header */}
       <div style={{
@@ -176,7 +176,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                   flex: 1,
                   fontSize: 14,
                   padding: '8px 12px',
-                  border: `1px solid ${inviteError ? '#EA4335' : '#BDBDBD'}`,
+                  border: `1px solid ${inviteError ? '#EA4335' : '#dadce0'}`,
                   borderRadius: 8,
                   backgroundColor: '#F8F9FA',
                   color: '#202124',
@@ -276,7 +276,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                     onClick={() => { setUnlinkTarget(client); setUnlinkError(null) }}
                     style={{
                       background: 'none',
-                      border: '1px solid #BDBDBD',
+                      border: '1px solid #dadce0',
                       borderRadius: 8,
                       padding: '5px 12px',
                       fontSize: 12,
@@ -336,7 +336,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                 disabled={unlinkLoading}
                 style={{
                   background: '#FFFFFF', color: '#202124',
-                  border: '1px solid #BDBDBD', borderRadius: 8,
+                  border: '1px solid #dadce0', borderRadius: 8,
                   padding: '8px 18px', fontSize: 14, fontWeight: 500,
                   cursor: 'pointer', minHeight: 36,
                 }}

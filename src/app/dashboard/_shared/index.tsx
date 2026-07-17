@@ -122,7 +122,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
             (props as ZzpInvoiceTableProps).onNewInvoice && (
               <button
                 onClick={(props as ZzpInvoiceTableProps).onNewInvoice}
-                className="bg-[#007aff] text-white text-sm px-4 py-2 rounded-xl hover:opacity-90 transition-opacity font-semibold"
+                className="bg-[#1a73e8] text-white text-sm px-4 py-2 rounded-xl hover:opacity-90 transition-opacity font-semibold"
               >
                 + Nieuwe factuur
               </button>
@@ -570,7 +570,7 @@ export function DashboardHeader({
       alignItems: 'center',
       padding: '0 16px',
       gap: 8,
-      fontFamily: "'Google Sans', 'Roboto', sans-serif",
+      fontFamily: "'Roboto', sans-serif",
     }}>
 
       {/* Logo — [INTEGRATION] next/link + role-aware href — May 2026 */}
@@ -580,7 +580,7 @@ export function DashboardHeader({
           fontWeight: 700, fontSize: 17, color: '#1A73E8',
           flexShrink: 0, letterSpacing: '-0.3px', lineHeight: 1,
           textDecoration: 'none', cursor: 'pointer',
-          fontFamily: "'Google Sans', 'Roboto', sans-serif",
+          fontFamily: "'Roboto', sans-serif",
           transition: 'opacity 0.15s',
         }}
         onMouseEnter={e => ((e.currentTarget as HTMLAnchorElement).style.opacity = '0.75')}

@@ -9,10 +9,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 
 const M3 = {
-  primary: '#1A73E8', onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', track: '#EEF1F4', warning: '#7C5800', warningContainer: '#FEE8C4',
+  primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
+  outlineVariant: '#E0E0E0', track: '#f1f3f4', warning: '#7C5800', warningContainer: '#FEE8C4',
 }
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const pct = (x: number) => `${Math.round(x * 100)}%`
 

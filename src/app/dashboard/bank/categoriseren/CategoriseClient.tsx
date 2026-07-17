@@ -10,17 +10,17 @@
 // page with more behind it says so, and offers a one-tap sweep of the confident ones.
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD',
-  onSurface: '#1C1B1F', neutral: '#5F6368', surface: '#FFFFFF',
+  onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
   outlineVariant: '#E0E0E0', success: '#137333', successContainer: '#CEEAD6',
   warn: '#B26A00', warnContainer: '#FEEFC3',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 // Triage categories offered to the owner (Dutch), from the single source of truth.
@@ -157,7 +157,7 @@ export default function CategoriseClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
 
         <header style={{ margin: '16px 0 16px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Wat is dit?</h1>
@@ -195,7 +195,7 @@ export default function CategoriseClient() {
         )}
 
         {loading ? (
-          <div style={{ height: 120, borderRadius: 16, background: '#F0F1F3' }} />
+          <div style={{ height: 120, borderRadius: 16, background: '#f1f3f4' }} />
         ) : mode === 'todo' && trulyDone ? (
           <div style={{ background: M3.successContainer, borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
             <div style={{ fontSize: 32, marginBottom: 6 }}>✓</div>
@@ -295,7 +295,7 @@ export default function CategoriseClient() {
                   disabled={busy === it.id}
                   style={{
                     marginTop: 12, width: '100%', padding: '11px', borderRadius: 12, border: 'none',
-                    background: busy === it.id ? '#C7C7CC' : M3.primary, color: M3.onPrimary,
+                    background: busy === it.id ? '#dadce0' : M3.primary, color: M3.onPrimary,
                     fontSize: 15, fontWeight: 600, cursor: busy === it.id ? 'default' : 'pointer', fontFamily: FONT,
                   }}
                 >

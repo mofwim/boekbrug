@@ -1,12 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { ErrorMessage, SuccessMessage } from '@/components/ui/Feedback'
+import { BackLink } from '@/components/ui/BackLink'
 
 export default function InviteClientPage() {
-  const router = useRouter()
-
   // حالة الإيميل والتحميل والنجاح والخطأ
   const [clientEmail, setClientEmail] = useState('')
   const [loading, setLoading] = useState(false)
@@ -38,17 +36,12 @@ export default function InviteClientPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
+    <div className="min-h-screen bg-[#f8f9fa]">
 
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto flex items-center gap-3">
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="text-gray-400 hover:text-gray-600 text-sm"
-          >
-            ← Terug
-          </button>
+          <BackLink className="text-gray-400 hover:text-gray-600 text-sm" style={{ color: 'inherit' }} />
           <h1 className="text-lg font-bold text-gray-900">Klant toevoegen</h1>
         </div>
       </div>

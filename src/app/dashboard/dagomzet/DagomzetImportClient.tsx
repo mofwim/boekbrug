@@ -8,16 +8,16 @@
 // preview it returns and posts the confirmed rows back.
 
 import { useState, type ChangeEvent, type CSSProperties } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import TurnoverInsights from './TurnoverInsights'
 
 const M3 = {
-  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#1C1B1F', neutral: '#5F6368',
+  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
   surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
   warning: '#7C5800', warningContainer: '#FEE8C4', primaryContainer: '#D3E3FD',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+const FONT = "'Roboto', -apple-system, sans-serif"
+const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 interface TurnoverRow {
@@ -91,7 +91,7 @@ export default function DagomzetImportClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
         <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 4px' }}>Dagomzet importeren</h1>
         <p style={{ fontSize: 14, color: M3.neutral, margin: '0 0 20px', lineHeight: 1.5 }}>
           Upload het Z-rapport van de kassa (.xls, .xlsx of .csv). Je ziet eerst precies wat er is gelezen —
@@ -210,13 +210,13 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   return (
     <div>
       <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: '#1C1B1F', fontFamily: "'Google Sans','Roboto Mono',monospace" }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, fontFamily: "'Google Sans','Roboto Mono',monospace" }}>{sub}</div>}
+      <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', fontFamily: "'Roboto Mono',monospace" }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: '#5F6368', marginTop: 2, fontFamily: "'Roboto Mono',monospace" }}>{sub}</div>}
     </div>
   )
 }
 
 const thL: CSSProperties = { textAlign: 'left', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
 const thR: CSSProperties = { textAlign: 'right', padding: '10px 14px', fontWeight: 600, fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '.03em' }
-const tdL: CSSProperties = { textAlign: 'left', padding: '9px 14px', color: '#1C1B1F' }
-const tdR: CSSProperties = { textAlign: 'right', padding: '9px 14px', color: '#1C1B1F' }
+const tdL: CSSProperties = { textAlign: 'left', padding: '9px 14px', color: '#202124' }
+const tdR: CSSProperties = { textAlign: 'right', padding: '9px 14px', color: '#202124' }

@@ -16,8 +16,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
     start_url: '/',
     display: 'standalone',
-    background_color: '#f2f2f7',
-    theme_color: '#007aff',
+    background_color: '#f8f9fa',
+    theme_color: '#1a73e8',
     icons: [
       {
         src: '/favicon.ico',
