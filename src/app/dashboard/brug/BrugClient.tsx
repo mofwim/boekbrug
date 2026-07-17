@@ -719,7 +719,7 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
 
   const teBetalen = concept.saldo >= 0
   const line = (label: string, value: string, opts: { color?: string; strong?: boolean; top?: boolean } = {}) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderTop: opts.top ? '1px solid #eef1f4' : 'none', marginTop: opts.top ? 4 : 0 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderTop: opts.top ? '1px solid #f1f3f4' : 'none', marginTop: opts.top ? 4 : 0 }}>
       <span style={{ fontSize: opts.strong ? 14.5 : 13.5, fontWeight: opts.strong ? 700 : 500, color: opts.color ?? M3.onSurface }}>{label}</span>
       <span style={{ fontSize: opts.strong ? 18 : 15, fontWeight: opts.strong ? 700 : 600, color: opts.color ?? M3.onSurface }}>{value}</span>
     </div>

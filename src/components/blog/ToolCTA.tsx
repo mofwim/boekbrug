@@ -49,7 +49,7 @@ export default function ToolCTA({
     <aside
       style={{
         background: '#e8f0fe',
-        border: '1px solid #cfe1ff',
+        border: '1px solid #d3e3fd',
         borderRadius: 18,
         padding: '26px 24px',
         margin: '36px 0 8px',

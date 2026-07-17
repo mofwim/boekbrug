@@ -235,8 +235,8 @@ export default function DraftQueue({ clients }: Props) {
         .bq-dq-root { font-family: 'Roboto',sans-serif; }
         @keyframes bq-shimmer { 0% { background-position: -240px 0; } 100% { background-position: 240px 0; } }
         .bq-skel {
-          background: #ECEFF1;
-          background-image: linear-gradient(90deg, #ECEFF1 0px, #F5F7F8 90px, #ECEFF1 180px);
+          background: #e0e0e0;
+          background-image: linear-gradient(90deg, #e0e0e0 0px, #F5F7F8 90px, #e0e0e0 180px);
           background-size: 360px 100%;
           border-radius: 6px;
           animation: bq-shimmer 1.1s linear infinite;

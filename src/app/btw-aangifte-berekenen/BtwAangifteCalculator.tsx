@@ -76,7 +76,7 @@ export default function BtwAangifteCalculator({ locale = 'nl' }: { locale?: Loca
   }, [omzet21, omzet9, voorbelasting])
 
   const teBetalen = r.saldo >= 0
-  const panelColor = teBetalen ? 'linear-gradient(135deg, #e37400, #f0730a)' : 'linear-gradient(135deg, #34a853, #24a148)'
+  const panelColor = teBetalen ? 'linear-gradient(135deg, #e37400, #f0730a)' : 'linear-gradient(135deg, #34a853, #34a853)'
 
   return (
     <div style={s.card}>

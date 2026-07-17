@@ -95,7 +95,7 @@ export default function BankafschriftNaarExcelPage() {
           {faq.map((f) => (
             <div key={f.q} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: '16px 18px' }}>
               <div style={{ fontSize: 15.5, fontWeight: 700, color: '#202124', marginBottom: 6 }}>{f.q}</div>
-              <div style={{ fontSize: 14.5, color: '#5b5b60', lineHeight: 1.6 }}>{f.a}</div>
+              <div style={{ fontSize: 14.5, color: '#5f6368', lineHeight: 1.6 }}>{f.a}</div>
             </div>
           ))}
         </div>

@@ -195,7 +195,7 @@ export default function CategoriseClient() {
         )}
 
         {loading ? (
-          <div style={{ height: 120, borderRadius: 16, background: '#F0F1F3' }} />
+          <div style={{ height: 120, borderRadius: 16, background: '#f1f3f4' }} />
         ) : mode === 'todo' && trulyDone ? (
           <div style={{ background: M3.successContainer, borderRadius: 16, padding: '24px 20px', textAlign: 'center' }}>
             <div style={{ fontSize: 32, marginBottom: 6 }}>✓</div>

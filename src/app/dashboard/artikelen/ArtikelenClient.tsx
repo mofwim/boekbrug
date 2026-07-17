@@ -145,7 +145,7 @@ export default function ArtikelenClient() {
         )}
 
         {loading ? (
-          <div style={{ height: 160, borderRadius: R.lg, background: '#F0F1F3' }} />
+          <div style={{ height: 160, borderRadius: R.lg, background: '#f1f3f4' }} />
         ) : shown.length === 0 ? (
           <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14, padding: '40px 0' }}>
             {search ? 'Geen artikel gevonden.' : 'Nog geen artikelen. Voeg je eerste vaste factuurregel toe.'}

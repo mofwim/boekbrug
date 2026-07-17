@@ -334,7 +334,7 @@ export default function IntakeButton({
               {destModal.isDuplicate ? 'Je hebt dit bestand al eerder toegevoegd:' : 'Dit is er met je bestand gebeurd:'}
             </div>
 
-            <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: '#f7f7f9', marginBottom: 20 }}>
+            <div style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 12, background: '#f8f9fa', marginBottom: 20 }}>
               <span style={{ fontSize: 16, lineHeight: '20px' }}>{destModal.isDuplicate ? 'ℹ️' : '📁'}</span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

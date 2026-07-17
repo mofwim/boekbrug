@@ -90,7 +90,7 @@ const shared = StyleSheet.create({
   // Table
   tableHeader: {
     flexDirection: "row",
-    backgroundColor: "#f3f4f6",
+    backgroundColor: "#f1f3f4",
     padding: 8,
     borderRadius: 4,
     marginBottom: 2,
@@ -99,14 +99,14 @@ const shared = StyleSheet.create({
     flexDirection: "row",
     padding: 8,
     borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
+    borderBottomColor: "#f1f3f4",
   },
   tableRowAlt: {
     flexDirection: "row",
     padding: 8,
-    backgroundColor: "#fafafa",
+    backgroundColor: "#f8f9fa",
     borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
+    borderBottomColor: "#f1f3f4",
   },
   headerText: {
     fontSize: 9,
@@ -165,7 +165,7 @@ const shared = StyleSheet.create({
     fontSize: 8,
     color: "#d1d5db",
     borderTopWidth: 1,
-    borderTopColor: "#f3f4f6",
+    borderTopColor: "#f1f3f4",
     paddingTop: 8,
   },
 });

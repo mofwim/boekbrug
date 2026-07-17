@@ -81,7 +81,7 @@ function YearCard({ s, currentYear }: { s: YearSummary; currentYear: number }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface }}>{s.year}</div>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12.5, fontWeight: 600, color: s.withinRetention ? M3.vault : M3.neutral, background: s.withinRetention ? '#ECEFF1' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12.5, fontWeight: 600, color: s.withinRetention ? M3.vault : M3.neutral, background: s.withinRetention ? '#e0e0e0' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
             🛡️ {retentionLabel}
           </div>
         </div>

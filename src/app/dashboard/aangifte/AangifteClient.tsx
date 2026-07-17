@@ -12,7 +12,7 @@ import { quarterFromParams } from '@/lib/quarter'
 
 const M3 = {
   primary: '#1A73E8', onSurface: '#202124', neutral: '#5F6368', surface: '#FFFFFF',
-  outlineVariant: '#E0E0E0', track: '#EEF1F4', success: '#137333', error: '#B3261E',
+  outlineVariant: '#E0E0E0', track: '#f1f3f4', success: '#137333', error: '#B3261E',
   warning: '#7C5800', warningContainer: '#FEE8C4',
 }
 const FONT = "'Roboto', -apple-system, sans-serif"

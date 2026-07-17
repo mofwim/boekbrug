@@ -378,7 +378,7 @@ function InfoLine({ label, value }: { label: string; value: string | null | unde
 function SkeletonList() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {[1,2,3].map(i => <div key={i} style={{ height: 70, borderRadius: R.lg, background: 'linear-gradient(90deg,#F8F9FA 25%,#E8EAED 50%,#F8F9FA 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite' }} />)}
+      {[1,2,3].map(i => <div key={i} style={{ height: 70, borderRadius: R.lg, background: 'linear-gradient(90deg,#F8F9FA 25%,#e0e0e0 50%,#F8F9FA 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.4s infinite' }} />)}
     </div>
   )
 }

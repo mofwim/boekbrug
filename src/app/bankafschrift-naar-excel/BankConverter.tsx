@@ -124,7 +124,7 @@ export default function BankConverter() {
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click() }}
             style={{
               border: `2px dashed ${dragOver ? '#1a73e8' : '#c9c9ce'}`,
-              background: dragOver ? '#f0f7ff' : '#fff',
+              background: dragOver ? '#e8f0fe' : '#fff',
               borderRadius: 18, padding: '48px 24px', textAlign: 'center', cursor: 'pointer',
               transition: 'all .15s', outline: 'none',
             }}
@@ -217,9 +217,9 @@ export default function BankConverter() {
           </div>
 
           {/* Soft hand-off — no lock */}
-          <section style={{ marginTop: 22, background: '#f0f7ff', border: '1px solid #d3e3fd', borderRadius: 16, padding: 22, textAlign: 'center' }}>
+          <section style={{ marginTop: 22, background: '#e8f0fe', border: '1px solid #d3e3fd', borderRadius: 16, padding: 22, textAlign: 'center' }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: '#202124', marginBottom: 6 }}>Wil je dit niet elke maand opnieuw doen?</div>
-            <div style={{ fontSize: 14.5, color: '#5b5b60', marginBottom: 16, maxWidth: 520, margin: '0 auto 16px', lineHeight: 1.55 }}>
+            <div style={{ fontSize: 14.5, color: '#5f6368', marginBottom: 16, maxWidth: 520, margin: '0 auto 16px', lineHeight: 1.55 }}>
               In BoekBrug staan je afschriften, facturen en BTW bij elkaar. Je bank koppelen we automatisch aan je facturen — klaar voor je aangifte en je boekhouder.
             </div>
             <Link href="/register" style={{ backgroundColor: '#1a73e8', color: '#fff', fontSize: 15, fontWeight: 600, padding: '12px 24px', borderRadius: 9999, textDecoration: 'none', display: 'inline-block' }}>

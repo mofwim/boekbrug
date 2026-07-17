@@ -947,7 +947,7 @@ function ConfirmPaidModal({
                   disabled={submitting}
                   style={{
                     width: "100%", padding: "14px", borderRadius: 14,
-                    background: "#eef4ff", color: "#1a73e8",
+                    background: "#e8f0fe", color: "#1a73e8",
                     border: "1.5px solid #1a73e8",
                     fontWeight: 600, fontSize: 15,
                     cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
@@ -978,7 +978,7 @@ function ConfirmPaidModal({
                   disabled={submitting}
                   style={{
                     width: "100%", padding: "14px", borderRadius: 14,
-                    background: "#eef4ff", color: "#1a73e8",
+                    background: "#e8f0fe", color: "#1a73e8",
                     border: "1.5px solid #1a73e8",
                     fontWeight: 600, fontSize: 15,
                     cursor: submitting ? "not-allowed" : "pointer", marginBottom: 8,
@@ -1449,7 +1449,7 @@ function InvoiceCard({
               disabled={loadingPdf}
               style={{
                 width: "100%", padding: "12px", borderRadius: 12,
-                background: "#eef4ff", border: "1.5px solid #1a73e8",
+                background: "#e8f0fe", border: "1.5px solid #1a73e8",
                 color: "#1a73e8", fontWeight: 600, fontSize: 14,
                 cursor: loadingPdf ? "wait" : "pointer", marginBottom: 10,
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
@@ -1467,7 +1467,7 @@ function InvoiceCard({
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "10px 12px", borderRadius: 10, marginBottom: 10,
-                background: "#f7f7f7", textDecoration: "none",
+                background: "#f8f9fa", textDecoration: "none",
               }}
             >
               <span style={{ fontSize: 15 }}>📁</span>
@@ -1523,7 +1523,7 @@ function InvoiceCard({
               onClick={onRestore}
               style={{
                 width: "100%", padding: "13px 0", borderRadius: 12,
-                background: "#eef4ff", border: "1.5px solid #1a73e8",
+                background: "#e8f0fe", border: "1.5px solid #1a73e8",
                 color: "#1a73e8", fontWeight: 600, fontSize: 14, cursor: "pointer",
               }}
             >
@@ -1746,7 +1746,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
           padding: "20px", borderRadius: 16,
           border: `2px dashed ${dragOver ? "#1a73e8" : "#dadce0"}`,
-          background: dragOver ? "#f0f7ff" : "#fafafa",
+          background: dragOver ? "#e8f0fe" : "#f8f9fa",
           cursor: uploading ? "not-allowed" : "pointer",
         }}
         onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
@@ -1817,7 +1817,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
               {results.map((r, i) => {
                 const meta = RESULT_META[r.status];
                 return (
-                  <div key={i} style={{ display: "flex", gap: 10, padding: "10px 12px", borderRadius: 12, background: "#f7f7f9" }}>
+                  <div key={i} style={{ display: "flex", gap: 10, padding: "10px 12px", borderRadius: 12, background: "#f8f9fa" }}>
                     <span style={{ fontSize: 16, lineHeight: "20px" }}>{meta.icon}</span>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <p style={{ fontSize: 13, fontWeight: 600, color: "#202124", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -2255,7 +2255,7 @@ export default function IncomingInvoicesClient({
           style={{
             display: "inline-flex", alignItems: "center", gap: 6,
             marginTop: 12, padding: "8px 14px", borderRadius: 10,
-            background: "#eef4ff", color: "#1a73e8",
+            background: "#e8f0fe", color: "#1a73e8",
             fontSize: 14, fontWeight: 600, textDecoration: "none",
           }}
         >
@@ -2303,7 +2303,7 @@ export default function IncomingInvoicesClient({
               <button
                 onClick={() => setSelectMode(true)}
                 style={{
-                  background: "#eef4ff", border: "none", color: "#1a73e8",
+                  background: "#e8f0fe", border: "none", color: "#1a73e8",
                   fontWeight: 600, fontSize: 14, cursor: "pointer",
                   padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
                 }}
@@ -2315,7 +2315,7 @@ export default function IncomingInvoicesClient({
                 <button
                   onClick={selectAllReady}
                   style={{
-                    background: "#eef4ff", border: "none", color: "#1a73e8",
+                    background: "#e8f0fe", border: "none", color: "#1a73e8",
                     fontWeight: 700, fontSize: 14, cursor: "pointer",
                     padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
                   }}

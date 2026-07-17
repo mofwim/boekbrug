@@ -190,7 +190,7 @@ export default function KasClient() {
         {/* Ledger */}
         <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral, margin: '0 2px 10px' }}>BOEKINGEN</div>
         {loading ? (
-          <div style={{ height: 80, borderRadius: 16, background: '#F0F1F3' }} />
+          <div style={{ height: 80, borderRadius: 16, background: '#f1f3f4' }} />
         ) : entries.length === 0 ? (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
             Nog geen kasboekingen. Voeg je eerste contante ontvangst of uitgave toe.
@@ -198,7 +198,7 @@ export default function KasClient() {
         ) : (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, overflow: 'hidden' }}>
             {entries.map((e, i) => (
-              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none' }}>
+              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i > 0 ? '1px solid #e0e0e0' : 'none' }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {e.description?.trim() || catLabel(e.category)}

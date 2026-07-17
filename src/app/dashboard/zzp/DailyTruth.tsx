@@ -28,7 +28,7 @@ const M3 = {
   error:              '#B3261E',
   neutral:            '#5F6368',
   outlineVariant:     '#E0E0E0',
-  hairline:           '#ECEFF1',
+  hairline:           '#e0e0e0',
 }
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"

@@ -82,7 +82,7 @@ const s = {
   } as React.CSSProperties,
   resultPanel: {
     marginTop: 22,
-    background: 'linear-gradient(135deg, #34a853, #24a148)',
+    background: 'linear-gradient(135deg, #34a853, #34a853)',
     borderRadius: 16,
     padding: '22px 24px',
     color: '#fff',

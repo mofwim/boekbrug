@@ -83,7 +83,7 @@ export default function ResultaatClient() {
         </div>
 
         {loading ? (
-          <div style={{ height: 220, borderRadius: 16, background: '#F0F1F3' }} />
+          <div style={{ height: 220, borderRadius: 16, background: '#f1f3f4' }} />
         ) : !data?.ok ? (
           <div style={{ color: M3.neutral, fontSize: 14 }}>Kon het resultaat niet laden.</div>
         ) : (

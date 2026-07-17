@@ -930,7 +930,7 @@ export default function BankClient() {
             </button>
           </div>
           {statements.map((st) => (
-            <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #F7F7F7' }}>
+            <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f8f9fa' }}>
               <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#9aa0a6', flexShrink: 0 }}>description</span>
                 <span style={{ fontSize: 13, color: '#3c4043', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -989,7 +989,7 @@ export default function BankClient() {
             disabled={autoRunning}
             style={{
               padding: '11px 16px', borderRadius: R.full, border: 'none',
-              background: autoRunning ? '#C7D0DB' : M3.primary, color: '#fff',
+              background: autoRunning ? '#dadce0' : M3.primary, color: '#fff',
               fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: autoRunning ? 'default' : 'pointer',
               display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
@@ -1184,7 +1184,7 @@ export default function BankClient() {
                   style={{
                     border: 'none', borderRadius: R.full, cursor: batchSelectedCount === 0 || batchRunning ? 'default' : 'pointer',
                     fontFamily: FONT, fontSize: 13, fontWeight: 600, padding: '8px 16px',
-                    background: batchSelectedCount === 0 || batchRunning ? '#C7D0DB' : M3.primary, color: '#fff',
+                    background: batchSelectedCount === 0 || batchRunning ? '#dadce0' : M3.primary, color: '#fff',
                   }}
                 >
                   {batchRunning ? 'Bezig…' : `Bevestig betaling (${batchSelectedCount})`}

@@ -118,7 +118,7 @@ export default function ArticleLayout({
             <div style={{ marginBottom: 16 }}>
               <Link
                 href={articlePath(locale, frontmatter.pillarSlug)}
-                style={{ display: 'inline-block', fontSize: 12, fontWeight: 600, color: '#1a73e8', background: '#e8f0fe', border: '1px solid #cfe1ff', borderRadius: 9999, padding: '5px 12px', textDecoration: 'none' }}
+                style={{ display: 'inline-block', fontSize: 12, fontWeight: 600, color: '#1a73e8', background: '#e8f0fe', border: '1px solid #d3e3fd', borderRadius: 9999, padding: '5px 12px', textDecoration: 'none' }}
               >
                 {t.partOf}: {frontmatter.pillarTitle} →
               </Link>

@@ -27,7 +27,7 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
-const NAVY = '#16324f'
+const NAVY = '#1a73e8'
 const styles = StyleSheet.create({
   page: {
     fontFamily: 'Helvetica',
@@ -83,7 +83,7 @@ const styles = StyleSheet.create({
   tableHeader: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: '#c8c8cd',
+    borderBottomColor: '#dadce0',
     paddingBottom: 6,
     marginBottom: 4,
   },
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingVertical: 5,
     borderBottomWidth: 1,
-    borderBottomColor: '#eeeeef',
+    borderBottomColor: '#f1f3f4',
   },
   colAantal: { width: 44, fontSize: 10 },
   colOmschrijving: { flex: 1, fontSize: 10, paddingRight: 8 },
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#c8c8cd',
+    borderTopColor: '#dadce0',
   },
   totalFinalLabel: { fontSize: 12, fontFamily: 'Helvetica-Bold' },
   totalFinalValue: { fontSize: 12, fontFamily: 'Helvetica-Bold' },
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
     right: 44,
     textAlign: 'center',
     fontSize: 8,
-    color: '#c8c8cd',
+    color: '#dadce0',
   },
 })
 
