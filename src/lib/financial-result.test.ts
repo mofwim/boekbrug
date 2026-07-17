@@ -1,6 +1,7 @@
 // [RESULT] Pure node test — run: npx tsx src/lib/financial-result.test.ts
 import {
   computeResult,
+  toResultBankTx,
   type ResultInvoice, type ResultBankTx, type ResultCashEntry,
 } from "./financial-result";
 import type { DailyTurnover } from "./turnover";
@@ -166,6 +167,64 @@ console.log("\n— [SETTLE-LAG] fallback booking date reconciles to Z-report via
   const rff = computeResult([], bankFarFallback, [], turnover);
   check("fallback booking date beyond the lag window → counts (not silently suppressed)",
     near(rff.omzet, 1000 + 400) && near(rff.cashOmzetZonderBtw, 400));
+}
+
+console.log("\n— [FINDING-1] an acquirer payout MIS-TAPPED as 'omzet' on a covered day must NOT double-count —");
+{
+  // The R&D audit's HIGH bug: a Rabo OmniKassa / Worldline / Nets payout the auto-classifier
+  // missed → sign-fallback 'omzet' → the owner confirms 'omzet'. On a covered till day the
+  // till already counted those takings once; the old de-dup (keyed on the literal category
+  // "pos_income") let this 'omzet' line add a SECOND helping. Now toResultBankTx recognises the
+  // acquirer NAME and flags it as a settlement, so computeResult treats it as a covered witness.
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-07-03",
+    base_0: 0, base_9: 0, base_21: 2113, btw_9: 0, btw_21: 190,
+    total_incl: 2303.10, pin_amount: 2086.65, cash_amount: 216.45, other_amount: 0,
+  }];
+  // Owner (mis)categorised the OmniKassa payout as plain 'omzet'. Booked next day (T+1).
+  const rawMisTap = { amount: 2080, category: "omzet", invoice_id: null, date: "2026-07-04", description: "Rabo OmniKassa afrekening periode" };
+  const mapped = toResultBankTx(rawMisTap);
+  check("toResultBankTx flags an acquirer-named CREDIT as a settlement even when category='omzet'", mapped.posSettlement === true);
+  check("… and derives a settleDate (booking-date fallback) for the covered-day check", mapped.settleDate === "2026-07-04");
+  const rMis = computeResult([], [mapped], [], turnover);
+  check("covered-day OmniKassa 'omzet' payout is a witness → omzet = till net only (2113, NOT ~4193)", near(rMis.omzet, 2113));
+
+  // A genuine NON-acquirer bank 'omzet' on a covered day (e.g. a webshop transfer that never
+  // went through the till) has NO acquirer name → NOT a settlement → it must still COUNT, so
+  // real off-till revenue is never hidden.
+  const rawWebshop = { amount: 500, category: "omzet", invoice_id: null, date: "2026-07-03", description: "overboeking webshop bestelling 8842" };
+  const mappedWebshop = toResultBankTx(rawWebshop);
+  check("a non-acquirer 'omzet' credit is NOT flagged as a settlement", mappedWebshop.posSettlement === false);
+  const rShop = computeResult([], [mappedWebshop], [], turnover);
+  check("… so genuine off-till revenue on a covered day still counts (2113 + 500)", near(rShop.omzet, 2113 + 500));
+
+  // An acquirer-named DEBIT (a purchase AT a terminal) is not income → never a settlement.
+  const mappedDebit = toResultBankTx({ amount: -12.5, category: "kosten", invoice_id: null, date: "2026-07-03", description: "betaalautomaat CCV bloemen" });
+  check("an acquirer-named DEBIT is not a settlement (it's a purchase)", mappedDebit.posSettlement === false);
+}
+
+console.log("\n— [FINDING-2] SETTLE_LAG widened to 5 days: a DAT-less T+5 payout still reconciles —");
+{
+  // A Jun 30 (Q2) sale whose DAT-less payout posts Jul 5 (T+5, over a long weekend + holiday),
+  // booked into Q3. Q3's revenue array has no Jun 30 row, but the caller's −5-day covered
+  // buffer includes it. With the OLD lag=3 the backward window reached only Jul 2 → the payout
+  // was NOT matched → the till's already-counted €900 was booked a SECOND time in Q3. lag=5
+  // reaches Jun 30 and suppresses it.
+  const bankT5: ResultBankTx[] = [
+    { amount: 1089, category: "pos_income", invoice_id: null, settleDate: "2026-07-05", settleExact: false },
+  ];
+  const covered = new Set(["2026-06-30"]);
+  const r = computeResult([], bankT5, [], [], covered);
+  check("T+5 DAT-less payout reconciles to the covered Z-report day → not re-counted in the new quarter",
+    r.omzet === 0 && r.cashOmzetZonderBtw === 0);
+
+  // A T+6 payout is beyond the 5-day window (and the 5-day buffer) → it is NOT suppressed and
+  // counts as real revenue rather than being silently hidden.
+  const bankT6: ResultBankTx[] = [
+    { amount: 500, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: false },
+  ];
+  const r6 = computeResult([], bankT6, [], [], covered);
+  check("T+6 (beyond the window) counts as revenue → never silently hidden", near(r6.omzet, 500));
 }
 
 console.log("\n— turnover cross-quarter settlement lag (R1) —");

@@ -15,8 +15,9 @@
 // a rate are surfaced separately (cashOmzetZonderBtw) rather than silently guessed.
 
 import { pnlRole } from "./bank-categories";
-import { turnoverNetOmzet, turnoverBtw, type DailyTurnover } from "./turnover";
+import { turnoverNetOmzet, turnoverBtw, parsePosSettlement, type DailyTurnover } from "./turnover";
 import { nearestLegalRate } from "./btw-rate";
+import { isPosPayoutDescription } from "./bank-identity";
 
 export interface ResultInvoice {
   direction: "outgoing" | "incoming" | null;
@@ -28,9 +29,15 @@ export interface ResultBankTx {
   amount: number | null;       // signed: + credit, − debit
   category: string | null;      // null = uncategorized (not counted)
   invoice_id: string | null;    // set = payment of an already-counted invoice
-  // [TURNOVER] For a pos_income line: the takings day it settled (parsed DAT date, or the
-  // booking date as a fallback). Used to exclude it on days the till already counted.
+  // [TURNOVER] For a card/PSP settlement line: the takings day it settled (parsed DAT date,
+  // or the booking date as a fallback). Used to exclude it on days the till already counted.
   settleDate?: string | null;
+  // TRUE when this revenue credit is a card-acquirer / PSP SETTLEMENT — either an explicit
+  // pos_income category, or a credit whose text matches a known acquirer even though the
+  // owner (mis)categorised it as plain 'omzet'. Such a line's takings were already booked
+  // once by the till on the settled day, so on a covered day it is a witness, never a second
+  // helping of revenue. Set by toResultBankTx so all four surfaces de-dup identically.
+  posSettlement?: boolean;
   // TRUE when settleDate is the REAL takings date parsed from the statement (DAT.),
   // FALSE/absent when it is only the booking date used as a fallback. When it is a
   // fallback, the true takings day is a day or two EARLIER (settlement lags takings),
@@ -44,6 +51,41 @@ export interface ResultCashEntry {
   category: string | null;
   btw_rate: number | null;      // only set for a cash sale the owner rated
   date?: string | null;         // [TURNOVER] entry_date — for the covered-day check
+}
+
+/** The raw bank_transactions columns the result engine needs. */
+export interface RawBankRow {
+  amount: number | null;
+  category: string | null;
+  invoice_id: string | null;
+  date: string | null;
+  description: string | null;
+}
+
+/**
+ * Map one raw bank_transactions row to a ResultBankTx, deciding whether it is a card/PSP
+ * SETTLEMENT and, if so, the takings day it settled. THE single place that decision is made,
+ * so all four money surfaces (result / aangifte / readiness / closing-package) de-dup card
+ * takings identically and cannot drift.
+ *
+ * A line is a settlement when it is explicitly categorised pos_income, OR it is a CREDIT
+ * whose text matches a known acquirer/PSP (isPosPayoutDescription) even though the owner
+ * (mis)categorised it as plain 'omzet' — either way its takings were already booked once by
+ * the till on the settled day. settleDate is the printed DAT. takings date when present, else
+ * the booking date (settleExact=false → computeResult widens a short backward window only).
+ */
+export function toResultBankTx(b: RawBankRow): ResultBankTx {
+  const amt = b.amount ?? 0;
+  const posSettlement = b.category === "pos_income" || (amt >= 0 && isPosPayoutDescription(b.description));
+  const parsedTakings = posSettlement ? parsePosSettlement(b.description).date : null;
+  return {
+    amount: b.amount,
+    category: b.category,
+    invoice_id: b.invoice_id,
+    posSettlement,
+    settleDate: posSettlement ? (parsedTakings ?? b.date) : null,
+    settleExact: posSettlement ? parsedTakings != null : false,
+  };
 }
 
 export interface FinancialResult {
@@ -73,12 +115,16 @@ export interface FinancialResult {
 
 export interface SalesRateBucket { rate: number; omzet: number; btw: number }
 
-// The maximum settlement lag (days) we look BACKWARD when a pos_income line's takings
+// The maximum settlement lag (days) we look BACKWARD when a settlement line's takings
 // date wasn't printed and we only have the booking date. Card settlements post to the
 // bank the same day or a few days after the sale — never before — so looking back a few
 // days (and never forward) reconciles a T+1/T+2 payout to its Z-report day without ever
-// hiding revenue on a day that carries its own exact takings date.
-const SETTLE_LAG_DAYS = 3;
+// hiding revenue on a day that carries its own exact takings date. Kept EQUAL to the
+// −5-day covered buffer the callers fetch (result/readiness/closing): a DAT-less payout
+// over a long weekend + holiday can post 4–5 days after the sale and cross a quarter
+// boundary, so a shorter window here would miss its covered takings day and let the till's
+// already-counted revenue be booked a SECOND time in the next quarter.
+const SETTLE_LAG_DAYS = 5;
 
 // Is a pos_income line the settlement of a day the till Z-report already counted? Exact
 // takings date (settleExact) → exact covered match. Fallback booking date → also accept a
@@ -190,15 +236,18 @@ export function computeResult(
   for (const t of bankTx) {
     if (t.invoice_id) continue;   // payment of an already-counted invoice
     if (!t.category) continue;     // uncategorized → never guessed into a total
-    // [TURNOVER] pos_income that settled a day the Z-report already counted is that day's
-    // takings, not new revenue → witness only. Keyed on the takings date (settleDate).
-    // When settleDate is the exact DAT. date, an exact covered-day match. When it is only
-    // the booking-date fallback, the real takings day is 1–3 days earlier (settlement lag),
-    // so widen to a short BACKWARD window — never forward, so a real takings day carrying
-    // its own exact date can never be hidden. ONLY for pos_income — a manually-set 'omzet'
-    // line still counts (the owner's stated intent), and if it lacks a rate it is surfaced
-    // below as omzet-zonder-tarief rather than silently zero-rated.
-    if (t.category === "pos_income" && posSettlesCoveredDay(t, covered)) continue;
+    // [TURNOVER] A card/PSP settlement that settled a day the Z-report already counted is
+    // that day's takings, not new revenue → witness only. Keyed on the takings date
+    // (settleDate). When settleDate is the exact DAT. date, an exact covered-day match. When
+    // it is only the booking-date fallback, the real takings day is a few days earlier
+    // (settlement lag), so widen to a short BACKWARD window — never forward, so a real
+    // takings day carrying its own exact date can never be hidden. The de-dup keys on
+    // posSettlement (an explicit pos_income category OR an acquirer-named credit the owner
+    // mis-tapped as 'omzet') — NOT the literal category — so a covered-day card payout can
+    // never be double-counted, whichever chip the owner picked. A NON-acquirer 'omzet' bank
+    // line (e.g. a webshop transfer that never went through the till) has posSettlement=false
+    // and still counts, and if it lacks a rate is surfaced below as omzet-zonder-tarief.
+    if ((t.posSettlement || t.category === "pos_income") && posSettlesCoveredDay(t, covered)) continue;
     // [SIGN] Keep the SIGN of the bank amount — do NOT Math.abs it. A card refund/chargeback
     // settles as a NEGATIVE pos_income and a supplier refund as a POSITIVE kosten credit;
     // abs would book money leaving the business as money arriving (and vice-versa). The stored

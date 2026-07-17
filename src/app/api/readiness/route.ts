@@ -12,8 +12,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { summarizeClosingPackage } from "@/lib/closing-package";
-import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
-import { turnoverNetOmzet, parsePosSettlement, type DailyTurnover } from "@/lib/turnover";
+import { computeResult, toResultBankTx, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { needsDocument } from "@/lib/bank-identity";
@@ -188,15 +188,10 @@ export async function GET(req: NextRequest) {
   // old bank=[]), a quarter whose only VAT gap is undeclared bank revenue could still score
   // "klaar" — while /api/result and /api/aangifte counted it. computeResult surfaces it as
   // omzet-zonder-tarief (cashOmzetZonderBtw), which blocks readiness, so all three agree.
-  // Card takings reconciled to a Z-report are excluded via settleDate + coveredDates.
-  const bankTx: ResultBankTx[] = bank.map((b) => {
-    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
-    return {
-      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
-      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
-    };
-  });
+  // Card takings reconciled to a Z-report are excluded via the shared toResultBankTx mapper
+  // (settleDate + coveredDates), which also catches an acquirer payout the owner mis-tapped
+  // as 'omzet' so readiness agrees exactly with /api/result and /api/aangifte.
+  const bankTx: ResultBankTx[] = bank.map(toResultBankTx);
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates);
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);

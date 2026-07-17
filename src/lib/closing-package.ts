@@ -37,11 +37,12 @@ import {
 } from "./quarterly";
 import { calcBtwRate } from "./export";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
-import { turnoverNetOmzet, parsePosSettlement, type DailyTurnover } from "./turnover";
+import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
 import type { EftSettlement } from "./eft-parser";
 import {
   computeResult,
+  toResultBankTx,
   type ResultInvoice,
   type ResultCashEntry,
   type ResultBankTx,
@@ -1298,14 +1299,10 @@ export async function buildClosingPackageZip(args: {
       .order("id", { ascending: true })
       .range(from, to),
   ).catch(() => []);
-  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map((b) => {
-    const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
-    return {
-      amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-      settleDate: b.category === "pos_income" ? (parsedTakings ?? b.date) : null,
-      settleExact: b.category === "pos_income" ? parsedTakings != null : false,
-    };
-  });
+  // [SETTLE] Shared mapper — identical card-settlement de-dup to /api/result, /api/aangifte and
+  // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
+  // package never double-counts a covered-day card settlement.
+  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map(toResultBankTx);
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
     status: i.status,
