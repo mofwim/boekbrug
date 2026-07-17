@@ -11,7 +11,9 @@
 //     add its path here. (An earlier DOM-probe version of this check could get stuck
 //     hiding the FAB when navigating away from a header page, so we keep it a simple,
 //     deterministic path list — DashboardHeader is only used by these two routes.)
-//   - "/dashboard/invoice/*" — the invoice form pages have a full-width bottom action bar.
+//   - Pages with a full-width bottom-anchored input/action bar that the FAB would sit on:
+//     "/dashboard/invoice/*" (invoice form action bar) and "/dashboard/messages/*" (the
+//     conversation composer textarea, sticky bottom-0). A fixed corner can't dodge these.
 
 "use client";
 
@@ -20,13 +22,16 @@ import { SearchBar } from "@/components/search/SearchBar";
 
 const INLINE_HEADER_PATHS = new Set(["/dashboard", "/dashboard/accountant"]);
 
+// Routes whose full-width bottom bar/composer would collide with the bottom-left FAB.
+const BOTTOM_BAR_PREFIXES = ["/dashboard/invoice/", "/dashboard/messages/"];
+
 export default function GlobalSearchLauncher() {
   const pathname = usePathname();
 
   if (
     !pathname ||
     INLINE_HEADER_PATHS.has(pathname) ||
-    pathname.startsWith("/dashboard/invoice/")
+    BOTTOM_BAR_PREFIXES.some((p) => pathname.startsWith(p))
   ) {
     return null;
   }
