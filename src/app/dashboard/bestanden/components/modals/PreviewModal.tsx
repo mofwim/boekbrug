@@ -91,7 +91,7 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
               )}
             </div>
            ) : doc.file_type.startsWith("image/") ? (
-            <img src={url} alt={doc.file_name} style={{ maxWidth: "100%", maxHeight: "60vh", borderRadius: T.md, boxShadow: T.elev2 }} />
+            <img src={url} alt={doc.file_name} loading="lazy" decoding="async" style={{ maxWidth: "100%", maxHeight: "60vh", borderRadius: T.md, boxShadow: T.elev2 }} />
            ) : (
             <iframe src={url} title={doc.file_name} style={{ width: "100%", height: "60vh", border: "none", borderRadius: T.md }} />
           )}
