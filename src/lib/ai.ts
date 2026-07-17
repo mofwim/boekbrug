@@ -45,6 +45,32 @@ export function isStatementFilename(filename: string): boolean {
   return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
 }
 
+// [TRUST-CONFIDENT-FALSE] The classifier (a small model) can be CONFIDENTLY wrong that a
+// document is "not an invoice" — the classic case is a collective invoice (verzamelfactuur:
+// many delivery-note lines with their own numbers/dates/amounts) read as a "rekeningoverzicht".
+// Silently discarding such a verdict loses a real, bookable invoice with NO trace the owner can
+// see. So: when a NOT-an-invoice verdict still carries a STRONG invoice signal — a vendor AND an
+// amount — and the filename is not an unmistakable statement, we do NOT trust the rejection. The
+// document is routed to the human verify queue flagged 'uncertain' instead of dropped. This is
+// money-safe: email/intake invoices enter as 'processing', excluded from BTW/omzet/kosten until
+// the human confirms or dismisses — a genuine non-invoice (newsletter, real statement) is simply
+// dismissed there, but a real invoice is never again lost unseen. Pure + testable.
+export function shouldRescueNonInvoice(
+  p: {
+    vendor?: string | null;
+    total_inc_btw?: number | null;
+    total_ex_btw?: number | null;
+    amount?: number | null;
+  },
+  filename: string,
+): boolean {
+  if (isStatementFilename(filename)) return false; // an unmistakable statement stays rejected
+  const hasVendor = !!(p.vendor && String(p.vendor).trim());
+  const hasAmount =
+    p.total_inc_btw != null || p.total_ex_btw != null || p.amount != null;
+  return hasVendor && hasAmount;
+}
+
 // [CREDIT-BACKSTOP] A document whose printed TOTAL is negative is a credit / correction, even
 // when the model did not tag it (e.g. an "expondo Factuurcorrectie — Full return" that never
 // writes the word "Creditnota"). Returns true when the row must be treated as a creditnota so
@@ -1269,6 +1295,21 @@ Return JSON only.`;
       };
     }
     if (band === 'review') {
+      parsed.is_invoice = true;
+      parsed.uncertain = true;
+      parsed.field_confidence = {
+        ...(parsed.field_confidence ?? {}),
+        amount: Math.min(parsed.field_confidence?.amount ?? 0.4, 0.4),
+      };
+    }
+
+    // [TRUST-CONFIDENT-FALSE] A CONFIDENT "not an invoice" (accept band, so it skipped the
+    // 'review' rescue above) that still carries a strong invoice signal (vendor + amount) and
+    // is not a statement filename is most likely a mis-judged real invoice — a verzamelfactuur
+    // read as a statement. Rescue it to the verify queue flagged 'uncertain' instead of letting
+    // the caller discard it unseen. Held as 'processing' downstream ⇒ never booked as a cost
+    // until the human confirms. (The low-confidence 'skip' band already returned above.)
+    if (parsed.is_invoice === false && shouldRescueNonInvoice(parsed, filename)) {
       parsed.is_invoice = true;
       parsed.uncertain = true;
       parsed.field_confidence = {
