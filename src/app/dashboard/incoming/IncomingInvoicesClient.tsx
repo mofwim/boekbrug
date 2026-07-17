@@ -128,13 +128,23 @@ function formatSignedAmount(amount: number): string {
 function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  // [BACKFILL] Re-scan control — an owner-triggered re-pull over a chosen start date, for
+  // invoices the incremental sync already passed (e.g. one missed before a fix landed).
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  const [backfillDate, setBackfillDate] = useState<string>(
+    () => `${new Date().getFullYear()}-01-01`
+  );
 
   // [BOEK-011] One tap = full import. The server caps each call at 25 new
   // invoices (function time limit); it reports `remaining` and we simply call
   // again until the backlog is drained — with live progress so the user sees
   // "Bezig… 25 van 61" instead of a silent partial import. MAX_ROUNDS guards
   // against a server bug ever looping us forever.
-  const handleSync = async () => {
+  // [BACKFILL] When `backfillSince` (an ISO date) is passed, the SAME batch loop runs against
+  // /api/email/backfill (re-scan from that date, watermark held) instead of the incremental
+  // /api/email/sync. Everything else — the continue-until-drained loop, the honest summary — is
+  // identical, so a re-scan reuses the exact proven machinery.
+  const handleSync = async (backfillSince?: string) => {
     setSyncing(true);
     setSyncResult(null);
 
@@ -158,7 +168,13 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     try {
       while (round < MAX_ROUNDS) {
         round++;
-        const res = await fetch("/api/email/sync", { method: "POST" });
+        const res = backfillSince
+          ? await fetch("/api/email/backfill", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sinceDate: backfillSince }),
+            })
+          : await fetch("/api/email/sync", { method: "POST" });
         const data = await res.json();
 
         if (data.error) {
@@ -289,7 +305,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
         <div style={{ display: "flex", gap: 8 }}>
           <button
-            onClick={handleSync}
+            onClick={() => handleSync()}
             disabled={syncing}
             style={{
               flex: 1,
@@ -312,6 +328,69 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           >
             Ontkoppel
           </button>
+        </div>
+
+        {/* [BACKFILL] Re-scan an earlier period. The daily sync only looks forward, so an
+            invoice that was missed at the time (and is now fixable) needs a one-off re-pull.
+            Nothing is duplicated — the re-scan imports only what's still missing. */}
+        <div style={{ marginTop: 10 }}>
+          {!backfillOpen ? (
+            <button
+              onClick={() => setBackfillOpen(true)}
+              disabled={syncing}
+              style={{
+                background: "transparent", border: "none",
+                color: syncing ? "#c7c7cc" : "#007aff",
+                fontSize: 13, fontWeight: 500,
+                cursor: syncing ? "default" : "pointer", padding: 0,
+              }}
+            >
+              Mis je een factuur? Oudere e-mails opnieuw ophalen…
+            </button>
+          ) : (
+            <div style={{ background: "#fff", borderRadius: 10, padding: 12 }}>
+              <div style={{ fontSize: 12.5, color: "#3c4043", lineHeight: 1.5, marginBottom: 8 }}>
+                Ik scan je e-mail opnieuw vanaf deze datum en importeer wat er nog mist. Al
+                geïmporteerde facturen blijven zoals ze zijn — niets wordt dubbel.
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <input
+                  type="date"
+                  value={backfillDate}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setBackfillDate(e.target.value)}
+                  disabled={syncing}
+                  style={{
+                    border: "1px solid #d1d1d6", borderRadius: 8, padding: "8px 10px",
+                    fontSize: 14, fontFamily: "inherit",
+                  }}
+                />
+                <button
+                  onClick={() => handleSync(backfillDate)}
+                  disabled={syncing || !backfillDate}
+                  style={{
+                    background: syncing ? "#e5e5ea" : "#007aff",
+                    color: syncing ? "#8e8e93" : "#fff",
+                    border: "none", borderRadius: 8, padding: "8px 16px",
+                    fontWeight: 600, fontSize: 14,
+                    cursor: syncing || !backfillDate ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {syncing ? "Bezig…" : "Opnieuw ophalen"}
+                </button>
+                <button
+                  onClick={() => setBackfillOpen(false)}
+                  disabled={syncing}
+                  style={{
+                    background: "transparent", border: "none", color: "#8e8e93",
+                    fontSize: 13, cursor: syncing ? "default" : "pointer", padding: "8px 4px",
+                  }}
+                >
+                  Annuleer
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {syncResult && (
