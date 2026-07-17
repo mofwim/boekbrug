@@ -519,6 +519,9 @@ export async function POST(req: NextRequest) {
           document_kind: v.document_kind ?? null,
           invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
           confidence: v.confidence,
+          // Raw gross only (no amount-fallback), and never auto-book a forced-through duplicate.
+          totalIncBtw: v.total_inc_btw ?? null,
+          forcedDuplicate: force === true,
           health: {
             total_ex_btw: v.total_ex_btw ?? 0,
             btw_amount: v.btw_amount ?? 0,

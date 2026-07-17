@@ -26,9 +26,12 @@ import { classifyImportHealth, type HealthInput } from "./import-health";
 // Auto-booking bar — stricter than import-health's 0.7 review line. A present per-field score
 // below this keeps the invoice in the queue for a human, even if it isn't otherwise "flagged".
 export const HIGH_CONF = 0.8;
-// Overall AI confidence floor (matches the 'accept' band; below this it wouldn't be enqueued as
-// a normal invoice anyway).
+// Overall AI confidence floor. FAIL-CLOSED: auto-booking REQUIRES a confidence that clears this;
+// a null/absent overall confidence is never enough (it would book on presence checks alone).
 const MIN_OVERALL = 0.7;
+// When the model gave NO amount-specific confidence, we lean on the overall score — but demand a
+// much higher one, because the money field is the one that must never be wrong.
+const VERY_HIGH_OVERALL = 0.9;
 
 export interface AutoAdvanceSignals {
   is_invoice?: boolean | null;
@@ -38,6 +41,13 @@ export interface AutoAdvanceSignals {
   document_kind?: string | null;
   invoice_type?: string | null;
   confidence?: number | null; // overall AI confidence
+  // [AUTO-ADVANCE] The RAW stored gross (total_inc_btw) — NOT the amount-fallback. Auto-booking
+  // requires a real, finite, non-zero gross; an invoice priced only via a fallback 'amount' (so
+  // the dedup gate that keys on total_inc_btw never ran) must stay in the queue.
+  totalIncBtw?: number | null;
+  // [AUTO-ADVANCE] The owner overrode a duplicate warning ("toch toevoegen"). Adding-anyway is
+  // consent to ADD, never to skip verification — such a row must never auto-book.
+  forcedDuplicate?: boolean;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -48,9 +58,14 @@ export interface AutoAdvanceDecision {
 
 /**
  * Decide whether a freshly-extracted incoming invoice may skip the manual verify tap. Conservative
- * by construction: any doubt → false (stays in the queue for the human). Pure.
+ * by construction and FAIL-CLOSED: any doubt, any missing signal → false (stays in the queue for
+ * the human). Auto-booking sends a number into the P&L / BTW / accountant package with no human
+ * in the loop, so the bar is deliberately high. Pure.
  */
 export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDecision {
+  // A duplicate the owner forced past the warning is never auto-booked.
+  if (s.forcedDuplicate === true) return { advance: false, reason: "forced_duplicate" };
+
   // Ordinary invoice only — a statement/reminder/creditnota always needs human eyes.
   if (s.is_invoice === false) return { advance: false, reason: "not_invoice" };
   if (s.is_statement === true) return { advance: false, reason: "statement" };
@@ -61,9 +76,15 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
     return { advance: false, reason: `kind_${kind}` };
   }
 
-  // Overall confidence floor.
-  if (typeof s.confidence === "number" && s.confidence < MIN_OVERALL) {
-    return { advance: false, reason: "low_overall_confidence" };
+  // A REAL gross must exist — never auto-book a total derived only from the 'amount' fallback
+  // (that path bypasses the total_inc_btw-keyed dedup gate).
+  if (!(typeof s.totalIncBtw === "number" && Number.isFinite(s.totalIncBtw) && Math.abs(s.totalIncBtw) >= 0.005)) {
+    return { advance: false, reason: "no_reliable_total" };
+  }
+
+  // Overall confidence — FAIL-CLOSED: must be present AND clear the floor.
+  if (!(typeof s.confidence === "number" && s.confidence >= MIN_OVERALL)) {
+    return { advance: false, reason: "overall_confidence_missing_or_low" };
   }
 
   // Must be fully clean by the SAME classifier the queue badge uses (arithmetic, total present,
@@ -71,14 +92,24 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   const health = classifyImportHealth(s.health);
   if (health.level !== "clean") return { advance: false, reason: "needs_review" };
 
-  // Extra caution for auto-booking: any PRESENT money-field score must clear the HIGH bar.
   const fc = s.health.field_confidence;
+  // The MONEY field's own confidence is the one that must never be wrong. If the model reported
+  // it, it must clear HIGH_CONF. If it did NOT report it, we don't skip the check — we demand a
+  // VERY_HIGH overall confidence instead (fail-closed, never fail-open on a missing money score).
+  const amountScore = fc
+    ? [fc.amount, fc.total, fc.total_inc_btw].find((n): n is number => typeof n === "number")
+    : undefined;
+  if (typeof amountScore === "number") {
+    if (amountScore < HIGH_CONF) return { advance: false, reason: "amount_confidence_below_high_bar" };
+  } else if (!(typeof s.confidence === "number" && s.confidence >= VERY_HIGH_OVERALL)) {
+    return { advance: false, reason: "no_amount_confidence_and_overall_not_very_high" };
+  }
+
+  // Every OTHER present per-field score must also clear the HIGH bar.
   if (fc) {
-    const scores = [fc.vendor, fc.invoice_number, fc.invoice_date, fc.amount, fc.total, fc.total_inc_btw].filter(
-      (n): n is number => typeof n === "number",
-    );
+    const scores = [fc.vendor, fc.invoice_number, fc.invoice_date].filter((n): n is number => typeof n === "number");
     if (scores.length > 0 && Math.min(...scores) < HIGH_CONF) {
-      return { advance: false, reason: "confidence_below_high_bar" };
+      return { advance: false, reason: "field_confidence_below_high_bar" };
     }
   }
 

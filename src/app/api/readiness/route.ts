@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
+    .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start).lte("invoice_date", end)
     .order("id", { ascending: true }).range(from, to));
@@ -128,6 +128,13 @@ export async function GET(req: NextRequest) {
   // Only 'processing' (the verify queue); a 'draft' is an unsent outgoing sales invoice, a
   // separate concern that must not falsely block the close.
   const unverifiedInvoiceCount = invRaw.filter((i) => i.status === "processing").length;
+  // [AUTO-ADVANCE] Invoices the app auto-verified (booked, but the owner should eyeball them
+  // at quarter close). field_confidence is jsonb; the _auto_verified marker is set by the
+  // intake/email auto-advance path.
+  const autoVerifiedCount = invRaw.filter((i) => {
+    const fc = i.field_confidence as Record<string, unknown> | null;
+    return !!(fc && typeof fc === "object" && fc._auto_verified);
+  }).length;
 
   const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
@@ -209,6 +216,7 @@ export async function GET(req: NextRequest) {
     verifiedInvoiceCount,
     invoicesWithEvidence,
     unverifiedInvoiceCount,
+    autoVerifiedCount,
     missingEvidence: [], // exact COUNT drives the score; specific numbers aren't surfaced here
     bankTxCount: bank.length,
     undocumentedCount,

@@ -18,6 +18,8 @@ const clean = (over: Partial<AutoAdvanceSignals> = {}): AutoAdvanceSignals => ({
   document_kind: "invoice",
   invoice_type: "factuur",
   confidence: 0.95,
+  totalIncBtw: 121,
+  forcedDuplicate: false,
   health: {
     total_ex_btw: 100,
     btw_amount: 21,
@@ -60,15 +62,47 @@ console.log("\n— confidence bar is HIGHER than the 0.7 review line —");
 {
   // 0.75 would pass import-health's 0.7 'clean' but must NOT auto-book (below HIGH_CONF 0.8).
   const d = shouldAutoAdvanceInvoice(clean({ health: { ...clean().health, field_confidence: { vendor: 0.75, invoice_number: 0.95, invoice_date: 0.95, amount: 0.95 } } }));
-  check("a 0.75 field score → blocked (below the high bar)", d.advance === false && d.reason === "confidence_below_high_bar");
+  check("a 0.75 field score → blocked (below the high bar)", d.advance === false && d.reason === "field_confidence_below_high_bar");
   check("low overall confidence → blocked", shouldAutoAdvanceInvoice(clean({ confidence: 0.5 })).advance === false);
   check("is_invoice false → blocked", shouldAutoAdvanceInvoice(clean({ is_invoice: false })).advance === false);
 }
 
-console.log("\n— a clean invoice with NO per-field scores still advances (missing = confident, like the badge) —");
+console.log("\n— [FIX] fail-CLOSED on missing signals (the review found these holes) —");
 {
-  const d = shouldAutoAdvanceInvoice(clean({ health: { total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121, invoice_date: "2026-05-10", invoice_number: "2026-9", invoice_type: "factuur", field_confidence: null } }));
-  check("no field_confidence + clean amounts → advance", d.advance === true);
+  // A null overall confidence must NOT advance (was fail-open).
+  check("null overall confidence → blocked", shouldAutoAdvanceInvoice(clean({ confidence: null })).advance === false);
+  check("undefined overall confidence → blocked", shouldAutoAdvanceInvoice(clean({ confidence: undefined })).advance === false);
+  // No real gross (only an 'amount' fallback would have priced it) → blocked.
+  check("no reliable total_inc_btw → blocked", shouldAutoAdvanceInvoice(clean({ totalIncBtw: null })).advance === false);
+  check("zero total_inc_btw → blocked", shouldAutoAdvanceInvoice(clean({ totalIncBtw: 0 })).advance === false);
+  // A duplicate the owner forced past the warning must never auto-book.
+  check("forced duplicate → blocked", shouldAutoAdvanceInvoice(clean({ forcedDuplicate: true })).advance === false);
+}
+
+console.log("\n— [FIX] missing amount confidence does NOT skip the money gate —");
+{
+  // No amount score present + only ordinary overall confidence → blocked (must be VERY high).
+  const noAmt = { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99 };
+  const d = shouldAutoAdvanceInvoice(clean({ confidence: 0.8, health: { ...clean().health, field_confidence: noAmt } }));
+  check("no amount score + overall 0.8 → blocked", d.advance === false && d.reason === "no_amount_confidence_and_overall_not_very_high");
+  // No amount score but VERY high overall (≥0.9) → allowed.
+  const d2 = shouldAutoAdvanceInvoice(clean({ confidence: 0.95, health: { ...clean().health, field_confidence: noAmt } }));
+  check("no amount score + overall 0.95 → advance", d2.advance === true);
+  // An amount score BETWEEN the review line (0.7) and the HIGH bar (0.8) passes health but must
+  // be blocked by the auto-book money gate.
+  const d3 = shouldAutoAdvanceInvoice(clean({ confidence: 0.99, health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.75 } } }));
+  check("amount score 0.75 → blocked by the high money gate", d3.advance === false && d3.reason === "amount_confidence_below_high_bar");
+  // A clearly-low amount score (below 0.7) is caught earlier by health → needs_review (still blocked).
+  const d4 = shouldAutoAdvanceInvoice(clean({ confidence: 0.99, health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.6 } } }));
+  check("amount score 0.6 → blocked (by health needs_review)", d4.advance === false);
+}
+
+console.log("\n— a clean invoice with NO per-field scores needs VERY-high overall (no free pass) —");
+{
+  const d = shouldAutoAdvanceInvoice(clean({ confidence: 0.95, health: { total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121, invoice_date: "2026-05-10", invoice_number: "2026-9", invoice_type: "factuur", field_confidence: null } }));
+  check("no field_confidence + very-high overall + clean amounts → advance", d.advance === true);
+  const d2 = shouldAutoAdvanceInvoice(clean({ confidence: 0.72, health: { total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121, invoice_date: "2026-05-10", invoice_number: "2026-9", invoice_type: "factuur", field_confidence: null } }));
+  check("no field_confidence + only 0.72 overall → blocked", d2.advance === false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

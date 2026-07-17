@@ -1131,6 +1131,10 @@ export interface AttachmentClassification {
   // single invoice, but likely already booked, so it is flagged (not booked as a 2nd cost).
   isReminder?: boolean
   reminderOfInvoiceNumber?: string | null
+  // [AUTO-ADVANCE] Defense-in-depth signals so the email auto-advance gate has the SAME inputs
+  // as the intake gate — a statement/other-kind read as an invoice must never auto-book.
+  isStatement?: boolean
+  documentKind?: string | null
   // [BRIDGE-EXTRACT] per-field AI confidence (vendor/number/date)
   fieldConfidence?: {
     vendor?: number
@@ -1182,6 +1186,9 @@ export async function classifyAttachment(
     // [REMINDER] reminder signal (+ the original invoice number when known)
     isReminder: result.is_reminder,
     reminderOfInvoiceNumber: result.reminder_of_invoice_number ?? null,
+    // [AUTO-ADVANCE] statement / kind — defense-in-depth for the auto-advance gate.
+    isStatement: result.is_statement,
+    documentKind: result.document_kind ?? null,
     fieldConfidence: result.field_confidence,
   }
 }
@@ -2183,10 +2190,15 @@ export async function syncUserEmails(
       const autoAdv = !classification.uncertain
         ? shouldAutoAdvanceInvoice({
             is_invoice: classification.isInvoice,
+            is_statement: classification.isStatement,
             is_reminder: classification.isReminder,
             is_credit_note: classification.isCreditNote,
+            document_kind: classification.documentKind ?? null,
             confidence: classification.confidence,
             invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
+            // Raw gross only — never auto-book a total derived from the 'amount' fallback (that
+            // path also bypasses the dedup gate, which keys on totalIncBtw).
+            totalIncBtw: typeof classification.totalIncBtw === 'number' ? classification.totalIncBtw : null,
             health: {
               total_ex_btw: classification.totalExBtw ?? 0,
               btw_amount: classification.btwAmount ?? 0,

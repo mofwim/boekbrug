@@ -27,6 +27,11 @@ export interface ReadinessSignals {
   // "missing invoice" gap — it must block "klaar" until the owner clears the queue.
   // Optional so older callers/tests keep compiling (undefined → 0 → no block).
   unverifiedInvoiceCount?: number;
+  // [AUTO-ADVANCE] Invoices the app auto-verified (clean + confident) without a manual tap.
+  // They ARE booked correctly in the common case, so this does NOT block "klaar" — but the
+  // owner should eyeball them before closing (a confidently-consistent misread has no other
+  // human catch). Surfaced as a RISK, not a gap. Optional (undefined → 0 → no nudge).
+  autoVerifiedCount?: number;
 
   // ── Bank ──
   bankTxCount: number;                  // bank transactions DATED in the quarter
@@ -169,6 +174,19 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       });
     }
     if (!applicable) notes.push("Nog geen facturen geïmporteerd voor dit kwartaal.");
+
+    // [AUTO-ADVANCE] Auto-verified invoices are booked, but the quarter-close is the moment to
+    // eyeball them — a confidently-consistent misread has no other human catch. A RISK (review),
+    // never a blocking gap, so daily automation stays hands-off.
+    const autoV = s.autoVerifiedCount ?? 0;
+    if (autoV > 0) {
+      risks.push({
+        severity: "risk",
+        title: autoV === 1 ? "1 factuur is automatisch verwerkt" : `${autoV} facturen zijn automatisch verwerkt`,
+        detail: "De app heeft deze duidelijk leesbare facturen automatisch geverifieerd. Loop ze even na (tab 'Automatisch verwerkt') voordat je afsluit.",
+        fix: { label: "Bekijk", href: "/dashboard/incoming/manage" },
+      });
+    }
   }
 
   // ── 2) Bank (30%) — data present, and every line resolved (income/transfer/known cost,
