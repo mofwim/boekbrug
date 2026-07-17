@@ -26,25 +26,26 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     // Invoices the owner currently owes-and-has-paid in cash: incoming, paid, method 'kas'.
     const { data: invRows, error: invErr } = await supabase
       .from("invoices")
-      .select("id, total_inc_btw, payment_date, invoice_number, client_name")
+      .select("id, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name")
       .eq("receiver_id", userId)
       .eq("direction", "incoming")
       .eq("status", "paid")
       .eq("payment_method", "kas");
     if (invErr) return;
 
-    // Existing invoice-linked settlement entries (the ones this reconcile owns).
+    // Existing invoice-linked settlement entries (the ones this reconcile owns). We read amount +
+    // entry_date so a corrected invoice amount/date can HEAL the linked entry (not only create/delete).
     const { data: entryRows, error: entryErr } = await supabase
       .from("cash_entries")
-      .select("id, invoice_id")
+      .select("id, invoice_id, amount, entry_date")
       .eq("user_id", userId)
       .eq("category", "betaling")
       .not("invoice_id", "is", null);
     if (entryErr) return;
 
     const paid = (invRows ?? []) as SettleableInvoice[];
-    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null }>;
-    const { toCreate, toDeleteIds } = computeCashSettlementSync(paid, existing);
+    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; amount?: number | null; entry_date?: string | null }>;
+    const { toCreate, toUpdate, toDeleteIds } = computeCashSettlementSync(paid, existing);
 
     // Create the missing settlements. Insert one at a time so a single bad row (or the unique
     // index catching a race) never aborts the rest.
@@ -67,6 +68,23 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
           console.error("[CASH-SETTLE] settlement insert failed (non-fatal)", { invoice: inv.id, error: error.message });
         }
       }
+    }
+
+    // [CASH-SETTLE] Heal stale settlements: the invoice's gross or payment date changed after it
+    // was cash-paid, so the linked entry must move too — else the kas balance drifts permanently.
+    for (const { id, inv } of toUpdate) {
+      const s = buildCashSettlement(inv);
+      if (!s) continue;
+      const { error } = await supabase
+        .from("cash_entries")
+        .update({
+          amount: s.amount,
+          description: s.description,
+          ...(s.entry_date ? { entry_date: s.entry_date } : {}),
+        })
+        .eq("id", id)
+        .eq("user_id", userId);
+      if (error) console.error("[CASH-SETTLE] settlement update failed (non-fatal)", { entry: id, error: error.message });
     }
 
     // Delete the orphaned settlements (their invoice is no longer paid-in-cash) — the reversal.

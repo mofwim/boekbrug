@@ -26,9 +26,27 @@ export function isCashCategory(v: unknown): v is CashCategory {
 export interface SettleableInvoice {
   id: string;
   total_inc_btw: number | null;
+  // [CASH-SETTLE] Fallback components: when total_inc_btw is null but ex + btw are present, the
+  // gross paid = ex + btw. Without this, a cash-paid invoice with a null gross booked its cost
+  // but never moved the drawer (kas overstated, never healed).
+  total_ex_btw?: number | null;
+  btw_amount?: number | null;
   payment_date?: string | null;
   invoice_number?: string | null;
   client_name?: string | null;
+}
+
+/** The GROSS the owner actually handed over for this invoice: total_inc_btw, or ex+btw when the
+ *  gross wasn't stored. Returns null when neither yields a positive number (a €0 or a credit/refund
+ *  — a creditnota — is never an 'out' cash settlement, so we don't auto-book one). Pure. */
+export function settlementGross(inv: SettleableInvoice): number | null {
+  const raw =
+    typeof inv.total_inc_btw === "number" && inv.total_inc_btw !== 0
+      ? inv.total_inc_btw
+      : typeof inv.total_ex_btw === "number" && typeof inv.btw_amount === "number"
+        ? inv.total_ex_btw + inv.btw_amount
+        : NaN;
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
 }
 
 export interface CashSettlementRow {
@@ -44,8 +62,8 @@ export interface CashSettlementRow {
 /** The kasboek settlement entry for one cash-paid invoice, or null when its total is unusable
  *  (never write a €0/garbage settlement). Pure. */
 export function buildCashSettlement(inv: SettleableInvoice): CashSettlementRow | null {
-  const amount = typeof inv.total_inc_btw === "number" ? Math.abs(inv.total_inc_btw) : NaN;
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const amount = settlementGross(inv);
+  if (amount === null) return null;
   const label = ["Betaling factuur", inv.invoice_number ?? ""].join(" ").trim();
   const desc = inv.client_name ? `${label} — ${inv.client_name}` : label;
   const iso =
@@ -69,15 +87,42 @@ export function buildCashSettlement(inv: SettleableInvoice): CashSettlementRow |
  *   - toDeleteIds: 'betaling' entries whose invoice is no longer paid-in-cash (un-paid, or switched
  *     to bank) — the reversal, so undoing a cash payment removes its kas movement automatically.
  */
+export interface ExistingSettlement {
+  id: string;
+  invoice_id: string | null;
+  amount?: number | null;
+  entry_date?: string | null;
+}
+
 export function computeCashSettlementSync(
   paidKasInvoices: SettleableInvoice[],
-  existing: Array<{ id: string; invoice_id: string | null }>,
-): { toCreate: SettleableInvoice[]; toDeleteIds: string[] } {
+  existing: ExistingSettlement[],
+): { toCreate: SettleableInvoice[]; toUpdate: Array<{ id: string; inv: SettleableInvoice }>; toDeleteIds: string[] } {
   const paidIds = new Set(paidKasInvoices.map((i) => i.id));
-  const linked = new Set(existing.map((e) => e.invoice_id).filter((x): x is string => !!x));
-  const toCreate = paidKasInvoices.filter((i) => !linked.has(i.id) && buildCashSettlement(i) !== null);
+  const linkedByInvoice = new Map<string, ExistingSettlement>();
+  for (const e of existing) if (e.invoice_id) linkedByInvoice.set(e.invoice_id, e);
+
+  const toCreate: SettleableInvoice[] = [];
+  const toUpdate: Array<{ id: string; inv: SettleableInvoice }> = [];
+  for (const inv of paidKasInvoices) {
+    const s = buildCashSettlement(inv);
+    if (!s) continue; // no usable gross → can't settle (never a €0/garbage entry)
+    const existingEntry = linkedByInvoice.get(inv.id);
+    if (!existingEntry) {
+      toCreate.push(inv);
+      continue;
+    }
+    // [CASH-SETTLE] Heal a stale entry: if the invoice's gross or payment date was corrected
+    // after it was paid (the confirm route persists a re-reviewed amount on pay), the linked
+    // 'betaling' entry must move too — otherwise the kas balance is permanently off by the delta.
+    const amountDrift =
+      typeof existingEntry.amount === "number" ? Math.abs(existingEntry.amount - s.amount) > 0.005 : true;
+    const dateDrift = !!s.entry_date && (existingEntry.entry_date ?? null) !== s.entry_date;
+    if (amountDrift || dateDrift) toUpdate.push({ id: existingEntry.id, inv });
+  }
+
   const toDeleteIds = existing.filter((e) => e.invoice_id && !paidIds.has(e.invoice_id)).map((e) => e.id);
-  return { toCreate, toDeleteIds };
+  return { toCreate, toUpdate, toDeleteIds };
 }
 
 export interface CashMovement {
