@@ -28,6 +28,9 @@ import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
+import { reconcileCashSettlements } from "@/lib/cash-settle"
+import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 // [INTAKE-IMG-PDF] Convert an uploaded image (jpg/png) to a one-page PDF at
 // ingest, so every invoice lives as a PDF from day one (opens uniformly, can be
 // stamped by the closing package with no download-time conversion).
@@ -501,13 +504,44 @@ export async function POST(req: NextRequest) {
     if (decision.paidDate) fieldConfidence._intake_paid_date = decision.paidDate
   }
 
+  // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
+  // directly as 'received' (booked, UNPAID, reversible). Never for a receipt (its "probably paid"
+  // suggestion needs a human pay-confirm), never for a pen-mark paid suggestion, never for a
+  // statement/reminder/creditnota/low-confidence read. The decision reads the REAL AI number
+  // (v.invoice_number) — not the CAMERA- fallback — so a numberless invoice stays in the queue.
+  const autoAdv =
+    decision.destination === "invoice" && !decision.suggestPaid
+      ? shouldAutoAdvanceInvoice({
+          is_invoice: v.is_invoice,
+          is_statement: v.is_statement,
+          is_reminder: v.is_reminder,
+          is_credit_note: v.is_credit_note,
+          document_kind: v.document_kind ?? null,
+          invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
+          confidence: v.confidence,
+          health: {
+            total_ex_btw: v.total_ex_btw ?? 0,
+            btw_amount: v.btw_amount ?? 0,
+            total_inc_btw: v.total_inc_btw ?? v.amount ?? 0,
+            invoice_date: invoiceDate,
+            invoice_number: v.invoice_number ?? null,
+            invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
+            field_confidence: fieldConfidence,
+          },
+        })
+      : { advance: false, reason: "not_eligible" };
+  if (autoAdv.advance) {
+    fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
+  }
+
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
       sender_id: null,
       receiver_id: user.id,
       direction: "incoming",
-      status: "processing", // verify queue — never auto-paid, even for receipts
+      // [AUTO-ADVANCE] clean+confident → 'received' (booked, unpaid, reversible); else the queue.
+      status: autoAdv.advance ? "received" : "processing",
       source: "camera",
       client_name: v.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
@@ -548,15 +582,43 @@ export async function POST(req: NextRequest) {
     await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId)
   }
 
+  // [AUTO-ADVANCE] Side-effects of a clean auto-verify — mirror the confirm route, best-effort:
+  // audit the automatic booking (legal trail), settle any cash link + book a bank line that
+  // already paid it, and tell the owner what the app did (so the double-check stays available).
+  if (autoAdv.advance && invoice?.id) {
+    await logAuditAction({
+      userId: user.id,
+      action: "invoice.auto_verified",
+      entityType: "invoice",
+      entityId: invoice.id,
+      oldValue: { status: "processing" },
+      newValue: { status: "received", reason: autoAdv.reason, source: "intake_auto_advance" },
+      ipAddress: getClientIP(req),
+    }).catch(() => {})
+    try { await reconcileCashSettlements(pipeline, user.id) } catch { /* non-fatal */ }
+    try { await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: user.id }) } catch { /* non-fatal */ }
+    try {
+      await pipeline.from("notifications").insert({
+        user_id: user.id,
+        title: "Factuur automatisch verwerkt",
+        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en klaargezet voor de boekhouder. Controleer indien nodig.`.replace("  ", " "),
+        type: "invoice",
+      })
+    } catch { /* non-essential */ }
+  }
+
   return NextResponse.json({
     ok: true,
     destination: decision.destination, // 'invoice' | 'receipt'
     invoice_id: invoice?.id,
     suggest_paid: decision.suggestPaid,
+    auto_verified: autoAdv.advance,
     message:
       decision.destination === "receipt"
         ? "Bon herkend — controleer en bevestig (waarschijnlijk al betaald)."
-        : "Factuur herkend — controleer en bevestig.",
+        : autoAdv.advance
+          ? "Factuur herkend en automatisch verwerkt ✓ — klaar voor de boekhouder."
+          : "Factuur herkend — controleer en bevestig.",
   })
 }
 
