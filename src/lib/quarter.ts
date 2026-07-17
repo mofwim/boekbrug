@@ -34,3 +34,51 @@ export function quarterFromParams(
   const valid = Number.isInteger(y) && y >= 2000 && y <= 2100 && [1, 2, 3, 4].includes(q);
   return valid ? { year: y, quarter: q as QuarterNo } : lastCompletedQuarter(now);
 }
+
+// ─── [BANK-QUARTER] Group dated rows by quarter for the bank-matching filter ──────────
+// The bank screen mixes every uploaded statement, so an owner working on Q2 also sees all
+// the Q1 rows and the "Geen factuur" count balloons. These group by the quarter of the BANK
+// DATE (the payment date, not the invoice date), so a Q1 invoice paid in Q2 shows under Q2
+// (when the money moved) while the matcher still offers the Q1 invoice as a candidate.
+
+/** "2026-06-20" → "2026-Q2". null / unparseable → null (caller shows it in every quarter). */
+export function quarterKeyOf(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  const q = Math.floor((month - 1) / 3) + 1;
+  return `${m[1]}-Q${q}`;
+}
+
+/** "2026-Q2" → "Q2 2026" (human, for a chip label). Unknown shape → the key unchanged. */
+export function quarterLabelOf(key: string): string {
+  const m = /^(\d{4})-Q([1-4])$/.exec(key);
+  return m ? `Q${m[2]} ${m[1]}` : key;
+}
+
+/** Distinct quarter keys present in a set of dated rows, newest first, with counts. */
+export function quartersPresent(
+  dates: Array<string | null | undefined>,
+): Array<{ key: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const d of dates) {
+    const k = quarterKeyOf(d);
+    if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0)); // newest first
+}
+
+/**
+ * Does a dated row belong to the selected quarter? 'all' matches everything. A row with NO
+ * parseable date matches ANY specific quarter too — fail-SAFE: a dateless payment is never
+ * hidden by a quarter filter (better shown in every quarter than silently dropped).
+ */
+export function matchesQuarter(iso: string | null | undefined, selected: string): boolean {
+  if (selected === "all") return true;
+  const k = quarterKeyOf(iso);
+  return k === null || k === selected;
+}
