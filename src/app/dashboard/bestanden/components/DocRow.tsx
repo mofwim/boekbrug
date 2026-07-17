@@ -46,6 +46,11 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
         userSelect: "none", opacity: isDragging ? 0.6 : 1,
         background: selected ? T.primaryContainer : hovered ? T.surfaceVariant : "transparent",
         transition: "background 0.1s",
+        // [PERF] native list virtualization: skip rendering off-screen rows.
+        // Only affects off-screen items; on-screen rows (the ones you can
+        // drag/click) render and behave identically.
+        contentVisibility: "auto",
+        containIntrinsicSize: "auto 44px",
       }}
     >
       {/* Checkbox */}
