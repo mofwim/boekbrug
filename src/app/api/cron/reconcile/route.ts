@@ -26,7 +26,11 @@ export const maxDuration = 300;
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
+  if (!secret) {
+    console.error("[CRON-RECONCILE] CRON_SECRET is not configured — the automatic reconcile is DISABLED.");
+    return NextResponse.json({ error: "cron_secret_not_configured" }, { status: 401 });
+  }
+  if (auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -58,8 +62,25 @@ export async function GET(req: NextRequest) {
   let usersProcessed = 0;
   let bookedTotal = 0;
   let failed = 0;
+  let truncated = 0;
 
-  for (const uid of userIds) {
+  // [CRON-FAIRNESS] Rotate the start each run (by the UTC hour) so, if the full list can't finish
+  // within maxDuration, a FIXED tail never permanently starves — over the day everyone reaches the
+  // head. The soft deadline stops cleanly BETWEEN users (never mid-write), so a truncation can't
+  // leave a half-linked payment. Full round-robin needs a persisted cursor; this is the cheap,
+  // stateless version that removes the "always the same users starve" failure.
+  const arr = [...userIds];
+  const offset = arr.length > 0 ? new Date().getUTCHours() % arr.length : 0;
+  const ordered = [...arr.slice(offset), ...arr.slice(0, offset)];
+  const startedAt = Date.now();
+  const DEADLINE_MS = 250_000; // stop ~50s before the 300s ceiling, between users
+
+  for (const uid of ordered) {
+    if (Date.now() - startedAt > DEADLINE_MS) {
+      truncated = ordered.length - usersProcessed - failed;
+      console.warn("[CRON-RECONCILE] soft deadline hit — deferring remaining users to next run", { remaining: truncated });
+      break;
+    }
     try {
       const confirmed = await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: uid });
       await reconcileCashSettlements(pipeline, uid);
@@ -81,10 +102,12 @@ export async function GET(req: NextRequest) {
           /* notification is non-essential */
         }
       }
-    } catch {
+    } catch (e) {
+      // Isolate + LOG (a persistently-failing user was previously an anonymous counter bump).
       failed += 1;
+      console.error("[CRON-RECONCILE] user reconcile failed (non-fatal)", { uid, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  return NextResponse.json({ ok: true, users: userIds.size, usersProcessed, bookedTotal, failed });
+  return NextResponse.json({ ok: true, users: userIds.size, usersProcessed, bookedTotal, failed, truncated });
 }
