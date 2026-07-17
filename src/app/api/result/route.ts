@@ -172,16 +172,18 @@ export async function GET(req: NextRequest) {
   // independent GROSS cross-check of the till's PIN takings. It is fed to the triangle ONLY as
   // pinLedgerByDay — reconcileTriangle raises a break when it disagrees with the till's PIN; it
   // is NEVER a revenue/cost source (money stays in daily_turnover). In-quarter days only.
-  const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null }>((from, to) => pipeline
+  const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null; spent: number | null }>((from, to) => pipeline
     .from("ledger_daily")
-    .select("ledger_date, received")
+    .select("ledger_date, received, spent")
     .eq("user_id", ownerId)
     .eq("kind", "pin")
     .gte("ledger_date", start)
     .lte("ledger_date", end)
     .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+  // NET PIN (received − spent, card refunds under 'spent'): the till's pin_amount is net-of-
+  // refunds, so comparing net-to-net avoids a spurious break on a day with card refunds.
   const pinLedgerByDay = new Map<string, number>();
-  for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, Number(r.received) || 0);
+  for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
 
   const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
 

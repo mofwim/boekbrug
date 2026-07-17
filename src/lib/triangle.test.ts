@@ -101,11 +101,28 @@ console.log("\n— buildCardReconciliationCsv (the accountant's view) —");
   });
   const csv = buildCardReconciliationCsv("Q3 2026", tri);
   check("header names the three corners", /Kassa-PIN.*terminal.*bank/i.test(csv));
-  check("day row shows NL amounts + commission", csv.includes("2026-07-03;1000,00;1000,00;985,00;15,00;sluit aan"));
+  check("day row shows NL amounts + commission", csv.includes("2026-07-03;1000,00;1000,00;;985,00;15,00;sluit aan"));
   check("mismatch day flagged in status", /2026-07-04;800,00;750,00;.*verschil kassa\/terminal/.test(csv));
-  check("total commission line present (only the ok day = 15,00)", csv.includes("Totaal kaartcommissie (bruto − netto, BTW-vrij);;;;15,00"));
+  check("total commission line present (only the ok day = 15,00)", csv.includes("Totaal kaartcommissie (bruto − netto, BTW-vrij);;;;;15,00"));
   check("gross-mismatch day count surfaced", /Dagen kassa .* terminal.*;1$/m.test(csv));
   check("result rows echo the inputs", tri.days[0].tillPin === 1000 && tri.days[0].eftGross === 1000 && tri.days[0].bankNet === 985);
+}
+
+console.log("\n— [RE-REVIEW MED-2] an orphan PIN-ledger day (no till/EFT/bank) is surfaced, not dropped —");
+{
+  // The bookkeeper recorded €500 PIN on 10/08 but the till Z-report for that day is MISSING.
+  // The ledger is the only witness of that day's (possibly un-booked) revenue → it must appear.
+  const tri = reconcileTriangle({
+    turnover: [],
+    eftSettlements: [],
+    pinLedgerByDay: new Map([["2026-08-10", 500]]),
+  });
+  const day = tri.days.find((d) => d.date === "2026-08-10");
+  check("orphan ledger day appears in the reconciliation", !!day);
+  check("its ledgerPin witness is echoed", day?.ledgerPin === 500);
+  check("it is surfaced as incomplete (no till to tie to), not silently dropped", day?.status === "incomplete");
+  const csv = buildCardReconciliationCsv("Q3 2026", tri);
+  check("the ledger-only day is reviewable in the accountant CSV", csv.includes("2026-08-10") && /Grootboek PIN/.test(csv));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

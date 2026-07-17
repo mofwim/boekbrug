@@ -39,8 +39,11 @@ export async function POST(req: NextRequest) {
     const accountNr = typeof body.accountNr === "string" && body.accountNr.trim() ? body.accountNr.trim().slice(0, 32) : null;
     const rows = Array.isArray(body.rows) ? (body.rows as { ledger_date?: unknown; received?: unknown; spent?: unknown }[]) : null;
     if (!rows || rows.length === 0) return NextResponse.json({ error: "geen rijen om op te slaan" }, { status: 400 });
+    if (rows.length > 1000) return NextResponse.json({ error: "te veel rijen in één keer (max 1000)" }, { status: 400 });
 
-    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    // Gross day-totals are ≥ 0 (a refund lives in 'spent', not a negative 'received'); clamp so a
+    // bad client value can't store a negative witness. This is only a cross-check, but keep it clean.
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
     const records = [];
     for (const r of rows) {
       if (!r || typeof r.ledger_date !== "string" || !ISO_DATE.test(r.ledger_date)) {

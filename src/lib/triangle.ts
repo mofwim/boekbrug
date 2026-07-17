@@ -76,6 +76,10 @@ export function reconcileTriangle(input: TriangleInput): TriangleResult {
   // or weekend-merged deposit) is surfaced as an incomplete day, never silently dropped —
   // symmetric with the orphan-EFT handling.
   if (input.bankNetByDay) for (const d of input.bankNetByDay.keys()) days.add(d);
+  // Union PIN-grootboek days too. A day the bookkeeper recorded PIN takings for but the till
+  // Z-report is MISSING (no turnover/EFT/bank row) would otherwise be dropped — hiding exactly
+  // the missing-omzet signal the ledger is there to expose. Surfaced as an incomplete day.
+  if (input.pinLedgerByDay) for (const d of input.pinLedgerByDay.keys()) days.add(d);
 
   const tillByDay = new Map<string, DailyTurnover>();
   for (const t of input.turnover) tillByDay.set(t.turnover_date, t);
@@ -114,22 +118,22 @@ export function buildCardReconciliationCsv(quarterLabel: string, tri: TriangleRe
     const s = String(v ?? "");
     return /[;\n"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const rows = tri.days.filter((d) => d.tillPin != null || d.eftGross != null || d.bankNet != null);
+  const rows = tri.days.filter((d) => d.tillPin != null || d.eftGross != null || d.bankNet != null || d.ledgerPin != null);
   const L: string[] = [];
   L.push(`BoekBrug — Kaart-reconciliatie ${quarterLabel}`);
-  L.push("Kassa-PIN (bruto) ↔ terminal-afrekening (bruto) ↔ bank-uitbetaling (netto). Het verschil bruto − netto is de acquirer-commissie (betaalkosten, BTW-vrij). Een verschil tussen kassa en terminal is een ECHT verschil — controleer die dag.");
+  L.push("Kassa-PIN (bruto) ↔ terminal-afrekening (bruto) ↔ bank-uitbetaling (netto). Het verschil bruto − netto is de acquirer-commissie (betaalkosten, BTW-vrij). Een verschil tussen kassa en terminal is een ECHT verschil — controleer die dag. 'Grootboek PIN' is een extra controle uit de boekhouding (telt niet mee als geld).");
   L.push("");
-  L.push(["Datum", "Kassa PIN (bruto)", "Terminal (bruto)", "Bank (netto)", "Commissie", "Status"].map(esc).join(";"));
+  L.push(["Datum", "Kassa PIN (bruto)", "Terminal (bruto)", "Grootboek PIN", "Bank (netto)", "Commissie", "Status"].map(esc).join(";"));
   for (const d of rows) {
     L.push([
-      d.date, EUR(d.tillPin), EUR(d.eftGross), EUR(d.bankNet),
+      d.date, EUR(d.tillPin), EUR(d.eftGross), EUR(d.ledgerPin ?? null), EUR(d.bankNet),
       EUR(d.commission), STATUS_NL[d.status] ?? d.status,
     ].map(esc).join(";"));
   }
   L.push("");
-  L.push(["Totaal kaartcommissie (bruto − netto, BTW-vrij)", "", "", "", EUR(tri.totalCommission), ""].map(esc).join(";"));
-  L.push(["Dagen kassa ≠ terminal (controleer voor de aangifte)", "", "", "", "", String(tri.grossMismatchDays)].map(esc).join(";"));
-  L.push(["Dagen nog niet compleet (bank-uitbetaling of terminal ontbreekt)", "", "", "", "", String(tri.incompleteDays)].map(esc).join(";"));
+  L.push(["Totaal kaartcommissie (bruto − netto, BTW-vrij)", "", "", "", "", EUR(tri.totalCommission), ""].map(esc).join(";"));
+  L.push(["Dagen kassa ≠ terminal (controleer voor de aangifte)", "", "", "", "", "", String(tri.grossMismatchDays)].map(esc).join(";"));
+  L.push(["Dagen nog niet compleet (bank-uitbetaling of terminal ontbreekt)", "", "", "", "", "", String(tri.incompleteDays)].map(esc).join(";"));
   L.push("");
   L.push("Let op: als de acquirer (CCV/Worldline/…) de transactiekosten APART factureert, staat die factuur bij de inkoopfacturen en IS die commissie daar al als kosten geboekt — dan is dit bruto-verschil ter controle, niet nog eens boeken.");
   return L.join("\r\n");
