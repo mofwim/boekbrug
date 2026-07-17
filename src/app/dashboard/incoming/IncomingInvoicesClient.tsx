@@ -17,6 +17,7 @@ import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
 import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
+import { combineImagesToPdf } from "@/lib/combine-images-pdf";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1589,8 +1590,20 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const [results, setResults] = useState<IntakeResult[]>([]);
   const [showResults, setShowResults] = useState(false);
 
+  // [MULTI-PAGE] "Meerdere pagina's = één factuur" flow. The owner explicitly gathers the
+  // pages of ONE invoice (photograph or pick), we combine them into a single multi-page PDF,
+  // and send it as ONE file — so a 2/3-page invoice never becomes 2/3 separate invoices.
+  const [mpOpen, setMpOpen] = useState(false);
+  const [mpPages, setMpPages] = useState<File[]>([]);
+  const [combining, setCombining] = useState(false);
+  const mpCameraRef = useRef<HTMLInputElement>(null);
+  const mpFileRef = useRef<HTMLInputElement>(null);
+
   // [INTAKE-MULTI] Max files per batch — protects the server / AI from a huge drop.
   const MAX_BATCH = 20;
+  // [MULTI-PAGE] A single invoice with more pages than this is unusual — cap so the combined
+  // PDF and the AI read stay sane. Well above any real paper invoice.
+  const MAX_PAGES = 20;
 
   // [INTAKE-KEEP-ALL] Accept every common invoice/document format. PDFs and images go to the
   // extractor; the rest (XML/UBL e-invoices, Office docs, CSV, e-mail files, bank exports) are
@@ -1701,6 +1714,47 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     setShowResults(true);
   };
 
+  // ── [MULTI-PAGE] "Meerdere pagina's = één factuur" ─────────────────────────────
+  // Collect the pages (photograph or pick — images only), then combine them into ONE PDF and
+  // send it through the SAME /api/intake as a single file. Never guesses: the owner opted in.
+  const addMpPages = (fl: FileList | null) => {
+    if (!fl || fl.length === 0) return;
+    const imgs = Array.from(fl).filter(
+      (f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(f.name),
+    );
+    if (imgs.length === 0) {
+      alert("Kies foto's of afbeeldingen — de pagina's van de factuur.");
+      return;
+    }
+    setMpPages((prev) => {
+      const merged = [...prev, ...imgs];
+      if (merged.length > MAX_PAGES) {
+        alert(`Maximaal ${MAX_PAGES} pagina's per factuur.`);
+        return merged.slice(0, MAX_PAGES);
+      }
+      return merged;
+    });
+  };
+  const removeMpPage = (idx: number) => setMpPages((prev) => prev.filter((_, i) => i !== idx));
+  const cancelMultiPage = () => { setMpOpen(false); setMpPages([]); };
+  const combineAndUpload = async () => {
+    if (mpPages.length === 0 || combining) return;
+    setCombining(true);
+    try {
+      const pdf = await combineImagesToPdf(mpPages);
+      const result = await uploadOne(pdf);
+      setMpOpen(false);
+      setMpPages([]);
+      onUploaded();
+      setResults([result]);
+      setShowResults(true);
+    } catch {
+      alert("Combineren mislukt. Maak duidelijkere foto's, of voeg de pagina's los toe.");
+    } finally {
+      setCombining(false);
+    }
+  };
+
   // [INTAKE-FEEDBACK] Close the modal AND refresh so new invoices show in the queue.
   const closeResults = () => {
     setShowResults(false);
@@ -1793,7 +1847,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
             : "Kies bestanden of sleep hier naartoe"}
         </span>
         <span style={{ fontSize: 12, color: "#8e8e93" }}>
-          PDF, afbeelding of bankafschrift — meerdere tegelijk
+          PDF, afbeelding of bankafschrift — meerdere tegelijk (max {MAX_BATCH})
         </span>
 
         {/* [INTAKE-MULTI] Batch progress bar */}
@@ -1807,6 +1861,94 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           </div>
         )}
       </label>
+
+      {/* [MULTI-PAGE] Hidden inputs for the multi-page flow (camera adds one page at a time;
+          the file picker can add several images at once). Images only — pages of one invoice. */}
+      <input
+        ref={mpCameraRef} type="file" accept="image/*" capture="environment"
+        style={{ display: "none" }}
+        onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = ""; }}
+      />
+      <input
+        ref={mpFileRef} type="file" accept="image/*" multiple
+        style={{ display: "none" }}
+        onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = ""; }}
+      />
+
+      {/* [MULTI-PAGE] Entry button — a paper invoice of 2+ pages photographed as several images. */}
+      {!mpOpen ? (
+        <button
+          onClick={() => !uploading && setMpOpen(true)}
+          disabled={uploading}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            width: "100%", padding: "12px", borderRadius: 14, marginTop: 10,
+            background: "#fff", color: "#007aff", border: "1.5px solid #d1d1d6",
+            fontWeight: 600, fontSize: 14, cursor: uploading ? "not-allowed" : "pointer",
+          }}
+        >
+          <span style={{ fontSize: 17 }}>📄</span>
+          Factuur met meerdere pagina&apos;s
+        </button>
+      ) : (
+        <div style={{ marginTop: 10, padding: 14, borderRadius: 16, border: "1.5px solid #007aff", background: "#f5faff" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#1c1c1e", marginBottom: 4 }}>
+            Eén factuur, meerdere pagina&apos;s
+          </div>
+          <div style={{ fontSize: 12.5, color: "#5f6368", marginBottom: 12, lineHeight: 1.4 }}>
+            Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één
+            factuur — geen losse facturen. (Voor verschillende facturen: voeg ze los toe.)
+          </div>
+
+          {/* Collected pages */}
+          {mpPages.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+              {mpPages.map((f, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#fff", borderRadius: 10, border: "1px solid #e5e5ea" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#007aff", minWidth: 58 }}>Pagina {i + 1}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                  <button onClick={() => removeMpPage(i)} aria-label="Verwijder pagina"
+                    disabled={combining}
+                    style={{ border: "none", background: "transparent", color: "#9aa0a6", fontSize: 18, cursor: combining ? "default" : "pointer", lineHeight: 1 }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add-page actions */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <button onClick={() => !combining && mpCameraRef.current?.click()} disabled={combining}
+              style={{ flex: 1, padding: "10px", borderRadius: 12, border: "1px solid #d1d1d6", background: "#fff", color: "#007aff", fontWeight: 600, fontSize: 13, cursor: combining ? "default" : "pointer" }}>
+              📷 Pagina fotograferen
+            </button>
+            <button onClick={() => !combining && mpFileRef.current?.click()} disabled={combining}
+              style={{ flex: 1, padding: "10px", borderRadius: 12, border: "1px solid #d1d1d6", background: "#fff", color: "#007aff", fontWeight: 600, fontSize: 13, cursor: combining ? "default" : "pointer" }}>
+              🖼️ Pagina&apos;s kiezen
+            </button>
+          </div>
+
+          {/* Combine + cancel */}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={cancelMultiPage} disabled={combining}
+              style={{ padding: "11px 16px", borderRadius: 12, border: "none", background: "#f1f3f4", color: "#5f6368", fontWeight: 600, fontSize: 14, cursor: combining ? "default" : "pointer" }}>
+              Annuleer
+            </button>
+            <button onClick={combineAndUpload} disabled={combining || mpPages.length === 0}
+              style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
+                background: combining || mpPages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
+                cursor: combining || mpPages.length === 0 ? "default" : "pointer" }}>
+              {combining ? "Bezig…" : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? "" : "'s"} → één factuur` : "Voeg eerst pagina's toe"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* [MULTI-PAGE] Honest note: one PDF must be one invoice — the app reads a PDF as a single
+          invoice (all pages together). A PDF holding several DIFFERENT invoices can't be split. */}
+      <div style={{ fontSize: 11.5, color: "#8e8e93", marginTop: 8, lineHeight: 1.45 }}>
+        Let op: één PDF = één factuur (alle pagina&apos;s samen). Zitten er meerdere verschillende
+        facturen in één PDF? Splits ze niet — voeg elke factuur los toe.
+      </div>
 
       {/* [INTAKE-FEEDBACK] Results modal — where did each file go? */}
       {showResults && results.length > 0 && (
