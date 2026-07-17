@@ -570,8 +570,10 @@ export async function searchBestanden(
   if (error) throw new Error(error.message);
   let docs = (data ?? []) as BestandRow[];
 
-  // [SEARCH] Typo-tolerant fallback when exact/substring found nothing.
-  if (docs.length === 0) {
+  // [SEARCH] Typo-tolerant fallback when exact/substring found nothing — only for
+  // NAME-like queries (a numeric query is exact-match territory; trigram-fuzzy on
+  // numbers yields garbage).
+  if (docs.length === 0 && /\p{L}/u.test(query)) {
     docs = (await fuzzyRpc(supabase, "search_documents_fuzzy", query)) as BestandRow[];
   }
 
@@ -613,8 +615,9 @@ export async function searchFolders(
   if (error) throw new Error(error.message);
   let folders = (data ?? []) as FolderSearchResult[];
 
-  // [SEARCH] Typo-tolerant fallback when the exact/substring name match found nothing.
-  if (folders.length === 0) {
+  // [SEARCH] Typo-tolerant fallback when the exact/substring name match found nothing —
+  // name-like queries only (no trigram-fuzzy on numeric queries).
+  if (folders.length === 0 && /\p{L}/u.test(query)) {
     folders = (await fuzzyRpc(supabase, "search_folders_fuzzy", query)) as FolderSearchResult[];
   }
 
