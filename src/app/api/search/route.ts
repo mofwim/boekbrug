@@ -287,19 +287,25 @@ export async function GET(req: NextRequest) {
     }
   };
 
+  // [SEARCH] Only fuzzy-match NAME-like queries. Typo-tolerance is for names; a numeric
+  // query (invoice number / amount) is exact-match territory — trigram similarity on
+  // structured numbers produces garbage (e.g. "2034116" ~ "20260034" ≈ 0.23), so a
+  // non-existent number would surface an unrelated invoice. Requires a letter.
+  const nameLike = /\p{L}/u.test(q);
+
   let invoiceRows: any[] = invoicesRes.data ?? [];
-  if ((target === "all" || target === "invoices") && invoiceRows.length < 3) {
+  if (nameLike && (target === "all" || target === "invoices") && invoiceRows.length < 3) {
     // RLS scopes the fuzzy rows to what this user may already see.
     invoiceRows = [...invoiceRows, ...(await safeRpc("search_invoices_fuzzy", { q }))];
   }
 
   let clientRows: any[] = clientsRes.data ?? [];
-  if ((target === "all" || target === "clients") && role !== "accountant" && clientRows.length < 3) {
+  if (nameLike && (target === "all" || target === "clients") && role !== "accountant" && clientRows.length < 3) {
     clientRows = [...clientRows, ...(await safeRpc("search_clients_fuzzy", { q }))];
   }
 
   let docRows: any[] = docsRes.data ?? [];
-  if ((target === "all" || target === "documents") && docRows.length < 3) {
+  if (nameLike && (target === "all" || target === "documents") && docRows.length < 3) {
     docRows = [...docRows, ...(await safeRpc("search_documents_fuzzy", { q }))];
   }
 
