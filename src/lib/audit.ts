@@ -40,6 +40,7 @@ export type AuditAction =
   | 'invoice.dedup_override'          // ← [INTAKE-FORCE] owner added despite a semantic-duplicate match ("toch toevoegen")
   | 'invoice.status_changed'
   | 'invoice.reimported'              // ← [REIMPORT] owner re-read a queued invoice's PDF with the current extractor
+  | 'bank.auto_confirmed'             // ← [BANK-AUTO-CONFIRM] app booked a near-certain bank↔invoice match without a tap
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)

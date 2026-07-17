@@ -10,6 +10,7 @@ import Link from 'next/link'
 import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
+import { isPartialPaymentHint } from '@/lib/bank-matching'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const M3 = {
@@ -132,6 +133,9 @@ export default function BankClient() {
   // single-confirm. selectedForBatch holds the txIds the owner ticked.
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set())
   const [batchRunning, setBatchRunning] = useState(false)
+  // [BANK-AUTO-CONFIRM] "Quiet by default": the app books the near-certain matches itself.
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoDoneCount, setAutoDoneCount] = useState<number | null>(null)
   // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
   // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
   // dropdown of every counterpart. Matches counterpart name, reference, or date.
@@ -175,6 +179,27 @@ export default function BankClient() {
     }
     setSelected(pre)
   }, [])
+
+  // [BANK-AUTO-CONFIRM] Let the app handle the near-certain payments (reference number +
+  // exact amount, single invoice) so the owner only deals with what's genuinely ambiguous.
+  // The server decides the safe set (isSafeAutoConfirm); we just refresh afterwards.
+  const autoConfirm = useCallback(async () => {
+    setAutoRunning(true)
+    try {
+      const res = await fetch('/api/bank/auto-confirm', { method: 'POST' })
+      const json = await res.json()
+      if (res.ok) {
+        setAutoDoneCount(json.count ?? 0)
+        await runMatch() // the handled ones leave "Te bevestigen"
+      } else {
+        showToast('Automatisch afhandelen mislukt.')
+      }
+    } catch {
+      showToast('Automatisch afhandelen mislukt.')
+    } finally {
+      setAutoRunning(false)
+    }
+  }, [runMatch])
 
   // [BANK-PERSIST] Initial load — show stored pending transactions on refresh.
   useEffect(() => {
@@ -691,6 +716,19 @@ export default function BankClient() {
   const batchEligibleList = toConfirm.filter((s) => isBatchEligible(s))
   const batchSelectedCount = batchEligibleList.filter((s) => selectedForBatch.has(s.transactionId)).length
 
+  // [BANK-AUTO-CONFIRM] How many of the shown (quarter-filtered) matches are near-certain
+  // enough for the app to book without a tap — mirrors the server's isSafeAutoConfirm:
+  // reference number + exact amount, single invoice, not an instalment. The server is
+  // authoritative; this only drives the "handle X automatically" offer.
+  const safeAutoCount = toConfirm.filter((s) =>
+    s.outcome === 'auto' &&
+    !!s.best &&
+    s.best.signals.includes('reference') &&
+    s.best.signals.includes('amount') &&
+    (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
+    !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
+  ).length
+
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
@@ -860,6 +898,46 @@ export default function BankClient() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* [BANK-AUTO-CONFIRM] "Quiet by default": the app offers to book the near-certain
+          payments itself, so the owner isn't tapping through hundreds of sure matches. The
+          server only books reference+exact-amount single-invoice matches, and every
+          booking is reversible — the ambiguous ones stay in the list for the human. */}
+      {safeAutoCount > 0 && (
+        <div style={{ marginTop: 18, borderRadius: R.lg, background: M3.primaryContainer, padding: '16px 18px', boxShadow: EL1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }}>bolt</span>
+            <div style={{ fontSize: 15, fontWeight: 700, color: M3.onPrimaryContainer }}>
+              Ik kan {safeAutoCount} zekere {safeAutoCount === 1 ? 'betaling' : 'betalingen'} voor je afhandelen
+            </div>
+          </div>
+          <div style={{ fontSize: 12.5, color: '#3c4043', margin: '6px 0 12px', lineHeight: 1.5 }}>
+            Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan — die koppel ik en markeer ik als betaald. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.
+          </div>
+          <button
+            onClick={autoConfirm}
+            disabled={autoRunning}
+            style={{
+              padding: '11px 16px', borderRadius: R.full, border: 'none',
+              background: autoRunning ? '#C7D0DB' : M3.primary, color: '#fff',
+              fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: autoRunning ? 'default' : 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{autoRunning ? 'hourglass_empty' : 'auto_awesome'}</span>
+            {autoRunning ? 'Bezig…' : 'Automatisch afhandelen'}
+          </button>
+        </div>
+      )}
+      {autoDoneCount != null && autoDoneCount > 0 && safeAutoCount === 0 && (
+        <div style={{ marginTop: 18, borderRadius: R.lg, background: M3.successContainer, padding: '14px 16px' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: M3.success, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>task_alt</span>
+            Ik heb {autoDoneCount} {autoDoneCount === 1 ? 'betaling' : 'betalingen'} automatisch afgehandeld
+          </div>
+          <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 2 }}>Alleen wat jouw aandacht nodig heeft is overgebleven.</div>
         </div>
       )}
 

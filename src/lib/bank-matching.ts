@@ -384,6 +384,30 @@ export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[]
   return out;
 }
 
+/**
+ * [BANK-AUTO-CONFIRM] Is this match near-certain enough for the app to book it WITHOUT a
+ * human tap? The whole point of "quiet by default": the owner shouldn't chase hundreds of
+ * one-tap confirms — the app should silently handle the sure ones and reserve attention for
+ * the genuinely ambiguous. Safe ONLY when:
+ *   - outcome is 'auto' with a best candidate,
+ *   - the invoice NUMBER is printed in the statement AND the amount matches to the cent
+ *     (both signals → the 0.97 match; either alone is not enough),
+ *   - it is a SINGLE invoice (a multi-invoice batch needs the owner to allocate),
+ *   - the payment is not flagged as an instalment/deelbetaling.
+ * BTW/omzet/kosten are on accrual (invoice date), so this only sets the paid/linked status
+ * — never a tax figure — and it is fully reversible. Anything short of certain stays human.
+ */
+export function isSafeAutoConfirm(m: TransactionMatch): boolean {
+  if (m.outcome !== "auto" || !m.best) return false;
+  const sig = m.best.signals;
+  if (!sig.includes("reference") || !sig.includes("amount")) return false;
+  if (parseReferenceNumbers(m.transaction.reference).length > 1) return false;
+  if (isPartialPaymentHint(`${m.transaction.reference ?? ""} ${m.transaction.description ?? ""}`)) {
+    return false;
+  }
+  return true;
+}
+
 // ─── Main entry ────────────────────────────────────────────────────────────────
 
 /**
