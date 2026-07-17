@@ -68,6 +68,9 @@ export interface IntakeClassification {
   is_invoice: boolean
   document_kind?: "invoice" | "receipt" | "other"
   is_paid?: boolean
+  // [PEN-MARK] Payment hints read from a handwritten note or a shop stamp on a PAPER invoice.
+  paid_method?: "bank" | "kas" | "pin" | null
+  paid_date?: string | null
   confidence?: number
 }
 
@@ -75,8 +78,13 @@ export type IntakeDestination = "bank" | "invoice" | "receipt" | "document"
 
 export interface IntakeDecision {
   destination: IntakeDestination
-  // For 'receipt': suggest 'paid' in the verify queue (human confirms).
+  // For 'receipt', or an invoice marked paid by a pen/stamp: suggest 'paid' in the verify
+  // queue (the human still confirms — never auto-booked).
   suggestPaid: boolean
+  // [PEN-MARK] When the paid suggestion comes from a written/stamped mark, carry HOW and WHEN
+  // so the verify modal can pre-fill method + date. Null when unknown.
+  paidMethod?: "bank" | "kas" | "pin" | null
+  paidDate?: string | null
   reason: string // short, for audit/debug
 }
 
@@ -108,7 +116,22 @@ export function decideFromAi(ai: IntakeClassification): IntakeDecision {
     return {
       destination: "receipt",
       suggestPaid: ai.is_paid === true,
+      paidMethod: ai.is_paid ? (ai.paid_method ?? null) : null,
+      paidDate: ai.is_paid ? (ai.paid_date ?? null) : null,
       reason: ai.is_paid ? "ai_receipt_paid" : "ai_receipt_unpaid",
+    }
+  }
+
+  // [PEN-MARK] An INVOICE the owner marked paid by hand or a stamp ("betaald · kas · 16-2") →
+  // still the verify queue, but pre-suggest paid + how + when so a snapped-and-thrown paper
+  // invoice is one confirming tap, not manual entry. Never auto-booked — the human confirms.
+  if (ai.is_paid === true) {
+    return {
+      destination: "invoice",
+      suggestPaid: true,
+      paidMethod: ai.paid_method ?? null,
+      paidDate: ai.paid_date ?? null,
+      reason: "ai_invoice_pen_paid",
     }
   }
 
