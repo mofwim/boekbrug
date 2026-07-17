@@ -5,7 +5,7 @@
 // Flow: upload bankafschrift → /api/bank/upload → /api/bank/match → review suggestions → confirm.
 // Philosophy: AI suggests, the human confirms. 'auto' = pre-filled (still one tap to confirm).
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
@@ -136,6 +136,11 @@ export default function BankClient() {
   // [BANK-AUTO-CONFIRM] "Quiet by default": the app books the near-certain matches itself.
   const [autoRunning, setAutoRunning] = useState(false)
   const [autoDoneCount, setAutoDoneCount] = useState<number | null>(null)
+  // [BANK-AUTO-RUN] Guard so the app auto-handles the near-certain payments ONCE per page
+  // load, the moment they appear — the owner should never have to press a button for a
+  // payment the app is already certain of. Set before the async call so a re-render mid-flight
+  // (runMatch updates `data`) can't fire a second pass.
+  const autoRanRef = useRef(false)
   // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
   // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
   // dropdown of every counterpart. Matches counterpart name, reference, or date.
@@ -180,6 +185,23 @@ export default function BankClient() {
     setSelected(pre)
   }, [])
 
+  // [BANK-UNLINK] Undo a confirmed match — makes auto-confirm safe (every booking reversible).
+  const unlink = useCallback(async (txId: string) => {
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/unlink', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: txId }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) { await runMatch(); showToast('Koppeling ongedaan gemaakt.') }
+      else if (json.error === 'verwerkt') showToast('De boekhouder heeft deze factuur al verwerkt — vraag eerst om dat ongedaan te maken.')
+      else if (json.error === 'multi_invoice_unlink_unsupported') showToast('Ontkoppelen van een groepsbetaling kan hier nog niet.')
+      else showToast('Ontkoppelen mislukt.')
+    } catch { showToast('Ontkoppelen mislukt.') }
+    finally { setProcessingId(null) }
+  }, [runMatch])
+
   // [BANK-AUTO-CONFIRM] Let the app handle the near-certain payments (reference number +
   // exact amount, single invoice) so the owner only deals with what's genuinely ambiguous.
   // The server decides the safe set (isSafeAutoConfirm); we just refresh afterwards.
@@ -200,6 +222,31 @@ export default function BankClient() {
       setAutoRunning(false)
     }
   }, [runMatch])
+
+  // [BANK-AUTO-RUN] The circle should run itself: when the matches load and the app finds
+  // near-certain payments (invoice number printed in the statement + exact amount, single
+  // invoice, no instalment hint), it books them WITHOUT waiting for a tap. This is the
+  // difference between the owner chasing the app and the app working in the background.
+  // The server (isSafeAutoConfirm) is authoritative and only ever touches that safe set;
+  // this effect just decides "are there any, and have I not run yet this load". autoRanRef
+  // makes it once-per-mount so the runMatch refresh inside autoConfirm can't loop it.
+  useEffect(() => {
+    if (autoRanRef.current) return
+    if (autoRunning) return
+    if (!data) return
+    const hasSafe = (data.suggestions ?? []).some(
+      (s) =>
+        s.outcome === 'auto' &&
+        !!s.best &&
+        s.best.signals.includes('reference') &&
+        s.best.signals.includes('amount') &&
+        (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
+        !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
+    )
+    if (!hasSafe) return
+    autoRanRef.current = true
+    void autoConfirm()
+  }, [data, autoRunning, autoConfirm])
 
   // [BANK-PERSIST] Initial load — show stored pending transactions on refresh.
   useEffect(() => {
@@ -910,12 +957,16 @@ export default function BankClient() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }}>bolt</span>
             <div style={{ fontSize: 15, fontWeight: 700, color: M3.onPrimaryContainer }}>
-              Ik kan {safeAutoCount} zekere {safeAutoCount === 1 ? 'betaling' : 'betalingen'} voor je afhandelen
+              {autoRunning
+                ? `Ik handel ${safeAutoCount} zekere ${safeAutoCount === 1 ? 'betaling' : 'betalingen'} voor je af…`
+                : `${safeAutoCount} zekere ${safeAutoCount === 1 ? 'betaling' : 'betalingen'} klaar om af te handelen`}
             </div>
           </div>
           <div style={{ fontSize: 12.5, color: '#3c4043', margin: '6px 0 12px', lineHeight: 1.5 }}>
-            Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan — die koppel ik en markeer ik als betaald. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.
+            Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan handel ik zelf af — koppelen en als betaald markeren. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.
           </div>
+          {/* [BANK-AUTO-RUN] The app already books these on load; this button is only a manual
+              re-trigger if the automatic pass was interrupted (e.g. a network hiccup). */}
           <button
             onClick={autoConfirm}
             disabled={autoRunning}
@@ -927,7 +978,7 @@ export default function BankClient() {
             }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{autoRunning ? 'hourglass_empty' : 'auto_awesome'}</span>
-            {autoRunning ? 'Bezig…' : 'Automatisch afhandelen'}
+            {autoRunning ? 'Bezig…' : 'Nu afhandelen'}
           </button>
         </div>
       )}
@@ -1118,6 +1169,8 @@ export default function BankClient() {
                 onIgnore={() => ignoreTx(s.transactionId)}
                 onRestore={() => restoreTx(s.transactionId)}
                 onOpenFile={openInvoiceFile}
+                isDoneTab={bankTab === 'done'}
+                onUnlink={() => unlink(s.transactionId)}
               />
             ))}
             {activeList.length === 0 && (
@@ -1271,7 +1324,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -1287,6 +1340,8 @@ function TxCard({
   onIgnore: () => void
   onRestore: () => void
   onOpenFile: (invoiceId: string) => void
+  isDoneTab?: boolean
+  onUnlink?: () => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
@@ -1383,6 +1438,20 @@ function TxCard({
 
   return (
     <div style={{ borderRadius: R.lg, background: M3.surface, boxShadow: EL1, padding: 14, border: `1px solid #EEE` }}>
+      {/* [BANK-UNLINK] On the Gekoppeld tab, one tap undoes the match — makes the app's
+          automatic booking safe: any auto-confirmed payment is reversible. */}
+      {isDoneTab && onUnlink && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button
+            onClick={onUnlink}
+            disabled={processing}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#9aa0a6', padding: '2px 4px' }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
+            {processing ? 'Bezig…' : 'Ontkoppelen'}
+          </button>
+        </div>
+      )}
       {/* Transaction row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
         <div style={{ display: 'flex', gap: 10, minWidth: 0, alignItems: 'flex-start' }}>

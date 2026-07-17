@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   //    so we can decide allCovered after the payment.
   const { data: tx, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, status, user_id, amount, reference")
+    .select("id, status, user_id, amount, reference, date")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -142,6 +142,10 @@ export async function POST(req: NextRequest) {
       status: "paid",
       payment_method: "bank", // known from a bank match — no Bank/Contant question
       marked_paid_at: new Date().toISOString(),
+      // [BANK-PAYDATE] The REAL settlement date is the bank line's date, not now(). A Q1
+      // invoice paid in Q2 must carry its true payment day/quarter so the owner and the
+      // accountant both see "paid in Q2" — the cross-quarter case, recorded not guessed.
+      payment_date: tx.date,
     })
     .eq("id", invoiceId)
     .neq("status", "paid") // idempotent: don't re-pay / reset marked_paid_at on double-submit
@@ -220,12 +224,13 @@ export async function POST(req: NextRequest) {
     ? { status: "matched" as const, invoice_id: invoiceId }
     : { invoice_id: invoiceId };
 
-  const { error: linkErr } = await pipeline
+  const { data: linkData, error: linkErr } = await pipeline
     .from("bank_transactions")
     .update(linkUpdate)
     .eq("id", transactionId)
     .eq("user_id", user.id)
-    .eq("status", "pending"); // only touch a still-pending tx; never overwrite a matched link
+    .eq("status", "pending") // only touch a still-pending tx; never overwrite a matched link
+    .select("id"); // [BANK-LINK-RACE] know whether the link actually landed (0 rows ⇒ tx grabbed)
 
   if (linkErr) {
     console.error("[BOEK-016] transaction link failed after payment:", linkErr.message);
@@ -236,7 +241,7 @@ export async function POST(req: NextRequest) {
     // consistent and the owner can simply retry — never a paid invoice with no proof.
     const { error: rollbackErr } = await supabase
       .from("invoices")
-      .update({ status: inv.status, payment_method: null, marked_paid_at: null })
+      .update({ status: inv.status, payment_method: null, marked_paid_at: null, payment_date: null })
       .eq("id", invoiceId)
       .eq("status", "paid");
     if (rollbackErr) {
@@ -245,6 +250,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "transaction_link_failed", detail: linkErr.message, rolledBack: !rollbackErr },
       { status: 500 }
+    );
+  }
+
+  // [BANK-LINK-RACE] A 0-row link with NO error means a concurrent confirm grabbed the tx
+  // between our fetch and this write (the .eq("status","pending") no longer matched). For a
+  // SINGLE-invoice tx the bank line is the ONLY proof of this payment, so a silent no-op would
+  // orphan our paid invoice exactly like a hard link error — roll it back so the owner can
+  // retry. For a MULTI-invoice batch the payment stands on its own (our invoice is genuinely
+  // one of the listed numbers) and the tx stays visible for the remaining numbers, so a no-op
+  // there is benign and self-healing — we do not roll back a correctly-paid batch invoice.
+  if ((!linkData || linkData.length === 0) && refNumbers.length <= 1) {
+    const { error: rollbackErr } = await supabase
+      .from("invoices")
+      .update({ status: inv.status, payment_method: null, marked_paid_at: null, payment_date: null })
+      .eq("id", invoiceId)
+      .eq("status", "paid");
+    if (rollbackErr) {
+      console.error("[BANK-LINK-RACE] rollback after 0-row link also failed:", rollbackErr.message);
+    }
+    return NextResponse.json(
+      { error: "transaction_already_processed", rolledBack: !rollbackErr },
+      { status: 409 }
     );
   }
 
