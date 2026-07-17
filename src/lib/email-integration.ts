@@ -1310,7 +1310,14 @@ export type EmailProvider = 'gmail' | 'outlook'
  * 4. Claude reads each PDF/image — real invoice or not
  * 5. Save verified invoices with status='received'
  */
-export async function syncUserEmails(userId: string): Promise<{
+export async function syncUserEmails(
+  userId: string,
+  // [BACKFILL] Optional re-scan window. `fromMs` fetches from an explicit date instead of the
+  // incremental watermark (so an already-passed email can be re-listed and imported); when set,
+  // `holdWatermark` keeps the normal incremental mark untouched so a backfill is purely additive
+  // and never rewinds or advances the daily window. Absent ⇒ exactly the previous behaviour.
+  opts?: { fromMs?: number; holdWatermark?: boolean },
+): Promise<{
   provider: EmailProvider
   fetched: number
   verified: number
@@ -1411,12 +1418,19 @@ export async function syncUserEmails(userId: string): Promise<{
       ?.last_synced_email_at ?? null
 
   const WATERMARK_OVERLAP_MS = 24 * 60 * 60 * 1000 // 24h — cheap, bulletproof
-  const syncAfterMs = watermarkIso
-    ? Math.max(floorMs, new Date(watermarkIso).getTime() - WATERMARK_OVERLAP_MS)
-    : floorMs
+  // [BACKFILL] An explicit re-scan window (fromMs) bypasses the watermark clamp entirely:
+  // the whole point is to reach emails the incremental mark has already passed. PHASE-0
+  // dedup (byte-hash + message-id + semantic) still guarantees nothing is imported twice,
+  // so a re-scan only ever fills gaps. Absent ⇒ the normal incremental/floor window.
+  const syncAfterMs =
+    opts?.fromMs != null
+      ? opts.fromMs
+      : watermarkIso
+        ? Math.max(floorMs, new Date(watermarkIso).getTime() - WATERMARK_OVERLAP_MS)
+        : floorMs
 
   console.log('[BOEK-011] Sync window', {
-    mode: watermarkIso ? 'incremental (watermark)' : 'full (floor)',
+    mode: opts?.fromMs != null ? 'backfill (explicit)' : watermarkIso ? 'incremental (watermark)' : 'full (floor)',
     watermark: watermarkIso,
     fetchFrom: new Date(syncAfterMs).toISOString(),
   })
@@ -2300,7 +2314,11 @@ export async function syncUserEmails(userId: string): Promise<{
     // never-fetched older mail outside every future window — permanent loss.
     // Progress already saved (invoices / skip registry) is untouched; only the
     // window refuses to shrink until one fully-covered pass succeeds.
-    if (!fetchComplete) {
+    if (opts?.holdWatermark) {
+      // [BACKFILL] A re-scan is additive — it must never move the incremental mark (which
+      // tracks the newest fully-processed email for the daily window). Leave it untouched.
+      console.log('[BACKFILL] Watermark held — re-scan pass does not touch the incremental mark')
+    } else if (!fetchComplete) {
       console.log(
         '[BOEK-011] Watermark held — fetch incomplete (throttle/cap); window unchanged this round'
       )
