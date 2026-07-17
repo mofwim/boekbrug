@@ -52,12 +52,21 @@ const PARENT_RULES: ParentRule[] = [
     parent: (pathname) => pathname.replace(/\/edit$/, ''),
   },
 
-  // ── invoice/new → depends on clientId query param + role ──────────────────
+  // ── invoice/new → depends on the originating client + role ────────────────
+  // Two distinct flows open this page pre-filled for a client, each with its
+  // own param name and its own client tree — return the user to where they came
+  // from in both cases:
+  //   · accountant: ?clientId=  → /dashboard/clients/[id]  (accountant tree)
+  //   · ZZP'er:     ?client_id= → /dashboard/klanten/[id]  (owner's own klanten)
+  // Otherwise fall back to the role default. Every branch is an explicit
+  // ancestor — never a loop.
   {
     match: /^\/dashboard\/invoice\/new$/,
     parent: (_, role, search) => {
       const clientId = search?.get('clientId')
       if (clientId) return `/dashboard/clients/${clientId}`
+      const zzpClientId = search?.get('client_id')
+      if (zzpClientId) return `/dashboard/klanten/${zzpClientId}`
       return role === 'accountant'
         ? '/dashboard/accountant'
         : '/dashboard/facturen'
