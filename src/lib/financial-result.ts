@@ -60,6 +60,7 @@ export interface RawBankRow {
   invoice_id: string | null;
   date: string | null;
   description: string | null;
+  counterpart_name?: string | null; // banks often put the acquirer/PSP name here, not in description
 }
 
 /**
@@ -76,7 +77,7 @@ export interface RawBankRow {
  */
 export function toResultBankTx(b: RawBankRow): ResultBankTx {
   const amt = b.amount ?? 0;
-  const posSettlement = b.category === "pos_income" || (amt >= 0 && isPosPayoutDescription(b.description));
+  const posSettlement = b.category === "pos_income" || (amt >= 0 && isPosPayoutDescription(b.description, b.counterpart_name ?? null));
   const parsedTakings = posSettlement ? parsePosSettlement(b.description).date : null;
   return {
     amount: b.amount,
@@ -126,17 +127,19 @@ export interface SalesRateBucket { rate: number; omzet: number; btw: number }
 // already-counted revenue be booked a SECOND time in the next quarter.
 const SETTLE_LAG_DAYS = 5;
 
-// Is a pos_income line the settlement of a day the till Z-report already counted? Exact
-// takings date (settleExact) → exact covered match. Fallback booking date → also accept a
-// covered day up to SETTLE_LAG_DAYS earlier (the sale happened before the payout posted).
-function posSettlesCoveredDay(t: ResultBankTx, covered: Set<string>): boolean {
-  if (!t.settleDate) return false;
-  if (covered.has(t.settleDate)) return true;
-  if (t.settleExact) return false; // exact date: no widening — never hide real revenue
+// WHICH covered takings day does this settlement line reconcile to (or null)? Exact takings
+// date (settleExact) → exact covered match. Fallback booking date → also accept a covered day
+// up to SETTLE_LAG_DAYS earlier (the sale happened before the payout posted). Returns the
+// matched covered date so the caller can consume that day's card-takings budget (see below).
+function matchedCoveredDay(t: ResultBankTx, covered: Set<string>): string | null {
+  if (!t.settleDate) return null;
+  if (covered.has(t.settleDate)) return t.settleDate;
+  if (t.settleExact) return null; // exact date: no widening — never hide real revenue
   for (let back = 1; back <= SETTLE_LAG_DAYS; back++) {
-    if (covered.has(isoMinusDays(t.settleDate, back))) return true;
+    const d = isoMinusDays(t.settleDate, back);
+    if (covered.has(d)) return d;
   }
-  return false;
+  return null;
 }
 
 // Subtract whole days from a 'YYYY-MM-DD' string via UTC (no local-TZ drift). Returns
@@ -208,6 +211,35 @@ export function computeResult(
         .map((t) => t.turnover_date),
     );
 
+  // [CARD-BUDGET] How much bank revenue a covered day may SUPPRESS as "already counted by the
+  // till". The physical till's CARD takings for the day = pin_amount (from the Z-report); a
+  // card/PSP settlement reconciles the till only UP TO that amount. Anything beyond it is money
+  // the till never saw — a same-day webshop payout via the same PSP, or a terminal paying out
+  // more than the till rang — and MUST count as revenue (flagged omzet-zonder-tarief), never be
+  // hidden. So suppression is BUDGET-BOUNDED, not all-or-nothing: for each covered day we
+  // suppress settlement credits only until pin_amount is exhausted, then count the rest.
+  //
+  // The budget is built from the IN-QUARTER turnover rows only. A covered day that is NOT in
+  // `turnover` (a prior-quarter day reached via the caller's −5-day buffer) has no budget entry
+  // → its settlement is suppressed IN FULL here, because that revenue belongs to the PRIOR
+  // quarter (it was counted there), not this one. When pin_amount is missing we fall back to the
+  // day's gross (total_incl, else net+BTW) — a card settlement can never exceed the day's total
+  // takings, so this bound still never double-counts; it only widens what a Z-report without a
+  // PIN split may absorb, and any excess is still surfaced.
+  const cardRemaining = new Map<string, number>();
+  for (const t of turnover) {
+    const net = turnoverNetOmzet(t);
+    const gross = t.total_incl ?? 0;
+    if (!(net > 0 || gross > 0)) continue; // not a revenue (covered) day
+    const bound =
+      t.pin_amount != null && t.pin_amount > 0
+        ? t.pin_amount
+        : gross > 0
+          ? gross
+          : net + turnoverBtw(t).total;
+    cardRemaining.set(t.turnover_date, Math.round(bound * 100) / 100);
+  }
+
   // 1) Invoices — the BTW-exact core.
   for (const inv of invoices) {
     const ex = inv.total_ex_btw ?? 0;
@@ -236,18 +268,6 @@ export function computeResult(
   for (const t of bankTx) {
     if (t.invoice_id) continue;   // payment of an already-counted invoice
     if (!t.category) continue;     // uncategorized → never guessed into a total
-    // [TURNOVER] A card/PSP settlement that settled a day the Z-report already counted is
-    // that day's takings, not new revenue → witness only. Keyed on the takings date
-    // (settleDate). When settleDate is the exact DAT. date, an exact covered-day match. When
-    // it is only the booking-date fallback, the real takings day is a few days earlier
-    // (settlement lag), so widen to a short BACKWARD window — never forward, so a real
-    // takings day carrying its own exact date can never be hidden. The de-dup keys on
-    // posSettlement (an explicit pos_income category OR an acquirer-named credit the owner
-    // mis-tapped as 'omzet') — NOT the literal category — so a covered-day card payout can
-    // never be double-counted, whichever chip the owner picked. A NON-acquirer 'omzet' bank
-    // line (e.g. a webshop transfer that never went through the till) has posSettlement=false
-    // and still counts, and if it lacks a rate is surfaced below as omzet-zonder-tarief.
-    if ((t.posSettlement || t.category === "pos_income") && posSettlesCoveredDay(t, covered)) continue;
     // [SIGN] Keep the SIGN of the bank amount — do NOT Math.abs it. A card refund/chargeback
     // settles as a NEGATIVE pos_income and a supplier refund as a POSITIVE kosten credit;
     // abs would book money leaving the business as money arriving (and vice-versa). The stored
@@ -256,6 +276,36 @@ export function computeResult(
     // for the same reason.)
     const raw = t.amount ?? 0;
     const role = pnlRole(t.category);
+
+    // [TURNOVER · CARD-BUDGET] A card/PSP settlement that reconciles a day the till already
+    // counted is that day's takings, not new revenue. But it is a witness only UP TO the day's
+    // physical card takings (pin_amount) — see cardRemaining. A settlement keyed on an explicit
+    // pos_income category OR an acquirer-named credit the owner mis-tapped as 'omzet' is checked
+    // against that budget: the part within budget is suppressed (already counted by the till),
+    // any EXCESS is off-till revenue (e.g. a same-day webshop payout via the same PSP) and is
+    // COUNTED + flagged, never hidden. A NON-acquirer 'omzet' line (a webshop transfer with no
+    // acquirer name) is not a settlement → it always counts. Only positive credits consume the
+    // budget; a covered-day refund (raw ≤ 0) is a witness of the till's already-net figure and
+    // is fully suppressed.
+    const isSettlement = role === "omzet" && (t.posSettlement || t.category === "pos_income");
+    if (isSettlement) {
+      const day = matchedCoveredDay(t, covered);
+      if (day) {
+        if (raw <= 0) continue; // covered-day refund/chargeback → witness of the till's net
+        if (!cardRemaining.has(day)) continue; // prior-quarter buffer day → belongs to that quarter
+        const rem = Math.max(0, cardRemaining.get(day) ?? 0);
+        const suppressed = Math.min(raw, rem);
+        cardRemaining.set(day, Math.round((rem - suppressed) * 100) / 100);
+        const excess = Math.round((raw - suppressed) * 100) / 100;
+        if (excess <= 0) continue; // fully within the till's card takings → witness only
+        // The part beyond the till's card takings is real off-till revenue with no BTW rate.
+        omzet += excess;
+        cashOmzetZonderBtw += excess;
+        omzetZonderBtwNonCash += excess;
+        continue;
+      }
+    }
+
     if (role === "omzet") {
       omzet += raw;
       // A bank revenue line (pos_income takings on an un-covered day, or a manual 'omzet'

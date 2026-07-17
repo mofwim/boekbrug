@@ -201,6 +201,42 @@ console.log("\n— [FINDING-1] an acquirer payout MIS-TAPPED as 'omzet' on a cov
   // An acquirer-named DEBIT (a purchase AT a terminal) is not income → never a settlement.
   const mappedDebit = toResultBankTx({ amount: -12.5, category: "kosten", invoice_id: null, date: "2026-07-03", description: "betaalautomaat CCV bloemen" });
   check("an acquirer-named DEBIT is not a settlement (it's a purchase)", mappedDebit.posSettlement === false);
+
+  // The acquirer name often lives in counterpart_name, not description — the mapper must see it,
+  // else a mis-tapped 'omzet' payout would still double-count (adversarial review LOW #7/#8).
+  const cpOnly = toResultBankTx({ amount: 900, category: "omzet", invoice_id: null, date: "2026-07-03", description: "afrekening", counterpart_name: "Worldline" });
+  check("acquirer name in counterpart_name (not description) still flags a settlement", cpOnly.posSettlement === true);
+}
+
+console.log("\n— [CARD-BUDGET] suppression is bounded by pin_amount, so off-till (webshop) revenue is never hidden —");
+{
+  // The adversarial review's HIGH: an omnichannel store (physical till + webshop via the same
+  // PSP). Covered day pin €545; a Buckaroo payout of €800 arrives, tapped 'omzet'. Suppressing
+  // the WHOLE €800 would hide €255 of real off-till revenue. The budget suppresses only up to
+  // pin_amount; the €255 excess counts and is flagged.
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-07-06",
+    base_0: 0, base_9: 0, base_21: 500, btw_9: 0, btw_21: 105,
+    total_incl: 605, pin_amount: 545, cash_amount: 60, other_amount: 0,
+  }];
+  const buckaroo = toResultBankTx({ amount: 800, category: "omzet", invoice_id: null, date: "2026-07-06", description: "Buckaroo uitbetaling webshop" });
+  const r = computeResult([], [buckaroo], [], turnover);
+  check("only pin_amount (545) is suppressed; the €255 excess counts (till net 500 + 255)", near(r.omzet, 500 + 255));
+  check("the excess is flagged as omzet-zonder-tarief (blocks readiness, no false 'klaar')", near(r.cashOmzetZonderBtw, 255));
+
+  // When the till's OWN card settlement also appears, it consumes the budget and the full
+  // webshop payout counts — the reconciliation self-corrects and the total is order-independent.
+  const terminal = toResultBankTx({ amount: 545, category: "pos_income", invoice_id: null, date: "2026-07-06", description: "CCV afrek. transacties DAT. 20260706" });
+  const rBoth = computeResult([], [terminal, buckaroo], [], turnover);
+  const rBothRev = computeResult([], [buckaroo, terminal], [], turnover);
+  check("terminal (545) + webshop (800): budget consumed by the terminal → full webshop counts (500 + 800)", near(rBoth.omzet, 500 + 800));
+  check("… and the result is independent of statement order", near(rBoth.omzet, rBothRev.omzet));
+
+  // A pos_income line that itself exceeds the day's pin (terminal paid out more than the till
+  // rang, or a webshop settling via the terminal PSP) → the excess is not hidden.
+  const bigPos: ResultBankTx[] = [{ amount: 700, category: "pos_income", invoice_id: null, settleDate: "2026-07-06", settleExact: true }];
+  const rBig = computeResult([], bigPos, [], turnover);
+  check("pos_income above pin (700 vs 545) → €155 excess counts, not hidden", near(rBig.omzet, 500 + 155));
 }
 
 console.log("\n— [FINDING-2] SETTLE_LAG widened to 5 days: a DAT-less T+5 payout still reconciles —");

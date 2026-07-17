@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
   // Bank + cash (same de-dup inputs as /api/result).
   const bankRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description")
+    .select("amount, category, invoice_id, date, description, counterpart_name")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
   // [SETTLE] The card-settlement de-dup is derived by the shared toResultBankTx mapper, so
