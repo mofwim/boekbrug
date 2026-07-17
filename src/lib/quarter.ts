@@ -82,3 +82,37 @@ export function matchesQuarter(iso: string | null | undefined, selected: string)
   const k = quarterKeyOf(iso);
   return k === null || k === selected;
 }
+
+// ─── [CROSS-QUARTER] "Paid in a different quarter than it was booked" ──────────────────
+// BoekBrug is accrual (factuurstelsel): BTW/omzet/kosten fall in the quarter of the INVOICE
+// date, never the payment date. That is correct and never changes. But the owner still needs
+// to SEE when a Q1 invoice was actually settled in Q2 — for their own cash view and to answer
+// the accountant's "when did this come in?" — without ever being told the tax quarter moved.
+// This is the one honest signal for that: it returns the PAYMENT quarter's label only when
+// both dates parse AND they fall in different quarters. Everything else → null (no badge).
+export interface CrossQuarterPayment {
+  /** The quarter the money actually moved, e.g. "Q2 2026" — for the badge text. */
+  paidQuarterLabel: string;
+  /** The quarter the invoice belongs to for BTW/omzet (unchanged), e.g. "Q1 2026". */
+  bookedQuarterLabel: string;
+}
+
+/**
+ * Returns the cross-quarter marker when an invoice's payment landed in a DIFFERENT quarter
+ * than its invoice date, else null. Both dates must parse; a missing/unpaid payment_date, an
+ * unparseable date, or a same-quarter payment all yield null (no marker). Pure + display-only:
+ * it never implies the accrual/tax quarter moved — only that the settlement happened later.
+ */
+export function crossQuarterPayment(
+  invoiceDateIso: string | null | undefined,
+  paymentDateIso: string | null | undefined,
+): CrossQuarterPayment | null {
+  const bookedKey = quarterKeyOf(invoiceDateIso);
+  const paidKey = quarterKeyOf(paymentDateIso);
+  if (!bookedKey || !paidKey) return null;
+  if (bookedKey === paidKey) return null;
+  return {
+    paidQuarterLabel: quarterLabelOf(paidKey),
+    bookedQuarterLabel: quarterLabelOf(bookedKey),
+  };
+}

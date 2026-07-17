@@ -14,6 +14,7 @@ import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
+import { crossQuarterPayment } from '@/lib/quarter'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -491,6 +492,11 @@ export default function FacturenClient({ profile }: { profile: any }) {
                 : inv.invoice_type === 'pro_forma' ? 'pro_forma'
                 : 'factuur'
 
+              // [CROSS-QUARTER] Only a paid invoice whose money actually moved in a different
+              // quarter than its invoice date gets the marker — accrual is unchanged, this is
+              // purely "when was it settled". null (no marker) for everything else.
+              const xq = isPaid ? crossQuarterPayment(inv.invoice_date, inv.payment_date) : null
+
               // Row tint
               const rowBg = isCredit ? '#FFF8F0' : isOfferte ? '#F8F9FA' : '#fff'
 
@@ -522,6 +528,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
                         )}
                         {recon[inv.id] && (
                           <ReconBadge recon={recon[inv.id]} mode="zzp" invoiceId={inv.id} onReconConfirm={() => router.push('/dashboard/bank')} />
+                        )}
+                        {xq && (
+                          <span
+                            title={`De factuur telt voor de btw mee in ${xq.bookedQuarterLabel} (factuurdatum). De betaling kwam binnen in ${xq.paidQuarterLabel}.`}
+                            style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#FFF3E0', color: '#B26A00', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
+                            Betaald in {xq.paidQuarterLabel}
+                          </span>
                         )}
                       </div>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

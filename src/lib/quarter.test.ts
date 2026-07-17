@@ -1,5 +1,5 @@
 // [QUARTER] Pure node test — run: npx tsx src/lib/quarter.test.ts
-import { lastCompletedQuarter, quarterFromParams, quarterKeyOf, quarterLabelOf, quartersPresent, matchesQuarter } from "./quarter";
+import { lastCompletedQuarter, quarterFromParams, quarterKeyOf, quarterLabelOf, quartersPresent, matchesQuarter, crossQuarterPayment } from "./quarter";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -51,6 +51,22 @@ console.log("\n— [BANK-QUARTER] quarterKeyOf / label / present / matches —")
   check("a Q2 payment matches Q2", matchesQuarter("2026-06-20", "2026-Q2") === true);
   check("a Q1 payment does NOT match Q2", matchesQuarter("2026-02-10", "2026-Q2") === false);
   check("a dateless row is fail-safe visible in any quarter", matchesQuarter(null, "2026-Q2") === true);
+}
+
+console.log("\n— [CROSS-QUARTER] crossQuarterPayment —");
+{
+  const q1toQ2 = crossQuarterPayment("2026-02-10", "2026-05-03");
+  check("Q1 invoice paid in Q2 → marker with paid=Q2, booked=Q1",
+    q1toQ2?.paidQuarterLabel === "Q2 2026" && q1toQ2?.bookedQuarterLabel === "Q1 2026");
+  check("same quarter (both Q2) → null (no marker)", crossQuarterPayment("2026-04-01", "2026-06-20") === null);
+  check("paid earlier quarter than booked (prepaid) still marks the difference",
+    crossQuarterPayment("2026-05-01", "2026-02-01")?.paidQuarterLabel === "Q1 2026");
+  check("crosses the year boundary (Q4 invoice paid next Q1)",
+    crossQuarterPayment("2025-12-20", "2026-01-05")?.paidQuarterLabel === "Q1 2026");
+  check("no payment_date (unpaid) → null", crossQuarterPayment("2026-02-10", null) === null);
+  check("no invoice_date → null", crossQuarterPayment(null, "2026-05-03") === null);
+  check("unparseable payment_date → null (never a false marker)", crossQuarterPayment("2026-02-10", "nonsense") === null);
+  check("both null → null", crossQuarterPayment(null, null) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

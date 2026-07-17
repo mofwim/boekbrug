@@ -99,6 +99,10 @@ check("paid invoice excluded",
   !isEligible(tx({}), inv({ status: "paid" })));
 check("draft invoice excluded",
   !isEligible(tx({}), inv({ status: "draft" })));
+check("processing (verify queue) invoice excluded — never auto-paid before it's verified",
+  !isEligible(tx({}), inv({ status: "processing" })));
+check("archived invoice excluded",
+  !isEligible(tx({}), inv({ status: "archived" })));
 check("zero-amount transaction excluded",
   !isEligible(tx({ amount: 0 }), inv({})));
 check("valid outgoing+credit is eligible",
