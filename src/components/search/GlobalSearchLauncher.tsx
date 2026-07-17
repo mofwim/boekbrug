@@ -31,8 +31,10 @@ export default function GlobalSearchLauncher() {
     return null;
   }
 
+  // Bottom-LEFT: the primary page FABs ("+ Nieuwe factuur/klant", etc.) live
+  // bottom-right on facturen/klanten/werkplek — a bottom-right search FAB overlapped them.
   return (
-    <div style={{ position: "fixed", right: 20, bottom: 20, zIndex: 150 }}>
+    <div style={{ position: "fixed", left: 20, bottom: 20, zIndex: 150 }}>
       <SearchBar variant="launcher" />
     </div>
   );
