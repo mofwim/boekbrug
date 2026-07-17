@@ -14,6 +14,7 @@
 
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF',
@@ -52,9 +53,46 @@ export default function IntakeButton({
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // [MULTI-PAGE] "Meerdere pagina's = één factuur" — gather the pages of ONE invoice, combine
+  // them into a single multi-page PDF, then send it as ONE file (same /api/intake). The owner
+  // opts in, so we never guess whether separate photos are one invoice or several.
+  const [mpMode, setMpMode] = useState(false)
+  const [mpPages, setMpPages] = useState<File[]>([])
+  const [combining, setCombining] = useState(false)
+  const mpCameraRef = useRef<HTMLInputElement>(null)
+  const mpFileRef = useRef<HTMLInputElement>(null)
+  const MAX_PAGES = 20
+
   function showToast(msg: string) {
     setToast(msg)
     setTimeout(() => setToast(null), 3500)
+  }
+
+  function addMpPages(fl: FileList | null) {
+    if (!fl || fl.length === 0) return
+    const imgs = Array.from(fl).filter(
+      (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(f.name),
+    )
+    if (imgs.length === 0) { showToast('Kies foto’s van de pagina’s'); return }
+    setMpPages((prev) => {
+      const merged = [...prev, ...imgs]
+      if (merged.length > MAX_PAGES) { showToast(`Maximaal ${MAX_PAGES} pagina’s per factuur`); return merged.slice(0, MAX_PAGES) }
+      return merged
+    })
+  }
+  function closeMultiPage() { setMpMode(false); setMpPages([]) }
+  async function combineAndUpload() {
+    if (mpPages.length === 0 || combining) return
+    setCombining(true)
+    try {
+      const pdf = await combineImagesToPdf(mpPages)
+      setMpMode(false); setMpPages([])
+      await handleFile(pdf) // same single-file path: dedup, extract → one invoice
+    } catch {
+      showToast('Combineren mislukt — voeg de pagina’s los toe')
+    } finally {
+      setCombining(false)
+    }
   }
 
   async function handleFile(file: File, force = false) {
@@ -224,45 +262,121 @@ export default function IntakeButton({
         style={{ display: 'none' }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.currentTarget.value = '' }}
       />
+      {/* [MULTI-PAGE] pages of ONE invoice — camera adds one at a time, file picker several. */}
+      <input
+        ref={mpCameraRef} type="file" accept="image/*" capture="environment"
+        style={{ display: 'none' }}
+        onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = '' }}
+      />
+      <input
+        ref={mpFileRef} type="file" accept="image/*" multiple
+        style={{ display: 'none' }}
+        onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = '' }}
+      />
 
       {/* Choice sheet */}
       {open && (
         <div
-          onClick={() => setOpen(false)}
+          onClick={() => { if (!combining) { setOpen(false); closeMultiPage() } }}
           style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
         >
           <div onClick={(e) => e.stopPropagation()} style={{ background: M3.surface, borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT }}>
             <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
-            <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>Toevoegen</p>
-            <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
-              Maak een foto of kies een bestand. De AI herkent en sorteert het automatisch.
-            </p>
 
-            <button
-              onClick={() => cameraRef.current?.click()}
-              style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 12 }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 28 }}>photo_camera</span>
-              <div style={{ flex: 1, textAlign: 'left' }}>
-                <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Foto maken</p>
-                <p style={{ fontSize: 13, opacity: 0.9 }}>Bon of factuur fotograferen</p>
-              </div>
-            </button>
+            {!mpMode ? (
+              <>
+                <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>Toevoegen</p>
+                <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 20 }}>
+                  Maak een foto of kies een bestand. De AI herkent en sorteert het automatisch.
+                </p>
 
-            <button
-              onClick={() => fileRef.current?.click()}
-              style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primaryContainer, color: M3.onPrimaryContainer, borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 8 }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 28 }}>upload_file</span>
-              <div style={{ flex: 1, textAlign: 'left' }}>
-                <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Bestand uploaden</p>
-                <p style={{ fontSize: 13, opacity: 0.85 }}>PDF, afbeelding of bankafschrift</p>
-              </div>
-            </button>
+                <button
+                  onClick={() => cameraRef.current?.click()}
+                  style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 12 }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 28 }}>photo_camera</span>
+                  <div style={{ flex: 1, textAlign: 'left' }}>
+                    <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Foto maken</p>
+                    <p style={{ fontSize: 13, opacity: 0.9 }}>Bon of factuur fotograferen</p>
+                  </div>
+                </button>
 
-            <button onClick={() => setOpen(false)} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
-              Annuleren
-            </button>
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primaryContainer, color: M3.onPrimaryContainer, borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 12 }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 28 }}>upload_file</span>
+                  <div style={{ flex: 1, textAlign: 'left' }}>
+                    <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>Bestand uploaden</p>
+                    <p style={{ fontSize: 13, opacity: 0.85 }}>PDF, afbeelding of bankafschrift</p>
+                  </div>
+                </button>
+
+                {/* [MULTI-PAGE] A paper invoice of 2+ pages, photographed page by page. */}
+                <button
+                  onClick={() => setMpMode(true)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: '#fff', color: M3.onSurface, borderRadius: R.lg, padding: '16px', border: '1.5px solid #DADCE0', cursor: 'pointer', fontFamily: FONT }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }}>description</span>
+                  <div style={{ flex: 1, textAlign: 'left' }}>
+                    <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>Factuur met meerdere pagina&apos;s</p>
+                    <p style={{ fontSize: 12.5, color: '#5F6368' }}>Meerdere pagina&apos;s → samen één factuur</p>
+                  </div>
+                </button>
+
+                <p style={{ fontSize: 11.5, color: '#8e8e93', textAlign: 'center', margin: '12px 4px 0', lineHeight: 1.45 }}>
+                  Eén PDF = één factuur. Meerdere verschillende facturen? Voeg ze los toe.
+                </p>
+
+                <button onClick={() => { setOpen(false); closeMultiPage() }} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
+                  Annuleren
+                </button>
+              </>
+            ) : (
+              // [MULTI-PAGE] Collector — like a scanner's "add page": snap/pick each page, then combine.
+              <>
+                <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 4, textAlign: 'center' }}>Eén factuur, meerdere pagina&apos;s</p>
+                <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 16 }}>
+                  Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één factuur.
+                </p>
+
+                {mpPages.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14, maxHeight: '32vh', overflowY: 'auto' }}>
+                    {mpPages.map((f, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: '#F1F3F4', borderRadius: 10 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 700, color: M3.primary, minWidth: 62 }}>Pagina {i + 1}</span>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: '#5F6368', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                        <button onClick={() => setMpPages((prev) => prev.filter((_, j) => j !== i))} disabled={combining} aria-label="Verwijder pagina"
+                          style={{ border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: combining ? 'default' : 'pointer', lineHeight: 1 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                  <button onClick={() => !combining && mpCameraRef.current?.click()} disabled={combining}
+                    style={{ flex: 1, padding: '12px', borderRadius: 12, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontWeight: 600, fontSize: 13.5, cursor: combining ? 'default' : 'pointer', fontFamily: FONT }}>
+                    📷 Pagina fotograferen
+                  </button>
+                  <button onClick={() => !combining && mpFileRef.current?.click()} disabled={combining}
+                    style={{ flex: 1, padding: '12px', borderRadius: 12, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontWeight: 600, fontSize: 13.5, cursor: combining ? 'default' : 'pointer', fontFamily: FONT }}>
+                    🖼️ Pagina&apos;s kiezen
+                  </button>
+                </div>
+
+                <button onClick={combineAndUpload} disabled={combining || mpPages.length === 0}
+                  style={{ width: '100%', padding: '15px', borderRadius: R.lg, border: 'none', fontWeight: 700, fontSize: 15, fontFamily: FONT,
+                    background: combining || mpPages.length === 0 ? '#C7C7CC' : M3.primary, color: '#fff',
+                    cursor: combining || mpPages.length === 0 ? 'default' : 'pointer' }}>
+                  {combining ? 'Bezig…' : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? '' : "'s"} → één factuur` : "Voeg eerst pagina's toe"}
+                </button>
+
+                <button onClick={closeMultiPage} disabled={combining}
+                  style={{ width: '100%', padding: '13px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: combining ? 'default' : 'pointer', fontFamily: FONT, marginTop: 8 }}>
+                  Terug
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
