@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { BackLink } from '@/components/ui/BackLink'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 // [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
@@ -307,12 +308,7 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto flex items-center gap-3">
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="text-gray-400 hover:text-gray-600 text-sm"
-          >
-            ← Terug
-          </button>
+          <BackLink className="text-gray-400 hover:text-gray-600 text-sm" style={{ color: 'inherit' }} />
           <h1 className="text-lg font-bold text-gray-900">Instellingen</h1>
         </div>
       </div>

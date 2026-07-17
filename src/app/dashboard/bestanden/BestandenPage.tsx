@@ -822,11 +822,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           width: "100%", boxSizing: "border-box",
           maxWidth: "100%", overflow: "hidden",
         }}>
-          {/* Back — internal if history exists, external otherwise */}
+          {/* Back — internal folder history if it exists, else the page's
+              canonical parent (role home). Never router.back() — that could
+              loop back onto a dead entry. */}
           <button
             onClick={() => {
               if (navHistoryRef.current.length > 0) navigateBack();
-              else router.back();
+              else router.push(logoHref);
             }}
             style={{
               display: "flex", alignItems: "center", gap: 4,

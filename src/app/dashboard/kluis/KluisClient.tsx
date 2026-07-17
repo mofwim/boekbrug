@@ -7,7 +7,7 @@
 // export always works — so retention is the pull, never a cage.
 
 import { useState } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import type { YearSummary } from '@/lib/compliance-vault'
 
 const M3 = {
@@ -22,7 +22,7 @@ export default function KluisClient({ summaries, currentYear }: { summaries: Yea
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <Link href="/dashboard/werkplek" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Werkplek</Link>
+        <BackLink label="Werkplek" style={{ color: M3.primary }} />
 
         <header style={{ margin: '16px 0 8px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Compliance-kluis</h1>

@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { BackLink } from '@/components/ui/BackLink'
 import { createClient } from '@/lib/supabase'
 
 const M3 = {
@@ -70,7 +71,7 @@ export default function KlantDetailClient({ client, invoices, totals }: {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <Link href="/dashboard/klanten" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Klanten</Link>
+        <BackLink label="Klanten" style={{ color: M3.primary }} />
 
         <header style={{ margin: '16px 0 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div>

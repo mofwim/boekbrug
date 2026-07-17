@@ -11,6 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
+import { BackLink } from '@/components/ui/BackLink'
 
 // ─────────────────────────────────────────────────────────
 // Types & constants
@@ -293,11 +294,7 @@ export default function KwartaalPage() {
       <div style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '12px 24px' }}>
         <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => router.push(`/dashboard/clients/${clientId}`)}
-              style={{ fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              ← Terug
-            </button>
+            <BackLink style={{ fontWeight: 500, whiteSpace: 'nowrap' }} />
             <div className="min-w-0">
               <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Q{q} {year} — {client?.company_name || client?.full_name}

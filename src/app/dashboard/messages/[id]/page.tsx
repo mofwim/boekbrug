@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
+import { BackLink } from '@/components/ui/BackLink'
 
 // Skeleton للرسائل أثناء التحميل
 function MessageSkeleton({ isMe }: { isMe: boolean }) {
@@ -136,12 +137,7 @@ export default function ConversationPage() {
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <button
-            onClick={() => router.push('/dashboard/messages')}
-            className="text-gray-400 hover:text-gray-600 text-sm"
-          >
-            ← Terug
-          </button>
+          <BackLink className="text-gray-400 hover:text-gray-600 text-sm" style={{ color: 'inherit' }} />
           <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-sm flex-shrink-0">
             {otherName[0]?.toUpperCase() || '?'}
           </div>

@@ -5,7 +5,7 @@
 // saved once and reused. Manage here; pick from it while making a factuur.
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import { type Article, foldText } from '@/lib/articles'
 
 const M3 = {
@@ -104,7 +104,7 @@ export default function ArtikelenClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
 
         <header style={{ margin: '16px 0 18px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 2px' }}>Artikelen</h1>

@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
+import { BackLink } from '@/components/ui/BackLink'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
@@ -77,11 +78,7 @@ export default function ClientDetailPage() {
       }}>
         <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
-            <button
-              onClick={() => router.push('/dashboard')}
-              style={{ fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              ← Terug
-            </button>
+            <BackLink style={{ fontWeight: 500, whiteSpace: 'nowrap' }} />
             <div style={{ minWidth: 0 }}>
               <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {client?.company_name || client?.full_name}

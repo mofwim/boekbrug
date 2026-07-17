@@ -8,6 +8,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 import { lastCompletedQuarter } from '@/lib/quarter'
 
 const M3 = {
@@ -85,7 +86,7 @@ export default function KlaarClient() {
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+          <BackLink style={{ color: M3.primary }} />
           <button onClick={() => setReloadKey((k) => k + 1)} title="Vernieuwen" style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>Vernieuwen
           </button>

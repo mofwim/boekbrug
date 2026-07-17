@@ -2,12 +2,14 @@
 
 // src/app/dashboard/not-found.tsx
 // BOEK-006: 404 داخل الـ dashboard
+// [NAVIGATION] "Terug" resolves the canonical parent of the (broken) path via
+// BackLink — never router.back(), which could bounce straight back to the dead
+// link and loop.
 
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 
 export default function DashboardNotFound() {
-  const router = useRouter()
-
   return (
     <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center px-6">
       <div className="text-center space-y-4 max-w-sm">
@@ -21,19 +23,18 @@ export default function DashboardNotFound() {
           </p>
         </div>
 
-        <div className="flex gap-3 justify-center pt-2">
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
+        <div className="flex gap-3 justify-center items-center pt-2">
+          <Link
+            href="/dashboard"
+            className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors no-underline"
           >
             Naar dashboard
-          </button>
-          <button
-            onClick={() => router.back()}
+          </Link>
+          <BackLink
+            label="Terug"
             className="border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors"
-          >
-            Terug
-          </button>
+            style={{ color: '#4b5563' }}
+          />
         </div>
 
       </div>

@@ -6,7 +6,7 @@
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import { BackLink } from '@/components/ui/BackLink'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#1C1B1F', neutral: '#5F6368',
@@ -111,7 +111,7 @@ export default function KasClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <Link href="/dashboard" style={{ fontSize: 14, color: M3.primary, textDecoration: 'none' }}>← Terug</Link>
+        <BackLink style={{ color: M3.primary }} />
 
         {/* Balance */}
         <div style={{ margin: '16px 0 20px' }}>

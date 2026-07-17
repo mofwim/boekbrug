@@ -65,10 +65,27 @@ const PARENT_RULES: ParentRule[] = [
   },
 
   // ── invoice/[id] (any other) → facturen (zzp) or accountant home ──────────
+  // [NAV] Context-aware: when the invoice was opened from a client's kwartaal
+  // page (?from=client&clientId=…), "Terug" returns there — preserving q/year
+  // so the accountant lands back on the exact filtered view. Otherwise it falls
+  // back to the role default. This is loop-safe: every branch is an explicit
+  // ancestor href, never history.
   {
     match: /^\/dashboard\/invoice\/[^/]+$/,
-    parent: (_, role) =>
-      role === 'accountant' ? '/dashboard/accountant' : '/dashboard/facturen',
+    parent: (_, role, search) => {
+      const from = search?.get('from')
+      const clientId = search?.get('clientId')
+      if (from === 'client' && clientId) {
+        const q = search?.get('q')
+        const year = search?.get('year')
+        const qs = new URLSearchParams({
+          ...(q ? { q } : {}),
+          ...(year ? { year } : {}),
+        }).toString()
+        return `/dashboard/clients/${clientId}/kwartaal${qs ? `?${qs}` : ''}`
+      }
+      return role === 'accountant' ? '/dashboard/accountant' : '/dashboard/facturen'
+    },
   },
 
   // ── clients/[id]/kwartaal → clients/[id] ─────────────────────────────────
@@ -113,6 +130,41 @@ const PARENT_RULES: ParentRule[] = [
   {
     match: /^\/dashboard\/incoming\/manage$/,
     parent: () => '/dashboard/incoming',
+  },
+
+  // ── bank/categoriseren → bank ────────────────────────────────────────────
+  // [NAV] Without this the categorise screen jumped past the bank overview
+  // straight to home. Its real parent is the bank page it was opened from.
+  {
+    match: /^\/dashboard\/bank\/categoriseren$/,
+    parent: () => '/dashboard/bank',
+  },
+
+  // ── messages/[id] → messages list ────────────────────────────────────────
+  // [NAV] A conversation's parent is the inbox, not the dashboard home.
+  {
+    match: /^\/dashboard\/messages\/[^/]+$/,
+    parent: () => '/dashboard/messages',
+  },
+
+  // ── klanten/[id] (ZZP own clients) → klanten list ────────────────────────
+  // [NAV] Distinct from the accountant's /dashboard/clients tree above.
+  {
+    match: /^\/dashboard\/klanten\/[^/]+$/,
+    parent: () => '/dashboard/klanten',
+  },
+
+  // ── clients/invite (accountant) → clients beheer ─────────────────────────
+  {
+    match: /^\/dashboard\/clients\/invite$/,
+    parent: () => '/dashboard/clients/beheer',
+  },
+
+  // ── kluis (document vault) → werkplek ────────────────────────────────────
+  // [NAV] The vault is reached from the ZZP werkplek; that is its parent.
+  {
+    match: /^\/dashboard\/kluis$/,
+    parent: () => '/dashboard/werkplek',
   },
 
   // ── all other /dashboard/* → home per role ────────────────────────────────
