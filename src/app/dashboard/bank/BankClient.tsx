@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
+import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const M3 = {
@@ -145,6 +146,10 @@ export default function BankClient() {
   const [initialLoading, setInitialLoading] = useState(true)
   // [BANK-TABS] Active tab — defaults to the one the owner acts on.
   const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'pin' | 'ignored' | 'done'>('confirm')
+  // [BANK-QUARTER] Which quarter's transactions to show. 'auto' resolves to the newest
+  // quarter that has data, so an owner working on Q2 lands on Q2 instead of an all-quarters
+  // pile (old Q1 uploads inflated "Geen factuur" to 335). 'all' shows every quarter.
+  const [quarterSel, setQuarterSel] = useState<string>('auto')
   // [BANK-IGNORE] Ignored transactions (status 'not_found'), loaded lazily when
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
@@ -621,7 +626,27 @@ export default function BankClient() {
     !isDone(s) &&
     (s.partiallyLinked === true ||
       (confirmed[s.transactionId] && confirmed[s.transactionId].allCovered === false))
-  const pending = data?.suggestions.filter((s) => !isDone(s)) ?? []
+  // [BANK-QUARTER] Quarters present across ALL loaded transactions (pending + done +
+  // ignored), newest first, with a per-quarter count for the chip. Filtering is by the BANK
+  // date (payment date), so a Q1 invoice paid in Q2 shows under Q2 and the matcher still
+  // offers the Q1 invoice — cross-quarter payments land in the quarter the money moved.
+  const quarters = quartersPresent([
+    ...((data?.suggestions ?? []).map((s) => s.date)),
+    ...((ignoredList ?? []).map((s) => s.date)),
+  ])
+  // [BANK-QUARTER] Default (via 'auto') to the app's shared quarter: the LAST COMPLETED
+  // quarter (the one whose BTW is due — what klaar/aangifte/resultaat also default to), so
+  // "I'm working on Q2" lands on Q2, not the newest half-open quarter. Fall back to the
+  // newest quarter present (or 'all') when the last-completed quarter has no bank data.
+  const lc = lastCompletedQuarter()
+  const defaultQuarterKey = `${lc.year}-Q${lc.quarter}`
+  const autoQuarter = quarters.some((q) => q.key === defaultQuarterKey)
+    ? defaultQuarterKey
+    : (quarters[0]?.key ?? 'all')
+  const effectiveQuarter = quarterSel === 'auto' ? autoQuarter : quarterSel
+  const inQ = (s: Suggestion) => matchesQuarter(s.date, effectiveQuarter)
+
+  const pending = (data?.suggestions.filter((s) => !isDone(s)) ?? []).filter(inQ)
 
   // [BANK-SORT] Stable order by date (newest first) so a restored transaction
   // returns to its logical position instead of jumping to the bottom.
@@ -658,7 +683,9 @@ export default function BankClient() {
   const noneAll = pending.filter((s) => s.outcome === 'none' && !isPartiallyLinked(s))
   const noMatch = noneAll.filter((s) => !isPosReceipt(s)).sort(byDateDesc)
   const posList = noneAll.filter(isPosReceipt).sort(byDateDesc)
-  const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).sort(byDateDesc)
+  const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).filter(inQ).sort(byDateDesc)
+  // [BANK-QUARTER] Ignored tab, filtered to the selected quarter too.
+  const ignoredInQ = (ignoredList ?? []).filter(inQ)
   // [BANK-BATCH-CONFIRM] The subset of "Te bevestigen" that can be bulk-confirmed
   // (strong single-invoice auto matches), and how many of those are currently ticked.
   const batchEligibleList = toConfirm.filter((s) => isBatchEligible(s))
@@ -668,14 +695,14 @@ export default function BankClient() {
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
     { key: 'pin' as const, label: 'Pinontvangsten', icon: 'point_of_sale', count: posList.length },
-    { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredList?.length ?? 0 },
+    { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredInQ.length },
     { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
   ]
   const activeListRaw =
     bankTab === 'confirm' ? toConfirm
     : bankTab === 'none' ? noMatch
     : bankTab === 'pin' ? posList
-    : bankTab === 'ignored' ? (ignoredList ?? [])
+    : bankTab === 'ignored' ? ignoredInQ
     : confirmedList
 
   // [BANK-FILTER] Only the "Geen factuur" tab is filtered (the long one).
@@ -839,10 +866,38 @@ export default function BankClient() {
       {/* [BANK-TABS] Tabs — only once we have data with at least one transaction */}
       {data && (toConfirm.length + noMatch.length + posList.length + confirmedList.length + (ignoredList?.length ?? 0)) > 0 && (
         <>
+          {/* [BANK-QUARTER] Quarter filter — only when more than one quarter is loaded.
+              Defaults (via 'auto') to the newest quarter so the owner sees just the
+              quarter they're working on; "Alle" brings every quarter back. Counts are
+              per quarter so it's obvious no data was deleted — only filtered. */}
+          {quarters.length >= 2 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 18, alignItems: 'center' }}>
+              <span style={{ fontSize: 12.5, color: '#5F6368', fontWeight: 700 }}>Kwartaal:</span>
+              {([{ key: 'all', label: 'Alle', count: null as number | null }, ...quarters.map((q) => ({ key: q.key, label: quarterLabelOf(q.key), count: q.count }))]).map((q) => {
+                const active = q.key === 'all' ? quarterSel === 'all' : effectiveQuarter === q.key
+                return (
+                  <button
+                    key={q.key}
+                    onClick={() => setQuarterSel(q.key)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 11px',
+                      borderRadius: R.full, cursor: 'pointer', fontFamily: FONT, fontSize: 12.5, fontWeight: 600,
+                      border: `1px solid ${active ? M3.primary : '#E0E0E0'}`,
+                      background: active ? M3.primaryContainer : '#fff',
+                      color: active ? M3.onPrimaryContainer : '#5F6368',
+                    }}
+                  >
+                    {q.label}
+                    {q.count != null && <span style={{ opacity: 0.6, fontFamily: FONT_NUM }}>{q.count}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {/* [BANK-CHIPS] Chips grid instead of a horizontal scroll bar: every tab
               is visible at once and wraps to the next line on narrow screens — no
               hidden horizontal scroll the owner can miss. */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 18 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
             {tabs.map((t) => {
               const active = bankTab === t.key
               return (
