@@ -100,6 +100,14 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard/accountant',
   },
 
+  // ── clients/invite (accountant) → clients beheer ─────────────────────────
+  // MUST sit above the generic clients/[^/]+ rule below, otherwise 'invite'
+  // matches [^/]+ first and this never fires.
+  {
+    match: /^\/dashboard\/clients\/invite$/,
+    parent: () => '/dashboard/clients/beheer',
+  },
+
   // ── clients/[id] (any other) → accountant home ───────────────────────────
   {
     match: /^\/dashboard\/clients\/[^/]+$/,
@@ -152,12 +160,6 @@ const PARENT_RULES: ParentRule[] = [
   {
     match: /^\/dashboard\/klanten\/[^/]+$/,
     parent: () => '/dashboard/klanten',
-  },
-
-  // ── clients/invite (accountant) → clients beheer ─────────────────────────
-  {
-    match: /^\/dashboard\/clients\/invite$/,
-    parent: () => '/dashboard/clients/beheer',
   },
 
   // ── kluis (document vault) → werkplek ────────────────────────────────────
