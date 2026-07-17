@@ -113,6 +113,65 @@ const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'paid',     label: 'Betaald'    },
 ]
 
+// ─── [SORT] Ordering the list — the same options the market (Moneybird, e-Boekhouden,
+// Exact) offers, so the owner can find an invoice by whatever date/number matters to them,
+// not only "date added". Default stays 'added_desc' (nieuwste import bovenaan) so the screen
+// looks unchanged until the owner picks another order.
+type SortKey =
+  | 'added_desc' | 'invdate_desc' | 'invdate_asc'
+  | 'due_asc' | 'paydate_desc' | 'amount_desc' | 'amount_asc' | 'vendor_asc'
+const SORTS: { id: SortKey; label: string }[] = [
+  { id: 'added_desc',   label: 'Toegevoegd (nieuwste eerst)'  },
+  { id: 'invdate_desc', label: 'Factuurdatum (nieuwste eerst)' },
+  { id: 'invdate_asc',  label: 'Factuurdatum (oudste eerst)'   },
+  { id: 'due_asc',      label: 'Vervaldatum (eerst verlopen)'  },
+  { id: 'paydate_desc', label: 'Betaaldatum (nieuwste eerst)'  },
+  { id: 'amount_desc',  label: 'Bedrag (hoog → laag)'          },
+  { id: 'amount_asc',   label: 'Bedrag (laag → hoog)'          },
+  { id: 'vendor_asc',   label: 'Leverancier (A–Z)'             },
+]
+
+// Comparators — a MISSING value always sorts LAST (a dateless/amountless invoice must never
+// jump to the top and hide a real one), regardless of asc/desc. Dates are ISO "YYYY-MM-DD"
+// so a plain string compare is chronological.
+function cmpDate(a: string | null, b: string | null, dir: 'asc' | 'desc'): number {
+  const aa = a ?? '', bb = b ?? ''
+  if (!aa && !bb) return 0
+  if (!aa) return 1
+  if (!bb) return -1
+  return dir === 'asc' ? aa.localeCompare(bb) : bb.localeCompare(aa)
+}
+function cmpNum(a: number | null, b: number | null, dir: 'asc' | 'desc'): number {
+  const aNull = a == null, bNull = b == null
+  if (aNull && bNull) return 0
+  if (aNull) return 1
+  if (bNull) return -1
+  return dir === 'asc' ? (a as number) - (b as number) : (b as number) - (a as number)
+}
+function cmpStr(a: string | null, b: string | null): number {
+  const aa = (a ?? '').trim(), bb = (b ?? '').trim()
+  if (!aa && !bb) return 0
+  if (!aa) return 1
+  if (!bb) return -1
+  return aa.localeCompare(bb, 'nl', { sensitivity: 'base' })
+}
+// Array.prototype.sort is stable, so equal keys keep the incoming order (created_at desc
+// from the server) — a deterministic tiebreak with no extra code.
+function sortRows(rows: IncomingRow[], key: SortKey): IncomingRow[] {
+  const s = [...rows]
+  switch (key) {
+    case 'invdate_desc': return s.sort((a, b) => cmpDate(a.invoice_date, b.invoice_date, 'desc'))
+    case 'invdate_asc':  return s.sort((a, b) => cmpDate(a.invoice_date, b.invoice_date, 'asc'))
+    case 'due_asc':      return s.sort((a, b) => cmpDate(a.due_date, b.due_date, 'asc'))
+    case 'paydate_desc': return s.sort((a, b) => cmpDate(a.payment_date, b.payment_date, 'desc'))
+    case 'amount_desc':  return s.sort((a, b) => cmpNum(a.total_inc_btw, b.total_inc_btw, 'desc'))
+    case 'amount_asc':   return s.sort((a, b) => cmpNum(a.total_inc_btw, b.total_inc_btw, 'asc'))
+    case 'vendor_asc':   return s.sort((a, b) => cmpStr(a.client_name, b.client_name))
+    case 'added_desc':
+    default:             return s.sort((a, b) => cmpDate(a.created_at, b.created_at, 'desc'))
+  }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function IncomingManageClient({
   profile,
@@ -127,6 +186,8 @@ export default function IncomingManageClient({
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
+  const [sortBy, setSortBy]             = useState<SortKey>('added_desc')
+  const [showSortMenu, setShowSortMenu] = useState(false)
   const [expandedId, setExpandedId]     = useState<string | null>(null)
   const [toast, setToast]               = useState<string | null>(null)
   const [payCtx, setPayCtx]             = useState<PayCtx | null>(null)
@@ -189,10 +250,10 @@ export default function IncomingManageClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionParam, focusId, invoices.length])
 
-  const displayed = invoices.filter(inv => {
-    if (filter === 'all') return true
-    return inv.status === filter
-  })
+  const displayed = sortRows(
+    invoices.filter(inv => (filter === 'all' ? true : inv.status === filter)),
+    sortBy,
+  )
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
@@ -467,32 +528,67 @@ export default function IncomingManageClient({
           </Link>
         </div>
 
-        {/* Filter dropdown */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowFilterMenu(p => !p)}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '10px 14px', background: M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
-          >
-            <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer }}>
-              {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'}
-            </span>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer }}>
-              {showFilterMenu ? 'expand_less' : 'expand_more'}
-            </span>
-          </button>
-          {showFilterMenu && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
-              {FILTERS.map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
-                  style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          )}
+        {/* Filter + Sort dropdowns (side by side) */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {/* Filter */}
+          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <button
+              onClick={() => { setShowFilterMenu(p => !p); setShowSortMenu(false) }}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'}
+              </span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }}>
+                {showFilterMenu ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+            {showFilterMenu && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                {FILTERS.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
+                    style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* [SORT] Sorteren op — invoice/payment/due date, amount, vendor, or date added */}
+          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <button
+              onClick={() => { setShowSortMenu(p => !p); setShowFilterMenu(false) }}
+              title="Sorteren"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: '#F1F3F4', borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>swap_vert</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#49454F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {SORTS.find(s => s.id === sortBy)?.label ?? 'Sorteren'}
+                </span>
+              </span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>
+                {showSortMenu ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+            {showSortMenu && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100, background: '#fff', borderRadius: R.md, marginTop: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden', maxHeight: '60vh', overflowY: 'auto' }}>
+                {SORTS.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => { setSortBy(s.id); setShowSortMenu(false) }}
+                    style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? M3.primaryContainer : '#fff', color: sortBy === s.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
