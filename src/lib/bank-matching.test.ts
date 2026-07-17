@@ -107,6 +107,17 @@ check("zero-amount transaction excluded",
   !isEligible(tx({ amount: 0 }), inv({})));
 check("valid outgoing+credit is eligible",
   isEligible(tx({ amount: 1210 }), inv({})));
+// [BANK-MATCH-ARREARS] Grace widened 3 → 10 days so a bill-in-arrears / SEPA incasso
+// (charged on the 1st, invoice dated a few days later) still surfaces as a candidate.
+check("incasso 4 days before the invoice date is STILL eligible (arrears grace)",
+  isEligible(tx({ amount: -323.68, date: "2026-06-01" }),
+             inv({ direction: "incoming", total_inc_btw: 323.68, invoice_date: "2026-06-05" })));
+check("payment 8 days before the invoice date is eligible (within 10-day grace)",
+  isEligible(tx({ amount: -100, date: "2026-06-02" }),
+             inv({ direction: "incoming", total_inc_btw: 100, invoice_date: "2026-06-10" })));
+check("payment 16 days before the invoice date is NOT eligible (previous month's bill)",
+  !isEligible(tx({ amount: -100, date: "2026-05-30" }),
+              inv({ direction: "incoming", total_inc_btw: 100, invoice_date: "2026-06-15" })));
 
 console.log("\n— outcomes —");
 

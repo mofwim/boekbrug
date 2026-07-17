@@ -21,6 +21,12 @@ export interface ReadinessSignals {
   verifiedInvoiceCount: number;         // verified in/out invoices in the quarter
   invoicesWithEvidence: number;         // of those, how many carry a source PDF/document
   missingEvidence: string[];            // invoice numbers (or ids) lacking a stored PDF
+  // [PACKAGE-READINESS] Invoices dated in this quarter STILL in the verify queue
+  // (status processing/draft). They are real bills the owner hasn't confirmed, so they
+  // do NOT count as verified above and would reach the accountant NOWHERE. A genuine
+  // "missing invoice" gap — it must block "klaar" until the owner clears the queue.
+  // Optional so older callers/tests keep compiling (undefined → 0 → no block).
+  unverifiedInvoiceCount?: number;
 
   // ── Bank ──
   bankTxCount: number;                  // bank transactions DATED in the quarter
@@ -145,6 +151,21 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         detail: s.missingEvidence.length
           ? `Zonder PDF: ${s.missingEvidence.slice(0, 5).join(", ")}${s.missingEvidence.length > 5 ? " …" : ""}. De boekhouder kan deze niet controleren.`
           : "De boekhouder kan deze niet controleren zonder de bon/factuur.",
+      });
+    }
+    // [PACKAGE-READINESS] Unverified invoices dated in the quarter block "klaar": they are
+    // real bills sitting in the verify queue and would never reach the accountant. This is
+    // separate from the evidence gap above (that's about verified invoices without a PDF).
+    const unverified = s.unverifiedInvoiceCount ?? 0;
+    if (unverified > 0) {
+      missing.push({
+        severity: "missing",
+        title:
+          unverified === 1
+            ? "1 factuur staat nog in de verwerkingsrij"
+            : `${unverified} facturen staan nog in de verwerkingsrij`,
+        detail: "Controleer en bevestig deze facturen voordat je afsluit — anders gaan ze niet mee naar de boekhouder.",
+        fix: { label: "Naar Facturen", href: "/dashboard/incoming" },
       });
     }
     if (!applicable) notes.push("Nog geen facturen geïmporteerd voor dit kwartaal.");

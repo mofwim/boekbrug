@@ -1681,6 +1681,21 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     setCurrent(0);
     setTotal(0);
 
+    // [BANK-AUTO-RUN] If any file was a bank statement, close the circle right here: the
+    // near-certain payments (reference + amount to the cent) get auto-booked so a matching
+    // invoice moves to 'paid' immediately — the owner never has to walk over to /bank for it.
+    // Best-effort; a matched count is surfaced on the bank line's result row.
+    if (collected.some((r) => r.status === "bank")) {
+      const booked = await triggerBankAutoConfirm();
+      if (booked > 0) {
+        for (const r of collected) {
+          if (r.status === "bank") {
+            r.message = `${r.message} — ${booked} betaling${booked === 1 ? "" : "en"} automatisch gekoppeld.`;
+          }
+        }
+      }
+    }
+
     onUploaded();
     setResults(collected);
     setShowResults(true);

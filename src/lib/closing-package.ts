@@ -52,6 +52,7 @@ import {
   type ConceptAangifte,
   type AangifteCompleteness,
 } from "./aangifte";
+import { fetchAllRows } from "./supabase-paginate";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -873,14 +874,21 @@ export async function summarizeClosingPackage(args: {
   const end = quarterEndDate(year, quarter);
   const warnings: ClosingPackageWarning[] = [];
 
-  const { data: invData, error: invErr } = await supabase
-    .from("invoices")
-    .select(INVOICE_FIELDS)
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .gte("invoice_date", start)
-    .lte("invoice_date", end)
-    .neq("status", "archived");
-  if (invErr) throw new Error(`[CLOSING-PACKAGE] summary query failed: ${invErr.message}`);
+  // [PAGINATION] Page past the ~1000-row PostgREST cap: a busy shop's quarter can exceed it,
+  // and a silent truncation would drop invoices from the count AND the readiness warning below.
+  const invData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from("invoices")
+      .select(INVOICE_FIELDS)
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .gte("invoice_date", start)
+      .lte("invoice_date", end)
+      .neq("status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e: unknown) => {
+    throw new Error(`[CLOSING-PACKAGE] summary query failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
   // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
@@ -893,6 +901,15 @@ export async function summarizeClosingPackage(args: {
   const verified = all.filter(isVerifiedForPackage);
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
+
+  // [PACKAGE-READINESS] Invoices dated in this quarter that are STILL in the verify queue
+  // (processing/draft) are real bills the owner hasn't confirmed. They don't count as verified
+  // above, so without this they'd vanish from the package with zero signal — the exact "missing
+  // invoice" the owner fears. Surface a warning so "afsluiten" is never auto-green while unverified
+  // invoices sit unbooked. (Readiness enforces the block; here we only report.)
+  const unverifiedInQuarter = all.filter(
+    (i) => i.status === "processing" || i.status === "draft",
+  ).length;
 
   // Count how many verified invoices actually have a retrievable PDF path.
   // outgoing → pdf_url ; incoming → document_id (resolved to a file_url).
@@ -947,6 +964,17 @@ export async function summarizeClosingPackage(args: {
   // Honest warnings — the real gaps, listed specifically.
   if (verified.length === 0) {
     warnings.push({ code: "no_invoices", message: "Geen geverifieerde facturen in dit kwartaal." });
+  }
+  // [PACKAGE-READINESS] Unverified invoices dated in the quarter → the owner must clear the
+  // verify queue before closing, else these real bills never reach the accountant.
+  if (unverifiedInQuarter > 0) {
+    warnings.push({
+      code: "unverified_in_queue",
+      message:
+        unverifiedInQuarter === 1
+          ? "1 factuur staat nog in de verwerkingsrij — verifieer die voordat je afsluit."
+          : `${unverifiedInQuarter} facturen staan nog in de verwerkingsrij — verifieer ze voordat je afsluit.`,
+    });
   }
   if (missingPdf.length > 0) {
     warnings.push({
@@ -1005,14 +1033,21 @@ export async function buildClosingPackageZip(args: {
 
   // Invoices of the quarter (both directions). Filter on STORED status only
   // (verified sets), within the quarter date range.
-  const { data: invData, error: invErr } = await supabase
-    .from("invoices")
-    .select(INVOICE_FIELDS)
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .gte("invoice_date", start)
-    .lte("invoice_date", end)
-    .neq("status", "archived");
-  if (invErr) throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${invErr.message}`);
+  // [PAGINATION] Page past the ~1000-row cap — this set feeds BOTH the evidence PDFs and
+  // invoicesForResult (the concept aangifte money), so a silent truncation would understate it.
+  const invData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from("invoices")
+      .select(INVOICE_FIELDS)
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .gte("invoice_date", start)
+      .lte("invoice_date", end)
+      .neq("status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e: unknown) => {
+    throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
   // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
@@ -1228,12 +1263,20 @@ export async function buildClosingPackageZip(args: {
   // 'omzet'/'pos_income' with no invoice or Z-report IS revenue with no rate, and must be
   // surfaced as omzet-zonder-tarief here too (not silently dropped), so the ZIP matches
   // /api/result and /api/readiness. The covered-days set excludes takings the till counted.
-  const { data: cashAllRows } = await supabase
-    .from("cash_entries")
-    .select("direction, amount, category, btw_rate, entry_date")
-    .eq("user_id", ownerId)
-    .gte("entry_date", start)
-    .lte("entry_date", end);
+  // [PAGINATION] Busy shops book many cash entries a quarter — page past the cap so the
+  // reconciliation engine sees every one (a dropped row understates omzet/kosten).
+  const cashAllRows = await fetchAllRows<{
+    direction: string; amount: number | null; category: string | null; btw_rate: number | null; entry_date: string | null;
+  }>((from, to) =>
+    supabase
+      .from("cash_entries")
+      .select("direction, amount, category, btw_rate, entry_date")
+      .eq("user_id", ownerId)
+      .gte("entry_date", start)
+      .lte("entry_date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => []);
   const cashEntries: ResultCashEntry[] = (cashAllRows ?? []).map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount,
@@ -1241,12 +1284,19 @@ export async function buildClosingPackageZip(args: {
     btw_rate: c.btw_rate,
     date: c.entry_date,
   }));
-  const { data: bankAllRows } = await supabase
-    .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description")
-    .eq("user_id", ownerId)
-    .gte("date", start)
-    .lte("date", end);
+  // [PAGINATION] Same for bank lines — a quarter of a busy account can exceed 1000 rows.
+  const bankAllRows = await fetchAllRows<{
+    amount: number | null; category: string | null; invoice_id: string | null; date: string | null; description: string | null;
+  }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("amount, category, invoice_id, date, description")
+      .eq("user_id", ownerId)
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => []);
   const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map((b) => {
     const parsedTakings = b.category === "pos_income" ? parsePosSettlement(b.description).date : null;
     return {

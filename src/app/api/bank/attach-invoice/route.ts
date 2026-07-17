@@ -29,7 +29,7 @@ import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
-import { normalizeToIso } from "@/lib/safecore";
+import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -65,6 +65,8 @@ export async function POST(req: NextRequest) {
   // Default to 'incoming' (the common case) if absent.
   const direction =
     (formData.get("direction") as string | null) === "outgoing" ? "outgoing" : "incoming";
+  // [BANK-ATTACH-DEDUP] Owner override — "toch toevoegen" after a semantic-duplicate warning.
+  const force = (formData.get("force") as string | null) === "true";
   if (!file) {
     return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 });
   }
@@ -178,6 +180,57 @@ export async function POST(req: NextRequest) {
   const totalExBtw = amountAgrees ? (verification.total_ex_btw ?? 0) : 0;
   const btwAmount = amountAgrees ? (verification.btw_amount ?? 0) : 0;
   const amountWarning = aiTotal != null && !amountAgrees;
+
+  // 6b. [BANK-ATTACH-DEDUP] Semantic duplicate gate — the SAME invoice as a different file.
+  //     Byte-hash (step 4) only catches the identical file. The real double-book risk here:
+  //     an invoice already imported by email sits in the verify queue as 'processing' (the
+  //     bank matcher EXCLUDES processing, so its payment shows in "Geen factuur"); the owner
+  //     photographs that same bill and attaches it → a SECOND, auto-'paid' invoice, so the
+  //     cost + voorbelasting are booked twice. Run the same graded key the intake/email paths
+  //     use (real number → number+total(+date); reliable vendor → vendor+total+date) BEFORE
+  //     any storage/insert, keyed on the AI-read fields against invoices in THIS direction.
+  //     A `force` escape lets the owner add it anyway (genuinely two bills, same total).
+  if (!force) {
+    const dedupTotal = verification.total_inc_btw ?? verification.amount ?? bankAmount;
+    const dup = await findSemanticDuplicate(
+      {
+        invoiceNumber: verification.invoice_number,
+        vendor: verification.vendor,
+        totalIncBtw: dedupTotal,
+        invoiceDate: verification.invoice_date,
+      },
+      async (q) => {
+        let query = pipeline
+          .from("invoices")
+          .select("id, invoice_number, client_name, status")
+          .eq("direction", direction)
+          .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
+          .eq("total_inc_btw", q.total);
+        if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", q.vendor);
+        if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
+        const { data } = await query.order("id", { ascending: false }).limit(200);
+        const rows = data ?? [];
+        const hit =
+          q.tier === "number" && q.invoiceNumber
+            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
+            : rows[0];
+        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null;
+      }
+    );
+    if (dup.duplicate && dup.match) {
+      return NextResponse.json(
+        {
+          error: "Deze factuur lijkt al in de app te staan.",
+          duplicate: true,
+          semantic: true,
+          match: { id: dup.match.id, invoice_number: dup.match.invoice_number, vendor: dup.match.client_name },
+          detail:
+            "Als dit dezelfde factuur is, koppel de bestaande factuur aan deze betaling in plaats van hem opnieuw toe te voegen. Weet je zeker dat het een andere factuur is? Dan kun je hem alsnog toevoegen.",
+        },
+        { status: 409 }
+      );
+    }
+  }
 
   // 7. Store the file in Storage + documents (same shape as manual upload).
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");

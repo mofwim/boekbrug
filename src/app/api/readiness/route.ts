@@ -85,16 +85,23 @@ export async function GET(req: NextRequest) {
   // income, the "money in with no invoice" that readiness never used to see.
   let unmatchedIncomeCount = 0;
   for (const t of bank) {
-    if (t.status === "pending" && !t.invoice_id) {
-      if ((t.amount ?? 0) > 0 && t.category == null) {
-        unmatchedIncomeCount++;
-      } else {
-        const stillOpen =
-          t.category == null
-            ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
-            : t.category === "kosten";
-        if (stillOpen) undocumentedCount++;
-      }
+    const credit = (t.amount ?? 0) > 0;
+    // [TRUST-READY] Unexplained INCOME is a gap REGARDLESS of status: a credit with no
+    // linked invoice and no category is money-in we can't place. Restricting to 'pending'
+    // let a credit that was touched (status advanced by some other flow) but never
+    // categorised or linked slip through → a false "klaar" with unbooked revenue. Card
+    // takings are auto-categorised 'pos_income', so they carry a category and are excluded.
+    if (credit && !t.invoice_id && t.category == null) {
+      unmatchedIncomeCount++;
+      continue;
+    }
+    // Cost side stays pending-scoped: a categorised/confirmed debit is already resolved.
+    if (t.status === "pending" && !t.invoice_id && !credit) {
+      const stillOpen =
+        t.category == null
+          ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
+          : t.category === "kosten";
+      if (stillOpen) undocumentedCount++;
     }
   }
 
@@ -116,6 +123,11 @@ export async function GET(req: NextRequest) {
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
   }));
+  // [PACKAGE-READINESS] Real bills dated in the quarter still in the verify queue — they
+  // must block "klaar" (they'd otherwise reach the accountant nowhere).
+  const unverifiedInvoiceCount = invRaw.filter(
+    (i) => i.status === "processing" || i.status === "draft",
+  ).length;
 
   const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
@@ -196,6 +208,7 @@ export async function GET(req: NextRequest) {
     quarterLabel,
     verifiedInvoiceCount,
     invoicesWithEvidence,
+    unverifiedInvoiceCount,
     missingEvidence: [], // exact COUNT drives the score; specific numbers aren't surfaced here
     bankTxCount: bank.length,
     undocumentedCount,
