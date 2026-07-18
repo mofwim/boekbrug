@@ -21,15 +21,16 @@ const M3 = {
   warn: '#B26A00', primaryContainer: '#D3E3FD', bg: '#F8F9FA',
 }
 const FONT = "'Roboto', -apple-system, sans-serif"
-// Same accept set as the app's intake button: images + PDF + the bank-statement formats.
-const ACCEPT = 'image/*,application/pdf,.pdf,.xml,.mt940,.sta,.camt,.053,.txt'
+// Same accept set as the app's intake button: images + PDF + bank-statement formats + the
+// spreadsheet exports a shop uploads monthly (kassa Z-report, PIN/kas grootboek).
+const ACCEPT = 'image/*,application/pdf,.pdf,.xml,.mt940,.sta,.camt,.053,.txt,.940,.xls,.xlsx,.csv'
 
 type Status = 'queued' | 'busy' | 'done' | 'duplicate' | 'error'
 interface Item {
   id: string
   file: File
   status: Status
-  destination?: 'invoice' | 'receipt' | 'bank' | 'document'
+  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'turnover' | 'ledger'
   message?: string
   canForce?: boolean
   force?: boolean   // set on a "toch toevoegen" retry → sends force=true to override a semantic dup
@@ -47,6 +48,8 @@ const DEST: Record<string, { label: string; icon: string; color: string }> = {
   invoice:  { label: 'Factuur',       icon: '🧾', color: M3.primary },
   receipt:  { label: 'Bon',           icon: '🧾', color: M3.primary },
   bank:     { label: 'Bankafschrift', icon: '🏦', color: '#0B8043' },
+  turnover: { label: 'Kassa-omzet',   icon: '🛒', color: '#0B8043' },
+  ledger:   { label: 'Controle-check', icon: '🔗', color: '#7B1FA2' },
   document: { label: 'Bestand',       icon: '📁', color: M3.neutral },
 }
 
@@ -187,7 +190,7 @@ export default function UploadClient() {
             Sleep bestanden hierheen
           </p>
           <p style={{ fontSize: 12.5, color: M3.neutral, marginBottom: 16 }}>
-            of kies ze hieronder — PDF, foto’s en bankafschriften (MT940/CAMT)
+            of kies ze hieronder — PDF, foto’s, bankafschriften (MT940/CAMT) én kassa-/grootboek-bestanden (Excel)
           </p>
 
           <input ref={fileRef} type="file" accept={ACCEPT} multiple style={{ display: 'none' }}
@@ -300,6 +303,8 @@ export default function UploadClient() {
             <p style={{ fontSize: 13, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
               {countBy('invoice') + countBy('receipt') > 0 && <>{countBy('invoice') + countBy('receipt')} factuur/bon · </>}
               {countBy('bank') > 0 && <>{countBy('bank')} bankafschrift · </>}
+              {countBy('turnover') > 0 && <>{countBy('turnover')} kassa-omzet · </>}
+              {countBy('ledger') > 0 && <>{countBy('ledger')} controle-check · </>}
               {countBy('document') > 0 && <>{countBy('document')} bestand · </>}
               {dups.length > 0 && <>{dups.length} dubbel · </>}
               {errs.length > 0 && <span style={{ color: M3.error }}>{errs.length} mislukt</span>}
@@ -324,6 +329,11 @@ export default function UploadClient() {
               {countBy('bank') > 0 && (
                 <Link href="/dashboard/bank" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>
                   Naar Bank →
+                </Link>
+              )}
+              {countBy('turnover') > 0 && (
+                <Link href="/dashboard/dagomzet" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>
+                  Naar Dagomzet →
                 </Link>
               )}
               {countBy('document') > 0 && (
