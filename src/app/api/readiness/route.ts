@@ -71,7 +71,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
   const verifiedInvoiceCount = summary.outgoingCount + summary.incomingCount;
-  const invoicesWithEvidence = summary.filesIncluded;
+  // [READINESS-EVIDENCE] Use the invoices-with-PDF count, NOT filesIncluded — the latter also
+  // counts bank-statement + shared files, which let the invoice-evidence dimension hit a false 100%
+  // (dropping the "X facturen missen het originele document" gap) while verified invoices had no PDF.
+  const invoicesWithEvidence = summary.invoicesWithPdf;
 
   // ── 2) Bank — transactions DATED in the quarter, and how many still need a bon ──
   const bank = await fetchAllRows((from, to) => pipeline
