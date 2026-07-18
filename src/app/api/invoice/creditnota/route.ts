@@ -73,12 +73,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
     }
 
-    // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen
-    // Draft facturen worden verwijderd — niet gecrediteerd
-    const CREDITABLE_STATUSES: string[] = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
+    // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen. Draft facturen verwijder je.
+    // [LC2] This route only credits an invoice the owner SENT (outgoing — see the sender_id guard
+    // above), and the creditnota counts as −omzet (status 'sent'). So the original MUST be a status
+    // that actually counted as +omzet — outgoing = {sent, paid, overdue} in computeResult. Crediting
+    // an outgoing invoice that never counted (a stray 'processing'/'received'/'processed') would
+    // book phantom NEGATIVE omzet with nothing to offset it. Those statuses aren't reachable for a
+    // normal outgoing invoice anyway, so restricting to the counting set is safe and closes the gap.
+    const CREDITABLE_STATUSES: string[] = ['sent', 'paid', 'overdue']
     if (!original.status || !CREDITABLE_STATUSES.includes(original.status)) {
       return NextResponse.json(
-        { error: 'Alleen verzonden facturen kunnen worden gecrediteerd. Concept-facturen verwijder je gewoon.' },
+        { error: 'Alleen een verzonden of betaalde factuur kan worden gecrediteerd. Een concept of nog niet-geboekte factuur verwijder of bewerk je gewoon.' },
         { status: 400 }
       )
     }
