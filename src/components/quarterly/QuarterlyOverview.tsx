@@ -44,10 +44,19 @@ function ZzpView({ role }: { role: Role }) {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [packaging, setPackaging] = useState(false); // [CLOSING-PACKAGE]
+  // [TRUST-OWNER] The RECONCILED figures (invoices + bank + cash + card takings) — the SAME source
+  // as the accountant view, the closing package and /api/aangifte. For a retail shop most omzet is
+  // pin/contant with NO invoice, so the invoices-only /api/quarterly totals (data.totalIn) show a
+  // fraction of the real omzet and must never be presented as the Q2 aangifte. null → show "…".
+  const [recon, setRecon] = useState<{
+    omzet: number; verschuldigd: number; voorbelasting: number; saldo: number;
+    salesByRate: { rate: number; omzet: number; btw: number }[];
+  } | null>(null);
 
   useEffect(() => {
     setLoading(true);
     setData(null);
+    setRecon(null);
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
@@ -57,6 +66,29 @@ function ZzpView({ role }: { role: Role }) {
       .then((r) => r.json())
       .then(setData)
       .finally(() => setLoading(false));
+
+    // [TRUST-OWNER] Reconciled omzet + BTW in parallel — accrual (invoice date), all channels,
+    // independent of the paid/all mode. This is the real Q2 number the owner files.
+    const rparams = new URLSearchParams({ year: String(year), quarter: String(quarter) });
+    (async () => {
+      try {
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${rparams}`),
+          fetch(`/api/aangifte?${rparams}`),
+        ]);
+        if (!rRes.ok || !aRes.ok) return;
+        const r = await rRes.json();
+        const a = await aRes.json();
+        const omzet = Number(r?.result?.omzet);
+        const verschuldigd = Number(a?.aangifte?.verschuldigd);
+        const voorbelasting = Number(a?.aangifte?.voorbelasting);
+        const saldo = Number(a?.aangifte?.saldo);
+        const salesByRate = Array.isArray(r?.result?.salesByRate) ? r.result.salesByRate : [];
+        if ([omzet, verschuldigd, voorbelasting, saldo].every(Number.isFinite)) {
+          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate });
+        }
+      } catch { /* leave recon null → the owner sees "…", never a wrong number */ }
+    })();
   }, [quarter, year, mode]);
 
   // [CLOSING-PACKAGE] Download the full quarterly package (ZIP) for the accountant.
@@ -224,12 +256,62 @@ function ZzpView({ role }: { role: Role }) {
             <p className="text-sm text-muted-foreground mt-0.5">{quarterLabel}</p>
           </div>
 
-          {/* [BOEK-013] Inkomsten — label boven tabel beschrijft wat de cijfers zijn */}
+          {/* [TRUST-OWNER] The REAL Q2 figures — omzet incl. pin & contant + BTW te betalen — from
+              the reconciled engine (same as the accountant + closing ZIP), NOT invoices only. This
+              is what you actually file. The facturen tables below are a subset for reference. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-background border-2 border-emerald-400 rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Omzet (excl. BTW)</p>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none mt-1.5">{recon ? formatEur(recon.omzet) : "…"}</p>
+              <p className="text-[11px] text-muted-foreground mt-1.5">incl. pin & contant</p>
+            </div>
+            <div className="bg-background border-2 border-blue-400 rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">BTW te betalen (5g)</p>
+              <p className="text-2xl font-bold tabular-nums text-blue-700 leading-none mt-1.5">{recon ? formatEur(recon.saldo) : "…"}</p>
+              <p className="text-[11px] text-muted-foreground mt-1.5">na voorbelasting</p>
+            </div>
+          </div>
+
+          {/* [TRUST-OWNER] Concept BTW-aangifte from the reconciled figures — verschuldigd per
+              tarief, minus voorbelasting = te betalen (5g). Same numbers as the accountant + ZIP. */}
+          {recon && (recon.salesByRate.length > 0 || recon.verschuldigd !== 0 || recon.voorbelasting !== 0) && (
+            <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-4 py-3 border-b">
+                <h3 className="text-sm font-semibold">Concept BTW-aangifte Q{quarter} {year}</h3>
+              </div>
+              <div className="divide-y">
+                {recon.salesByRate.filter((b) => b.omzet !== 0 || b.btw !== 0).map((b) => (
+                  <div key={b.rate} className="flex items-center justify-between px-4 py-3.5">
+                    <div>
+                      <p className="text-sm font-medium">Verschuldigd {b.rate}%</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.omzet)}</p>
+                    </div>
+                    <p className="text-sm font-semibold tabular-nums">{formatEur(b.btw)}</p>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Verschuldigd (5a)</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatEur(recon.verschuldigd)}</p>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Voorbelasting (5b)</p>
+                  <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
+                  <p className="text-sm font-semibold">Te betalen (5g)</p>
+                  <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* [BOEK-013] Facturen (subset of the reconciled omzet above) — label maakt duidelijk
+              dat dit alleen de facturen zijn, niet de totale omzet incl. pin/contant. */}
           <div>
             <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
               {mode === "paid"
-                ? "Inkomsten — alleen betaalde facturen"
-                : "Inkomsten — betaald én uitstaand"}
+                ? "Facturen — inkomsten (alleen betaald)"
+                : "Facturen — inkomsten (betaald én uitstaand)"}
             </p>
             <div className="bg-background border-2 border-emerald-400 rounded-2xl overflow-hidden shadow-sm">
               <div className="grid grid-cols-2 divide-x divide-emerald-100 border-b border-emerald-100 bg-emerald-50">
@@ -259,12 +341,13 @@ function ZzpView({ role }: { role: Role }) {
             </div>
           </div>
 
-          {/* [BOEK-013] Uitgaven — label boven tabel beschrijft wat de cijfers zijn */}
+          {/* [BOEK-013] Facturen — uitgaven (subset). De voorbelasting in de aangifte hierboven
+              telt óók bonnen/kosten zonder factuur mee; deze tabel toont alleen de facturen. */}
           <div>
             <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
               {mode === "paid"
-                ? "Uitgaven — alleen betaalde facturen"
-                : "Uitgaven — betaald én uitstaand"}
+                ? "Facturen — uitgaven (alleen betaald)"
+                : "Facturen — uitgaven (betaald én uitstaand)"}
             </p>
             <div className="bg-background border-2 border-red-400 rounded-2xl overflow-hidden shadow-sm">
               <div className="grid grid-cols-2 divide-x divide-red-100 border-b border-red-100 bg-red-50">
