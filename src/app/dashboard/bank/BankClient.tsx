@@ -1417,10 +1417,17 @@ function TxCard({
   // [BANK-SLOT-DISMISS] Hide any number the owner removed with ✗ (view-only). The
   // raw reference is untouched; this only changes what THIS card shows this session.
   const refParts = allRefParts.filter((r) => !dismissedNumbers.has(normRef(r)))
+  // [BANK-R1] On the "Gekoppeld" tab a matched line may have a sparse bank reference (an auto 1:1
+  // match keyed on amount) — fall back to the actually-linked invoice number(s) so the owner still
+  // sees WHICH invoice was booked, not a bare payment with no clue what happened.
+  const doneNumbers = s.coveredNumbers ?? []
   const refLabel =
-    refParts.length === 0 ? null
-    : refParts.length === 1 ? refParts[0]
-    : `${refParts.length} facturen`
+    refParts.length === 0
+      ? (isDoneTab && doneNumbers.length > 0
+          ? (doneNumbers.length === 1 ? doneNumbers[0] : `${doneNumbers.length} facturen`)
+          : null)
+      : refParts.length === 1 ? refParts[0]
+      : `${refParts.length} facturen`
   const selectedCand =
     s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ?? (s.outcome === 'auto' ? s.best : null)
 
