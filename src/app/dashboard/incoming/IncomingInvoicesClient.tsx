@@ -2153,10 +2153,14 @@ export default function IncomingInvoicesClient({
               : "✓ Factuur geverifieerd"
           );
         } else {
-          showToast("Verificatie mislukt — ververs de pagina");
+          // [UI-HONESTY] The server rejected it — roll back the optimistic remove so the invoice
+          // stays visible in the queue instead of vanishing on a lie.
+          setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+          showToast("Verificatie mislukt — factuur staat nog in de wachtrij");
         }
       } catch {
-        showToast("Fout — ververs de pagina");
+        setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+        showToast("Fout — factuur staat nog in de wachtrij");
       }
     },
     []
@@ -2291,10 +2295,13 @@ export default function IncomingInvoicesClient({
         if (res.ok) {
           showToast("✓ Factuur gemarkeerd als betaald");
         } else {
-          showToast("Bevestiging mislukt — ververs de pagina");
+          // [UI-HONESTY] Roll back the optimistic remove — the payment was NOT recorded.
+          setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+          showToast("Bevestiging mislukt — factuur staat nog in de wachtrij");
         }
       } catch {
-        showToast("Fout — ververs de pagina");
+        setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+        showToast("Fout — factuur staat nog in de wachtrij");
       }
     },
     []
@@ -2307,11 +2314,24 @@ export default function IncomingInvoicesClient({
     setIgnoreFor(null);
     setExpandedId(null);
 
+    // [UI-HONESTY] A fetch that resolves is NOT proof of success — a 4xx/5xx (not found, RLS reject)
+    // resolves with res.ok=false. The old code showed "genegeerd" regardless, so a failed ignore
+    // looked done. Check res.ok and, on failure, roll back to the queue and say so.
+    const rollback = () => {
+      setIgnored((prev) => prev.filter((inv) => inv.id !== invoice.id));
+      setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+    };
     try {
-      await fetch(`/api/email/confirm/${invoice.id}`, { method: "DELETE" });
-      showToast("Factuur genegeerd");
+      const res = await fetch(`/api/email/confirm/${invoice.id}`, { method: "DELETE" });
+      if (res.ok) {
+        showToast("Factuur genegeerd");
+      } else {
+        rollback();
+        showToast("Negeren mislukt — factuur staat nog in de wachtrij");
+      }
     } catch {
-      showToast("Fout — ververs de pagina");
+      rollback();
+      showToast("Fout — factuur staat nog in de wachtrij");
     }
   }, []);
 
@@ -2321,11 +2341,23 @@ export default function IncomingInvoicesClient({
     setPending((prev) => [invoice, ...prev]);
     setExpandedId(null);
 
+    // [UI-HONESTY] Same as ignore: only claim "teruggezet" when the server actually accepted it;
+    // otherwise roll back to the ignored list so the UI reflects the real state.
+    const rollback = () => {
+      setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
+      setIgnored((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+    };
     try {
-      await fetch(`/api/email/confirm/${invoice.id}`, { method: "PATCH" });
-      showToast("Factuur teruggezet");
+      const res = await fetch(`/api/email/confirm/${invoice.id}`, { method: "PATCH" });
+      if (res.ok) {
+        showToast("Factuur teruggezet");
+      } else {
+        rollback();
+        showToast("Terugzetten mislukt — probeer opnieuw");
+      }
     } catch {
-      showToast("Fout — ververs de pagina");
+      rollback();
+      showToast("Fout — probeer opnieuw");
     }
   }, []);
 
