@@ -25,6 +25,7 @@ interface IncomingInvoiceRow {
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
+  amount_paid?: number | null;
   invoice_date: string;
   invoice_number: string;
   source: string;
@@ -47,7 +48,7 @@ interface IncomingInvoiceRow {
 // Plain column list — no join. The join broke the query and emptied the page.
 // [BRIDGE-CREDITNOTA-SIGN] + invoice_type (badge + sign-inverted health gate).
 const INVOICE_COLUMNS =
-  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
+  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();

@@ -34,6 +34,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 // definition — no drift between "is this tx done?" answered in two places.
 import { isEligible, normalizeRef, isFullyCovered, parseReferenceNumbers } from "@/lib/bank-matching";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
+import { logAuditAction } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
   // 1. Auth
@@ -135,6 +136,79 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not_eligible" }, { status: 409 });
   }
 
+  // [PARTIAL-PAY] Single-invoice case → the atomic apply_bank_payment RPC. It applies
+  // LEAST(payment, remaining), so a payment SMALLER than the invoice balance is recorded as a
+  // DEELBETALING — the invoice stays openstaand with the remaining tracked (amount_paid), instead
+  // of the old behaviour that flipped it to fully 'paid' on the first instalment (a wrong number).
+  // It only flips to 'paid' when the instalments together cover the total. The whole payment is
+  // allocated to this one invoice (one tx → one invoice), so the tx is fully consumed → matched.
+  // A MULTI-number reference (a batch: one payment listing several invoice numbers) keeps the
+  // existing full-coverage flow below — partial batches are out of scope. Session client so the
+  // B.4 verwerkt trigger has auth context (the RPC also re-checks verwerkt under its row lock).
+  const refNumbers = parseReferenceNumbers(tx.reference);
+  if (refNumbers.length <= 1) {
+    const payAmount = Math.abs(tx.amount ?? 0);
+    if (payAmount <= 0) {
+      return NextResponse.json({ error: "not_eligible" }, { status: 409 });
+    }
+    const { data: applyRows, error: applyErr } = await supabase.rpc("apply_bank_payment", {
+      p_user_id: user.id,
+      p_tx_id: transactionId,
+      p_invoice_id: invoiceId,
+      p_amount: payAmount,
+      p_pay_date: tx.date ?? null,
+    });
+    if (applyErr) {
+      if (applyErr.message?.toLowerCase().includes("verwerkt")) {
+        return NextResponse.json({ error: "verwerkt", invoiceNumber: inv.invoice_number }, { status: 409 });
+      }
+      if (applyErr.message?.toLowerCase().includes("already fully paid")) {
+        return NextResponse.json({ error: "invoice_already_paid" }, { status: 409 });
+      }
+      return NextResponse.json({ error: "payment_failed", detail: applyErr.message }, { status: 500 });
+    }
+    // Empty result ⇒ the tx was claimed by a concurrent confirm/auto-book between our checks and
+    // the RPC's lock (its mutex re-read saw status ≠ 'pending'). Nothing was written — 409, retryable.
+    const row = Array.isArray(applyRows) ? (applyRows[0] as { applied: number; amount_paid: number; total: number; is_paid: boolean } | undefined) : undefined;
+    if (!row) {
+      return NextResponse.json({ error: "transaction_already_processed" }, { status: 409 });
+    }
+    const isPaid = row.is_paid === true;
+    const remaining = Math.max(0, (row.total ?? 0) - (row.amount_paid ?? 0));
+    // [BANK-TX-INVOICES] The RPC already wrote the join row (with amount_applied) inside its
+    // transaction — no recordPaymentLinks needed here.
+    try {
+      await pipeline.from("notifications").insert({
+        user_id: user.id,
+        title: isPaid ? "Factuur betaald" : "Deelbetaling geboekt",
+        body: isPaid
+          ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
+          : `Deelbetaling van € ${row.applied.toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
+        type: "payment",
+      });
+    } catch {
+      /* non-blocking */
+    }
+    await logAuditAction({
+      userId: user.id,
+      action: isPaid ? "bank.confirmed" : "bank.partial_payment",
+      entityType: "invoice",
+      entityId: invoiceId,
+      newValue: {
+        transaction_id: transactionId,
+        invoice_number: inv.invoice_number,
+        applied: row.applied,
+        amount_paid: row.amount_paid,
+        total: row.total,
+        remaining,
+        fully_paid: isPaid,
+      },
+    });
+    // allCovered = the TRANSACTION is done (fully consumed by this invoice); `partial` tells the UI
+    // the INVOICE still has a balance so it can show "€X van €Y · €Z openstaand".
+    return NextResponse.json({ ok: true, allCovered: true, partial: !isPaid, applied: row.applied, remaining });
+  }
+
   // 4. Write (a): invoice → paid. SESSION client so the verwerkt trigger fires (auth.uid() set).
   //    Never write `shared` (GENERATED) or 'voldaan' (UI-only).
   const { data: payData, error: payErr } = await supabase
@@ -183,7 +257,7 @@ export async function POST(req: NextRequest) {
   //      correct direction, normalize their numbers, and require that every
   //      reference number maps to one. A number with no paid invoice (not uploaded
   //      yet, or uploaded-but-unconfirmed) keeps allCovered=false → tx stays pending.
-  const refNumbers = parseReferenceNumbers(tx.reference);
+  //    (refNumbers computed above for the single-vs-multi branch; reused here.)
   let allCovered = true;
 
   if (refNumbers.length > 1) {

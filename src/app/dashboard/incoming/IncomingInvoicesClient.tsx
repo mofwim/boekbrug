@@ -61,6 +61,9 @@ interface IncomingInvoice {
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
+  // [PARTIAL-PAY] running total settled by instalments (0 when unpaid). A value 0 < amount_paid <
+  // |total| means the invoice is a deelbetaling: still openstaand, but part is already received.
+  amount_paid?: number | null;
   invoice_date: string;
   invoice_number: string;
   source: string;
@@ -1364,6 +1367,25 @@ function InvoiceCard({
           <span style={{ fontWeight: 700, fontSize: 18, color: "#202124", whiteSpace: "nowrap" }}>
             {formatSignedAmount(invoice.total_inc_btw)}
           </span>
+          {/* [PARTIAL-PAY] Deelbetaling badge — part received, rest still openstaand. Shown only
+              while 0 < amount_paid < total (a fully-paid invoice leaves this list entirely). */}
+          {(() => {
+            const paid = Math.max(0, invoice.amount_paid ?? 0);
+            const total = Math.abs(invoice.total_inc_btw ?? 0);
+            if (!(paid > 0.005 && paid < total - 0.005)) return null;
+            const remaining = Math.max(0, total - paid);
+            return (
+              <span
+                title={`Deelbetaling: € ${paid.toFixed(2)} van € ${total.toFixed(2)} ontvangen`}
+                style={{
+                  fontSize: 11, fontWeight: 600, color: "#b06000", background: "#fef7e0",
+                  border: "1px solid #fde293", borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap",
+                }}
+              >
+                Deels betaald · € {remaining.toFixed(2)} open
+              </span>
+            );
+          })()}
           <span
             style={{
               fontSize: 18, color: "#dadce0",

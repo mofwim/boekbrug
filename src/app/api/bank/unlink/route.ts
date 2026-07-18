@@ -66,7 +66,9 @@ export async function POST(req: Request) {
   const invoiceId = tx.invoice_id as string;
   const { data: inv, error: invErr } = await pipeline
     .from("invoices")
-    .select("id, direction, status, accountant_status")
+    // [PARTIAL-PAY] Also read amount_paid + total + payment_date so we can undo the EXACT amount
+    // this payment applied (an instalment), not force the whole invoice back to unpaid.
+    .select("id, direction, status, accountant_status, amount_paid, total_inc_btw, payment_date")
     .eq("id", invoiceId)
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .maybeSingle();
@@ -75,6 +77,20 @@ export async function POST(req: Request) {
   if (inv.accountant_status === "verwerkt") {
     return NextResponse.json({ error: "verwerkt" }, { status: 409 });
   }
+
+  // [PARTIAL-PAY] How much did THIS payment apply to the invoice? The per-link amount_applied is
+  // authoritative; fall back to the tx magnitude for a pre-migration link (amount_applied NULL).
+  // Undoing a payment lowers amount_paid by exactly this — so an invoice fully paid by two
+  // instalments drops back to "€400 van €1000" when you unlink the second one, not to fully unpaid.
+  const { data: linkRow } = await pipeline
+    .from("bank_tx_invoices")
+    .select("amount_applied")
+    .eq("transaction_id", transactionId)
+    .eq("invoice_id", invoiceId)
+    .maybeSingle();
+  const appliedAmount = Math.abs(Number(linkRow?.amount_applied ?? tx.amount ?? 0));
+  const priorPaid = Math.max(0, Number(inv.amount_paid ?? 0));
+  const newPaid = Math.max(0, priorPaid - appliedAmount);
 
   // 3. Detach the bank line FIRST → back to pending, no invoice_id. Order matters: if the
   //    invoice restore (step 4) then fails we roll THIS back, so we never end on the worse
@@ -99,17 +115,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "conflict" }, { status: 409 });
   }
 
-  // 4. Restore the invoice to unpaid. SESSION client so the B.4 trigger has auth context.
-  //    Only touch a still-'paid' invoice (idempotent). incoming → 'received', else 'sent'.
-  //    'overdue' is never stored (recomputed from due_date), and 'processing' invoices are
-  //    excluded from matching (isEligible), so by construction the prior status was
-  //    received/sent — restoring by direction is exact, not a guess.
-  //    Also clear payment_date (confirm/auto-confirm set it) so no stale settlement date lingers.
+  // 4. Restore the invoice. SESSION client so the B.4 trigger has auth context. incoming →
+  //    'received', else 'sent'. 'overdue' is never stored (recomputed from due_date), and
+  //    'processing' invoices are excluded from matching (isEligible), so by construction the
+  //    prior open status was received/sent — restoring by direction is exact, not a guess.
+  //
+  //    [PARTIAL-PAY] Two cases:
+  //      (a) the invoice was fully 'paid' → removing this payment un-completes it: back to the
+  //          open status, amount_paid lowered by this payment's share. If instalments remain
+  //          (newPaid > 0) it becomes a partial-open invoice again and keeps its first-instalment
+  //          date + payment_method; if nothing remains it is a clean unpaid invoice (dates cleared).
+  //      (b) the invoice was already partial-open (never 'paid') → status is untouched; we only
+  //          lower amount_paid (to 0 when this was its only instalment).
   const restoredStatus = inv.direction === "incoming" ? "received" : "sent";
+  const stillHasPayment = newPaid > 0;
   if (inv.status === "paid") {
     const { error: payErr } = await supabase
       .from("invoices")
-      .update({ status: restoredStatus, payment_method: null, marked_paid_at: null, payment_date: null })
+      .update({
+        status: restoredStatus,
+        amount_paid: newPaid,
+        payment_method: stillHasPayment ? "bank" : null,
+        marked_paid_at: null,
+        payment_date: stillHasPayment ? inv.payment_date : null,
+      })
       .eq("id", invoiceId)
       .eq("status", "paid");
     if (payErr) {
@@ -123,6 +152,24 @@ export async function POST(req: Request) {
       if (payErr.message?.toLowerCase().includes("verwerkt")) {
         return NextResponse.json({ error: "verwerkt" }, { status: 409 });
       }
+      return NextResponse.json({ error: "restore_failed", detail: payErr.message }, { status: 500 });
+    }
+  } else if (priorPaid > 0) {
+    // Partial-open invoice: status stays open; just lower the running total by this instalment.
+    const { error: payErr } = await supabase
+      .from("invoices")
+      .update({
+        amount_paid: newPaid,
+        payment_method: stillHasPayment ? "bank" : null,
+        payment_date: stillHasPayment ? inv.payment_date : null,
+      })
+      .eq("id", invoiceId);
+    if (payErr) {
+      await pipeline
+        .from("bank_transactions")
+        .update({ status: tx.status, invoice_id: invoiceId })
+        .eq("id", transactionId)
+        .eq("user_id", user.id);
       return NextResponse.json({ error: "restore_failed", detail: payErr.message }, { status: 500 });
     }
   }

@@ -61,7 +61,7 @@ export async function runBankAutoConfirm(args: {
   const invRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, amount_paid")
       .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
       .neq("status", "paid")
       .order("id", { ascending: true })
@@ -70,7 +70,14 @@ export async function runBankAutoConfirm(args: {
   if (txRows.length === 0 || invRows.length === 0) return [];
 
   const transactions = (txRows as BankTransactionDbRow[]).map((r) => rowToTransaction(r));
-  const invoices = invRows as InvoiceForMatching[];
+  const allInvoices = invRows as (InvoiceForMatching & { amount_paid?: number | null })[];
+  // [PARTIAL-PAY] Auto-confirm books full-amount matches by writing status='paid' directly (not
+  // via apply_bank_payment), so it must NEVER touch an invoice that is mid-instalment (amount_paid
+  // > 0): a full-amount payment landing on a partially-settled invoice would over-pay it. Those are
+  // left for the human to complete through the partial-aware confirm route (which caps at the
+  // remaining balance). A fully-unpaid invoice (amount_paid 0) is unaffected — the common case.
+  const invoices = allInvoices.filter((i) => Math.max(0, Number(i.amount_paid ?? 0)) === 0);
+  if (invoices.length === 0) return [];
   const invById = new Map(invoices.map((i) => [i.id, i]));
   const result = matchTransactions(transactions, invoices);
   const safe = result.matches.filter(isSafeAutoConfirm);
