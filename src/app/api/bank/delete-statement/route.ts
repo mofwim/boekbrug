@@ -33,6 +33,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { invoiceIdsForTransactions } from "@/lib/bank-tx-links";
+import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
@@ -102,25 +103,48 @@ export async function POST(req: NextRequest) {
   if (txs.length > 0) {
     const txIds = txs.map((t) => t.id as string);
     const linkIds = await invoiceIdsForTransactions(pipeline, user.id, txIds);
-    const reversalIds = new Set<string>(linkIds);
-    for (const t of txs) if (t.invoice_id) reversalIds.add(t.invoice_id as string);
+    const idSet = new Set<string>(linkIds);
+    for (const t of txs) if (t.invoice_id) idSet.add(t.invoice_id as string);
 
-    let toRestore: { id: string; direction: string | null; accountant_status: string | null }[] = [];
-    if (reversalIds.size > 0) {
-      const { data: paidInvs, error: invErr } = await pipeline
-        .from("invoices")
-        .select("id, direction, status, accountant_status")
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .eq("status", "paid")
-        .eq("payment_method", "bank")
-        .in("id", [...reversalIds]);
-      if (invErr) {
-        // Never delete a statement while we cannot read what it paid — that would strand paid
-        // invoices with no bank line. Abort cleanly; nothing was touched.
-        return NextResponse.json({ error: "reversal_lookup_failed", detail: invErr.message }, { status: 500 });
-      }
-      toRestore = paidInvs ?? [];
+    // Fetch the user's paid-by-bank invoices once; resolve the reversal set from these in code so we
+    // can combine the exact id-links with the direction-guarded number gap-fill (below).
+    const { data: paidInvs, error: invErr } = await pipeline
+      .from("invoices")
+      .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date")
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .eq("status", "paid")
+      .eq("payment_method", "bank");
+    if (invErr) {
+      // Never delete a statement while we cannot read what it paid — that would strand paid
+      // invoices with no bank line. Abort cleanly; nothing was touched.
+      return NextResponse.json({ error: "reversal_lookup_failed", detail: invErr.message }, { status: 500 });
     }
+    const paid = paidInvs ?? [];
+
+    // (1) Exact, collision-free part: invoices this statement's txs are id-linked to.
+    const toRestoreMap = new Map<string, (typeof paid)[number]>();
+    for (const inv of paid) if (idSet.has(inv.id)) toRestoreMap.set(inv.id, inv);
+
+    // (2) [GAP-FILL] A PRE-migration batch only backfilled its representative id (the migration
+    //     cannot reconstruct the older siblings). For any reference number NOT already covered by an
+    //     id-link, fall back to a DIRECTION-GUARDED number match so those siblings are reversed too
+    //     — without the direction guard a same-number invoice of the opposite direction could be
+    //     wrongly un-paid. A freshly-booked batch is fully id-covered, so this adds nothing for it
+    //     (no number-collision surface); it only recovers historical siblings this statement paid.
+    const coveredNums = new Set<string>();
+    for (const inv of toRestoreMap.values()) coveredNums.add(normalizeRef(inv.invoice_number ?? ""));
+    for (const t of txs) {
+      const rn = parseReferenceNumbers(t.reference);
+      if (rn.length <= 1) continue;
+      const dir: "incoming" | "outgoing" = (t.amount ?? 0) < 0 ? "incoming" : "outgoing";
+      const uncovered = new Set(rn.filter((n) => !coveredNums.has(n)));
+      if (uncovered.size === 0) continue;
+      for (const inv of paid) {
+        if (inv.direction === dir && uncovered.has(normalizeRef(inv.invoice_number ?? ""))) toRestoreMap.set(inv.id, inv);
+      }
+    }
+    const toRestore = [...toRestoreMap.values()];
+
     // A 'verwerkt' (accountant-locked) invoice blocks the whole reversal — nothing is touched.
     if (toRestore.some((i) => i.accountant_status === "verwerkt")) {
       return NextResponse.json({ error: "verwerkt", detail: "Een factuur van dit afschrift is al verwerkt door de boekhouder. Vraag eerst om ontwerken." }, { status: 409 });
@@ -131,12 +155,14 @@ export async function POST(req: NextRequest) {
     // abort WITHOUT deleting any transaction, so a failed reversal can never land in the half-state
     // this cascade exists to prevent (a restored invoice beside a still-'matched' bank line, or a
     // paid invoice with its bank line deleted). All-or-nothing, mirroring unlink's discipline.
-    const restored: { id: string; direction: string | null }[] = [];
+    // [MED-2] Re-pay restores the ORIGINAL marked_paid_at + payment_date so a rollback never loses
+    // the settlement date (which attributes the payment to the correct quarter).
+    const restored: { id: string; marked_paid_at: string | null; payment_date: string | null }[] = [];
     const repay = async () => {
       for (const r of restored) {
         await supabase
           .from("invoices")
-          .update({ status: "paid", payment_method: "bank" })
+          .update({ status: "paid", payment_method: "bank", marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
           .eq("id", r.id)
           .neq("status", "paid");
       }
@@ -154,7 +180,7 @@ export async function POST(req: NextRequest) {
         }
         return NextResponse.json({ error: "reversal_failed", detail: restoreErr.message }, { status: 500 });
       }
-      restored.push({ id: inv.id, direction: inv.direction });
+      restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date });
     }
 
     // [MED-3] Audit snapshot BEFORE the destructive delete — record exactly which transactions

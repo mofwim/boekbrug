@@ -43,7 +43,9 @@ CREATE POLICY bank_tx_invoices_delete_own ON public.bank_tx_invoices
 
 -- Backfill from the existing single-invoice links so already-booked payments are reversible by id
 -- too. (A pre-existing BATCH only carried its representative invoice_id, so only that one backfills
--- — the older siblings stay number-reversed as before; every NEW booking records the full set.)
+-- here — the reversal paths recover the older siblings via a DIRECTION-GUARDED number gap-fill for
+-- exactly the reference numbers no id-link covers; every NEW booking records the full set up front,
+-- so new batches are 100% id-reversed with no number-collision surface at all.)
 INSERT INTO public.bank_tx_invoices (user_id, transaction_id, invoice_id)
   SELECT user_id, id, invoice_id
   FROM public.bank_transactions

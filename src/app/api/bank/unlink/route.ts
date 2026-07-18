@@ -158,31 +158,45 @@ async function unlinkBatch(args: {
   const linkedInvoiceId = tx.invoice_id;
   if (!linkedInvoiceId) return NextResponse.json({ error: "not_linked" }, { status: 409 });
 
-  // [BANK-TX-INVOICES] The AUTHORITATIVE reversal set is the exact invoice ids this transaction
-  // paid, recorded in the join table at booking time. Reversing by id can only ever touch the
-  // invoices this payment actually paid — it cannot un-pay an unrelated invoice that happens to
-  // share a number (invoice numbers are not unique across suppliers / directions). The number
-  // match below is a LEGACY fallback, used only for a pre-migration batch whose join rows were
-  // never written (backfill stored only its representative id).
+  // [BANK-TX-INVOICES] The reversal set is built id-first, number-second, so it is BOTH
+  // collision-free AND complete:
+  //  (1) the exact invoice ids this transaction paid, recorded in the join table at booking time —
+  //      reversing by id can only ever touch the invoices this payment actually paid, never an
+  //      unrelated invoice that shares a number (numbers are not unique across suppliers/directions).
+  //  (2) GAP-FILL: a PRE-migration batch only backfilled its representative id (the migration can't
+  //      reconstruct the older siblings). For any reference number NOT already covered by an id-link,
+  //      we fall back to a number match — GUARDED to the batch's direction so a same-number invoice
+  //      of the opposite direction is never wrongly un-paid (the MED-3 collision). A freshly-booked
+  //      batch is fully id-covered, so (2) adds nothing for it → no number-collision surface at all.
   const linkIds = await invoiceIdsForTransactions(pipeline, userId, [transactionId]);
   const idSet = new Set(linkIds);
+  idSet.add(linkedInvoiceId); // the linked representative is always part of the batch
 
-  // The batch's paid invoices (owner-pinned).
+  // The user's paid-by-bank invoices (owner-pinned). We resolve the batch from these in code.
   const { data: paidRows, error: invErr } = await pipeline
     .from("invoices")
-    .select("id, invoice_number, direction, status, accountant_status")
+    .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date")
     .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
     .eq("status", "paid")
     .eq("payment_method", "bank");
   if (invErr) return NextResponse.json({ error: "invoice_lookup_failed", detail: invErr.message }, { status: 500 });
-  // Prefer the collision-free id set; only if the join table has nothing for this tx (legacy) do we
-  // fall back to the reference-number match, and even then we always keep the linked representative.
-  const batch =
-    idSet.size > 0
-      ? (paidRows ?? []).filter((i) => idSet.has(i.id))
-      : (paidRows ?? []).filter(
-          (i) => i.id === linkedInvoiceId || new Set(refNums).has(normalizeRef(i.invoice_number ?? "")),
-        );
+  const paid = paidRows ?? [];
+
+  // (1) exact id-linked part
+  const byId = new Map<string, (typeof paid)[number]>();
+  for (const inv of paid) if (idSet.has(inv.id)) byId.set(inv.id, inv);
+  // (2) direction-guarded number gap-fill for reference numbers no id-link covers
+  const rep = paid.find((i) => i.id === linkedInvoiceId);
+  const batchDir = rep?.direction ?? null; // a batch is one supplier/customer → one direction
+  const coveredNums = new Set<string>();
+  for (const inv of byId.values()) coveredNums.add(normalizeRef(inv.invoice_number ?? ""));
+  const uncovered = new Set(refNums.filter((n) => !coveredNums.has(n)));
+  if (batchDir && uncovered.size > 0) {
+    for (const inv of paid) {
+      if (inv.direction === batchDir && uncovered.has(normalizeRef(inv.invoice_number ?? ""))) byId.set(inv.id, inv);
+    }
+  }
+  const batch = [...byId.values()];
 
   // A 'verwerkt' invoice anywhere in the batch blocks the whole reversal (accrual is locked by the
   // accountant) — refuse before touching anything.
@@ -204,7 +218,9 @@ async function unlinkBatch(args: {
 
   // Restore each invoice to unpaid (idempotent via .eq('status','paid')). On any failure, re-pay
   // what we already restored and re-link the bank line, so we never leave a half-reversed batch.
-  const restored: string[] = [];
+  // [MED-2] Re-pay restores the ORIGINAL marked_paid_at + payment_date, not just paid/bank, so a
+  // rollback never loses the settlement date (which attributes the payment to the right quarter).
+  const restored: { id: string; marked_paid_at: string | null; payment_date: string | null }[] = [];
   for (const inv of batch) {
     const restoredStatus = inv.direction === "incoming" ? "received" : "sent";
     const { error: payErr } = await payClient
@@ -213,14 +229,18 @@ async function unlinkBatch(args: {
       .eq("id", inv.id)
       .eq("status", "paid");
     if (payErr) {
-      for (const rid of restored) {
-        await payClient.from("invoices").update({ status: "paid", payment_method: "bank" }).eq("id", rid).neq("status", "paid");
+      for (const r of restored) {
+        await payClient
+          .from("invoices")
+          .update({ status: "paid", payment_method: "bank", marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
+          .eq("id", r.id)
+          .neq("status", "paid");
       }
       await pipeline.from("bank_transactions").update({ status: tx.status ?? "matched", invoice_id: linkedInvoiceId }).eq("id", transactionId).eq("user_id", userId);
       if (payErr.message?.toLowerCase().includes("verwerkt")) return NextResponse.json({ error: "verwerkt" }, { status: 409 });
       return NextResponse.json({ error: "restore_failed", detail: payErr.message }, { status: 500 });
     }
-    restored.push(inv.id);
+    restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date });
   }
 
   // [BANK-TX-INVOICES] Row survives the detach (status pending) → clear its join rows explicitly.
@@ -231,7 +251,7 @@ async function unlinkBatch(args: {
     action: "bank.unlinked",
     entityType: "bank_transaction",
     entityId: transactionId,
-    newValue: { transaction_id: transactionId, invoice_ids: restored, invoice_count: restored.length, batch: true },
+    newValue: { transaction_id: transactionId, invoice_ids: restored.map((r) => r.id), invoice_count: restored.length, batch: true },
   });
 
   return NextResponse.json({ ok: true, batch: true, restored: restored.length });
