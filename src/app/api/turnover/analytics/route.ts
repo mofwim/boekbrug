@@ -87,5 +87,14 @@ export async function GET(req: NextRequest) {
   }
 
   const analytics = computeTurnoverAnalytics(turnover, ticketCount);
-  return NextResponse.json({ ok: true, year, quarter, label: `Q${quarter} ${year}`, analytics });
+
+  // [COHERENCE-TURNOVER-DELETE] The per-day list so the owner can REMOVE a wrong-date /
+  // wrong-period booked day (the DELETE /api/turnover/import handler existed but had no
+  // caller — a phantom day fed the BTW return with no way to reverse it). Sorted newest
+  // first; each row carries the date + booked total the delete UI acts on.
+  const days = turnover
+    .map((t) => ({ date: t.turnover_date, total: t.total_incl ?? 0 }))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+  return NextResponse.json({ ok: true, year, quarter, label: `Q${quarter} ${year}`, analytics, days });
 }
