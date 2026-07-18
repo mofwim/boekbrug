@@ -255,6 +255,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // [RD6] Spot a bank credit booked as 'omzet' whose amount equals an existing outgoing invoice —
+  // probably that invoice's PAYMENT mis-tapped as new revenue, which double-counts the sale (the
+  // invoice already booked it accrual, possibly in a prior quarter). Exact-cent + outgoing only.
+  const outgoingGrossCents = new Set<number>();
+  for (const i of invRaw) {
+    if (effDir(i) !== "outgoing") continue;
+    const cents = Math.round(((i.total_ex_btw ?? 0) + (i.btw_amount ?? 0)) * 100);
+    if (cents > 0) outgoingGrossCents.add(cents);
+  }
+  let probablePaymentAsOmzetCount = 0;
+  for (const t of bank) {
+    if ((t.amount ?? 0) > 0 && !t.invoice_id && t.category === "omzet") {
+      if (outgoingGrossCents.has(Math.round((t.amount ?? 0) * 100))) probablePaymentAsOmzetCount++;
+    }
+  }
+
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
   const completeness: AangifteCompleteness = {
@@ -278,6 +294,7 @@ export async function GET(req: NextRequest) {
     bankTxCount: bank.length,
     undocumentedCount,
     unmatchedIncomeCount,
+    probablePaymentAsOmzetCount,
     usesTurnover: turnover.length > 0,
     turnoverDays: turnover.length,
     reconExceptions,
