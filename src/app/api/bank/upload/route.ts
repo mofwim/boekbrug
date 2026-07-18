@@ -62,5 +62,6 @@ export async function POST(req: NextRequest) {
     skipped: result.skipped,
     statementStored: result.statementStored,
     parseWarnings: result.parseWarnings,
+    autoBooked: result.autoBooked, // [BANK-AUTO-FEEDBACK] payments the import auto-booked
   });
 }

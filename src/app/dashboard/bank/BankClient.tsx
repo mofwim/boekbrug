@@ -104,7 +104,7 @@ export default function BankClient() {
   const [busy, setBusy] = useState(false)
   // [BANK-DND] true while a file is being dragged over the upload zone.
   const [dragActive, setDragActive] = useState(false)
-  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number; unreadable: number } | null>(null)
+  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number; unreadable: number; autoBooked?: number } | null>(null)
   // [BANK-STATEMENTS] Uploaded statements (filename + upload time) and the
   // "refresh names" action that upgrades older rows' names from their description.
   const [statements, setStatements] = useState<{ id: string; name: string; uploadedAt: string; size: number }[] | null>(null)
@@ -311,7 +311,12 @@ export default function BankClient() {
       // [R2] parseWarnings = statement lines the parser could not read. Each one is a
       // transaction that is NOT in the overview (the raw file still reaches the accountant).
       // The UI dropped this field, so the owner was never told a line went missing.
-      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped, unreadable: Array.isArray(upJson.parseWarnings) ? upJson.parseWarnings.length : 0 })
+      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped, unreadable: Array.isArray(upJson.parseWarnings) ? upJson.parseWarnings.length : 0, autoBooked: upJson.autoBooked ?? 0 })
+      // [BANK-AUTO-FEEDBACK] Tell the owner right away when the import already booked payments for
+      // them — the money moved silently on the server; a toast makes the automatic work visible.
+      if ((upJson.autoBooked ?? 0) > 0) {
+        showToast(`${upJson.autoBooked} betaling${upJson.autoBooked === 1 ? '' : 'en'} automatisch gekoppeld ✓ — zie "Gekoppeld"`)
+      }
 
       // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the
       // server keeps a passthrough copy regardless of format). But a CSV/PDF — or

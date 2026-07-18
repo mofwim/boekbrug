@@ -35,6 +35,9 @@ export interface BankImportResult {
   // Set so the caller tells the owner the truth ("geen banktransacties geïmporteerd")
   // instead of the old silent 0-transaction passthrough that LOOKED ingested.
   nonBankSpreadsheet: boolean;
+  // [BANK-AUTO-FEEDBACK] How many near-certain payments the import auto-booked (marked invoices
+  // paid + linked). Surfaced so the owner is told the automatic work happened, not left guessing.
+  autoBooked: number;
 }
 
 export async function importBankStatement(args: {
@@ -106,11 +109,30 @@ export async function importBankStatement(args: {
   // for the owner to open /dashboard/bank. No session here, so the pay write uses the
   // service-role pipeline; the isEligible guard inside is authoritative. Best-effort: a
   // reconcile hiccup must never fail the import (the /bank load pass remains the backstop).
+  let autoBooked = 0;
   if (inserted > 0) {
     try {
-      await runBankAutoConfirm({ payClient: pipeline, pipeline, userId });
+      const confirmed = await runBankAutoConfirm({ payClient: pipeline, pipeline, userId });
+      autoBooked = confirmed.length;
     } catch (e) {
       console.error("[BANK-INGEST] auto-confirm after import failed (non-fatal)", e);
+    }
+  }
+
+  // [BANK-AUTO-FEEDBACK] The import books the near-certain payments SILENTLY on the server. The
+  // owner saw "facturen automatisch" nowhere — nothing told them their invoices had been marked
+  // paid. A single summary notification closes that gap: it says how many were booked and where to
+  // review/undo them (every auto-booking is one tap to reverse under "Gekoppeld"). Non-blocking.
+  if (autoBooked > 0) {
+    try {
+      await pipeline.from("notifications").insert({
+        user_id: userId,
+        title: autoBooked === 1 ? "1 betaling automatisch gekoppeld" : `${autoBooked} betalingen automatisch gekoppeld`,
+        body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Gekoppeld" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
+        type: "payment",
+      });
+    } catch {
+      /* non-blocking — the bookings + audit trail stand regardless of the notification */
     }
   }
 
@@ -189,5 +211,6 @@ export async function importBankStatement(args: {
     statementStored,
     minDate: min,
     nonBankSpreadsheet,
+    autoBooked, // [BANK-AUTO-FEEDBACK] how many payments the import auto-booked (for the upload UI)
   };
 }
