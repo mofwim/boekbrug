@@ -54,13 +54,16 @@ console.log('═══ safecore creditnota tests ═══\n')
   check('3. creditnota negatief + consistent → ok', v.ok === true, JSON.stringify(v))
 }
 
-// ── 4. Creditnota with MIXED signs (ex neg, btw pos) → blocked ──────────────
+// ── 4. [NET-CREDIT] MIXED signs (ex neg, btw pos) but the identity holds → ok ──
+// Policy change: a net-credit with POSITIVE BTW over a negative net total is legitimate (the
+// Altena statiegeld/retour shape). -4 + 0.84 = -3.16, rate |0.84/-4| = 21% (legal). The identity
+// check still blocks a genuine sign-error (see 10c) — only mutually-consistent numbers pass.
 {
   const v = evaluateArithmetic(
     { totalExBtw: -4.0, btwAmount: 0.84, totalIncBtw: -3.16 },
     { isCreditNote: true }
   )
-  check('4. creditnota met gemengde tekens → blocked', v.ok === false, JSON.stringify(v))
+  check('4. net-credit met gemengde tekens (identiteit klopt) → ok', v.ok === true, JSON.stringify(v))
 }
 
 // ── 5. Creditnota with all-POSITIVE amounts → blocked ───────────────────────
@@ -114,6 +117,69 @@ console.log('═══ safecore creditnota tests ═══\n')
     { isCreditNote: true }
   )
   check('10. creditnota met nul-totaal → blocked', v.ok === false)
+}
+
+// ── 10b. [NET-CREDIT] mixed-sign net-credit (the real Altena invoice) → ok ──
+// ex -123, BTW +13.42 (positive, on the 9% goods), totaal -109.58; -123 + 13.42 = -109.58.
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: -123.0, btwAmount: 13.42, totalIncBtw: -109.58 },
+    { isCreditNote: true }
+  )
+  check('10b. net-credit met POSITIEVE BTW en negatief totaal → ok', v.ok === true, JSON.stringify(v))
+}
+
+// ── 10c. net-credit but identity broken → still blocked (the read is wrong) ──
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: -123.0, btwAmount: 13.42, totalIncBtw: -100.0 },
+    { isCreditNote: true }
+  )
+  check('10c. net-credit met verkeerd totaal → blocked', v.ok === false && (v.flags ?? []).includes('sum_mismatch'))
+}
+
+// ── 10d. net-credit with an impossible rate (|btw/ex| > 21%) → blocked ──────
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: -10.0, btwAmount: 5.0, totalIncBtw: -5.0 },
+    { isCreditNote: true }
+  )
+  check('10d. net-credit met ongeldig tarief (50%) → blocked', v.ok === false && (v.flags ?? []).includes('illegal_btw_rate'))
+}
+
+// ── 10e. Regression: a normal positive invoice is untouched by the net-credit relaxation ──
+{
+  const std = evaluateArithmetic({ totalExBtw: 100, btwAmount: 21, totalIncBtw: 121 })
+  check('10e. gewone factuur (positief) blijft ok', std.ok === true, JSON.stringify(std))
+}
+
+// ── 10f. [NO-BASE] near-zero base with a large BTW → blocked (the rate check can't run) ──
+// €238 BTW on a €0.004 base is a physically-impossible read; the identity still holds, so only
+// this guard catches it now that the all-≤0 structural rule is gone.
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: 0.004, btwAmount: -238, totalIncBtw: -237.996 },
+    { isCreditNote: true }
+  )
+  check('10f. BTW zonder grondslag (bijna-nul ex) → blocked', v.ok === false && (v.flags ?? []).includes('illegal_btw_rate'), JSON.stringify(v))
+}
+
+// ── 10g. exact-zero base with BTW, negative total → blocked (closes the ex==0 gap too) ──
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: 0, btwAmount: -50, totalIncBtw: -50 },
+    { isCreditNote: true }
+  )
+  check('10g. BTW op nul-grondslag → blocked', v.ok === false, JSON.stringify(v))
+}
+
+// ── 10h. Regression: a legit 0%-BTW credit (btw exactly 0, real base) stays ok ──
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: -10, btwAmount: 0, totalIncBtw: -10 },
+    { isCreditNote: true }
+  )
+  check('10h. 0%-credit (btw=0, echte grondslag) blijft ok', v.ok === true, JSON.stringify(v))
 }
 
 // ── 11. Regression: opts absent === opts undefined === old behaviour ────────

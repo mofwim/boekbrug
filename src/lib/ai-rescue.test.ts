@@ -9,6 +9,7 @@ import {
   looksLikeStatementReason,
   needsVisualReread,
   isTransientAiError,
+  isAiApiError,
 } from "./ai";
 
 let passed = 0, failed = 0;
@@ -125,6 +126,15 @@ check("Claude 400 (bad request) → NOT transient (terminal)", isTransientAiErro
 check("invalid PDF → NOT transient", isTransientAiError(new Error("Ongeldig PDF-bestand")) === false);
 check("JSON parse failure → NOT transient", isTransientAiError(new Error("Unexpected token < in JSON")) === false);
 check("null → NOT transient", isTransientAiError(null) === false);
+
+console.log("\n— [REREAD-STRONG] a model-unavailable 404 is an API error (re-thrown → honest 502), not a verdict —");
+check("404 model not found → API error (so it re-throws, not a false 'not invoice')",
+  isAiApiError(new Error("Claude PDF API error 404: model not found")) === true);
+check("404 is NOT classified transient (won't retry-loop the sync)", isTransientAiError(new Error("Claude PDF API error 404: model not found")) === false);
+check("400 bad request → API error", isAiApiError(new Error("Claude API error 400: invalid")) === true);
+check("429 → API error too (covered by both predicates)", isAiApiError(new Error("Claude API error 429")) === true);
+check("a plain read/parse error is NOT an API error (stays FALLBACK)", isAiApiError(new Error("Unexpected token < in JSON")) === false);
+check("null → NOT an API error", isAiApiError(null) === false);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

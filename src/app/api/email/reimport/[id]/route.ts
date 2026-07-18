@@ -21,6 +21,17 @@ import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
+// [REREAD-STRONG] The manual "Opnieuw inlezen" is a single, user-initiated re-read of ONE flagged
+// invoice — the right place to spend a stronger model that reads the real page layout. The
+// automatic sync stays on Haiku (cheap, high-volume). This is the fix for complex invoices Haiku
+// mis-reads on every pass (statiegeld/retour, net-negative creditnota, crowded multi-column
+// tables). Must be a model enabled on the account.
+const REREAD_MODEL = "claude-sonnet-5";
+
+// [REREAD-STRONG] A raw-PDF read on the stronger model is slower than the Haiku text path — give
+// the route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
+export const maxDuration = 120;
+
 // A stored value may be a relative path (new) or a legacy full signed/public URL. Normalise
 // to the bucket-relative path. (Mirror of the helper in api/email/file/[id].)
 function toStoragePath(stored: string): string {
@@ -139,7 +150,10 @@ export async function POST(
   // Re-read with the CURRENT extractor (same path the import uses → identical behaviour).
   let c: Awaited<ReturnType<typeof classifyAttachment>>;
   try {
-    c = await classifyAttachment(base64, mimeType, filename, receiverName);
+    c = await classifyAttachment(base64, mimeType, filename, receiverName, {
+      model: REREAD_MODEL,
+      preferRawPdf: true,
+    });
   } catch (e) {
     console.error("[REIMPORT] classify failed", { invoiceId: id, e });
     return NextResponse.json({ error: "Kon de factuur nu niet opnieuw lezen — probeer het later opnieuw." }, { status: 502 });

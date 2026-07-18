@@ -2328,6 +2328,17 @@ export default function IncomingInvoicesClient({
     if (reimportAllRunning) return;
     const targets = pending.filter((p) => p.health.level === "needs-review");
     if (targets.length === 0) return;
+    // [REREAD-STRONG] The re-read is a heavier, on-demand read per invoice; confirm before running
+    // it across the whole flagged set so a large queue isn't kicked off (and the page blocked) by
+    // an accidental tap.
+    if (
+      targets.length > 1 &&
+      !window.confirm(
+        `${targets.length} facturen opnieuw inlezen? Dit leest elke gemarkeerde factuur opnieuw en kan even duren.`
+      )
+    ) {
+      return;
+    }
     setReimportAllRunning(true);
     setReimportAllDone(0);
 

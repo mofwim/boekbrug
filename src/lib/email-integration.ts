@@ -1156,7 +1156,11 @@ export async function classifyAttachment(
   filename: string,
   // [BRIDGE-EXTRACT] receiver identity (our company) — passed to the AI so it
   // never returns us as the vendor on an incoming invoice.
-  receiverName?: string | null
+  receiverName?: string | null,
+  // [REREAD-STRONG] Optional read-strategy override. The automatic sync passes nothing (Haiku,
+  // cheap text path). The manual "Opnieuw inlezen" passes a stronger model + preferRawPdf so a
+  // stuck complex invoice is re-read on the real page layout by a more capable model.
+  opts?: { model?: string; preferRawPdf?: boolean }
 ): Promise<AttachmentClassification> {
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
 
@@ -1166,6 +1170,8 @@ export async function classifyAttachment(
   // that the caller would misread as "could not read" and permanently skip.
   const result = await verifyInvoiceFromPdf(base64Data, mimeType, filename, receiverName, {
     throwOnTransient: true,
+    model: opts?.model,
+    preferRawPdf: opts?.preferRawPdf,
   })
 
   return {
