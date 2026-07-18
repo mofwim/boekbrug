@@ -24,6 +24,7 @@ import {
   deriveDueDate,
 } from '@/lib/safecore'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
+import { resolveSupplierForImport } from '@/lib/supplier-registry'
 
 // Legal suffixes / entity noise stripped when comparing two vendor names for the
 // duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
@@ -2256,6 +2257,18 @@ export async function syncUserEmails(
       const invoiceStatus = autoAdv.advance ? 'received' : 'processing'
 
       const insertPipeline = createPipelineClient()
+
+      // [SUPPLIER-REGISTRY] Resolve the vendor to a CANONICAL supplier (keyed on IBAN, then
+      // normalized name) so the same company stops appearing under many spellings. Best-effort:
+      // returns null on any error / junk vendor → we fall back to the raw name + null supplier_id,
+      // exactly the pre-registry behaviour. When resolved, we store the supplier's canonical name
+      // so the crediteuren list is consistent across a supplier's invoices.
+      const rawVendorName = classification.vendor || extractSenderName(attachment.from)
+      const supplier = await resolveSupplierForImport(insertPipeline, userId, {
+        name: classification.vendor,
+        iban: classification.vendorIban ?? null,
+      })
+
       const { data: insertedInvoice, error: dbError } = await insertPipeline
         .from('invoices')
         .insert({
@@ -2264,7 +2277,8 @@ export async function syncUserEmails(
           direction: 'incoming',
           status: invoiceStatus,
           source: 'email',
-          client_name: classification.vendor || extractSenderName(attachment.from),
+          supplier_id: supplier?.id ?? null,
+          client_name: supplier?.name || rawVendorName,
           client_email: extractEmail(attachment.from),
           invoice_date: invoiceDate,
           // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null.

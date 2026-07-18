@@ -339,6 +339,8 @@ CREATE TABLE public.invoices (
   vendor_iban text,
   payment_reference text,
   payment_prepared_at timestamp with time zone,
+  -- [SUPPLIER-REGISTRY] canonical supplier link for incoming invoices (see supplier_registry.sql).
+  supplier_id uuid,
   CONSTRAINT invoices_pkey PRIMARY KEY (id),
   CONSTRAINT invoices_sender_id_fkey
     FOREIGN KEY (sender_id) REFERENCES public.profiles(id),
@@ -349,7 +351,27 @@ CREATE TABLE public.invoices (
   CONSTRAINT invoices_offerte_converted_to_fkey
     FOREIGN KEY (offerte_converted_to) REFERENCES public.invoices(id),
   CONSTRAINT invoices_document_id_fkey
-    FOREIGN KEY (document_id) REFERENCES public.documents(id)
+    FOREIGN KEY (document_id) REFERENCES public.documents(id),
+  CONSTRAINT invoices_supplier_id_fkey
+    FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL
+);
+
+-- [SUPPLIER-REGISTRY] Canonical supplier (leverancier) registry for incoming invoices.
+-- Keyed on IBAN (strong) then normalized name (fallback) so the same company stops appearing
+-- under many spellings. Full definition + RLS in supabase/migrations/supplier_registry.sql.
+CREATE TABLE public.suppliers (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name text NOT NULL,
+  name_key text,
+  iban text,
+  kvk_number text,
+  btw_number text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT suppliers_pkey PRIMARY KEY (id),
+  CONSTRAINT suppliers_user_id_fkey
+    FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE
 );
 
 CREATE TABLE public.messages (

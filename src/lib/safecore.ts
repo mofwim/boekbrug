@@ -134,7 +134,17 @@ export function evaluateArithmetic(
     // excl + BTW must equal incl (tolerance 0.02 for rounding)
     if (Math.abs(ex + btw - incl) > 0.02) {
       flags.push('sum_mismatch')
-      reasons.push('excl + BTW ≠ totaal')
+      // [BREAKDOWN-MISSING] Distinguish "the split couldn't be READ" (both ex and BTW absent,
+      // only the printed total came through — the common email case that showed a confusing
+      // "excl + BTW ≠ totaal") from a genuine arithmetic contradiction (a split that IS present
+      // but doesn't add up). Same flag, clearer owner-facing reason. The total is still the money;
+      // the invoice is held either way until the human supplies the breakdown.
+      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      reasons.push(
+        breakdownMissing
+          ? 'de BTW-uitsplitsing (excl + BTW) ontbreekt — vul deze aan'
+          : 'excl + BTW ≠ totaal'
+      )
     }
     // Legal BTW rate: computed (btw_rate is NOT stored). Guard division by zero;
     // when ex=0 we can't derive a rate, so we skip the rate check (the sum check
@@ -211,7 +221,14 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
     // excl + BTW must equal incl — the identity holds with negatives.
     if (Math.abs(ex + btw - incl) > 0.02) {
       flags.push('sum_mismatch')
-      reasons.push('excl + BTW ≠ totaal')
+      // [BREAKDOWN-MISSING] Same clarification as the standard gate: an unreadable split
+      // (both absent) reads clearer than a false "≠ totaal".
+      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      reasons.push(
+        breakdownMissing
+          ? 'de BTW-uitsplitsing (excl + BTW) ontbreekt — vul deze aan'
+          : 'excl + BTW ≠ totaal'
+      )
     }
     // Legal BTW rate — |btw/ex| with an abs-guard on ex. (neg ÷ neg = positive,
     // so the rate itself is positive; [BTW-MIXED-RATE] blend logic applies.)
