@@ -42,6 +42,7 @@ export type AuditAction =
   | 'invoice.auto_verified'           // ← [AUTO-ADVANCE] app moved a clean, confident invoice processing→received without a tap
   | 'invoice.reimported'              // ← [REIMPORT] owner re-read a queued invoice's PDF with the current extractor
   | 'bank.auto_confirmed'             // ← [BANK-AUTO-CONFIRM] app booked a near-certain bank↔invoice match without a tap
+  | 'bank.auto_confirmed_batch'       // ← [BANK-BATCH] app booked a provably-exact multi-invoice batch payment
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
