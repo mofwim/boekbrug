@@ -157,16 +157,19 @@ export async function POST(
     updatePatch.status = "paid";
     updatePatch.payment_method = body.payment_method;
     updatePatch.marked_paid_at = new Date().toISOString();
-    // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Accept a valid
-    // YYYY-MM-DD; otherwise fall back to today's date (in-system confirmation
-    // day) so a paid invoice never lacks a payment_date. marked_paid_at remains
-    // the precise confirmation timestamp; payment_date is the accounting day.
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Prefer an explicit YYYY-MM-DD; else the
+    // invoice's OWN date (a receipt uploaded weeks later is a far better accounting-day proxy than
+    // "today", which would misattribute a cross-quarter payment to the wrong quarter); "today" is
+    // only the last resort so a paid invoice never lacks a payment_date. marked_paid_at stays the
+    // precise confirmation timestamp; payment_date is the accounting day. (Accrual BTW is on the
+    // invoice date regardless, so this only fixes the settlement-quarter display.)
+    const isoRe = /^\d{4}-\d{2}-\d{2}$/;
+    const reviewedDate = typeof body.invoice_date === "string" && isoRe.test(body.invoice_date) ? body.invoice_date : null;
+    const invDate = typeof invoice.invoice_date === "string" && isoRe.test(invoice.invoice_date) ? invoice.invoice_date : null;
     updatePatch.payment_date =
-      typeof body.payment_date === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(body.payment_date)
+      typeof body.payment_date === "string" && isoRe.test(body.payment_date)
         ? body.payment_date
-        : todayIso;
+        : reviewedDate ?? invDate ?? new Date().toISOString().slice(0, 10);
   } else {
     // verify → enters the accountant's world as a Crediteur (unpaid, shared)
     updatePatch.status = "received";

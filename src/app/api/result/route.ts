@@ -213,12 +213,28 @@ export async function GET(req: NextRequest) {
 
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, commissionToBook, coveredBudget);
 
+  // [DATELESS] A verified invoice with NO invoice_date is dropped by the date-range fetch above, so
+  // it is absent from the figures — count it (same rule as /api/aangifte + the ZIP) so the Resultaat
+  // screen can warn instead of quietly understating omzet/voorbelasting.
+  const OUTGOING_OK = new Set(["paid", "sent", "overdue"]);
+  const datelessRows = await fetchAllRows((from, to) => pipeline
+    .from("invoices")
+    .select("status, direction, receiver_id")
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+    .is("invoice_date", null)
+    .order("id", { ascending: true }).range(from, to));
+  const datelessVerifiedCount = datelessRows.filter((i) => {
+    const dir = effDir(i);
+    return dir === "incoming" ? INCOMING_OK.has(i.status ?? "") : OUTGOING_OK.has(i.status ?? "");
+  }).length;
+
   return NextResponse.json({
     ok: true,
     year,
     quarter,
     label: `Q${quarter} ${year}`,
     result,
+    datelessVerifiedCount, // [DATELESS] verified invoices excluded for want of a date (warn upstream)
     // [TRIANGLE] Transparency for the owner + the closing package: the raw commission, what
     // was actually booked (net of acquirer invoices), and the Leg-A exceptions to review.
     reconciliation: {

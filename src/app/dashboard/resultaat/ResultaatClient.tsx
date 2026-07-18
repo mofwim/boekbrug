@@ -23,7 +23,7 @@ interface Reconciliation {
   totalCommission: number; commissionBooked: number; acquirerFeeInvoices: number
   grossMismatchDays: number; incompleteDays: number; eftSettlements: number
 }
-interface Data { ok: boolean; label: string; result: Result; reconciliation?: Reconciliation }
+interface Data { ok: boolean; label: string; result: Result; reconciliation?: Reconciliation; datelessVerifiedCount?: number }
 
 export default function ResultaatClient() {
   const sp = useSearchParams()
@@ -132,6 +132,16 @@ export default function ResultaatClient() {
                     {data.reconciliation.incompleteDays} dag(en) nog niet compleet — upload de terminal-afrekening of het bankafschrift voor een volledige controle.
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* [DATELESS] A verified invoice with NO date is dropped from these figures — warn so the
+                omzet/voorbelasting is never quietly too low (same warning as de aangifte + het ZIP). */}
+            {(data.datelessVerifiedCount ?? 0) > 0 && (
+              <div style={{ background: M3.warningContainer, borderRadius: 14, padding: '12px 14px', marginBottom: 14, fontSize: 13, color: M3.warning }}>
+                {data.datelessVerifiedCount === 1
+                  ? '1 geverifieerde factuur heeft geen datum'
+                  : `${data.datelessVerifiedCount} geverifieerde facturen hebben geen datum`} en tellen daardoor niet mee in dit kwartaal. Vul de factuurdatum in, anders is je omzet of BTW-aftrek te laag.
               </div>
             )}
 

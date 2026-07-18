@@ -5,7 +5,7 @@
 // Cash sales (in) and cash expenses (out); deposits/withdrawals to the bank are
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BackLink } from '@/components/ui/BackLink'
 
 const M3 = {
@@ -145,6 +145,40 @@ export default function KasClient() {
     try { await fetch(`/api/cash?id=${id}`, { method: 'DELETE' }); await load(); if (kbOpen) void loadKasboek(kbPeriod) } catch { await load() }
   }
 
+  // [KAS-UPLOAD] Add a receipt/invoice the owner ALREADY paid in cash. It runs through the normal
+  // intake (AI read + duplicate guard), pre-marked "contant betaald" (paid_method=kas + the chosen
+  // date), so it lands in the verify queue with method + date pre-filled. The human confirms there,
+  // and that confirm books the invoice→kasboek cash settlement automatically — keeping the BTW
+  // aftrekbaar. It is deliberately NOT a manual cash 'kosten' entry (that would drop the
+  // voorbelasting and double-count once the same receipt is booked as an invoice).
+  const [cashUploading, setCashUploading] = useState(false)
+  const [cashUploadMsg, setCashUploadMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const cashFileRef = useRef<HTMLInputElement | null>(null)
+
+  async function uploadCashInvoice(file: File) {
+    setCashUploading(true); setCashUploadMsg(null)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('paid_method', 'kas')
+      form.append('paid_date', date) // the date chosen in the form above (defaults to today)
+      const res = await fetch('/api/intake', { method: 'POST', body: form })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        setCashUploadMsg({ kind: 'ok', text: 'Bon toegevoegd. Bevestig ‘contant betaald’ in Te verifiëren — daarna staat de betaling automatisch in je kasboek.' })
+      } else if (json?.duplicate) {
+        setCashUploadMsg({ kind: 'err', text: 'Deze bon staat er al — hij is eerder toegevoegd.' })
+      } else {
+        setCashUploadMsg({ kind: 'err', text: json?.error || 'Uploaden mislukt — probeer het opnieuw.' })
+      }
+    } catch {
+      setCashUploadMsg({ kind: 'err', text: 'Er ging iets mis bij het uploaden.' })
+    } finally {
+      setCashUploading(false)
+      if (cashFileRef.current) cashFileRef.current.value = ''
+    }
+  }
+
   // [CASH-SETTLE] 'betaling' is a system-managed settlement of a cash-paid invoice — labelled
   // for display, but never offered in the add form (CATS), and not manually deletable (undo the
   // payment on the invoice instead; the kasboek then reconciles it away).
@@ -169,6 +203,34 @@ export default function KasClient() {
           </div>
           {balance < 0 && (
             <div style={{ fontSize: 12.5, color: M3.error, marginTop: 2 }}>Negatief saldo — je hebt meer uitgaven dan ontvangsten geboekt.</div>
+          )}
+        </div>
+
+        {/* [KAS-UPLOAD] Add a cash-paid invoice/receipt (photo or PDF). It goes to the verify queue
+            pre-marked "contant betaald"; the human confirms and the payment lands in the kasboek
+            automatically — the BTW stays aftrekbaar (unlike a plain cash-cost entry). */}
+        <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 16, marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, marginBottom: 4 }}>Contant betaalde factuur toevoegen</div>
+          <div style={{ fontSize: 12.5, color: M3.neutral, marginBottom: 12, lineHeight: 1.45 }}>
+            Foto of PDF van een bon die je contant hebt betaald. We lezen hem uit en zetten hem klaar als ‘contant betaald’ — jij bevestigt, daarna staat de betaling automatisch in je kasboek en blijft de BTW aftrekbaar.
+          </div>
+          <input
+            ref={cashFileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadCashInvoice(f) }}
+          />
+          <button
+            onClick={() => cashFileRef.current?.click()} disabled={cashUploading}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 16px', borderRadius: 12, border: 'none', cursor: cashUploading ? 'default' : 'pointer', background: M3.primary, color: M3.onPrimary, fontFamily: FONT, fontSize: 14, fontWeight: 600, opacity: cashUploading ? 0.6 : 1 }}
+          >
+            {cashUploading ? 'Bezig met uploaden…' : '📄 Bon uploaden'}
+          </button>
+          {cashUploadMsg && (
+            <div style={{ marginTop: 10, fontSize: 12.5, color: cashUploadMsg.kind === 'ok' ? M3.success : M3.error, lineHeight: 1.45 }}>
+              {cashUploadMsg.text}
+              {cashUploadMsg.kind === 'ok' && (
+                <> <a href="/dashboard/incoming" style={{ color: M3.primary, fontWeight: 600 }}>Ga naar Te verifiëren →</a></>
+              )}
+            </div>
           )}
         </div>
 

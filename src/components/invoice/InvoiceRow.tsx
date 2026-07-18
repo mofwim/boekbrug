@@ -144,21 +144,28 @@ export function ReconBadge({
   }
   if (recon.pendingMatch) {
     const clickable = !!onReconConfirm
+    // [BANK-RECON-CONFIRM] A SAFE match (reference-backed) is one tap to book — blue "Betaling
+    // gevonden". An amount-only match is only a POSSIBILITY (a same-amount invoice could be the
+    // real one), so it reads amber "Mogelijke betaling — controleer" and opens the bank page for
+    // review rather than claiming certainty. Never overstate what the engine actually knows.
+    const safe = recon.pendingMatch.safe === true
     return (
       <span
         role={clickable ? 'button' : undefined}
         tabIndex={clickable ? 0 : undefined}
         onClick={clickable ? (e) => { e.stopPropagation(); onReconConfirm!(invoiceId) } : undefined}
         onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onReconConfirm!(invoiceId) } } : undefined}
-        title="Er staat een betaling in je bankafschrift die hierbij lijkt te horen — bevestig het op de Bank-pagina"
+        title={safe
+          ? 'Deze betaling staat in je bankafschrift en hoort bij deze factuur — tik om te bevestigen'
+          : 'Er staat een betaling in je bankafschrift die hierbij zou kunnen horen — controleer het op de Bank-pagina'}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 3,
-          backgroundColor: '#E8F0FE', color: '#1967D2',
+          backgroundColor: safe ? '#E8F0FE' : '#FEF7E0', color: safe ? '#1967D2' : '#B26A00',
           borderRadius: radius, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
           cursor: clickable ? 'pointer' : 'default',
         }}
       >
-        <span aria-hidden>🏦</span> Betaling gevonden
+        <span aria-hidden>🏦</span> {safe ? 'Betaling gevonden' : 'Mogelijke betaling'}
       </span>
     )
   }

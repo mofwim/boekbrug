@@ -41,6 +41,11 @@ export interface ReadinessSignals {
   // never "needs a document"), so a payment with no invoice behind it scored the
   // quarter "100% klaar". A genuine gap: revenue the accountant can't tie to a sale.
   unmatchedIncomeCount: number;
+  // [RD6] Bank credits the owner categorised 'omzet' (so they're booked as NEW revenue) whose exact
+  // amount also matches an existing invoice's gross — probably an invoice PAYMENT mis-tapped as
+  // omzet, which would double-count the sale (the invoice already booked it on its own date). A
+  // risk to eyeball, not a hard block. Optional (older callers omit it → treated as 0).
+  probablePaymentAsOmzetCount?: number;
 
   // ── Till / cash reconciliation (retail triangle: till ⇄ bank ⇄ drawer) ──
   usesTurnover: boolean;                // daily_turnover rows exist → the triangle applies
@@ -228,6 +233,37 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 ontvangen betaling zonder factuur"
               : `${s.unmatchedIncomeCount} ontvangen betalingen zonder factuur`,
           detail: "Koppel de betaling aan een factuur of geef aan wat het is (bijv. huur, lening, privé). Onverklaarde omzet kan de boekhouder niet aansluiten.",
+          fix: FIX.bank,
+        });
+      }
+      // [VOORBELASTING-RISK] Supplier-like payments (needsDocument) paid by bank with NO purchase
+      // invoice behind them: the deductible BTW (voorbelasting, 5b) on those costs is not claimed,
+      // so the owner would pay MORE BTW than needed. Per [NO-CODEER] we do NOT hand-code the debit
+      // (coding a bare debit yields no voorbelasting and risks double-counting the invoice) — we
+      // surface it as a RISK to upload the inkoopfactuur. It doesn't hard-block daily automation,
+      // but it means readiness can never say "klaar" in silence while deductible BTW is missing.
+      if (s.undocumentedCount > 0) {
+        risks.push({
+          severity: "risk",
+          title:
+            s.undocumentedCount === 1
+              ? "1 leverancierbetaling zonder inkoopfactuur"
+              : `${s.undocumentedCount} leverancierbetalingen zonder inkoopfactuur`,
+          detail: "Je hebt deze kosten per bank betaald, maar er is nog geen inkoopfactuur. Upload de factuur — anders mis je de BTW-aftrek (voorbelasting) op deze kosten en betaal je te veel.",
+          fix: FIX.bank,
+        });
+      }
+      // [RD6] A bank credit booked as 'omzet' whose amount equals an existing invoice is probably a
+      // factuurbetaling mis-tapped as revenue — booking it AND the invoice double-counts the sale.
+      const dubbel = s.probablePaymentAsOmzetCount ?? 0;
+      if (dubbel > 0) {
+        risks.push({
+          severity: "risk",
+          title:
+            dubbel === 1
+              ? "1 ontvangst als omzet geboekt lijkt op een factuurbetaling"
+              : `${dubbel} ontvangsten als omzet geboekt lijken op een factuurbetaling`,
+          detail: "Het bedrag is gelijk aan een factuur. Als dit de betaling van die factuur is, koppel hem — anders telt de omzet dubbel (de factuur telt al mee).",
           fix: FIX.bank,
         });
       }

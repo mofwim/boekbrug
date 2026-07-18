@@ -152,6 +152,7 @@ export type Database = {
           invoice_id: string | null
           reference: string | null
           status: string | null
+          statement_document_id: string | null
           user_id: string | null
         }
         Insert: {
@@ -167,6 +168,7 @@ export type Database = {
           invoice_id?: string | null
           reference?: string | null
           status?: string | null
+          statement_document_id?: string | null
           user_id?: string | null
         }
         Update: {
@@ -182,6 +184,7 @@ export type Database = {
           invoice_id?: string | null
           reference?: string | null
           status?: string | null
+          statement_document_id?: string | null
           user_id?: string | null
         }
         Relationships: [
@@ -200,6 +203,30 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      bank_tx_invoices: {
+        Row: {
+          created_at: string | null
+          id: string
+          invoice_id: string
+          transaction_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          invoice_id: string
+          transaction_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          invoice_id?: string
+          transaction_id?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       counterpart_memory: {
         Row: {

@@ -35,6 +35,9 @@ export interface BankImportResult {
   // Set so the caller tells the owner the truth ("geen banktransacties geïmporteerd")
   // instead of the old silent 0-transaction passthrough that LOOKED ingested.
   nonBankSpreadsheet: boolean;
+  // [BANK-AUTO-FEEDBACK] How many near-certain payments the import auto-booked (marked invoices
+  // paid + linked). Surfaced so the owner is told the automatic work happened, not left guessing.
+  autoBooked: number;
 }
 
 export async function importBankStatement(args: {
@@ -79,6 +82,7 @@ export async function importBankStatement(args: {
   // ── dedup + insert transactions (only when the parse yielded some) ──
   let inserted = 0;
   let skipped = 0;
+  let insertedIds: string[] = [];      // [BANK-TX-STATEMENT-LINK] the rows THIS import created
   if (transactions.length > 0) {
     let existing: ExistingTxKey[] = [];
     const { max } = dateRange(transactions);
@@ -95,8 +99,8 @@ export async function importBankStatement(args: {
     skipped = dd.skipped;
     if (dd.toInsert.length > 0) {
       const rows = mapToRows(dd.toInsert, userId);
-      const { error } = await pipeline.from("bank_transactions").insert(rows);
-      if (!error) inserted = rows.length;
+      const { data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id");
+      if (!error) { inserted = rows.length; insertedIds = (insData ?? []).map((r) => r.id as string); }
     }
   }
 
@@ -105,16 +109,38 @@ export async function importBankStatement(args: {
   // for the owner to open /dashboard/bank. No session here, so the pay write uses the
   // service-role pipeline; the isEligible guard inside is authoritative. Best-effort: a
   // reconcile hiccup must never fail the import (the /bank load pass remains the backstop).
+  let autoBooked = 0;
   if (inserted > 0) {
     try {
-      await runBankAutoConfirm({ payClient: pipeline, pipeline, userId });
+      const confirmed = await runBankAutoConfirm({ payClient: pipeline, pipeline, userId });
+      autoBooked = confirmed.length;
     } catch (e) {
       console.error("[BANK-INGEST] auto-confirm after import failed (non-fatal)", e);
     }
   }
 
+  // [BANK-AUTO-FEEDBACK] The import books the near-certain payments SILENTLY on the server. The
+  // owner saw "facturen automatisch" nowhere — nothing told them their invoices had been marked
+  // paid. A single summary notification closes that gap: it says how many were booked and where to
+  // review/undo them (every auto-booking is one tap to reverse under "Gekoppeld"). Non-blocking.
+  if (autoBooked > 0) {
+    // Count in FACTUREN (invoices), the thing that actually changed state — not "betalingen": one
+    // batch payment settles several invoices, so "N betalingen" would overstate. Honest wording.
+    try {
+      await pipeline.from("notifications").insert({
+        user_id: userId,
+        title: autoBooked === 1 ? "1 factuur automatisch gekoppeld" : `${autoBooked} facturen automatisch gekoppeld`,
+        body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Gekoppeld" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
+        type: "payment",
+      });
+    } catch {
+      /* non-blocking — the bookings + audit trail stand regardless of the notification */
+    }
+  }
+
   // ── raw passthrough store (best-effort — the transactions above are unaffected) ──
   let statementStored = false;
+  let statementDocId: string | null = null; // [BANK-TX-STATEMENT-LINK] the statement this import created/reused
   try {
     const contentHash = computeContentHash(buffer);
     const { data: existingDoc } = await pipeline
@@ -126,6 +152,7 @@ export async function importBankStatement(args: {
       .maybeSingle();
     if (existingDoc) {
       statementStored = true;
+      statementDocId = existingDoc.id as string;
     } else {
       const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storagePath = `${userId}/bank/${Date.now()}-${safeName}`;
@@ -154,10 +181,26 @@ export async function importBankStatement(args: {
           .select("id")
           .single();
         statementStored = sdoc?.id != null;
+        statementDocId = (sdoc?.id as string | undefined) ?? null;
       }
     }
   } catch {
     // best-effort — the transactions are stored regardless; only the passthrough is missing
+  }
+
+  // [BANK-TX-STATEMENT-LINK] Stamp the statement onto the rows THIS import created, so deleting
+  // the statement can later reverse exactly its own bookings (and re-import can't double). Only
+  // the freshly-inserted rows — never rows a prior import already owns. Best-effort.
+  if (statementDocId && insertedIds.length > 0) {
+    try {
+      await pipeline
+        .from("bank_transactions")
+        .update({ statement_document_id: statementDocId })
+        .in("id", insertedIds)
+        .eq("user_id", userId);
+    } catch {
+      /* non-fatal — the link is a convenience for reversal, not a money figure */
+    }
   }
 
   return {
@@ -170,5 +213,6 @@ export async function importBankStatement(args: {
     statementStored,
     minDate: min,
     nonBankSpreadsheet,
+    autoBooked, // [BANK-AUTO-FEEDBACK] how many payments the import auto-booked (for the upload UI)
   };
 }

@@ -89,14 +89,17 @@ console.log("\n— missing bank data is a real gap (bank → 0) —");
   check("almost, not ready", r.status === "almost");
 }
 
-console.log("\n— [NO-CODEER] uncoded cost debits do NOT lower readiness (feature removed) —");
+console.log("\n— [NO-CODEER] uncoded cost debits don't BLOCK, but a supplier payment without an invoice is a surfaced voorbelasting RISK —");
 {
-  // 120 tx, 12 uncoded cost debits. Coding a bare bank debit gives no BTW and can
-  // double-count an invoice, so it is NOT a readiness gap. bank stays 30 → 100.
+  // 120 tx, 12 supplier-like cost debits with no inkoopfactuur. We never hand-code a bare debit
+  // (that yields no BTW and can double-count) → NOT a blocking 'missing' gap. But the missing
+  // voorbelasting is real, so it's surfaced as a RISK (eyeball, not block): still 'ready', and the
+  // honesty guard caps the score at 99 so a clean 100 never hides an unclaimed BTW-aftrek.
   const r = buildReadiness(perfect({ bankTxCount: 120, undocumentedCount: 12 }));
-  check("score = 100 (undocumented no longer drags bank)", r.score === 100);
-  check("no 'wacht nog op een bon' item is listed", !r.missing.some((m) => /wachten nog op een bon/.test(m.title)));
-  check("still ready", r.status === "ready");
+  check("not a false 100 while voorbelasting may be missing (capped to 99)", r.score === 99);
+  check("no 'wacht nog op een bon' MISSING gap is listed", !r.missing.some((m) => /wachten nog op een bon/.test(m.title)));
+  check("surfaced as a voorbelasting RISK", r.risks.some((m) => /leverancierbetaling/.test(m.title)));
+  check("still ready — a risk doesn't block handover", r.status === "ready");
 }
 
 console.log("\n— unmatched INCOME still lowers the bank ratio (revenue truth survives) —");

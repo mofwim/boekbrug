@@ -17,10 +17,12 @@ import {
   matchTransactions,
   isFullyCovered,
   coveredReferenceNumbers,
+  parseReferenceNumbers,
   normalizeRef,
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -156,6 +158,87 @@ export async function GET() {
     };
   });
 
+  // [BANK-R1] Already-MATCHED transactions (incl. the app's own auto-bookings). This route used to
+  // return pending txs only, so an auto-confirmed payment simply vanished from the UI on reload —
+  // the owner saw "4 facturen automatisch" once and then nothing, with no way to see WHICH invoices
+  // were booked or to undo one. We now return the matched lines too, shaped as "done" suggestions
+  // (allCovered = true), so they populate the "Gekoppeld" tab with a working one-tap Ontkoppelen.
+  // Paginated + newest-first: an account can hold >1000 matched lines over several quarters, and
+  // the ~1000-row PostgREST cap would otherwise silently drop some — so a booked payment could
+  // vanish from "Gekoppeld" and become unreachable to undo. fetchAllRows pages past the cap; the
+  // date order means any residual cap drops OLDEST rows, never the current quarter's.
+  const matchedRows = await fetchAllRows((from, to) =>
+    pipeline
+      .from("bank_transactions")
+      .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
+      .eq("user_id", user.id)
+      .eq("status", "matched")
+      .order("date", { ascending: false })
+      .range(from, to),
+  );
+  const matchedTx = (matchedRows ?? []) as BankTransactionDbRow[];
+
+  // Which invoice(s) each matched line paid — the AUTHORITATIVE id-based set (join table), so a
+  // batch shows every invoice it settled, not just the representative. One grouped read of the
+  // join table + a fallback to the single invoice_id (covers pre-migration lines with no join
+  // rows). Best-effort, display only — wrapped so a missing table degrades to the invoice_id path.
+  const idsByTx = new Map<string, Set<string>>();
+  for (const r of matchedTx) idsByTx.set(r.id, new Set(r.invoice_id ? [r.invoice_id as string] : []));
+  if (matchedTx.length > 0) {
+    try {
+      const { data: linkRows } = await pipeline
+        .from("bank_tx_invoices")
+        .select("transaction_id, invoice_id")
+        .eq("user_id", user.id)
+        .in("transaction_id", matchedTx.map((r) => r.id));
+      for (const lr of (linkRows ?? []) as { transaction_id: string; invoice_id: string }[]) {
+        (idsByTx.get(lr.transaction_id) ?? idsByTx.set(lr.transaction_id, new Set()).get(lr.transaction_id)!).add(lr.invoice_id);
+      }
+    } catch {
+      /* pre-migration: keep the invoice_id fallback already seeded above */
+    }
+  }
+  const allWantIds = new Set<string>();
+  for (const s of idsByTx.values()) for (const id of s) allWantIds.add(id);
+  const numById = new Map<string, string>();
+  if (allWantIds.size > 0) {
+    const { data: linkedInvs } = await pipeline
+      .from("invoices")
+      .select("id, invoice_number")
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .in("id", [...allWantIds]);
+    for (const i of linkedInvs ?? []) numById.set(i.id, normalizeRef(i.invoice_number ?? ""));
+  }
+  const linkedNumbersByTx = new Map<string, string[]>();
+  for (const [txId, ids] of idsByTx) {
+    linkedNumbersByTx.set(txId, [...ids].map((id) => numById.get(id) ?? "").filter((n) => n.length > 0));
+  }
+
+  const linkedSuggestions = matchedTx.map((row) => {
+    const t = rowToTransaction(row);
+    // The AUTHORITATIVE paid numbers are the actually-linked invoices (join table / invoice_id).
+    // Prefer them alone — a bank reference can contain unrelated numeric tokens (order/customer
+    // numbers) that parseReferenceNumbers would otherwise show as false "Betaald" slots. Only when
+    // NO invoice number is known (a legacy line with no link) do we fall back to the parsed
+    // reference so the card still shows something.
+    const linkedNums = linkedNumbersByTx.get(row.id) ?? [];
+    const covered = linkedNums.length > 0 ? [...new Set(linkedNums)] : parseReferenceNumbers(row.reference);
+    return {
+      transactionId: row.id,
+      date: t.date,
+      amount: t.amount,
+      description: t.description,
+      counterpart: t.counterpartName,
+      reference: t.reference,
+      outcome: "auto" as const, // nominal — it is already done (allCovered), never shown as pending
+      best: null,
+      candidates: [],
+      partiallyLinked: false,
+      allCovered: true,
+      coveredNumbers: covered,
+    };
+  });
+
   return NextResponse.json({
     ok: true,
     summary: {
@@ -164,6 +247,6 @@ export async function GET() {
       choice: result.choiceCount,
       none: result.noneCount,
     },
-    suggestions,
+    suggestions: [...suggestions, ...linkedSuggestions],
   });
 }

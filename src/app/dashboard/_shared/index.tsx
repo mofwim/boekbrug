@@ -87,7 +87,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
   // [BANK-RECON-BADGE] Owner-facing reconciliation badges (never in accountant mode).
   // Self-wired here so every consumer of the shared table gets them without prop threading.
   const router = useRouter()
-  const { byInvoice: reconByInvoice } = useInvoiceReconciliation(!isAccountant)
+  const { byInvoice: reconByInvoice, confirmMatch } = useInvoiceReconciliation(!isAccountant)
 
   const emptyLabel = isAccountant
     ? statusFilter === 'all'
@@ -198,7 +198,14 @@ export function InvoiceTable(props: InvoiceTableProps) {
                     : null
                 }
                 recon={!isAccountant ? reconByInvoice[invoice.id] : undefined}
-                onReconConfirm={!isAccountant ? () => router.push('/dashboard/bank') : undefined}
+                onReconConfirm={!isAccountant ? async (id) => {
+                  // [BANK-RECON-CONFIRM] Book a safe (reference-backed) match in one tap; the badge
+                  // flips to "In bankafschrift" via the hook. An amount-only match ('navigate') opens
+                  // the bank page to review; router.refresh() picks up the new paid status.
+                  const r = await confirmMatch(id)
+                  if (r === 'ok') router.refresh()
+                  else if (r !== 'error') router.push('/dashboard/bank')
+                } : undefined}
               />
             ))}
           </InfiniteList>

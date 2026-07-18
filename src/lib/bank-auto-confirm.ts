@@ -23,6 +23,7 @@ import {
 } from "./bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
+import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
 
 export interface AutoConfirmed {
@@ -115,6 +116,11 @@ export async function runBankAutoConfirm(args: {
       continue;
     }
 
+    // [BANK-TX-INVOICES] Record the exact invoice this payment paid so a later reversal
+    // (unlink / delete-statement) reverses by id, never by number. Best-effort — the money-truth
+    // is the tx.invoice_id + invoice.status above; this row is only the collision-free undo index.
+    await recordPaymentLinks(pipeline, userId, txId, [invoiceId]);
+
     confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0 });
     await logAuditAction({
       userId,
@@ -180,6 +186,11 @@ export async function runBankAutoConfirm(args: {
       .update({ status: "matched", invoice_id: rep })
       .eq("id", txId).eq("user_id", userId).eq("status", "pending").select("id");
     if (linkErr || !linkData || linkData.length === 0) { await rollback(); continue; }
+
+    // [BANK-TX-INVOICES] Record EVERY invoice this batch paid (not just the representative), so the
+    // whole batch reverses by id — the reason the join table exists (a batch used to carry only one
+    // invoice_id, forcing an unsafe number-based reversal for the other N−1).
+    await recordPaymentLinks(pipeline, userId, txId, plan.invoiceIds);
 
     for (const inv of planInvs) {
       confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0 });

@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
+import { invoiceIdsForTransactions, invoicesClaimedByOtherTx, clearPaymentLinks } from "@/lib/bank-tx-links";
 import { logAuditAction } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
   // 1. The transaction — owner-pinned. Must currently be linked to an invoice.
   const { data: tx, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, user_id, invoice_id, status, reference")
+    .select("id, user_id, invoice_id, status, reference, amount")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -126,6 +127,10 @@ export async function POST(req: Request) {
     }
   }
 
+  // [BANK-TX-INVOICES] The bank line is detached but the row survives (status pending), so the FK
+  // cascade does NOT fire — clear the join row explicitly so a re-book starts from a clean index.
+  await clearPaymentLinks(pipeline, user.id, transactionId);
+
   await logAuditAction({
     userId: user.id,
     action: "bank.unlinked",
@@ -146,25 +151,64 @@ async function unlinkBatch(args: {
   payClient: Awaited<ReturnType<typeof createServerSupabaseClient>>;
   userId: string;
   transactionId: string;
-  tx: { invoice_id: string | null; status: string | null };
+  tx: { invoice_id: string | null; status: string | null; amount: number | null };
   refNums: string[];
 }): Promise<NextResponse> {
   const { pipeline, payClient, userId, transactionId, tx, refNums } = args;
   const linkedInvoiceId = tx.invoice_id;
   if (!linkedInvoiceId) return NextResponse.json({ error: "not_linked" }, { status: 409 });
-  const refSet = new Set(refNums);
 
-  // The batch's paid invoices (owner-pinned). Filter to the referenced numbers in code so a
-  // number that resolves to several rows, or an unrelated same-number invoice, is handled by the
-  // exact normalized match — never a substring.
+  // [BANK-TX-INVOICES] The reversal set is built id-first, number-second, so it is BOTH
+  // collision-free AND complete:
+  //  (1) the exact invoice ids this transaction paid, recorded in the join table at booking time —
+  //      reversing by id can only ever touch the invoices this payment actually paid, never an
+  //      unrelated invoice that shares a number (numbers are not unique across suppliers/directions).
+  //  (2) GAP-FILL: a PRE-migration batch only backfilled its representative id (the migration can't
+  //      reconstruct the older siblings). For any reference number NOT already covered by an id-link,
+  //      we fall back to a number match — GUARDED to the batch's direction so a same-number invoice
+  //      of the opposite direction is never wrongly un-paid (the MED-3 collision). A freshly-booked
+  //      batch is fully id-covered, so (2) adds nothing for it → no number-collision surface at all.
+  const linkIds = await invoiceIdsForTransactions(pipeline, userId, [transactionId]);
+  const idSet = new Set(linkIds);
+  idSet.add(linkedInvoiceId); // the linked representative is always part of the batch
+
+  // The user's paid-by-bank invoices (owner-pinned). We resolve the batch from these in code.
   const { data: paidRows, error: invErr } = await pipeline
     .from("invoices")
-    .select("id, invoice_number, direction, status, accountant_status")
+    .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date")
     .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
     .eq("status", "paid")
     .eq("payment_method", "bank");
   if (invErr) return NextResponse.json({ error: "invoice_lookup_failed", detail: invErr.message }, { status: 500 });
-  const batch = (paidRows ?? []).filter((i) => refSet.has(normalizeRef(i.invoice_number ?? "")));
+  const paid = paidRows ?? [];
+
+  // (1) exact id-linked part
+  const byId = new Map<string, (typeof paid)[number]>();
+  for (const inv of paid) if (idSet.has(inv.id)) byId.set(inv.id, inv);
+  // (2) direction-guarded number gap-fill for reference numbers no id-link covers.
+  //     Direction = the representative invoice's direction, or (if it is no longer paid-by-bank —
+  //     e.g. re-marked cash — so `rep` is undefined) the bank movement's sign, so the gap-fill can
+  //     never silently disable itself. A null/zero amount with no representative → skip (we don't
+  //     guess a direction). A batch is one supplier/customer → exactly one direction.
+  const rep = paid.find((i) => i.id === linkedInvoiceId);
+  const signDir: "incoming" | "outgoing" | null =
+    (tx.amount ?? 0) < 0 ? "incoming" : (tx.amount ?? 0) > 0 ? "outgoing" : null;
+  const batchDir = (rep?.direction as "incoming" | "outgoing" | null) ?? signDir;
+  const coveredNums = new Set<string>();
+  for (const inv of byId.values()) coveredNums.add(normalizeRef(inv.invoice_number ?? ""));
+  const uncovered = new Set(refNums.filter((n) => !coveredNums.has(n)));
+  if (batchDir && uncovered.size > 0) {
+    // Candidates: paid-by-bank invoices in the batch direction whose number is an uncovered ref
+    // number. Exclude any that are id-linked to ANOTHER transaction — those provably belong to a
+    // different payment (a same-number stray), never to this batch. Only a genuinely un-linked
+    // pre-migration sibling survives the exclusion.
+    const candidates = paid.filter(
+      (inv) => inv.direction === batchDir && uncovered.has(normalizeRef(inv.invoice_number ?? "")),
+    );
+    const claimed = await invoicesClaimedByOtherTx(pipeline, userId, candidates.map((c) => c.id), [transactionId]);
+    for (const inv of candidates) if (!claimed.has(inv.id)) byId.set(inv.id, inv);
+  }
+  const batch = [...byId.values()];
 
   // A 'verwerkt' invoice anywhere in the batch blocks the whole reversal (accrual is locked by the
   // accountant) — refuse before touching anything.
@@ -186,7 +230,9 @@ async function unlinkBatch(args: {
 
   // Restore each invoice to unpaid (idempotent via .eq('status','paid')). On any failure, re-pay
   // what we already restored and re-link the bank line, so we never leave a half-reversed batch.
-  const restored: string[] = [];
+  // [MED-2] Re-pay restores the ORIGINAL marked_paid_at + payment_date, not just paid/bank, so a
+  // rollback never loses the settlement date (which attributes the payment to the right quarter).
+  const restored: { id: string; marked_paid_at: string | null; payment_date: string | null }[] = [];
   for (const inv of batch) {
     const restoredStatus = inv.direction === "incoming" ? "received" : "sent";
     const { error: payErr } = await payClient
@@ -195,22 +241,29 @@ async function unlinkBatch(args: {
       .eq("id", inv.id)
       .eq("status", "paid");
     if (payErr) {
-      for (const rid of restored) {
-        await payClient.from("invoices").update({ status: "paid", payment_method: "bank" }).eq("id", rid).neq("status", "paid");
+      for (const r of restored) {
+        await payClient
+          .from("invoices")
+          .update({ status: "paid", payment_method: "bank", marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
+          .eq("id", r.id)
+          .neq("status", "paid");
       }
       await pipeline.from("bank_transactions").update({ status: tx.status ?? "matched", invoice_id: linkedInvoiceId }).eq("id", transactionId).eq("user_id", userId);
       if (payErr.message?.toLowerCase().includes("verwerkt")) return NextResponse.json({ error: "verwerkt" }, { status: 409 });
       return NextResponse.json({ error: "restore_failed", detail: payErr.message }, { status: 500 });
     }
-    restored.push(inv.id);
+    restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date });
   }
+
+  // [BANK-TX-INVOICES] Row survives the detach (status pending) → clear its join rows explicitly.
+  await clearPaymentLinks(pipeline, userId, transactionId);
 
   await logAuditAction({
     userId,
     action: "bank.unlinked",
     entityType: "bank_transaction",
     entityId: transactionId,
-    newValue: { transaction_id: transactionId, invoice_ids: restored, invoice_count: restored.length, batch: true },
+    newValue: { transaction_id: transactionId, invoice_ids: restored.map((r) => r.id), invoice_count: restored.length, batch: true },
   });
 
   return NextResponse.json({ ok: true, batch: true, restored: restored.length });
