@@ -62,6 +62,7 @@ export interface VandaagInvoice {
 interface Props {
   payable: VandaagInvoice[]; // List 1 — incoming, status='received'
   remind: VandaagInvoice[]; // List 2 — outgoing, status IN ('sent','overdue')
+  loadFailed?: boolean; // [COHERENCE-ERRSTATE] true when a server query errored
 }
 
 // ─── Date helpers (timezone-proof) ────────────────────────────────────────────
@@ -128,7 +129,7 @@ function accentOf(dueIso: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VandaagClient({ payable, remind }: Props) {
+export default function VandaagClient({ payable, remind, loadFailed }: Props) {
   const router = useRouter();
 
   // [TODAY-LISTS-V1] "Negeren" = session-only visual hide (no DB write, like
@@ -201,7 +202,9 @@ export default function VandaagClient({ payable, remind }: Props) {
         </p>
       </header>
 
-      {nothingToDo ? (
+      {loadFailed ? (
+        <LoadError onRetry={() => router.refresh()} />
+      ) : nothingToDo ? (
         <EmptyAllClear />
       ) : (
         <>
@@ -544,6 +547,55 @@ function InvoiceCard({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Load-error state ─────────────────────────────────────────────────────────
+// [COHERENCE-ERRSTATE] Shown when a server query failed. It is deliberately NOT
+// the calm "✓ niets" checkmark: on an error we do not KNOW there is nothing to do,
+// so we must not claim it. Honest wording + a retry, never false reassurance.
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      style={{
+        background: "#FCECEA",
+        border: `1px solid ${M3.error}`,
+        borderRadius: 16,
+        padding: "32px 24px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+      <div
+        style={{
+          fontSize: 17,
+          fontWeight: 600,
+          color: M3.onSurface,
+          marginBottom: 4,
+        }}
+      >
+        We konden je taken niet laden
+      </div>
+      <div style={{ fontSize: 14, color: M3.onSurfaceVariant, marginBottom: 16 }}>
+        Er ging iets mis bij het ophalen. Dit betekent <strong>niet</strong> dat je
+        niets hoeft te doen — probeer het opnieuw.
+      </div>
+      <button
+        onClick={onRetry}
+        style={{
+          padding: "10px 20px",
+          borderRadius: 12,
+          border: "none",
+          background: M3.primary,
+          color: "#fff",
+          fontSize: 15,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        Opnieuw proberen
+      </button>
     </div>
   );
 }

@@ -45,7 +45,7 @@ export default async function VandaagPage() {
   // [TODAY-LISTS-V1] List 1 — Te betalen: incoming invoices verified but unpaid.
   // status='received' = verified Crediteur awaiting payment (NOT 'processing',
   // which is still in the verification queue; NOT 'paid'). Payment state = status.
-  const { data: payableRaw } = await supabase
+  const { data: payableRaw, error: payableErr } = await supabase
     .from("invoices")
     .select(SELECT)
     .eq("receiver_id", user.id)
@@ -58,7 +58,7 @@ export default async function VandaagPage() {
   // [TODAY-LISTS-V1] List 2 — Herinner je klant: outgoing invoices sent but unpaid.
   // status IN ('sent','overdue') — 'overdue' included defensively; if the app never
   // promotes sent→overdue automatically it simply matches nothing extra (safe).
-  const { data: remindRaw } = await supabase
+  const { data: remindRaw, error: remindErr } = await supabase
     .from("invoices")
     .select(SELECT)
     .eq("sender_id", user.id)
@@ -71,5 +71,13 @@ export default async function VandaagPage() {
   const payable = (payableRaw ?? []) as unknown as VandaagInvoice[];
   const remind = (remindRaw ?? []) as unknown as VandaagInvoice[];
 
-  return <VandaagClient payable={payable} remind={remind} />;
+  // [COHERENCE-ERRSTATE] A failed load must NEVER masquerade as a calm "all clear".
+  // Supabase returns { data: null, error } without throwing, so `?? []` silently
+  // coerces a DB/RLS/network failure into two empty lists → the owner is falsely
+  // reassured that nothing is due or overdue, hiding real payment obligations. Pass
+  // the failure through so the client can show an honest "we could not load" state
+  // instead of the reassuring checkmark. (Locked constraint #3: no false reassurance.)
+  const loadFailed = !!payableErr || !!remindErr;
+
+  return <VandaagClient payable={payable} remind={remind} loadFailed={loadFailed} />;
 }
