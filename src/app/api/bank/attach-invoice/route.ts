@@ -279,6 +279,18 @@ export async function POST(req: NextRequest) {
   // and stop rather than create an evidence-less paid invoice.
   if (docErr || !doc) {
     await supabase.storage.from("documents").remove([storagePath]);
+    // [DEDUP-ATOMIC] A concurrent double-submit (or a retry) that raced PAST the byte-hash SELECT
+    // above trips the (user_id, content_hash) UNIQUE index here (23505). Treat it exactly like the
+    // SELECT-found duplicate: the other request already created the document + its (auto-PAID)
+    // invoice, so we must NOT create a second — that would double-count the cost + voorbelasting.
+    // Return the same 409 duplicate, never a 500 that would invite another retry.
+    if (docErr && (docErr as { code?: string }).code === "23505") {
+      const { data: dup } = await supabase
+        .from("documents").select("id, folder_id").eq("user_id", user.id).eq("content_hash", contentHash).limit(1).maybeSingle();
+      const folderPath = dup ? await buildFolderBreadcrumb(supabase, user.id, dup.folder_id ?? null) : [];
+      const where = folderPath.length ? `Dit bestand staat al in: ${folderPath.join(" / ")}` : "Dit bestand is al toegevoegd";
+      return NextResponse.json({ error: where, duplicate: true }, { status: 409 });
+    }
     return NextResponse.json({ error: "Opslaan van de factuur mislukt — probeer het opnieuw." }, { status: 500 });
   }
   const documentId = doc.id;

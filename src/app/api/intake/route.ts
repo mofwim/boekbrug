@@ -499,6 +499,20 @@ export async function POST(req: NextRequest) {
   // back the stored file rather than create a half-linked, evidence-less invoice.
   if (docErr || !doc) {
     await supabase.storage.from("documents").remove([storagePath])
+    // [DEDUP-ATOMIC] A concurrent double-submit that raced past the byte-hash SELECT above trips the
+    // (user_id, content_hash) UNIQUE index here (23505). Treat it like the SELECT-found duplicate —
+    // the other request already stored the document + created its invoice, so returning a duplicate
+    // (not a 500) stops a second invoice from being created and double-counting the cost.
+    if (docErr && (docErr as { code?: string }).code === "23505") {
+      const { data: dup } = await supabase
+        .from("documents").select("id, folder_id").eq("user_id", user.id).eq("content_hash", contentHash).limit(1).maybeSingle()
+      const folderPath = dup ? await buildFolderBreadcrumb(supabase, user.id, dup.folder_id ?? null) : []
+      const where = folderPath.length ? `Dit bestand staat al in: ${folderPath.join(" / ")}` : "Dit bestand is al toegevoegd"
+      return NextResponse.json({
+        error: where, duplicate: true,
+        existing: dup ? { id: dup.id, folder_id: dup.folder_id ?? null, folder_name: folderPath.length ? folderPath[folderPath.length - 1] : null } : undefined,
+      }, { status: 409 })
+    }
     return NextResponse.json(
       { error: "Opslaan van de factuur is mislukt — probeer het opnieuw." },
       { status: 500 }
