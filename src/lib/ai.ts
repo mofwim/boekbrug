@@ -940,6 +940,22 @@ Return JSON only.`;
 // Returns is_invoice: false → file is discarded, never saved to DB
 // Returns is_invoice: true  → file is saved with extracted data
 // ─────────────────────────────────────────────────────────
+// [TRANSIENT-RETRY] Distinguish a TRANSIENT infra failure (Claude 429/5xx, network) from a
+// genuine "can't read this file" verdict. On transient errors the email-sync path must NOT record
+// a permanent 'could_not_read' skip and advance the watermark past a real invoice — it must retry
+// next sync. Detected from the error the callClaude* helpers throw (`... API error <status>`) and
+// node/undici network failures. Pure.
+export function isTransientAiError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  if (/\bAPI error\s+(429|5\d\d)\b/i.test(msg)) return true;          // Claude 429 / 5xx
+  if (/request failed/i.test(msg)) return true;                       // fetchWithRetry fallback
+  if (/fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|und_err|network|timeout/i.test(msg)) return true;
+  const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
+  const code = typeof cause?.code === 'string' ? cause.code : '';
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(code)) return true;
+  return false;
+}
+
 export async function verifyInvoiceFromPdf(
   fileBase64: string,
   mimeType: string,
@@ -948,7 +964,11 @@ export async function verifyInvoiceFromPdf(
   // provided, the AI must never return this name as the vendor (it's the client,
   // not the sender). Fixes the W.Ketels/Kiwi confusion. Optional → callers that
   // don't pass it keep the old behaviour.
-  receiverName?: string | null
+  receiverName?: string | null,
+  // [TRANSIENT-RETRY] Opt-in: when true, re-throw a transient infra error instead of returning the
+  // confidence-0 FALLBACK, so the email-sync/reimport path can retry rather than permanently skip.
+  // Default false → every existing caller (upload / intake / bank-attach) keeps the FALLBACK behaviour.
+  opts?: { throwOnTransient?: boolean }
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
     is_invoice: false,
@@ -1305,14 +1325,28 @@ Return JSON only.`;
             '[VISUAL-REREAD] Text path read an invoice with weak number/split/amount — re-reading via the raw PDF layout'
           );
           const reread = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
-          // Only ADOPT the visual re-read when it still yields a usable invoice total — never let a
-          // worse second pass discard the good total the trusted text path already had (money-safe).
           const rp = safeParseJSON<VerifyInvoiceResult>(reread);
-          const rereadHasTotal =
-            rp != null &&
-            rp.is_invoice === true &&
-            (hasNum(rp.total_inc_btw) || (hasNum(rp.total_ex_btw) && hasNum(rp.btw_amount)));
-          if (rereadHasTotal) result = reread;
+          // Adopt the visual re-read (to gain the recovered invoice number / BTW split) ONLY when
+          // its total AGREES with the total the trusted text path already read. The re-read fires
+          // mostly for a missing NUMBER, so its total must confirm — not silently replace — the
+          // money. If the two totals DISAGREE, keep the text read (already flagged needs-review for
+          // the weak field, so the human reviews it) rather than swap in a differently-read total.
+          const probeTotal = hasNum(probe.total_inc_btw)
+            ? (probe.total_inc_btw as number)
+            : hasNum(probe.total_ex_btw) && hasNum(probe.btw_amount)
+              ? (probe.total_ex_btw as number) + (probe.btw_amount as number)
+              : null;
+          const rpTotal =
+            rp != null && rp.is_invoice === true
+              ? hasNum(rp.total_inc_btw)
+                ? (rp.total_inc_btw as number)
+                : hasNum(rp.total_ex_btw) && hasNum(rp.btw_amount)
+                  ? (rp.total_ex_btw as number) + (rp.btw_amount as number)
+                  : null
+              : null;
+          if (rpTotal != null && probeTotal != null && Math.abs(rpTotal - probeTotal) <= 0.02) {
+            result = reread;
+          }
         }
       } else {
         // Raw PDF path — Claude reads the actual PDF (text + scanned). Already the visual layout,
@@ -1610,6 +1644,11 @@ Return JSON only.`;
     return parsed;
   } catch (error) {
     console.error('[BOEK-011] verifyInvoiceFromPdf failed:', error);
+    // [TRANSIENT-RETRY] A transient API/network failure is NOT a verdict that the file is
+    // unreadable. When the caller opted in (email-sync / reimport), re-throw so it retries next
+    // sync instead of registering a permanent 'could_not_read' skip and walking the watermark past
+    // a real invoice (silent, unrecoverable loss on any Claude incident during the daily cron).
+    if (opts?.throwOnTransient && isTransientAiError(error)) throw error;
     return FALLBACK;
   }
 }

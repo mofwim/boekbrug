@@ -23,6 +23,10 @@ import { syncUserEmails } from '@/lib/email-integration'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
+// [SYNC-DURATION] Same reasoning as the sync route: a backfill batch can run past the default
+// function ceiling (text read + visual re-read per invoice); without a raised limit it is killed
+// before any save and makes no progress. Cap still depends on the hosting plan.
+export const maxDuration = 300
 
 // Sanity bounds: a re-scan can reach back at most ~3 years and never into the future.
 const MAX_LOOKBACK_MS = 3 * 365 * 24 * 60 * 60 * 1000
