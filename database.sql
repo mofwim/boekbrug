@@ -1116,20 +1116,49 @@ $$;
 
 -- ── New User Trigger ────────────────────────────────────
 
+-- [COHERENCE-REGISTER] Populate the profile from signup metadata (role/company/kvk/
+-- btw/onboarding_step) so email/password registration works with email confirmation
+-- ENABLED — the browser can no longer write the profile (anon RLS), so this SECURITY
+-- DEFINER trigger is the single writer. See migrations/register_profile_from_metadata.sql.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path TO 'public'
 AS $$
+DECLARE
+  meta jsonb := COALESCE(new.raw_user_meta_data, '{}'::jsonb);
+  v_role text;
+  v_step int;
 BEGIN
+  v_role := CASE
+    WHEN meta->>'role' IN ('zzper', 'accountant') THEN meta->>'role'
+    ELSE 'zzper'
+  END;
+
+  BEGIN
+    v_step := COALESCE(NULLIF(meta->>'onboarding_step', ''), '1')::int;
+  EXCEPTION WHEN others THEN
+    v_step := 1;
+  END;
+  IF v_step IS NULL OR v_step < 1 THEN
+    v_step := 1;
+  END IF;
+
   INSERT INTO public.profiles (
     id, email, full_name,
+    company_name, kvk_number, btw_number,
     onboarding_step, onboarding_done, role
   ) VALUES (
     new.id,
     new.email,
-    new.raw_user_meta_data->>'full_name',
-    1, false, 'zzper'
+    NULLIF(meta->>'full_name', ''),
+    NULLIF(meta->>'company_name', ''),
+    NULLIF(meta->>'kvk_number', ''),
+    NULLIF(meta->>'btw_number', ''),
+    v_step,
+    false,
+    v_role
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN new;
