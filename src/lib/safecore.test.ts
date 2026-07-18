@@ -134,6 +134,20 @@ console.log('═══ safecore creditnota tests ═══\n')
   check('12b. datum buiten bereik → blocked (creditnota)', cn.ok === false)
 }
 
+// ── 13. [BREAKDOWN-MISSING] total present but ex+BTW both absent → clearer reason ───
+{
+  // The €8.980 case: only the printed total came through; ex and BTW are null.
+  const v = evaluateArithmetic({ totalExBtw: null, btwAmount: null, totalIncBtw: 8980.05 })
+  check('13a. missing split → blocked', v.ok === false)
+  check('13b. …still flagged sum_mismatch (consumers unaffected)', (v.flags ?? []).includes('sum_mismatch'))
+  check('13c. …reason says the split is MISSING, not "≠ totaal"',
+    (v.reason ?? '').includes('uitsplitsing') && !(v.reason ?? '').includes('≠'), JSON.stringify(v.reason))
+  // A split that IS present but wrong keeps the original mismatch wording.
+  const w = evaluateArithmetic({ totalExBtw: 100, btwAmount: 5, totalIncBtw: 200 })
+  check('13d. present-but-wrong split → still "excl + BTW ≠ totaal"',
+    (w.reason ?? '').includes('≠'), JSON.stringify(w.reason))
+}
+
 console.log('\n═══ [DEDUP-NUMBER-NORM] invoice-number normalization ═══\n')
 {
   check('spacing around a separator folds', normalizeInvoiceNumber('26 / 3958') === normalizeInvoiceNumber('26/3958'))

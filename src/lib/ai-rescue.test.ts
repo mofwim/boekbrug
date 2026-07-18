@@ -7,6 +7,7 @@ import {
   isReminderFilename,
   looksLikeStatementText,
   looksLikeStatementReason,
+  needsStrongReread,
 } from "./ai";
 
 let passed = 0, failed = 0;
@@ -92,6 +93,25 @@ check("'samenvatting van bestaande facturen' reason", looksLikeStatementReason("
 check("'meerdere facturen' reason", looksLikeStatementReason("overzicht van meerdere facturen") === true);
 check("generic 'geen factuur' reason is NOT statement-specific", looksLikeStatementReason("geen factuur herkend") === false);
 check("null reason → false", looksLikeStatementReason(null) === false);
+
+console.log("\n— [STRONG-REREAD] a weak invoice read triggers a strong-model re-read —");
+check("missing invoice number (total present) → re-read",
+  needsStrongReread({ is_invoice: true, invoice_number: null, total_inc_btw: 344.48, total_ex_btw: 316.04, btw_amount: 28.44 }) === true);
+check("missing BTW split (only total, the €8.980 case) → re-read",
+  needsStrongReread({ is_invoice: true, invoice_number: "26003666", total_inc_btw: 8980.05, total_ex_btw: null, btw_amount: null }) === true);
+check("low amount confidence → re-read",
+  needsStrongReread({ is_invoice: true, invoice_number: "123", total_inc_btw: 100, total_ex_btw: 82.64, btw_amount: 17.36, field_confidence: { amount: 0.4 } }) === true);
+check("legacy 'amount' field as total + missing split → re-read",
+  needsStrongReread({ is_invoice: true, invoice_number: "123", amount: 500 }) === true);
+
+console.log("\n— [STRONG-REREAD] a clean read is NOT re-read (no wasted strong call) —");
+check("full clean invoice → no re-read",
+  needsStrongReread({ is_invoice: true, invoice_number: "26302362", total_inc_btw: 344.48, total_ex_btw: 316.04, btw_amount: 28.44, field_confidence: { amount: 0.95 } }) === false);
+check("not an invoice → no re-read",
+  needsStrongReread({ is_invoice: false, invoice_number: null, total_inc_btw: 100 }) === false);
+check("no total at all → no re-read (handled by the raw fallback, not here)",
+  needsStrongReread({ is_invoice: true, invoice_number: null, total_inc_btw: null, amount: null }) === false);
+check("null input → false", needsStrongReread(null) === false);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

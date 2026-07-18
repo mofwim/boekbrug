@@ -28,6 +28,12 @@
 // [BOEK-018] constants — May 2026
 //const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+// [STRONG-REREAD] A more capable model, used ONLY for the low-confidence re-read of an invoice
+// the cheap Haiku pass read poorly (missing invoice number, missing BTW split, or a low self-
+// scored amount confidence). Haiku reads the clean majority fine and stays the default; Sonnet is
+// spent only on the hard minority where accuracy is worth the extra cost — the fix for the
+// frequent EMAIL-<ts> placeholder numbers and "—" ex/BTW splits on complex layouts.
+const STRONG_MODEL = 'claude-sonnet-5';
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
 // The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)
@@ -186,6 +192,36 @@ export function fixExInclConfusion(
     if (impliedRate >= 0 && impliedRate <= 21) return newEx;
   }
   return ex;
+}
+
+// [STRONG-REREAD] Decide whether a cheap first read is weak enough to justify a re-read on the
+// stronger model. Only fires on something the model already called an invoice AND for which it
+// found a total (a truly-empty read is handled by the existing raw-PDF fallback, not here) — so
+// the strong pass is spent recovering the fields most often lost on complex layouts: the invoice
+// number, the ex/BTW split, or an amount the reader itself scored low. Pure + testable.
+export function needsStrongReread(
+  p:
+    | {
+        is_invoice?: boolean;
+        invoice_number?: string | null;
+        total_inc_btw?: number | null;
+        total_ex_btw?: number | null;
+        btw_amount?: number | null;
+        amount?: number | null;
+        field_confidence?: { amount?: number } | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!p || p.is_invoice !== true) return false;
+  const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
+  const total = isNum(p.total_inc_btw) ? p.total_inc_btw : isNum(p.amount) ? p.amount : undefined;
+  if (total === undefined) return false;
+  const missingNumber = !p.invoice_number || !String(p.invoice_number).trim();
+  const missingBreakdown = !(isNum(p.total_ex_btw) && isNum(p.btw_amount));
+  const amountScore = p.field_confidence?.amount;
+  const lowAmountConfidence = isNum(amountScore) && amountScore < 0.7;
+  return missingNumber || missingBreakdown || lowAmountConfidence;
 }
 
 // Base system prompt — shared by all functions
@@ -449,7 +485,8 @@ function cacheableSystem(systemPrompt: string): Array<{
 
 async function callClaude(
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  model: string = CLAUDE_MODEL
 ): Promise<string> {
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -459,7 +496,7 @@ async function callClaude(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       system: cacheableSystem(systemPrompt),
       messages: [{ role: 'user', content: prompt }],
@@ -588,7 +625,8 @@ async function extractPdfTextIfTextLayer(pdfBase64: string): Promise<string | nu
 async function callClaudeWithPdf(
   pdfBase64: string,
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  model: string = CLAUDE_MODEL
 ): Promise<string> {
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(pdfBase64)
@@ -602,7 +640,7 @@ async function callClaudeWithPdf(
       'anthropic-beta': 'pdfs-2024-09-25', // required for PDF support
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       system: cacheableSystem(systemPrompt),
       messages: [
@@ -738,7 +776,8 @@ async function callClaudeWithImage(
   imageBase64: string,
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  model: string = CLAUDE_MODEL
 ): Promise<string> {
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(imageBase64)
@@ -759,7 +798,7 @@ async function callClaudeWithImage(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       system: cacheableSystem(systemPrompt),
       messages: [
@@ -1252,15 +1291,32 @@ Return JSON only.`;
           (hasNum(probe.total_inc_btw) ||
             (hasNum(probe.total_ex_btw) && hasNum(probe.btw_amount)));
 
+        // [STRONG-REREAD] Re-read via the RAW PDF on the stronger model when the flat text either
+        // wasn't conclusive (existing SAFECORE fallback) OR produced an invoice whose number /
+        // BTW-split / amount came back weak. Reading the actual page layout on Sonnet recovers
+        // the columns the flattened text loses — the fix for the frequent EMAIL-<ts> placeholder
+        // numbers and "—" ex/BTW splits. The strong pass only runs on this hard minority.
         if (!textPathTrusted) {
           console.log(
-            '[PDF-OPTIMIZE] Text path not conclusive — re-reading via raw PDF (SAFECORE fallback)'
+            '[PDF-OPTIMIZE] Text path not conclusive — re-reading via raw PDF on the strong model'
           );
-          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, STRONG_MODEL);
+        } else if (needsStrongReread(probe)) {
+          console.log(
+            '[STRONG-REREAD] Text path read an invoice with weak number/split/amount — re-reading via raw PDF on the strong model'
+          );
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, STRONG_MODEL);
         }
       } else {
-        // Raw PDF path — Claude reads the actual PDF (text + scanned). UNCHANGED.
+        // Raw PDF path — Claude reads the actual PDF (text + scanned).
         result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+        // [STRONG-REREAD] A scanned/no-text-layer PDF the cheap pass read weakly (missing number,
+        // missing split, or a low amount score) gets one re-read on the stronger model.
+        const probe = safeParseJSON<VerifyInvoiceResult>(result);
+        if (needsStrongReread(probe)) {
+          console.log('[STRONG-REREAD] Raw PDF read weak — re-reading on the strong model');
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, STRONG_MODEL);
+        }
       }
     } else if (
       mimeType === 'image/jpeg' ||
@@ -1269,12 +1325,16 @@ Return JSON only.`;
       mimeType === 'image/gif'
     ) {
       // Claude reads the image directly
-      result = await callClaudeWithImage(
-        fileBase64,
-        mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
-        prompt,
-        systemPrompt
-      );
+      const imgMime = mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+      result = await callClaudeWithImage(fileBase64, imgMime, prompt, systemPrompt);
+      // [STRONG-REREAD] A photographed invoice the cheap pass read weakly (missing number, missing
+      // BTW split, or a low amount score) gets one re-read on the stronger model — photos are the
+      // hardest layout, so this is where the accuracy gain lands most.
+      const probe = safeParseJSON<VerifyInvoiceResult>(result);
+      if (needsStrongReread(probe)) {
+        console.log('[STRONG-REREAD] Image read weak — re-reading on the strong model');
+        result = await callClaudeWithImage(fileBase64, imgMime, prompt, systemPrompt, STRONG_MODEL);
+      }
     } else {
       // Unsupported type — skip safely
       return {
