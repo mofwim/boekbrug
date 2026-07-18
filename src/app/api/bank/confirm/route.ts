@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
 
   const { data: inv, error: invErr } = await pipeline
     .from("invoices")
-    .select("id, invoice_number, status, accountant_status, sender_id, receiver_id, direction")
+    .select("id, invoice_number, status, accountant_status, sender_id, receiver_id, direction, total_inc_btw")
     .eq("id", invoiceId)
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .maybeSingle();
@@ -217,6 +217,11 @@ export async function POST(req: NextRequest) {
       status: "paid",
       payment_method: "bank", // known from a bank match — no Bank/Contant question
       marked_paid_at: new Date().toISOString(),
+      // [PARTIAL-PAY] This multi-number-batch branch pays the invoice in FULL, so amount_paid must
+      // reach the total — otherwise an invoice that was mid-instalment and is now completed via a
+      // batch would keep a stale amount_paid < total. Openstaand is status-gated (paid ⇒ 0) so this
+      // is only an internal-consistency fix, but it keeps amount_paid honest for a later unlink.
+      amount_paid: Math.abs(inv.total_inc_btw ?? 0),
       // [BANK-PAYDATE] The REAL settlement date is the bank line's date, not now(). A Q1
       // invoice paid in Q2 must carry its true payment day/quarter so the owner and the
       // accountant both see "paid in Q2" — the cross-quarter case, recorded not guessed.
