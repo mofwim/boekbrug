@@ -64,6 +64,19 @@ export default function InvoiceDetailPage() {
   // [BOEK-031] linked creditnota — toon als er al een bestaat
   const [linkedCreditnota, setLinkedCreditnota] = useState<any>(null)
 
+  // [COHERENCE-CREDITNOTA] The dedicated creditnota action. It POSTs to
+  // /api/invoice/creditnota — the ONE route that copies the original's lines
+  // negatively, stores original_invoice_id (so "Gecrediteerd via …" shows and no
+  // second creditnota can be made), mints a CR- number, and delivers the PDF.
+  // The old banner navigated to a BLANK /invoice/new form where handleCredit was
+  // never invoked: the owner retyped everything and handleSubmit wrote a
+  // creditnota with original_invoice_id=null — an orphan that severed the link and
+  // allowed unlimited duplicate legal credits. This dialog calls the route directly.
+  const [showCreditDialog, setShowCreditDialog] = useState(false)
+  const [creditReason, setCreditReason] = useState('')
+  const [creatingCredit, setCreatingCredit] = useState(false)
+  const [creditError, setCreditError] = useState<string | null>(null)
+
   // [BOEK-031] Send flow state — May 2026
   const [showSendModal, setShowSendModal] = useState(false)
   const [sending, setSending] = useState(false)
@@ -80,6 +93,18 @@ export default function InvoiceDetailPage() {
     const d = searchParams.get('delivery')
     if (d === 'pdf_failed' || d === 'email_failed') setDeliveryWarning(d)
   }, [searchParams])
+
+  // [COHERENCE-CREDITNOTA] ?action=credit (from the Facturen list's "credit a paid
+  // invoice" flow) auto-opens the creditnota dialog once the invoice has loaded.
+  // Guarded on invoice presence so it never opens on an empty/errored page; the
+  // dialog itself still only acts if the invoice is actually creditable.
+  useEffect(() => {
+    if (invoice && searchParams.get('action') === 'credit') {
+      setCreditReason('')
+      setCreditError(null)
+      setShowCreditDialog(true)
+    }
+  }, [invoice, searchParams])
 
   // [NAVIGATION] Back target = the page's canonical parent, resolved centrally
   // by getParentPath. The invoice/[id] rule already folds in the "opened from a
@@ -234,6 +259,36 @@ export default function InvoiceDetailPage() {
 
     setShowSendModal(false)
     setSending(false)
+  }
+
+  // [COHERENCE-CREDITNOTA] Create the creditnota via the dedicated route. No blank
+  // form, no re-entry: the server copies the original invoice's lines negatively and
+  // preserves the original_invoice_id link. On success we land on the new creditnota;
+  // the original's detail then shows "Gecrediteerd via …" and the create-banner is
+  // gone (canCreateCreditnota turns off), so a second credit is impossible.
+  async function createCreditnota() {
+    setCreatingCredit(true)
+    setCreditError(null)
+    try {
+      const res = await fetch('/api/invoice/creditnota', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ original_invoice_id: invoiceId, reason: creditReason.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setCreditError(data.error || 'Creditnota aanmaken mislukt — probeer opnieuw')
+        setCreatingCredit(false)
+        return
+      }
+      // Navigate to the freshly-created, correctly-linked creditnota.
+      router.replace(
+        data.creditnota_id ? `/dashboard/invoice/${data.creditnota_id}` : '/dashboard/facturen'
+      )
+    } catch {
+      setCreditError('Onbekende fout — probeer opnieuw')
+      setCreatingCredit(false)
+    }
   }
 
   // [DS] STATUS_CONFIG — Material You chip tokens
@@ -503,7 +558,7 @@ export default function InvoiceDetailPage() {
                 </p>
               </div>
               <button
-                onClick={() => router.push(`/dashboard/invoice/new?type=creditnota&original=${invoiceId}`)}
+                onClick={() => { setCreditReason(''); setCreditError(null); setShowCreditDialog(true) }}
                 style={{ flexShrink: 0, marginLeft: 12, backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
               >↩ Creditnota</button>
             </div>
@@ -652,6 +707,62 @@ export default function InvoiceDetailPage() {
                 disabled={sending}
                 style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#1A73E8', color: 'white', fontSize: 14, fontWeight: 600, cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.6 : 1 }}>
                 {sending ? 'Verzenden...' : 'Versturen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* [COHERENCE-CREDITNOTA] Creditnota confirmation — replaces the dead blank-form
+          navigation. Confirming calls /api/invoice/creditnota, which copies this
+          invoice's lines negatively and preserves the link. No re-entry, no orphans. */}
+      {showCreditDialog && invoice && (
+        <div onClick={() => !creatingCredit && setShowCreditDialog(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
+              Creditnota maken voor {invoice.invoice_number || 'deze factuur'}?
+            </h3>
+            <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
+              We maken automatisch een creditnota met dezelfde regels als negatieve bedragen.
+              De originele factuur blijft staan en wordt gemarkeerd als gecrediteerd. Je hoeft
+              niets over te typen.
+            </p>
+            <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Klant:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_name}</dd>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Te crediteren:</dt>
+              <dd style={{ color: '#B3261E', fontWeight: 600, margin: 0 }}>
+                −{NL_NUMBER.format(Math.abs(invoice.total_inc_btw ?? 0))}
+              </dd>
+            </dl>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#5F6368', marginBottom: 6 }}>
+              Reden (optioneel)
+            </label>
+            <input
+              type="text"
+              value={creditReason}
+              onChange={e => setCreditReason(e.target.value)}
+              placeholder="bijv. verkeerd bedrag, geannuleerde opdracht"
+              disabled={creatingCredit}
+              style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, color: '#202124', boxSizing: 'border-box', marginBottom: 16, fontFamily: 'inherit' }}
+            />
+            {creditError && (
+              <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
+                {creditError}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowCreditDialog(false)}
+                disabled={creatingCredit}
+                style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: creatingCredit ? 'default' : 'pointer' }}>
+                Annuleren
+              </button>
+              <button onClick={createCreditnota}
+                disabled={creatingCredit}
+                style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#EA4335', color: 'white', fontSize: 14, fontWeight: 600, cursor: creatingCredit ? 'default' : 'pointer', opacity: creatingCredit ? 0.6 : 1 }}>
+                {creatingCredit ? 'Bezig…' : '↩ Creditnota maken'}
               </button>
             </div>
           </div>

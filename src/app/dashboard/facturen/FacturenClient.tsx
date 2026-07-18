@@ -284,7 +284,12 @@ export default function FacturenClient({ profile }: { profile: any }) {
   }
 
   async function handleDeleteRequest(id: string, number: string, status: string) {
-    if (status === 'paid') { router.push(`/dashboard/invoice/new?type=creditnota&original=${id}`); return }
+    // [COHERENCE-CREDITNOTA] A paid invoice may never be deleted — it is corrected with
+    // a creditnota. Send the owner to the invoice detail with ?action=credit, which opens
+    // the creditnota dialog that calls /api/invoice/creditnota (copies lines, keeps the
+    // link). The old target (/invoice/new?type=creditnota) was a dead blank form that
+    // produced an orphan creditnota with original_invoice_id=null.
+    if (status === 'paid') { router.push(`/dashboard/invoice/${id}?action=credit`); return }
     setDeleteCtx({ id, number, status })
   }
 

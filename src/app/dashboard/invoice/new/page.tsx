@@ -81,13 +81,6 @@ type InvoiceLine = {
   rawInput?: string
 }
 
-type SentInvoice = {
-  id: string
-  invoice_number: string
-  client_name: string
-  total_inc_btw: number
-}
-
 // ─── Config ────────────────────────────────────────────────────────────────────
 
 // [DS] Design System v1.0 — Type config with DS tokens
@@ -473,11 +466,8 @@ function NewInvoicePageContent() {
         : [{ description: aiDescription, quantity: 1, unit_price: aiAmount, btw_rate: aiBtwRate }]
   )
 
-  // ── Credit flow ──────────────────────────────────────────────────────────────
-  const [sentInvoices, setSentInvoices]       = useState<SentInvoice[]>([])
-  const [originalInvoiceId, setOriginalInvoiceId] = useState(originalParam)
-  const [creditReason, setCreditReason]       = useState('')
-  const [loadingCredit, setLoadingCredit]     = useState(false)
+  // [COHERENCE-CREDITNOTA] Credit-flow state removed — see the note above handleConvertOfferte.
+  // Creditnotas are created from the original invoice's detail dialog, not here.
 
   // ── Replace flow — read-only from URL, never mutated ─────────────────────────
   const replacesId     = replacesParam
@@ -515,17 +505,6 @@ function NewInvoicePageContent() {
         .from('clients').select('*').eq('user_id', user.id).order('name')
       if (cl) setClients(cl)
 
-      // Sent invoices for credit flow
-      const { data: sent } = await supabase
-        .from('invoices')
-        .select('id, invoice_number, client_name, total_inc_btw')
-        .eq('sender_id', user.id)
-        .in('status', ['sent', 'paid', 'overdue'])
-        .eq('invoice_type', 'factuur')
-        .order('created_at', { ascending: false })
-        .limit(50)
-      if (sent) setSentInvoices(sent)
-
       // [BOEK-029] from_offerte: load original invoice_lines for accurate amounts
       if (offerteParam) {
         const { data: offLines } = await supabase
@@ -546,6 +525,19 @@ function NewInvoicePageContent() {
     }
     load()
   }, [router, supabase])
+
+  // [COHERENCE-CREDITNOTA] A creditnota must be created FROM its original invoice via
+  // /api/invoice/creditnota — the route copies the original's lines negatively and stores
+  // original_invoice_id so the credit↔original link holds and no second credit is possible.
+  // The standalone ?type=creditnota blank form here was dead: handleCredit was never
+  // invoked, the owner retyped everything, and handleSubmit wrote original_invoice_id=null
+  // (an orphan credit + unlimited duplicates). Redirect any such entry to the correct place:
+  // the original invoice's detail, which opens the proper creditnota dialog.
+  useEffect(() => {
+    if (typeParam === 'creditnota') {
+      router.replace(originalParam ? `/dashboard/invoice/${originalParam}?action=credit` : '/dashboard/facturen')
+    }
+  }, [typeParam, originalParam, router])
 
   // Close autocomplete on outside click
   useEffect(() => {
@@ -694,24 +686,12 @@ function NewInvoicePageContent() {
     btwByRate[rate] = (btwByRate[rate] ?? 0) + l.quantity * l.unit_price * (rate / 100)
   })
 
-  // ─── Credit submit ─────────────────────────────────────────────────────────
-
-  async function handleCredit() {
-    if (!originalInvoiceId) { setError('Selecteer de originele factuur'); return }
-    setLoadingCredit(true); setError('')
-    try {
-      const res = await fetch('/api/invoice/creditnota', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ original_invoice_id: originalInvoiceId, reason: creditReason }),
-      })
-      const result = await res.json()
-      if (!res.ok) { setError(result.error || 'Mislukt'); return }
-      // [BOEK-031] replace ipv push — Navigation Strategy — May 2026
-      router.replace(result.creditnota_id ? `/dashboard/invoice/${result.creditnota_id}` : '/dashboard/facturen')
-    } catch { setError('Onbekende fout') }
-    finally { setLoadingCredit(false) }
-  }
+  // [COHERENCE-CREDITNOTA] The standalone credit-submit flow that lived here was
+  // removed: a creditnota is now created only from its original invoice via the detail
+  // page's dialog → /api/invoice/creditnota (copies lines, keeps the link). The old
+  // handleCredit + the sentInvoices picker + creditReason state were never wired to any
+  // control on this page (dead code), and the ?type=creditnota redirect above now sends
+  // the owner to the correct place, so the whole standalone path is retired.
 
   // ─── Offerte → Factuur convert ─────────────────────────────────────────────
 
@@ -1042,7 +1022,10 @@ function NewInvoicePageContent() {
         <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
           <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>Type document</p>
           <div style={{ display: 'flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden', backgroundColor: '#F1F3F4' }}>
-            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).map((t, idx, arr) => {
+            {/* [COHERENCE-CREDITNOTA] 'creditnota' is intentionally NOT a selectable type
+                here — a credit note can only be created from an existing invoice (see the
+                redirect above). Offering it standalone produced orphan credits. */}
+            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).filter(t => t !== 'creditnota').map((t, idx, arr) => {
               const c = TYPE_CONFIG[t]
               const active = invoiceType === t
               return (
