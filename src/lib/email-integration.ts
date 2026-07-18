@@ -1161,7 +1161,12 @@ export async function classifyAttachment(
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
 
   // [BOEK-011] Data is already base64 (converted in fetchMessageAttachments)
-  const result = await verifyInvoiceFromPdf(base64Data, mimeType, filename, receiverName)
+  // [TRANSIENT-RETRY] Opt in: a transient Claude/network failure re-throws (→ PHASE 1 marks the
+  // attachment classifyFailed → retried next sync) instead of returning a confidence-0 FALLBACK
+  // that the caller would misread as "could not read" and permanently skip.
+  const result = await verifyInvoiceFromPdf(base64Data, mimeType, filename, receiverName, {
+    throwOnTransient: true,
+  })
 
   return {
     isInvoice: result.is_invoice,
@@ -1911,6 +1916,21 @@ export async function syncUserEmails(
       // recorded in field_confidence._safecore for the audit trail / human review.
       let dedupNote: { dedup: string; reason: string } | null = null
 
+      // [SUPPLIER-DEDUP] Resolve the canonical supplier BEFORE the duplicate check, so Check B
+      // can key on supplier IDENTITY (supplier_id) rather than the STORED name string. Since the
+      // insert now stores the supplier's canonical name, comparing a re-arrived invoice's raw
+      // vendor read against that canonical name (vendorsAreDifferent / ilike) would wrongly read
+      // as a NEW vendor and let the duplicate through — a double-book for exactly the multi-
+      // spelling suppliers this registry unifies (the "Silifke≡Hocaoglu" gap named above). By
+      // resolving first, two invoices that map to the same supplier_id are recognised as the same
+      // vendor regardless of spelling. Best-effort (null on any error) → falls back to the raw
+      // name + the pre-existing name comparison, exactly as before. Reused at the insert below.
+      const rawVendorName = classification.vendor || extractSenderName(attachment.from)
+      const supplier = await resolveSupplierForImport(supabase, userId, {
+        name: classification.vendor,
+        iban: classification.vendorIban ?? null,
+      })
+
       if (typeof classification.totalIncBtw === 'number') {
         const numberIsReal = !isPlaceholderInvoiceNumber(classification.invoiceNumber)
 
@@ -1969,7 +1989,7 @@ export async function syncUserEmails(
           // Build the query for the chosen anchor (number or vendor).
           let contentQuery = supabase
             .from('invoices')
-            .select('id, source_message_id, invoice_date, client_name, invoice_number')
+            .select('id, source_message_id, invoice_date, client_name, invoice_number, supplier_id')
             .eq('receiver_id', userId)
             .eq('direction', 'incoming')
             .eq('total_inc_btw', classification.totalIncBtw)
@@ -1999,9 +2019,17 @@ export async function syncUserEmails(
             // placeholder+reliable-vendor fallback). The date filter below adds
             // the precision that makes this acceptable. Stronger vendor matching
             // is BRIDGE-ALIAS territory.
+            // [SUPPLIER-DEDUP] When we resolved a canonical supplier, key the vendor tier on the
+            // supplier_id — the reliable identity — instead of the stored name (which is now the
+            // canonical spelling and would miss a raw re-read variant). Fall back to the literal
+            // ilike on client_name for legacy rows with no supplier_id.
             // [L2] Escape LIKE wildcards so the match is literal (as the comment
             // above intends) — a parsed vendor with `%`/`_` must not act as a wildcard.
-            contentQuery = contentQuery.ilike('client_name', escapeLikeValue((classification.vendor ?? '').trim()))
+            if (supplier?.id) {
+              contentQuery = contentQuery.eq('supplier_id', supplier.id)
+            } else {
+              contentQuery = contentQuery.ilike('client_name', escapeLikeValue((classification.vendor ?? '').trim()))
+            }
           }
 
           // Date filter: applied when we have a real date. For the vendor tier
@@ -2027,7 +2055,12 @@ export async function syncUserEmails(
                   (c) =>
                     normalizeInvoiceNumber(c.invoice_number) ===
                       normalizeInvoiceNumber(classification.invoiceNumber as string) &&
-                    !vendorsAreDifferent(classification.vendor, c.client_name),
+                    // [SUPPLIER-DEDUP] Same canonical supplier (by id) → same vendor, dedup even
+                    // when the printed name differs. Otherwise fall back to the name comparison
+                    // (legacy rows without supplier_id, or when this invoice didn't resolve one).
+                    (supplier?.id && c.supplier_id === supplier.id
+                      ? true
+                      : !vendorsAreDifferent(classification.vendor, c.client_name)),
                 ) ?? null
               : (existingByContent && existingByContent.length > 0 ? existingByContent[0] : null)
 
@@ -2258,17 +2291,9 @@ export async function syncUserEmails(
 
       const insertPipeline = createPipelineClient()
 
-      // [SUPPLIER-REGISTRY] Resolve the vendor to a CANONICAL supplier (keyed on IBAN, then
-      // normalized name) so the same company stops appearing under many spellings. Best-effort:
-      // returns null on any error / junk vendor → we fall back to the raw name + null supplier_id,
-      // exactly the pre-registry behaviour. When resolved, we store the supplier's canonical name
-      // so the crediteuren list is consistent across a supplier's invoices.
-      const rawVendorName = classification.vendor || extractSenderName(attachment.from)
-      const supplier = await resolveSupplierForImport(insertPipeline, userId, {
-        name: classification.vendor,
-        iban: classification.vendorIban ?? null,
-      })
-
+      // [SUPPLIER-REGISTRY] `supplier` + `rawVendorName` were resolved BEFORE the dedup block
+      // above (so Check B could key on supplier_id). Reuse them here: store supplier_id + the
+      // canonical name, falling back to the raw name when no supplier was resolved.
       const { data: insertedInvoice, error: dbError } = await insertPipeline
         .from('invoices')
         .insert({

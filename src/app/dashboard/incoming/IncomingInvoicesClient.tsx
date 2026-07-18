@@ -2331,15 +2331,19 @@ export default function IncomingInvoicesClient({
     setReimportAllRunning(true);
     setReimportAllDone(0);
 
-    let improved = 0;
+    let reread = 0;
     let notInvoice = 0;
+    let skipped = 0;
     let failed = 0;
     for (const inv of targets) {
       try {
         const res = await fetch(`/api/email/reimport/${inv.id}`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) improved++;
+        if (res.ok && data.ok) reread++;
         else if (data.notInvoice) notInvoice++;
+        // 409 = the card is no longer 'processing' (e.g. the owner verified it just before this
+        // reached it). That is not a failure — count it as skipped so the summary stays honest.
+        else if (res.status === 409) skipped++;
         else failed++;
       } catch {
         failed++;
@@ -2348,13 +2352,15 @@ export default function IncomingInvoicesClient({
     }
 
     setReimportAllRunning(false);
-    // A blocking summary only when something needs the owner's eye; otherwise the
-    // refreshed cards are the feedback. Either way we reload to show the new reads.
+    // A blocking summary only when something needs the owner's eye; otherwise the refreshed cards
+    // are the feedback. "opnieuw ingelezen" (re-read), not "bijgewerkt" — reimport always re-reads
+    // but keeps the stored amounts when the fresh read is no better, so it may not have changed.
     if (notInvoice > 0 || failed > 0) {
       alert(
         "Opnieuw inlezen klaar:\n" +
-          `• ${improved} bijgewerkt\n` +
+          `• ${reread} opnieuw ingelezen\n` +
           (notInvoice ? `• ${notInvoice} bleek geen boekbare factuur — je kunt die negeren\n` : "") +
+          (skipped ? `• ${skipped} overgeslagen (al bevestigd)\n` : "") +
           (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw\n` : "")
       );
     }
@@ -2678,6 +2684,20 @@ export default function IncomingInvoicesClient({
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124" }}>
             Bezig met verifiëren…
+          </div>
+        </div>
+      )}
+
+      {/* [REIMPORT-ALL] Block the page while the batch re-read runs — so an edit modal can't be
+          opened mid-run and then wiped by the end-of-run reload, and no card can be verified into
+          a 409. */}
+      {reimportAllRunning && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
+            Bezig met opnieuw inlezen…
+            <div style={{ fontSize: 13, fontWeight: 400, color: "#5f6368", marginTop: 4 }}>
+              {reimportAllDone}/{needsAttentionCount}
+            </div>
           </div>
         </div>
       )}

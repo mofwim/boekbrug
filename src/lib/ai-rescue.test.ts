@@ -8,6 +8,7 @@ import {
   looksLikeStatementText,
   looksLikeStatementReason,
   needsVisualReread,
+  isTransientAiError,
 } from "./ai";
 
 let passed = 0, failed = 0;
@@ -112,6 +113,18 @@ check("not an invoice → no re-read",
 check("no total at all → no re-read (handled by the raw fallback, not here)",
   needsVisualReread({ is_invoice: true, invoice_number: null, total_inc_btw: null, amount: null }) === false);
 check("null input → false", needsVisualReread(null) === false);
+
+console.log("\n— [TRANSIENT-RETRY] transient infra errors retry; genuine read failures do not —");
+check("Claude 429 → transient", isTransientAiError(new Error("Claude PDF API error 429: rate limited")) === true);
+check("Claude 500 → transient", isTransientAiError(new Error("Claude API error 500: internal")) === true);
+check("Claude 529 (overloaded) → transient", isTransientAiError(new Error("Claude Image API error 529: overloaded")) === true);
+check("network ECONNRESET → transient", isTransientAiError(new Error("fetch failed: ECONNRESET")) === true);
+check("fetchWithRetry 'request failed' → transient", isTransientAiError(new Error("Claude API: request failed")) === true);
+check("cause.code ETIMEDOUT → transient", isTransientAiError(Object.assign(new Error("x"), { cause: { code: "ETIMEDOUT" } })) === true);
+check("Claude 400 (bad request) → NOT transient (terminal)", isTransientAiError(new Error("Claude API error 400: invalid")) === false);
+check("invalid PDF → NOT transient", isTransientAiError(new Error("Ongeldig PDF-bestand")) === false);
+check("JSON parse failure → NOT transient", isTransientAiError(new Error("Unexpected token < in JSON")) === false);
+check("null → NOT transient", isTransientAiError(null) === false);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

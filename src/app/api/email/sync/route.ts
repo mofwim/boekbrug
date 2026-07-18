@@ -9,6 +9,13 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { syncUserEmails, deleteEmailConnection } from '@/lib/email-integration'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
+// [SYNC-DURATION] A batch of up to SYNC_BATCH_MAX attachments — each possibly a text read PLUS a
+// visual re-read (2 Claude calls) — can run well past the platform's ~10-15s default. Without a
+// raised ceiling the request is killed mid-PHASE-1/2 and makes ZERO forward progress (nothing is
+// saved, the watermark never advances). Mirror the cron's budget (actual cap still depends on the
+// hosting plan; on a constrained plan lower SYNC_BATCH_MAX to fit).
+export const maxDuration = 300
+
 // ── POST — run sync ───────────────────────────────────────────────────────────
 
 export async function POST(_req: NextRequest) {
