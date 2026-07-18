@@ -11,6 +11,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 // [CASH-SETTLE] keep the kasboek in sync when an invoice is paid/undone in cash
 import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 // [BRIDGE-B] legal trail for verify/pay state changes
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import type { Database } from "@/types/database.types";
@@ -223,6 +224,15 @@ export async function POST(
   // reconciles, so this only makes it instant.
   if (action === "pay" || action === "verify") {
     await reconcileCashSettlements(supabase, user.id);
+    // [BANK-LINK] A just-verified invoice may already have its payment sitting in an imported bank
+    // statement — including as part of a multi-invoice batch. Run the SAME safe engine the cron runs
+    // (only books provably-exact reference+amount / iban+amount / exact-batch matches), inline, so
+    // the invoice flips to 'betaald · gekoppeld' IMMEDIATELY instead of waiting up to a day for the
+    // daily cron. This is exactly the gap where an already-paid invoice showed "24 dagen te laat".
+    // Best-effort: a failure just defers the link to the cron / the /bank page, never blocks verify.
+    try {
+      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id });
+    } catch { /* non-fatal — cron / bank page still catches it */ }
   }
 
   // ── Notify (service_role — notifications has no authenticated INSERT policy) ──

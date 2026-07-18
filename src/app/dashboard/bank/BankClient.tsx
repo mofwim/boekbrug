@@ -234,15 +234,23 @@ export default function BankClient() {
     if (autoRanRef.current) return
     if (autoRunning) return
     if (!data) return
-    const hasSafe = (data.suggestions ?? []).some(
-      (s) =>
-        s.outcome === 'auto' &&
-        !!s.best &&
-        s.best.signals.includes('reference') &&
-        s.best.signals.includes('amount') &&
-        (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
-        !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
-    )
+    // [BANK-IBAN] Mirror the server's isSafeAutoConfirm EXACTLY: the safe set is
+    // (reference + amount) OR (iban + amount). The old gate only checked reference+amount,
+    // so an invoice matched purely by supplier IBAN + exact sum (e.g. the HVO invoices, which
+    // carry no printed invoice number in the payment) never tripped the on-load auto-run —
+    // it sat unlinked until the daily cron. The server stays authoritative; this only decides
+    // "are there any safe matches worth calling autoConfirm for right now".
+    const hasSafe = (data.suggestions ?? []).some((s) => {
+      if (s.outcome !== 'auto' || !s.best) return false
+      const sig = s.best.signals
+      const refAmt = sig.includes('reference') && sig.includes('amount')
+      const ibanAmt = sig.includes('iban') && sig.includes('amount')
+      if (!refAmt && !ibanAmt) return false
+      // single reference only (a multi-invoice batch is the engine's separate path), not an instalment
+      if (s.reference && s.reference.split(',').map((x) => x.trim()).filter(Boolean).length > 1) return false
+      if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
+      return true
+    })
     if (!hasSafe) return
     autoRanRef.current = true
     void autoConfirm()

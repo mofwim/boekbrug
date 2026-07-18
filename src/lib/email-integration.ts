@@ -1664,6 +1664,10 @@ export async function syncUserEmails(
   // [COULD-NOT-READ] Attachments we could NOT read (API reject / unsupported /
   // unparseable) — kept in bestanden for the owner, NOT asserted "not an invoice".
   let couldNotRead = 0
+  // [BANK-LINK] Count of invoices that auto-advanced straight to 'received' this run.
+  // Only a 'received' invoice is matchable by the bank engine (EXCLUDED_STATUSES bars
+  // 'processing'), so we only bother running the linker post-loop when this is > 0.
+  let autoAdvanced = 0
 
   // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
   const { resolveImportTarget } = await import('@/lib/bestanden')
@@ -2664,6 +2668,11 @@ export async function syncUserEmails(
       } else {
         saved++
         completedKeys.add(wmKey) // [watermark] saved = complete
+        // [BANK-LINK] Remember that a matchable ('received') invoice landed this run, so we can
+        // run the safe bank linker ONCE after the loop (not per-invoice — the engine scans the
+        // whole statement each call). Only auto-advanced invoices are eligible: a held/processing
+        // one is barred by EXCLUDED_STATUSES anyway.
+        if (autoAdv.advance && verdict.ok) autoAdvanced++
 
         // [BOEK-SAFECORE] When held for an arithmetic problem, audit it —
         // truth in the log. Non-fatal. (Only on a held invoice; a clean
@@ -2856,6 +2865,21 @@ export async function syncUserEmails(
         '[BOEK-011] Watermark held — oldest fetched email not yet complete (transient failure or batch boundary)'
       )
     }
+    }
+  }
+
+  // [BANK-LINK] Close the circle immediately for invoices that auto-advanced to 'received' this
+  // run. Their payment may already be sitting in an imported bank statement (this is exactly the
+  // gap where invoice 26703066 showed "24 dagen te laat" while its €771,72 batch afschrijving sat
+  // matched-but-unlinked). Run the SAME safe engine the daily cron runs — it books ONLY provably
+  // exact reference+amount / iban+amount / exact-batch matches — so there is no risk of a wrong
+  // link, just an earlier one. Best-effort and non-fatal: a failure defers to the cron / /bank page.
+  if (autoAdvanced > 0) {
+    try {
+      const { runBankAutoConfirm } = await import('@/lib/bank-auto-confirm')
+      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId })
+    } catch (e) {
+      console.error('[BANK-LINK] post-import auto-confirm failed (non-fatal)', e)
     }
   }
 
