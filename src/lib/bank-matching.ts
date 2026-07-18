@@ -25,6 +25,10 @@ export interface InvoiceForMatching {
   id: string;
   invoice_number: string | null;
   total_inc_btw: number | null;
+  // [PARTIAL-PAY] amount already settled by earlier instalments (magnitude; 0/absent when fully
+  // open). The matcher targets the REMAINING balance (|total| − amount_paid), so the next
+  // instalment's payment matches on amount instead of scoring low against the full invoice.
+  amount_paid?: number | null;
   invoice_date: string | null; // ISO "YYYY-MM-DD"
   due_date: string | null; // ISO
   client_name: string | null; // counterpart (customer for outgoing, vendor for incoming)
@@ -345,7 +349,18 @@ export function scorePair(
   const reasons: string[] = [];
 
   const refOk = referenceMatches(tx, inv.invoice_number);
-  const amtOk = amountMatches(tx.amount, inv.total_inc_btw, opts.amountEpsilon);
+  // [PARTIAL-PAY] When earlier instalments already settled part of the invoice, the payment we're
+  // scoring should match the REMAINING balance, not the full total — so the €600 second instalment
+  // of a €1000 invoice (€400 paid) scores an exact 'amount' hit against the €600 that's left. Sign
+  // is preserved (a creditnota total is negative; amount_paid is a magnitude). A fully-open invoice
+  // (amount_paid 0/absent) keeps the full total → identical to before, so the auto path (which
+  // excludes partials entirely) is unchanged.
+  const paidSoFar = Math.max(0, inv.amount_paid ?? 0);
+  const amountTarget: number | null =
+    inv.total_inc_btw == null || paidSoFar <= 0.005
+      ? inv.total_inc_btw
+      : (inv.total_inc_btw < 0 ? -1 : 1) * Math.max(0, Math.abs(inv.total_inc_btw) - paidSoFar);
+  const amtOk = amountMatches(tx.amount, amountTarget, opts.amountEpsilon);
   const ibanOk = ibanMatches(tx.counterpartIban, inv.vendor_iban);
   const dateBonus = dateProximityScore(
     tx.date,
@@ -382,7 +397,11 @@ export function scorePair(
     if (amtOk) {
       confidence += 0.5;
       signals.push("amount");
-      reasons.push(`bedrag €${inv.total_inc_btw} komt exact overeen`);
+      reasons.push(
+        paidSoFar > 0.005
+          ? `bedrag komt overeen met het restant (€${(amountTarget ?? 0).toFixed(2)})`
+          : `bedrag €${inv.total_inc_btw} komt exact overeen`,
+      );
     }
     // [BANK-IBAN] Same bank account as the invoice's counterpart — a strong, supplier-specific
     // identity. Paired with an EXACT amount it reaches 'auto' (IBAN + amount ≈ reference + amount:
@@ -417,6 +436,15 @@ export function scorePair(
   if (isPartialPaymentHint(`${tx.reference ?? ""} ${tx.description ?? ""}`)) {
     confidence = Math.min(confidence, 0.6);
     reasons.push("lijkt een deelbetaling — controleer");
+  }
+
+  // [PARTIAL-PAY] Completing an already-partly-paid invoice is a human decision, never a silent
+  // auto-book: cap it to a 'choice' (still a strong, listed candidate) so the owner sees "restant"
+  // and confirms. The auto path excludes partials outright, so this only shapes the suggestion UI —
+  // and it prevents a misleading 'auto' badge on the last instalment.
+  if (paidSoFar > 0.005) {
+    confidence = Math.min(confidence, 0.6);
+    reasons.push(`restant van deelbetaling (€${(amountTarget ?? 0).toFixed(2)} open)`);
   }
 
   confidence = Math.min(1, Math.max(0, confidence));

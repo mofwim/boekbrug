@@ -445,6 +445,36 @@ console.log("\n— [BANK-PARTIAL] instalment references are detected and kept ou
   ).confidence >= DEFAULT_OPTIONS.autoConfidence);
 }
 
+console.log("\n— [PARTIAL-PAY] the matcher targets the REMAINING balance of a part-paid invoice —");
+{
+  // €1000 invoice, €400 already settled (amount_paid=400) → €600 remaining. A €600 payment must
+  // score an exact 'amount' hit against the REMAINING, not miss against the €1000 total.
+  const second = scorePair(
+    tx({ amount: -600, reference: null, description: "betaling", counterpartIban: "NL11BANK0123456789" }),
+    inv({ total_inc_btw: 1000, amount_paid: 400, direction: "incoming", status: "received", vendor_iban: "NL11BANK0123456789" }),
+    DEFAULT_OPTIONS,
+  );
+  check("second instalment (€600) matches the €600 remaining → 'amount' signal", second.signals.includes("amount"));
+  check("a part-paid completion is a human choice, never silent auto (≤ 0.6)", second.confidence <= 0.6);
+
+  // The FULL amount must NOT match a part-paid invoice's remaining (a duplicate full payment is not
+  // the €600 that's left) — so it can't be mistaken for the outstanding balance.
+  const fullOnPartial = scorePair(
+    tx({ amount: -1000, reference: null, description: "betaling", counterpartIban: "NL11BANK0123456789" }),
+    inv({ total_inc_btw: 1000, amount_paid: 400, direction: "incoming", status: "received", vendor_iban: "NL11BANK0123456789" }),
+    DEFAULT_OPTIONS,
+  );
+  check("full €1000 does NOT match the €600 remaining ('amount' absent)", !fullOnPartial.signals.includes("amount"));
+
+  // A fully-open invoice (amount_paid absent/0) is unchanged: the full amount still matches the total.
+  const fresh = scorePair(
+    tx({ amount: -1000, reference: null, description: "betaling", counterpartIban: "NL11BANK0123456789" }),
+    inv({ total_inc_btw: 1000, direction: "incoming", status: "received", vendor_iban: "NL11BANK0123456789" }),
+    DEFAULT_OPTIONS,
+  );
+  check("fully-open invoice unchanged: full amount matches the total", fresh.signals.includes("amount"));
+}
+
 console.log("\n— [BANK-CHOICE-NOCLAIM] an ambiguous choice does not steal a candidate from another tx —");
 {
   // Two €500 "Jansen" credits, two €500 "Jansen" invoices → each tx matches both by

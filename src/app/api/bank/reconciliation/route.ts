@@ -63,7 +63,7 @@ export async function GET() {
     const invRows = await fetchAllRows((from, to) =>
       pipeline
         .from("invoices")
-        .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban")
+        .select("id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban")
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .neq("status", "paid")
         .order("id", { ascending: true })
