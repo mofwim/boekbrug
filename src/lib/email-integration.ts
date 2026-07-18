@@ -1957,8 +1957,23 @@ export async function syncUserEmails(
 
         if (numberIsReal) {
           tier = { kind: 'number' }
-        } else if (isReliableVendor(classification.vendor)) {
+        } else if (isReliableVendor(classification.vendor) && realDateIso) {
+          // Placeholder number + reliable vendor + a REAL invoice date → vendor+total+date is
+          // specific enough to catch a re-arrival of the SAME bill.
           tier = { kind: 'vendor' }
+        } else if (isReliableVendor(classification.vendor)) {
+          // [DEDUP-RECURRING] Reliable vendor but NO date read → vendor+total ALONE is too weak:
+          // a monthly RECURRING invoice (subscription, rent, SaaS) has the same vendor and the same
+          // amount every month, and if the AI read its number as a placeholder and couldn't read the
+          // date, this key would match it against LAST MONTH's invoice and silently drop it as a
+          // "duplicate" — exactly the "last month's invoices weren't imported" symptom. Without a
+          // date we cannot tell a re-arrival from next month's bill, so we do NOT dedup: hold it for
+          // human review (same safe stance as the un-dedupable branch below).
+          tier = {
+            kind: 'none',
+            reason:
+              'betrouwbare afzender maar geen factuurdatum — duplicaatcontrole te onzeker (kan een terugkerende factuur van hetzelfde bedrag zijn)',
+          }
         } else {
           tier = {
             kind: 'none',
