@@ -155,6 +155,14 @@ export function ZzpDashboard({ profile }: { profile: any }) {
           {/* Bon/factuur toevoegen — foto of bestand → AI sorteert (daily add). */}
           <IntakeButton variant="card" />
 
+          {/* [UPLOAD-HUB] Alles uploaden — one page for MANY files at once (facturen, bonnen,
+              bankafschriften). The scattered per-screen uploads still work; this is the single door. */}
+          <ActionCard
+            icon="upload_file" iconBg="#1A73E8" iconColor="#fff"
+            label="Alles uploaden" sub="Meerdere bestanden tegelijk — de app sorteert"
+            onClick={() => router.push('/dashboard/upload')}
+          />
+
           {/* Mijn facturen — your outgoing invoices. */}
           <ActionCard
             icon="description" iconBg="#00897B" iconColor="#fff"
