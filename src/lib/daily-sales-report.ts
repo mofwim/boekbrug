@@ -82,7 +82,10 @@ export function parseDailySalesReport(text: string): DailySalesResult {
   }
   const total_incl = r2(grossSum);
 
-  // Cross-check against the printed TOTAAL gross (first amount on the TOTAAL line), if present.
+  // Cross-check against the printed TOTAAL gross (first amount on the TOTAAL line). This is the
+  // ONLY arithmetic guard on the auto-booked sum, so its ABSENCE must itself be a warning — never a
+  // silent no-op. Without it a report variant (rate line printed twice, or a different total layout)
+  // could auto-book a doubled/misparsed omzet with no flag. No TOTAAL found → route to review.
   const tm = text.match(/TOTAAL:?\s*\d+\s+([\d.]*\d,\d{2})/i);
   if (tm) {
     const totaal = num(tm[1]);
@@ -90,6 +93,8 @@ export function parseDailySalesReport(text: string): DailySalesResult {
     if (Math.abs(totaal - grossSum) > tol) {
       warnings.push(`Som per tarief (${total_incl.toFixed(2)}) ≠ TOTAAL (${totaal.toFixed(2)}) — controleer het rapport.`);
     }
+  } else {
+    warnings.push("Geen TOTAAL-regel gevonden om de bedragen te controleren — controleer het rapport in Dagomzet.");
   }
 
   const row: DailyTurnover = {

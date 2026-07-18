@@ -745,18 +745,24 @@ async function bookTurnoverRows(
   userId: string,
   rows: DailyTurnover[],
   source: string,
+  opts?: { preserveSplit?: boolean },
 ): Promise<{ ok: boolean; days: number; span: string; total_incl: number }> {
-  const records = rows.map((r) => ({
-    user_id: userId,
-    turnover_date: r.turnover_date,
-    base_0: r.base_0 ?? 0, base_9: r.base_9 ?? 0, base_21: r.base_21 ?? 0,
-    btw_9: r.btw_9 ?? 0, btw_21: r.btw_21 ?? 0,
-    total_incl: r.total_incl ?? null,
-    pin_amount: r.pin_amount ?? null,
-    cash_amount: r.cash_amount ?? null,
-    other_amount: r.other_amount ?? null,
-    source,
-  }))
+  const records = rows.map((r) => {
+    const base = {
+      user_id: userId,
+      turnover_date: r.turnover_date,
+      base_0: r.base_0 ?? 0, base_9: r.base_9 ?? 0, base_21: r.base_21 ?? 0,
+      btw_9: r.btw_9 ?? 0, btw_21: r.btw_21 ?? 0,
+      total_incl: r.total_incl ?? null,
+      source,
+    }
+    // [DAGVERKOPEN-PDF] A daily-sales PDF carries no payment split. OMITTING pin/cash/other from the
+    // payload means an ON CONFLICT upsert leaves those columns UNTOUCHED — so a later PDF never nulls
+    // a richer Excel-sourced pin/cash for that day (which would wrongly widen the covered-day
+    // suppression budget and could drop same-day webshop omzet). On a fresh day they default to null.
+    if (opts?.preserveSplit) return base
+    return { ...base, pin_amount: r.pin_amount ?? null, cash_amount: r.cash_amount ?? null, other_amount: r.other_amount ?? null }
+  })
   const { error } = await supabase.from("daily_turnover").upsert(records, { onConflict: "user_id,turnover_date" })
   const dates = rows.map((r) => r.turnover_date).sort()
   const span = dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : ""
@@ -801,7 +807,7 @@ async function handleDailySalesPdf(
     })
   }
 
-  const booked = await bookTurnoverRows(supabase, userId, [row], "z_report_pdf")
+  const booked = await bookTurnoverRows(supabase, userId, [row], "z_report_pdf", { preserveSplit: true })
   if (!booked.ok) {
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",

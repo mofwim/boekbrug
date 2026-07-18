@@ -47,6 +47,18 @@ console.log("\n— guards —");
   check("TOTAAL mismatch → row present but a warning is raised", row !== null && warnings.length > 0);
 }
 {
+  // No recognizable TOTAAL line → the only cross-check can't run → warn (blocks auto-book).
+  const noTotaal = "OMZET VAN 04/04/2026 Omzet met BTW % 9,00 109,00 Omzet met BTW % 21,00 121,00";
+  const { row, warnings } = parseDailySalesReport(noTotaal);
+  check("missing TOTAAL → row present but a warning blocks auto-book", row !== null && warnings.length > 0);
+}
+{
+  // A rate line printed TWICE with no TOTAAL to catch it → must NOT silently auto-book (warned).
+  const doubled = "OMZET VAN 05/04/2026 Omzet met BTW % 9,00 109,00 Omzet met BTW % 9,00 109,00";
+  const { row, warnings } = parseDailySalesReport(doubled);
+  check("doubled rate line without TOTAAL → warned (not a silent 2× booking)", row !== null && warnings.length > 0);
+}
+{
   const { row } = parseDailySalesReport("no date, no omzet");
   check("garbage text → row null", row === null);
 }
