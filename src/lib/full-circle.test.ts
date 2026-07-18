@@ -142,7 +142,7 @@ check("shuffling the bank lines changes nothing", near(shuffled.omzet, result.om
 console.log("\n— the card triangle books the acquirer fee ONCE (and only in kosten) —");
 // Terminal gross 1210 on 05-10; bank paid out 1200 net → €10 commission. Booked as a BTW-free cost.
 const eft: EftSettlement[] = [
-  { terminalId: "T1", periodNr: 1, shiftNr: null, periodStart: null, periodEnd: null, firstTrx: null, lastTrx: null,
+  { terminalId: "T1", periodNr: "1", shiftNr: null, periodStart: null, periodEnd: null, firstTrx: null, lastTrx: null,
     settlementDate: "2026-05-10", grossTotal: 1210, txCount: 10, byScheme: [] as unknown as EftSettlement["byScheme"] },
 ];
 const feePos: RawBankRow[] = [{ amount: 1200, category: "pos_income", invoice_id: null, date: "2026-05-10", description: "BEA card payout", counterpart_name: "CCV" }];
