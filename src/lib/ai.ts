@@ -27,13 +27,10 @@
 
 // [BOEK-018] constants — May 2026
 //const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
+// The app deliberately reads every invoice on Haiku (cost). This stays the ONLY model used —
+// the low-confidence path below re-reads on the same Haiku model but via the raw VISUAL layout
+// (the real PDF/image) instead of flattened text, with no model-cost increase.
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
-// [STRONG-REREAD] A more capable model, used ONLY for the low-confidence re-read of an invoice
-// the cheap Haiku pass read poorly (missing invoice number, missing BTW split, or a low self-
-// scored amount confidence). Haiku reads the clean majority fine and stays the default; Sonnet is
-// spent only on the hard minority where accuracy is worth the extra cost — the fix for the
-// frequent EMAIL-<ts> placeholder numbers and "—" ex/BTW splits on complex layouts.
-const STRONG_MODEL = 'claude-sonnet-5';
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
 // The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)
@@ -194,12 +191,14 @@ export function fixExInclConfusion(
   return ex;
 }
 
-// [STRONG-REREAD] Decide whether a cheap first read is weak enough to justify a re-read on the
-// stronger model. Only fires on something the model already called an invoice AND for which it
-// found a total (a truly-empty read is handled by the existing raw-PDF fallback, not here) — so
-// the strong pass is spent recovering the fields most often lost on complex layouts: the invoice
-// number, the ex/BTW split, or an amount the reader itself scored low. Pure + testable.
-export function needsStrongReread(
+// [VISUAL-REREAD] Decide whether a cheap TEXT read is weak enough to justify one re-read of the
+// same PDF on the same Haiku model but via the raw VISUAL layout (which preserves the table
+// columns the flattened text loses). Only fires on something the model already called an invoice
+// AND for which it found a total (a truly-empty read is handled by the existing raw-PDF fallback,
+// not here) — so the re-read is spent recovering the fields most often lost on complex layouts:
+// the invoice number, the ex/BTW split, or an amount the reader itself scored low. No model-cost
+// increase (same Haiku), just a second pass that sees the page. Pure + testable.
+export function needsVisualReread(
   p:
     | {
         is_invoice?: boolean;
@@ -1291,32 +1290,26 @@ Return JSON only.`;
           (hasNum(probe.total_inc_btw) ||
             (hasNum(probe.total_ex_btw) && hasNum(probe.btw_amount)));
 
-        // [STRONG-REREAD] Re-read via the RAW PDF on the stronger model when the flat text either
-        // wasn't conclusive (existing SAFECORE fallback) OR produced an invoice whose number /
-        // BTW-split / amount came back weak. Reading the actual page layout on Sonnet recovers
-        // the columns the flattened text loses — the fix for the frequent EMAIL-<ts> placeholder
-        // numbers and "—" ex/BTW splits. The strong pass only runs on this hard minority.
+        // Re-read via the RAW PDF (same Haiku model) when the flat text either wasn't conclusive
+        // (existing SAFECORE fallback) OR produced an invoice whose number / BTW-split / amount
+        // came back weak. Reading the actual page LAYOUT recovers the table columns the flattened
+        // text loses — the fix for the frequent EMAIL-<ts> placeholder numbers and "—" ex/BTW
+        // splits — with no model-cost change (still Haiku).
         if (!textPathTrusted) {
           console.log(
-            '[PDF-OPTIMIZE] Text path not conclusive — re-reading via raw PDF on the strong model'
+            '[PDF-OPTIMIZE] Text path not conclusive — re-reading via raw PDF (SAFECORE fallback)'
           );
-          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, STRONG_MODEL);
-        } else if (needsStrongReread(probe)) {
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+        } else if (needsVisualReread(probe)) {
           console.log(
-            '[STRONG-REREAD] Text path read an invoice with weak number/split/amount — re-reading via raw PDF on the strong model'
+            '[VISUAL-REREAD] Text path read an invoice with weak number/split/amount — re-reading via the raw PDF layout'
           );
-          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, STRONG_MODEL);
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
         }
       } else {
-        // Raw PDF path — Claude reads the actual PDF (text + scanned).
+        // Raw PDF path — Claude reads the actual PDF (text + scanned). Already the visual layout,
+        // so a VISUAL-REREAD would be an identical second pass — nothing to gain. UNCHANGED.
         result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
-        // [STRONG-REREAD] A scanned/no-text-layer PDF the cheap pass read weakly (missing number,
-        // missing split, or a low amount score) gets one re-read on the stronger model.
-        const probe = safeParseJSON<VerifyInvoiceResult>(result);
-        if (needsStrongReread(probe)) {
-          console.log('[STRONG-REREAD] Raw PDF read weak — re-reading on the strong model');
-          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, STRONG_MODEL);
-        }
       }
     } else if (
       mimeType === 'image/jpeg' ||
@@ -1324,17 +1317,14 @@ Return JSON only.`;
       mimeType === 'image/webp' ||
       mimeType === 'image/gif'
     ) {
-      // Claude reads the image directly
-      const imgMime = mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
-      result = await callClaudeWithImage(fileBase64, imgMime, prompt, systemPrompt);
-      // [STRONG-REREAD] A photographed invoice the cheap pass read weakly (missing number, missing
-      // BTW split, or a low amount score) gets one re-read on the stronger model — photos are the
-      // hardest layout, so this is where the accuracy gain lands most.
-      const probe = safeParseJSON<VerifyInvoiceResult>(result);
-      if (needsStrongReread(probe)) {
-        console.log('[STRONG-REREAD] Image read weak — re-reading on the strong model');
-        result = await callClaudeWithImage(fileBase64, imgMime, prompt, systemPrompt, STRONG_MODEL);
-      }
+      // Claude reads the image directly (already the visual layout on Haiku — no re-read to add,
+      // a second pass on the same model + image would be identical). UNCHANGED.
+      result = await callClaudeWithImage(
+        fileBase64,
+        mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
+        prompt,
+        systemPrompt
+      );
     } else {
       // Unsupported type — skip safely
       return {
