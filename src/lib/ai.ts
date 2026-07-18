@@ -26,11 +26,14 @@
 // ─────────────────────────────────────────────────────────
 
 // [BOEK-018] constants — May 2026
-//const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
-// The app deliberately reads every invoice on Haiku (cost). This stays the ONLY model used —
-// the low-confidence path below re-reads on the same Haiku model but via the raw VISUAL layout
-// (the real PDF/image) instead of flattened text, with no model-cost increase.
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+// [MODEL-UPGRADE] Switched invoice/turnover OCR from Haiku → Sonnet at the owner's request.
+// A smarter reader returns HIGHER, more reliable per-field confidence, so more clean invoices
+// clear the auto-advance bar and auto-verify without a manual tap — raising automation by
+// improving the READ, not by lowering any money-safety gate (the confidence floors are unchanged).
+// Higher per-scan cost is the deliberate trade. The low-confidence path below still re-reads on the
+// SAME model via the raw VISUAL layout (real PDF/image) instead of flattened text.
+// const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'; // previous (cheaper, less capable)
+const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
 // The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)
