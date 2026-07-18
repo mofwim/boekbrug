@@ -26,11 +26,12 @@
 // ─────────────────────────────────────────────────────────
 
 // [BOEK-018] constants — May 2026
-//const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
-// The app deliberately reads every invoice on Haiku (cost). This stays the ONLY model used —
-// the low-confidence path below re-reads on the same Haiku model but via the raw VISUAL layout
-// (the real PDF/image) instead of flattened text, with no model-cost increase.
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+// [MODEL] The app now reads every invoice on Sonnet (the owner switched from Haiku for extraction
+// accuracy — supplier identity + the three totals matter more than the per-read cost). The manual
+// "Opnieuw inlezen" already used claude-sonnet-5; using the SAME id here keeps one model across the
+// automatic and manual paths. The low-confidence path still re-reads via the raw VISUAL layout (the
+// real PDF/image) instead of flattened text — that remains an accuracy lever, now on the same model.
+const CLAUDE_MODEL = 'claude-sonnet-5';
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
 // The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)

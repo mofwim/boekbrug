@@ -1265,9 +1265,9 @@ export async function classifyAttachment(
   // [BRIDGE-EXTRACT] receiver identity (our company) — passed to the AI so it
   // never returns us as the vendor on an incoming invoice.
   receiverName?: string | null,
-  // [REREAD-STRONG] Optional read-strategy override. The automatic sync passes nothing (Haiku,
-  // cheap text path). The manual "Opnieuw inlezen" passes a stronger model + preferRawPdf so a
-  // stuck complex invoice is re-read on the real page layout by a more capable model.
+  // [REREAD-STRONG] Optional read-strategy override. The automatic sync passes nothing (default
+  // model, flattened-text path). The manual "Opnieuw inlezen" passes preferRawPdf so a stuck complex
+  // invoice is re-read on the real page layout instead of flattened text (same model as the sync).
   // [RECEIVER-IDENTITY] receiverKvk/Btw/Iban = OUR own legal numbers, so the AI can tell ours from
   // the vendor's and never return ours as the vendor.
   opts?: {

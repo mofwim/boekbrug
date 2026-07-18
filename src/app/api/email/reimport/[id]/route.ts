@@ -21,15 +21,15 @@ import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
-// [REREAD-STRONG] The manual "Opnieuw inlezen" is a single, user-initiated re-read of ONE flagged
-// invoice — the right place to spend a stronger model that reads the real page layout. The
-// automatic sync stays on Haiku (cheap, high-volume). This is the fix for complex invoices Haiku
-// mis-reads on every pass (statiegeld/retour, net-negative creditnota, crowded multi-column
-// tables). Must be a model enabled on the account.
+// [REREAD-STRONG] The automatic sync now reads on Sonnet too (see CLAUDE_MODEL in ai.ts). The manual
+// "Opnieuw inlezen" keeps its edge for a stuck invoice by forcing a read of the REAL page layout
+// (preferRawPdf) on the same model — the fix for complex invoices mis-read on every pass
+// (statiegeld/retour, net-negative creditnota, crowded multi-column tables). Pinned to the same
+// model id as the sync so both paths stay in lockstep. Must be a model enabled on the account.
 const REREAD_MODEL = "claude-sonnet-5";
 
-// [REREAD-STRONG] A raw-PDF read on the stronger model is slower than the Haiku text path — give
-// the route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
+// [REREAD-STRONG] A raw-PDF (visual-layout) read is slower than the flattened-text path — give the
+// route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
 export const maxDuration = 120;
 
 // A stored value may be a relative path (new) or a legacy full signed/public URL. Normalise
