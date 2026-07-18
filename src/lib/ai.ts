@@ -26,14 +26,15 @@
 // ─────────────────────────────────────────────────────────
 
 // [BOEK-018] constants — May 2026
-// [MODEL-UPGRADE] Switched invoice/turnover OCR from Haiku → Sonnet at the owner's request.
-// A smarter reader returns HIGHER, more reliable per-field confidence, so more clean invoices
-// clear the auto-advance bar and auto-verify without a manual tap — raising automation by
-// improving the READ, not by lowering any money-safety gate (the confidence floors are unchanged).
-// Higher per-scan cost is the deliberate trade. The low-confidence path below still re-reads on the
-// SAME model via the raw VISUAL layout (real PDF/image) instead of flattened text.
-// const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'; // previous (cheaper, less capable)
-const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';
+// [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
+// hard-coded switch to 'claude-sonnet-4-5-20251001' returned HTTP 404 (that exact id is not
+// available on this account), which silently broke EVERY invoice classification — no invoice could
+// be read or imported. The lesson: never hard-code an unverified model id. The default below is the
+// Haiku model this app has always run on successfully; to try a smarter model (e.g. a valid Sonnet),
+// set CLAUDE_MODEL in the environment — and if that id is unavailable, just clear the env var to
+// fall straight back to the working Haiku default, with NO code change or deploy needed.
+const DEFAULT_CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+const CLAUDE_MODEL = (process.env.CLAUDE_MODEL || '').trim() || DEFAULT_CLAUDE_MODEL;
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
 // The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)
