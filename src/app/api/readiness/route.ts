@@ -17,6 +17,8 @@ import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { needsDocument } from "@/lib/bank-identity";
+import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
+import type { EftSettlement } from "@/lib/eft-parser";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
@@ -198,6 +200,61 @@ export async function GET(req: NextRequest) {
       .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
   );
   const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget);
+
+  // [S3 · TRIANGLE-READY] The till-vs-terminal (EFT) leg of the card triangle — a day where the
+  // terminal afrekening ≠ the till's PIN takings (a missing bon, a skim, a terminal fault) — is
+  // flagged on /api/result and in the ZIP but was INVISIBLE to readiness, so a real card
+  // discrepancy the accountant would catch could still pass "klaar". Reconcile it here too (same
+  // pure reconcileTriangle) and add the disagreeing days as RISKS, so the readiness verdict never
+  // hides a card mismatch. Only gross-mismatch days (a genuine discrepancy) are surfaced — an
+  // 'incomplete' day is just a payout not yet settled (normal near quarter-end), not an error.
+  // Witness-only + best-effort: a fetch hiccup must never fail the readiness verdict.
+  if (turnover.length > 0) {
+    try {
+      const endBuffer = shiftDays(end, 5);
+      const { data: eftRows } = await pipeline
+        .from("eft_settlements")
+        .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
+        .eq("user_id", ownerId).gte("settlement_date", start).lte("settlement_date", end);
+      const eftSettlements: EftSettlement[] = (eftRows ?? []).map((e) => ({
+        terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
+        periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,
+        settlementDate: e.settlement_date, grossTotal: e.gross_total ?? 0, txCount: e.tx_count ?? 0,
+        byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
+      }));
+      const posBufRows = await fetchAllRows((from, to) => pipeline
+        .from("bank_transactions").select("description, amount, date")
+        .eq("user_id", ownerId).eq("category", "pos_income")
+        .gte("date", startBuffer).lte("date", endBuffer)
+        .order("id", { ascending: true }).range(from, to));
+      const netByDay = bankNetByDay(posBufRows.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
+      for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
+      const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null; spent: number | null }>((from, to) => pipeline
+        .from("ledger_daily").select("ledger_date, received, spent")
+        .eq("user_id", ownerId).eq("kind", "pin")
+        .gte("ledger_date", start).lte("ledger_date", end)
+        .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+      const pinLedgerByDay = new Map<string, number>();
+      for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
+      const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
+      const seen = new Set(reconExceptions.map((e) => e.date + "|" + e.kind));
+      for (const d of triangle.days) {
+        if (d.status !== "gross_mismatch") continue;
+        const key = d.date + "|terminal";
+        if (seen.has(key)) continue;
+        seen.add(key);
+        reconExceptions.push({
+          date: d.date,
+          kind: "terminal",
+          note: `Kassa-PIN (${d.tillPin ?? "?"}) wijkt af van terminal-afrekening (${d.eftGross ?? "?"})`,
+          diff: d.grossDiff ?? 0,
+        });
+      }
+    } catch {
+      /* triangle is a witness; never let it fail the readiness verdict */
+    }
+  }
+
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
   const IN_OK = new Set(["paid", "received"]);
   const completeness: AangifteCompleteness = {
