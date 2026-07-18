@@ -123,13 +123,18 @@ export async function POST(req: NextRequest) {
   // our own company as the vendor. Falls back to full_name, then null.
   const { data: me } = await supabase
     .from("profiles")
-    .select("company_name, full_name")
+    .select("company_name, full_name, kvk_number, btw_number, iban")
     .eq("id", user.id)
     .maybeSingle();
   const receiverName = me?.company_name || me?.full_name || null;
 
   // [BOEK-011] Claude verifies the actual file
-  const verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName);
+  // [RECEIVER-IDENTITY] pass our own KVK/BTW/IBAN so the extractor never returns us as the vendor.
+  const verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName, {
+    receiverKvk: me?.kvk_number || null,
+    receiverBtw: me?.btw_number || null,
+    receiverIban: me?.iban || null,
+  });
 
   if (!verification.is_invoice) {
     return NextResponse.json(

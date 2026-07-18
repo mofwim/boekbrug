@@ -986,7 +986,14 @@ export async function verifyInvoiceFromPdf(
   // cheap flattened-text path and reads the ACTUAL PDF layout directly. Used by the manual
   // "Opnieuw inlezen" so a stuck complex invoice (statiegeld/retour, net-negative creditnota) is
   // re-read by a stronger model on the real page — the automatic sync keeps the Haiku/text path.
-  opts?: { throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean }
+  // [RECEIVER-IDENTITY] Our own legal identity (KVK/BTW/IBAN), so the AI can tell OUR numbers
+  // from the vendor's and never return ours as the vendor. Also used as a programmatic backstop
+  // below (any vendor field equal to ours is dropped). Optional → callers that don't pass it keep
+  // the name-only behaviour.
+  opts?: {
+    throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean
+    receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+  }
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
     is_invoice: false,
@@ -994,14 +1001,38 @@ export async function verifyInvoiceFromPdf(
     reason: 'AI verificatie mislukt — bestand overgeslagen',
   };
 
+  // [RECEIVER-IDENTITY] Canonicalize our own identity the SAME way the vendor fields are
+  // normalized below, so the equality backstop compares like-for-like.
+  const myKvk = (() => {
+    const d = String(opts?.receiverKvk ?? '').replace(/\D/g, '')
+    return d.length === 8 ? d : null
+  })();
+  const myBtw = (() => {
+    const b = String(opts?.receiverBtw ?? '').replace(/\s+/g, '').toUpperCase()
+    return /^NL\d{9}B\d{2}$/.test(b) ? b : null
+  })();
+  const myIban = (() => {
+    const s = String(opts?.receiverIban ?? '').replace(/\s+/g, '').toUpperCase()
+    return s.length >= 15 && /^[A-Z0-9]+$/.test(s) ? s : null
+  })();
+
   // [BRIDGE-EXTRACT] Inject the receiver identity into the prompt when known.
+  const receiverIdLines = [
+    myKvk ? `- Our own KVK is "${myKvk}" — this is the RECEIVER's KVK. NEVER return it as "vendor_kvk".` : '',
+    myBtw ? `- Our own BTW number is "${myBtw}" — the RECEIVER's. NEVER return it as "vendor_btw".` : '',
+    myIban ? `- Our own IBAN is "${myIban}" — the RECEIVER's account. NEVER return it as "vendor_iban".` : '',
+  ].filter(Boolean).join('\n');
   const receiverHint = receiverName
     ? `\n\nIMPORTANT — who the RECEIVER is:
 - The recipient of this invoice is "${receiverName}" (this is OUR company, the client).
 - "${receiverName}" is the RECEIVER, never the vendor/sender. Even if this name appears
   prominently (e.g. under "Factuur aan", "T.a.v.", or at the top), do NOT return it as "vendor".
-- The vendor is the OTHER party — the company that issued and sent the invoice to us.`
-    : '';
+- The vendor is the OTHER party — the company that issued and sent the invoice to us.${receiverIdLines ? '\n' + receiverIdLines + '\n- The vendor\'s KVK/BTW/IBAN are DIFFERENT numbers than ours above.' : ''}`
+    : (receiverIdLines
+      ? `\n\nIMPORTANT — our own legal identity (the RECEIVER, never the vendor):
+${receiverIdLines}
+- The vendor's KVK/BTW/IBAN are DIFFERENT numbers than ours above; never return ours as the vendor's.`
+      : '');
 
   const systemPrompt = `${SYSTEM_BASE}
 
@@ -1540,6 +1571,17 @@ Return JSON only.`;
     } else {
       parsed.vendor_btw = undefined;
     }
+
+    // [RECEIVER-IDENTITY] Programmatic backstop: never let OUR own identity leak through as the
+    // vendor's. If the model — despite the prompt — returned the receiver's (our) KVK/BTW/IBAN as
+    // the vendor's, drop it. Both sides are already canonicalized identically, so this is an exact
+    // match. This is the code-level guarantee behind the prompt rules, and it also fixes the case
+    // where the vendor NAME was suppressed but its identity numbers survived (self-supplier
+    // pollution: a supplier row keyed on our own company).
+    if (myKvk && parsed.vendor_kvk === myKvk) parsed.vendor_kvk = undefined;
+    if (myBtw && parsed.vendor_btw === myBtw) parsed.vendor_btw = undefined;
+    if (myIban && parsed.vendor_iban === myIban) parsed.vendor_iban = undefined;
+
     // payment_reference: trim; empty → undefined (the system falls back to the
     // invoice number when preparing a payment, so a missing reference is fine).
     if (typeof parsed.payment_reference === 'string') {

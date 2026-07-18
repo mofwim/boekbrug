@@ -121,13 +121,20 @@ export async function POST(
 
   // Receiver identity — so the extractor never returns US as the vendor.
   let receiverName: string | null = null;
+  let receiverKvk: string | null = null;
+  let receiverBtw: string | null = null;
+  let receiverIban: string | null = null;
   {
     const { data: me } = await supabase
       .from("profiles")
-      .select("company_name, full_name")
+      .select("company_name, full_name, kvk_number, btw_number, iban")
       .eq("id", user.id)
       .maybeSingle();
     receiverName = me?.company_name?.trim() || me?.full_name?.trim() || null;
+    // [RECEIVER-IDENTITY] our own legal numbers → backstop drops any vendor field equal to ours.
+    receiverKvk = me?.kvk_number?.trim() || null;
+    receiverBtw = me?.btw_number?.trim() || null;
+    receiverIban = me?.iban?.trim() || null;
   }
 
   // Download the stored bytes. Storage bucket RLS is separate from table RLS; ownership is
@@ -153,6 +160,9 @@ export async function POST(
     c = await classifyAttachment(base64, mimeType, filename, receiverName, {
       model: REREAD_MODEL,
       preferRawPdf: true,
+      receiverKvk,
+      receiverBtw,
+      receiverIban,
     });
   } catch (e) {
     console.error("[REIMPORT] classify failed", { invoiceId: id, e });

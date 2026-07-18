@@ -117,8 +117,27 @@ export async function resolveSupplierForImport(
         return { id: byIban.id, name: byIban.name }
       }
 
-      // Before creating an IBAN-keyed supplier, adopt an existing NAME-only record for the same
-      // company (so we don't split one supplier into a name row + an IBAN row): attach the IBAN.
+      // Before creating an IBAN-keyed supplier, adopt an existing row that already identifies this
+      // same company by a strong key and attach the IBAN — so we never split one company across an
+      // IBAN row and a KVK/name row. Strongest first:
+      //   (a) KVK match: a KVK-keyed row that has no IBAN yet (this vendor's earlier KVK-only
+      //   invoice). Without this, an IBAN+KVK invoice would insert, hit the (user,kvk) index → 23505,
+      //   then re-read by IBAN only (the KVK row's iban is NULL) → miss → return null forever.
+      if (kvk) {
+        const { data: byKvk } = await supabase
+          .from('suppliers')
+          .select('id, name')
+          .eq('user_id', userId)
+          .eq('kvk_number', kvk)
+          .is('iban', null)
+          .limit(1)
+          .maybeSingle()
+        if (byKvk) {
+          await supabase.from('suppliers').update({ iban }).eq('id', byKvk.id)
+          return { id: byKvk.id, name: byKvk.name }
+        }
+      }
+      //   (b) NAME match: a name-only record for the same company (no IBAN yet): attach the IBAN.
       if (reliableName) {
         const { data: byName } = await supabase
           .from('suppliers')
@@ -153,15 +172,36 @@ export async function resolveSupplierForImport(
         .single()
       if (!createErr && created) return { id: created.id, name: created.name }
 
-      // Lost the insert race (23505) or another error → re-read the winner by (user, iban).
-      const { data: retry } = await supabase
+      // The insert failed. Two causes, both reconciled by re-reading the winner:
+      //   • lost an (user, iban) race → re-read by iban finds it;
+      //   • the (user, kvk) index rejected because a KVK-keyed row already exists (its iban may be
+      //     NULL, so an iban re-read alone would miss it) → fall back to a kvk re-read, and attach
+      //     our IBAN to that row so future IBAN-only invoices from this vendor resolve here too.
+      const { data: retryByIban } = await supabase
         .from('suppliers')
-        .select('id, name')
+        .select('id, name, iban')
         .eq('user_id', userId)
         .eq('iban', iban)
         .limit(1)
         .maybeSingle()
-      return retry ? { id: retry.id, name: retry.name } : null
+      if (retryByIban) return { id: retryByIban.id, name: retryByIban.name }
+
+      if (kvk) {
+        const { data: retryByKvk } = await supabase
+          .from('suppliers')
+          .select('id, name, iban')
+          .eq('user_id', userId)
+          .eq('kvk_number', kvk)
+          .limit(1)
+          .maybeSingle()
+        if (retryByKvk) {
+          if (!retryByKvk.iban) {
+            await supabase.from('suppliers').update({ iban }).eq('id', retryByKvk.id)
+          }
+          return { id: retryByKvk.id, name: retryByKvk.name }
+        }
+      }
+      return null
     }
 
     // ── 2. KVK tier (no IBAN, but a legal KVK): the strong identity that keeps two same-named
@@ -182,6 +222,26 @@ export async function resolveSupplierForImport(
           await supabase.from('suppliers').update(patch).eq('id', byKvk.id)
         }
         return { id: byKvk.id, name: byKvk.name }
+      }
+
+      // Before creating, adopt an existing same-company row that has no KVK yet (an IBAN-keyed or
+      // name-only row from an earlier invoice that didn't print a KVK) and tag it with this KVK —
+      // so a KVK-only invoice doesn't spawn a DUPLICATE of a supplier we already hold under the
+      // same name. Mirrors the IBAN tier's name-adoption and its same-name-collision risk posture.
+      if (reliableName) {
+        const { data: byName } = await supabase
+          .from('suppliers')
+          .select('id, name')
+          .eq('user_id', userId)
+          .eq('name_key', key)
+          .is('kvk_number', null)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle()
+        if (byName) {
+          await supabase.from('suppliers').update({ kvk_number: kvk }).eq('id', byName.id)
+          return { id: byName.id, name: byName.name }
+        }
       }
 
       // Create, keyed by KVK. Plain insert; on the (user_id, kvk_number) unique-index race — or

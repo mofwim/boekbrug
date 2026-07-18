@@ -1163,7 +1163,12 @@ export async function classifyAttachment(
   // [REREAD-STRONG] Optional read-strategy override. The automatic sync passes nothing (Haiku,
   // cheap text path). The manual "Opnieuw inlezen" passes a stronger model + preferRawPdf so a
   // stuck complex invoice is re-read on the real page layout by a more capable model.
-  opts?: { model?: string; preferRawPdf?: boolean }
+  // [RECEIVER-IDENTITY] receiverKvk/Btw/Iban = OUR own legal numbers, so the AI can tell ours from
+  // the vendor's and never return ours as the vendor.
+  opts?: {
+    model?: string; preferRawPdf?: boolean
+    receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+  }
 ): Promise<AttachmentClassification> {
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
 
@@ -1175,6 +1180,9 @@ export async function classifyAttachment(
     throwOnTransient: true,
     model: opts?.model,
     preferRawPdf: opts?.preferRawPdf,
+    receiverKvk: opts?.receiverKvk,
+    receiverBtw: opts?.receiverBtw,
+    receiverIban: opts?.receiverIban,
   })
 
   return {
@@ -1409,11 +1417,16 @@ export async function syncUserEmails(
   // AI never returns us as the vendor on incoming invoices.
   const { data: profile } = await supabase
     .from('profiles')
-    .select('created_at, company_name, full_name')
+    .select('created_at, company_name, full_name, kvk_number, btw_number, iban')
     .eq('id', userId)
     .single()
 
   const receiverName = profile?.company_name || profile?.full_name || null
+  // [RECEIVER-IDENTITY] Our own legal numbers → the AI (and its backstop) can tell OURS from the
+  // vendor's and never store our own company as a supplier.
+  const receiverKvk = profile?.kvk_number || null
+  const receiverBtw = profile?.btw_number || null
+  const receiverIban = profile?.iban || null
 
   // [BOEK-011] Sync start boundary.
   //
@@ -1681,7 +1694,8 @@ export async function syncUserEmails(
           attachment.data,
           attachment.mimeType,
           attachment.filename,
-          receiverName
+          receiverName,
+          { receiverKvk, receiverBtw, receiverIban }
         )
         return { attachment, classification, classifyFailed: false }
       } catch (err) {
