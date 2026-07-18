@@ -78,6 +78,9 @@ export async function POST(req: NextRequest) {
     }
     const label = doc.file_name || doc.file_url;
 
+    // Isolate each file: a parse/book failure on ONE document skips that file and continues the
+    // batch — never 500s the whole run (which would leave the rest unprocessed with no results).
+    try {
     // ── Spreadsheet → turnover / ledger ──────────────────────────────────────────────────
     if (isSheet) {
       let matrix;
@@ -125,12 +128,16 @@ export async function POST(req: NextRequest) {
       if (!row || warnings.length > 0) {
         results.push({ file: label, status: "review", message: `dagomzet herkend maar niet zeker — controleer in Dagomzet` }); review++; continue;
       }
-      const b = await bookTurnoverRows(supabase, user.id, [row], "z_report_pdf", { preserveSplit: true });
+      // source 'z_report' (an allowed daily_turnover.source; 'z_report_pdf' violates the DB CHECK).
+      const b = await bookTurnoverRows(supabase, user.id, [row], "z_report", { preserveSplit: true });
       if (!b.ok) { results.push({ file: label, status: "error", message: "opslaan van dagomzet mislukt" }); failed++; continue; }
       turnoverDays += b.days; booked++;
       results.push({ file: label, status: "booked", type: "turnover", message: `dagomzet ${row.turnover_date} (€${b.total_incl.toFixed(2)})` });
       await logAuditAction({ userId: user.id, action: "turnover.auto_imported", entityType: "daily_turnover", entityId: doc.id,
         newValue: { days: 1, span: row.turnover_date, total_incl: b.total_incl, file_name: doc.file_name, path: "reprocess_pdf" }, ipAddress: getClientIP(req) }).catch(() => {});
+    }
+    } catch {
+      results.push({ file: label, status: "error", message: "onverwachte fout bij verwerken — overgeslagen" }); failed++;
     }
   }
 

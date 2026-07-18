@@ -781,7 +781,10 @@ async function handleDailySalesPdf(
     })
   }
 
-  const booked = await bookTurnoverRows(supabase, userId, [row], "z_report_pdf", { preserveSplit: true })
+  // source MUST be an allowed daily_turnover.source value ('z_report' | 'manual') — the DB CHECK
+  // rejects anything else, which would silently fail the whole booking. Provenance (PDF vs Excel)
+  // lives in the audit log below (path: intake_pdf), not in this constrained column.
+  const booked = await bookTurnoverRows(supabase, userId, [row], "z_report", { preserveSplit: true })
   if (!booked.ok) {
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
