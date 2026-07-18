@@ -732,14 +732,21 @@ async function handleSpreadsheet(
       if (!upErr) {
         const folderId = await ensureImportedFolder(userId, "pipeline")
         const pipelineDoc = createPipelineClient()
-        const { data: doc } = await pipelineDoc.from("documents").insert({
+        const { data: doc, error: docErr } = await pipelineDoc.from("documents").insert({
           user_id: userId, file_name: file.name, file_url: storagePath,
           file_size: buffer.length, file_type: file.type || "application/octet-stream",
           doc_type: "overig", folder_id: folderId, source: "camera",
           ai_processed: true, ai_doc_type: plan.kind === "turnover" ? "kassa_zrapport" : "grootboek_export",
           content_hash: hash,
         }).select("id").single()
-        documentId = doc?.id ?? null
+        // Roll back the just-uploaded blob if the row failed, so a failed store never leaks an
+        // orphaned storage object (mirrors the invoice path). The booking below still proceeds.
+        if (docErr || !doc) {
+          await supabase.storage.from("documents").remove([storagePath]).catch(() => {})
+          documentId = null
+        } else {
+          documentId = doc.id
+        }
       }
     }
   } catch { /* storage is a convenience; the booking below is the truth */ }
