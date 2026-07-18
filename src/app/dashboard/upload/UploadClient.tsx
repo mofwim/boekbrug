@@ -33,7 +33,14 @@ interface Item {
   message?: string
   canForce?: boolean
   force?: boolean   // set on a "toch toevoegen" retry → sends force=true to override a semantic dup
+  preview?: string  // objectURL for an image → inline thumbnail so the owner verifies without opening
+  vendor?: string | null      // extracted — shown inline so you see WHAT the file is at a glance
+  total?: number | null
+  number?: string | null
+  rateLimited?: boolean       // a 429 (too many at once) → retry after a short wait, not a real error
 }
+
+const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 // Destination → how the owner reads it (label + emoji + colour).
 const DEST: Record<string, { label: string; icon: string; color: string }> = {
@@ -75,15 +82,23 @@ export default function UploadClient() {
           const res = await fetch('/api/intake', { method: 'POST', body: fd })
           const data = await res.json().catch(() => ({}))
           if (res.ok) {
-            patch(item.id, { status: 'done', destination: data.destination, message: data.message })
+            patch(item.id, {
+              status: 'done', destination: data.destination, message: data.message,
+              vendor: data.vendor ?? null, total: data.total_inc_btw ?? null, number: data.invoice_number ?? null,
+            })
           } else if (res.status === 409 && data.duplicate) {
             patch(item.id, { status: 'duplicate', message: data.error || 'Al toegevoegd', canForce: !!data.canForce })
+          } else if (res.status === 429) {
+            // Rate limit (60 documenten/uur) — NOT a broken file. Say so honestly + offer a retry.
+            patch(item.id, { status: 'error', rateLimited: true, message: data.error || 'Te veel tegelijk — probeer dit bestand zo opnieuw.' })
           } else {
-            patch(item.id, { status: 'error', message: data.error || 'Uploaden mislukt' })
+            patch(item.id, { status: 'error', message: data.error || 'Lezen mislukt — probeer dit bestand opnieuw.' })
           }
         } catch {
-          patch(item.id, { status: 'error', message: 'Uploaden mislukt — probeer opnieuw' })
+          patch(item.id, { status: 'error', message: 'Lezen mislukt — probeer dit bestand opnieuw.' })
         }
+        // Gentle spacing between AI reads — smooths bursts so fewer files trip an error.
+        await new Promise((r) => setTimeout(r, 250))
       }
     } finally {
       running.current = false
@@ -93,9 +108,31 @@ export default function UploadClient() {
   const addFiles = useCallback((files: FileList | File[] | null) => {
     const arr = files ? Array.from(files) : []
     if (arr.length === 0) return
-    const newItems: Item[] = arr.map((file) => ({ id: nextId(), file, status: 'queued' as Status }))
+    const newItems: Item[] = arr.map((file) => ({
+      id: nextId(), file, status: 'queued' as Status,
+      // An objectURL for every file: shown as an inline thumbnail for images, and opened by the
+      // "bekijk" link for any file — so the owner recognises/checks each one without leaving the page.
+      preview: URL.createObjectURL(file),
+    }))
     setItems((prev) => [...prev, ...newItems])
     pending.current.push(...newItems)
+    void kick()
+  }, [kick])
+
+  // Re-try a file that failed (a transient AI error or a rate-limit that has since cleared).
+  const retry = useCallback((item: Item) => {
+    const again: Item = { ...item, status: 'queued', message: undefined, rateLimited: false }
+    patch(item.id, { status: 'queued', message: 'Opnieuw in wachtrij…', rateLimited: false })
+    pending.current.push(again)
+    void kick()
+  }, [kick, patch])
+
+  const retryAllFailed = useCallback(() => {
+    setItems((prev) => {
+      const failed = prev.filter((i) => i.status === 'error')
+      for (const f of failed) pending.current.push({ ...f, status: 'queued', message: undefined, rateLimited: false })
+      return prev.map((i) => (i.status === 'error' ? { ...i, status: 'queued' as Status, message: 'Opnieuw in wachtrij…', rateLimited: false } : i))
+    })
     void kick()
   }, [kick])
 
@@ -192,21 +229,42 @@ export default function UploadClient() {
                 : it.status === 'duplicate' ? M3.warn
                 : it.status === 'done' ? M3.success
                 : M3.outlineVariant
+              const isImg = it.file.type.startsWith('image/')
+              // The at-a-glance summary of WHAT the file is (so you don't open each one).
+              const extracted = [it.vendor, it.total != null ? eur.format(it.total) : null, it.number ? `nr. ${it.number}` : null]
+                .filter(Boolean).join('  ·  ')
               return (
                 <div key={it.id} style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderLeft: `4px solid ${border}`, borderRadius: 12, padding: '10px 12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 18 }}>
-                      {it.status === 'queued' ? '⏳' : it.status === 'busy' ? '🔄' : it.status === 'done' ? (d?.icon ?? '✅') : it.status === 'duplicate' ? '⚠️' : '❌'}
-                    </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {/* Thumbnail (image) or a status/type glyph — recognise the file instantly. */}
+                    {isImg && it.preview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={it.preview} alt="" style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 8, flexShrink: 0, background: '#F1F3F4' }} />
+                    ) : (
+                      <div style={{ width: 46, height: 46, borderRadius: 8, background: '#F1F3F4', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>
+                        {it.status === 'queued' ? '⏳' : it.status === 'busy' ? '🔄' : it.status === 'done' ? (d?.icon ?? '📄') : it.status === 'duplicate' ? '⚠️' : '📄'}
+                      </div>
+                    )}
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {it.file.name}
                       </p>
-                      <p style={{ fontSize: 12, color: it.status === 'error' ? M3.error : it.status === 'duplicate' ? M3.warn : M3.neutral, margin: '2px 0 0', lineHeight: 1.4 }}>
-                        {it.status === 'queued' ? 'In wachtrij…'
+                      {/* Extracted identity for a recognised invoice: leverancier · bedrag · nummer. */}
+                      {it.status === 'done' && extracted && (
+                        <p style={{ fontSize: 12.5, fontWeight: 600, color: M3.onSurface, margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{extracted}</p>
+                      )}
+                      <p style={{ fontSize: 12, color: it.status === 'error' ? (it.rateLimited ? M3.warn : M3.error) : it.status === 'duplicate' ? M3.warn : M3.neutral, margin: '2px 0 0', lineHeight: 1.4 }}>
+                        {it.status === 'queued' ? (it.message || 'In wachtrij…')
                           : it.status === 'busy' ? 'Bezig met lezen…'
                           : it.message || (d ? d.label : 'Klaar')}
                       </p>
+                      {/* [UPLOAD-VERIFY] Open the file itself to check it — without leaving the page. */}
+                      {it.preview && (it.status === 'done' || it.status === 'error' || it.status === 'duplicate') && (
+                        <a href={it.preview} target="_blank" rel="noopener noreferrer"
+                          style={{ display: 'inline-block', marginTop: 4, fontSize: 12, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}>
+                          Bekijk bestand →
+                        </a>
+                      )}
                     </div>
                     {it.status === 'done' && d && (
                       <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: d.color, background: '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
@@ -214,12 +272,21 @@ export default function UploadClient() {
                       </span>
                     )}
                   </div>
-                  {it.status === 'duplicate' && it.canForce && (
-                    <button onClick={() => forceAdd(it)}
-                      style={{ marginTop: 8, background: 'transparent', color: M3.warn, border: `1px solid #E0C48A`, borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
-                      Toch toevoegen — dit is een ander bestand
-                    </button>
-                  )}
+                  {/* Actions row: retry a failure, or override an uncertain duplicate. */}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {it.status === 'error' && (
+                      <button onClick={() => retry(it)}
+                        style={{ marginTop: 8, background: 'transparent', color: M3.primary, border: `1px solid ${M3.primaryContainer}`, borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
+                        ↻ Opnieuw proberen
+                      </button>
+                    )}
+                    {it.status === 'duplicate' && it.canForce && (
+                      <button onClick={() => forceAdd(it)}
+                        style={{ marginTop: 8, background: 'transparent', color: M3.warn, border: `1px solid #E0C48A`, borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
+                        Toch toevoegen — dit is een ander bestand
+                      </button>
+                    )}
+                  </div>
                 </div>
               )
             })}
@@ -237,6 +304,17 @@ export default function UploadClient() {
               {dups.length > 0 && <>{dups.length} dubbel · </>}
               {errs.length > 0 && <span style={{ color: M3.error }}>{errs.length} mislukt</span>}
             </p>
+            {errs.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <button onClick={retryAllFailed}
+                  style={{ background: M3.error, color: '#fff', border: 'none', borderRadius: 999, padding: '9px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}>
+                  ↻ Alle {errs.length} mislukte opnieuw proberen
+                </button>
+                <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 2px 0', lineHeight: 1.45 }}>
+                  Mislukt komt meestal door de limiet van 60 documenten per uur of een tijdelijke leesfout — opnieuw proberen lost het vaak op.
+                </p>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {countBy('invoice') + countBy('receipt') > 0 && (
                 <Link href="/dashboard/incoming" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>

@@ -653,6 +653,11 @@ export async function POST(req: NextRequest) {
     invoice_id: invoice?.id,
     suggest_paid: decision.suggestPaid,
     auto_verified: autoAdv.advance,
+    // [UPLOAD-HUB] Echo the key extracted fields so the upload page can show WHAT each file is
+    // (leverancier · bedrag · nummer) at a glance — the owner verifies without opening every file.
+    vendor: v.vendor ?? null,
+    invoice_number: v.invoice_number ?? null,
+    total_inc_btw: v.total_inc_btw ?? v.amount ?? null,
     message:
       decision.destination === "receipt"
         ? "Bon herkend — controleer en bevestig (waarschijnlijk al betaald)."
