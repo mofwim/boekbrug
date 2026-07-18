@@ -183,6 +183,10 @@ export function planBatchAutoConfirm(args: {
     if (!cands || cands.length !== 1) return null; // unmatched OR ambiguous number → not auto-safe
     const inv = cands[0];
     if (inv.total_inc_btw == null || !Number.isFinite(inv.total_inc_btw)) return null;
+    // A credit note (negative gross) must never enter the automatic path: reconcileBatch sums by
+    // MAGNITUDE, so a credit could satisfy a tie for the wrong (magnitude) amount. A net-of-credit
+    // batch is genuinely ambiguous — leave it for the human. (≤ 0 covers creditnota + any junk.)
+    if (inv.total_inc_btw <= 0) return null;
     if (usedIds.has(inv.id)) return null; // the same invoice can't satisfy two references
     usedIds.add(inv.id);
     picked.push(inv);

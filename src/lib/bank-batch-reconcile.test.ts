@@ -166,6 +166,14 @@ console.log("\n— [ROOT] planBatchAutoConfirm: auto-book ONLY a provably-unambi
   const paidOne = [inv("p1", "900", 100), { ...inv("p2", "901", 100), status: "paid" }];
   check("a paid invoice can't be re-booked in a batch",
     planBatchAutoConfirm({ reference: "900, 901", bankAmount: -200, invoices: paidOne }) === null);
+
+  // [REVIEW-B] A credit note (negative gross) must never enter the automatic path — reconcileBatch
+  // sums by magnitude, so an abs-tie could book the wrong amount. ≤0 candidate → whole batch null.
+  const withCredit = [inv("cn1", "1001", 300), { ...inv("cn2", "CR55", -20) }];
+  check("a credit note in the batch blocks auto-book (magnitude-tie at 320)",
+    planBatchAutoConfirm({ reference: "1001, CR55", bankAmount: -320, invoices: withCredit }) === null);
+  check("a credit note also blocks the genuine net debit (280)",
+    planBatchAutoConfirm({ reference: "1001, CR55", bankAmount: -280, invoices: withCredit }) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
