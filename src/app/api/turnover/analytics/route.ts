@@ -23,10 +23,32 @@ export async function GET(req: NextRequest) {
 
   const now = new Date();
   const sp = req.nextUrl.searchParams;
-  const year = Number(sp.get("year")) || now.getUTCFullYear();
-  const quarter = ([1, 2, 3, 4].includes(Number(sp.get("quarter")))
-    ? Number(sp.get("quarter"))
-    : Math.floor(now.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+  const explicitYear = sp.get("year");
+  const explicitQuarter = sp.get("quarter");
+
+  let year: number;
+  let quarter: 1 | 2 | 3 | 4;
+  if (explicitYear || explicitQuarter) {
+    year = Number(explicitYear) || now.getUTCFullYear();
+    quarter = ([1, 2, 3, 4].includes(Number(explicitQuarter))
+      ? Number(explicitQuarter)
+      : Math.floor(now.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+  } else {
+    // [TURNOVER-SHOW] No explicit period → default to the quarter of the owner's MOST RECENT booked
+    // day, so "ga naar Dagomzet" actually shows their omzet. Booking Q2 while the calendar is in Q3
+    // must not land on an empty current quarter (the "geboekt ✓ maar niks te zien" trap). Falls back
+    // to the calendar quarter when nothing is booked yet.
+    const { data: latest } = await supabase
+      .from("daily_turnover")
+      .select("turnover_date")
+      .eq("user_id", user.id)
+      .order("turnover_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const ref = latest?.turnover_date ? new Date(`${latest.turnover_date}T00:00:00Z`) : now;
+    year = ref.getUTCFullYear();
+    quarter = (Math.floor(ref.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+  }
 
   const startMonth = (quarter - 1) * 3;
   const start = `${year}-${pad(startMonth + 1)}-01`;
