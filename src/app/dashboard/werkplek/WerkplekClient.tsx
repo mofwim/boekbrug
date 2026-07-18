@@ -18,6 +18,9 @@ const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 const ITEMS = [
   { icon: 'receipt_long', label: 'Mijn facturen',  sub: 'Verstuur en beheer',      href: '/dashboard/facturen', bg: M3.primary,   color: '#fff' },
   { icon: 'folder_open',  label: 'Mijn bestanden', sub: 'Bonnen en documenten',     href: '/dashboard/bestanden', bg: M3.warning,   color: '#fff' },
+  // [COHERENCE-ORPHAN] De Brug — the app's namesake invoice↔document tree — had no ZZP
+  // entry point (only accountant surfaces linked to it), so the owner could never open it.
+  { icon: 'account_tree', label: 'De Brug',        sub: 'Zie hoe je facturen en documenten verbonden zijn', href: '/dashboard/brug', bg: '#1967D2', color: '#fff' },
   { icon: 'people',       label: 'Mijn klanten',   sub: 'Klantgegevens en history', href: '/dashboard/klanten',  bg: M3.success,   color: '#fff' },
   { icon: 'shield',       label: 'Compliance-kluis', sub: '7 jaar bewaren, klaar voor je boekhouder', href: '/dashboard/kluis', bg: '#455A64', color: '#fff' },
   { icon: 'settings',     label: 'Mijn gegevens',  sub: 'Bedrijf en account',       href: '/dashboard/settings', bg: M3.tertiary,  color: '#fff' },

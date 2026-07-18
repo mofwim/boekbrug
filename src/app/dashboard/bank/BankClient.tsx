@@ -1125,6 +1125,24 @@ export default function BankClient() {
             </p>
           )}
 
+          {/* [COHERENCE-ORPHAN] Entry point to the bank-line categorisation screen. It
+              was a real, P&L-feeding feature (give every uncategorised debit/credit an
+              identity: kost, huur, fee, transfer…) with NO link anywhere — reachable only
+              by typing the URL. Surface it here, where uncategorised "geen factuur" lines
+              live, so those costs can actually reach the W&V/BTW. */}
+          {bankTab === 'none' && noMatch.length > 0 && (
+            <Link
+              href="/dashboard/bank/categoriseren"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10,
+                fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>label</span>
+              Geef deze regels een categorie →
+            </Link>
+          )}
+
           {/* [BANK-FILTER] Search field for the long "Geen factuur" list. */}
           {bankTab === 'none' && noMatch.length > 0 && (
             <div style={{ position: 'relative', marginTop: 12 }}>
