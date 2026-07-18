@@ -161,6 +161,29 @@ function RegisterContent() {
       return
     }
 
+    // [COHERENCE-REGISTER] Defensive self-heal for the confirmation-OFF path: a session
+    // exists, so this authenticated upsert passes RLS and writes the exact registration
+    // data. It is redundant when the handle_new_user metadata trigger is applied (same
+    // values), but it guarantees the accountant role + company/kvk/btw are stored even if
+    // that migration hasn't been applied yet — closing the silent-wrong-data window. The
+    // no-session (confirmation-ON) path above can't do this (anon RLS) and relies on the
+    // trigger. Best-effort: a failure here never blocks the redirect.
+    await supabase
+      .from('profiles')
+      .upsert({
+        id: data.user.id,
+        role,
+        full_name: fullName,
+        company_name: companyName,
+        kvk_number: kvk,
+        btw_number: btw,
+        email,
+        onboarding_step: 4,
+      }, { onConflict: 'id' })
+      .then(({ error }) => {
+        if (error) console.error('[COHERENCE-REGISTER] post-session profile upsert failed (non-fatal):', error)
+      })
+
     const redirectUrl = searchParams.get('redirect')
     router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/onboarding')
   }

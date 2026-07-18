@@ -5,7 +5,7 @@
 // [BOEK-031] add creditnota button for sent invoices — May 2026
 // [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
@@ -95,16 +95,29 @@ export default function InvoiceDetailPage() {
   }, [searchParams])
 
   // [COHERENCE-CREDITNOTA] ?action=credit (from the Facturen list's "credit a paid
-  // invoice" flow) auto-opens the creditnota dialog once the invoice has loaded.
-  // Guarded on invoice presence so it never opens on an empty/errored page; the
-  // dialog itself still only acts if the invoice is actually creditable.
+  // invoice" flow) auto-opens the creditnota dialog once the invoice has loaded. Fires at
+  // most ONCE (creditAutoOpenedRef) so it can't reopen after the user dismisses it or when
+  // the invoice re-renders, and strips the query param afterwards. Guarded synchronously on
+  // the invoice's own type/status so it never opens on a creditnota or a non-creditable
+  // status; the server route remains the authority for the actual write.
+  const creditAutoOpenedRef = useRef(false)
   useEffect(() => {
-    if (invoice && searchParams.get('action') === 'credit') {
+    if (
+      invoice &&
+      !creditAutoOpenedRef.current &&
+      searchParams.get('action') === 'credit' &&
+      invoice.invoice_type !== 'creditnota' &&
+      invoice.direction !== 'incoming' &&
+      CREDITABLE_STATUSES.includes(invoice.status)
+    ) {
+      creditAutoOpenedRef.current = true
       setCreditReason('')
       setCreditError(null)
       setShowCreditDialog(true)
+      // Drop the param so a later re-render / setInvoice can't reopen the dialog.
+      window.history.replaceState(null, '', pathname)
     }
-  }, [invoice, searchParams])
+  }, [invoice, searchParams, pathname])
 
   // [NAVIGATION] Back target = the page's canonical parent, resolved centrally
   // by getParentPath. The invoice/[id] rule already folds in the "opened from a

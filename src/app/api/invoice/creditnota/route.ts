@@ -88,6 +88,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // [COHERENCE-CREDITNOTA] Never credit a creditnota (a creditnota has status 'sent', so
+    // it passes the status check above). Crediting a credit would mint a positive "credit
+    // of a credit" that fabricates +omzet with nothing behind it. Only a real factuur is
+    // creditable. Not reachable through the UI, but the route is the authority.
+    if (original.invoice_type === 'creditnota') {
+      return NextResponse.json(
+        { error: 'Een creditnota kan niet zelf worden gecrediteerd.' },
+        { status: 400 }
+      )
+    }
+
     // [FACTUUR-A] Duplicate guard — one creditnota per invoice, enforced via
     // original_invoice_id (column + FK exist on invoices). Replaces the dead
     // invoice_number='CN-…' check that could never match CR- numbering.

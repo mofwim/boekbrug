@@ -284,10 +284,14 @@ export function OnboardingWizard({
       }
       if (step === 4) {
         if (clientEmail.trim()) {
+          // [COHERENCE-ONBOARDING] The route reads `clientEmail` (see /api/invite/client
+          // and InviteClient.tsx). Sending `client_email` made it 400 "Email verplicht",
+          // which the .catch swallowed → the invite was never created while onboarding
+          // showed success. Send the field name the route actually expects.
           await fetch("/api/invite/client", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ client_email: clientEmail.trim() }),
+            body: JSON.stringify({ clientEmail: clientEmail.trim() }),
           }).catch(() => {});
         }
         await persistStep(5);
