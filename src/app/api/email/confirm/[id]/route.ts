@@ -45,7 +45,7 @@ export async function POST(
   // Verify ownership + load current amounts (TRAIL needs unchanged fields too)
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date")
+    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date, invoice_type")
     .eq("id", id)
     .single();
 
@@ -88,8 +88,15 @@ export async function POST(
     return NextResponse.json({ error: "Onbekende actie" }, { status: 400 });
   }
 
+  // [BRIDGE-CREDITNOTA-SIGN] A normal invoice's amounts are ≥ 0. A creditnota follows the safecore
+  // rule (evaluateCreditnotaArithmetic): only the NET total is negative — the ex/BTW signs are NOT
+  // constrained (real Altena case: ex −123, BTW +13,42, totaal −109,58). So validNum only enforces
+  // ≥ 0 for a normal invoice; for a creditnota it accepts any finite value, so a correctly-read
+  // negative excl / positive BTW persists instead of being dropped back to the stored amount. The
+  // old blanket `v >= 0` (with the client's Math.max(0)) turned every edited creditnota positive.
+  const isCredit = invoice.invoice_type === "creditnota";
   const validNum = (v: unknown): v is number =>
-    typeof v === "number" && isFinite(v) && v >= 0;
+    typeof v === "number" && isFinite(v) && (isCredit ? true : v >= 0);
 
   // Effective amounts = reviewed values where valid, else what's already stored
   const exBtw  = validNum(body.total_ex_btw)  ? body.total_ex_btw  : (invoice.total_ex_btw  ?? 0);
@@ -101,11 +108,13 @@ export async function POST(
   const warnings: string[] = [];
   // TRAIL 2 — arithmetic: excl + btw must equal incl (catches Excl/Incl mix-ups)
   if (Math.abs(exBtw + btw - incBtw) > 0.02) warnings.push("trail2_amounts");
-  // TRAIL 3 — legal BTW rate: must round to 0 / 9 / 21 (catches e.g. 37%;
-  // a legitimate multi-rate invoice is flagged for the human, not rejected)
-  if (exBtw > 0) {
-    const rate = Math.round((btw / exBtw) * 100);
-    if (rate !== 0 && rate !== 9 && rate !== 21) warnings.push("trail3_btw_rate");
+  // TRAIL 3 — legal BTW rate. Uses the magnitude ratio |BTW / excl| (mirrors safecore and the
+  // client), so a blended 0–21% rate is accepted and only an impossible >21% is flagged. The abs
+  // also lets a creditnota (negative base, possibly positive goods-BTW) be checked correctly
+  // instead of being skipped by the old `exBtw > 0` guard or false-flagged by a signed ratio.
+  if (Math.abs(exBtw) > 0.005) {
+    const rate = Math.round(Math.abs(btw / exBtw) * 100);
+    if (rate > 21) warnings.push("trail3_btw_rate");
   }
 
   // ── Status patch per action ──
