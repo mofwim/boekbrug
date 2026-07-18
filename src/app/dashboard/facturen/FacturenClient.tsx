@@ -346,11 +346,21 @@ export default function FacturenClient({ profile }: { profile: any }) {
           ...(result.invoice_type   ? { invoice_type: result.invoice_type }     : {}),
         })
         const displayNumber = result.invoice_number || ctx.number
-        showToast(
-          ctx.isResend
-            ? (displayNumber ? `Factuur ${displayNumber} opnieuw verzonden ✓` : 'Factuur opnieuw verzonden ✓')
-            : (displayNumber ? `Factuur ${displayNumber} verzonden ✓` : 'Factuur verzonden ✓')
-        )
+        // [SEND-PDF-HONEST] A pdf_failed response means the number was issued but the PDF/email did
+        // NOT go out — never toast "verzonden ✓". Tell the owner to resend so the state is honest.
+        if (result.warning === 'pdf_failed' || result.delivered === false) {
+          showToast(
+            displayNumber
+              ? `Factuur ${displayNumber} kreeg een nummer, maar de PDF kon niet worden gemaakt — verstuur opnieuw`
+              : 'De PDF kon niet worden gemaakt — verstuur de factuur opnieuw'
+          )
+        } else {
+          showToast(
+            ctx.isResend
+              ? (displayNumber ? `Factuur ${displayNumber} opnieuw verzonden ✓` : 'Factuur opnieuw verzonden ✓')
+              : (displayNumber ? `Factuur ${displayNumber} verzonden ✓` : 'Factuur verzonden ✓')
+          )
+        }
       }
     } catch {
       // [BOEK-RESEND] rollback to original status on network failure too

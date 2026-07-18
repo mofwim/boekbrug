@@ -1698,11 +1698,12 @@ export async function syncUserEmails(
     classification: Awaited<ReturnType<typeof classifyAttachment>>
     // [BOEK-011] true = transient error (retry next sync), never registry-skip
     classifyFailed: boolean
-    // [MODEL-OUTAGE] true = the failure is an APP-WIDE model/config error (e.g. an invalid
-    // CLAUDE_MODEL → HTTP 404 not_found), not this file's fault. Such a failure must NEVER count
-    // toward the poison-pill give-up — otherwise a few hours of a misconfigured model would bury
-    // EVERY real invoice as 'could_not_read'. It only holds the watermark until the model is fixed.
-    modelError?: boolean
+    // [MODEL-OUTAGE] configOutage = an APP-WIDE model/config error (invalid CLAUDE_MODEL → 404,
+    // auth/permission), always an outage-hold. transientError = a capacity/network error (529/5xx/
+    // 429/network) which is an outage-hold ONLY when the whole batch is failing (decided post-map) —
+    // a lone transient failure still poison-pills so one stuck file can't freeze the watermark.
+    configOutage?: boolean
+    transientError?: boolean
   }
 
   // Mini concurrency limiter — no external dep. Inline so the helper stays
@@ -1973,13 +1974,19 @@ export async function syncUserEmails(
         //       these — it returns a low-confidence FALLBACK (the could_not_read path below) — so the
         //       poison-pill still protects the watermark against a truly stuck single file.
         const { isTransientAiError } = await import('@/lib/ai')
+        // A CONFIG outage (invalid CLAUDE_MODEL → 404, auth/permission) is inherently app-wide, so it
+        // is ALWAYS an outage-hold. A TRANSIENT/CAPACITY error (529/5xx/429/network) is only an
+        // outage when the WHOLE batch is failing — a single file that deterministically produces a
+        // transient-looking error (e.g. a large PDF that always times out) must still poison-pill so
+        // it can't freeze the watermark forever. That batch-wide decision is made AFTER this map.
         const configOutage = /not_found_error|404|authentication_error|permission_error|invalid[_ ]?api|model:/i.test(msg)
-        const modelError = configOutage || isTransientAiError(err)
+        const transientError = isTransientAiError(err)
         return {
           attachment,
           classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
           classifyFailed: true,
-          modelError,
+          configOutage,
+          transientError,
         }
       }
     }
@@ -1991,16 +1998,32 @@ export async function syncUserEmails(
   // the watermark must not advance past them (they need a re-fetch to retry).
   const completedKeys = new Set<string>()
 
+  // [MODEL-OUTAGE] Decide, batch-wide, whether a TRANSIENT classify failure is a real outage or a
+  // single stuck file. A config outage anywhere ⇒ app-wide outage. Otherwise a transient error is an
+  // outage only when EVERY attachment this run failed (≥2, so nothing classified successfully) —
+  // proof the service is down, not that one file is bad. If some attachments succeeded, the service
+  // is up, so a transient failure on another file is that-file-specific and must still poison-pill
+  // (else a single deterministically-timing-out PDF would freeze the watermark forever, re-opening
+  // the exact bug the poison-pill prevents).
+  const classifiedTotal = classified.length
+  const classifiedFailed = classified.filter((c) => c.classifyFailed).length
+  const configOutageAny = classified.some((c) => c.configOutage)
+  const transientOutage = classifiedTotal >= 2 && classifiedFailed === classifiedTotal
+  const outageActive = configOutageAny || transientOutage
+
   // PHASE 2 — save loop, sequential by design (dedup correctness)
-  for (const { attachment, classification, classifyFailed, modelError } of classified) {
+  for (const { attachment, classification, classifyFailed, configOutage, transientError } of classified) {
     const wmKey = `${attachment.messageId}:${attachment.filename}`
+    // An outage-hold when: a config outage (always), or a transient error DURING a batch-wide outage.
+    // A lone transient failure (some files succeeded) is NOT an outage → it takes the poison-pill path.
+    const outageHold = configOutage || (transientError && outageActive)
     try {
       // [MODEL-OUTAGE] An app-wide model/config failure (invalid CLAUDE_MODEL → 404, auth) is not
       // this file's fault. NEVER count it toward the poison-pill give-up and NEVER register it as
       // could_not_read — just leave the watermark held so the invoice is re-read once the model is
       // fixed. Otherwise a misconfigured model for a few hours would permanently bury every real
       // invoice fetched during the outage (exactly what a bad model id did to the HVO invoices).
-      if (classifyFailed && modelError) {
+      if (classifyFailed && outageHold) {
         errors++
         continue
       }

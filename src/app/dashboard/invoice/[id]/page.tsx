@@ -224,6 +224,14 @@ export default function InvoiceDetailPage() {
       invoice_type: responseData.invoice_type ?? prev.invoice_type,
     }))
 
+    // [SEND-PDF-HONEST] pdf_failed = the number was issued but the PDF/email did NOT go out. Don't
+    // silently close as if delivered — keep the modal open with an honest resend prompt.
+    if (responseData.warning === 'pdf_failed' || responseData.delivered === false) {
+      setSendError('De factuur kreeg een nummer, maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur opnieuw.')
+      setSending(false)
+      return
+    }
+
     setShowSendModal(false)
     setSending(false)
   }
