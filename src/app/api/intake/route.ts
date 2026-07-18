@@ -34,7 +34,7 @@ import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
 import { looksLikeSpreadsheetBinary } from "@/lib/detect-file"
 import { planSpreadsheetIngest, ledgerKindLabel } from "@/lib/spreadsheet-ingest"
 import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sales-report"
-import type { DailyTurnover } from "@/lib/turnover"
+import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
 import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
@@ -744,38 +744,6 @@ async function storeRawIncoming(
   }
 }
 
-// Upsert DailyTurnover rows into daily_turnover (source distinguishes provenance). Idempotent on
-// (user, turnover_date) → a re-import of the same day corrects, never doubles. Returns ok + a summary.
-async function bookTurnoverRows(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  userId: string,
-  rows: DailyTurnover[],
-  source: string,
-  opts?: { preserveSplit?: boolean },
-): Promise<{ ok: boolean; days: number; span: string; total_incl: number }> {
-  const records = rows.map((r) => {
-    const base = {
-      user_id: userId,
-      turnover_date: r.turnover_date,
-      base_0: r.base_0 ?? 0, base_9: r.base_9 ?? 0, base_21: r.base_21 ?? 0,
-      btw_9: r.btw_9 ?? 0, btw_21: r.btw_21 ?? 0,
-      total_incl: r.total_incl ?? null,
-      source,
-    }
-    // [DAGVERKOPEN-PDF] A daily-sales PDF carries no payment split. OMITTING pin/cash/other from the
-    // payload means an ON CONFLICT upsert leaves those columns UNTOUCHED — so a later PDF never nulls
-    // a richer Excel-sourced pin/cash for that day (which would wrongly widen the covered-day
-    // suppression budget and could drop same-day webshop omzet). On a fresh day they default to null.
-    if (opts?.preserveSplit) return base
-    return { ...base, pin_amount: r.pin_amount ?? null, cash_amount: r.cash_amount ?? null, other_amount: r.other_amount ?? null }
-  })
-  const { error } = await supabase.from("daily_turnover").upsert(records, { onConflict: "user_id,turnover_date" })
-  const dates = rows.map((r) => r.turnover_date).sort()
-  const span = dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : ""
-  const total_incl = Math.round(records.reduce((s, r) => s + (r.total_incl ?? 0), 0) * 100) / 100
-  return { ok: !error, days: records.length, span, total_incl }
-}
-
 // ── Daily-sales report handler — a "OMZET VAN DD/MM/YYYY" PDF is one day of turnover ─────────
 // Returns a NextResponse when the PDF IS a daily-sales report (booked or stored-for-review), or
 // null when it isn't (the caller then runs the normal invoice extractor). The per-day report is the
@@ -905,35 +873,22 @@ async function handleSpreadsheet(
   // ── LEDGER: reconciliation witness (never money) → ledger_daily ───────────────────────────
   if (plan.kind === "ledger" && plan.ledger) {
     const { kind, accountNr, rows } = plan.ledger
-    const records = rows.slice(0, 1000).map((r) => ({
-      user_id: userId,
-      ledger_date: r.ledger_date,
-      kind,
-      received: r.received > 0 ? r.received : 0,
-      spent: r.spent > 0 ? r.spent : 0,
-      account_nr: accountNr,
-      source: "ledger_xlsx",
-      updated_at: new Date().toISOString(),
-    }))
-    const { error } = await supabase
-      .from("ledger_daily").upsert(records, { onConflict: "user_id,ledger_date,kind" })
-    if (error) {
+    const booked = await bookLedgerRows(supabase, userId, kind, accountNr, rows)
+    if (!booked.ok) {
       return NextResponse.json({
         ok: true, destination: "document", document_id: documentId, sheet_kind: "ledger_review",
         message: "Grootboek-overzicht gelezen, maar opslaan is mislukt — probeer het opnieuw.",
       })
     }
-    const dates = records.map((r) => r.ledger_date).sort()
-    const span = dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : ""
     await logAuditAction({
       userId, action: "ledger.auto_imported", entityType: "ledger_daily", entityId: documentId ?? userId,
-      newValue: { kind, account_nr: accountNr, days: records.length, span, file_name: file.name, path: "intake" },
+      newValue: { kind, account_nr: accountNr, days: booked.days, span: booked.span, file_name: file.name, path: "intake" },
       ipAddress: getClientIP(req),
     }).catch(() => {})
     return NextResponse.json({
       ok: true, destination: "ledger", document_id: documentId, ledger_kind: kind,
-      days: records.length, span,
-      message: `${ledgerKindLabel(kind)} ingelezen ✓ — ${records.length} dagen (${span}) als controle-check. Verschijnt in de reconciliatie, niet dubbel in je omzet.`,
+      days: booked.days, span: booked.span,
+      message: `${ledgerKindLabel(kind)} ingelezen ✓ — ${booked.days} dagen (${booked.span}) als controle-check. Verschijnt in de reconciliatie, niet dubbel in je omzet.`,
     })
   }
 

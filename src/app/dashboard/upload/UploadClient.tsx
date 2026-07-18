@@ -56,6 +56,9 @@ const DEST: Record<string, { label: string; icon: string; color: string }> = {
 let idc = 0
 const nextId = () => `f${++idc}-${Date.now()}`
 
+interface ReprocSummary { scanned: number; considered: number; booked: number; turnoverDays: number; ledgerDays: number; review: number; skipped: number; failed: number; capped: boolean }
+interface ReprocResult { file: string; status: 'booked' | 'review' | 'skip' | 'error'; type?: string; message: string }
+
 export default function UploadClient() {
   const [items, setItems] = useState<Item[]>([])
   const [dragActive, setDragActive] = useState(false)
@@ -63,6 +66,18 @@ export default function UploadClient() {
   const running = useRef(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
+  // [REPROCESS] Book the kassa/grootboek/dagomzet files already sitting in bestanden — no re-upload.
+  const [reproc, setReproc] = useState<{ busy: boolean; done: boolean; summary?: ReprocSummary; results?: ReprocResult[] }>({ busy: false, done: false })
+  const runReprocess = useCallback(async () => {
+    setReproc({ busy: true, done: false })
+    try {
+      const res = await fetch('/api/documents/reprocess', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      setReproc({ busy: false, done: true, summary: data.summary, results: data.results })
+    } catch {
+      setReproc({ busy: false, done: true })
+    }
+  }, [])
 
   const patch = useCallback((id: string, changes: Partial<Item>) => {
     setItems((prev) => prev.map((f) => (f.id === id ? { ...f, ...changes } : f)))
@@ -211,6 +226,41 @@ export default function UploadClient() {
           <p style={{ fontSize: 11.5, color: '#8e8e93', margin: '14px 4px 0', lineHeight: 1.45 }}>
             Je kunt meerdere foto’s of bestanden in één keer selecteren. Eén PDF = één factuur.
           </p>
+        </div>
+
+        {/* [REPROCESS] Book kassa/grootboek/dagomzet files you already uploaded earlier — no re-upload. */}
+        <div style={{ marginTop: 14, background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 14, padding: 14 }}>
+          <p style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, margin: 0 }}>Al eerder geüpload?</p>
+          <p style={{ fontSize: 12.5, color: M3.neutral, margin: '4px 0 10px', lineHeight: 1.5 }}>
+            Kassa-, grootboek- en dagomzet-bestanden die al in je bestanden staan maar nog niet geboekt zijn,
+            worden hiermee alsnog verwerkt — zonder opnieuw te uploaden. Veilig om te herhalen (corrigeert, telt nooit dubbel).
+          </p>
+          <button onClick={runReprocess} disabled={reproc.busy}
+            style={{ background: reproc.busy ? '#9AA0A6' : '#0B8043', color: '#fff', border: 'none', borderRadius: 999, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: reproc.busy ? 'default' : 'pointer', fontFamily: FONT }}>
+            {reproc.busy ? '🔄 Bezig met boeken…' : '🔄 Boek mijn opgeslagen bestanden'}
+          </button>
+
+          {reproc.done && reproc.summary && (
+            <div style={{ marginTop: 12 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: '0 0 6px' }}>
+                {reproc.summary.booked > 0
+                  ? `✓ ${reproc.summary.booked} bestand(en) geboekt — ${reproc.summary.turnoverDays} dag(en) kassa-omzet${reproc.summary.ledgerDays ? `, ${reproc.summary.ledgerDays} dag(en) controle-check` : ''}.`
+                  : 'Geen nieuwe kassa-/grootboek-bestanden gevonden om te boeken.'}
+                {reproc.summary.review > 0 && <span style={{ color: M3.warn }}> · {reproc.summary.review} nakijken in Dagomzet</span>}
+                {reproc.summary.failed > 0 && <span style={{ color: M3.error }}> · {reproc.summary.failed} mislukt</span>}
+              </p>
+              {(reproc.results ?? []).filter((r) => r.status !== 'skip').slice(0, 40).map((r, i) => (
+                <p key={i} style={{ fontSize: 12, margin: '2px 0', color: r.status === 'booked' ? M3.success : r.status === 'review' ? M3.warn : r.status === 'error' ? M3.error : M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {r.status === 'booked' ? '✓' : r.status === 'review' ? '⚠️' : '✗'} {r.file} — {r.message}
+                </p>
+              ))}
+              {reproc.summary.booked > 0 && (
+                <Link href="/dashboard/dagomzet" style={{ display: 'inline-block', marginTop: 8, fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '7px 14px' }}>
+                  Naar Dagomzet →
+                </Link>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Progress banner */}
