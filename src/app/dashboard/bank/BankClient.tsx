@@ -315,7 +315,7 @@ export default function BankClient() {
       // [BANK-AUTO-FEEDBACK] Tell the owner right away when the import already booked payments for
       // them — the money moved silently on the server; a toast makes the automatic work visible.
       if ((upJson.autoBooked ?? 0) > 0) {
-        showToast(`${upJson.autoBooked} betaling${upJson.autoBooked === 1 ? '' : 'en'} automatisch gekoppeld ✓ — zie "Gekoppeld"`)
+        showToast(`${upJson.autoBooked} ${upJson.autoBooked === 1 ? 'factuur' : 'facturen'} automatisch gekoppeld ✓ — zie "Gekoppeld"`)
       }
 
       // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the

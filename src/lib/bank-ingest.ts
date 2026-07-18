@@ -124,10 +124,12 @@ export async function importBankStatement(args: {
   // paid. A single summary notification closes that gap: it says how many were booked and where to
   // review/undo them (every auto-booking is one tap to reverse under "Gekoppeld"). Non-blocking.
   if (autoBooked > 0) {
+    // Count in FACTUREN (invoices), the thing that actually changed state — not "betalingen": one
+    // batch payment settles several invoices, so "N betalingen" would overstate. Honest wording.
     try {
       await pipeline.from("notifications").insert({
         user_id: userId,
-        title: autoBooked === 1 ? "1 betaling automatisch gekoppeld" : `${autoBooked} betalingen automatisch gekoppeld`,
+        title: autoBooked === 1 ? "1 factuur automatisch gekoppeld" : `${autoBooked} facturen automatisch gekoppeld`,
         body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Gekoppeld" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
         type: "payment",
       });

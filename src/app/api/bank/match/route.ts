@@ -22,6 +22,7 @@ import {
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -162,11 +163,19 @@ export async function GET() {
   // the owner saw "4 facturen automatisch" once and then nothing, with no way to see WHICH invoices
   // were booked or to undo one. We now return the matched lines too, shaped as "done" suggestions
   // (allCovered = true), so they populate the "Gekoppeld" tab with a working one-tap Ontkoppelen.
-  const { data: matchedRows } = await pipeline
-    .from("bank_transactions")
-    .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
-    .eq("user_id", user.id)
-    .eq("status", "matched");
+  // Paginated + newest-first: an account can hold >1000 matched lines over several quarters, and
+  // the ~1000-row PostgREST cap would otherwise silently drop some — so a booked payment could
+  // vanish from "Gekoppeld" and become unreachable to undo. fetchAllRows pages past the cap; the
+  // date order means any residual cap drops OLDEST rows, never the current quarter's.
+  const matchedRows = await fetchAllRows((from, to) =>
+    pipeline
+      .from("bank_transactions")
+      .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
+      .eq("user_id", user.id)
+      .eq("status", "matched")
+      .order("date", { ascending: false })
+      .range(from, to),
+  );
   const matchedTx = (matchedRows ?? []) as BankTransactionDbRow[];
 
   // Which invoice(s) each matched line paid — the AUTHORITATIVE id-based set (join table), so a
@@ -207,12 +216,13 @@ export async function GET() {
 
   const linkedSuggestions = matchedTx.map((row) => {
     const t = rowToTransaction(row);
-    // A matched line is fully settled by definition → every reference number is "Betaald". Union the
-    // parsed reference numbers with the actually-linked invoice numbers so the card marks each slot
-    // paid even when the bank reference was sparse (e.g. an auto-1:1 match keyed on amount).
-    const covered = [
-      ...new Set([...parseReferenceNumbers(row.reference), ...(linkedNumbersByTx.get(row.id) ?? [])]),
-    ];
+    // The AUTHORITATIVE paid numbers are the actually-linked invoices (join table / invoice_id).
+    // Prefer them alone — a bank reference can contain unrelated numeric tokens (order/customer
+    // numbers) that parseReferenceNumbers would otherwise show as false "Betaald" slots. Only when
+    // NO invoice number is known (a legacy line with no link) do we fall back to the parsed
+    // reference so the card still shows something.
+    const linkedNums = linkedNumbersByTx.get(row.id) ?? [];
+    const covered = linkedNums.length > 0 ? [...new Set(linkedNums)] : parseReferenceNumbers(row.reference);
     return {
       transactionId: row.id,
       date: t.date,

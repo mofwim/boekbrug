@@ -214,6 +214,26 @@ export async function POST(req: NextRequest) {
     confidence: v.confidence,
   })
 
+  // [KAS-UPLOAD] The Kas screen can upload a receipt the owner ALREADY paid in cash. The button
+  // passes paid_method=kas (optionally paid_date) so — when the file is recognised as an invoice
+  // or receipt — it lands in the verify queue PRE-MARKED "contant betaald", reusing the exact
+  // pen-mark paid flow. Still only a SUGGESTION: the human confirms, and that confirm books the
+  // invoice→kasboek cash settlement — NOT a separate cash 'kosten' entry (which would drop the
+  // voorbelasting and double-count). A file the AI does not recognise as an invoice is untouched
+  // (stays in documents) — we never force-mark an unrecognised file as paid.
+  const forcedMethodRaw = formData.get("paid_method");
+  const forcedMethod =
+    forcedMethodRaw === "kas" || forcedMethodRaw === "bank" || forcedMethodRaw === "pin" ? forcedMethodRaw : null;
+  if (forcedMethod && (decision.destination === "invoice" || decision.destination === "receipt")) {
+    decision.suggestPaid = true;
+    decision.paidMethod = forcedMethod;
+    const forcedDateRaw = formData.get("paid_date");
+    if (typeof forcedDateRaw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(forcedDateRaw)) {
+      decision.paidDate = forcedDateRaw;
+    }
+    // else: keep any AI-read date (or null) — the verify modal lets the human pick before confirming.
+  }
+
   // ── [SAFECORE Rule 2] Semantic duplicate gate (invoice/receipt only) ────────
   // Byte-hash (above) only catches the SAME file. This catches the SAME INVOICE
   // arriving as a DIFFERENT file (re-photographed, regenerated PDF, re-upload) —

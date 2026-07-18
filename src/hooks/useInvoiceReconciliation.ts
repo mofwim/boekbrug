@@ -60,7 +60,16 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transactionId: pending.transactionId, invoiceId }),
       })
-      if (!res.ok) return 'error'
+      if (!res.ok) {
+        // The server auto-confirm may have booked this invoice already (409 invoice_already_paid).
+        // The desired end-state already holds, so treat it as success — never a false "mislukt".
+        const err = await res.json().catch(() => ({}))
+        if (res.status === 409 && err?.error === 'invoice_already_paid') {
+          setByInvoice((m) => ({ ...m, [invoiceId]: { linked: true, pendingMatch: null } }))
+          return 'ok'
+        }
+        return 'error'
+      }
       // Optimistic: the payment is now in the statement for this invoice.
       setByInvoice((m) => ({ ...m, [invoiceId]: { linked: true, pendingMatch: null } }))
       return 'ok'
