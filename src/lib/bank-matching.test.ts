@@ -119,6 +119,27 @@ check("payment 16 days before the invoice date is NOT eligible (previous month's
   !isEligible(tx({ amount: -100, date: "2026-05-30" }),
               inv({ direction: "incoming", total_inc_btw: 100, invoice_date: "2026-06-15" })));
 
+// [M7-CREDITNOTA] A creditnota (negative total) reverses the money direction of its settlement.
+console.log("\n— creditnota refunds (M7) —");
+check("supplier creditnota (incoming, −total) refunded as money IN (credit) IS eligible",
+  isEligible(tx({ amount: 100, date: "2026-06-10" }),
+             inv({ direction: "incoming", total_inc_btw: -100, invoice_date: "2026-06-05" })));
+check("our creditnota (outgoing, −total) refunded as money OUT (debit) IS eligible",
+  isEligible(tx({ amount: -100, date: "2026-06-10" }),
+             inv({ direction: "outgoing", total_inc_btw: -100, invoice_date: "2026-06-05" })));
+check("creditnota still guarded: incoming creditnota with a DEBIT is NOT eligible",
+  !isEligible(tx({ amount: -100, date: "2026-06-10" }),
+              inv({ direction: "incoming", total_inc_btw: -100, invoice_date: "2026-06-05" })));
+check("creditnota still guarded: outgoing creditnota with a CREDIT is NOT eligible",
+  !isEligible(tx({ amount: 100, date: "2026-06-10" }),
+              inv({ direction: "outgoing", total_inc_btw: -100, invoice_date: "2026-06-05" })));
+check("a normal invoice is unchanged by the creditnota rule (credit → outgoing)",
+  isEligible(tx({ amount: 100 }), inv({ direction: "outgoing", total_inc_btw: 100 })));
+check("amountMatches: a +50 refund matches a −50 creditnota (magnitude)",
+  amountMatches(50, -50, 0.02));
+check("amountMatches: a −50 refund matches a −50 creditnota (magnitude)",
+  amountMatches(-50, -50, 0.02));
+
 console.log("\n— outcomes —");
 
 // 1. Reference match → auto

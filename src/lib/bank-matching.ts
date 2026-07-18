@@ -176,7 +176,11 @@ export function amountMatches(
   epsilon: number
 ): boolean {
   if (invoiceTotal == null) return false;
-  return Math.abs(Math.abs(txAmount) - invoiceTotal) <= epsilon;
+  // [M7-CREDITNOTA] Compare MAGNITUDES on both sides. A creditnota carries a NEGATIVE total
+  // (sign convention), and its refund is a real bank line of the opposite money direction — a
+  // €50 refund (tx ±50) must match a −€50 creditnota. Abs-ing the invoice side is a no-op for a
+  // normal (positive) invoice, so this never changes ordinary matching.
+  return Math.abs(Math.abs(txAmount) - Math.abs(invoiceTotal)) <= epsilon;
 }
 
 /** Days between two ISO dates (absolute, NaN-safe → Infinity). */
@@ -267,9 +271,17 @@ export function isEligible(
   if (inv.accountant_status === "verwerkt") return false; // B.4
   if (inv.status && EXCLUDED_STATUSES.has(inv.status)) return false;
 
-  // Direction / sign guard (M-confirmed)
+  // Direction / sign guard (M-confirmed). [M7-CREDITNOTA] A creditnota (negative total) REVERSES
+  // the money direction of its own settlement: a supplier's creditnota TO us (direction incoming)
+  // is refunded as money IN (credit, tx > 0), and our creditnota to a customer (direction
+  // outgoing) is refunded as money OUT (debit, tx < 0). So for a creditnota the sign→direction
+  // map is flipped; without this, every credit-note refund was rejected here and could never be
+  // reconciled. A normal invoice is unchanged.
+  const isCreditNote = (inv.total_inc_btw ?? 0) < 0;
   const requiredDirection: "outgoing" | "incoming" =
-    tx.amount > 0 ? "outgoing" : "incoming";
+    tx.amount > 0
+      ? (isCreditNote ? "incoming" : "outgoing")
+      : (isCreditNote ? "outgoing" : "incoming");
   if (inv.direction !== requiredDirection) return false;
 
   // [BANK-MATCH-STRICT] Date sanity: a payment cannot happen meaningfully BEFORE
