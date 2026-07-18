@@ -292,6 +292,11 @@ export interface VerifyInvoiceResult {
   // BoekBrug never processes money — these only prepare it. Null when absent.
   vendor_iban?: string;      // the vendor's IBAN (party to be paid), normalized
   payment_reference?: string; // betalingskenmerk / structured payment reference
+  // [SUPPLIER-IDENTITY] The vendor's LEGAL identity — the strongest keys for recognising the same
+  // supplier across differently-spelled names (two "Jansen" firms have different KVK). Extracted
+  // here so the supplier registry can match/store them. Null when the invoice doesn't print them.
+  vendor_kvk?: string;       // vendor KVK number, digits only (8 digits, Dutch Chamber of Commerce)
+  vendor_btw?: string;       // vendor BTW/VAT number, e.g. NL123456789B01 (no spaces, uppercase)
   // [SMART-INTAKE] What KIND of document this is, so the intake router can send
   // it to the right destination. A "receipt"/kassabon is a PAID proof; an
   // "invoice" is a payment request (usually unpaid). "other" → not a financial
@@ -984,7 +989,14 @@ export async function verifyInvoiceFromPdf(
   // cheap flattened-text path and reads the ACTUAL PDF layout directly. Used by the manual
   // "Opnieuw inlezen" so a stuck complex invoice (statiegeld/retour, net-negative creditnota) is
   // re-read by a stronger model on the real page — the automatic sync keeps the Haiku/text path.
-  opts?: { throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean }
+  // [RECEIVER-IDENTITY] Our own legal identity (KVK/BTW/IBAN), so the AI can tell OUR numbers
+  // from the vendor's and never return ours as the vendor. Also used as a programmatic backstop
+  // below (any vendor field equal to ours is dropped). Optional → callers that don't pass it keep
+  // the name-only behaviour.
+  opts?: {
+    throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean
+    receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+  }
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
     is_invoice: false,
@@ -992,14 +1004,38 @@ export async function verifyInvoiceFromPdf(
     reason: 'AI verificatie mislukt — bestand overgeslagen',
   };
 
+  // [RECEIVER-IDENTITY] Canonicalize our own identity the SAME way the vendor fields are
+  // normalized below, so the equality backstop compares like-for-like.
+  const myKvk = (() => {
+    const d = String(opts?.receiverKvk ?? '').replace(/\D/g, '')
+    return d.length === 8 ? d : null
+  })();
+  const myBtw = (() => {
+    const b = String(opts?.receiverBtw ?? '').replace(/\s+/g, '').toUpperCase()
+    return /^NL\d{9}B\d{2}$/.test(b) ? b : null
+  })();
+  const myIban = (() => {
+    const s = String(opts?.receiverIban ?? '').replace(/\s+/g, '').toUpperCase()
+    return s.length >= 15 && /^[A-Z0-9]+$/.test(s) ? s : null
+  })();
+
   // [BRIDGE-EXTRACT] Inject the receiver identity into the prompt when known.
+  const receiverIdLines = [
+    myKvk ? `- Our own KVK is "${myKvk}" — this is the RECEIVER's KVK. NEVER return it as "vendor_kvk".` : '',
+    myBtw ? `- Our own BTW number is "${myBtw}" — the RECEIVER's. NEVER return it as "vendor_btw".` : '',
+    myIban ? `- Our own IBAN is "${myIban}" — the RECEIVER's account. NEVER return it as "vendor_iban".` : '',
+  ].filter(Boolean).join('\n');
   const receiverHint = receiverName
     ? `\n\nIMPORTANT — who the RECEIVER is:
 - The recipient of this invoice is "${receiverName}" (this is OUR company, the client).
 - "${receiverName}" is the RECEIVER, never the vendor/sender. Even if this name appears
   prominently (e.g. under "Factuur aan", "T.a.v.", or at the top), do NOT return it as "vendor".
-- The vendor is the OTHER party — the company that issued and sent the invoice to us.`
-    : '';
+- The vendor is the OTHER party — the company that issued and sent the invoice to us.${receiverIdLines ? '\n' + receiverIdLines + '\n- The vendor\'s KVK/BTW/IBAN are DIFFERENT numbers than ours above.' : ''}`
+    : (receiverIdLines
+      ? `\n\nIMPORTANT — our own legal identity (the RECEIVER, never the vendor):
+${receiverIdLines}
+- The vendor's KVK/BTW/IBAN are DIFFERENT numbers than ours above; never return ours as the vendor's.`
+      : '');
 
   const systemPrompt = `${SYSTEM_BASE}
 
@@ -1014,6 +1050,8 @@ Return only a JSON object with these exact keys:
   "due_date": "YYYY-MM-DD" or null,
   "payment_term_days": number or null,
   "vendor_iban": string or null,
+  "vendor_kvk": string or null,
+  "vendor_btw": string or null,
   "payment_reference": string or null,
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
@@ -1079,6 +1117,18 @@ Vendor IBAN + payment reference extraction rules:
 - If MULTIPLE IBANs appear, prefer the one tied to the vendor / "to be paid".
   If you cannot tell which IBAN belongs to the vendor, set vendor_iban to null
   — never guess an IBAN, and never return our own (receiver) IBAN.
+
+Vendor legal-identity extraction rules (the SENDER's KVK + BTW — never ours):
+- "vendor_kvk" = the VENDOR's Chamber-of-Commerce number, labelled "KVK", "K.v.K.",
+  "KvK-nummer", "Chamber of Commerce", "CoC". Digits only, drop spaces/dots
+  (e.g. "KVK: 12 34 56 78" → "12345678"). It is the SENDER's, usually in the header
+  or footer near their address — NOT the receiver's (T.a.v./Factuur aan) number.
+- "vendor_btw" = the VENDOR's BTW/VAT number, labelled "BTW", "BTW-nr", "BTW-nummer",
+  "VAT", "Btw-id". Dutch format NL + 9 digits + B + 2 digits; remove spaces, uppercase
+  (e.g. "BTW: NL 123456789 B01" → "NL123456789B01"). The receiver's own BTW number is
+  often printed too ("Uw BTW-nummer") — return the SENDER's, never the receiver's.
+- If a number clearly belongs to the receiver/client, or you cannot tell, set it to null —
+  never guess, never return the receiver's KVK/BTW.
 - "payment_reference" = the betalingskenmerk / structured payment reference the
   invoice asks you to quote when paying (labels: "Betalingskenmerk",
   "Kenmerk", "Referentie", "Mededeling", "Payment reference"). This is often
@@ -1509,6 +1559,32 @@ Return JSON only.`;
     } else {
       parsed.vendor_iban = undefined;
     }
+    // [SUPPLIER-IDENTITY] KVK: digits only, exactly 8 (a real Dutch KVK) — else drop as junk.
+    if (typeof parsed.vendor_kvk === 'string') {
+      const kvk = parsed.vendor_kvk.replace(/\D/g, '');
+      parsed.vendor_kvk = kvk.length === 8 ? kvk : undefined;
+    } else {
+      parsed.vendor_kvk = undefined;
+    }
+    // [SUPPLIER-IDENTITY] BTW: strip spaces, uppercase; keep only a well-formed NL BTW id
+    // (NL + 9 digits + B + 2 digits). A foreign/short/garbled value → undefined (not a key).
+    if (typeof parsed.vendor_btw === 'string') {
+      const btw = parsed.vendor_btw.replace(/\s+/g, '').toUpperCase();
+      parsed.vendor_btw = /^NL\d{9}B\d{2}$/.test(btw) ? btw : undefined;
+    } else {
+      parsed.vendor_btw = undefined;
+    }
+
+    // [RECEIVER-IDENTITY] Programmatic backstop: never let OUR own identity leak through as the
+    // vendor's. If the model — despite the prompt — returned the receiver's (our) KVK/BTW/IBAN as
+    // the vendor's, drop it. Both sides are already canonicalized identically, so this is an exact
+    // match. This is the code-level guarantee behind the prompt rules, and it also fixes the case
+    // where the vendor NAME was suppressed but its identity numbers survived (self-supplier
+    // pollution: a supplier row keyed on our own company).
+    if (myKvk && parsed.vendor_kvk === myKvk) parsed.vendor_kvk = undefined;
+    if (myBtw && parsed.vendor_btw === myBtw) parsed.vendor_btw = undefined;
+    if (myIban && parsed.vendor_iban === myIban) parsed.vendor_iban = undefined;
+
     // payment_reference: trim; empty → undefined (the system falls back to the
     // invoice number when preparing a payment, so a missing reference is fine).
     if (typeof parsed.payment_reference === 'string') {

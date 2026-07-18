@@ -604,14 +604,24 @@ function ConfirmPaidModal({
   // Total is always derived — never edited directly. This IS TRAIL 2: excl + BTW = incl.
   const totalIncBtw = exBtw + btwAmount;
 
+  // [BRIDGE-CREDITNOTA-SIGN] The old `Math.max(0, …)` forced every edited amount ≥ 0, which turned
+  // a creditnota positive the moment the user touched a field. A creditnota's amounts follow the
+  // safecore rule (evaluateCreditnotaArithmetic): only the NET total must be negative — the ex/BTW
+  // signs are NOT constrained (the real Altena case is ex −123, BTW +13,42, totaal −109,58). So for
+  // a creditnota we accept the real signed value the reviewer reads off the paper (no clamp); for a
+  // normal invoice we keep the ≥ 0 clamp.
+  const isCredit = invoice.invoice_type === "creditnota";
+  const clampAmount = (raw: number) => (isCredit ? raw : Math.max(0, raw));
+
   // [BRIDGE-B] TRAIL 3 — legal BTW rate must round to 0 / 9 / 21. FLAG, never block.
   // [BTW-MIXED-RATE] A blended rate (e.g. 9%+21% food invoice → ~11%) is valid:
   // any value 0–21 can be a mix of legal NL rates. Only < 0 or > 21 is impossible.
-  // [BRIDGE-CREDITNOTA-SIGN] abs-guard instead of `exBtw > 0`: on a creditnota
-  // both values are negative (neg ÷ neg = a positive rate), so the check now
-  // runs there too instead of being silently skipped.
-  const btwRate = Math.abs(exBtw) > 0.005 ? Math.round((btwAmount / exBtw) * 100) : null;
-  const rateFlag = btwRate !== null && (btwRate < 0 || btwRate > 21);
+  // [BRIDGE-CREDITNOTA-SIGN] Magnitude ratio (mirrors safecore): |BTW / excl|. On a mixed-sign
+  // net-credit (positive goods-BTW over a negative net excl) the raw ratio is negative, so the old
+  // `btwRate < 0` test false-flagged a correctly-read Altena-style creditnota. Only a magnitude
+  // above 21% is actually impossible for a (blended) NL rate.
+  const btwRate = Math.abs(exBtw) > 0.005 ? Math.round(Math.abs(btwAmount / exBtw) * 100) : null;
+  const rateFlag = btwRate !== null && btwRate > 21;
 
   // [BRIDGE-EXTRACT] N-N page-number pattern in the invoice number → soft flag
   // (e.g. "1-1" likely a page indicator the AI mistook for a number). Never blocks.
@@ -727,7 +737,7 @@ function ConfirmPaidModal({
                   <input
                     type="number"
                     value={exBtw}
-                    onChange={(e) => setExBtw(Math.max(0, parseFloat(e.target.value) || 0))}
+                    onChange={(e) => setExBtw(clampAmount(parseFloat(e.target.value) || 0))}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
@@ -748,7 +758,7 @@ function ConfirmPaidModal({
                   <input
                     type="number"
                     value={btwAmount}
-                    onChange={(e) => setBtwAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                    onChange={(e) => setBtwAmount(clampAmount(parseFloat(e.target.value) || 0))}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8,
@@ -2143,10 +2153,14 @@ export default function IncomingInvoicesClient({
               : "✓ Factuur geverifieerd"
           );
         } else {
-          showToast("Verificatie mislukt — ververs de pagina");
+          // [UI-HONESTY] The server rejected it — roll back the optimistic remove so the invoice
+          // stays visible in the queue instead of vanishing on a lie.
+          setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+          showToast("Verificatie mislukt — factuur staat nog in de wachtrij");
         }
       } catch {
-        showToast("Fout — ververs de pagina");
+        setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+        showToast("Fout — factuur staat nog in de wachtrij");
       }
     },
     []
@@ -2281,10 +2295,13 @@ export default function IncomingInvoicesClient({
         if (res.ok) {
           showToast("✓ Factuur gemarkeerd als betaald");
         } else {
-          showToast("Bevestiging mislukt — ververs de pagina");
+          // [UI-HONESTY] Roll back the optimistic remove — the payment was NOT recorded.
+          setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+          showToast("Bevestiging mislukt — factuur staat nog in de wachtrij");
         }
       } catch {
-        showToast("Fout — ververs de pagina");
+        setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+        showToast("Fout — factuur staat nog in de wachtrij");
       }
     },
     []
@@ -2297,11 +2314,24 @@ export default function IncomingInvoicesClient({
     setIgnoreFor(null);
     setExpandedId(null);
 
+    // [UI-HONESTY] A fetch that resolves is NOT proof of success — a 4xx/5xx (not found, RLS reject)
+    // resolves with res.ok=false. The old code showed "genegeerd" regardless, so a failed ignore
+    // looked done. Check res.ok and, on failure, roll back to the queue and say so.
+    const rollback = () => {
+      setIgnored((prev) => prev.filter((inv) => inv.id !== invoice.id));
+      setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+    };
     try {
-      await fetch(`/api/email/confirm/${invoice.id}`, { method: "DELETE" });
-      showToast("Factuur genegeerd");
+      const res = await fetch(`/api/email/confirm/${invoice.id}`, { method: "DELETE" });
+      if (res.ok) {
+        showToast("Factuur genegeerd");
+      } else {
+        rollback();
+        showToast("Negeren mislukt — factuur staat nog in de wachtrij");
+      }
     } catch {
-      showToast("Fout — ververs de pagina");
+      rollback();
+      showToast("Fout — factuur staat nog in de wachtrij");
     }
   }, []);
 
@@ -2311,11 +2341,23 @@ export default function IncomingInvoicesClient({
     setPending((prev) => [invoice, ...prev]);
     setExpandedId(null);
 
+    // [UI-HONESTY] Same as ignore: only claim "teruggezet" when the server actually accepted it;
+    // otherwise roll back to the ignored list so the UI reflects the real state.
+    const rollback = () => {
+      setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
+      setIgnored((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+    };
     try {
-      await fetch(`/api/email/confirm/${invoice.id}`, { method: "PATCH" });
-      showToast("Factuur teruggezet");
+      const res = await fetch(`/api/email/confirm/${invoice.id}`, { method: "PATCH" });
+      if (res.ok) {
+        showToast("Factuur teruggezet");
+      } else {
+        rollback();
+        showToast("Terugzetten mislukt — probeer opnieuw");
+      }
     } catch {
-      showToast("Fout — ververs de pagina");
+      rollback();
+      showToast("Fout — probeer opnieuw");
     }
   }, []);
 

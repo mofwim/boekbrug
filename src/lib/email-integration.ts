@@ -504,6 +504,56 @@ export interface GmailAttachment {
 }
 
 /**
+ * [BIG-MAILBOX] Pick the ceiling of an oldest-anchored listing window so a mailbox with more
+ * matching messages than one sync can page still makes progress OLDEST-first, instead of forever
+ * re-listing the newest ~cap and freezing the watermark at the floor (the ">cap wall").
+ *
+ * `list(before)` lists the window [after, before) (before=null ⇒ up to `now`) and reports whether
+ * the listing was COMPLETE (reached its natural end) or capped. We first try the full range; when
+ * that caps, we binary-search for the LARGEST window [after, ceiling] that lists completely and
+ * still contains mail:
+ *   · incomplete (still > cap)  → ceiling too high → lower it
+ *   · complete but EMPTY        → ceiling below the oldest mail (a gap above the floor) → raise it
+ *                                 (this is what a naive "shrink only" would deadlock on)
+ *   · complete and NON-EMPTY    → remember it and keep raising to maximise the slice
+ * The window is always anchored at `after`, so a non-empty result always contains the OLDEST mail —
+ * processing it oldest-first advances the watermark across any empty gap. Only pathological density
+ * (> cap within `minWindow` everywhere) finds no slice → we return the full incomplete listing and
+ * the caller HOLDS the mark (best effort — never a false "complete" that would skip unlisted mail).
+ *
+ * Pure except for the injected `list`; unit-tested in email-window.test.ts.
+ */
+export async function narrowOldestWindow<T>(opts: {
+  after: number
+  now: number
+  minWindow: number
+  maxIters: number
+  list: (before: number | null) => Promise<{ items: T[]; complete: boolean }>
+}): Promise<{ items: T[]; complete: boolean; ceiling: number | null; narrowed: boolean }> {
+  const { after, now, minWindow, maxIters, list } = opts
+  const first = await list(null)
+  if (first.complete) return { items: first.items, complete: true, ceiling: null, narrowed: false }
+
+  let lo = after // [after, lo] is empty / too-small → raise from here
+  let hi = now   // [after, hi] is incomplete → lower from here
+  let best: { items: T[]; ceiling: number } | null = null
+  for (let i = 0; i < maxIters && hi - lo > minWindow; i++) {
+    const mid = lo + Math.floor((hi - lo) / 2)
+    const probe = await list(mid)
+    if (!probe.complete) {
+      hi = mid
+    } else {
+      if (probe.items.length > 0) best = { items: probe.items, ceiling: mid }
+      lo = mid // complete (empty or not) → try a larger window
+    }
+  }
+  if (best) return { items: best.items, complete: true, ceiling: best.ceiling, narrowed: true }
+  // No complete non-empty slice found (pathological density) → keep the full incomplete listing;
+  // the caller holds the watermark, exactly as before this fix.
+  return { items: first.items, complete: false, ceiling: null, narrowed: true }
+}
+
+/**
  * [BOEK-011] Fetch Gmail messages after syncAfter timestamp
  * Returns only PDF and image attachments — no metadata guessing
  */
@@ -514,6 +564,10 @@ export async function fetchGmailAttachments(
   attachments: GmailAttachment[]
   complete: boolean
   messageIndex: Array<{ messageId: string; date: string }>
+  // [BIG-MAILBOX] true when the listing window was narrowed below "now" (a backlog larger than one
+  // sync can page) — so mail NEWER than the processed slice is deferred to the next sync. The caller
+  // uses it to keep the client auto-continuing instead of stopping between cron cycles.
+  windowNarrowed: boolean
 }> {
   const afterDate = Math.floor(syncAfterMs / 1000)
   // [OWN-SENT] Exclude the owner's OWN outbound mail. A ZZP'er emails invoices to
@@ -528,7 +582,8 @@ export async function fetchGmailAttachments(
   // bare query; Spam+Trash are the one gap. For a bookkeeping tool, completeness wins: a
   // recovered invoice only ever lands in the verify queue (never auto-booked), so surfacing a
   // trashed one costs a glance, while missing a real one costs a deduction.
-  const query = `has:attachment after:${afterDate} in:anywhere -in:sent -in:drafts -in:chats`
+  // The query (`has:attachment after:… [before:…] in:anywhere -in:sent -in:drafts -in:chats`) is
+  // built inside listGmailIds below so the adaptive window can add a `before:` ceiling.
 
   // 1. List message IDs — WITH pagination.
   //
@@ -543,66 +598,93 @@ export async function fetchGmailAttachments(
   // FACT (did we reach the end?) instead of the old "< 50" heuristic — so the
   // watermark advances only over a genuinely complete listing.
   const GMAIL_PAGE_SIZE = 100 // Gmail allows up to 500; 100 keeps pages light
-  const MAX_PAGES = 40        // 40 × 100 = 4000 messages / sync, same ceiling as Outlook
+  const MAX_PAGES = 40        // 40 × 100 = 4000 messages listable per WINDOW, same ceiling as Outlook
+  const MIN_WINDOW_SEC = 60 * 60 // 1h — stop narrowing the window below this (pathological density)
+  const MAX_NARROW_ITERS = 20    // hard bound on the halving loop (≈ 40 years → 1h)
 
-  const messagesRaw: Array<{ id: string }> = []
-  let pageToken: string | null = null
-  let page = 0
-  let listComplete = true
+  // List UNIQUE message IDs matching the query in (afterDate, beforeSec]. `complete` = the listing
+  // reached its natural end; false = it hit MAX_PAGES (the window holds more than one sync can page).
+  const listGmailIds = async (
+    beforeSec: number | null
+  ): Promise<{ ids: Array<{ id: string }>; complete: boolean; pages: number }> => {
+    const q =
+      `has:attachment after:${afterDate}` +
+      (beforeSec != null ? ` before:${beforeSec}` : '') +
+      ` in:anywhere -in:sent -in:drafts -in:chats`
+    const raw: Array<{ id: string }> = []
+    let pageToken: string | null = null
+    let page = 0
+    let complete = true
 
-  do {
-    const url =
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages` +
-      `?q=${encodeURIComponent(query)}` +
-      `&maxResults=${GMAIL_PAGE_SIZE}` +
-      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '')
+    do {
+      const url =
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages` +
+        `?q=${encodeURIComponent(q)}` +
+        `&maxResults=${GMAIL_PAGE_SIZE}` +
+        (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '')
 
-    const listRes: Response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
+      const listRes: Response = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
 
-    if (!listRes.ok) {
-      const body = await listRes.text()
-      // First page failing is a real error; a later page failing keeps what we
-      // have but marks the listing incomplete (watermark holds — see below).
-      if (page === 0) {
-        throw new Error(`Gmail list mislukt: ${body}`)
+      if (!listRes.ok) {
+        const body = await listRes.text()
+        // First page failing is a real error; a later page failing keeps what we
+        // have but marks the listing incomplete (watermark holds — see below).
+        if (page === 0) {
+          throw new Error(`Gmail list mislukt: ${body}`)
+        }
+        console.error('[BOEK-011] Gmail pagination stopped early', { page, body })
+        complete = false
+        break
       }
-      console.error('[BOEK-011] Gmail pagination stopped early', { page, body })
-      listComplete = false
-      break
+
+      // [BOEK-TRUST] Explicit type — the do/while condition depends on pageToken,
+      // which is derived from listData; without an annotation TypeScript reports a
+      // circular "implicitly has type any" on the loop variables.
+      const listData: { messages?: Array<{ id: string }>; nextPageToken?: string } =
+        await listRes.json()
+      raw.push(...(listData.messages ?? []))
+      pageToken = listData.nextPageToken ?? null
+      page++
+    } while (pageToken && page < MAX_PAGES)
+
+    if (pageToken && page >= MAX_PAGES) complete = false
+
+    // De-dup by id (defensive; Gmail list is normally unique).
+    const seen = new Set<string>()
+    const ids: Array<{ id: string }> = []
+    for (const m of raw) {
+      if (m.id && !seen.has(m.id)) {
+        seen.add(m.id)
+        ids.push(m)
+      }
     }
-
-    // [BOEK-TRUST] Explicit type — the do/while condition depends on pageToken,
-    // which is derived from listData; without an annotation TypeScript reports a
-    // circular "implicitly has type any" on the loop variables.
-    const listData: { messages?: Array<{ id: string }>; nextPageToken?: string } =
-      await listRes.json()
-    messagesRaw.push(...(listData.messages ?? []))
-    pageToken = listData.nextPageToken ?? null
-    page++
-  } while (pageToken && page < MAX_PAGES)
-
-  // Hit the page cap with more still to list → older tail wasn't fetched.
-  if (pageToken && page >= MAX_PAGES) {
-    console.warn('[BOEK-011] Gmail listing capped at MAX_PAGES — fetch incomplete')
-    listComplete = false
+    return { ids, complete, pages: page }
   }
 
-  // De-dup by id (defensive; Gmail list is normally unique).
-  const seenIds = new Set<string>()
-  const messages: Array<{ id: string }> = []
-  for (const m of messagesRaw) {
-    if (m.id && !seenIds.has(m.id)) {
-      seenIds.add(m.id)
-      messages.push(m)
-    }
-  }
+  // [BIG-MAILBOX] Adaptive oldest-first window (see narrowOldestWindow). Gmail lists NEWEST-first, so
+  // when more than MAX_PAGES×PAGE_SIZE messages match, only the newest ~4000 are ever listed and the
+  // OLDER tail is never reached — and the oldest-first watermark then freezes at the floor forever.
+  const nowSec = Math.floor(Date.now() / 1000)
+  const win = await narrowOldestWindow<{ id: string }>({
+    after: afterDate,
+    now: nowSec,
+    minWindow: MIN_WINDOW_SEC,
+    maxIters: MAX_NARROW_ITERS,
+    list: async (before) => {
+      const r = await listGmailIds(before)
+      return { items: r.ids, complete: r.complete }
+    },
+  })
+  const messages = win.items
+  const listComplete = win.complete
+  const windowNarrowed = win.narrowed
   console.log('[BOEK-011] Gmail listing', {
-    rawRows: messagesRaw.length,
     uniqueMessages: messages.length,
-    pages: page,
     complete: listComplete,
+    windowNarrowed,
+    ceiling: win.ceiling != null ? new Date(win.ceiling * 1000).toISOString() : 'now',
   })
 
   const results: GmailAttachment[] = []
@@ -630,7 +712,7 @@ export async function fetchGmailAttachments(
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed }
 }
 
 async function fetchMessageAttachments(
@@ -869,17 +951,11 @@ export async function fetchOutlookAttachments(
   // walk needs the full timeline, not just freshly-fetched attachments;
   // otherwise skipping done-messages would empty the walk and freeze the mark.
   messageIndex: Array<{ messageId: string; date: string }>
+  // [BIG-MAILBOX] see fetchGmailAttachments — true when a backlog forced a narrowed window.
+  windowNarrowed: boolean
 }> {
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
-
-  const filter = `receivedDateTime ge ${afterIso}`
-  const firstUrl =
-    `https://graph.microsoft.com/v1.0/me/messages` +
-    `?$filter=${encodeURIComponent(filter)}` +
-    `&$select=id,subject,from,toRecipients,receivedDateTime,hasAttachments` +
-    `&$orderby=receivedDateTime desc` +
-    `&$top=50`
 
   type OutlookMessage = {
     id: string
@@ -911,56 +987,85 @@ export async function fetchOutlookAttachments(
   // "many folders" is exactly the shape the owner reported. Fix: de-duplicate INSIDE the loop
   // and budget by UNIQUE messages, never raw pages, so folder-view repeats can't consume the
   // ceiling. A hard API-call cap still bounds a pathological mailbox in wall-clock time.
-  const MAX_UNIQUE = 4000    // unique messages per sync — the real ceiling
+  const MAX_UNIQUE = 4000    // unique messages listable per WINDOW — the real ceiling
   const MAX_API_CALLS = 200  // safety bound on Graph list calls (folder dupes inflate paging)
+  const MIN_WINDOW_MS = 60 * 60 * 1000 // 1h — stop narrowing below this (pathological density)
+  const MAX_NARROW_ITERS = 20          // hard bound on the halving loop (≈ 40 years → 1h)
 
-  const seenIds = new Set<string>()
-  const messages: OutlookMessage[] = []
-  let nextUrl: string | null = firstUrl
-  let apiCalls = 0
+  // List UNIQUE messages in [afterIso, beforeIso). `complete` = the listing reached its natural end;
+  // false = it hit the unique/api ceiling (the window holds more than one sync can page).
+  const listOutlookMessages = async (
+    beforeIso: string | null
+  ): Promise<{ messages: OutlookMessage[]; complete: boolean; apiCalls: number }> => {
+    const filter =
+      `receivedDateTime ge ${afterIso}` +
+      (beforeIso != null ? ` and receivedDateTime lt ${beforeIso}` : '')
+    const firstUrl =
+      `https://graph.microsoft.com/v1.0/me/messages` +
+      `?$filter=${encodeURIComponent(filter)}` +
+      `&$select=id,subject,from,toRecipients,receivedDateTime,hasAttachments` +
+      `&$orderby=receivedDateTime desc` +
+      `&$top=50`
 
-  // [BOEK-011 throttle×watermark] `complete` = the listing reached its natural end AND every
-  // attachment fetch succeeded. Any early stop (throttle, error, ceiling) marks the fetch
-  // incomplete, and the caller HOLDS the watermark for this round — the older tail is never
-  // skipped; only the window refuses to shrink until a fully-covered pass.
-  let listComplete = true
+    const seen = new Set<string>()
+    const out: OutlookMessage[] = []
+    let nextUrl: string | null = firstUrl
+    let apiCalls = 0
+    let complete = true
 
-  while (nextUrl && messages.length < MAX_UNIQUE && apiCalls < MAX_API_CALLS) {
-    const listRes: Response = await graphFetch(nextUrl, accessToken)
-    apiCalls++
+    while (nextUrl && out.length < MAX_UNIQUE && apiCalls < MAX_API_CALLS) {
+      const listRes: Response = await graphFetch(nextUrl, accessToken)
+      apiCalls++
 
-    if (!listRes.ok) {
-      const body = await listRes.text()
-      // First call failing is a real error; a later one shouldn't discard what we collected —
-      // but it DOES make the fetch incomplete (hold the watermark).
-      if (apiCalls === 1) {
-        throw new Error(`Outlook list mislukt: ${body}`)
+      if (!listRes.ok) {
+        const body = await listRes.text()
+        // First call failing is a real error; a later one shouldn't discard what we collected —
+        // but it DOES make the fetch incomplete (hold the watermark).
+        if (apiCalls === 1) {
+          throw new Error(`Outlook list mislukt: ${body}`)
+        }
+        console.error('[BOEK-011] Outlook pagination stopped early', { apiCalls, body })
+        complete = false
+        break
       }
-      console.error('[BOEK-011] Outlook pagination stopped early', { apiCalls, body })
-      listComplete = false
-      break
+
+      const listData = await listRes.json()
+      // De-duplicate as we page: a folder-view repeat never counts toward MAX_UNIQUE.
+      for (const m of ((listData.value || []) as OutlookMessage[])) {
+        if (m.id && !seen.has(m.id)) {
+          seen.add(m.id)
+          out.push(m)
+        }
+      }
+      nextUrl = (listData['@odata.nextLink'] as string | undefined) ?? null
     }
 
-    const listData = await listRes.json()
-    // De-duplicate as we page: a folder-view repeat never counts toward MAX_UNIQUE.
-    for (const m of ((listData.value || []) as OutlookMessage[])) {
-      if (m.id && !seenIds.has(m.id)) {
-        seenIds.add(m.id)
-        messages.push(m)
-      }
-    }
-    nextUrl = (listData['@odata.nextLink'] as string | undefined) ?? null
+    // Ceiling hit with more pages remaining → this window's older tail wasn't listed.
+    if (nextUrl && (out.length >= MAX_UNIQUE || apiCalls >= MAX_API_CALLS)) complete = false
+    return { messages: out, complete, apiCalls }
   }
 
-  // Ceiling hit with more pages remaining → the older tail wasn't listed: hold the watermark.
-  if (nextUrl && (messages.length >= MAX_UNIQUE || apiCalls >= MAX_API_CALLS)) {
-    console.warn('[BOEK-011] Outlook listing capped (unique/api ceiling) — fetch incomplete')
-    listComplete = false
-  }
+  // [BIG-MAILBOX] Adaptive oldest-first window (see narrowOldestWindow). Graph lists newest-first, so
+  // more than MAX_UNIQUE matches would strand the OLDER tail and freeze the oldest-first watermark.
+  const nowMs = Date.now()
+  const win = await narrowOldestWindow<OutlookMessage>({
+    after: syncAfterMs,
+    now: nowMs,
+    minWindow: MIN_WINDOW_MS,
+    maxIters: MAX_NARROW_ITERS,
+    list: async (before) => {
+      const r = await listOutlookMessages(before != null ? new Date(before).toISOString() : null)
+      return { items: r.messages, complete: r.complete }
+    },
+  })
+  const messages = win.items
+  const listComplete = win.complete
+  const windowNarrowed = win.narrowed
   console.log('[BOEK-011] Outlook listing', {
     uniqueMessages: messages.length,
-    apiCalls,
     complete: listComplete,
+    windowNarrowed,
+    ceiling: win.ceiling != null ? new Date(win.ceiling).toISOString() : 'now',
   })
 
   const results: GmailAttachment[] = []
@@ -1012,7 +1117,7 @@ export async function fetchOutlookAttachments(
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed }
 }
 
 async function fetchOutlookMessageAttachments(
@@ -1125,6 +1230,9 @@ export interface AttachmentClassification {
   // [PAY-SAFE-EXTRACT] vendor payment details (IBAN to pay + betalingskenmerk)
   vendorIban?: string
   paymentReference?: string
+  // [SUPPLIER-IDENTITY] vendor legal identity — strong keys for supplier matching
+  vendorKvk?: string
+  vendorBtw?: string
   // [BRIDGE-CREDITNOTA-SIGN] Is this a creditnota? Drives the sign-inverted
   // SAFECORE gate + invoice_type='creditnota' at insert. Amounts stay NEGATIVE
   // as printed (matching outgoing creditnota [BOEK-031]).
@@ -1157,10 +1265,15 @@ export async function classifyAttachment(
   // [BRIDGE-EXTRACT] receiver identity (our company) — passed to the AI so it
   // never returns us as the vendor on an incoming invoice.
   receiverName?: string | null,
-  // [REREAD-STRONG] Optional read-strategy override. The automatic sync passes nothing (Haiku,
-  // cheap text path). The manual "Opnieuw inlezen" passes a stronger model + preferRawPdf so a
-  // stuck complex invoice is re-read on the real page layout by a more capable model.
-  opts?: { model?: string; preferRawPdf?: boolean }
+  // [REREAD-STRONG] Optional read-strategy override. The automatic sync passes nothing (default
+  // model, flattened-text path). The manual "Opnieuw inlezen" passes preferRawPdf so a stuck complex
+  // invoice is re-read on the real page layout instead of flattened text (same model as the sync).
+  // [RECEIVER-IDENTITY] receiverKvk/Btw/Iban = OUR own legal numbers, so the AI can tell ours from
+  // the vendor's and never return ours as the vendor.
+  opts?: {
+    model?: string; preferRawPdf?: boolean
+    receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+  }
 ): Promise<AttachmentClassification> {
   const { verifyInvoiceFromPdf } = await import('@/lib/ai')
 
@@ -1172,6 +1285,9 @@ export async function classifyAttachment(
     throwOnTransient: true,
     model: opts?.model,
     preferRawPdf: opts?.preferRawPdf,
+    receiverKvk: opts?.receiverKvk,
+    receiverBtw: opts?.receiverBtw,
+    receiverIban: opts?.receiverIban,
   })
 
   return {
@@ -1193,6 +1309,9 @@ export async function classifyAttachment(
     btwRate: result.btw_rate,
     // [PAY-SAFE-EXTRACT] vendor payment details from the same Claude call
     vendorIban: result.vendor_iban,
+    // [SUPPLIER-IDENTITY] vendor legal identity for supplier matching/storage
+    vendorKvk: result.vendor_kvk,
+    vendorBtw: result.vendor_btw,
     paymentReference: result.payment_reference,
     // [BRIDGE-CREDITNOTA-SIGN] creditnota signal from the same Claude call
     isCreditNote: result.is_credit_note,
@@ -1403,11 +1522,16 @@ export async function syncUserEmails(
   // AI never returns us as the vendor on incoming invoices.
   const { data: profile } = await supabase
     .from('profiles')
-    .select('created_at, company_name, full_name')
+    .select('created_at, company_name, full_name, kvk_number, btw_number, iban')
     .eq('id', userId)
     .single()
 
   const receiverName = profile?.company_name || profile?.full_name || null
+  // [RECEIVER-IDENTITY] Our own legal numbers → the AI (and its backstop) can tell OURS from the
+  // vendor's and never store our own company as a supplier.
+  const receiverKvk = profile?.kvk_number || null
+  const receiverBtw = profile?.btw_number || null
+  const receiverIban = profile?.iban || null
 
   // [BOEK-011] Sync start boundary.
   //
@@ -1498,12 +1622,17 @@ export async function syncUserEmails(
   let attachments: GmailAttachment[] = []
   let fetchComplete = false
   let messageIndex: Array<{ messageId: string; date: string }> = []
+  // [BIG-MAILBOX] true when the provider narrowed its window because the backlog is larger than one
+  // sync can page — i.e. mail newer than this run's slice is still waiting. Surfaced in `remaining`
+  // so the client's auto-continue keeps going instead of stopping between cron cycles.
+  let windowNarrowed = false
   try {
     if (tokens.provider === 'gmail') {
       const r = await fetchGmailAttachments(accessToken, syncAfterMs)
       attachments = r.attachments
       fetchComplete = r.complete
       messageIndex = r.messageIndex
+      windowNarrowed = r.windowNarrowed
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
@@ -1511,6 +1640,7 @@ export async function syncUserEmails(
       attachments = r.attachments
       fetchComplete = r.complete
       messageIndex = r.messageIndex
+      windowNarrowed = r.windowNarrowed
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
@@ -1657,6 +1787,139 @@ export async function syncUserEmails(
   const freshAttachments = freshAll.slice(0, SYNC_BATCH_MAX)
   const remainingAfterBatch = freshAll.length - freshAttachments.length
 
+  // [POISON-PILL] Consecutive-failure guard for the watermark. The mark walks messages oldest-first
+  // and stops at the first with an attachment that didn't finish this run — correct for a genuine
+  // transient failure, but an attachment that fails EVERY sync (a non-transient error mis-read as
+  // transient, a file that always times out, a persistent save/DB error) would block the walk
+  // forever, freezing the mark and starving every newer invoice behind the batch cap. We count
+  // consecutive failures per attachment and GIVE UP after SYNC_MAX_ATTEMPTS: keep it owner-visible
+  // and register a terminal skip so the mark can pass. Completed attachments' counters are cleared
+  // after PHASE 2, so a finally-successful flaky file never carries a stale count.
+  const SYNC_MAX_ATTEMPTS = (() => {
+    const raw = Number(process.env.SYNC_MAX_ATTEMPTS)
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 50) return Math.round(raw)
+    return 6
+  })()
+  // [POISON-PILL] Minimum REAL time between two counted failures. The counter is time-gated, not
+  // per-sync: a burst of rapid re-syncs (manual retries, the client's auto-continue backlog drain,
+  // a frequent cron) within this window counts as ONE attempt, so a short transient Claude/rate-
+  // limit episode can never burn all the attempts and give up on a real invoice. Only a failure
+  // that PERSISTS across many hours (a genuine poison pill) reaches SYNC_MAX_ATTEMPTS. With the
+  // defaults (6 × 30 min) a give-up needs ~2.5 h of continuous failure.
+  const SYNC_MIN_RETRY_MS = (() => {
+    const raw = Number(process.env.SYNC_MIN_RETRY_MINUTES)
+    const mins = Number.isFinite(raw) && raw >= 0 && raw <= 1440 ? Math.round(raw) : 30
+    return mins * 60_000
+  })()
+
+  // count = consecutive counted failures; atMs = when the last one was counted (the time gate).
+  const attemptState = new Map<string, { count: number; atMs: number }>()
+  {
+    const batchKeys = freshAttachments.map((a) => `${a.messageId}:${a.filename}`)
+    for (const chunk of chunkArray(batchKeys, 100)) {
+      const { data } = await supabase
+        .from('email_failed_attempts')
+        .select('source_message_id, attempt_count, updated_at')
+        .eq('user_id', userId)
+        .in('source_message_id', chunk)
+      for (const r of (data ?? []) as Array<{ source_message_id: string; attempt_count: number; updated_at: string }>) {
+        attemptState.set(r.source_message_id, { count: r.attempt_count, atMs: new Date(r.updated_at).getTime() })
+      }
+    }
+  }
+
+  // Keep an unreadable/failed attachment owner-visible: store the bytes as a could_not_read document
+  // (deduped by content hash) and register a skip with `reason`. Shared by the confidence-0 "could
+  // not read" branch and the poison-pill give-up. Never throws.
+  const saveUnreadableAttachment = async (att: GmailAttachment, reason: string): Promise<void> => {
+    try {
+      const buf = Buffer.from(att.data, 'base64')
+      const hash = computeContentHash(buf)
+      const { data: dupDoc } = await supabase
+        .from('documents').select('id')
+        .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
+      if (!dupDoc) {
+        const safeName = att.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+        const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
+        const { error: upErr } = await supabase.storage
+          .from('documents').upload(storagePath, buf, { contentType: att.mimeType, upsert: false })
+        if (!upErr) {
+          const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
+          const { error: docErr } = await supabase.from('documents').insert({
+            user_id: userId,
+            file_name: att.filename,
+            file_url: storagePath,
+            file_size: buf.length,
+            file_type: att.mimeType,
+            doc_type: 'overig',
+            folder_id: folderId,
+            source: 'email',
+            ai_processed: false,          // we did NOT read it — never claim we did
+            ai_doc_type: 'could_not_read',
+            content_hash: hash,
+          })
+          if (docErr) await supabase.storage.from('documents').remove([storagePath])
+        }
+      }
+    } catch (e) {
+      console.error('[BOEK-011] could-not-read save failed', e)
+    }
+    // NB: the skip upsert is inside its OWN try/catch — this function must NEVER throw (its callers
+    // run inside the PHASE-2 try/catch, and a throw here would double-count the attempt and abort
+    // the whole sync before the watermark advance).
+    try {
+      await supabase
+        .from('email_skipped_attachments')
+        .upsert(
+          {
+            user_id: userId,
+            source_message_id: `${att.messageId}:${att.filename}`,
+            filename: att.filename,
+            reason,
+          },
+          { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+        )
+    } catch (e) {
+      console.error('[BOEK-011] skip-registry upsert failed (non-fatal)', e)
+    }
+  }
+
+  // Record ONE failed processing attempt for an attachment. Returns true when it has now EXHAUSTED
+  // its retries and was given up (kept owner-visible + terminal skip), so the caller lets the mark
+  // pass; false while it should still be retried (the mark holds, unchanged behaviour). Never throws.
+  const recordFailedAttempt = async (att: GmailAttachment, lastError: string): Promise<boolean> => {
+    const key = `${att.messageId}:${att.filename}`
+    const prev = attemptState.get(key)
+    const nowMs = Date.now()
+    // [POISON-PILL] Time gate: within SYNC_MIN_RETRY_MS of the last COUNTED failure, do NOT count
+    // again — hold the mark and retry next sync, exactly like a plain transient failure. This is
+    // what keeps a burst of rapid re-syncs during a short outage from exhausting the attempts on a
+    // real invoice; only a failure that keeps recurring across the window advances the counter.
+    if (prev && nowMs - prev.atMs < SYNC_MIN_RETRY_MS) return false
+    const next = (prev?.count ?? 0) + 1
+    attemptState.set(key, { count: next, atMs: nowMs })
+    try {
+      await supabase
+        .from('email_failed_attempts')
+        .upsert(
+          {
+            user_id: userId,
+            source_message_id: key,
+            attempt_count: next,
+            last_error: lastError.slice(0, 500),
+            updated_at: new Date(nowMs).toISOString(),
+          },
+          { onConflict: 'user_id,source_message_id' }
+        )
+    } catch (e) {
+      console.error('[POISON-PILL] attempt upsert failed (non-fatal)', e)
+    }
+    if (next < SYNC_MAX_ATTEMPTS) return false
+    console.warn('[POISON-PILL] giving up on attachment after repeated failures', { key, attempts: next })
+    await saveUnreadableAttachment(att, 'repeatedly_failed')
+    return true
+  }
+
   console.log('[BOEK-011] Sync scope', {
     fetched: attachments.length,
     alreadyImported: knownKeys.size,
@@ -1675,7 +1938,8 @@ export async function syncUserEmails(
           attachment.data,
           attachment.mimeType,
           attachment.filename,
-          receiverName
+          receiverName,
+          { receiverKvk, receiverBtw, receiverIban }
         )
         return { attachment, classification, classifyFailed: false }
       } catch (err) {
@@ -1706,9 +1970,18 @@ export async function syncUserEmails(
       // Transient classification failure (rate limit / network) → skip WITHOUT
       // registering; the next sync retries it. A real invoice must never be
       // permanently skipped because of one bad network moment.
-      // [watermark] NOT complete — the mark stops before this email.
+      // [watermark] NOT complete — the mark stops before this email … UNLESS this attachment has
+      // failed on SYNC_MAX_ATTEMPTS consecutive syncs (poison pill), in which case we give up so it
+      // stops blocking every newer invoice: it's kept owner-visible + registered terminal and the
+      // mark is allowed to pass (completedKeys).
       if (classifyFailed) {
-        errors++
+        const gaveUp = await recordFailedAttempt(attachment, 'classify_failed')
+        if (gaveUp) {
+          couldNotRead++
+          completedKeys.add(wmKey)
+        } else {
+          errors++
+        }
         continue
       }
 
@@ -1720,50 +1993,7 @@ export async function syncUserEmails(
       // owner is told, and register it with reason 'could_not_read' (still stops the
       // costly per-sync re-send, but is honest about WHY).
       if (!classification.isInvoice && !((classification.confidence ?? 0) > 0)) {
-        try {
-          const buf = Buffer.from(attachment.data, 'base64')
-          const hash = computeContentHash(buf)
-          const { data: dupDoc } = await supabase
-            .from('documents').select('id')
-            .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
-          if (!dupDoc) {
-            const safeName = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
-            const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
-            const { error: upErr } = await supabase.storage
-              .from('documents').upload(storagePath, buf, { contentType: attachment.mimeType, upsert: false })
-            if (!upErr) {
-              const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
-              const { error: docErr } = await supabase.from('documents').insert({
-                user_id: userId,
-                file_name: attachment.filename,
-                file_url: storagePath,
-                file_size: buf.length,
-                file_type: attachment.mimeType,
-                doc_type: 'overig',
-                folder_id: folderId,
-                source: 'email',
-                ai_processed: false,          // we did NOT read it — never claim we did
-                ai_doc_type: 'could_not_read',
-                content_hash: hash,
-              })
-              if (docErr) await supabase.storage.from('documents').remove([storagePath])
-            }
-          }
-        } catch (e) {
-          console.error('[BOEK-011] could-not-read save failed', e)
-        }
-        const skipPipeline = createPipelineClient()
-        await skipPipeline
-          .from('email_skipped_attachments')
-          .upsert(
-            {
-              user_id: userId,
-              source_message_id: `${attachment.messageId}:${attachment.filename}`,
-              filename: attachment.filename,
-              reason: 'could_not_read',
-            },
-            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
-          )
+        await saveUnreadableAttachment(attachment, 'could_not_read')
         couldNotRead++
         completedKeys.add(wmKey) // handled (kept + registered) = complete
         continue
@@ -1935,6 +2165,8 @@ export async function syncUserEmails(
       const supplier = await resolveSupplierForImport(supabase, userId, {
         name: classification.vendor,
         iban: classification.vendorIban ?? null,
+        kvk: classification.vendorKvk ?? null,
+        btw: classification.vendorBtw ?? null,
       })
 
       if (typeof classification.totalIncBtw === 'number') {
@@ -2395,9 +2627,18 @@ export async function syncUserEmails(
           if (pdfUrl) {
             await supabase.storage.from('documents').remove([pdfUrl])
           }
-          errors++
-          // [watermark] NOT complete — a genuine save failure; the mark stops
-          // here so the next sync re-fetches and retries this email.
+          // [watermark] NOT complete — a genuine save failure; the mark stops here so the next
+          // sync re-fetches and retries this email … unless this attachment has now failed
+          // SYNC_MAX_ATTEMPTS times (poison pill), in which case we give up and let the mark pass.
+          {
+            const gaveUp = await recordFailedAttempt(attachment, `save_error: ${dbError.message}`)
+            if (gaveUp) {
+              couldNotRead++
+              completedKeys.add(wmKey)
+            } else {
+              errors++
+            }
+          }
         }
       } else {
         saved++
@@ -2438,8 +2679,31 @@ export async function syncUserEmails(
       }
     } catch (error) {
       console.error('[BOEK-011] Processing error:', error)
-      errors++
-      // [watermark] NOT complete — unknown failure; the mark stops here.
+      // [watermark] NOT complete — unknown failure; the mark stops here … unless this attachment
+      // has now failed SYNC_MAX_ATTEMPTS times (poison pill), in which case we give up and let the
+      // mark pass so it stops blocking every newer invoice.
+      const msg = error instanceof Error ? error.message : String(error)
+      const gaveUp = await recordFailedAttempt(attachment, msg)
+      if (gaveUp) {
+        couldNotRead++
+        completedKeys.add(wmKey)
+      } else {
+        errors++
+      }
+    }
+  }
+
+  // [POISON-PILL] Clear the failure counter for every attachment that completed this run (saved,
+  // duplicate, terminal skip, or given up) — a flaky file that finally succeeded must not carry a
+  // stale count toward a future give-up. Failed-this-round attachments keep their (just-incremented)
+  // count so the next sync sees it.
+  if (completedKeys.size > 0) {
+    for (const chunk of chunkArray([...completedKeys], 100)) {
+      await supabase
+        .from('email_failed_attempts')
+        .delete()
+        .eq('user_id', userId)
+        .in('source_message_id', chunk)
     }
   }
 
@@ -2659,7 +2923,11 @@ export async function syncUserEmails(
     // [BOEK-011] New attachments beyond this batch's cap — the client uses
     // this to auto-continue syncing until the backlog is drained, showing
     // progress instead of silently importing a fraction.
-    remaining: remainingAfterBatch,
+    // [BIG-MAILBOX] When the listing window was narrowed (backlog > one sync can page), mail newer
+    // than this slice is deferred and not counted in remainingAfterBatch. Report at least 1 so the
+    // client keeps auto-continuing across slice boundaries instead of stopping until the next cron;
+    // the no-progress guard still stops it if a round genuinely advances nothing.
+    remaining: windowNarrowed ? Math.max(remainingAfterBatch, 1) : remainingAfterBatch,
     // [BOEK-011] Attachments registered as non-invoice this run — the client
     // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
     // the no-progress guard.

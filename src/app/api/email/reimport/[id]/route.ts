@@ -21,15 +21,15 @@ import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
-// [REREAD-STRONG] The manual "Opnieuw inlezen" is a single, user-initiated re-read of ONE flagged
-// invoice — the right place to spend a stronger model that reads the real page layout. The
-// automatic sync stays on Haiku (cheap, high-volume). This is the fix for complex invoices Haiku
-// mis-reads on every pass (statiegeld/retour, net-negative creditnota, crowded multi-column
-// tables). Must be a model enabled on the account.
+// [REREAD-STRONG] The automatic sync already reads on Sonnet 4.5 (see CLAUDE_MODEL in ai.ts). The
+// manual "Opnieuw inlezen" keeps an edge for a stuck invoice two ways: a notch-newer model
+// (Sonnet 5) AND a forced read of the REAL page layout (preferRawPdf) instead of flattened text —
+// the fix for complex invoices mis-read on every pass (statiegeld/retour, net-negative creditnota,
+// crowded multi-column tables). Must be a model enabled on the account.
 const REREAD_MODEL = "claude-sonnet-5";
 
-// [REREAD-STRONG] A raw-PDF read on the stronger model is slower than the Haiku text path — give
-// the route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
+// [REREAD-STRONG] A raw-PDF (visual-layout) read is slower than the flattened-text path — give the
+// route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
 export const maxDuration = 120;
 
 // A stored value may be a relative path (new) or a legacy full signed/public URL. Normalise
@@ -121,13 +121,20 @@ export async function POST(
 
   // Receiver identity — so the extractor never returns US as the vendor.
   let receiverName: string | null = null;
+  let receiverKvk: string | null = null;
+  let receiverBtw: string | null = null;
+  let receiverIban: string | null = null;
   {
     const { data: me } = await supabase
       .from("profiles")
-      .select("company_name, full_name")
+      .select("company_name, full_name, kvk_number, btw_number, iban")
       .eq("id", user.id)
       .maybeSingle();
     receiverName = me?.company_name?.trim() || me?.full_name?.trim() || null;
+    // [RECEIVER-IDENTITY] our own legal numbers → backstop drops any vendor field equal to ours.
+    receiverKvk = me?.kvk_number?.trim() || null;
+    receiverBtw = me?.btw_number?.trim() || null;
+    receiverIban = me?.iban?.trim() || null;
   }
 
   // Download the stored bytes. Storage bucket RLS is separate from table RLS; ownership is
@@ -153,6 +160,9 @@ export async function POST(
     c = await classifyAttachment(base64, mimeType, filename, receiverName, {
       model: REREAD_MODEL,
       preferRawPdf: true,
+      receiverKvk,
+      receiverBtw,
+      receiverIban,
     });
   } catch (e) {
     console.error("[REIMPORT] classify failed", { invoiceId: id, e });
