@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
+import { invoiceIdsForTransactions, clearPaymentLinks } from "@/lib/bank-tx-links";
 import { logAuditAction } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -126,6 +127,10 @@ export async function POST(req: Request) {
     }
   }
 
+  // [BANK-TX-INVOICES] The bank line is detached but the row survives (status pending), so the FK
+  // cascade does NOT fire — clear the join row explicitly so a re-book starts from a clean index.
+  await clearPaymentLinks(pipeline, user.id, transactionId);
+
   await logAuditAction({
     userId: user.id,
     action: "bank.unlinked",
@@ -152,11 +157,17 @@ async function unlinkBatch(args: {
   const { pipeline, payClient, userId, transactionId, tx, refNums } = args;
   const linkedInvoiceId = tx.invoice_id;
   if (!linkedInvoiceId) return NextResponse.json({ error: "not_linked" }, { status: 409 });
-  const refSet = new Set(refNums);
 
-  // The batch's paid invoices (owner-pinned). Filter to the referenced numbers in code so a
-  // number that resolves to several rows, or an unrelated same-number invoice, is handled by the
-  // exact normalized match — never a substring.
+  // [BANK-TX-INVOICES] The AUTHORITATIVE reversal set is the exact invoice ids this transaction
+  // paid, recorded in the join table at booking time. Reversing by id can only ever touch the
+  // invoices this payment actually paid — it cannot un-pay an unrelated invoice that happens to
+  // share a number (invoice numbers are not unique across suppliers / directions). The number
+  // match below is a LEGACY fallback, used only for a pre-migration batch whose join rows were
+  // never written (backfill stored only its representative id).
+  const linkIds = await invoiceIdsForTransactions(pipeline, userId, [transactionId]);
+  const idSet = new Set(linkIds);
+
+  // The batch's paid invoices (owner-pinned).
   const { data: paidRows, error: invErr } = await pipeline
     .from("invoices")
     .select("id, invoice_number, direction, status, accountant_status")
@@ -164,7 +175,14 @@ async function unlinkBatch(args: {
     .eq("status", "paid")
     .eq("payment_method", "bank");
   if (invErr) return NextResponse.json({ error: "invoice_lookup_failed", detail: invErr.message }, { status: 500 });
-  const batch = (paidRows ?? []).filter((i) => refSet.has(normalizeRef(i.invoice_number ?? "")));
+  // Prefer the collision-free id set; only if the join table has nothing for this tx (legacy) do we
+  // fall back to the reference-number match, and even then we always keep the linked representative.
+  const batch =
+    idSet.size > 0
+      ? (paidRows ?? []).filter((i) => idSet.has(i.id))
+      : (paidRows ?? []).filter(
+          (i) => i.id === linkedInvoiceId || new Set(refNums).has(normalizeRef(i.invoice_number ?? "")),
+        );
 
   // A 'verwerkt' invoice anywhere in the batch blocks the whole reversal (accrual is locked by the
   // accountant) — refuse before touching anything.
@@ -204,6 +222,9 @@ async function unlinkBatch(args: {
     }
     restored.push(inv.id);
   }
+
+  // [BANK-TX-INVOICES] Row survives the detach (status pending) → clear its join rows explicitly.
+  await clearPaymentLinks(pipeline, userId, transactionId);
 
   await logAuditAction({
     userId,

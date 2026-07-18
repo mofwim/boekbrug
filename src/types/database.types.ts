@@ -204,6 +204,30 @@ export type Database = {
           },
         ]
       }
+      bank_tx_invoices: {
+        Row: {
+          created_at: string | null
+          id: string
+          invoice_id: string
+          transaction_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          invoice_id: string
+          transaction_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          invoice_id?: string
+          transaction_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       counterpart_memory: {
         Row: {
           category: string

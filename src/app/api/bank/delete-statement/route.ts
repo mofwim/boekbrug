@@ -32,7 +32,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
+import { invoiceIdsForTransactions } from "@/lib/bank-tx-links";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
@@ -85,64 +85,110 @@ export async function POST(req: NextRequest) {
   //     remove this statement's transactions (incl. pos_income, whose triangle effect is a live
   //     read). The invoices themselves remain — Bewaarplicht is on the invoices, the file was a
   //     convenience copy. Requires the statement_document_id link (bank_tx_statement_link.sql).
+  //
+  //     [BANK-TX-INVOICES] Which invoices did this statement pay? The AUTHORITATIVE, collision-free
+  //     answer is the join table — the exact invoice ids recorded at booking time, reversed by id,
+  //     never by invoice NUMBER (numbers are not unique across suppliers/directions, so a
+  //     number-based reversal could un-pay an unrelated invoice — a wrong-number event). We also
+  //     union the direct tx.invoice_id (a legacy single link the backfill covers) so nothing this
+  //     statement paid is missed.
   const pipeline = createPipelineClient();
   const { data: stmtTx } = await pipeline
     .from("bank_transactions")
-    .select("id, invoice_id, reference")
+    .select("id, invoice_id, reference, amount, category")
     .eq("user_id", user.id)
     .eq("statement_document_id", documentId);
   const txs = stmtTx ?? [];
   if (txs.length > 0) {
-    // Which invoices did this statement pay? Directly-linked (single or batch representative) +
-    // every batch-covered invoice (paid-by-bank, number in a multi-invoice tx's reference).
-    const directIds = new Set<string>();
-    const batchRefNums = new Set<string>();
-    for (const t of txs) {
-      if (t.invoice_id) directIds.add(t.invoice_id as string);
-      const rn = parseReferenceNumbers(t.reference);
-      if (rn.length > 1) rn.forEach((n) => batchRefNums.add(n));
-    }
+    const txIds = txs.map((t) => t.id as string);
+    const linkIds = await invoiceIdsForTransactions(pipeline, user.id, txIds);
+    const reversalIds = new Set<string>(linkIds);
+    for (const t of txs) if (t.invoice_id) reversalIds.add(t.invoice_id as string);
+
     let toRestore: { id: string; direction: string | null; accountant_status: string | null }[] = [];
-    if (directIds.size > 0 || batchRefNums.size > 0) {
-      const { data: paidInvs } = await pipeline
+    if (reversalIds.size > 0) {
+      const { data: paidInvs, error: invErr } = await pipeline
         .from("invoices")
-        .select("id, invoice_number, direction, status, accountant_status")
+        .select("id, direction, status, accountant_status")
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .eq("status", "paid")
-        .eq("payment_method", "bank");
-      toRestore = (paidInvs ?? []).filter(
-        (i) => directIds.has(i.id) || batchRefNums.has(normalizeRef(i.invoice_number ?? "")),
-      );
+        .eq("payment_method", "bank")
+        .in("id", [...reversalIds]);
+      if (invErr) {
+        // Never delete a statement while we cannot read what it paid — that would strand paid
+        // invoices with no bank line. Abort cleanly; nothing was touched.
+        return NextResponse.json({ error: "reversal_lookup_failed", detail: invErr.message }, { status: 500 });
+      }
+      toRestore = paidInvs ?? [];
     }
     // A 'verwerkt' (accountant-locked) invoice blocks the whole reversal — nothing is touched.
     if (toRestore.some((i) => i.accountant_status === "verwerkt")) {
       return NextResponse.json({ error: "verwerkt", detail: "Een factuur van dit afschrift is al verwerkt door de boekhouder. Vraag eerst om ontwerken." }, { status: 409 });
     }
+
     // Restore each invoice to unpaid — SESSION client so the B.4 verwerkt trigger has auth context.
+    // [HIGH-2] Every write is checked. On the FIRST failure we re-pay what we already restored and
+    // abort WITHOUT deleting any transaction, so a failed reversal can never land in the half-state
+    // this cascade exists to prevent (a restored invoice beside a still-'matched' bank line, or a
+    // paid invoice with its bank line deleted). All-or-nothing, mirroring unlink's discipline.
+    const restored: { id: string; direction: string | null }[] = [];
+    const repay = async () => {
+      for (const r of restored) {
+        await supabase
+          .from("invoices")
+          .update({ status: "paid", payment_method: "bank" })
+          .eq("id", r.id)
+          .neq("status", "paid");
+      }
+    };
     for (const inv of toRestore) {
-      await supabase
+      const { error: restoreErr } = await supabase
         .from("invoices")
         .update({ status: inv.direction === "incoming" ? "received" : "sent", payment_method: null, marked_paid_at: null, payment_date: null })
         .eq("id", inv.id)
         .eq("status", "paid");
+      if (restoreErr) {
+        await repay();
+        if (restoreErr.message?.toLowerCase().includes("verwerkt")) {
+          return NextResponse.json({ error: "verwerkt", detail: "Een factuur van dit afschrift is al verwerkt door de boekhouder. Vraag eerst om ontwerken." }, { status: 409 });
+        }
+        return NextResponse.json({ error: "reversal_failed", detail: restoreErr.message }, { status: 500 });
+      }
+      restored.push({ id: inv.id, direction: inv.direction });
     }
+
+    // [MED-3] Audit snapshot BEFORE the destructive delete — record exactly which transactions
+    // (incl. the pos_income lines whose card-commission is a live read) and which invoices this
+    // reversal touched, so the deletion is reconstructable from the trail, not just observed.
+    try {
+      await logAuditAction({
+        userId: user.id,
+        action: "bank.unlinked",
+        entityType: "document",
+        entityId: documentId,
+        newValue: {
+          reversed_invoice_ids: restored.map((r) => r.id),
+          removed_transaction_ids: txIds,
+          removed_transactions: txs.length,
+          pos_income_lines: txs.filter((t) => t.category === "pos_income").length,
+          reason: "statement_deleted_cascade",
+        },
+        ipAddress: getClientIP(req),
+      });
+    } catch { /* non-blocking */ }
+
     // Remove this statement's transactions — clears the linked lines AND the pos_income lines that
-    // feed the card triangle, so the deleted statement contributes nothing to the result anymore.
-    await pipeline
+    // feed the card triangle (their join rows cascade via the FK), so the deleted statement
+    // contributes nothing to the result anymore. If the delete fails after we've un-paid the
+    // invoices, re-pay them so we never leave unpaid invoices beside still-'matched' bank lines.
+    const { error: delTxErr } = await pipeline
       .from("bank_transactions")
       .delete()
       .eq("user_id", user.id)
       .eq("statement_document_id", documentId);
-    if (toRestore.length > 0) {
-      try {
-        await logAuditAction({
-          userId: user.id,
-          action: "bank.unlinked",
-          entityType: "document",
-          entityId: documentId,
-          newValue: { reversed_invoice_ids: toRestore.map((i) => i.id), removed_transactions: txs.length, reason: "statement_deleted_cascade" },
-        });
-      } catch { /* non-blocking */ }
+    if (delTxErr) {
+      await repay();
+      return NextResponse.json({ error: "transaction_delete_failed", detail: delTxErr.message }, { status: 500 });
     }
   }
 

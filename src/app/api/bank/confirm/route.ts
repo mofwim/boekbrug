@@ -33,6 +33,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 // now lives in bank-matching.ts so this confirm path and the match path share ONE
 // definition — no drift between "is this tx done?" answered in two places.
 import { isEligible, normalizeRef, isFullyCovered, parseReferenceNumbers } from "@/lib/bank-matching";
+import { recordPaymentLinks } from "@/lib/bank-tx-links";
 
 export async function POST(req: NextRequest) {
   // 1. Auth
@@ -274,6 +275,11 @@ export async function POST(req: NextRequest) {
       { status: 409 }
     );
   }
+
+  // [BANK-TX-INVOICES] Record this (transaction → invoice) so a later reversal reverses by id, not
+  // by number. A multi-invoice batch is confirmed one invoice per call, so successive confirms
+  // accumulate every paid invoice onto the same tx here — the full, collision-free reversal set.
+  await recordPaymentLinks(pipeline, user.id, transactionId, [invoiceId]);
 
   // 7. Notification (non-blocking) — notifications inserts use service_role by rule.
   try {
