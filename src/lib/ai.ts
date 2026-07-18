@@ -956,6 +956,15 @@ export function isTransientAiError(error: unknown): boolean {
   return false;
 }
 
+// [REREAD-STRONG] Any Claude HTTP API error (the callClaude* helpers throw `Claude … API error
+// <status>`), including a NON-transient 404 (model not enabled) / 400 / 403. Distinct from a
+// genuine "not an invoice" verdict, which is a normal return — never an exception. Used so an
+// infra/config failure surfaces honestly (retry / 502) rather than as a false document verdict.
+export function isAiApiError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  return /\bapi error\b/i.test(msg);
+}
+
 export async function verifyInvoiceFromPdf(
   fileBase64: string,
   mimeType: string,
@@ -1663,11 +1672,14 @@ Return JSON only.`;
     return parsed;
   } catch (error) {
     console.error('[BOEK-011] verifyInvoiceFromPdf failed:', error);
-    // [TRANSIENT-RETRY] A transient API/network failure is NOT a verdict that the file is
-    // unreadable. When the caller opted in (email-sync / reimport), re-throw so it retries next
-    // sync instead of registering a permanent 'could_not_read' skip and walking the watermark past
-    // a real invoice (silent, unrecoverable loss on any Claude incident during the daily cron).
-    if (opts?.throwOnTransient && isTransientAiError(error)) throw error;
+    // [TRANSIENT-RETRY] An INFRA/read failure is NOT a verdict that the file is unreadable — a
+    // genuine "not an invoice" is a normal parsed return, never an exception. So when the caller
+    // opted in (email-sync / reimport), re-throw ANY Claude HTTP API error (429/5xx transient, but
+    // also a 404 model-unavailable / 400 / 403 config error) and network failure. The email-sync
+    // then retries next sync (never a permanent 'could_not_read' skip); the manual re-read 502s
+    // honestly ("probeer later opnieuw") instead of the swallowed FALLBACK being reported as
+    // "geen boekbare factuur — negeer" (a config error must never masquerade as a document verdict).
+    if (opts?.throwOnTransient && (isTransientAiError(error) || isAiApiError(error))) throw error;
     return FALLBACK;
   }
 }

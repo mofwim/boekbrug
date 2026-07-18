@@ -244,6 +244,12 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
         flags.push('illegal_btw_rate')
         reasons.push(`ongeldig BTW-tarief (${rate}%)`)
       }
+    } else if (Math.abs(btw) > 0.02) {
+      // [NO-BASE] A non-trivial BTW on an essentially-ZERO base is physically impossible (implied
+      // rate → ∞) — a mis-read. The old all-≤0 structural rule caught this by accident; keep it
+      // caught now that the rate check self-disables for a near-zero base.
+      flags.push('illegal_btw_rate')
+      reasons.push('BTW zonder grondslag — controleer de bedragen')
     }
   }
 

@@ -153,6 +153,35 @@ console.log('═══ safecore creditnota tests ═══\n')
   check('10e. gewone factuur (positief) blijft ok', std.ok === true, JSON.stringify(std))
 }
 
+// ── 10f. [NO-BASE] near-zero base with a large BTW → blocked (the rate check can't run) ──
+// €238 BTW on a €0.004 base is a physically-impossible read; the identity still holds, so only
+// this guard catches it now that the all-≤0 structural rule is gone.
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: 0.004, btwAmount: -238, totalIncBtw: -237.996 },
+    { isCreditNote: true }
+  )
+  check('10f. BTW zonder grondslag (bijna-nul ex) → blocked', v.ok === false && (v.flags ?? []).includes('illegal_btw_rate'), JSON.stringify(v))
+}
+
+// ── 10g. exact-zero base with BTW, negative total → blocked (closes the ex==0 gap too) ──
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: 0, btwAmount: -50, totalIncBtw: -50 },
+    { isCreditNote: true }
+  )
+  check('10g. BTW op nul-grondslag → blocked', v.ok === false, JSON.stringify(v))
+}
+
+// ── 10h. Regression: a legit 0%-BTW credit (btw exactly 0, real base) stays ok ──
+{
+  const v = evaluateArithmetic(
+    { totalExBtw: -10, btwAmount: 0, totalIncBtw: -10 },
+    { isCreditNote: true }
+  )
+  check('10h. 0%-credit (btw=0, echte grondslag) blijft ok', v.ok === true, JSON.stringify(v))
+}
+
 // ── 11. Regression: opts absent === opts undefined === old behaviour ────────
 {
   const a = evaluateArithmetic({ totalExBtw: 100, btwAmount: 21, totalIncBtw: 121 })
