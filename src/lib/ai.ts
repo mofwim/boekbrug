@@ -1304,7 +1304,15 @@ Return JSON only.`;
           console.log(
             '[VISUAL-REREAD] Text path read an invoice with weak number/split/amount — re-reading via the raw PDF layout'
           );
-          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+          const reread = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+          // Only ADOPT the visual re-read when it still yields a usable invoice total — never let a
+          // worse second pass discard the good total the trusted text path already had (money-safe).
+          const rp = safeParseJSON<VerifyInvoiceResult>(reread);
+          const rereadHasTotal =
+            rp != null &&
+            rp.is_invoice === true &&
+            (hasNum(rp.total_inc_btw) || (hasNum(rp.total_ex_btw) && hasNum(rp.btw_amount)));
+          if (rereadHasTotal) result = reread;
         }
       } else {
         // Raw PDF path — Claude reads the actual PDF (text + scanned). Already the visual layout,

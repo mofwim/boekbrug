@@ -119,26 +119,26 @@ export async function resolveSupplierForImport(
         }
       }
 
-      // Create, keyed by IBAN. upsert on the (user_id, iban) unique index → race-safe under
-      // concurrent sync (a parallel insert of the same IBAN resolves to the same row).
+      // Create, keyed by IBAN. Plain INSERT — NOT an upsert with onConflict: the (user_id, iban)
+      // unique index is PARTIAL (`WHERE iban IS NOT NULL`), and PostgREST's onConflict cannot
+      // carry that predicate, so an ON CONFLICT arbiter would fail to resolve and the create would
+      // silently no-op. A plain insert still enforces the partial index; on the rare concurrent-
+      // sync race we catch the unique violation (23505) and re-read the row the winner created.
       const { data: created, error: createErr } = await supabase
         .from('suppliers')
-        .upsert(
-          {
-            user_id: userId,
-            name: cleanName || 'Onbekende leverancier',
-            name_key: key || null,
-            iban,
-            kvk_number: vendor.kvk ?? null,
-            btw_number: vendor.btw ?? null,
-          },
-          { onConflict: 'user_id,iban' },
-        )
+        .insert({
+          user_id: userId,
+          name: cleanName || 'Onbekende leverancier',
+          name_key: key || null,
+          iban,
+          kvk_number: vendor.kvk ?? null,
+          btw_number: vendor.btw ?? null,
+        })
         .select('id, name')
         .single()
       if (!createErr && created) return { id: created.id, name: created.name }
 
-      // upsert lost a race / errored → re-read the winner.
+      // Lost the insert race (23505) or another error → re-read the winner by (user, iban).
       const { data: retry } = await supabase
         .from('suppliers')
         .select('id, name')

@@ -37,8 +37,10 @@ CREATE TABLE IF NOT EXISTS public.suppliers (
 );
 
 -- One supplier per IBAN per user — the strong identity. Partial (IBAN present) so the many
--- suppliers without a known IBAN are not collapsed into a single NULL row. This unique index
--- also makes the resolver's ON CONFLICT upsert race-safe under concurrent sync.
+-- suppliers without a known IBAN are not collapsed into a single NULL row. The resolver inserts
+-- plainly and catches the unique violation (23505) on a concurrent-sync race — it does NOT use
+-- ON CONFLICT, because PostgREST cannot carry this partial index's WHERE predicate into an
+-- ON CONFLICT arbiter.
 CREATE UNIQUE INDEX IF NOT EXISTS suppliers_user_iban_uidx
   ON public.suppliers (user_id, iban) WHERE iban IS NOT NULL;
 
