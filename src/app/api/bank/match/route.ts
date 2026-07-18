@@ -44,7 +44,7 @@ export async function GET() {
   //    "partially done" state on reload and the tx wrongly falls into "Geen factuur".
   const { data: txRows, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
+    .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
     .eq("user_id", user.id)
     .eq("status", "pending");
   if (txErr) {
@@ -72,7 +72,7 @@ export async function GET() {
   const { data: invRows, error: invErr } = await pipeline
     .from("invoices")
     .select(
-      "id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status"
+      "id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban"
     )
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .neq("status", "paid");
@@ -170,7 +170,7 @@ export async function GET() {
   const matchedRows = await fetchAllRows((from, to) =>
     pipeline
       .from("bank_transactions")
-      .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
+      .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
       .eq("user_id", user.id)
       .eq("status", "matched")
       .order("date", { ascending: false })

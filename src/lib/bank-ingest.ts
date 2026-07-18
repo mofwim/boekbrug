@@ -99,7 +99,14 @@ export async function importBankStatement(args: {
     skipped = dd.skipped;
     if (dd.toInsert.length > 0) {
       const rows = mapToRows(dd.toInsert, userId);
-      const { data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id");
+      let { data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id");
+      // [BANK-IBAN] Resilient to a not-yet-applied migration: if counterpart_iban doesn't exist yet
+      // (42703 undefined_column), retry WITHOUT it so bank import never breaks — the IBAN is a
+      // matching hint, never money-truth. Once bank_tx_counterpart_iban.sql is applied it stores.
+      if (error && (error as { code?: string }).code === "42703") {
+        const stripped = rows.map(({ counterpart_iban: _omit, ...r }) => r);
+        ({ data: insData, error } = await pipeline.from("bank_transactions").insert(stripped).select("id"));
+      }
       if (!error) { inserted = rows.length; insertedIds = (insData ?? []).map((r) => r.id as string); }
     }
   }

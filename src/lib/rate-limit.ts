@@ -38,7 +38,7 @@ export const RATE_LIMITS = {
   INVOICE_SEND:        { maxRequests: 100, windowMinutes: 60 },   // 100 / hour
   // [COST] AI/OCR calls to Claude — a per-user ceiling so one account can't drive
   // unbounded ANTHROPIC spend on the main intake/onboarding/email pipelines.
-  AI_OCR:              { maxRequests: 60, windowMinutes: 60 },    // 60 documents / hour
+  AI_OCR:              { maxRequests: 240, windowMinutes: 60 },   // 240 AI reads / hour — a shop's month of receipts in one sitting (non-AI files no longer count)
   AI_TRANSLATE:        { maxRequests: 120, windowMinutes: 60 },   // 120 short text calls / hour
   // [BETAALVERZOEK] Public /pay/[token] read — anonymous surface. Bucketed per
   // TOKEN (a uuid), so a single leaked/shared link can't be hammered, while a real

@@ -28,31 +28,70 @@ const MONTHS = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', '
 const monthLabel = (ym: string) => { const m = /^\d{4}-(\d{2})$/.exec(ym); return m ? MONTHS[Number(m[1]) - 1] : ym }
 
 export default function TurnoverInsights() {
-  const [data, setData] = useState<{ label: string; analytics: Analytics } | null>(null)
+  const [data, setData] = useState<{ label: string; year: number; quarter: number; analytics: Analytics } | null>(null)
   const [loading, setLoading] = useState(true)
+  // null = "let the server pick the latest quarter that has data"; set = an explicit quarter to view.
+  const [period, setPeriod] = useState<{ year: number; quarter: number } | null>(null)
 
   useEffect(() => {
     let cancelled = false
+    setLoading(true)
     ;(async () => {
       try {
-        const res = await fetch('/api/turnover/analytics')
+        const qs = period ? `?year=${period.year}&quarter=${period.quarter}` : ''
+        const res = await fetch(`/api/turnover/analytics${qs}`)
         const json = await res.json()
-        if (!cancelled && res.ok) setData({ label: json.label, analytics: json.analytics })
+        if (!cancelled && res.ok) setData({ label: json.label, year: json.year, quarter: json.quarter, analytics: json.analytics })
       } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [period])
 
-  if (loading) return null
+  // Move between quarters. Anchors on the currently-shown period (server-picked on first load).
+  const shift = (delta: number) => {
+    const base = period ?? (data ? { year: data.year, quarter: data.quarter } : null)
+    if (!base) return
+    let q = base.quarter + delta, y = base.year
+    while (q < 1) { q += 4; y -= 1 }
+    while (q > 4) { q -= 4; y += 1 }
+    setPeriod({ year: y, quarter: q })
+  }
+
+  if (loading && !data) return null
   const a = data?.analytics
-  if (!a || a.days === 0) return null // nothing imported yet → no empty panel
+  // Nothing booked yet AND the owner hasn't navigated → no empty panel at all.
+  if (period === null && (!a || a.days === 0)) return null
 
-  const maxMonth = Math.max(...a.monthly.map((m) => m.omzet), 1)
+  const maxMonth = a ? Math.max(...a.monthly.map((m) => m.omzet), 1) : 1
+
+  const Nav = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button onClick={() => shift(-1)} aria-label="Vorig kwartaal"
+        style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, lineHeight: 1, color: M3.onSurface }}>‹</button>
+      <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, minWidth: 64, textAlign: 'center' }}>{data?.label ?? '—'}</div>
+      <button onClick={() => shift(1)} aria-label="Volgend kwartaal"
+        style={{ border: `1px solid ${M3.outlineVariant}`, background: M3.surface, borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 15, lineHeight: 1, color: M3.onSurface }}>›</button>
+    </div>
+  )
+
+  // The owner navigated to a quarter with no booked omzet — keep the panel + nav so they can move on.
+  if (!a || a.days === 0) {
+    return (
+      <div style={{ marginTop: 24, background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
+        <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>Geboekte omzet</div>
+          {Nav}
+        </div>
+        <div style={{ padding: '20px 18px', fontSize: 13.5, color: M3.neutral }}>Geen kassa-omzet geboekt in {data?.label}.</div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ marginTop: 24, background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
-      <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}` }}>
-        <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>Inzicht — {data?.label}</div>
+      <div style={{ padding: '16px 18px', borderBottom: `1px solid ${M3.outlineVariant}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ fontSize: 13, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em' }}>Geboekte omzet</div>
+        {Nav}
       </div>
 
       {/* KPI row */}

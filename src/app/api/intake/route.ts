@@ -28,6 +28,13 @@ import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+// [SHEET-INTAKE] Route an uploaded kassa Z-report / grootboek export into the EXISTING
+// turnover + ledger pipelines instead of filing it as an opaque document.
+import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
+import { looksLikeSpreadsheetBinary } from "@/lib/detect-file"
+import { planSpreadsheetIngest, ledgerKindLabel } from "@/lib/spreadsheet-ingest"
+import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sales-report"
+import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
 import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 import { reconcileCashSettlements } from "@/lib/cash-settle"
@@ -60,10 +67,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 })
   }
 
-  // [COST] Per-user ceiling on the AI/OCR intake pipeline (Claude calls) — one account
-  // cannot drive unbounded spend.
-  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/intake", ...RATE_LIMITS.AI_OCR })
-  if (!rl.allowed) return rateLimitResponse(rl)
+  // [COST] The per-user AI/OCR ceiling is enforced LATER — right before the Claude call — NOT here.
+  // A bank statement, a kassa/grootboek spreadsheet, and a daily-sales PDF are all parsed LOCALLY
+  // (no Claude call, no spend), so they must never consume the AI budget: counting them here made a
+  // shop uploading a month of till/bank files burn its whole allowance and then hit "te veel
+  // verzoeken" on the real receipts. The gate now sits at the single verifyInvoiceFromPdf call.
 
   let formData: FormData
   try {
@@ -96,12 +104,27 @@ export async function POST(req: NextRequest) {
     file.type === "text/plain" ||
     file.type === "text/xml" ||
     file.type === "application/xml" ||
-    /\.(xml|mt940|sta|camt|053|txt)$/i.test(file.name)
+    file.type === "text/csv" ||
+    // [BANK-CSV] Read a text head for .csv too, so decidePreAi's bank-CSV sniff can run — a
+    // Rabo/ING/bunq CSV export is a bank statement, not a spreadsheet to file away.
+    /\.(xml|mt940|940|sta|camt|053|txt|csv)$/i.test(file.name)
   const textHead = couldBeText ? buffer.slice(0, 4096).toString("utf8") : undefined
 
   const preAi = decidePreAi(file.name, file.type, textHead)
   if (preAi?.destination === "bank") {
     return handleBankStatement(buffer, file.name, user.id, file.type || "text/plain")
+  }
+
+  // ── Stage 1b: a spreadsheet the shop exports monthly — a kassa Z-report (→ dagomzet) or a
+  //    PIN/kas grootboek export (→ ledger witness). These are the backbone of a shop's numbers,
+  //    and were silently dead-ending as opaque "documents" because the extractor only reads
+  //    pdf/image. Detect by magic bytes (.xls/.xlsx) or extension (.csv, already NOT a bank CSV
+  //    since decidePreAi ran first), parse ONCE, and hand off to the real pipelines. A file that
+  //    is neither turnover nor ledger returns null → falls through to the safe document store. ──
+  if (looksLikeSpreadsheetBinary(buffer) || /\.(xls|xlsx|csv)$/i.test(file.name)) {
+    const sheetResp = await handleSpreadsheet(buffer, file, user.id, supabase, req)
+    if (sheetResp) return sheetResp
+    // null → not a recognised turnover/ledger sheet; continue to the document path below.
   }
 
   // ── Type guard for the AI path: only pdf/image go to the extractor ──────────
@@ -194,7 +217,21 @@ export async function POST(req: NextRequest) {
     }, { status: 409 })
   }
 
+  // ── Stage 1c: a daily-sales report PDF ("OMZET VAN DD/MM/YYYY") is one day of turnover, not an
+  //    invoice. Detect it by its text layer BEFORE the invoice extractor and book it into
+  //    daily_turnover (idempotent with the monthly Excel path). A PDF that is NOT this report
+  //    returns null and continues to the normal AI extractor below. ──
+  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+    const dailyResp = await handleDailySalesPdf(buffer, file, user.id, supabase, req)
+    if (dailyResp) return dailyResp
+  }
+
   // ── Stage 2: AI verify + classify ───────────────────────────────────────────
+  // [COST] The AI/OCR ceiling applies ONLY here — the single Claude call. Bank/spreadsheet/daily-PDF
+  // files returned above without ever reaching this point, so they never counted against the budget.
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/intake", ...RATE_LIMITS.AI_OCR })
+  if (!rl.allowed) return rateLimitResponse(rl)
+
   const { data: me } = await supabase
     .from("profiles")
     .select("company_name, full_name")
@@ -653,6 +690,11 @@ export async function POST(req: NextRequest) {
     invoice_id: invoice?.id,
     suggest_paid: decision.suggestPaid,
     auto_verified: autoAdv.advance,
+    // [UPLOAD-HUB] Echo the key extracted fields so the upload page can show WHAT each file is
+    // (leverancier · bedrag · nummer) at a glance — the owner verifies without opening every file.
+    vendor: v.vendor ?? null,
+    invoice_number: v.invoice_number ?? null,
+    total_inc_btw: v.total_inc_btw ?? v.amount ?? null,
     message:
       decision.destination === "receipt"
         ? "Bon herkend — controleer en bevestig (waarschijnlijk al betaald)."
@@ -660,6 +702,200 @@ export async function POST(req: NextRequest) {
           ? "Factuur herkend en automatisch verwerkt ✓ — klaar voor de boekhouder."
           : "Factuur herkend — controleer en bevestig.",
   })
+}
+
+// ── Shared helpers for the sheet/daily-report booking paths ──────────────────────────────────
+// Dedup + store the raw incoming file in bestanden (best-effort); returns the documentId, or null
+// if it is a fresh file whose store failed. Skips storage when this exact file (byte-hash) already
+// exists, so a corrected re-upload never piles up document rows. Rolls back the storage blob if the
+// documents row fails, so a failed store never leaks an orphan.
+async function storeRawIncoming(
+  buffer: Buffer,
+  file: File,
+  userId: string,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  aiDocType: string,
+): Promise<string | null> {
+  const hash = computeContentHash(buffer)
+  try {
+    const { data: existing } = await supabase
+      .from("documents").select("id").eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
+    if (existing?.id) return existing.id
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+    const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
+    const { error: upErr } = await supabase.storage
+      .from("documents").upload(storagePath, buffer, { contentType: file.type || "application/octet-stream", upsert: false })
+    if (upErr) return null
+    const folderId = await ensureImportedFolder(userId, "pipeline")
+    const pipelineDoc = createPipelineClient()
+    const { data: doc, error: docErr } = await pipelineDoc.from("documents").insert({
+      user_id: userId, file_name: file.name, file_url: storagePath,
+      file_size: buffer.length, file_type: file.type || "application/octet-stream",
+      doc_type: "overig", folder_id: folderId, source: "camera",
+      ai_processed: true, ai_doc_type: aiDocType, content_hash: hash,
+    }).select("id").single()
+    if (docErr || !doc) {
+      await supabase.storage.from("documents").remove([storagePath]).catch(() => {})
+      return null
+    }
+    return doc.id
+  } catch {
+    return null // storage is a convenience; the booking is the money-truth
+  }
+}
+
+// ── Daily-sales report handler — a "OMZET VAN DD/MM/YYYY" PDF is one day of turnover ─────────
+// Returns a NextResponse when the PDF IS a daily-sales report (booked or stored-for-review), or
+// null when it isn't (the caller then runs the normal invoice extractor). The per-day report is the
+// sibling of the monthly kassa Excel; it lands in the SAME daily_turnover table via bookTurnoverRows,
+// so uploading the month's Excel later simply upserts the same days (idempotent — never doubles).
+async function handleDailySalesPdf(
+  buffer: Buffer,
+  file: File,
+  userId: string,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  req: NextRequest,
+): Promise<NextResponse | null> {
+  // Extract the text layer (fail-safe: any trouble → null → the invoice extractor still runs).
+  let text: string
+  try {
+    const unpdf = await import("unpdf")
+    const doc = await unpdf.getDocumentProxy(new Uint8Array(buffer))
+    const { text: t } = await unpdf.extractText(doc, { mergePages: true })
+    text = (t ?? "").trim()
+  } catch {
+    return null
+  }
+  if (!looksLikeDailySalesReport(text)) return null
+
+  const { row, warnings } = parseDailySalesReport(text)
+  if (!row) return null // looked like a report but unreadable → let the AI path try instead
+
+  const documentId = await storeRawIncoming(buffer, file, userId, supabase, "dagverkopen_pdf")
+
+  if (warnings.length > 0) {
+    // A per-rate/TOTAAL mismatch → do NOT auto-book omzet into the VAT picture; store + send to review.
+    return NextResponse.json({
+      ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
+      message: `Dagomzet herkend (${row.turnover_date}) — maar de bedragen kloppen niet helemaal (${warnings.length} controle). Controleer en boek in Dagomzet.`,
+    })
+  }
+
+  // source MUST be an allowed daily_turnover.source value ('z_report' | 'manual') — the DB CHECK
+  // rejects anything else, which would silently fail the whole booking. Provenance (PDF vs Excel)
+  // lives in the audit log below (path: intake_pdf), not in this constrained column.
+  const booked = await bookTurnoverRows(supabase, userId, [row], "z_report", { preserveSplit: true })
+  if (!booked.ok) {
+    return NextResponse.json({
+      ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
+      message: "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+    })
+  }
+  await logAuditAction({
+    userId, action: "turnover.auto_imported", entityType: "daily_turnover", entityId: documentId ?? userId,
+    newValue: { days: 1, span: row.turnover_date, total_incl: booked.total_incl, file_name: file.name, path: "intake_pdf" },
+    ipAddress: getClientIP(req),
+  }).catch(() => {})
+  return NextResponse.json({
+    ok: true, destination: "turnover", document_id: documentId,
+    days: 1, span: row.turnover_date, total_incl: booked.total_incl,
+    message: `Dagomzet geboekt ✓ — ${row.turnover_date} (€${booked.total_incl.toFixed(2)}). Controleer in Dagomzet.`,
+  })
+}
+
+// ── Spreadsheet handler — kassa Z-report → daily_turnover, grootboek → ledger_daily ─────────
+// Returns a NextResponse when the file IS a recognised turnover/ledger sheet (booked), or null
+// when it is neither (the caller then stores it in bestanden like any other document). Reuses the
+// SAME pure normalizers and the SAME tables as the manual /api/turnover/import + /api/ledger/import
+// paths — this only changes WHERE the parse is triggered, never the numbers it produces.
+//
+// Money-truth: turnover feeds the VAT return, so it is auto-booked ONLY when the normalizer's own
+// per-row cross-checks pass with zero warnings (commitSafe); a flagged sheet is stored and the owner
+// is sent to Dagomzet to review. Ledger is a reconciliation witness (never the P&L), so it is always
+// safe to store. Both upserts are keyed on (user, day[, kind]) → re-uploading a month corrects it,
+// never doubles it. Everything is audited and reversible (re-import a corrected file, or clear the day).
+async function handleSpreadsheet(
+  buffer: Buffer,
+  file: File,
+  userId: string,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  req: NextRequest,
+): Promise<NextResponse | null> {
+  let matrix
+  try {
+    matrix = sheetBytesToMatrix(new Uint8Array(buffer))
+  } catch {
+    return null // not readable as a spreadsheet → let the caller store the raw file
+  }
+  const plan = planSpreadsheetIngest(matrix)
+  if (plan.kind === "unknown") return null
+
+  // Store the raw file (best-effort) so the accountant has the source and the owner can open it.
+  const documentId = await storeRawIncoming(
+    buffer, file, userId, supabase, plan.kind === "turnover" ? "kassa_zrapport" : "grootboek_export",
+  )
+
+  // ── TURNOVER: authoritative omzet + BTW → daily_turnover ──────────────────────────────────
+  if (plan.kind === "turnover" && plan.turnover) {
+    const { rows, warnings, commitSafe } = plan.turnover
+    const dates = rows.map((r) => r.turnover_date).sort()
+    const span = dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : ""
+
+    if (!commitSafe) {
+      // Flagged (arithmetic/payment mismatch) OR nothing parsed → do NOT auto-book omzet into the
+      // VAT picture. The file is stored; the owner reviews + books in Dagomzet.
+      return NextResponse.json({
+        ok: true, destination: "document", document_id: documentId,
+        sheet_kind: "turnover_review",
+        message: rows.length === 0
+          ? "Dit lijkt een kassa-bestand, maar er zijn geen dag-omzetregels gelezen — controleer het in Dagomzet."
+          : `Kassa-omzet herkend (${rows.length} dagen, ${span}) — maar ${warnings.length} regel(s) hebben aandacht nodig. Controleer en boek in Dagomzet.`,
+      })
+    }
+
+    const booked = await bookTurnoverRows(supabase, userId, rows, "z_report")
+    if (!booked.ok) {
+      // Never claim a booking that didn't happen. Store stays; tell the owner to retry via Dagomzet.
+      return NextResponse.json({
+        ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
+        message: "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+      })
+    }
+    await logAuditAction({
+      userId, action: "turnover.auto_imported", entityType: "daily_turnover", entityId: documentId ?? userId,
+      newValue: { days: booked.days, span: booked.span, total_incl: booked.total_incl, file_name: file.name, path: "intake_xlsx" },
+      ipAddress: getClientIP(req),
+    }).catch(() => {})
+    return NextResponse.json({
+      ok: true, destination: "turnover", document_id: documentId,
+      days: booked.days, span: booked.span, total_incl: booked.total_incl,
+      message: `Kassa-omzet geboekt ✓ — ${booked.days} dagen (${booked.span}). Controleer in Dagomzet.`,
+    })
+  }
+
+  // ── LEDGER: reconciliation witness (never money) → ledger_daily ───────────────────────────
+  if (plan.kind === "ledger" && plan.ledger) {
+    const { kind, accountNr, rows } = plan.ledger
+    const booked = await bookLedgerRows(supabase, userId, kind, accountNr, rows)
+    if (!booked.ok) {
+      return NextResponse.json({
+        ok: true, destination: "document", document_id: documentId, sheet_kind: "ledger_review",
+        message: "Grootboek-overzicht gelezen, maar opslaan is mislukt — probeer het opnieuw.",
+      })
+    }
+    await logAuditAction({
+      userId, action: "ledger.auto_imported", entityType: "ledger_daily", entityId: documentId ?? userId,
+      newValue: { kind, account_nr: accountNr, days: booked.days, span: booked.span, file_name: file.name, path: "intake" },
+      ipAddress: getClientIP(req),
+    }).catch(() => {})
+    return NextResponse.json({
+      ok: true, destination: "ledger", document_id: documentId, ledger_kind: kind,
+      days: booked.days, span: booked.span,
+      message: `${ledgerKindLabel(kind)} ingelezen ✓ — ${booked.days} dagen (${booked.span}) als controle-check. Verschijnt in de reconciliatie, niet dubbel in je omzet.`,
+    })
+  }
+
+  return null
 }
 
 // ── Bank statement handler — mirrors /api/bank/upload (text/xml only) ─────────

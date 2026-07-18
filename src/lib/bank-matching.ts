@@ -31,10 +31,35 @@ export interface InvoiceForMatching {
   direction: "outgoing" | "incoming" | null;
   status: string | null; // 'sent' | 'overdue' | 'paid' | 'received' | ...
   accountant_status: string | null; // 'verwerkt' → excluded (B.4)
+  // [BANK-IBAN] The counterpart's bank account on the invoice — the supplier's IBAN on an
+  // incoming (purchase) invoice, or the customer's on an outgoing one. When the bank line's
+  // counterpart IBAN equals this, it is a STRONG, supplier-specific identity signal (a bare
+  // amount can collide across suppliers; a full IBAN cannot). Null when unknown → simply not used.
+  vendor_iban?: string | null;
 }
 
 /** Which signal(s) fired for a candidate. */
-export type MatchSignal = "reference" | "amount" | "date" | "counterpart";
+export type MatchSignal = "reference" | "amount" | "date" | "counterpart" | "iban";
+
+/** Normalize an IBAN for comparison: upper-case, strip every non-alphanumeric char (spaces,
+ *  dots). Returns "" for a value too short to be a real IBAN (never match on junk).
+ *  [BANK-IBAN-HARDEN] The floor is 15 — the shortest real IBAN in the world (Norway/Belgium);
+ *  a Dutch one is 18. Below 15 it cannot be an IBAN (e.g. an 8-char BIC like "INGBNL2A"), and
+ *  matching on such a token could — in theory — collide two non-account strings. Since the
+ *  invoice-side writer already drops any vendor_iban < 15 chars, keeping both sides at the true
+ *  IBAN minimum means a match requires two genuinely-equal real IBANs = the same account. */
+export function normalizeIban(v: string | null | undefined): string {
+  const s = (v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return s.length >= 15 ? s : "";
+}
+
+/** Do the bank line's counterpart IBAN and the invoice's IBAN refer to the same account?
+ *  Only true when BOTH are present and normalize-equal — never true on a missing side. */
+export function ibanMatches(txIban: string | null | undefined, invoiceIban: string | null | undefined): boolean {
+  const a = normalizeIban(txIban);
+  const b = normalizeIban(invoiceIban);
+  return a.length > 0 && a === b;
+}
 
 /** A scored invoice candidate for one transaction. */
 export interface MatchCandidate {
@@ -321,6 +346,7 @@ export function scorePair(
 
   const refOk = referenceMatches(tx, inv.invoice_number);
   const amtOk = amountMatches(tx.amount, inv.total_inc_btw, opts.amountEpsilon);
+  const ibanOk = ibanMatches(tx.counterpartIban, inv.vendor_iban);
   const dateBonus = dateProximityScore(
     tx.date,
     inv.invoice_date,
@@ -358,6 +384,16 @@ export function scorePair(
       signals.push("amount");
       reasons.push(`bedrag €${inv.total_inc_btw} komt exact overeen`);
     }
+    // [BANK-IBAN] Same bank account as the invoice's counterpart — a strong, supplier-specific
+    // identity. Paired with an EXACT amount it reaches 'auto' (IBAN + amount ≈ reference + amount:
+    // a payment to this exact supplier account for this exact sum). Alone (no exact amount) it does
+    // NOT reach auto — a same-supplier invoice of a different amount must never be auto-paid — the
+    // !amtOk cap below keeps it a weak, listed candidate.
+    if (ibanOk) {
+      confidence += 0.45;
+      signals.push("iban");
+      reasons.push("zelfde rekeningnummer (IBAN) als op de factuur");
+    }
     confidence += dateBonus;
     if (dateBonus > 0) {
       signals.push("date");
@@ -368,7 +404,8 @@ export function scorePair(
       signals.push("counterpart");
       reasons.push(`tegenpartij lijkt op ${inv.client_name}`);
     }
-    // Without an exact amount and without a reference, a pair stays weak.
+    // Without an exact amount and without a reference, a pair stays weak — even a matching IBAN,
+    // because the same supplier can have several invoices of different amounts.
     if (!amtOk) confidence = Math.min(confidence, 0.35);
   }
 
@@ -429,7 +466,15 @@ export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[]
 export function isSafeAutoConfirm(m: TransactionMatch): boolean {
   if (m.outcome !== "auto" || !m.best) return false;
   const sig = m.best.signals;
-  if (!sig.includes("reference") || !sig.includes("amount")) return false;
+  // Two safe identities, BOTH requiring the exact amount:
+  //   reference + amount → the invoice number is printed in the payment (the original safe set).
+  //   [BANK-IBAN] iban + amount → the money went to the invoice's exact supplier account for the
+  //     exact sum. A full IBAN is supplier-specific (unlike a bare amount, which can collide), and
+  //     the matcher only yields 'auto' when ONE candidate clearly wins — two same-supplier invoices
+  //     of the same amount tie to 'choice', never here. So this stays a near-certain, single match.
+  const refAmt = sig.includes("reference") && sig.includes("amount");
+  const ibanAmt = sig.includes("iban") && sig.includes("amount");
+  if (!refAmt && !ibanAmt) return false;
   if (parseReferenceNumbers(m.transaction.reference).length > 1) return false;
   if (isPartialPaymentHint(`${m.transaction.reference ?? ""} ${m.transaction.description ?? ""}`)) {
     return false;

@@ -21,11 +21,11 @@ import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 
-// [REREAD-STRONG] The automatic sync now reads on Sonnet too (see CLAUDE_MODEL in ai.ts). The manual
-// "Opnieuw inlezen" keeps its edge for a stuck invoice by forcing a read of the REAL page layout
-// (preferRawPdf) on the same model — the fix for complex invoices mis-read on every pass
-// (statiegeld/retour, net-negative creditnota, crowded multi-column tables). Pinned to the same
-// model id as the sync so both paths stay in lockstep. Must be a model enabled on the account.
+// [REREAD-STRONG] The automatic sync already reads on Sonnet 4.5 (see CLAUDE_MODEL in ai.ts). The
+// manual "Opnieuw inlezen" keeps an edge for a stuck invoice two ways: a notch-newer model
+// (Sonnet 5) AND a forced read of the REAL page layout (preferRawPdf) instead of flattened text —
+// the fix for complex invoices mis-read on every pass (statiegeld/retour, net-negative creditnota,
+// crowded multi-column tables). Must be a model enabled on the account.
 const REREAD_MODEL = "claude-sonnet-5";
 
 // [REREAD-STRONG] A raw-PDF (visual-layout) read is slower than the flattened-text path — give the

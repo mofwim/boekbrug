@@ -144,6 +144,7 @@ export type Database = {
           category: string | null
           category_confirmed: boolean
           category_source: string | null
+          counterpart_iban: string | null
           counterpart_name: string | null
           created_at: string | null
           date: string | null
@@ -160,6 +161,7 @@ export type Database = {
           category?: string | null
           category_confirmed?: boolean
           category_source?: string | null
+          counterpart_iban?: string | null
           counterpart_name?: string | null
           created_at?: string | null
           date?: string | null
@@ -176,6 +178,7 @@ export type Database = {
           category?: string | null
           category_confirmed?: boolean
           category_source?: string | null
+          counterpart_iban?: string | null
           counterpart_name?: string | null
           created_at?: string | null
           date?: string | null

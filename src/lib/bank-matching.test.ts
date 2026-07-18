@@ -13,6 +13,8 @@ import {
   isPartialPaymentHint,
   isSafeAutoConfirm,
   scorePair,
+  normalizeIban,
+  ibanMatches,
   DEFAULT_OPTIONS,
   type InvoiceForMatching,
   type MatchCandidate,
@@ -139,6 +141,94 @@ check("amountMatches: a +50 refund matches a −50 creditnota (magnitude)",
   amountMatches(50, -50, 0.02));
 check("amountMatches: a −50 refund matches a −50 creditnota (magnitude)",
   amountMatches(-50, -50, 0.02));
+
+// [BANK-IBAN] The counterpart's bank account is a strong, supplier-specific identity:
+// a bare amount can collide across suppliers, a full IBAN cannot. With an EXACT amount it
+// reaches auto-confirm; alone (wrong amount) it stays a weak, human-reviewed candidate.
+console.log("\n— IBAN matching (BANK-IBAN) —");
+check("normalizeIban strips spaces/dots + upper-cases",
+  normalizeIban("nl91 abna 0417.1643 00") === "NL91ABNA0417164300");
+check("normalizeIban rejects junk too short to be an IBAN (< 15)",
+  normalizeIban("NL91") === "");
+check("normalizeIban rejects an 8-char BIC (not a real IBAN)",
+  normalizeIban("INGBNL2A") === "");
+check("normalizeIban keeps a real 18-char NL IBAN",
+  normalizeIban("NL91ABNA0417164300").length === 18);
+check("normalizeIban of null/empty → ''",
+  normalizeIban(null) === "" && normalizeIban(undefined) === "" && normalizeIban("") === "");
+check("ibanMatches: same account, different formatting → true",
+  ibanMatches("NL91 ABNA 0417 1643 00", "nl91abna0417164300"));
+check("ibanMatches: different accounts → false",
+  !ibanMatches("NL91ABNA0417164300", "NL02RABO0123456789"));
+check("ibanMatches: a missing side never matches (no match on absence)",
+  !ibanMatches(null, "NL91ABNA0417164300") && !ibanMatches("NL91ABNA0417164300", null));
+
+// scorePair: incoming (purchase) invoice, no reference in the statement, but the debit
+// carries the supplier's IBAN AND the exact amount → high confidence, 'iban'+'amount' signals.
+{
+  const t = tx({ amount: -723.19, date: "2026-06-10", reference: null, counterpartName: "Trimex International",
+                 counterpartIban: "NL91 ABNA 0417 1643 00" });
+  const i = inv({ id: "T", direction: "incoming", total_inc_btw: 723.19, invoice_date: "2026-06-08",
+                  vendor_iban: "nl91abna0417164300", client_name: "Trimex" });
+  const s = scorePair(t, i, DEFAULT_OPTIONS);
+  check("scorePair IBAN + exact amount → confidence ≥ auto (0.7)", s.confidence >= 0.7);
+  check("scorePair IBAN + amount → signals include 'iban' and 'amount'",
+    s.signals.includes("iban") && s.signals.includes("amount"));
+}
+// scorePair: same supplier IBAN but the WRONG amount (a different invoice of theirs) →
+// capped weak (≤ 0.35). A same-supplier invoice of another amount must never auto-pay.
+{
+  const t = tx({ amount: -999.00, date: "2026-06-10", reference: null,
+                 counterpartIban: "NL91ABNA0417164300" });
+  const i = inv({ id: "T2", direction: "incoming", total_inc_btw: 723.19, invoice_date: "2026-06-08",
+                  vendor_iban: "NL91ABNA0417164300" });
+  const s = scorePair(t, i, DEFAULT_OPTIONS);
+  check("scorePair IBAN alone (wrong amount) → capped weak (≤ 0.35)", s.confidence <= 0.35);
+}
+
+// matchTransactions integration: a supplier debit with the invoice's IBAN + exact amount and
+// no reference → 'auto' AND isSafeAutoConfirm true (the app books it without a human tap).
+{
+  const r = matchTransactions(
+    [tx({ amount: -723.19, date: "2026-06-10", reference: null, counterpartName: "Trimex International",
+          counterpartIban: "NL91ABNA0417164300" })],
+    [inv({ id: "T", direction: "incoming", total_inc_btw: 723.19, invoice_date: "2026-06-08",
+           vendor_iban: "NL91ABNA0417164300", client_name: "Trimex" }),
+     inv({ id: "OTHER", direction: "incoming", total_inc_btw: 55.00, invoice_date: "2026-06-08",
+           vendor_iban: "NL02RABO0123456789", client_name: "Andere" })]
+  );
+  const m = r.matches[0];
+  check("IBAN + amount, no reference → auto on the right invoice",
+    m.outcome === "auto" && m.best?.invoiceId === "T");
+  check("IBAN + amount → isSafeAutoConfirm true (books without a tap)", isSafeAutoConfirm(m));
+}
+// Safety: two same-supplier, same-amount unpaid invoices (same IBAN) → a genuine tie →
+// 'choice', never a wrong auto-pay. IBAN can't disambiguate identical bills; the human picks.
+{
+  const r = matchTransactions(
+    [tx({ amount: -100.00, date: "2026-06-10", reference: null,
+          counterpartIban: "NL91ABNA0417164300" })],
+    [inv({ id: "P1", invoice_number: "A-100", direction: "incoming", total_inc_btw: 100.00, invoice_date: "2026-06-05",
+           vendor_iban: "NL91ABNA0417164300" }),
+     inv({ id: "P2", invoice_number: "A-101", direction: "incoming", total_inc_btw: 100.00, invoice_date: "2026-06-06",
+           vendor_iban: "NL91ABNA0417164300" })]
+  );
+  const m = r.matches[0];
+  check("two identical same-IBAN invoices → choice (a tie is never auto-paid)",
+    m.outcome === "choice" && !isSafeAutoConfirm(m));
+}
+// Safety: IBAN + amount but the payment reference explicitly says 'deelbetaling' (instalment) →
+// never a one-tap auto (the amount is only part of the bill).
+{
+  const r = matchTransactions(
+    [tx({ amount: -723.19, date: "2026-06-10", reference: null, description: "1e termijn deelbetaling",
+          counterpartIban: "NL91ABNA0417164300" })],
+    [inv({ id: "T", direction: "incoming", total_inc_btw: 723.19, invoice_date: "2026-06-08",
+           vendor_iban: "NL91ABNA0417164300" })]
+  );
+  check("IBAN + amount but flagged deelbetaling → not a safe auto-confirm",
+    !isSafeAutoConfirm(r.matches[0]));
+}
 
 console.log("\n— outcomes —");
 
