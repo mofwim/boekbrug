@@ -42,10 +42,15 @@ export interface InvoiceForMatching {
 export type MatchSignal = "reference" | "amount" | "date" | "counterpart" | "iban";
 
 /** Normalize an IBAN for comparison: upper-case, strip every non-alphanumeric char (spaces,
- *  dots). Returns "" for a value too short to be a real IBAN (never match on junk). */
+ *  dots). Returns "" for a value too short to be a real IBAN (never match on junk).
+ *  [BANK-IBAN-HARDEN] The floor is 15 — the shortest real IBAN in the world (Norway/Belgium);
+ *  a Dutch one is 18. Below 15 it cannot be an IBAN (e.g. an 8-char BIC like "INGBNL2A"), and
+ *  matching on such a token could — in theory — collide two non-account strings. Since the
+ *  invoice-side writer already drops any vendor_iban < 15 chars, keeping both sides at the true
+ *  IBAN minimum means a match requires two genuinely-equal real IBANs = the same account. */
 export function normalizeIban(v: string | null | undefined): string {
   const s = (v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  return s.length >= 8 ? s : "";
+  return s.length >= 15 ? s : "";
 }
 
 /** Do the bank line's counterpart IBAN and the invoice's IBAN refer to the same account?

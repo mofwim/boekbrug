@@ -148,8 +148,12 @@ check("amountMatches: a −50 refund matches a −50 creditnota (magnitude)",
 console.log("\n— IBAN matching (BANK-IBAN) —");
 check("normalizeIban strips spaces/dots + upper-cases",
   normalizeIban("nl91 abna 0417.1643 00") === "NL91ABNA0417164300");
-check("normalizeIban rejects junk too short to be an IBAN (< 8)",
+check("normalizeIban rejects junk too short to be an IBAN (< 15)",
   normalizeIban("NL91") === "");
+check("normalizeIban rejects an 8-char BIC (not a real IBAN)",
+  normalizeIban("INGBNL2A") === "");
+check("normalizeIban keeps a real 18-char NL IBAN",
+  normalizeIban("NL91ABNA0417164300").length === 18);
 check("normalizeIban of null/empty → ''",
   normalizeIban(null) === "" && normalizeIban(undefined) === "" && normalizeIban("") === "");
 check("ibanMatches: same account, different formatting → true",
