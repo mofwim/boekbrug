@@ -1125,6 +1125,9 @@ export interface AttachmentClassification {
   // [PAY-SAFE-EXTRACT] vendor payment details (IBAN to pay + betalingskenmerk)
   vendorIban?: string
   paymentReference?: string
+  // [SUPPLIER-IDENTITY] vendor legal identity — strong keys for supplier matching
+  vendorKvk?: string
+  vendorBtw?: string
   // [BRIDGE-CREDITNOTA-SIGN] Is this a creditnota? Drives the sign-inverted
   // SAFECORE gate + invoice_type='creditnota' at insert. Amounts stay NEGATIVE
   // as printed (matching outgoing creditnota [BOEK-031]).
@@ -1193,6 +1196,9 @@ export async function classifyAttachment(
     btwRate: result.btw_rate,
     // [PAY-SAFE-EXTRACT] vendor payment details from the same Claude call
     vendorIban: result.vendor_iban,
+    // [SUPPLIER-IDENTITY] vendor legal identity for supplier matching/storage
+    vendorKvk: result.vendor_kvk,
+    vendorBtw: result.vendor_btw,
     paymentReference: result.payment_reference,
     // [BRIDGE-CREDITNOTA-SIGN] creditnota signal from the same Claude call
     isCreditNote: result.is_credit_note,
@@ -1935,6 +1941,8 @@ export async function syncUserEmails(
       const supplier = await resolveSupplierForImport(supabase, userId, {
         name: classification.vendor,
         iban: classification.vendorIban ?? null,
+        kvk: classification.vendorKvk ?? null,
+        btw: classification.vendorBtw ?? null,
       })
 
       if (typeof classification.totalIncBtw === 'number') {

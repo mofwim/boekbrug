@@ -289,6 +289,11 @@ export interface VerifyInvoiceResult {
   // BoekBrug never processes money — these only prepare it. Null when absent.
   vendor_iban?: string;      // the vendor's IBAN (party to be paid), normalized
   payment_reference?: string; // betalingskenmerk / structured payment reference
+  // [SUPPLIER-IDENTITY] The vendor's LEGAL identity — the strongest keys for recognising the same
+  // supplier across differently-spelled names (two "Jansen" firms have different KVK). Extracted
+  // here so the supplier registry can match/store them. Null when the invoice doesn't print them.
+  vendor_kvk?: string;       // vendor KVK number, digits only (8 digits, Dutch Chamber of Commerce)
+  vendor_btw?: string;       // vendor BTW/VAT number, e.g. NL123456789B01 (no spaces, uppercase)
   // [SMART-INTAKE] What KIND of document this is, so the intake router can send
   // it to the right destination. A "receipt"/kassabon is a PAID proof; an
   // "invoice" is a payment request (usually unpaid). "other" → not a financial
@@ -1011,6 +1016,8 @@ Return only a JSON object with these exact keys:
   "due_date": "YYYY-MM-DD" or null,
   "payment_term_days": number or null,
   "vendor_iban": string or null,
+  "vendor_kvk": string or null,
+  "vendor_btw": string or null,
   "payment_reference": string or null,
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
@@ -1076,6 +1083,18 @@ Vendor IBAN + payment reference extraction rules:
 - If MULTIPLE IBANs appear, prefer the one tied to the vendor / "to be paid".
   If you cannot tell which IBAN belongs to the vendor, set vendor_iban to null
   — never guess an IBAN, and never return our own (receiver) IBAN.
+
+Vendor legal-identity extraction rules (the SENDER's KVK + BTW — never ours):
+- "vendor_kvk" = the VENDOR's Chamber-of-Commerce number, labelled "KVK", "K.v.K.",
+  "KvK-nummer", "Chamber of Commerce", "CoC". Digits only, drop spaces/dots
+  (e.g. "KVK: 12 34 56 78" → "12345678"). It is the SENDER's, usually in the header
+  or footer near their address — NOT the receiver's (T.a.v./Factuur aan) number.
+- "vendor_btw" = the VENDOR's BTW/VAT number, labelled "BTW", "BTW-nr", "BTW-nummer",
+  "VAT", "Btw-id". Dutch format NL + 9 digits + B + 2 digits; remove spaces, uppercase
+  (e.g. "BTW: NL 123456789 B01" → "NL123456789B01"). The receiver's own BTW number is
+  often printed too ("Uw BTW-nummer") — return the SENDER's, never the receiver's.
+- If a number clearly belongs to the receiver/client, or you cannot tell, set it to null —
+  never guess, never return the receiver's KVK/BTW.
 - "payment_reference" = the betalingskenmerk / structured payment reference the
   invoice asks you to quote when paying (labels: "Betalingskenmerk",
   "Kenmerk", "Referentie", "Mededeling", "Payment reference"). This is often
@@ -1505,6 +1524,21 @@ Return JSON only.`;
         iban.length >= 15 && /^[A-Z0-9]+$/.test(iban) ? iban : undefined;
     } else {
       parsed.vendor_iban = undefined;
+    }
+    // [SUPPLIER-IDENTITY] KVK: digits only, exactly 8 (a real Dutch KVK) — else drop as junk.
+    if (typeof parsed.vendor_kvk === 'string') {
+      const kvk = parsed.vendor_kvk.replace(/\D/g, '');
+      parsed.vendor_kvk = kvk.length === 8 ? kvk : undefined;
+    } else {
+      parsed.vendor_kvk = undefined;
+    }
+    // [SUPPLIER-IDENTITY] BTW: strip spaces, uppercase; keep only a well-formed NL BTW id
+    // (NL + 9 digits + B + 2 digits). A foreign/short/garbled value → undefined (not a key).
+    if (typeof parsed.vendor_btw === 'string') {
+      const btw = parsed.vendor_btw.replace(/\s+/g, '').toUpperCase();
+      parsed.vendor_btw = /^NL\d{9}B\d{2}$/.test(btw) ? btw : undefined;
+    } else {
+      parsed.vendor_btw = undefined;
     }
     // payment_reference: trim; empty → undefined (the system falls back to the
     // invoice number when preparing a payment, so a missing reference is fine).

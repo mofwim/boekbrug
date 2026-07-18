@@ -1,6 +1,6 @@
 // [SUPPLIER-REGISTRY] Pure node test — run: npx tsx src/lib/supplier-registry.test.ts
 // Locks the pure identity helpers that decide when two vendor spellings are the SAME supplier.
-import { supplierNameKey, normalizeIban, isReliableSupplierName } from "./supplier-registry";
+import { supplierNameKey, normalizeIban, isReliableSupplierName, normalizeKvk } from "./supplier-registry";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -36,6 +36,14 @@ check("empty → not reliable", isReliableSupplierName("") === false);
 check("'onbekende afzender' → not reliable", isReliableSupplierName("Onbekende afzender") === false);
 check("2-letter core → not reliable (too generic to merge on)", isReliableSupplierName("BV") === false);
 check("dash → not reliable", isReliableSupplierName("-") === false);
+
+console.log("\n— normalizeKvk: the strong legal-entity key —");
+check("spaces/dots stripped, 8 digits kept", normalizeKvk("KVK: 12 34 56 78") === "12345678");
+check("already-clean 8 digits", normalizeKvk("12345678") === "12345678");
+check("7 digits → null (not a KVK)", normalizeKvk("1234567") === null);
+check("9 digits → null", normalizeKvk("123456789") === null);
+check("null → null", normalizeKvk(null) === null);
+check("letters only → null", normalizeKvk("abcdefgh") === null);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

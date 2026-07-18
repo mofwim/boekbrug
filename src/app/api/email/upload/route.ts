@@ -289,6 +289,8 @@ export async function POST(req: NextRequest) {
   const uploadedSupplier = await resolveSupplierForImport(pipeline, user.id, {
     name: verification.vendor,
     iban: verification.vendor_iban ?? null,
+    kvk: verification.vendor_kvk ?? null,
+    btw: verification.vendor_btw ?? null,
   });
 
   const { data: invoice, error: dbError } = await pipeline

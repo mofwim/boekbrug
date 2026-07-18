@@ -49,12 +49,21 @@ export function isReliableSupplierName(name: string | null | undefined): boolean
   return isReliableVendor(name) && supplierNameKey(name).length >= 3
 }
 
+/** Canonical KVK key: digits only, exactly 8 (a real Dutch Chamber-of-Commerce number). The KVK
+ *  is a legal-entity id — the strong key that tells two same-named companies apart. Junk → null. */
+export function normalizeKvk(kvk: string | null | undefined): string | null {
+  if (!kvk) return null
+  const d = String(kvk).replace(/\D/g, '')
+  return d.length === 8 ? d : null
+}
+
 export interface SupplierResolution {
   id: string
   name: string
 }
 
 type DB = SupabaseClient<Database>
+type SupplierUpdate = Database['public']['Tables']['suppliers']['Update']
 
 /**
  * [SUPPLIER-REGISTRY] Find-or-create the canonical supplier for an incoming invoice.
@@ -77,27 +86,33 @@ export async function resolveSupplierForImport(
   try {
     const cleanName = (vendor.name ?? '').trim()
     const iban = normalizeIban(vendor.iban)
+    const kvk = normalizeKvk(vendor.kvk)
+    const btw = (vendor.btw ?? '').trim() || null
     const key = supplierNameKey(cleanName)
     const reliableName = isReliableSupplierName(cleanName)
 
-    // Nothing to key on → don't manufacture a junk supplier island.
-    if (!iban && !reliableName) return null
+    // Nothing to key on → don't manufacture a junk supplier island. KVK is now a valid key too.
+    if (!iban && !kvk && !reliableName) return null
 
     // ── 1. IBAN tier (strongest): one supplier per (user, IBAN) ──────────────────
     if (iban) {
       const { data: byIban } = await supabase
         .from('suppliers')
-        .select('id, name, name_key')
+        .select('id, name, name_key, kvk_number, btw_number')
         .eq('user_id', userId)
         .eq('iban', iban)
         .limit(1)
         .maybeSingle()
 
       if (byIban) {
-        // Opportunistically backfill a missing name_key (non-fatal) so later name-only
-        // invoices from this supplier also resolve here. Never rename the canonical name.
-        if (!byIban.name_key && key) {
-          await supabase.from('suppliers').update({ name_key: key }).eq('id', byIban.id)
+        // Opportunistically backfill a missing name_key / KVK / BTW (non-fatal) so later invoices
+        // from this supplier also resolve here and the identity gets richer. Never rename the name.
+        const patch: SupplierUpdate = {}
+        if (!byIban.name_key && key) patch.name_key = key
+        if (!byIban.kvk_number && kvk) patch.kvk_number = kvk
+        if (!byIban.btw_number && btw) patch.btw_number = btw
+        if (Object.keys(patch).length) {
+          await supabase.from('suppliers').update(patch).eq('id', byIban.id)
         }
         return { id: byIban.id, name: byIban.name }
       }
@@ -131,8 +146,8 @@ export async function resolveSupplierForImport(
           name: cleanName || 'Onbekende leverancier',
           name_key: key || null,
           iban,
-          kvk_number: vendor.kvk ?? null,
-          btw_number: vendor.btw ?? null,
+          kvk_number: kvk,
+          btw_number: btw,
         })
         .select('id, name')
         .single()
@@ -149,7 +164,54 @@ export async function resolveSupplierForImport(
       return retry ? { id: retry.id, name: retry.name } : null
     }
 
-    // ── 2. Name tier (no IBAN on this invoice): match by normalized name key ──────
+    // ── 2. KVK tier (no IBAN, but a legal KVK): the strong identity that keeps two same-named
+    // companies apart and unites one company's differently-spelled invoices. ────────────────────
+    if (kvk) {
+      const { data: byKvk } = await supabase
+        .from('suppliers')
+        .select('id, name, name_key, btw_number')
+        .eq('user_id', userId)
+        .eq('kvk_number', kvk)
+        .limit(1)
+        .maybeSingle()
+      if (byKvk) {
+        const patch: SupplierUpdate = {}
+        if (!byKvk.name_key && key) patch.name_key = key
+        if (!byKvk.btw_number && btw) patch.btw_number = btw
+        if (Object.keys(patch).length) {
+          await supabase.from('suppliers').update(patch).eq('id', byKvk.id)
+        }
+        return { id: byKvk.id, name: byKvk.name }
+      }
+
+      // Create, keyed by KVK. Plain insert; on the (user_id, kvk_number) unique-index race — or
+      // when an IBAN-keyed row was already backfilled with this KVK — the 23505 re-read returns the
+      // winner, reconciling the two identities instead of splitting the supplier.
+      const { data: created, error: createErr } = await supabase
+        .from('suppliers')
+        .insert({
+          user_id: userId,
+          name: cleanName || 'Onbekende leverancier',
+          name_key: key || null,
+          iban: null,
+          kvk_number: kvk,
+          btw_number: btw,
+        })
+        .select('id, name')
+        .single()
+      if (!createErr && created) return { id: created.id, name: created.name }
+
+      const { data: retry } = await supabase
+        .from('suppliers')
+        .select('id, name')
+        .eq('user_id', userId)
+        .eq('kvk_number', kvk)
+        .limit(1)
+        .maybeSingle()
+      return retry ? { id: retry.id, name: retry.name } : null
+    }
+
+    // ── 3. Name tier (no IBAN, no KVK): match by normalized name key ──────────────
     const { data: byName } = await supabase
       .from('suppliers')
       .select('id, name')
@@ -167,8 +229,8 @@ export async function resolveSupplierForImport(
         name: cleanName,
         name_key: key,
         iban: null,
-        kvk_number: vendor.kvk ?? null,
-        btw_number: vendor.btw ?? null,
+        kvk_number: kvk,
+        btw_number: btw,
       })
       .select('id, name')
       .single()
