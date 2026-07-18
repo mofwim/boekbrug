@@ -1029,6 +1029,7 @@ export type Database = {
           source: string | null
           source_message_id: string | null
           status: string | null
+          supplier_id: string | null
           total_ex_btw: number | null
           total_inc_btw: number | null
           updated_at: string | null
@@ -1072,6 +1073,7 @@ export type Database = {
           source?: string | null
           source_message_id?: string | null
           status?: string | null
+          supplier_id?: string | null
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
@@ -1115,12 +1117,20 @@ export type Database = {
           source?: string | null
           source_message_id?: string | null
           status?: string | null
+          supplier_id?: string | null
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
           vendor_iban?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "invoices_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "invoices_document_id_fkey"
             columns: ["document_id"]
@@ -1386,6 +1396,50 @@ export type Database = {
           {
             foreignKeyName: "referrals_client_id_fkey"
             columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      suppliers: {
+        Row: {
+          btw_number: string | null
+          created_at: string
+          iban: string | null
+          id: string
+          kvk_number: string | null
+          name: string
+          name_key: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          btw_number?: string | null
+          created_at?: string
+          iban?: string | null
+          id?: string
+          kvk_number?: string | null
+          name: string
+          name_key?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          btw_number?: string | null
+          created_at?: string
+          iban?: string | null
+          id?: string
+          kvk_number?: string | null
+          name?: string
+          name_key?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suppliers_user_id_fkey"
+            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]

@@ -10,6 +10,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 // but incoming invoices have sender_id = null.
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
+import { resolveSupplierForImport } from "@/lib/supplier-registry";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
@@ -268,6 +269,15 @@ export async function POST(req: NextRequest) {
   // Must use service_role: invoices_zzp_insert RLS requires sender_id = auth.uid(),
   // which fails for incoming (sender_id is null — vendor isn't a BoekBrug user).
   const pipeline = createPipelineClient();
+
+  // [SUPPLIER-REGISTRY] Same canonical-supplier resolution as the email-sync path, so a manually
+  // uploaded invoice unifies under the same supplier (and adopts its canonical name) instead of
+  // creating yet another name variant. Best-effort: null → raw name + null supplier_id.
+  const uploadedSupplier = await resolveSupplierForImport(pipeline, user.id, {
+    name: verification.vendor,
+    iban: verification.vendor_iban ?? null,
+  });
+
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
@@ -278,7 +288,8 @@ export async function POST(req: NextRequest) {
       // verifies. 'processing' is excluded from the `shared` GENERATED expression.
       status: "processing",
       source: "upload",
-      client_name: verification.vendor || "Onbekende afzender",
+      supplier_id: uploadedSupplier?.id ?? null,
+      client_name: uploadedSupplier?.name || verification.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
       invoice_number: verification.invoice_number || `UPLOAD-${Date.now()}`,
       total_ex_btw: verification.total_ex_btw ?? 0,
