@@ -253,6 +253,27 @@ export async function GET(req: NextRequest) {
           diff: d.grossDiff ?? 0,
         });
       }
+      // [S3-COMMISSION] A day with a card PAYOUT (net into the bank) + till PIN takings but NO
+      // terminal settlement (eftGross) → the acquirer fee (gross − net) can't be booked as a cost,
+      // so quarterly profit is silently OVERSTATED and readiness would still say 'klaar'. Surface it
+      // as a risk with the fix (upload that day's terminal-afrekening) so fees are never silently
+      // unbooked. Only when a real positive fee exists (net < gross), never on a refund/partial day.
+      for (const d of triangle.days) {
+        if (d.eftGross != null) continue;                    // has a terminal receipt → fee is booked
+        if (!(typeof d.tillPin === "number" && d.tillPin > 0)) continue;
+        if (!(typeof d.bankNet === "number" && d.bankNet > 0)) continue;
+        const feeApprox = Math.round((d.tillPin - d.bankNet) * 100) / 100;
+        if (feeApprox <= 0.01) continue;                     // net ≥ gross → no fee to book
+        const key = d.date + "|commission";
+        if (seen.has(key)) continue;
+        seen.add(key);
+        reconExceptions.push({
+          date: d.date,
+          kind: "terminal",
+          note: `Betaalkosten (~€${feeApprox.toFixed(2)}) nog niet geboekt — upload de terminal-afrekening van deze dag zodat de commissie als kosten meetelt`,
+          diff: feeApprox,
+        });
+      }
     } catch {
       /* triangle is a witness; never let it fail the readiness verdict */
     }

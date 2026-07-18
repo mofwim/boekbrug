@@ -314,25 +314,33 @@ export async function POST(request: NextRequest) {
     // ── 12. [FACTUUR-A] Render the legal PDF — AFTER number commit ─
     // The PDF must carry the final number + the server-recomputed totals (lines
     // were fetched in step 6b). It can only be rendered now.
+    // [SEND-PDF-RETRY] Render is the delivery gate. A transient font/asset hiccup used to leave the
+    // invoice 'sent' (verstuurd) with NO PDF, NO email, NO signal — the customer got nothing and the
+    // owner had no idea. Retry once (catches the common transient), and on persistent failure make
+    // the failure LOUD (an owner notification) instead of a silent false 'verstuurd'.
     let pdfBuffer: Buffer | null = null
-    try {
-      pdfBuffer = await renderInvoicePdf(
-        {
-          ...invoice,
-          ...(computedTotals ?? {}),
-          invoice_number: finalNumber,
-          invoice_type: finalType,
-          status: resend || convertOnly ? invoice.status : 'sent',
-        },
-        lines ?? [],
-        profile ?? {}
-      )
-    } catch (pdfErr) {
-      console.error('[FACTUUR-A] PDF render failed', { invoiceId, finalNumber, error: pdfErr })
-      Sentry.captureException(pdfErr, {
-        tags: { feature: 'invoice-send', severity: 'high' },
-        extra: { invoiceId, finalNumber, userId: user.id },
-      })
+    for (let attempt = 0; attempt < 2 && !pdfBuffer; attempt++) {
+      try {
+        pdfBuffer = await renderInvoicePdf(
+          {
+            ...invoice,
+            ...(computedTotals ?? {}),
+            invoice_number: finalNumber,
+            invoice_type: finalType,
+            status: resend || convertOnly ? invoice.status : 'sent',
+          },
+          lines ?? [],
+          profile ?? {}
+        )
+      } catch (pdfErr) {
+        console.error('[FACTUUR-A] PDF render failed', { invoiceId, finalNumber, attempt, error: pdfErr })
+        if (attempt === 1) {
+          Sentry.captureException(pdfErr, {
+            tags: { feature: 'invoice-send', severity: 'high' },
+            extra: { invoiceId, finalNumber, userId: user.id },
+          })
+        }
+      }
     }
 
     if (!pdfBuffer) {
@@ -340,14 +348,27 @@ export async function POST(request: NextRequest) {
         // Pure delivery attempt — nothing was committed, a clean error is honest
         return NextResponse.json({ error: 'PDF genereren mislukt — probeer opnieuw' }, { status: 500 })
       }
-      // Number is consumed (Art. 35 — no rollback). The invoice IS legally
-      // issued. We do NOT send a PDF-less notification — that is defect #1.
-      // The user re-delivers via resend once the cause is fixed.
+      // Number is consumed (Art. 35 — no rollback). The invoice IS legally issued, but it was NOT
+      // delivered. Do NOT let the owner believe it went out: write an owner notification so the
+      // "verstuurd" state is corrected by an explicit "opnieuw versturen" prompt (recoverable via
+      // resend once the cause is fixed). Service-role insert (notifications has no authed INSERT).
+      try {
+        const notifPipeline = createPipelineClient()
+        await notifPipeline.from('notifications').insert({
+          user_id: user.id,
+          title: 'Factuur niet verzonden',
+          body: `Factuur ${finalNumber} kreeg een nummer maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
+          type: 'invoice',
+          read: false,
+          link: '/dashboard/facturen',
+        })
+      } catch { /* non-blocking — the warning field below is the primary signal */ }
       return NextResponse.json({
         success: true,
         invoice_number: finalNumber,
         invoice_type: finalType,
         converted: isConversion,
+        delivered: false,
         warning: 'pdf_failed',
       })
     }
