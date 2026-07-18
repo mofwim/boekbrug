@@ -74,7 +74,9 @@ export async function POST(
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
   // [SECURITY] Rate-limit the manual re-read: every call runs an expensive Sonnet vision read on the
-  // raw PDF, so an unbounded endpoint lets one session burn AI budget. Same AI_OCR bucket as upload.
+  // raw PDF, so an unbounded endpoint lets one session burn AI budget. Uses the AI_OCR limits config
+  // (240/hr); the counter is keyed by (user, endpoint), so it's this endpoint's own bucket — a
+  // separate 240/hr allowance from the upload path, both bounding per-user AI spend.
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/reimport", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
 

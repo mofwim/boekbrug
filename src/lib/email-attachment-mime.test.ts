@@ -28,6 +28,9 @@ check("no extension + generic mime → null", normalizeAttachmentMime("applicati
 console.log("\n— [SECURITY] SVG is never accepted (stored-XSS vector; not a readable invoice) —");
 check("image/svg+xml → null (blocked)", normalizeAttachmentMime("image/svg+xml", "logo.svg") === null);
 check("image/svg → null (blocked)", normalizeAttachmentMime("image/svg", "logo.svg") === null);
+check("parameterized image/svg+xml; charset=utf-8 → null (no slip past ===)",
+  normalizeAttachmentMime("image/svg+xml; charset=utf-8", "logo.svg") === null);
+check("uppercase IMAGE/SVG+XML → null (case-insensitive)", normalizeAttachmentMime("IMAGE/SVG+XML", "logo.svg") === null);
 check("spoofed generic mime + .svg name → null", normalizeAttachmentMime("application/octet-stream", "invoice.svg") === null);
 
 console.log(`\n${passed} passed, ${failed} failed`);

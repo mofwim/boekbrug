@@ -46,10 +46,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 });
   }
 
+  // [SECURITY] Reject SVG up front (defense-in-depth): an SVG is XML that can carry <script>, so it
+  // must never be stored as a viewable "image invoice". The AI media-type allowlist already refuses
+  // it downstream, but this closes the gate before any storage write. Match the base type so a
+  // parameterized `image/svg+xml; charset=utf-8` and a `.svg` name are both caught.
+  const baseType = (file.type || "").toLowerCase().split(";")[0].trim();
+  const isSvg = baseType.startsWith("image/svg") || file.name.toLowerCase().endsWith(".svg");
   const okType =
-    file.type === "application/pdf" ||
-    file.type.startsWith("image/") ||
-    file.name.toLowerCase().endsWith(".pdf");
+    !isSvg &&
+    (baseType === "application/pdf" ||
+      baseType.startsWith("image/") ||
+      file.name.toLowerCase().endsWith(".pdf"));
   if (!okType) {
     return NextResponse.json(
       { error: "Alleen PDF of afbeelding toegestaan" },

@@ -1377,12 +1377,14 @@ export function normalizeAttachmentMime(mimeType: string, filename: string): str
   const mt = (mimeType || "").toLowerCase()
   if (mt === "application/pdf") return "application/pdf"
   if (mt.startsWith("image/")) {
-    // [SECURITY] Block image/svg+xml specifically: an SVG is XML that can embed <script>, so storing
-    // one and later serving it inline (a signed Storage URL the browser opens) is a stored-XSS
-    // vector — and Claude can't read it as an invoice anyway. Other image/* (incl. heic/tiff/bmp)
-    // are binary rasters: not script-capable, and an unreadable one still reaches the visible
-    // could-not-read path, so the broad passthrough is preserved for them.
-    if (mt === "image/svg+xml" || mt === "image/svg") return null
+    // [SECURITY] Block SVG: an SVG is XML that can embed <script>, so storing one and later serving
+    // it inline (a signed Storage URL the browser opens) is a stored-XSS vector — and Claude can't
+    // read it as an invoice anyway. Match the BASE type (strip any `;charset=`/`;name=` parameters)
+    // and every svg spelling, so `image/svg+xml; charset=utf-8` can't slip past. Other image/*
+    // (incl. heic/tiff/bmp) are binary rasters: not script-capable, and an unreadable one still
+    // reaches the visible could-not-read path, so the broad passthrough is preserved for them.
+    const base = mt.split(";")[0].trim()
+    if (base.startsWith("image/svg")) return null
     return mt
   }
   // Wrong/generic MIME → infer from the extension. Only the types the classifier reads.
