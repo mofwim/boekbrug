@@ -2,7 +2,12 @@
 // Locks the rule that a confident "not an invoice" verdict carrying a strong invoice signal
 // (vendor + amount) and a non-statement filename is RESCUED to the verify queue, never
 // silently discarded — while a genuine statement or a signal-less document is not rescued.
-import { shouldRescueNonInvoice, isReminderFilename } from "./ai";
+import {
+  shouldRescueNonInvoice,
+  isReminderFilename,
+  looksLikeStatementText,
+  looksLikeStatementReason,
+} from "./ai";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -47,6 +52,46 @@ check("plain factuur is NOT a reminder", isReminderFilename("factuur-2216671.pdf
 check("a vendor named 'Herinneringen BV' invoice is still caught (acceptable — flagged, not dropped)",
   isReminderFilename("herinnering.pdf") === true);
 check("empty filename → not a reminder", isReminderFilename("") === false);
+
+console.log("\n— [STATEMENT-HARDEN] the model's own statement REASON blocks the vendor+amount rescue —");
+check("statement reason 'rekeningoverzicht' → not rescued even with vendor + amount",
+  shouldRescueNonInvoice({ vendor: "Exact", total_inc_btw: 8980.05, reason: "Rekeningoverzicht — samenvatting van bestaande facturen" }, "document.pdf") === false);
+check("statement reason 'overzicht van meerdere facturen' → not rescued",
+  shouldRescueNonInvoice({ vendor: "M.H. Bal", total_inc_btw: 1200, reason: "overzicht van meerdere facturen, geen boekbare factuur" }, "26003666.pdf") === false);
+check("statement reason 'openstaande facturen' → not rescued",
+  shouldRescueNonInvoice({ vendor: "Exact", total_inc_btw: 500, reason: "openstaande facturen overzicht" }, "statement.pdf") === false);
+check("a GENERIC 'geen factuur' reason still allows the verzamelfactuur rescue (not lost)",
+  shouldRescueNonInvoice({ vendor: "HVO meat bv", total_inc_btw: 3186.42, reason: "geen factuur herkend" }, "2216671.pdf") === true);
+check("no reason at all → rescue still works on strong signal",
+  shouldRescueNonInvoice({ vendor: "HVO meat bv", total_inc_btw: 3186.42 }, "2216671.pdf") === true);
+
+console.log("\n— [STATEMENT-TEXT-GUARD] content backstop recognises an OPENSTAANDE-FACTUREN overview by its text —");
+check("openstaande facturen overview text → statement",
+  looksLikeStatementText(
+    "OPENSTAANDE FACTUREN\nFactuurnummer  Factuurdatum  Bedrag  Reeds betaald  Nog openstaand\n" +
+    "26003666  01-08-2026  344,48\n26003201  01-07-2026  120,00\nTotaal openstaand 464,48"
+  ) === true);
+check("rekeningoverzicht text with saldo → statement",
+  looksLikeStatementText("Rekeningoverzicht\nSaldo per 08-08-2026: 8.980,05") === true);
+check("a single betalingsherinnering (one invoice) is NOT a statement",
+  looksLikeStatementText(
+    "Betalingsherinnering\nFactuurnummer 26003666\nBedrag incl. BTW 344,48\nGelieve te voldoen voor 22-08-2026"
+  ) === false);
+check("a normal single invoice text is NOT a statement",
+  looksLikeStatementText(
+    "FACTUUR\nFactuurnummer 26003666\nSubtotaal 316,04\nBTW 21% 28,44\nTotaal incl. BTW 344,48"
+  ) === false);
+check("empty/scanned text → not a statement (model's read stands)",
+  looksLikeStatementText("") === false && looksLikeStatementText(null) === false);
+check("bare overview word without balance/rows → not a statement (too weak)",
+  looksLikeStatementText("Rekeningoverzicht") === false);
+
+console.log("\n— [STATEMENT-HARDEN] looksLikeStatementReason vocabulary —");
+check("'rekeningoverzicht' reason", looksLikeStatementReason("Rekeningoverzicht — geen factuur") === true);
+check("'samenvatting van bestaande facturen' reason", looksLikeStatementReason("samenvatting van bestaande facturen") === true);
+check("'meerdere facturen' reason", looksLikeStatementReason("overzicht van meerdere facturen") === true);
+check("generic 'geen factuur' reason is NOT statement-specific", looksLikeStatementReason("geen factuur herkend") === false);
+check("null reason → false", looksLikeStatementReason(null) === false);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

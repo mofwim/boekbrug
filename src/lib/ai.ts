@@ -56,6 +56,54 @@ export function isReminderFilename(filename: string): boolean {
   );
 }
 
+// [STATEMENT-TEXT-GUARD] A CONTENT backstop over the model's own is_statement read. The reported
+// bug is an "openstaande facturen" overview (e.g. from no-reply@exact.com) that the small model
+// rejects (is_invoice=false) but WITHOUT setting the optional is_statement boolean, and whose
+// filename is generic — so neither the is_statement guard nor isStatementFilename fires, and the
+// vendor+amount rescue below then resurrects it as one bookable invoice (double-count). This reads
+// the extracted PDF TEXT and recognises the overview SHAPE deterministically. Deliberately narrow:
+// it requires PLURAL/overview vocabulary ("openstaande facturen/posten", "rekeningoverzicht",
+// "saldo-overzicht") AND a confirming signal (a summed open balance OR multiple invoice rows), so
+// a single-invoice "betalingsherinnering" — which the policy KEEPS (imported, flagged) — is never
+// caught here. Pure + testable. Empty/scanned text → false (the model's read stands).
+export function looksLikeStatementText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  const overviewTitle =
+    /(rekening|saldo)[-\s]?overzicht/.test(t) ||
+    /openstaande\s+(facturen|posten)/.test(t) ||
+    /overzicht\s+(van\s+)?openstaande/.test(t) ||
+    /overzicht\s+(van\s+)?(je|uw|de)\s+facturen/.test(t);
+  if (!overviewTitle) return false;
+  const openBalance =
+    /totaal\s+openstaand/.test(t) ||
+    /nog\s+openstaand/.test(t) ||
+    /reeds\s+betaald/.test(t) ||
+    /te\s+betalen\s+saldo/.test(t) ||
+    /\bvervallen\b/.test(t) ||
+    /\bsaldo\b/.test(t);
+  const multipleInvoiceRefs =
+    (t.match(/factuurnummer|factuurnr\.?|factuur\s+nr|factuurdatum/g) || []).length >= 2;
+  return openBalance || multipleInvoiceRefs;
+}
+
+// [STATEMENT-HARDEN] The model's REJECTION REASON, in prose, often says exactly what it decided —
+// "rekeningoverzicht — samenvatting van bestaande facturen". When it did, we trust that rejection
+// and do NOT let the vendor+amount rescue override it. Overview-specific vocabulary only, so a
+// generic "geen factuur" reason on a mis-judged verzamelfactuur still gets the benefit of the
+// rescue (it enters the verify queue, never lost).
+export function looksLikeStatementReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  const r = reason.toLowerCase();
+  return (
+    /(rekening|saldo)[-\s]?overzicht/.test(r) ||
+    /openstaande\s+(facturen|posten)/.test(r) ||
+    /samenvatting\s+van\s+\S*\s*factur/.test(r) ||
+    /overzicht\s+van\s+(meerdere|bestaande)\s+factur/.test(r) ||
+    /meerdere\s+facturen/.test(r)
+  );
+}
+
 // [TRUST-CONFIDENT-FALSE] The classifier (a small model) can be CONFIDENTLY wrong that a
 // document is "not an invoice" — the classic case is a collective invoice (verzamelfactuur:
 // many delivery-note lines with their own numbers/dates/amounts) read as a "rekeningoverzicht".
@@ -76,11 +124,18 @@ export function shouldRescueNonInvoice(
     // document has a vendor + a (balance) amount, so WITHOUT this guard the rescue below would
     // wrongly resurrect it as one bookable invoice and double-count the invoices it summarises.
     is_statement?: boolean | null;
+    // [STATEMENT-HARDEN] The model's own rejection reason. When it explicitly reasoned "this is a
+    // rekeningoverzicht / overzicht van meerdere facturen", we trust that over the blunt
+    // vendor+amount signal — the fix for the Exact "openstaande facturen" overview that was
+    // rejected-with-reason but had is_statement unset and a generic filename, so it got rescued
+    // and booked as a phantom cost.
+    reason?: string | null;
   },
   filename: string,
 ): boolean {
   if (p.is_statement === true) return false; // a statement of account is never a bookable invoice
   if (isStatementFilename(filename)) return false; // an unmistakable statement stays rejected
+  if (looksLikeStatementReason(p.reason)) return false; // the model itself reasoned it's an overview
   const hasVendor = !!(p.vendor && String(p.vendor).trim());
   const hasAmount =
     p.total_inc_btw != null || p.total_ex_btw != null || p.amount != null;
@@ -1047,18 +1102,23 @@ Statement / reminder detection (NOT an invoice — prevents double counting):
   TWICE and could make the owner pay twice. → is_invoice=false,
   document_kind="other", and set reason to a short Dutch explanation, e.g.
   "rekeningoverzicht — samenvatting van bestaande facturen, geen factuur".
-- Strong signals (require at least TWO before classifying as a statement):
+- Strong signals — ANY ONE of these is enough to classify it as a statement
+  (set is_invoice=false AND is_statement=true):
+  · a title/heading with "overzicht", "openstaande facturen", "openstaande
+    posten", "rekeningoverzicht" or "saldo-overzicht"
   · a table listing MULTIPLE different factuurnummers in one document
   · columns like "Reeds betaald" / "Nog openstaand" / "Vervallen"
-  · a total labelled "openstaand" ("Totaal openstaand bedrag") instead of
-    "Totaal incl. BTW"
-  · no BTW breakdown anywhere on the document
+  · a total labelled "openstaand" ("Totaal openstaand bedrag", "Saldo",
+    "Balans") instead of a single "Totaal incl. BTW"
 - EXCEPTION: a reminder that contains exactly ONE invoice WITH a full BTW
   breakdown (excl + BTW + incl) is that invoice re-sent → treat it as a normal
-  invoice (the duplicate check catches the copy of the original).
-- When genuinely unsure whether it is a statement or an invoice →
-  is_invoice=true (the human verify queue is the safety gate; a silently
-  skipped real invoice costs money, a held statement only costs a review).
+  invoice (is_invoice=true, is_reminder=true; the duplicate check catches the
+  copy of the original).
+- Tie-break: for an OVERVIEW of two or more invoices, prefer is_invoice=false,
+  is_statement=true — booking its summed total double-counts real invoices and
+  can make the owner PAY TWICE. A wrongly-held overview only costs one glance in
+  the skipped list; a wrongly-booked one costs money. Only when it is clearly a
+  SINGLE invoice (one number, one BTW breakdown) do you default to is_invoice=true.
 
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
@@ -1128,6 +1188,10 @@ Return JSON only.`;
 
   try {
     let result: string;
+    // [STATEMENT-TEXT-GUARD] Kept in the outer scope so the content backstop below can read the
+    // same text we (optionally) extracted for the cheap text path — an overview reliably announces
+    // itself in its text even when the small model forgets to set is_statement.
+    let statementText: string | null = null;
 
     if (mimeType === 'application/pdf') {
       // [BOEK-011] Validate PDF before sending — catch corrupt files early
@@ -1150,6 +1214,7 @@ Return JSON only.`;
       // scanned/weak PDFs or on ANY error → we fall through to the UNCHANGED raw
       // path below, so scanned invoices behave exactly as before (zero loss).
       const extractedText = await extractPdfTextIfTextLayer(fileBase64);
+      statementText = extractedText;
       if (extractedText) {
         result = await callClaude(
           `${prompt}\n\n--- FACTUUR TEKST (uit PDF) ---\n${extractedText}`,
@@ -1221,6 +1286,16 @@ Return JSON only.`;
 
     const parsed = safeParseJSON<VerifyInvoiceResult>(result);
     if (!parsed) return FALLBACK;
+
+    // [STATEMENT-TEXT-GUARD] Content backstop: if the extracted PDF text has the unmistakable
+    // shape of an OPENSTAANDE-FACTUREN / rekeningoverzicht (plural overview vocab + a summed open
+    // balance or multiple invoice rows), force is_statement=true so the early-return below rejects
+    // it — regardless of what the small model put in is_invoice/is_statement. This is the
+    // deterministic fix for the reported "overzicht wordt geïmporteerd" case (Exact statements are
+    // text PDFs). A single-invoice reminder never matches (narrow, plural-only vocabulary).
+    if (looksLikeStatementText(statementText)) {
+      parsed.is_statement = true;
+    }
 
     // [STATEMENT-GUARD] Deterministic backstop against booking a STATEMENT OF ACCOUNT as an
     // invoice. A "Rekeningoverzicht" / "Openstaande posten" / "Saldo-overzicht" lists MANY
