@@ -68,7 +68,12 @@ BEGIN
   END IF;
 
   -- (1) MUTEX — lock the bank line. A concurrent booker for the same tx blocks
-  --     here; after we commit it sees status <> 'pending' and returns 0 rows.
+  --     here; after we commit it re-reads the row and sees status <> 'pending'
+  --     and returns 0 rows. This empty-return path assumes READ COMMITTED (the
+  --     PostgREST default): the loser's FOR UPDATE re-reads our committed
+  --     'matched' row. Under REPEATABLE READ / SERIALIZABLE the loser's FOR
+  --     UPDATE instead raises a serialization error — which the caller catches
+  --     as batchErr and skips, so it still fails SAFE (never double-books).
   SELECT status INTO v_tx_status
   FROM public.bank_transactions
   WHERE id = p_tx_id AND user_id = p_user_id
