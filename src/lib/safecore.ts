@@ -167,23 +167,22 @@ export function evaluateArithmetic(
 }
 
 /**
- * [BRIDGE-CREDITNOTA-SIGN] Arithmetic gate for a CREDITNOTA.
+ * [BRIDGE-CREDITNOTA-SIGN] Arithmetic gate for a CREDITNOTA / NET-CREDIT document.
  *
- * Mirror of the standard gate with the sign expectation inverted:
- *   Structural (impossible values) → blocked:
- *     - any of ex/btw/incl is NaN, ±Infinity, or > 0 (a creditnota's amounts
- *       are NEGATIVE — matching the outgoing creditnota route [BOEK-031],
- *       which stores -(original.x), and the paper document itself)
- *     - incl >= 0 (a creditnota with no negative total is not bookable)
+ * The one hard rule is a NEGATIVE net total (they owe you). Everything else is consistency:
+ *   Structural → blocked:
+ *     - any of ex/btw/incl is NaN or ±Infinity
+ *     - incl >= 0 (a credit with no negative total is not bookable)
  *     - invoice year outside 2020–2030 (same business range)
  *   Consistency (internally wrong) → blocked:
- *     - |ex + btw − incl| > 0.02 (the sum identity holds with negatives:
- *       -4.00 + -0.84 = -4.84 — verified on real CR-002-2026)
- *     - rate ∉ [0..21]: computed with Math.abs guard on ex (neg/neg gives a
- *       positive rate; |ex| > 0.005 avoids the sign-flipped `ex > 0` trap
- *       that would silently skip the rate check for every creditnota)
+ *     - |ex + btw − incl| > 0.02 (the sum identity, sign-agnostic on ex/BTW)
+ *     - |btw / ex| ∉ [0..21] (a legal blended NL rate)
  *
- * btw = 0 is allowed (a 0%-BTW creditnota is legal — ex = incl, both negative).
+ * [NET-CREDIT] The individual signs of ex and BTW are deliberately NOT constrained. A pure
+ * creditnota has all three negative; a NET-CREDIT invoice (returns/emballage exceed goods) can
+ * have a POSITIVE BTW on its goods while 0%-BTW container returns drive the net excl/total
+ * negative (real Altena case: ex -123, BTW +13,42, totaal -109,58). The identity + rate catch the
+ * genuinely-broken reads; the mixed signs are legitimate. btw = 0 is allowed (a 0%-BTW credit).
  */
 function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
   const flags: string[] = []
@@ -193,14 +192,20 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
   const btw = c.btwAmount ?? 0
   const incl = c.totalIncBtw ?? c.amount ?? 0
 
-  // ── Structural: a creditnota's amounts must be finite and non-positive ──
-  const finiteNonPos = (v: number) => Number.isFinite(v) && v <= 0
-  if (!finiteNonPos(ex) || !finiteNonPos(btw) || !finiteNonPos(incl)) {
-    flags.push('creditnota_not_negative')
-    reasons.push('creditnota-bedragen moeten negatief zijn')
+  // ── Structural: amounts must be finite ──
+  const allFinite = Number.isFinite(ex) && Number.isFinite(btw) && Number.isFinite(incl)
+  if (!allFinite) {
+    flags.push('non_finite')
+    reasons.push('ongeldige bedragen (NaN/∞)')
   }
 
-  // incl must be strictly negative — a 0/blank creditnota is not bookable.
+  // [NET-CREDIT] The defining invariant of a creditnota / net-credit document is that the TOTAL is
+  // strictly negative (they owe YOU). The individual ex/BTW signs are NOT constrained: a net-credit
+  // invoice can carry POSITIVE BTW on its goods lines while 0%-BTW emballage/statiegeld RETURNS
+  // drive the net excl (and the total) negative — the real Altena case (ex -123, BTW +13,42,
+  // totaal -109,58, and -123 + 13,42 = -109,58 holds). Forcing every amount ≤ 0 (the old rule)
+  // falsely flagged such a correctly-read invoice "bedragen moeten negatief zijn". The identity
+  // (excl + BTW = totaal) and a legal blended rate are what actually guarantee correctness.
   if (Number.isFinite(incl) && incl >= 0) {
     flags.push('non_negative_creditnota_total')
     reasons.push('totaalbedrag van creditnota ontbreekt of is 0')
@@ -216,9 +221,9 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
     }
   }
 
-  // ── Consistency: only when the numbers are structurally sane ──
-  if (finiteNonPos(ex) && finiteNonPos(btw) && Number.isFinite(incl) && incl < 0) {
-    // excl + BTW must equal incl — the identity holds with negatives.
+  // ── Consistency: sign-agnostic on ex/BTW, only the net total must be negative. ──
+  if (allFinite && incl < 0) {
+    // excl + BTW must equal incl — the identity holds regardless of the individual signs.
     if (Math.abs(ex + btw - incl) > 0.02) {
       flags.push('sum_mismatch')
       // [BREAKDOWN-MISSING] Same clarification as the standard gate: an unreadable split
@@ -230,11 +235,12 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
           : 'excl + BTW ≠ totaal'
       )
     }
-    // Legal BTW rate — |btw/ex| with an abs-guard on ex. (neg ÷ neg = positive,
-    // so the rate itself is positive; [BTW-MIXED-RATE] blend logic applies.)
+    // Legal blended NL rate: |BTW / excl| ∈ [0..21]. The full-ratio abs() covers a mixed-sign
+    // net-credit (positive goods-BTW over a negative net excl gives a negative raw ratio that is
+    // still a valid magnitude), while a pure all-negative creditnota (neg ÷ neg) is unchanged.
     if (Math.abs(ex) > 0.005) {
-      const rate = Math.round((btw / ex) * 100)
-      if (rate < 0 || rate > 21) {
+      const rate = Math.round(Math.abs(btw / ex) * 100)
+      if (rate > 21) {
         flags.push('illegal_btw_rate')
         reasons.push(`ongeldig BTW-tarief (${rate}%)`)
       }

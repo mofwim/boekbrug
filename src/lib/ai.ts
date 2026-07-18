@@ -968,7 +968,11 @@ export async function verifyInvoiceFromPdf(
   // [TRANSIENT-RETRY] Opt-in: when true, re-throw a transient infra error instead of returning the
   // confidence-0 FALLBACK, so the email-sync/reimport path can retry rather than permanently skip.
   // Default false → every existing caller (upload / intake / bank-attach) keeps the FALLBACK behaviour.
-  opts?: { throwOnTransient?: boolean }
+  // [REREAD-STRONG] `model` overrides the reader model (default Haiku); `preferRawPdf` skips the
+  // cheap flattened-text path and reads the ACTUAL PDF layout directly. Used by the manual
+  // "Opnieuw inlezen" so a stuck complex invoice (statiegeld/retour, net-negative creditnota) is
+  // re-read by a stronger model on the real page — the automatic sync keeps the Haiku/text path.
+  opts?: { throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean }
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
     is_invoice: false,
@@ -1244,6 +1248,11 @@ Read the full content and answer:
 
 Return JSON only.`;
 
+  // [REREAD-STRONG] Reader model + read strategy. Default: undefined model (→ callClaude* use
+  // Haiku) and the cheap text path. The manual re-read passes a stronger model and preferRawPdf.
+  const model = opts?.model;
+  const preferRawPdf = opts?.preferRawPdf === true;
+
   try {
     let result: string;
     // [STATEMENT-TEXT-GUARD] Kept in the outer scope so the content backstop below can read the
@@ -1265,6 +1274,13 @@ Return JSON only.`;
           reason: 'Ongeldig PDF-bestand — overgeslagen',
         };
       }
+      if (preferRawPdf) {
+        // [REREAD-STRONG] Read the ACTUAL page layout directly on the (stronger) model — the
+        // flattened-text path is exactly what loses the statiegeld/retour columns and the net-
+        // negative total that a hard invoice like this needs. No text backstop here: the model
+        // sees the whole document and its own is_statement guard still applies downstream.
+        result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
+      } else {
       // [PDF-OPTIMIZE] Try the cheap text path first. For a TEXT PDF (the
       // majority of supplier invoices) we extract the text ourselves and send
       // TEXT ONLY (~840 vs ~2425 tokens, ~65% saved). SAFECORE-verified on real
@@ -1276,7 +1292,8 @@ Return JSON only.`;
       if (extractedText) {
         result = await callClaude(
           `${prompt}\n\n--- FACTUUR TEKST (uit PDF) ---\n${extractedText}`,
-          systemPrompt
+          systemPrompt,
+          model
         );
 
         // [PDF-OPTIMIZE] SAFECORE secondary fail-safe. On real Kiwi data, a
@@ -1319,12 +1336,12 @@ Return JSON only.`;
           console.log(
             '[PDF-OPTIMIZE] Text path not conclusive — re-reading via raw PDF (SAFECORE fallback)'
           );
-          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
         } else if (needsVisualReread(probe)) {
           console.log(
             '[VISUAL-REREAD] Text path read an invoice with weak number/split/amount — re-reading via the raw PDF layout'
           );
-          const reread = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+          const reread = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
           const rp = safeParseJSON<VerifyInvoiceResult>(reread);
           // Adopt the visual re-read (to gain the recovered invoice number / BTW split) ONLY when
           // its total AGREES with the total the trusted text path already read. The re-read fires
@@ -1350,22 +1367,24 @@ Return JSON only.`;
         }
       } else {
         // Raw PDF path — Claude reads the actual PDF (text + scanned). Already the visual layout,
-        // so a VISUAL-REREAD would be an identical second pass — nothing to gain. UNCHANGED.
-        result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+        // so a VISUAL-REREAD would be an identical second pass — nothing to gain.
+        result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
       }
+      } // [REREAD-STRONG] close the non-preferRawPdf (text-path) branch
     } else if (
       mimeType === 'image/jpeg' ||
       mimeType === 'image/png' ||
       mimeType === 'image/webp' ||
       mimeType === 'image/gif'
     ) {
-      // Claude reads the image directly (already the visual layout on Haiku — no re-read to add,
-      // a second pass on the same model + image would be identical). UNCHANGED.
+      // Claude reads the image directly (already the visual layout). The re-read model override is
+      // honoured so the manual re-read of a photographed invoice also uses the stronger model.
       result = await callClaudeWithImage(
         fileBase64,
         mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
         prompt,
-        systemPrompt
+        systemPrompt,
+        model
       );
     } else {
       // Unsupported type — skip safely
