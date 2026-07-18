@@ -40,6 +40,7 @@ interface InvoiceRow {
   invoice_number: string | null;
   invoice_date: string | null;
   total_inc_btw: number | null;
+  amount_paid?: number | null;
   due_date: string | null;
   status: string | null;
 }
@@ -57,7 +58,20 @@ export async function GET() {
   const todayIso = new Date().toISOString().split("T")[0];
   const todayNum = dayNumberFromIso(todayIso);
 
-  const SELECT = "id, client_name, invoice_number, invoice_date, total_inc_btw, due_date, status";
+  const SELECT = "id, client_name, invoice_number, invoice_date, total_inc_btw, amount_paid, due_date, status";
+
+  // [PARTIAL-PAY] The openstaand (still-owed) amount: a fully-paid invoice is 0 (it also drops out
+  // of these lists), a deelbetaling shows only the REMAINING balance, a fully-open invoice its total.
+  // Sign preserved (a creditnota total is negative; amount_paid is a magnitude). This is the same
+  // reconciled truth the bank matcher books — Te betalen / Te ontvangen must never overstate by a
+  // settled instalment.
+  const openstaandOf = (r: { total_inc_btw: number | null; amount_paid?: number | null; status?: string | null }) => {
+    const total = r.total_inc_btw ?? 0;
+    if (r.status === "paid") return 0;
+    const paid = Math.max(0, r.amount_paid ?? 0);
+    if (paid <= 0.005) return total;
+    return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid);
+  };
 
   // 1. Te betalen — confirmed incoming invoices, not yet paid. 'processing'/'draft'
   //    are not yet confirmed by the owner, so excluded. Sum of stored totals = exact.
@@ -71,7 +85,7 @@ export async function GET() {
   const pay = (payRows ?? []) as InvoiceRow[];
   const toPay = {
     count: pay.length,
-    total: pay.reduce((s, r) => s + (r.total_inc_btw ?? 0), 0),
+    total: pay.reduce((s, r) => s + openstaandOf(r), 0),
     overdue: pay.filter((r) => r.due_date && r.due_date < todayIso).length,
   };
 
@@ -87,7 +101,7 @@ export async function GET() {
   const recv = (recvRows ?? []) as InvoiceRow[];
   const toReceive = {
     count: recv.length,
-    total: recv.reduce((s, r) => s + (r.total_inc_btw ?? 0), 0),
+    total: recv.reduce((s, r) => s + openstaandOf(r), 0),
     overdue: recv.filter((r) => r.due_date && r.due_date < todayIso).length,
   };
 
@@ -133,7 +147,7 @@ export async function GET() {
     party: r.client_name,
     invoiceNumber: r.invoice_number,
     dueDate: r.due_date,
-    total: r.total_inc_btw ?? 0,
+    total: openstaandOf(r), // [PARTIAL-PAY] the remaining balance, not the full invoice
     direction,
   });
 

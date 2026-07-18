@@ -54,6 +54,7 @@ export interface VandaagInvoice {
   invoice_date: string | null; // ISO date
   due_date: string | null; // ISO date — page.tsx already filters out nulls
   total_inc_btw: number | null; // STORED total — read-only, never computed here
+  amount_paid?: number | null; // [PARTIAL-PAY] settled so far; remaining = |total| − amount_paid
   status: string;
   direction: string;
 }
@@ -450,20 +451,28 @@ function InvoiceCard({
             {formatDateNL(invoice.due_date)}
           </div>
 
-          {/* [TODAY-UX-FIELDS] STORED total — read directly from total_inc_btw,
-              never computed here. null → no amount shown (we never invent one). */}
-          {typeof invoice.total_inc_btw === "number" && (
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 700,
-                color: M3.onSurface,
-                marginTop: 6,
-              }}
-            >
-              {formatEuroNL(invoice.total_inc_btw)}
-            </div>
-          )}
+          {/* [TODAY-UX-FIELDS] STORED total — read directly from total_inc_btw, never computed here.
+              [PARTIAL-PAY] When a deelbetaling already settled part of it, show the REMAINING
+              openstaand (the reconciled truth the bank matcher booked), with the full total as a
+              sub-note — never the full total as "te betalen" when only part is left. */}
+          {typeof invoice.total_inc_btw === "number" && (() => {
+            const total = invoice.total_inc_btw;
+            const paid = Math.max(0, invoice.amount_paid ?? 0);
+            const isPartial = paid > 0.005 && paid < Math.abs(total) - 0.005;
+            const openstaand = isPartial ? (total < 0 ? -1 : 1) * (Math.abs(total) - paid) : total;
+            return (
+              <div style={{ marginTop: 6 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface }}>
+                  {formatEuroNL(openstaand)}
+                </div>
+                {isPartial && (
+                  <div style={{ fontSize: 12, color: "#b06000", marginTop: 2 }}>
+                    deels betaald · van {formatEuroNL(total)}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* "Negeren" — session-only visual hide. No DB, no status change. */}

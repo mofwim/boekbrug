@@ -30,7 +30,8 @@ export const dynamic = "force-dynamic";
 // READ DIRECTLY from the DB column — never computed/derived in "Vandaag" — so it
 // is the same trusted number shown on the invoices page, not an arithmetic claim.
 const SELECT =
-  "id, client_name, invoice_number, invoice_date, due_date, total_inc_btw, status, direction";
+  // [PARTIAL-PAY] amount_paid so a deelbetaling shows the REMAINING openstaand, not the full total.
+  "id, client_name, invoice_number, invoice_date, due_date, total_inc_btw, amount_paid, status, direction";
 
 export default async function VandaagPage() {
   const supabase = await createServerSupabaseClient();

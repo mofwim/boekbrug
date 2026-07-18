@@ -64,6 +64,11 @@ function todayIso(): string {
 export default function KasClient() {
   const [entries, setEntries] = useState<Entry[]>([])
   const [balance, setBalance] = useState(0)
+  // [KAS-OPENING] the drawer's starting float (beginsaldo) — a config value the owner sets once.
+  const [openingBalance, setOpeningBalance] = useState(0)
+  const [openingEdit, setOpeningEdit] = useState(false)
+  const [openingInput, setOpeningInput] = useState('')
+  const [openingSaving, setOpeningSaving] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const [direction, setDirection] = useState<'in' | 'out'>('in')
@@ -104,8 +109,23 @@ export default function KasClient() {
     try {
       const res = await fetch('/api/cash')
       const json = await res.json()
-      if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0) }
+      if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0); setOpeningBalance(json.openingBalance ?? 0) }
     } catch { /* silent */ } finally { setLoading(false) }
+  }
+
+  // [KAS-OPENING] Persist the starting float, then reload so the saldo reflects it immediately.
+  async function saveOpeningBalance() {
+    const val = Number((openingInput || '').replace(',', '.'))
+    if (!Number.isFinite(val) || val < 0) { setError('Beginsaldo moet 0 of hoger zijn'); return }
+    setOpeningSaving(true)
+    try {
+      const res = await fetch('/api/cash', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kas_opening_balance: val }),
+      })
+      if (res.ok) { setOpeningEdit(false); await load() }
+      else { const j = await res.json().catch(() => ({})); setError(j.error || 'Kon beginsaldo niet opslaan') }
+    } catch { setError('Verbinding mislukt') } finally { setOpeningSaving(false) }
   }
   // Initial load — inline async IIFE so no setState runs synchronously in the effect.
   useEffect(() => {
@@ -203,6 +223,34 @@ export default function KasClient() {
           </div>
           {balance < 0 && (
             <div style={{ fontSize: 12.5, color: M3.error, marginTop: 2 }}>Negatief saldo — je hebt meer uitgaven dan ontvangsten geboekt.</div>
+          )}
+          {/* [KAS-OPENING] Beginsaldo — the cash already in the drawer when you started. Included in
+              the saldo above; not counted as omzet. Set it once so the saldo matches reality. */}
+          {!openingEdit ? (
+            <button
+              type="button"
+              onClick={() => { setOpeningInput(openingBalance ? String(openingBalance).replace('.', ',') : ''); setOpeningEdit(true); setError('') }}
+              style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: M3.neutral, textAlign: 'left' }}
+            >
+              Beginsaldo kas: <strong style={{ color: M3.onSurface }}>{eur.format(openingBalance)}</strong> · wijzigen
+            </button>
+          ) : (
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12.5, color: M3.neutral }}>Beginsaldo kas €</span>
+              <input
+                inputMode="decimal" value={openingInput} onChange={(e) => setOpeningInput(e.target.value)}
+                placeholder="0,00" autoFocus
+                style={{ width: 90, padding: '6px 8px', borderRadius: 8, border: `1px solid ${M3.outlineVariant}`, fontSize: 14, fontFamily: FONT_NUM }}
+              />
+              <button type="button" onClick={saveOpeningBalance} disabled={openingSaving}
+                style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                {openingSaving ? 'Bezig…' : 'Opslaan'}
+              </button>
+              <button type="button" onClick={() => { setOpeningEdit(false); setError('') }}
+                style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${M3.outlineVariant}`, background: 'none', fontSize: 13, cursor: 'pointer', color: M3.neutral }}>
+                Annuleren
+              </button>
+            </div>
           )}
         </div>
 

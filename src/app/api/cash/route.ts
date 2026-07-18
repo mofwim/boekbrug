@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { computeCashBalance, isCashCategory } from "@/lib/cash";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export async function GET() {
   const supabase = await createServerSupabaseClient();
@@ -28,11 +29,36 @@ export async function GET() {
     .limit(500);
 
   const entries = rows ?? [];
-  const balance = computeCashBalance(
-    entries.map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
-  );
 
-  return NextResponse.json({ ok: true, entries, balance, count: entries.length });
+  // [KAS-SALDO] The headline "SALDO IN KASSA" must match the Kasboek panel's definition on the same
+  // screen: the till's daily CASH takings (daily_turnover.cash_amount) are cash that entered the
+  // drawer and are counted as ontvangsten in buildKasboek — but they live in daily_turnover, NOT in
+  // cash_entries, so summing cash_entries alone understates the drawer (and shows a false negative
+  // "meer uitgaven dan ontvangsten" alarm for every till shop). Sum BOTH sources. And sum the FULL
+  // history, not the 500-row display slice — a truncated balance is itself a wrong number.
+  const allMoves = await fetchAllRows((from, to) =>
+    supabase.from("cash_entries").select("direction, amount").eq("user_id", user.id).order("id", { ascending: true }).range(from, to),
+  );
+  const tillRows = await fetchAllRows((from, to) =>
+    supabase.from("daily_turnover").select("cash_amount").eq("user_id", user.id).order("turnover_date", { ascending: true }).range(from, to),
+  );
+  const entriesBalance = computeCashBalance(
+    (allMoves as { direction: string; amount: number | null }[]).map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
+  );
+  const tillCashIn = (tillRows as { cash_amount: number | null }[]).reduce((s, t) => s + (Number(t.cash_amount) || 0), 0);
+
+  // [KAS-OPENING] Add the drawer's starting float (beginsaldo) so the saldo matches reality from
+  // day one — a shop that began with cash in the till isn't understated by that amount.
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("kas_opening_balance")
+    .eq("id", user.id)
+    .maybeSingle();
+  const opening = Number((prof as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+
+  const balance = Math.round((opening + entriesBalance + tillCashIn) * 100) / 100;
+
+  return NextResponse.json({ ok: true, entries, balance, openingBalance: opening, count: entries.length });
 }
 
 export async function POST(req: NextRequest) {
@@ -87,6 +113,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "kon kasboeking niet opslaan" }, { status: 500 });
   }
   return NextResponse.json({ ok: true, entry: data });
+}
+
+// [KAS-OPENING] Set the drawer's opening balance (beginsaldo). A config value, not a movement —
+// it is added to the saldo, never counted as omzet/BTW. Audited via the standard invoice/status
+// trail is overkill for a config; a simple owner-scoped update on their own profile suffices (RLS).
+export async function PATCH(req: NextRequest) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  let body: { kas_opening_balance?: number };
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid body" }, { status: 400 }); }
+  const val = typeof body.kas_opening_balance === "number" ? body.kas_opening_balance : Number(body.kas_opening_balance);
+  if (!Number.isFinite(val) || val < 0) {
+    return NextResponse.json({ error: "beginsaldo moet 0 of hoger zijn" }, { status: 400 });
+  }
+  const opening = Math.round(val * 100) / 100;
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ kas_opening_balance: opening } as never)
+    .eq("id", user.id);
+  if (error) return NextResponse.json({ error: "kon beginsaldo niet opslaan" }, { status: 500 });
+  return NextResponse.json({ ok: true, openingBalance: opening });
 }
 
 export async function DELETE(req: NextRequest) {

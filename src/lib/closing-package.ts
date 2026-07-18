@@ -1377,10 +1377,15 @@ export async function buildClosingPackageZip(args: {
   ).catch(() => []);
   const kasTurnover: KasTurnoverDay[] = (kasTurnoverRaw ?? []) as KasTurnoverDay[];
 
+  // [KAS-OPENING] Seed the first period with the drawer's starting float so the accountant's
+  // Kasboek eindsaldo matches the app's headline saldo and reality.
+  const { data: kasProf } = await supabase.from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
+  const kasStartingBalance = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+
   // Only emit the sheet when the drawer has any life this quarter (takings or movements).
   const kb = buildKasboek({
     turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter,
-    openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter }),
+    openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter, startingBalance: kasStartingBalance }),
   });
   const kasboekXlsx: Uint8Array | null =
     kb.months.length > 0 || kb.openingBalance !== 0
