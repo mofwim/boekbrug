@@ -64,13 +64,17 @@ export async function GET(req: NextRequest) {
   let failed = 0;
   let truncated = 0;
 
-  // [CRON-FAIRNESS] Rotate the start each run (by the UTC hour) so, if the full list can't finish
-  // within maxDuration, a FIXED tail never permanently starves — over the day everyone reaches the
-  // head. The soft deadline stops cleanly BETWEEN users (never mid-write), so a truncation can't
-  // leave a half-linked payment. Full round-robin needs a persisted cursor; this is the cheap,
-  // stateless version that removes the "always the same users starve" failure.
+  // [CRON-FAIRNESS] Rotate the start each run so, if the full list can't finish within maxDuration,
+  // a FIXED tail never permanently starves. The cron fires ONCE a day at a fixed hour (Vercel Hobby
+  // can't run it more often), so keying the offset off getUTCHours() was a NO-OP — the hour is the
+  // same every run, so the same tail starved forever. Key it off the EPOCH DAY instead: it advances
+  // by one each daily run, so the start walks the whole list and every user reaches the head within
+  // N days. The soft deadline stops cleanly BETWEEN users (never mid-write), so a truncation can't
+  // leave a half-linked payment. (A persisted cursor would advance by the count processed; this is
+  // the cheap stateless version that actually varies.)
   const arr = [...userIds];
-  const offset = arr.length > 0 ? new Date().getUTCHours() % arr.length : 0;
+  const epochDay = Math.floor(Date.now() / 86_400_000);
+  const offset = arr.length > 0 ? epochDay % arr.length : 0;
   const ordered = [...arr.slice(offset), ...arr.slice(0, offset)];
   const startedAt = Date.now();
   const DEADLINE_MS = 250_000; // stop ~50s before the 300s ceiling, between users
