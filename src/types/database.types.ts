@@ -1511,6 +1511,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      book_bank_batch: {
+        Args: {
+          p_user_id: string
+          p_tx_id: string
+          p_invoice_ids: string[]
+          p_pay_date: string | null
+        }
+        Returns: {
+          invoice_id: string
+        }[]
+      }
       check_rate_limit: {
         Args: {
           p_endpoint: string

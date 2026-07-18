@@ -155,42 +155,27 @@ export async function runBankAutoConfirm(args: {
     const tx = rowToTransaction(row);
     if (!planInvs.every((inv) => isEligible(tx, inv))) continue; // accountant-'verwerkt' + invariants
 
-    // Pay every invoice in the tie. Track the ones WE flipped so a failure rolls back cleanly —
-    // a batch must be all-or-nothing, never a half-booked payment.
-    const flipped: string[] = [];
-    let ok = true;
-    for (const inv of planInvs) {
-      const { data, error } = await payClient
-        .from("invoices")
-        .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: tx.date || null })
-        .eq("id", inv.id).neq("status", "paid").select("id");
-      if (error) { ok = false; break; }            // verwerkt/RLS/other → abort the batch
-      if (data && data.length > 0) flipped.push(inv.id);
-      // data empty ⇒ concurrently paid by id ⇒ still covered ⇒ continue
-    }
-    const rollback = async () => {
-      for (const id of flipped) {
-        const inv = invById.get(id);
-        await payClient.from("invoices")
-          .update({ status: inv?.status ?? "received", payment_method: null, marked_paid_at: null, payment_date: null })
-          .eq("id", id).eq("status", "paid");
-      }
-    };
-    if (!ok) { await rollback(); continue; }
-
-    // Link the bank line to the batch (status matched + a representative invoice_id — the same
-    // shape the manual allCovered path writes). A link race rolls the whole batch back.
-    const rep = plan.invoiceIds[plan.invoiceIds.length - 1];
-    const { data: linkData, error: linkErr } = await pipeline
-      .from("bank_transactions")
-      .update({ status: "matched", invoice_id: rep })
-      .eq("id", txId).eq("user_id", userId).eq("status", "pending").select("id");
-    if (linkErr || !linkData || linkData.length === 0) { await rollback(); continue; }
-
-    // [BANK-TX-INVOICES] Record EVERY invoice this batch paid (not just the representative), so the
-    // whole batch reverses by id — the reason the join table exists (a batch used to carry only one
-    // invoice_id, forcing an unsafe number-based reversal for the other N−1).
-    await recordPaymentLinks(pipeline, userId, txId, plan.invoiceIds);
+    // [BANK-BATCH-ATOMIC] Book the whole tie in ONE database transaction via book_bank_batch.
+    // The RPC locks the bank line FIRST (the mutex), re-verifies every invoice is still unpaid +
+    // not accountant-'verwerkt' under that lock, then pays them all, links the tx, and records the
+    // join rows — all-or-nothing. This closes the concurrent half-rollback the multi-statement
+    // path had: two overlapping runs over the same batch tx could leave one invoice unpaid while
+    // the tx showed 'matched' (and never retried). Now the loser blocks on the lock and gets an
+    // EMPTY result → skips. If any invoice turned unpayable in the window the whole batch aborts
+    // (error) and nothing is written. Reversal index (bank_tx_invoices) is written INSIDE the txn.
+    //
+    // Outcomes: rows returned ⇒ booked · empty (no error) ⇒ tx already claimed by a concurrent run
+    // ⇒ skip · error ⇒ an invoice is no longer payable (or the migration isn't applied yet) ⇒
+    // leave the whole batch for the human. Degrades safely: a missing function just means batches
+    // aren't auto-booked until book_bank_batch_atomic.sql is applied.
+    const { data: bookedRows, error: batchErr } = await payClient.rpc("book_bank_batch", {
+      p_user_id: userId,
+      p_tx_id: txId,
+      p_invoice_ids: plan.invoiceIds,
+      p_pay_date: tx.date || null,
+    });
+    if (batchErr) continue;                                        // not payable / not applied → skip
+    if (!bookedRows || (bookedRows as unknown[]).length === 0) continue; // tx already claimed → skip
 
     for (const inv of planInvs) {
       confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0 });
