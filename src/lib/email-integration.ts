@@ -1689,18 +1689,30 @@ export async function syncUserEmails(
     if (Number.isFinite(raw) && raw >= 1 && raw <= 50) return Math.round(raw)
     return 6
   })()
+  // [POISON-PILL] Minimum REAL time between two counted failures. The counter is time-gated, not
+  // per-sync: a burst of rapid re-syncs (manual retries, the client's auto-continue backlog drain,
+  // a frequent cron) within this window counts as ONE attempt, so a short transient Claude/rate-
+  // limit episode can never burn all the attempts and give up on a real invoice. Only a failure
+  // that PERSISTS across many hours (a genuine poison pill) reaches SYNC_MAX_ATTEMPTS. With the
+  // defaults (6 × 30 min) a give-up needs ~2.5 h of continuous failure.
+  const SYNC_MIN_RETRY_MS = (() => {
+    const raw = Number(process.env.SYNC_MIN_RETRY_MINUTES)
+    const mins = Number.isFinite(raw) && raw >= 0 && raw <= 1440 ? Math.round(raw) : 30
+    return mins * 60_000
+  })()
 
-  const attemptCounts = new Map<string, number>()
+  // count = consecutive counted failures; atMs = when the last one was counted (the time gate).
+  const attemptState = new Map<string, { count: number; atMs: number }>()
   {
     const batchKeys = freshAttachments.map((a) => `${a.messageId}:${a.filename}`)
     for (const chunk of chunkArray(batchKeys, 100)) {
       const { data } = await supabase
         .from('email_failed_attempts')
-        .select('source_message_id, attempt_count')
+        .select('source_message_id, attempt_count, updated_at')
         .eq('user_id', userId)
         .in('source_message_id', chunk)
-      for (const r of (data ?? []) as Array<{ source_message_id: string; attempt_count: number }>) {
-        attemptCounts.set(r.source_message_id, r.attempt_count)
+      for (const r of (data ?? []) as Array<{ source_message_id: string; attempt_count: number; updated_at: string }>) {
+        attemptState.set(r.source_message_id, { count: r.attempt_count, atMs: new Date(r.updated_at).getTime() })
       }
     }
   }
@@ -1741,17 +1753,24 @@ export async function syncUserEmails(
     } catch (e) {
       console.error('[BOEK-011] could-not-read save failed', e)
     }
-    await supabase
-      .from('email_skipped_attachments')
-      .upsert(
-        {
-          user_id: userId,
-          source_message_id: `${att.messageId}:${att.filename}`,
-          filename: att.filename,
-          reason,
-        },
-        { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
-      )
+    // NB: the skip upsert is inside its OWN try/catch — this function must NEVER throw (its callers
+    // run inside the PHASE-2 try/catch, and a throw here would double-count the attempt and abort
+    // the whole sync before the watermark advance).
+    try {
+      await supabase
+        .from('email_skipped_attachments')
+        .upsert(
+          {
+            user_id: userId,
+            source_message_id: `${att.messageId}:${att.filename}`,
+            filename: att.filename,
+            reason,
+          },
+          { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+        )
+    } catch (e) {
+      console.error('[BOEK-011] skip-registry upsert failed (non-fatal)', e)
+    }
   }
 
   // Record ONE failed processing attempt for an attachment. Returns true when it has now EXHAUSTED
@@ -1759,8 +1778,15 @@ export async function syncUserEmails(
   // pass; false while it should still be retried (the mark holds, unchanged behaviour). Never throws.
   const recordFailedAttempt = async (att: GmailAttachment, lastError: string): Promise<boolean> => {
     const key = `${att.messageId}:${att.filename}`
-    const next = (attemptCounts.get(key) ?? 0) + 1
-    attemptCounts.set(key, next)
+    const prev = attemptState.get(key)
+    const nowMs = Date.now()
+    // [POISON-PILL] Time gate: within SYNC_MIN_RETRY_MS of the last COUNTED failure, do NOT count
+    // again — hold the mark and retry next sync, exactly like a plain transient failure. This is
+    // what keeps a burst of rapid re-syncs during a short outage from exhausting the attempts on a
+    // real invoice; only a failure that keeps recurring across the window advances the counter.
+    if (prev && nowMs - prev.atMs < SYNC_MIN_RETRY_MS) return false
+    const next = (prev?.count ?? 0) + 1
+    attemptState.set(key, { count: next, atMs: nowMs })
     try {
       await supabase
         .from('email_failed_attempts')
@@ -1770,7 +1796,7 @@ export async function syncUserEmails(
             source_message_id: key,
             attempt_count: next,
             last_error: lastError.slice(0, 500),
-            updated_at: new Date().toISOString(),
+            updated_at: new Date(nowMs).toISOString(),
           },
           { onConflict: 'user_id,source_message_id' }
         )
