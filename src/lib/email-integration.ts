@@ -1676,6 +1676,113 @@ export async function syncUserEmails(
   const freshAttachments = freshAll.slice(0, SYNC_BATCH_MAX)
   const remainingAfterBatch = freshAll.length - freshAttachments.length
 
+  // [POISON-PILL] Consecutive-failure guard for the watermark. The mark walks messages oldest-first
+  // and stops at the first with an attachment that didn't finish this run — correct for a genuine
+  // transient failure, but an attachment that fails EVERY sync (a non-transient error mis-read as
+  // transient, a file that always times out, a persistent save/DB error) would block the walk
+  // forever, freezing the mark and starving every newer invoice behind the batch cap. We count
+  // consecutive failures per attachment and GIVE UP after SYNC_MAX_ATTEMPTS: keep it owner-visible
+  // and register a terminal skip so the mark can pass. Completed attachments' counters are cleared
+  // after PHASE 2, so a finally-successful flaky file never carries a stale count.
+  const SYNC_MAX_ATTEMPTS = (() => {
+    const raw = Number(process.env.SYNC_MAX_ATTEMPTS)
+    if (Number.isFinite(raw) && raw >= 1 && raw <= 50) return Math.round(raw)
+    return 6
+  })()
+
+  const attemptCounts = new Map<string, number>()
+  {
+    const batchKeys = freshAttachments.map((a) => `${a.messageId}:${a.filename}`)
+    for (const chunk of chunkArray(batchKeys, 100)) {
+      const { data } = await supabase
+        .from('email_failed_attempts')
+        .select('source_message_id, attempt_count')
+        .eq('user_id', userId)
+        .in('source_message_id', chunk)
+      for (const r of (data ?? []) as Array<{ source_message_id: string; attempt_count: number }>) {
+        attemptCounts.set(r.source_message_id, r.attempt_count)
+      }
+    }
+  }
+
+  // Keep an unreadable/failed attachment owner-visible: store the bytes as a could_not_read document
+  // (deduped by content hash) and register a skip with `reason`. Shared by the confidence-0 "could
+  // not read" branch and the poison-pill give-up. Never throws.
+  const saveUnreadableAttachment = async (att: GmailAttachment, reason: string): Promise<void> => {
+    try {
+      const buf = Buffer.from(att.data, 'base64')
+      const hash = computeContentHash(buf)
+      const { data: dupDoc } = await supabase
+        .from('documents').select('id')
+        .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
+      if (!dupDoc) {
+        const safeName = att.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
+        const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
+        const { error: upErr } = await supabase.storage
+          .from('documents').upload(storagePath, buf, { contentType: att.mimeType, upsert: false })
+        if (!upErr) {
+          const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
+          const { error: docErr } = await supabase.from('documents').insert({
+            user_id: userId,
+            file_name: att.filename,
+            file_url: storagePath,
+            file_size: buf.length,
+            file_type: att.mimeType,
+            doc_type: 'overig',
+            folder_id: folderId,
+            source: 'email',
+            ai_processed: false,          // we did NOT read it — never claim we did
+            ai_doc_type: 'could_not_read',
+            content_hash: hash,
+          })
+          if (docErr) await supabase.storage.from('documents').remove([storagePath])
+        }
+      }
+    } catch (e) {
+      console.error('[BOEK-011] could-not-read save failed', e)
+    }
+    await supabase
+      .from('email_skipped_attachments')
+      .upsert(
+        {
+          user_id: userId,
+          source_message_id: `${att.messageId}:${att.filename}`,
+          filename: att.filename,
+          reason,
+        },
+        { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+      )
+  }
+
+  // Record ONE failed processing attempt for an attachment. Returns true when it has now EXHAUSTED
+  // its retries and was given up (kept owner-visible + terminal skip), so the caller lets the mark
+  // pass; false while it should still be retried (the mark holds, unchanged behaviour). Never throws.
+  const recordFailedAttempt = async (att: GmailAttachment, lastError: string): Promise<boolean> => {
+    const key = `${att.messageId}:${att.filename}`
+    const next = (attemptCounts.get(key) ?? 0) + 1
+    attemptCounts.set(key, next)
+    try {
+      await supabase
+        .from('email_failed_attempts')
+        .upsert(
+          {
+            user_id: userId,
+            source_message_id: key,
+            attempt_count: next,
+            last_error: lastError.slice(0, 500),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,source_message_id' }
+        )
+    } catch (e) {
+      console.error('[POISON-PILL] attempt upsert failed (non-fatal)', e)
+    }
+    if (next < SYNC_MAX_ATTEMPTS) return false
+    console.warn('[POISON-PILL] giving up on attachment after repeated failures', { key, attempts: next })
+    await saveUnreadableAttachment(att, 'repeatedly_failed')
+    return true
+  }
+
   console.log('[BOEK-011] Sync scope', {
     fetched: attachments.length,
     alreadyImported: knownKeys.size,
@@ -1726,9 +1833,18 @@ export async function syncUserEmails(
       // Transient classification failure (rate limit / network) → skip WITHOUT
       // registering; the next sync retries it. A real invoice must never be
       // permanently skipped because of one bad network moment.
-      // [watermark] NOT complete — the mark stops before this email.
+      // [watermark] NOT complete — the mark stops before this email … UNLESS this attachment has
+      // failed on SYNC_MAX_ATTEMPTS consecutive syncs (poison pill), in which case we give up so it
+      // stops blocking every newer invoice: it's kept owner-visible + registered terminal and the
+      // mark is allowed to pass (completedKeys).
       if (classifyFailed) {
-        errors++
+        const gaveUp = await recordFailedAttempt(attachment, 'classify_failed')
+        if (gaveUp) {
+          couldNotRead++
+          completedKeys.add(wmKey)
+        } else {
+          errors++
+        }
         continue
       }
 
@@ -1740,50 +1856,7 @@ export async function syncUserEmails(
       // owner is told, and register it with reason 'could_not_read' (still stops the
       // costly per-sync re-send, but is honest about WHY).
       if (!classification.isInvoice && !((classification.confidence ?? 0) > 0)) {
-        try {
-          const buf = Buffer.from(attachment.data, 'base64')
-          const hash = computeContentHash(buf)
-          const { data: dupDoc } = await supabase
-            .from('documents').select('id')
-            .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
-          if (!dupDoc) {
-            const safeName = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
-            const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
-            const { error: upErr } = await supabase.storage
-              .from('documents').upload(storagePath, buf, { contentType: attachment.mimeType, upsert: false })
-            if (!upErr) {
-              const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
-              const { error: docErr } = await supabase.from('documents').insert({
-                user_id: userId,
-                file_name: attachment.filename,
-                file_url: storagePath,
-                file_size: buf.length,
-                file_type: attachment.mimeType,
-                doc_type: 'overig',
-                folder_id: folderId,
-                source: 'email',
-                ai_processed: false,          // we did NOT read it — never claim we did
-                ai_doc_type: 'could_not_read',
-                content_hash: hash,
-              })
-              if (docErr) await supabase.storage.from('documents').remove([storagePath])
-            }
-          }
-        } catch (e) {
-          console.error('[BOEK-011] could-not-read save failed', e)
-        }
-        const skipPipeline = createPipelineClient()
-        await skipPipeline
-          .from('email_skipped_attachments')
-          .upsert(
-            {
-              user_id: userId,
-              source_message_id: `${attachment.messageId}:${attachment.filename}`,
-              filename: attachment.filename,
-              reason: 'could_not_read',
-            },
-            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
-          )
+        await saveUnreadableAttachment(attachment, 'could_not_read')
         couldNotRead++
         completedKeys.add(wmKey) // handled (kept + registered) = complete
         continue
@@ -2402,9 +2475,18 @@ export async function syncUserEmails(
           if (pdfUrl) {
             await supabase.storage.from('documents').remove([pdfUrl])
           }
-          errors++
-          // [watermark] NOT complete — a genuine save failure; the mark stops
-          // here so the next sync re-fetches and retries this email.
+          // [watermark] NOT complete — a genuine save failure; the mark stops here so the next
+          // sync re-fetches and retries this email … unless this attachment has now failed
+          // SYNC_MAX_ATTEMPTS times (poison pill), in which case we give up and let the mark pass.
+          {
+            const gaveUp = await recordFailedAttempt(attachment, `save_error: ${dbError.message}`)
+            if (gaveUp) {
+              couldNotRead++
+              completedKeys.add(wmKey)
+            } else {
+              errors++
+            }
+          }
         }
       } else {
         saved++
@@ -2445,8 +2527,31 @@ export async function syncUserEmails(
       }
     } catch (error) {
       console.error('[BOEK-011] Processing error:', error)
-      errors++
-      // [watermark] NOT complete — unknown failure; the mark stops here.
+      // [watermark] NOT complete — unknown failure; the mark stops here … unless this attachment
+      // has now failed SYNC_MAX_ATTEMPTS times (poison pill), in which case we give up and let the
+      // mark pass so it stops blocking every newer invoice.
+      const msg = error instanceof Error ? error.message : String(error)
+      const gaveUp = await recordFailedAttempt(attachment, msg)
+      if (gaveUp) {
+        couldNotRead++
+        completedKeys.add(wmKey)
+      } else {
+        errors++
+      }
+    }
+  }
+
+  // [POISON-PILL] Clear the failure counter for every attachment that completed this run (saved,
+  // duplicate, terminal skip, or given up) — a flaky file that finally succeeded must not carry a
+  // stale count toward a future give-up. Failed-this-round attachments keep their (just-incremented)
+  // count so the next sync sees it.
+  if (completedKeys.size > 0) {
+    for (const chunk of chunkArray([...completedKeys], 100)) {
+      await supabase
+        .from('email_failed_attempts')
+        .delete()
+        .eq('user_id', userId)
+        .in('source_message_id', chunk)
     }
   }
 
