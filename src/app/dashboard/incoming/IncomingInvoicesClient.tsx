@@ -2158,6 +2158,13 @@ export default function IncomingInvoicesClient({
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
 
+  // ── [REIMPORT-ALL] One-tap re-read of every "Aandacht nodig" invoice ──
+  // Re-runs the extractor over each flagged invoice's stored file, exactly like the
+  // per-card "Opnieuw inlezen" — improve-or-keep, never auto-verifies, status stays
+  // 'processing'. So each invoice keeps its own current state; only the READ is redone.
+  const [reimportAllRunning, setReimportAllRunning] = useState(false);
+  const [reimportAllDone, setReimportAllDone] = useState(0);
+
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -2312,6 +2319,48 @@ export default function IncomingInvoicesClient({
     }
   }, []);
 
+  // ── [REIMPORT-ALL] Re-read every flagged invoice in one tap ──
+  // Sequential (never hammer the AI): one reimport call per "Aandacht nodig" invoice.
+  // Each call is improve-or-keep and leaves status='processing', so an invoice's own
+  // state is preserved — only its extraction is refreshed. One page reload at the end
+  // picks up the new amounts + health for every card at once.
+  const handleReimportAllNeedsAttention = useCallback(async () => {
+    if (reimportAllRunning) return;
+    const targets = pending.filter((p) => p.health.level === "needs-review");
+    if (targets.length === 0) return;
+    setReimportAllRunning(true);
+    setReimportAllDone(0);
+
+    let improved = 0;
+    let notInvoice = 0;
+    let failed = 0;
+    for (const inv of targets) {
+      try {
+        const res = await fetch(`/api/email/reimport/${inv.id}`, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) improved++;
+        else if (data.notInvoice) notInvoice++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+      setReimportAllDone((n) => n + 1);
+    }
+
+    setReimportAllRunning(false);
+    // A blocking summary only when something needs the owner's eye; otherwise the
+    // refreshed cards are the feedback. Either way we reload to show the new reads.
+    if (notInvoice > 0 || failed > 0) {
+      alert(
+        "Opnieuw inlezen klaar:\n" +
+          `• ${improved} bijgewerkt\n` +
+          (notInvoice ? `• ${notInvoice} bleek geen boekbare factuur — je kunt die negeren\n` : "") +
+          (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw\n` : "")
+      );
+    }
+    window.location.reload();
+  }, [pending, reimportAllRunning]);
+
   const list = tab === "pending" ? pending : ignored;
 
   // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────
@@ -2419,6 +2468,33 @@ export default function IncomingInvoicesClient({
             bevestigen
           </p>
         )}
+        {/* [REIMPORT-ALL] One tap re-reads every "Aandacht nodig" invoice — each keeps its
+            own current state (improve-or-keep, never verified). Only on the pending tab and
+            only when something is actually flagged. */}
+        {tab === "pending" && needsAttentionCount > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              onClick={handleReimportAllNeedsAttention}
+              disabled={reimportAllRunning}
+              aria-label="Alle facturen die aandacht nodig hebben opnieuw inlezen"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "8px 14px", borderRadius: 10,
+                background: "#fef7e0", color: "#B06000",
+                border: "1px solid #FDE293",
+                fontSize: 14, fontWeight: 600,
+                cursor: reimportAllRunning ? "default" : "pointer",
+                opacity: reimportAllRunning ? 0.7 : 1,
+              }}
+            >
+              {reimportAllRunning
+                ? `Bezig met opnieuw inlezen… (${reimportAllDone}/${needsAttentionCount})`
+                : `↻ Alles met aandacht opnieuw inlezen (${needsAttentionCount})`}
+            </button>
+          </div>
+        )}
+
         {/* [BRIDGE-POLISH 3b] Entry to the management surface for confirmed
             incoming invoices (received/paid). iOS-styled to match THIS surface. */}
         <Link
