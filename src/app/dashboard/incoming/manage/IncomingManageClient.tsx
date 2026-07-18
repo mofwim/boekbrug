@@ -408,31 +408,21 @@ export default function IncomingManageClient({
     setPayCtx(null); setProcessingId(ctx.id)
     patchLocal(ctx.id, { status: ctx.newStatus })
 
-    // Tight, specific update: status + payment fields. Never amounts (B.4 guards
-    // them, and we don't even include them). Session client → auth.uid()=receiver
-    // → B.4 receiver-exclusion fires → write passes for a non-verwerkt invoice.
-    const patch: Record<string, any> = { status: ctx.newStatus }
-    if (ctx.newStatus === 'paid') {
-      patch.payment_method = ctx.paymentMethod ?? 'bank'
-      patch.marked_paid_at = new Date().toISOString()
-      patch.payment_date   = ctx.paymentDate ?? new Date().toISOString().slice(0, 10)
-      // [PAY-SAFE-CONFIRM] Confirmed paid → the "prepared" marker has served
-      // its purpose; clear it so a paid row never shows "wacht op bevestiging".
-      patch.payment_prepared_at = null
-    } else {
-      patch.payment_method = null
-      patch.marked_paid_at = null
-      patch.payment_date   = null
-      // [PAY-SAFE-CONFIRM] Undo paid → back to a clean unpaid row, no stale marker.
-      patch.payment_prepared_at = null
-    }
-
-    const { error } = await supabase
-      .from('invoices')
-      .update(patch)
-      .eq('id', ctx.id)
-      .eq('receiver_id', profile.id)        // ownership guard (incoming → receiver)
-      .eq('direction', 'incoming')
+    // [PAY-TOGGLE] Route through the server so the mutation is AUDITED and — crucially on undo —
+    // any bank transaction matched to this invoice is DETACHED (never a paid-undone invoice beside
+    // a still-'matched' tx that the owner could pay a second time). The old direct client write did
+    // neither.
+    const res = await fetch('/api/invoice/pay-toggle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceId: ctx.id,
+        action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
+        paymentMethod: ctx.paymentMethod ?? 'bank',
+        paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+      }),
+    })
+    const json = await res.json().catch(() => ({} as { error?: string }))
+    const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
 
     if (error) {
       // rollback optimistic
@@ -446,6 +436,10 @@ export default function IncomingManageClient({
         showToast(error.message || 'Bijwerken mislukt')
       }
     } else if (ctx.newStatus === 'paid') {
+      const patch = {
+        payment_method: (ctx.paymentMethod ?? 'bank') as 'kas' | 'bank',
+        payment_date: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+      }
       // reflect the new payment fields locally
       patchLocal(ctx.id, {
         payment_method: patch.payment_method,
