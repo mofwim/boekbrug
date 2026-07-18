@@ -2,18 +2,33 @@
 
 // src/hooks/useInvoiceReconciliation.ts
 // [BANK-RECON-BADGE] Fetch the per-invoice reconciliation map (linked / pendingMatch)
-// once and hand it to any invoice list. Read-only; a failure just yields no badges (the
-// lists render exactly as before). Keyed by invoice id — look up `byInvoice[invoice.id]`.
+// once and hand it to any invoice list. Read-only display; a failure just yields no badges
+// (the lists render exactly as before). Keyed by invoice id — look up `byInvoice[invoice.id]`.
+//
+// [BANK-RECON-CONFIRM] `confirmMatch(invoiceId)` turns the "Betaling gevonden" chip into a REAL
+// action instead of a dead navigation:
+//   - a SAFE match (reference-backed, isSafeAutoConfirm-grade) is booked in one tap through the
+//     same fully-guarded /api/bank/confirm route the bank page uses, then the badge flips to
+//     "In bankafschrift" optimistically → returns 'ok'.
+//   - an UNSAFE (amount-only) match is never booked from a list — booking it blindly could pay the
+//     wrong same-amount invoice — so it returns 'navigate' and the caller opens the bank page where
+//     the owner sees full context (counterpart, date, other candidates) before confirming.
+//   - no pending match / a failed write → 'navigate' / 'error'.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
+
+export type ConfirmMatchResult = 'ok' | 'navigate' | 'error'
 
 export function useInvoiceReconciliation(enabled: boolean = true): {
   byInvoice: Record<string, InvoiceRecon>
   loaded: boolean
+  confirmMatch: (invoiceId: string) => Promise<ConfirmMatchResult>
+  refetch: () => void
 } {
   const [byInvoice, setByInvoice] = useState<Record<string, InvoiceRecon>>({})
   const [loaded, setLoaded] = useState(false)
+  const [reloadTick, setReloadTick] = useState(0)
 
   useEffect(() => {
     if (!enabled) return
@@ -31,7 +46,28 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
       }
     })()
     return () => { cancelled = true }
-  }, [enabled])
+  }, [enabled, reloadTick])
 
-  return { byInvoice, loaded }
+  const refetch = useCallback(() => setReloadTick((t) => t + 1), [])
+
+  const confirmMatch = useCallback(async (invoiceId: string): Promise<ConfirmMatchResult> => {
+    const pending = byInvoice[invoiceId]?.pendingMatch
+    // No confident match, or an amount-only one → the owner must decide on the bank page.
+    if (!pending || !pending.safe) return 'navigate'
+    try {
+      const res = await fetch('/api/bank/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: pending.transactionId, invoiceId }),
+      })
+      if (!res.ok) return 'error'
+      // Optimistic: the payment is now in the statement for this invoice.
+      setByInvoice((m) => ({ ...m, [invoiceId]: { linked: true, pendingMatch: null } }))
+      return 'ok'
+    } catch {
+      return 'error'
+    }
+  }, [byInvoice])
+
+  return { byInvoice, loaded, confirmMatch, refetch }
 }

@@ -191,7 +191,7 @@ export default function IncomingManageClient({
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
-  const { byInvoice: recon } = useInvoiceReconciliation()
+  const { byInvoice: recon, confirmMatch } = useInvoiceReconciliation()
   const parentHref = useParentPath(profile.role ?? 'zzper')
 
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
@@ -668,7 +668,14 @@ export default function IncomingManageClient({
                           </span>
                         )}
                         {recon[inv.id] && (
-                          <ReconBadge recon={recon[inv.id]} mode="zzp" invoiceId={inv.id} onReconConfirm={() => router.push('/dashboard/bank')} />
+                          <ReconBadge recon={recon[inv.id]} mode="zzp" invoiceId={inv.id} onReconConfirm={async (id) => {
+                            // [BANK-RECON-CONFIRM] Book a safe (reference-backed) match in one tap;
+                            // an amount-only match ('navigate') opens the bank page to review.
+                            const r = await confirmMatch(id)
+                            if (r === 'ok') { patchLocal(id, { status: 'paid' }); showToast('Betaling bevestigd ✓') }
+                            else if (r === 'navigate') router.push('/dashboard/bank')
+                            else showToast('Bevestigen mislukt — probeer het op de Bank-pagina')
+                          }} />
                         )}
                         {xq && (
                           <span

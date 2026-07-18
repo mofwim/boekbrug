@@ -35,13 +35,18 @@ export interface ReconSuggestion {
   outcome: "auto" | "choice" | "none";
   best: ReconCandidate | null;
   candidates: ReconCandidate[];
+  /** True when this match is reference-backed + amount-exact + single-invoice (isSafeAutoConfirm):
+   *  certain enough to book in one tap. An amount-only 'auto' is NOT safe — booking it blindly
+   *  could pay the wrong same-amount invoice, so it stays a review action (open the bank page). */
+  safe?: boolean;
 }
 
 export interface InvoiceRecon {
   /** A bank line points at this invoice → the payment is in the statement. */
   linked: boolean;
-  /** The invoice is the confident 'auto' match of an unconfirmed bank line. */
-  pendingMatch: { transactionId: string; confidence: number } | null;
+  /** The invoice is the confident 'auto' match of an unconfirmed bank line. `safe` says whether
+   *  it is certain enough to book with one tap (reference-backed) or only a possibility to review. */
+  pendingMatch: { transactionId: string; confidence: number; safe: boolean } | null;
 }
 
 /**
@@ -84,7 +89,7 @@ export function computeInvoiceReconciliation(
     const r = ensure(invoiceId);
     if (r.linked) continue; // already reconciled — no "found" hint needed
     if (!r.pendingMatch || confidence > r.pendingMatch.confidence) {
-      r.pendingMatch = { transactionId: s.transactionId, confidence };
+      r.pendingMatch = { transactionId: s.transactionId, confidence, safe: s.safe === true };
     }
   }
 

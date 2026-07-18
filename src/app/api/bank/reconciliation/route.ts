@@ -14,7 +14,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
-import { matchTransactions, type InvoiceForMatching } from "@/lib/bank-matching";
+import { matchTransactions, isSafeAutoConfirm, type InvoiceForMatching } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 import {
   computeInvoiceReconciliation,
@@ -79,6 +79,10 @@ export async function GET() {
         outcome: m.outcome,
         best: m.best ? { invoiceId: m.best.invoiceId, confidence: m.best.confidence } : null,
         candidates: m.candidates.map((c) => ({ invoiceId: c.invoiceId, confidence: c.confidence })),
+        // [BANK-RECON-CONFIRM] Reference-backed + amount-exact + single-invoice → certain enough
+        // to book from the invoice row in one tap. An amount-only 'auto' is not safe and stays a
+        // "review on the bank page" action (never one-tap booked from a list).
+        safe: isSafeAutoConfirm(m),
       }));
     }
 
