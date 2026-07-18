@@ -131,6 +131,35 @@ export async function GET() {
     }
   }
 
+  // [BANK-PAID-EXPLAINED] A purchase debit that settles an invoice already marked paid by hand in
+  // Crediteuren must NOT be flagged as a "missende inkoopfactuur — voorbelasting niet geclaimd": the
+  // invoice exists, is paid, and its BTW is already in the aangifte (accrual). The matcher above
+  // excludes paid invoices (.neq status paid), so such a debit falls to outcome 'none' and the UI
+  // raises a FALSE missing-invoice alarm the owner can never clear. Re-run the scorer against PAID
+  // invoices (as explain-only candidates: status forced 'received' so isEligible admits them, and
+  // amount_paid zeroed so the remaining-aware amount targets the full total). A strong hit
+  // (reference/iban + amount) means the debit is explained. Display-only — nothing is re-paid.
+  const paidInvRows = await fetchAllRows((from, to) =>
+    pipeline
+      .from("invoices")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban")
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .eq("status", "paid")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const paidExplained = new Set<string>();
+  if ((paidInvRows ?? []).length > 0) {
+    const paidAsCandidates = (paidInvRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0 }));
+    const explainResult = matchTransactions(transactions, paidAsCandidates);
+    for (const m of explainResult.matches) {
+      const id = m.transaction.transactionId;
+      if (!id || !m.best) continue;
+      const sig = m.best.signals;
+      if ((sig.includes("reference") || sig.includes("iban")) && sig.includes("amount")) paidExplained.add(id);
+    }
+  }
+
   // 5. Shape a lean DTO for the UI. transactionId === bank_transactions.id.
   const suggestions = result.matches.map((m) => {
     const txId = m.transaction.transactionId;
@@ -157,6 +186,8 @@ export async function GET() {
       // [BANK-SLOT-PERSIST] Normalized reference numbers already paid against this tx, so
       // the multi-invoice UI marks those slots "Betaald" after a reload (session state gone).
       coveredNumbers: isLinked ? (coveredByTx.get(txId!) ?? []) : [],
+      // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
+      explainedByPaid: txId != null && paidExplained.has(txId),
     };
   });
 

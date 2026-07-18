@@ -93,6 +93,8 @@ interface Suggestion {
   // [BANK-SLOT-PERSIST] Server-computed reference numbers already paid against this tx,
   // so a paid slot shows "Betaald" after a reload (session confirm state is gone).
   coveredNumbers?: string[]
+  // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
+  explainedByPaid?: boolean
 }
 interface MatchResponse {
   ok: boolean
@@ -784,7 +786,10 @@ export default function BankClient() {
   // invoice means the voorbelasting (deductible BTW) on that cost is not claimed, so the owner
   // pays more BTW than they should. The bank line is the one signal that survives a silent
   // import miss, so we turn it from a dead-end into a prompt to recover the document.
-  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0)
+  // [BANK-PAID-EXPLAINED] Exclude a debit that matches an already-PAID invoice (marked paid by hand
+  // in Crediteuren): the invoice exists and its voorbelasting is already claimed, so flagging it as a
+  // "missende inkoopfactuur" is a false alarm the owner can never clear.
+  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0 && !s.explainedByPaid)
   const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).filter(inQ).sort(byDateDesc)
   // [BANK-QUARTER] Ignored tab, filtered to the selected quarter too.
   const ignoredInQ = (ignoredList ?? []).filter(inQ)
