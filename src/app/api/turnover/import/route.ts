@@ -17,6 +17,7 @@ import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
 import { normalizeTurnoverSheet } from "@/lib/turnover-import";
 import { detectSheetKind } from "@/lib/detect-file";
 import type { DailyTurnover } from "@/lib/turnover";
+import { logAuditAction, getClientIP } from "@/lib/audit";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB — a Z-report is tiny; this is generous.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,6 +63,19 @@ export async function POST(req: NextRequest) {
       .upsert(records, { onConflict: "user_id,turnover_date" });
     if (error) return NextResponse.json({ error: "kon dagomzet niet opslaan" }, { status: 500 });
 
+    // [DAGOMZET-AUDIT] This is a money mutation into the BTW-authoritative daily_turnover — audit it
+    // (the intake/reprocess paths already do). Constraint (4): every money write is auditable.
+    await logAuditAction({
+      userId: user.id, action: "turnover.auto_imported", entityType: "turnover", entityId: user.id,
+      newValue: {
+        via: "dagomzet_manual_commit",
+        days: records.map((r) => r.turnover_date),
+        count: records.length,
+        total_incl: records.reduce((s, r) => s + (r.total_incl ?? 0), 0),
+      },
+      ipAddress: getClientIP(req),
+    });
+
     return NextResponse.json({ ok: true, committed: records.length });
   }
 
@@ -95,4 +109,34 @@ export async function POST(req: NextRequest) {
 
   const { rows, warnings } = normalizeTurnoverSheet(matrix);
   return NextResponse.json({ ok: true, preview: true, count: rows.length, rows, warnings });
+}
+
+// [DAGOMZET-DELETE] Clear a booked turnover day. A wrong-date/wrong-month row fed the BTW return and
+// there was no way to reverse it (re-import only overwrites the SAME date). This removes exactly one
+// day (?date=YYYY-MM-DD) for the owner and audits the reversal. Reversible + audited (constraint 4).
+export async function DELETE(req: NextRequest) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const date = req.nextUrl.searchParams.get("date");
+  if (!date || !ISO_DATE.test(date)) return NextResponse.json({ error: "ongeldige of ontbrekende datum" }, { status: 400 });
+
+  // Capture the row first so the audit records exactly what was removed (and a no-op is a clean 404).
+  const { data: existing } = await supabase
+    .from("daily_turnover").select("turnover_date, total_incl, source")
+    .eq("user_id", user.id).eq("turnover_date", date).maybeSingle();
+  if (!existing) return NextResponse.json({ error: "geen dagomzet op deze datum" }, { status: 404 });
+
+  const { error } = await supabase
+    .from("daily_turnover").delete().eq("user_id", user.id).eq("turnover_date", date);
+  if (error) return NextResponse.json({ error: "kon dagomzet niet verwijderen" }, { status: 500 });
+
+  await logAuditAction({
+    userId: user.id, action: "turnover.auto_imported", entityType: "turnover", entityId: user.id,
+    oldValue: { turnover_date: existing.turnover_date, total_incl: existing.total_incl, source: existing.source },
+    newValue: { via: "dagomzet_delete", removed_day: date },
+    ipAddress: getClientIP(req),
+  });
+  return NextResponse.json({ ok: true, removed: date });
 }
