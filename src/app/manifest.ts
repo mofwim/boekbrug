@@ -7,7 +7,8 @@
 // Android (and PWABuilder/Bubblewrap when generating the Play Store TWA) read
 // to build the launcher icon and splash screen. "maskable" icons are full-bleed
 // so Android can crop them to any device shape without white corners. The source
-// artwork is the white "BB" monogram on the brand-blue gradient in public/icons.
+// artwork is the white "BB" wordmark over a suspension bridge (BoekBrug = "book
+// bridge") on the brand-blue gradient — regenerate via scripts/generate-icons.mjs.
 
 import type { MetadataRoute } from 'next'
 

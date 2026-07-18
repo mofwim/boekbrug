@@ -1,87 +1,114 @@
 #!/usr/bin/env node
 // scripts/generate-icons.mjs
 // [ANDROID/PWA] Generates the BoekBrug launcher icons in public/icons/ — the
-// white "BB" monogram on the brand-blue gradient used for the PWA / Android TWA
-// install experience. See docs/ANDROID_TWA_GUIDE.md.
+// white "BB" wordmark over a suspension bridge (BoekBrug = "book bridge") on the
+// brand-blue gradient, used for the PWA / Android TWA install experience.
+// See docs/ANDROID_TWA_GUIDE.md.
 //
 // Run from the repo root:   node scripts/generate-icons.mjs
-// Uses `sharp` (already a project dependency) to rasterize an inline SVG, so no
-// design tool is needed — edit the SVG below and re-run to rebrand.
+// Reproducible + self-contained: uses `sharp` (a project dependency) to
+// rasterize an inline SVG, and registers the bundled Outfit font
+// (scripts/fonts/, SIL OFL) via fontconfig so it renders identically on any
+// machine. Edit the SVG below and re-run to rebrand.
 //
 // Outputs (512px master downscaled):
 //   icon-192.png / icon-512.png              — "any" purpose, rounded corners
-//   icon-maskable-192.png / -512.png         — full-bleed, Android crops to shape
+//   icon-maskable-192.png / -512.png         — full-bleed, art scaled into the
+//                                              Android safe zone (no clipping)
 //   apple-touch-icon.png (180)               — iOS home-screen
 
 import sharp from "sharp";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const OUT = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "public",
-  "icons"
-);
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const OUT = path.join(HERE, "..", "public", "icons");
 mkdirSync(OUT, { recursive: true });
 
-// One geometric "B" built from stroked paths (no font dependency — resvg inside
-// sharp renders paths deterministically). Local coords: stem at x=0, top y=0,
-// height 210, lower bowl a touch larger for a classic B.
-function B(tx, ty) {
-  const H = 210;
-  const sw = 34;
-  return `
-    <g transform="translate(${tx},${ty})" fill="none" stroke="white"
-       stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M0 0 L0 ${H}"/>
-      <path d="M0 0 L44 0 C92 0 92 105 44 105 L0 105"/>
-      <path d="M0 105 L50 105 C104 105 104 ${H} 50 ${H} L0 ${H}"/>
-    </g>`;
+// Make the bundled Outfit-Bold available to fontconfig (librsvg inside sharp
+// resolves SVG <text> fonts by family name), so `node scripts/generate-icons.mjs`
+// produces the same glyphs everywhere without a system font install.
+try {
+  const fontDir = path.join(os.homedir(), ".fonts");
+  mkdirSync(fontDir, { recursive: true });
+  const dest = path.join(fontDir, "Outfit-Bold.ttf");
+  if (!existsSync(dest)) copyFileSync(path.join(HERE, "fonts", "Outfit-Bold.ttf"), dest);
+  execFileSync("fc-cache", ["-f", fontDir], { stdio: "ignore" });
+} catch (e) {
+  console.warn("[icons] could not register bundled font, relying on system Outfit:", e.message);
 }
 
-// Two B's, centered as a tight modern monogram.
-const monogram = `${B(134, 151)}${B(274, 151)}`;
+const S = 512;
 
-function svg({ rounded }) {
-  const bg = rounded
-    ? `<rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#g)"/>
-       <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#h)"/>`
-    : `<rect x="0" y="0" width="512" height="512" fill="url(#g)"/>
-       <rect x="0" y="0" width="512" height="512" fill="url(#h)"/>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-    <defs>
-      <linearGradient id="g" x1="40" y1="20" x2="472" y2="500" gradientUnits="userSpaceOnUse">
-        <stop offset="0" stop-color="#4c8dff"/>
-        <stop offset="0.55" stop-color="#1a73e8"/>
-        <stop offset="1" stop-color="#0b57d0"/>
-      </linearGradient>
-      <radialGradient id="h" cx="0.30" cy="0.20" r="0.95">
-        <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
-        <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.05"/>
-        <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
-      </radialGradient>
-    </defs>
-    ${bg}
-    ${monogram}
-  </svg>`;
-}
+const defs = `<defs>
+  <linearGradient id="blue" x1="40" y1="10" x2="480" y2="504" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#4c8dff"/>
+    <stop offset="0.55" stop-color="#1a73e8"/>
+    <stop offset="1" stop-color="#0b57d0"/>
+  </linearGradient>
+  <radialGradient id="hi" cx="0.3" cy="0.18" r="0.95">
+    <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+    <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.05"/>
+    <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="soft" x="-25%" y="-25%" width="150%" height="150%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="7"/>
+    <feOffset dy="7" result="o"/>
+    <feFlood flood-color="#062a6b" flood-opacity="0.33"/>
+    <feComposite in2="o" operator="in"/>
+    <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>`;
 
-const roundedSvg = Buffer.from(svg({ rounded: true }));
-const squareSvg = Buffer.from(svg({ rounded: false }));
+// "BB" over a clean suspension bridge — all white so it reads as one mark.
+const art = `
+  <g filter="url(#soft)">
+    <text x="256" y="262" font-family="Outfit" font-weight="700" font-size="196"
+      letter-spacing="-4" fill="white" text-anchor="middle">BB</text>
+    <g fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="100" y1="372" x2="412" y2="372" stroke-width="15"/>
+      <line x1="160" y1="300" x2="160" y2="378" stroke-width="15"/>
+      <line x1="352" y1="300" x2="352" y2="378" stroke-width="15"/>
+      <path d="M100 372 L160 300 Q256 400 352 300 L412 372" stroke-width="13"/>
+      <g stroke-width="7">
+        <line x1="198" y1="333" x2="198" y2="372"/>
+        <line x1="227" y1="346" x2="227" y2="372"/>
+        <line x1="256" y1="350" x2="256" y2="372"/>
+        <line x1="285" y1="346" x2="285" y2="372"/>
+        <line x1="314" y1="333" x2="314" y2="372"/>
+      </g>
+    </g>
+  </g>`;
+
+const bg = (rounded) =>
+  rounded
+    ? `<rect width="${S}" height="${S}" rx="115" ry="115" fill="url(#blue)"/>
+       <rect width="${S}" height="${S}" rx="115" ry="115" fill="url(#hi)"/>`
+    : `<rect width="${S}" height="${S}" fill="url(#blue)"/>
+       <rect width="${S}" height="${S}" fill="url(#hi)"/>`;
+
+// maskable → full-bleed square + art scaled to 0.82 so nothing lands outside the
+// Android circular safe zone.
+const svg = ({ rounded, maskable }) => `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">
+  ${defs}${bg(rounded)}
+  ${maskable ? `<g transform="translate(256,256) scale(0.82) translate(-256,-256)">${art}</g>` : art}
+</svg>`;
+
+const rounded = Buffer.from(svg({ rounded: true, maskable: false }));
+const maskable = Buffer.from(svg({ rounded: false, maskable: true }));
+const appleSquare = Buffer.from(svg({ rounded: false, maskable: false }));
 
 async function png(buf, size, name) {
-  await sharp(buf, { density: 384 })
-    .resize(size, size)
-    .png()
-    .toFile(path.join(OUT, name));
+  await sharp(buf).resize(size, size).png().toFile(path.join(OUT, name));
   console.log("wrote", name, `${size}x${size}`);
 }
 
-await png(roundedSvg, 192, "icon-192.png");
-await png(roundedSvg, 512, "icon-512.png");
-await png(squareSvg, 192, "icon-maskable-192.png");
-await png(squareSvg, 512, "icon-maskable-512.png");
-await png(squareSvg, 180, "apple-touch-icon.png");
+await png(rounded, 192, "icon-192.png");
+await png(rounded, 512, "icon-512.png");
+await png(maskable, 192, "icon-maskable-192.png");
+await png(maskable, 512, "icon-maskable-512.png");
+await png(appleSquare, 180, "apple-touch-icon.png");
 console.log("done — icons in public/icons/");

@@ -13,7 +13,7 @@ web-push + a service worker.
 
 ## What's already done in this repo
 
-- **PWA icons** — `public/icons/` holds the `BB` monogram launcher icons:
+- **PWA icons** — `public/icons/` holds the `BB`-over-a-bridge launcher icons
   `icon-192.png`, `icon-512.png`, plus full-bleed `icon-maskable-{192,512}.png`
   and `apple-touch-icon.png`. Regenerate with
   `node scripts/generate-icons.mjs` (uses `sharp`) if the brand changes.
