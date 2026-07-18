@@ -12,6 +12,20 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    // [COHERENCE-INVITE] Only an accountant may create an accountant→client invitation.
+    // Without this, a shop owner (role 'zzper') could POST here (RLS only requires
+    // auth.uid()=zzper_id, which passes for any role) and turn themselves into an
+    // 'accountant' inviting clients — a role-confusion / data-integrity path. The page
+    // is now role-guarded too; this is the authoritative server-side check.
+    const { data: callerProfile } = await supabase
+      .from('profiles')
+      .select('role, full_name, company_name')
+      .eq('id', user.id)
+      .single()
+    if (callerProfile?.role !== 'accountant') {
+      return NextResponse.json({ error: 'Alleen een boekhouder kan een klant uitnodigen.' }, { status: 403 })
+    }
+
     const limit = await checkRateLimit({
       userId: user.id,
       endpoint: '/api/invite/client',
@@ -48,14 +62,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Er is al een uitnodiging verstuurd naar dit adres.' }, { status: 400 })
     }
 
-    // جلب بيانات المحاسب
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name, company_name')
-      .eq('id', user.id)
-      .single()
-
-    const accountantName = profile?.company_name || profile?.full_name || 'Boekhouder'
+    // Naam van de boekhouder — al opgehaald bij de rolcontrole hierboven.
+    const accountantName = callerProfile?.company_name || callerProfile?.full_name || 'Boekhouder'
 
     // حفظ الدعوة — نحفظ accountant_id = المحاسب الحالي
     const { data: invitation, error: invError } = await supabase
