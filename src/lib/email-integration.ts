@@ -1962,7 +1962,19 @@ export async function syncUserEmails(
         // fault, so it must never be counted toward the poison-pill give-up (which would bury real
         // invoices as 'could_not_read'). It just holds the watermark until the model is fixed.
         const msg = err instanceof Error ? err.message : String(err)
-        const modelError = /not_found_error|404|authentication_error|permission_error|invalid[_ ]?api|model:/i.test(msg)
+        // [MODEL-OUTAGE] Two kinds of "not this file's fault" failure must HOLD the watermark and
+        // never poison-pill a real invoice:
+        //   (a) a CONFIG outage — invalid CLAUDE_MODEL id (404 not_found), auth/permission.
+        //   (b) a CAPACITY / transient outage — Anthropic 529 overloaded, 5xx, 429, network. A 5xx/
+        //       overloaded is the SERVER's state, never a verdict on this attachment, so a sustained
+        //       outage (e.g. ~3h overloaded) must not, after the retry budget, bury every real
+        //       invoice fetched during it as 'could_not_read'. isTransientAiError (shared with the
+        //       reader) recognises exactly these. A genuinely unreadable file does NOT throw one of
+        //       these — it returns a low-confidence FALLBACK (the could_not_read path below) — so the
+        //       poison-pill still protects the watermark against a truly stuck single file.
+        const { isTransientAiError } = await import('@/lib/ai')
+        const configOutage = /not_found_error|404|authentication_error|permission_error|invalid[_ ]?api|model:/i.test(msg)
+        const modelError = configOutage || isTransientAiError(err)
         return {
           attachment,
           classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
