@@ -67,10 +67,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 })
   }
 
-  // [COST] Per-user ceiling on the AI/OCR intake pipeline (Claude calls) — one account
-  // cannot drive unbounded spend.
-  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/intake", ...RATE_LIMITS.AI_OCR })
-  if (!rl.allowed) return rateLimitResponse(rl)
+  // [COST] The per-user AI/OCR ceiling is enforced LATER — right before the Claude call — NOT here.
+  // A bank statement, a kassa/grootboek spreadsheet, and a daily-sales PDF are all parsed LOCALLY
+  // (no Claude call, no spend), so they must never consume the AI budget: counting them here made a
+  // shop uploading a month of till/bank files burn its whole allowance and then hit "te veel
+  // verzoeken" on the real receipts. The gate now sits at the single verifyInvoiceFromPdf call.
 
   let formData: FormData
   try {
@@ -226,6 +227,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Stage 2: AI verify + classify ───────────────────────────────────────────
+  // [COST] The AI/OCR ceiling applies ONLY here — the single Claude call. Bank/spreadsheet/daily-PDF
+  // files returned above without ever reaching this point, so they never counted against the budget.
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/intake", ...RATE_LIMITS.AI_OCR })
+  if (!rl.allowed) return rateLimitResponse(rl)
+
   const { data: me } = await supabase
     .from("profiles")
     .select("company_name, full_name")
