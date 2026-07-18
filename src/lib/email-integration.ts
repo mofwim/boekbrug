@@ -1694,6 +1694,11 @@ export async function syncUserEmails(
     classification: Awaited<ReturnType<typeof classifyAttachment>>
     // [BOEK-011] true = transient error (retry next sync), never registry-skip
     classifyFailed: boolean
+    // [MODEL-OUTAGE] true = the failure is an APP-WIDE model/config error (e.g. an invalid
+    // CLAUDE_MODEL → HTTP 404 not_found), not this file's fault. Such a failure must NEVER count
+    // toward the poison-pill give-up — otherwise a few hours of a misconfigured model would bury
+    // EVERY real invoice as 'could_not_read'. It only holds the watermark until the model is fixed.
+    modelError?: boolean
   }
 
   // Mini concurrency limiter — no external dep. Inline so the helper stays
@@ -1948,10 +1953,17 @@ export async function syncUserEmails(
         // classifyFailed=true tells PHASE 2 to skip WITHOUT registering in the
         // skip registry, so the attachment is retried on the next sync. Only a
         // genuine Claude "not an invoice" verdict may be registered permanently.
+        // [MODEL-OUTAGE] Distinguish an APP-WIDE model/config error (invalid model id → 404
+        // not_found, auth/permission) from a per-file transient. A model outage is not this file's
+        // fault, so it must never be counted toward the poison-pill give-up (which would bury real
+        // invoices as 'could_not_read'). It just holds the watermark until the model is fixed.
+        const msg = err instanceof Error ? err.message : String(err)
+        const modelError = /not_found_error|404|authentication_error|permission_error|invalid[_ ]?api|model:/i.test(msg)
         return {
           attachment,
           classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
           classifyFailed: true,
+          modelError,
         }
       }
     }
@@ -1964,9 +1976,18 @@ export async function syncUserEmails(
   const completedKeys = new Set<string>()
 
   // PHASE 2 — save loop, sequential by design (dedup correctness)
-  for (const { attachment, classification, classifyFailed } of classified) {
+  for (const { attachment, classification, classifyFailed, modelError } of classified) {
     const wmKey = `${attachment.messageId}:${attachment.filename}`
     try {
+      // [MODEL-OUTAGE] An app-wide model/config failure (invalid CLAUDE_MODEL → 404, auth) is not
+      // this file's fault. NEVER count it toward the poison-pill give-up and NEVER register it as
+      // could_not_read — just leave the watermark held so the invoice is re-read once the model is
+      // fixed. Otherwise a misconfigured model for a few hours would permanently bury every real
+      // invoice fetched during the outage (exactly what a bad model id did to the HVO invoices).
+      if (classifyFailed && modelError) {
+        errors++
+        continue
+      }
       // Transient classification failure (rate limit / network) → skip WITHOUT
       // registering; the next sync retries it. A real invoice must never be
       // permanently skipped because of one bad network moment.
