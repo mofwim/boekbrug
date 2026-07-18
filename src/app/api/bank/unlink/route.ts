@@ -17,7 +17,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
-import { invoiceIdsForTransactions, clearPaymentLinks } from "@/lib/bank-tx-links";
+import { invoiceIdsForTransactions, invoicesClaimedByOtherTx, clearPaymentLinks } from "@/lib/bank-tx-links";
 import { logAuditAction } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
   // 1. The transaction — owner-pinned. Must currently be linked to an invoice.
   const { data: tx, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, user_id, invoice_id, status, reference")
+    .select("id, user_id, invoice_id, status, reference, amount")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -151,7 +151,7 @@ async function unlinkBatch(args: {
   payClient: Awaited<ReturnType<typeof createServerSupabaseClient>>;
   userId: string;
   transactionId: string;
-  tx: { invoice_id: string | null; status: string | null };
+  tx: { invoice_id: string | null; status: string | null; amount: number | null };
   refNums: string[];
 }): Promise<NextResponse> {
   const { pipeline, payClient, userId, transactionId, tx, refNums } = args;
@@ -185,16 +185,28 @@ async function unlinkBatch(args: {
   // (1) exact id-linked part
   const byId = new Map<string, (typeof paid)[number]>();
   for (const inv of paid) if (idSet.has(inv.id)) byId.set(inv.id, inv);
-  // (2) direction-guarded number gap-fill for reference numbers no id-link covers
+  // (2) direction-guarded number gap-fill for reference numbers no id-link covers.
+  //     Direction = the representative invoice's direction, or (if it is no longer paid-by-bank —
+  //     e.g. re-marked cash — so `rep` is undefined) the bank movement's sign, so the gap-fill can
+  //     never silently disable itself. A null/zero amount with no representative → skip (we don't
+  //     guess a direction). A batch is one supplier/customer → exactly one direction.
   const rep = paid.find((i) => i.id === linkedInvoiceId);
-  const batchDir = rep?.direction ?? null; // a batch is one supplier/customer → one direction
+  const signDir: "incoming" | "outgoing" | null =
+    (tx.amount ?? 0) < 0 ? "incoming" : (tx.amount ?? 0) > 0 ? "outgoing" : null;
+  const batchDir = (rep?.direction as "incoming" | "outgoing" | null) ?? signDir;
   const coveredNums = new Set<string>();
   for (const inv of byId.values()) coveredNums.add(normalizeRef(inv.invoice_number ?? ""));
   const uncovered = new Set(refNums.filter((n) => !coveredNums.has(n)));
   if (batchDir && uncovered.size > 0) {
-    for (const inv of paid) {
-      if (inv.direction === batchDir && uncovered.has(normalizeRef(inv.invoice_number ?? ""))) byId.set(inv.id, inv);
-    }
+    // Candidates: paid-by-bank invoices in the batch direction whose number is an uncovered ref
+    // number. Exclude any that are id-linked to ANOTHER transaction — those provably belong to a
+    // different payment (a same-number stray), never to this batch. Only a genuinely un-linked
+    // pre-migration sibling survives the exclusion.
+    const candidates = paid.filter(
+      (inv) => inv.direction === batchDir && uncovered.has(normalizeRef(inv.invoice_number ?? "")),
+    );
+    const claimed = await invoicesClaimedByOtherTx(pipeline, userId, candidates.map((c) => c.id), [transactionId]);
+    for (const inv of candidates) if (!claimed.has(inv.id)) byId.set(inv.id, inv);
   }
   const batch = [...byId.values()];
 

@@ -62,3 +62,36 @@ export async function invoiceIdsForTransactions(
     return [];
   }
 }
+
+/**
+ * Of `invoiceIds`, which are id-linked to some transaction NOT in `exceptTransactionIds`? Those
+ * invoices provably belong to a DIFFERENT payment, so a number-based gap-fill (used to recover a
+ * pre-migration batch's un-linked siblings) must NOT sweep them up — that would un-pay an invoice
+ * this payment never paid (a same-number stray owned by another tx). A genuine pre-migration
+ * sibling has NO id-link at all, so it is never in this "claimed elsewhere" set and passes through.
+ * Best-effort: on error returns an empty set (caller then relies on the direction guard alone).
+ */
+export async function invoicesClaimedByOtherTx(
+  client: Client,
+  userId: string,
+  invoiceIds: string[],
+  exceptTransactionIds: string[],
+): Promise<Set<string>> {
+  const ids = [...new Set(invoiceIds.filter(Boolean))];
+  if (ids.length === 0) return new Set();
+  const except = new Set(exceptTransactionIds);
+  try {
+    const { data } = await client
+      .from("bank_tx_invoices")
+      .select("invoice_id, transaction_id")
+      .eq("user_id", userId)
+      .in("invoice_id", ids);
+    const claimed = new Set<string>();
+    for (const r of (data ?? []) as { invoice_id: string; transaction_id: string }[]) {
+      if (!except.has(r.transaction_id)) claimed.add(r.invoice_id);
+    }
+    return claimed;
+  } catch {
+    return new Set();
+  }
+}

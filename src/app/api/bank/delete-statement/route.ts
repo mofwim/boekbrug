@@ -32,7 +32,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { invoiceIdsForTransactions } from "@/lib/bank-tx-links";
+import { invoiceIdsForTransactions, invoicesClaimedByOtherTx } from "@/lib/bank-tx-links";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
@@ -133,15 +133,28 @@ export async function POST(req: NextRequest) {
     //     (no number-collision surface); it only recovers historical siblings this statement paid.
     const coveredNums = new Set<string>();
     for (const inv of toRestoreMap.values()) coveredNums.add(normalizeRef(inv.invoice_number ?? ""));
+    // Collect number gap-fill candidates across this statement's batch txs, then exclude any that
+    // are id-linked to a transaction OUTSIDE this statement (they belong to a different payment —
+    // a same-number stray). A tx with a null/zero amount has no reliable direction, so we skip its
+    // gap-fill rather than guess (its id-linked invoices are already restored above).
+    const gapCandidates = new Map<string, (typeof paid)[number]>();
     for (const t of txs) {
       const rn = parseReferenceNumbers(t.reference);
       if (rn.length <= 1) continue;
-      const dir: "incoming" | "outgoing" = (t.amount ?? 0) < 0 ? "incoming" : "outgoing";
+      const dir: "incoming" | "outgoing" | null =
+        (t.amount ?? 0) < 0 ? "incoming" : (t.amount ?? 0) > 0 ? "outgoing" : null;
+      if (!dir) continue;
       const uncovered = new Set(rn.filter((n) => !coveredNums.has(n)));
       if (uncovered.size === 0) continue;
       for (const inv of paid) {
-        if (inv.direction === dir && uncovered.has(normalizeRef(inv.invoice_number ?? ""))) toRestoreMap.set(inv.id, inv);
+        if (!toRestoreMap.has(inv.id) && inv.direction === dir && uncovered.has(normalizeRef(inv.invoice_number ?? ""))) {
+          gapCandidates.set(inv.id, inv);
+        }
       }
+    }
+    if (gapCandidates.size > 0) {
+      const claimed = await invoicesClaimedByOtherTx(pipeline, user.id, [...gapCandidates.keys()], txIds);
+      for (const [id, inv] of gapCandidates) if (!claimed.has(id)) toRestoreMap.set(id, inv);
     }
     const toRestore = [...toRestoreMap.values()];
 
