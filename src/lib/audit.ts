@@ -48,6 +48,8 @@ export type AuditAction =
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
   | 'invoice.arithmetic_blocked'       // ← [BOEK-SAFECORE] auto-import held in 'processing': excl+BTW≠incl, illegal rate, or NaN/∞/≤0/bad-date
+  | 'turnover.auto_imported'           // ← [SHEET-INTAKE] app booked a clean kassa Z-report into daily_turnover from the upload page
+  | 'ledger.auto_imported'             // ← [SHEET-INTAKE] app stored a PIN/kas grootboek export into ledger_daily (reconciliation witness)
   // Level 2 — Accountant relationships
   | 'accountant.client_invited'
   | 'accountant.client_linked'

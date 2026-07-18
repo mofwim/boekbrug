@@ -52,7 +52,7 @@ export async function runBankAutoConfirm(args: {
   const txRows = await fetchAllRows((from, to) =>
     pipeline
       .from("bank_transactions")
-      .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
+      .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
       .eq("user_id", userId)
       .eq("status", "pending")
       .order("id", { ascending: true })
@@ -61,7 +61,7 @@ export async function runBankAutoConfirm(args: {
   const invRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban")
       .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
       .neq("status", "paid")
       .order("id", { ascending: true })

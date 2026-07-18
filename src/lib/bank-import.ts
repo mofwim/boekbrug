@@ -23,6 +23,9 @@ export interface BankTransactionRow {
   amount: number | null;
   description: string | null;
   counterpart_name: string | null;
+  // [BANK-IBAN] The counterpart's IBAN parsed from the statement — kept so the matcher can pair a
+  // payment to the invoice bearing the SAME supplier account (a strong, collision-free signal).
+  counterpart_iban: string | null;
   reference: string | null;
   status: "pending";
   // [BANK-AUTOCAT] Structural identity assigned at import (pos_income / fee / tax /
@@ -172,6 +175,7 @@ export function mapToRows(
       amount: t.amount,
       description: t.description || null,
       counterpart_name: t.counterpartName,
+      counterpart_iban: t.counterpartIban ?? null, // [BANK-IBAN] store for supplier-account matching
       reference: t.reference,
       status: "pending" as const,
       category: id === "unknown" ? null : id,
@@ -186,6 +190,7 @@ export interface BankTransactionDbRow {
   amount: number | null;
   description: string | null;
   counterpart_name: string | null;
+  counterpart_iban?: string | null; // [BANK-IBAN] supplier account, for IBAN matching (optional)
   reference: string | null;
   // [BANK-MULTI-LINK-PERSIST] A partially-linked multi-invoice tx keeps
   // status='pending' but already carries an invoice_id (the last invoice paid
@@ -206,7 +211,7 @@ export function rowToTransaction(r: BankTransactionDbRow): BankTransaction {
     currency: "EUR",
     description: r.description ?? "",
     counterpartName: r.counterpart_name,
-    counterpartIban: null, // not stored
+    counterpartIban: r.counterpart_iban ?? null, // [BANK-IBAN] now stored → used by the matcher
     reference: r.reference,
     transactionId: r.id, // carry DB id → ties a suggestion to its transaction
     rawLine: "",
