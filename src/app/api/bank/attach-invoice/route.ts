@@ -30,6 +30,7 @@ import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
+import { recordPaymentLinks } from "@/lib/bank-tx-links";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -355,6 +356,12 @@ export async function POST(req: NextRequest) {
       amountWarning,
     });
   }
+
+  // [BANK-TX-INVOICES] Record THIS invoice in the reversal index. Attach supports several invoices
+  // on one pending tx, but tx.invoice_id only ever holds the LAST one — so without the join row a
+  // later unlink would restore only the last-attached invoice, stranding the earlier ones paid with
+  // no bank line. Recording every attached invoice here makes the whole set reversible by id.
+  await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id]);
 
   // 11. Notification (non-blocking) — service_role by rule.
   try {

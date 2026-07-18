@@ -10,11 +10,18 @@ import { formatEur } from "@/lib/quarterly";
 import { downloadCsv } from "@/lib/export";
 import { useParentPath } from "@/lib/navigation-hooks";
 import type { Role } from "@/lib/navigation";
+import { lastCompletedQuarter } from "@/lib/quarter";
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
-const CURRENT_QUARTER = Math.ceil((new Date().getMonth() + 1) / 3) as 1 | 2 | 3 | 4;
+// [QUARTER-DEFAULT] Default to the LAST COMPLETED quarter — the one whose BTW is actually due —
+// exactly like /api/result, /api/aangifte, /api/readiness and the klaar flow (quarter.ts). The
+// old open-quarter default (Q3 mid-July) dropped the owner on an empty/partial quarter they'd have
+// to correct by hand, and disagreed with every other surface. year is defaulted to match.
+const _LC = lastCompletedQuarter();
+const CURRENT_YEAR_DEFAULT = _LC.year;
+const CURRENT_QUARTER = _LC.quarter as 1 | 2 | 3 | 4;
 
 interface Client {
   id: string;
@@ -38,7 +45,7 @@ export function QuarterlyOverview({ isAccountant, role }: Props) {
 function ZzpView({ role }: { role: Role }) {
   const parentHref = useParentPath(role);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
-  const [year, setYear] = useState(CURRENT_YEAR);
+  const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
   const [mode, setMode] = useState<"paid" | "all">("paid");
   const [data, setData] = useState<ZzpQuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -388,7 +395,7 @@ function ZzpView({ role }: { role: Role }) {
 // ─────────────────────────────────────────────────────────
 function AccountantView({ role }: { role: Role }) {
   const parentHref = useParentPath(role);
-  const [year, setYear] = useState(CURRENT_YEAR);
+  const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
   const [data, setData] = useState<QuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
