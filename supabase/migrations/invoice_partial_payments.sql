@@ -193,4 +193,65 @@ COMMENT ON FUNCTION public.apply_bank_payment(uuid, uuid, uuid, numeric, date) I
 REVOKE ALL ON FUNCTION public.apply_bank_payment(uuid, uuid, uuid, numeric, date) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.apply_bank_payment(uuid, uuid, uuid, numeric, date) TO authenticated, service_role;
 
+-- ── 4) recompute_invoice_amount_paid — atomic, drift-free reversal helper ─────
+--    The unlink paths remove a payment link, then call this to re-derive
+--    amount_paid = SUM(amount_applied) over the invoice's SURVIVING links, under
+--    a row lock. This is the authoritative reconciliation of amount_paid to the
+--    join table: it is order-independent (two concurrent unlinks each recompute
+--    under the lock and both converge on the true remaining sum — no lost-update
+--    phantom), and self-healing (a batch unlink that clears every link recomputes
+--    to 0, so a pre-migration batch invoice never stays stuck at amount_paid=|total|,
+--    which would read €0-openstaand and block re-booking). Clamped to [0, |total|].
+--    Call it AFTER the link rows are cleared. Returns the new amount_paid.
+CREATE OR REPLACE FUNCTION public.recompute_invoice_amount_paid(
+  p_user_id    uuid,
+  p_invoice_id uuid
+)
+RETURNS numeric
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_total numeric;
+  v_sum   numeric;
+BEGIN
+  IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
+    RAISE EXCEPTION '[PARTIAL-PAY] caller % may not recompute for %', auth.uid(), p_user_id
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Lock the invoice; a concurrent apply/recompute serializes on this row.
+  SELECT abs(coalesce(total_inc_btw, 0)) INTO v_total
+  FROM public.invoices
+  WHERE id = p_invoice_id
+    AND (sender_id = p_user_id OR receiver_id = p_user_id)
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN 0;   -- not ours / gone → nothing to do
+  END IF;
+
+  SELECT coalesce(sum(coalesce(amount_applied, 0)), 0) INTO v_sum
+  FROM public.bank_tx_invoices
+  WHERE invoice_id = p_invoice_id AND user_id = p_user_id;
+
+  -- Never let the running total exceed the invoice magnitude (defence in depth).
+  IF v_total > 0 AND v_sum > v_total THEN
+    v_sum := v_total;
+  END IF;
+  IF v_sum < 0 THEN
+    v_sum := 0;
+  END IF;
+
+  UPDATE public.invoices SET amount_paid = v_sum WHERE id = p_invoice_id;
+  RETURN v_sum;
+END;
+$$;
+
+COMMENT ON FUNCTION public.recompute_invoice_amount_paid(uuid, uuid) IS
+  '[PARTIAL-PAY] Atomically re-derives invoices.amount_paid = SUM(bank_tx_invoices.amount_applied) for an invoice under a row lock. Called by the unlink paths after clearing link rows — order-independent (no concurrent-unlink lost-update) and self-healing (fully-unlinked → 0).';
+
+REVOKE ALL ON FUNCTION public.recompute_invoice_amount_paid(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.recompute_invoice_amount_paid(uuid, uuid) TO authenticated, service_role;
+
 COMMIT;

@@ -78,6 +78,9 @@ interface IncomingRow {
   accountant_status: string | null       // 'verwerkt' etc. — read-only badge
   direction: string
   total_inc_btw: number | null
+  // [PARTIAL-PAY] running total already settled by instalments (0 when fully open). A value between
+  // 0 and |total_inc_btw| means the invoice is a deelbetaling: still openstaand, part paid.
+  amount_paid?: number | null
   total_ex_btw: number | null
   btw_amount: number | null
   invoice_date: string | null
@@ -721,6 +724,27 @@ export default function IncomingManageClient({
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>
+
+                      {/* [PARTIAL-PAY] Deelbetaling — part already settled, rest openstaand. Only
+                          while 0 < amount_paid < |total| (a fully-paid invoice shows the 'paid'
+                          chip instead). Makes the running balance visible where the owner pays. */}
+                      {(() => {
+                        const paid = Math.max(0, inv.amount_paid ?? 0)
+                        const tot = Math.abs(inv.total_inc_btw ?? 0)
+                        if (!(paid > 0.005 && paid < tot - 0.005)) return null
+                        const remaining = Math.max(0, tot - paid)
+                        return (
+                          <span
+                            title={`Deelbetaling: € ${paid.toFixed(2)} van € ${tot.toFixed(2)} betaald`}
+                            style={{
+                              fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
+                              border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Deels betaald · € {remaining.toFixed(2)} open
+                          </span>
+                        )
+                      })()}
 
                       {/* received → confirm payment (gated by no-double-pay check).
                           After prepare, becomes a prominent "Ik heb betaald" CTA

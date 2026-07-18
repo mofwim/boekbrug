@@ -1566,6 +1566,10 @@ export type Database = {
         Args: { p_type: string; p_user_id: string; p_year: number }
         Returns: number
       }
+      recompute_invoice_amount_paid: {
+        Args: { p_user_id: string; p_invoice_id: string }
+        Returns: number
+      }
       vault_delete_secret: { Args: { p_secret_id: string }; Returns: boolean }
       vault_read_secret: { Args: { p_secret_id: string }; Returns: string }
       vault_update_or_create_secret: {
