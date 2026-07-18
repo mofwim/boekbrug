@@ -4,9 +4,10 @@
 // trustworthy if the owner can undo any single booking. This detaches the bank line and
 // puts the invoice back to unpaid, so a wrong auto-booking is one tap to reverse.
 //
-// Scope: SINGLE-invoice transactions (reference lists ≤ 1 invoice number) — exactly the set
-// auto-confirm books. A multi-invoice batch is not unlinked here (its per-slot state is more
-// involved); it is refused with a clear message.
+// Scope: BOTH single-invoice and multi-invoice batch payments. A single line detaches + restores
+// its one invoice; a batch (reference lists >1 number, auto-booked or manually multi-confirmed)
+// is reversed as a whole via unlinkBatch — every invoice this payment paid goes back to unpaid.
+// Auto-booking is only trustworthy if EVERYTHING it books is one tap to undo, batches included.
 //
 // Guards mirror confirm: owner-pinned, and a 'verwerkt' invoice (the accountant already
 // processed it, B.4) is refused — you must ask the accountant to undo processing first.
@@ -15,7 +16,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { parseReferenceNumbers } from "@/lib/bank-matching";
+import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { logAuditAction } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -49,9 +50,14 @@ export async function POST(req: Request) {
   if (!tx) return NextResponse.json({ error: "transaction_not_found" }, { status: 404 });
   if (!tx.invoice_id) return NextResponse.json({ error: "not_linked" }, { status: 409 });
 
-  // Multi-invoice batches are out of scope for a one-tap unlink.
-  if (parseReferenceNumbers(tx.reference).length > 1) {
-    return NextResponse.json({ error: "multi_invoice_unlink_unsupported" }, { status: 409 });
+  // [BANK-BATCH-UNLINK] A multi-invoice batch (auto-booked by runBankAutoConfirm or manually
+  // multi-confirmed) is reversed as a WHOLE: every invoice whose number is in this payment's
+  // reference and is currently paid-by-bank is put back to unpaid, and the bank line detached.
+  // Without this, an auto-booked batch would be irreversible — violating the "everything the app
+  // books, the owner can undo" rule that makes quiet auto-booking trustworthy.
+  const refNums = parseReferenceNumbers(tx.reference);
+  if (refNums.length > 1) {
+    return unlinkBatch({ pipeline, payClient: supabase, userId: user.id, transactionId, tx, refNums });
   }
 
   // 2. The invoice — need its direction (to restore the right unpaid status) and the
@@ -129,4 +135,83 @@ export async function POST(req: Request) {
   });
 
   return NextResponse.json({ ok: true });
+}
+
+// [BANK-BATCH-UNLINK] Reverse a whole multi-invoice batch: put every invoice this payment paid
+// back to unpaid and detach the bank line. The batch's invoices are exactly the ones, owned by
+// this user and currently paid-by-bank, whose number appears in the payment's reference — the
+// same reference-coverage identity the manual confirm + auto-book used to create the batch.
+async function unlinkBatch(args: {
+  pipeline: ReturnType<typeof createPipelineClient>;
+  payClient: Awaited<ReturnType<typeof createServerSupabaseClient>>;
+  userId: string;
+  transactionId: string;
+  tx: { invoice_id: string | null; status: string | null };
+  refNums: string[];
+}): Promise<NextResponse> {
+  const { pipeline, payClient, userId, transactionId, tx, refNums } = args;
+  const linkedInvoiceId = tx.invoice_id;
+  if (!linkedInvoiceId) return NextResponse.json({ error: "not_linked" }, { status: 409 });
+  const refSet = new Set(refNums);
+
+  // The batch's paid invoices (owner-pinned). Filter to the referenced numbers in code so a
+  // number that resolves to several rows, or an unrelated same-number invoice, is handled by the
+  // exact normalized match — never a substring.
+  const { data: paidRows, error: invErr } = await pipeline
+    .from("invoices")
+    .select("id, invoice_number, direction, status, accountant_status")
+    .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+    .eq("status", "paid")
+    .eq("payment_method", "bank");
+  if (invErr) return NextResponse.json({ error: "invoice_lookup_failed", detail: invErr.message }, { status: 500 });
+  const batch = (paidRows ?? []).filter((i) => refSet.has(normalizeRef(i.invoice_number ?? "")));
+
+  // A 'verwerkt' invoice anywhere in the batch blocks the whole reversal (accrual is locked by the
+  // accountant) — refuse before touching anything.
+  if (batch.some((i) => i.accountant_status === "verwerkt")) {
+    return NextResponse.json({ error: "verwerkt" }, { status: 409 });
+  }
+
+  // Detach the bank line FIRST (same ordering as the single path), guarded to OUR link so a
+  // concurrent re-link is never clobbered. A 0-row detach → the link moved under us → conflict.
+  const { data: detachData, error: unlinkErr } = await pipeline
+    .from("bank_transactions")
+    .update({ status: "pending", invoice_id: null })
+    .eq("id", transactionId)
+    .eq("user_id", userId)
+    .eq("invoice_id", linkedInvoiceId)
+    .select("id");
+  if (unlinkErr) return NextResponse.json({ error: "unlink_failed", detail: unlinkErr.message }, { status: 500 });
+  if (!detachData || detachData.length === 0) return NextResponse.json({ error: "conflict" }, { status: 409 });
+
+  // Restore each invoice to unpaid (idempotent via .eq('status','paid')). On any failure, re-pay
+  // what we already restored and re-link the bank line, so we never leave a half-reversed batch.
+  const restored: string[] = [];
+  for (const inv of batch) {
+    const restoredStatus = inv.direction === "incoming" ? "received" : "sent";
+    const { error: payErr } = await payClient
+      .from("invoices")
+      .update({ status: restoredStatus, payment_method: null, marked_paid_at: null, payment_date: null })
+      .eq("id", inv.id)
+      .eq("status", "paid");
+    if (payErr) {
+      for (const rid of restored) {
+        await payClient.from("invoices").update({ status: "paid", payment_method: "bank" }).eq("id", rid).neq("status", "paid");
+      }
+      await pipeline.from("bank_transactions").update({ status: tx.status ?? "matched", invoice_id: linkedInvoiceId }).eq("id", transactionId).eq("user_id", userId);
+      if (payErr.message?.toLowerCase().includes("verwerkt")) return NextResponse.json({ error: "verwerkt" }, { status: 409 });
+      return NextResponse.json({ error: "restore_failed", detail: payErr.message }, { status: 500 });
+    }
+    restored.push(inv.id);
+  }
+
+  await logAuditAction({
+    userId,
+    action: "bank.unlinked",
+    entityType: "bank_transaction",
+    entityId: transactionId,
+    newValue: { transaction_id: transactionId, invoice_ids: restored, invoice_count: restored.length, batch: true },
+  });
+
+  return NextResponse.json({ ok: true, batch: true, restored: restored.length });
 }
