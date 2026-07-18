@@ -79,6 +79,7 @@ export async function importBankStatement(args: {
   // ── dedup + insert transactions (only when the parse yielded some) ──
   let inserted = 0;
   let skipped = 0;
+  let insertedIds: string[] = [];      // [BANK-TX-STATEMENT-LINK] the rows THIS import created
   if (transactions.length > 0) {
     let existing: ExistingTxKey[] = [];
     const { max } = dateRange(transactions);
@@ -95,8 +96,8 @@ export async function importBankStatement(args: {
     skipped = dd.skipped;
     if (dd.toInsert.length > 0) {
       const rows = mapToRows(dd.toInsert, userId);
-      const { error } = await pipeline.from("bank_transactions").insert(rows);
-      if (!error) inserted = rows.length;
+      const { data: insData, error } = await pipeline.from("bank_transactions").insert(rows).select("id");
+      if (!error) { inserted = rows.length; insertedIds = (insData ?? []).map((r) => r.id as string); }
     }
   }
 
@@ -115,6 +116,7 @@ export async function importBankStatement(args: {
 
   // ── raw passthrough store (best-effort — the transactions above are unaffected) ──
   let statementStored = false;
+  let statementDocId: string | null = null; // [BANK-TX-STATEMENT-LINK] the statement this import created/reused
   try {
     const contentHash = computeContentHash(buffer);
     const { data: existingDoc } = await pipeline
@@ -126,6 +128,7 @@ export async function importBankStatement(args: {
       .maybeSingle();
     if (existingDoc) {
       statementStored = true;
+      statementDocId = existingDoc.id as string;
     } else {
       const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storagePath = `${userId}/bank/${Date.now()}-${safeName}`;
@@ -154,10 +157,26 @@ export async function importBankStatement(args: {
           .select("id")
           .single();
         statementStored = sdoc?.id != null;
+        statementDocId = (sdoc?.id as string | undefined) ?? null;
       }
     }
   } catch {
     // best-effort — the transactions are stored regardless; only the passthrough is missing
+  }
+
+  // [BANK-TX-STATEMENT-LINK] Stamp the statement onto the rows THIS import created, so deleting
+  // the statement can later reverse exactly its own bookings (and re-import can't double). Only
+  // the freshly-inserted rows — never rows a prior import already owns. Best-effort.
+  if (statementDocId && insertedIds.length > 0) {
+    try {
+      await pipeline
+        .from("bank_transactions")
+        .update({ statement_document_id: statementDocId })
+        .in("id", insertedIds)
+        .eq("user_id", userId);
+    } catch {
+      /* non-fatal — the link is a convenience for reversal, not a money figure */
+    }
   }
 
   return {

@@ -17,16 +17,22 @@
 // accountant would see in the package). A failed Storage delete → warning, not
 // a hard error; the row is already gone, which is what matters for the package.
 //
-// What it NEVER touches: bank_transactions. The transactions are the protected
-// financial record (Bewaarplicht) and carry all the owner's work (linked
-// invoices, confirmed payments, ignores). Deleting the raw statement file does
-// not remove a single transaction — dedup already protects against re-import.
+// Deleting a statement is a TRUE UNDO of that import: before removing the file it reverses the
+// statement's own bookings — restores every invoice it paid to unpaid, then deletes exactly this
+// statement's transactions (via the statement_document_id link), including the pos_income lines
+// whose card-commission is a live read. This closes the old wrong-number gap (a re-import used to
+// ADD corrected lines on top of the stranded originals → doubled omzet + commission) and the
+// reversibility gap (a deleted statement's payments were unreachable to undo). Bewaarplicht rests
+// on the INVOICES, which remain; the statement file was a convenience copy. A 'verwerkt' invoice
+// blocks the reversal (ask the accountant to undo processing first).
 //
 // Auth: SESSION client (RLS). The owner deletes their OWN statement only; we
 // additionally verify ownership and doc_type explicitly before any delete.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
@@ -69,6 +75,75 @@ export async function POST(req: NextRequest) {
   if (doc.doc_type !== "bankafschrift") {
     // Defense: never let this endpoint delete a non-statement document.
     return NextResponse.json({ error: "Dit is geen bankafschrift" }, { status: 422 });
+  }
+
+  // 3b. [BANK-STATEMENT-DELETE-CASCADE] Reverse this statement's own bookings BEFORE removing it.
+  //     Deleting the file used to strand its derived state: paid invoices, matched links, and
+  //     pos_income card-commission lived on, pointing at a gone file — and a re-import then ADDED
+  //     the corrected lines on top (dedup only skips identical rows) → doubled omzet + commission.
+  //     Now a delete is a true "undo this import": restore every invoice this statement paid, then
+  //     remove this statement's transactions (incl. pos_income, whose triangle effect is a live
+  //     read). The invoices themselves remain — Bewaarplicht is on the invoices, the file was a
+  //     convenience copy. Requires the statement_document_id link (bank_tx_statement_link.sql).
+  const pipeline = createPipelineClient();
+  const { data: stmtTx } = await pipeline
+    .from("bank_transactions")
+    .select("id, invoice_id, reference")
+    .eq("user_id", user.id)
+    .eq("statement_document_id", documentId);
+  const txs = stmtTx ?? [];
+  if (txs.length > 0) {
+    // Which invoices did this statement pay? Directly-linked (single or batch representative) +
+    // every batch-covered invoice (paid-by-bank, number in a multi-invoice tx's reference).
+    const directIds = new Set<string>();
+    const batchRefNums = new Set<string>();
+    for (const t of txs) {
+      if (t.invoice_id) directIds.add(t.invoice_id as string);
+      const rn = parseReferenceNumbers(t.reference);
+      if (rn.length > 1) rn.forEach((n) => batchRefNums.add(n));
+    }
+    let toRestore: { id: string; direction: string | null; accountant_status: string | null }[] = [];
+    if (directIds.size > 0 || batchRefNums.size > 0) {
+      const { data: paidInvs } = await pipeline
+        .from("invoices")
+        .select("id, invoice_number, direction, status, accountant_status")
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .eq("status", "paid")
+        .eq("payment_method", "bank");
+      toRestore = (paidInvs ?? []).filter(
+        (i) => directIds.has(i.id) || batchRefNums.has(normalizeRef(i.invoice_number ?? "")),
+      );
+    }
+    // A 'verwerkt' (accountant-locked) invoice blocks the whole reversal — nothing is touched.
+    if (toRestore.some((i) => i.accountant_status === "verwerkt")) {
+      return NextResponse.json({ error: "verwerkt", detail: "Een factuur van dit afschrift is al verwerkt door de boekhouder. Vraag eerst om ontwerken." }, { status: 409 });
+    }
+    // Restore each invoice to unpaid — SESSION client so the B.4 verwerkt trigger has auth context.
+    for (const inv of toRestore) {
+      await supabase
+        .from("invoices")
+        .update({ status: inv.direction === "incoming" ? "received" : "sent", payment_method: null, marked_paid_at: null, payment_date: null })
+        .eq("id", inv.id)
+        .eq("status", "paid");
+    }
+    // Remove this statement's transactions — clears the linked lines AND the pos_income lines that
+    // feed the card triangle, so the deleted statement contributes nothing to the result anymore.
+    await pipeline
+      .from("bank_transactions")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("statement_document_id", documentId);
+    if (toRestore.length > 0) {
+      try {
+        await logAuditAction({
+          userId: user.id,
+          action: "bank.unlinked",
+          entityType: "document",
+          entityId: documentId,
+          newValue: { reversed_invoice_ids: toRestore.map((i) => i.id), removed_transactions: txs.length, reason: "statement_deleted_cascade" },
+        });
+      } catch { /* non-blocking */ }
+    }
   }
 
   // 4. Delete the documents row FIRST (removes it from the closing package at once).

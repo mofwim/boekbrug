@@ -152,6 +152,7 @@ export type Database = {
           invoice_id: string | null
           reference: string | null
           status: string | null
+          statement_document_id: string | null
           user_id: string | null
         }
         Insert: {
@@ -167,6 +168,7 @@ export type Database = {
           invoice_id?: string | null
           reference?: string | null
           status?: string | null
+          statement_document_id?: string | null
           user_id?: string | null
         }
         Update: {
@@ -182,6 +184,7 @@ export type Database = {
           invoice_id?: string | null
           reference?: string | null
           status?: string | null
+          statement_document_id?: string | null
           user_id?: string | null
         }
         Relationships: [
