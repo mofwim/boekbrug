@@ -231,6 +231,23 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
           fix: FIX.bank,
         });
       }
+      // [VOORBELASTING-RISK] Supplier-like payments (needsDocument) paid by bank with NO purchase
+      // invoice behind them: the deductible BTW (voorbelasting, 5b) on those costs is not claimed,
+      // so the owner would pay MORE BTW than needed. Per [NO-CODEER] we do NOT hand-code the debit
+      // (coding a bare debit yields no voorbelasting and risks double-counting the invoice) — we
+      // surface it as a RISK to upload the inkoopfactuur. It doesn't hard-block daily automation,
+      // but it means readiness can never say "klaar" in silence while deductible BTW is missing.
+      if (s.undocumentedCount > 0) {
+        risks.push({
+          severity: "risk",
+          title:
+            s.undocumentedCount === 1
+              ? "1 leverancierbetaling zonder inkoopfactuur"
+              : `${s.undocumentedCount} leverancierbetalingen zonder inkoopfactuur`,
+          detail: "Je hebt deze kosten per bank betaald, maar er is nog geen inkoopfactuur. Upload de factuur — anders mis je de BTW-aftrek (voorbelasting) op deze kosten en betaal je te veel.",
+          fix: FIX.bank,
+        });
+      }
     }
     dimensions.push({ key: "bank", label: DIM_LABEL.bank, weight: DIM_WEIGHT.bank, applicable, subscore, detail });
   }
