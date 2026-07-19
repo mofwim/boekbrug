@@ -185,6 +185,34 @@ console.log("\n— buildQuarterSettlements: prior/in-window split + undated dete
     const slices = computeSettlementSlices(q.events, q.priorByInvoice);
     check("creditnota slice nets omzet −100", near(slices[0].ex, -100));
   }
+  // [REVIEW-FIX D1] an invoice paid in a LATER quarter must NOT be flagged undated when computing
+  // THIS (earlier) quarter — it's dated, just future. Else every closed quarter falsely un-klaars.
+  {
+    const q = buildQuarterSettlements(hdrMap({ amountPaidMagnitude: 1210 }), [raw({ payDate: "2026-08-01", magnitude: 1210 })], ...Q2);
+    check("future-paid (Q3) → NOT undated when computing Q2", q.undatedPaidCount === 0);
+    check("future-paid → no in-window events this quarter", q.events.length === 0);
+  }
+}
+
+console.log("\n— [REVIEW-FIX D2] overpayment / duplicate settlement never over-declares —");
+{
+  const h = H(); // 1000 / 210 / 1210
+  // Customer double-pays: two records [1210 (closes), 100 (extra)] in one quarter.
+  const events = buildSettlementEvents(h, 0, [{ payDate: "2026-02-10", amountApplied: 1210, estimated: false }, { payDate: "2026-02-20", amountApplied: 100, estimated: false }]);
+  const slices = computeSettlementSlices(events, new Map());
+  const ex = slices.reduce((s, x) => s + x.ex, 0);
+  const btw = slices.reduce((s, x) => s + x.btw, 0);
+  check("overpayment: Σ ex capped at header 1000 (not 1082.64)", ex === 1000);
+  check("overpayment: Σ btw capped at header 210 (not 227.36)", btw === 210);
+}
+{
+  // Cross-quarter: invoice closed in Q1 (prior = full header), an extra duplicate record in Q2.
+  const h = H();
+  const priorClosed = new Map([[h.invoiceId, { ex: 1000, btw: 210 }]]);
+  const q2events = buildSettlementEvents(h, 1210, [{ payDate: "2026-05-01", amountApplied: 100, estimated: false }]);
+  const slices = computeSettlementSlices(q2events, priorClosed);
+  check("already-closed invoice: a later duplicate books 0 ex", near(slices[0].ex, 0));
+  check("already-closed invoice: a later duplicate books 0 btw", near(slices[0].btw, 0));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

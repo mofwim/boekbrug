@@ -66,7 +66,19 @@ export async function fetchSettlementEvents(
     .order("id", { ascending: true }).range(from, to),
   ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] invoice fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
 
-  const settled = invRows.filter(isSettled);
+  // 2) ALL of the owner's bank↔invoice links (by user_id, unfiltered). A payment reconciled via a
+  //    bank link IS settled money — even if amount_paid/status weren't synced on the invoice row —
+  //    so a linked invoice joins the settled set below (never a silent under-declaration).
+  const links = await fetchAllRows<{ invoice_id: string; transaction_id: string; amount_applied: number | null }>(
+    (from, to) => pipeline
+      .from("bank_tx_invoices")
+      .select("invoice_id, transaction_id, amount_applied")
+      .eq("user_id", ownerId)
+      .order("id", { ascending: true }).range(from, to),
+  ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
+  const linkedIds = new Set(links.map((l) => l.invoice_id).filter(Boolean));
+
+  const settled = invRows.filter((i) => isSettled(i) || linkedIds.has(i.id));
   if (settled.length === 0) return { events: [], priorByInvoice: new Map(), undatedPaidCount: 0, estimatedCount: 0 };
 
   const headers = new Map<string, HeaderWithPaid>();
@@ -83,18 +95,6 @@ export async function fetchSettlementEvents(
       amountPaidMagnitude: paidMagnitude(i, inc),
     });
   }
-  const ids = [...headers.keys()];
-
-  // 2) Per-installment bank settlements: bank_tx_invoices (amount_applied) ⨝ bank_transactions.date.
-  //    Fetch links for the owner's settled invoices, then resolve each link's transaction date.
-  const links = await fetchAllRows<{ invoice_id: string; transaction_id: string; amount_applied: number | null }>(
-    (from, to) => pipeline
-      .from("bank_tx_invoices")
-      .select("invoice_id, transaction_id, amount_applied")
-      .eq("user_id", ownerId)
-      .in("invoice_id", ids)
-      .order("id", { ascending: true }).range(from, to),
-  ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
 
   const txIds = [...new Set(links.map((l) => l.transaction_id).filter(Boolean))];
   const txDate = new Map<string, string>();

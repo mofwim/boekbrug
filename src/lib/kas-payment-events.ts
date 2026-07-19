@@ -65,6 +65,13 @@ export interface SettlementSlice {
   rate: number;   // header-derived legal rate (for the 1a/1b/1c rubriek split)
 }
 
+/** Clamp a proposed slice `v` into [0, room] in the header's direction (room may be negative for
+ *  a creditnota). Keeps a running total from exceeding the header on an overpayment/duplicate. */
+function clampToRoom(v: number, room: number): number {
+  if (room >= 0) return Math.min(Math.max(v, 0), room);
+  return Math.max(Math.min(v, 0), room);
+}
+
 /** The legal BTW rate implied by an invoice header (0 when there's no net to derive from). */
 export function deriveRate(headerEx: number, headerBtw: number): number {
   return headerEx !== 0 ? nearestLegalRate(Math.round((headerBtw / headerEx) * 100)) : 0;
@@ -161,19 +168,25 @@ export function buildQuarterSettlements(
     const header = headers.get(invoiceId)!;
     const sign = header.totalInc >= 0 ? 1 : -1;
 
-    const dated = recs.filter((r) => r.payDate && r.payDate <= end);
-    const datedMagnitude = dated.reduce((s, r) => s + Math.abs(r.magnitude), 0);
-    // Paid money we could NOT date (undated rows, or amount_paid beyond what dated rows explain)
-    // must never vanish: flag the invoice so klaar/aangifte block instead of under-declaring.
+    // A record with ANY payDate is dated — even one dated AFTER this window (it simply belongs to a
+    // future quarter). "Undated" money is only what has NO resolvable date at all, or amount_paid
+    // beyond what ALL dated records (past, present, future) explain. Comparing all-time amount_paid
+    // against a ≤end-scoped total would falsely flag every invoice paid in a later quarter as
+    // undated — permanently blocking every closed quarter. So date the magnitude over ALL dates.
+    const withDate = recs.filter((r) => r.payDate);
+    const datedMagnitude = withDate.reduce((s, r) => s + Math.abs(r.magnitude), 0);
     const undatedMagnitude = Math.max(0, header.amountPaidMagnitude - datedMagnitude);
     const hasUndated =
       recs.some((r) => !r.payDate) || undatedMagnitude > SETTLEMENT_CLOSE_SLACK;
     if (hasUndated) undatedPaidCount++;
 
+    // Events are built only from records dated up to `end` (this + prior quarters); a future-dated
+    // record contributes to a later quarter's computation, not this one.
+    const inScope = withDate.filter((r) => (r.payDate as string) <= end);
     const toRec = (r: RawSettlement) => ({ payDate: r.payDate as string, amountApplied: Math.abs(r.magnitude) * sign, estimated: r.estimated });
     const sortByDate = (a: { payDate: string }, b: { payDate: string }) => (a.payDate < b.payDate ? -1 : a.payDate > b.payDate ? 1 : 0);
-    const prior = dated.filter((r) => (r.payDate as string) < start).map(toRec).sort(sortByDate);
-    const inWindow = dated.filter((r) => (r.payDate as string) >= start).map(toRec).sort(sortByDate);
+    const prior = inScope.filter((r) => (r.payDate as string) < start).map(toRec).sort(sortByDate);
+    const inWindow = inScope.filter((r) => (r.payDate as string) >= start).map(toRec).sort(sortByDate);
 
     // Unrounded prior slices (the F1 seed): run the tested core over prior records.
     const priorInc = prior.reduce((s, r) => s + r.amountApplied, 0);
@@ -224,8 +237,11 @@ export function computeSettlementSlices(
       btw = e.headerBtw - r.btw;
     } else {
       const frac = e.headerInc !== 0 ? e.amountApplied / e.headerInc : 0;
-      ex = e.headerEx * frac;
-      btw = e.headerBtw * frac;
+      // Clamp the proportional slice to the REMAINING room up to the header, so an overpayment or
+      // a duplicate settlement record (applied > header) never books omzet/BTW beyond the invoice.
+      // The excess is not revenue — it's an overpayment, handled outside the VAT figure.
+      ex = clampToRoom(e.headerEx * frac, e.headerEx - r.ex);
+      btw = clampToRoom(e.headerBtw * frac, e.headerBtw - r.btw);
     }
     running.set(e.invoiceId, { ex: r.ex + ex, btw: r.btw + btw });
     slices.push({
