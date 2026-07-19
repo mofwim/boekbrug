@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Geen verbinding — BoekBrug</title>
+    <link rel="icon" href="/favicon.ico" />
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: #f8f9fa;
+        color: #1f2937;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+      }
+      .card {
+        max-width: 380px;
+        width: 100%;
+      }
+      .icon {
+        width: 96px;
+        height: 96px;
+        border-radius: 24px;
+        margin: 0 auto 24px;
+        display: block;
+        box-shadow: 0 10px 30px rgba(11, 87, 208, 0.25);
+      }
+      h1 { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+      p { font-size: 15px; line-height: 1.5; color: #556070; margin: 0 0 24px; }
+      button {
+        appearance: none;
+        border: 0;
+        background: #1a73e8;
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        padding: 12px 24px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      button:active { background: #0b57d0; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <img class="icon" src="/icons/icon-192.png" alt="BoekBrug" />
+      <h1>Je bent offline</h1>
+      <p>
+        BoekBrug heeft internet nodig om je facturen en gegevens veilig te laden.
+        Controleer je verbinding en probeer het opnieuw.
+      </p>
+      <button onclick="location.reload()">Opnieuw proberen</button>
+    </div>
+  </body>
+</html>
