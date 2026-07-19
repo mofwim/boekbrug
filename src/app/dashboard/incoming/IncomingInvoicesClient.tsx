@@ -2116,6 +2116,9 @@ export default function IncomingInvoicesClient({
   // [INCOMING-BEVESTIGD] Read-only surface of recently confirmed invoices — no mutations here.
   const [confirmed] = useState<IncomingInvoice[]>(confirmedInvoices);
   const [tab, setTab] = useState<Tab>("pending");
+  // [SEARCH] In-page live filter — dedicated to this page only. Filters the loaded
+  // incoming invoices (supplier / invoice number / amount) instantly, in place.
+  const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -2472,6 +2475,23 @@ export default function IncomingInvoicesClient({
 
   const list = tab === "pending" ? pending : tab === "confirmed" ? confirmed : ignored;
 
+  // [SEARCH] Live, in-place filter over the loaded list (supplier name / invoice number /
+  // whole-euro amount). The page holds the full set (server caps at 100/50), so this is
+  // complete — no navigation, no reload.
+  const incFold = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  const rawQ = search.trim();
+  const q = incFold(rawQ);
+  const qDigits = rawQ.replace(/[^\d]/g, "");
+  const amountLike = qDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawQ);
+  const filteredList = rawQ
+    ? list.filter((inv) => {
+        if (q && incFold(inv.client_name ?? "").includes(q)) return true;
+        if (q && incFold(inv.invoice_number ?? "").includes(q)) return true;
+        if (amountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === qDigits) return true;
+        return false;
+      })
+    : list;
+
   // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────
   // HEALTH: "is anything WRONG?"  → invoices the AI/arithmetic flagged.
   // FLOW:   "is anything waiting to be SENT onward?" → every pending invoice
@@ -2694,10 +2714,28 @@ export default function IncomingInvoicesClient({
           </div>
         )}
 
+        {/* [SEARCH] In-page live filter (this page only) */}
+        {(list.length > 0 || rawQ) && (
+          <div style={{ position: "relative", marginBottom: 14 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" strokeWidth="2" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Zoek op leverancier, factuurnummer of bedrag…"
+              aria-label="Inkomende facturen zoeken"
+              style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
+            />
+            {search && (
+              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen"
+                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</button>
+            )}
+          </div>
+        )}
+
         {/* Invoice list */}
-        {list.length > 0 ? (
+        {filteredList.length > 0 ? (
           <div style={{ marginBottom: 24 }}>
-            {list.map((inv) => (
+            {filteredList.map((inv) => (
               <InvoiceCard
                 key={inv.id}
                 invoice={inv}
@@ -2715,6 +2753,12 @@ export default function IncomingInvoicesClient({
                 highlighted={focusId === inv.id}
               />
             ))}
+          </div>
+        ) : rawQ ? (
+          <div style={{ textAlign: "center", padding: "48px 24px", color: "#8e8e93" }}>
+            <div style={{ fontSize: 44, marginBottom: 14 }}>🔍</div>
+            <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#1c1c1e" }}>Geen facturen gevonden</div>
+            <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : "genegeerd"}.</div>
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>

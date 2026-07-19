@@ -95,9 +95,6 @@ const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'credit',  label: 'Credit'   },
 ]
 
-// [SEARCH] Accent-insensitive fold ("José" ↔ "jose") for the quick-filter.
-const fold = (s: string) => (s ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function FacturenClient({ profile }: { profile: any }) {
   const router   = useRouter()
@@ -136,6 +133,12 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const searchParam = searchParams.get('search') ?? ''
   const [search, setSearch] = useState(searchParam)
   useEffect(() => { setSearch(searchParam) }, [searchParam])
+
+  // [SEARCH] In-page live filter, SERVER-backed: finds ALL matching invoices (every
+  // status, not only the loaded/paginated rows), in place — no navigation, no reload.
+  // Active from 2 chars; falls back to the normal infinite list when empty.
+  const [searchResults, setSearchResults] = useState<any[] | null>(null)
+  const [searchLoading, setSearchLoading] = useState(false)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
@@ -151,6 +154,31 @@ export default function FacturenClient({ profile }: { profile: any }) {
       .order('created_at', { ascending: false })
       .then(({ data }) => setArchivedInvoices(data ?? []))
   }, [profile?.id])
+
+  // [SEARCH] Debounced server query over ALL the user's invoices (any status), so a
+  // match that hasn't been scrolled into the infinite list is still found instantly.
+  useEffect(() => {
+    const q = search.trim()
+    if (q.length < 2) { setSearchResults(null); setSearchLoading(false); return }
+    const esc = q.replace(/[,()%_*\\":]/g, ' ').trim()
+    if (esc.length < 1) { setSearchResults([]); setSearchLoading(false); return }
+    let active = true
+    setSearchLoading(true)
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from('invoices')
+        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
+        .eq('sender_id', profile.id)
+        .neq('status', 'archived')
+        .or(`invoice_number.ilike.%${esc}%,client_name.ilike.%${esc}%`)
+        .order('created_at', { ascending: false })
+        .limit(50)
+      if (!active) return
+      setSearchResults((data as any[]) ?? [])
+      setSearchLoading(false)
+    }, 250)
+    return () => { active = false; clearTimeout(t) }
+  }, [search, profile.id])
 
   const statusMap: Record<FilterTab, InvoiceStatusFilter> = {
     all: 'all', sent: 'sent', paid: 'paid', draft: 'draft',
@@ -176,17 +204,18 @@ export default function FacturenClient({ profile }: { profile: any }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, loading, invoices.length])
 
-  const sq = fold(search.trim())
-  const displayed = invoices.filter(inv => {
-    if (inv.status === 'archived') return false
-    if (filter === 'offerte') return inv.invoice_type === 'pro_forma'
-    if (filter === 'credit')  return inv.invoice_type === 'creditnota'
-    return true
-  }).filter(inv => {
-    if (!sq) return true
-    return fold(inv.invoice_number ?? '').includes(sq)
-        || fold(inv.client_name ?? '').includes(sq)
-  })
+  // When searching (>=2 chars) the SERVER result set is authoritative — it already
+  // covers every status and all matches, so no client-side/tab filtering is applied
+  // (the user is looking for a specific invoice, wherever it is).
+  const searching = search.trim().length >= 2
+  const displayed = searching
+    ? (searchResults ?? [])
+    : invoices.filter(inv => {
+        if (inv.status === 'archived') return false
+        if (filter === 'offerte') return inv.invoice_type === 'pro_forma'
+        if (filter === 'credit')  return inv.invoice_type === 'creditnota'
+        return true
+      })
   const sorted = sort === 'desc' ? displayed : [...displayed].reverse()
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
@@ -379,10 +408,11 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const sentinelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = sentinelRef.current; if (!el) return
-    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting && hasMore && !loading) loadMore() }, { threshold: 0.1 })
+    // [SEARCH] Don't paginate the infinite list while a server search is active.
+    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting && hasMore && !loading && !searching) loadMore() }, { threshold: 0.1 })
     obs.observe(el)
     return () => obs.disconnect()
-  }, [hasMore, loading])
+  }, [hasMore, loading, searching])
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
@@ -483,10 +513,14 @@ export default function FacturenClient({ profile }: { profile: any }) {
 
       {/* ── Invoice list ── */}
       <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 100px' }}>
-        {loading && sorted.length === 0 ? (
+        {(searching ? searchLoading : loading) && sorted.length === 0 ? (
           <SkeletonList />
         ) : sorted.length === 0 ? (
-          <EmptyState />
+          searching ? (
+            <p style={{ textAlign: 'center', color: '#5F6368', fontSize: 14, padding: '48px 16px', fontFamily: FONT }}>
+              Geen facturen gevonden voor &ldquo;{search.trim()}&rdquo;
+            </p>
+          ) : <EmptyState />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {sorted.map(inv => {
@@ -744,8 +778,8 @@ export default function FacturenClient({ profile }: { profile: any }) {
               <p style={{ textAlign: 'center', fontSize: 12, color: '#5F6368', padding: '16px 0' }}>Laden...</p>
             )}
 
-            {/* [BOEK-029] Archived — end of Alle only, no buttons */}
-            {filter === 'all' && archivedInvoices.length > 0 && (
+            {/* [BOEK-029] Archived — end of Alle only, no buttons (hidden while searching) */}
+            {filter === 'all' && !searching && archivedInvoices.length > 0 && (
               <>
                 <div style={{ padding: '8px 4px 2px' }}>
                   <p style={{ fontSize: 11, color: '#9AA0A6', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
