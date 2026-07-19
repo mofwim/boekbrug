@@ -25,6 +25,7 @@ import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
+import { collectBadDebt } from "@/lib/bad-debt-collect";
 
 export const dynamic = "force-dynamic";
 
@@ -360,6 +361,9 @@ export async function GET(req: NextRequest) {
     invoices: regimeInvoices,
   }).catch(() => []);
 
+  // [BAD-DEBT] Reclaimable BTW on sales invoices >1 year past due (factuur only; kas → none).
+  const badDebt = await collectBadDebt(pipeline, ownerId, sr.scheme, end);
+
   // ── 6) Assemble the signals → the verdict ──
   const signals: ReadinessSignals = {
     quarterLabel,
@@ -385,6 +389,9 @@ export async function GET(req: NextRequest) {
     regimeFlags,     // [REGIME-FLAGS] KOR / verlegd / marge → risks, never a block
     undatedPaidCount: sr.undatedPaidCount,       // [KASSTELSEL] undated paid money blocks "klaar"
     estimatedPaidCount: sr.estimatedPortionCount, // [KASSTELSEL] estimated pay-date → risk
+    badDebt: badDebt.eligible.length > 0
+      ? { count: badDebt.eligible.length, reclaimableBtw: badDebt.totalReclaimableBtw }
+      : undefined, // [BAD-DEBT] reclaimable BTW on >1yr-unpaid sales → risk, never a block
   };
   const report = buildReadiness(signals);
 

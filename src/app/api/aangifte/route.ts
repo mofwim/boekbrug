@@ -16,6 +16,8 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { regimeFlagNote } from "@/lib/regime-flags";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
+import { collectBadDebt } from "@/lib/bad-debt-collect";
+import { badDebtNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function shiftDays(iso: string, days: number): string {
@@ -193,6 +195,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // [BAD-DEBT] Reclaimable BTW on sales invoices > 1 year past due and still unpaid (factuur only).
+  // An honest note — never auto-verrekend (the owner/accountant decides the period).
+  const badDebt = await collectBadDebt(pipeline, ownerId, sr.scheme, end);
+  const bdNote = badDebtNote(badDebt);
+  if (bdNote) regimeNotes.push(bdNote);
+  // Report the count/euro TOGETHER, gated on the same materiality as the note, so the API can never
+  // say "1 factuur / €0 terugvraagbaar" (an immaterial sub-euro reclaim rounds to 0 and isn't flagged).
+  const bdMaterial = badDebt.totalReclaimableBtw >= BAD_DEBT_MIN_EUR;
+
   const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes);
-  return NextResponse.json({ ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount });
+  return NextResponse.json({
+    ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount,
+    badDebtReclaimableBtw: bdMaterial ? Math.round(badDebt.totalReclaimableBtw) : 0,
+    badDebtCount: bdMaterial ? badDebt.eligible.length : 0,
+  });
 }

@@ -286,6 +286,16 @@ console.log("\n— [KASSTELSEL] undated paid money blocks 'klaar' —");
   check("estimated pay-date is a risk, not a block", r.missing.every((m) => !/schatting/.test(m.title)) && r.risks.some((x) => /schatting/.test(x.title)));
   check("still ready with only an estimated-date risk (score capped 99)", r.missing.length === 0 && r.status === "ready");
 }
+{
+  // [BAD-DEBT] Reclaimable BTW on >1yr-unpaid sales is a RISK (money to get back), never a gap.
+  const r = buildReadiness(perfect({ badDebt: { count: 2, reclaimableBtw: 420 } }));
+  check("bad-debt surfaces as a risk", r.risks.some((x) => /terugvraagbaar/.test(x.title)));
+  check("bad-debt names count + euros", r.risks.some((x) => /2 onbetaalde/.test(x.title) && /€420/.test(x.title)));
+  check("bad-debt is NOT a missing gap", !r.missing.some((x) => /terugvraagbaar/.test(x.title)));
+  check("bad-debt does not block ready", r.missing.length === 0 && r.status === "ready");
+  const none = buildReadiness(perfect({ badDebt: { count: 0, reclaimableBtw: 0 } }));
+  check("no eligible bad debt → no risk", !none.risks.some((x) => /terugvraagbaar/.test(x.title)));
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

@@ -6,6 +6,7 @@
 // need attention. Fully testable (run: npx tsx src/lib/readiness.test.ts).
 //
 import type { RegimeFlag } from "./regime-flags";
+import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 
 // THE SCORE IS NOT COSMETIC. Every point is earned by a PROVABLE condition:
 //   score = 100 × Σ(weight·subscore over APPLICABLE dimensions) / Σ(weight over applicable)
@@ -80,6 +81,10 @@ export interface ReadinessSignals {
   // optional (undefined → 0 → no block) so factuur callers/tests are unchanged.
   undatedPaidCount?: number;
   estimatedPaidCount?: number;
+  // [BAD-DEBT] Sales invoices > 1 year past due and still unpaid (factuur only): the BTW paid on
+  // them is reclaimable (oninbare vordering). A helpful nudge (risk), never a block — it's money to
+  // get back, not a gap. Optional (undefined → none).
+  badDebt?: { count: number; reclaimableBtw: number };
 }
 
 export interface ReconException {
@@ -119,6 +124,7 @@ const FIX = {
   dagomzet: { label: "Naar Dagomzet", href: "/dashboard/dagomzet" },
   kas: { label: "Naar Kas", href: "/dashboard/kas" },
   nieuweFactuur: { label: "Omzet invoeren", href: "/dashboard/invoice/new" },
+  facturen: { label: "Naar Facturen", href: "/dashboard/facturen" },
 } as const;
 
 export type ReadinessStatus = "ready" | "almost" | "attention";
@@ -475,6 +481,21 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       severity: "risk",
       title: f.title,
       detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
+  }
+
+  // [BAD-DEBT] Sales invoices >1 year past due and still unpaid: the BTW you declared on them is
+  // reclaimable (oninbare vordering, art. 29 Wet OB). Always a RISK, never a blocking gap — it is
+  // money to get BACK, so it can never make an aangifte "too low", and whether/when to reclaim is
+  // the owner's/accountant's call. Kasstelsel never reaches here (collector short-circuits to none).
+  if (s.badDebt && s.badDebt.reclaimableBtw >= BAD_DEBT_MIN_EUR && s.badDebt.count > 0) {
+    const n = s.badDebt.count;
+    risks.push({
+      severity: "risk",
+      title: `${n} onbetaalde factu${n === 1 ? "ur" : "ren"} >1 jaar — €${euro(s.badDebt.reclaimableBtw)} BTW terugvraagbaar`,
+      detail:
+        "Deze verkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De BTW die je hierover hebt afgedragen kun je terugvragen (oninbare vordering, art. 29 Wet OB). Dit wordt NIET automatisch verrekend — bespreek met je boekhouder in welk tijdvak je het terugvraagt.",
+      fix: FIX.facturen,
     });
   }
 
