@@ -286,7 +286,15 @@ export function isPlaceholderInvoiceNumber(n: string | null | undefined): boolea
  * normalization so "Atapack  B.V." and "atapack b.v." match.
  */
 export function normalizeVendor(v: string | null | undefined): string {
-  return (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  // Fold diacritics so "Café de Kroon" ≡ "Cafe de Kroon" — without this, an accent variant
+  // between two reads made the two vendors look "provably different" and suppressed a real
+  // duplicate flag (NFKD splits é into e + combining mark, which the range then strips).
+  return (v ?? '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
 }
 
 /**
@@ -510,8 +518,6 @@ export function assessPossibleDuplicate(
   let bestRank = 0
   for (const c of candidates) {
     if (typeof c.total_inc_btw !== 'number' || Math.round(c.total_inc_btw * 100) !== totalCents) continue
-    // An exact number match is a HARD duplicate (findSemanticDuplicate's job), not a soft one.
-    if (inNum && normalizeInvoiceNumber(c.invoice_number) === inNum) continue
 
     const cVendorReliable = isReliableVendor(c.client_name)
     const cCore = cVendorReliable ? vendorCore(c.client_name) : ''
@@ -523,9 +529,21 @@ export function assessPossibleDuplicate(
     const sameDate = !!(inDate && cDate && inDate === cDate)
     const gap = inDate && cDate ? daysApart(inDate, cDate) : null
     const nearDate = gap != null && gap > 0 && gap <= POSSIBLE_DUP_WINDOW_DAYS
+    const sameNumber = !!(inNum && normalizeInvoiceNumber(c.invoice_number) === inNum)
 
     let rank = 0, reason = ''
-    if (sameDate && sameVendor) { rank = 4; reason = 'zelfde bedrag, datum en afzender' }
+    if (sameNumber && sameDate) {
+      // Same number + total + date IS a hard duplicate (findSemanticDuplicate blocks it before we
+      // run) — don't downgrade it to a mere "possible". Skip.
+      continue
+    } else if (sameNumber) {
+      // [DEDUP-SOFT-CRITICAL] Same invoice number + total but the DATE drifted (an OCR date misread,
+      // or a null date on either side): the hard number-tier key filters on date and MISSED it, so it
+      // would otherwise import + auto-book a SECOND cost silently. A per-vendor invoice number that
+      // repeats with the same total is all but certainly the same bill → flag it (strongest signal).
+      rank = 5; reason = 'zelfde factuurnummer en bedrag, andere datum'
+    }
+    else if (sameDate && sameVendor) { rank = 4; reason = 'zelfde bedrag, datum en afzender' }
     else if (sameDate) { rank = 3; reason = 'zelfde bedrag en datum' }
     else if (sameVendor && nearDate) { rank = 2; reason = 'zelfde bedrag en afzender, datum dichtbij' }
     else continue

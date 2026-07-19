@@ -2461,7 +2461,10 @@ export async function syncUserEmails(
               .select('id, invoice_number, client_name, invoice_date, total_inc_btw')
               .eq('receiver_id', userId)
               .eq('direction', 'incoming')
-              .eq('total_inc_btw', total)
+              // A cent-wide band, not exact float equality: a legacy row stored as 42.9999… must
+              // still be fetched for the cent-precise in-code compare (assessPossibleDuplicate).
+              .gte('total_inc_btw', total - 0.005)
+              .lte('total_inc_btw', total + 0.005)
               .order('id', { ascending: false })
               .limit(200)
             return data ?? []

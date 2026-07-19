@@ -160,8 +160,11 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     // The stored reason is already owner-facing Dutch (e.g. "excl + BTW ≠ totaal").
     if (storedSafecore.reason) reasons.push(storedSafecore.reason)
     else reasons.push('mogelijke rekenfout in de bedragen')
-  } else if (!storedSafecore) {
-    // No stored verdict → recompute (covers the upload path + any legacy row).
+  } else if (!storedSafecore || storedSafecore.arithmetic_ok === undefined) {
+    // No stored arithmetic verdict → recompute. Covers the upload path, legacy rows, AND a
+    // _safecore that carries ONLY a non-arithmetic flag (e.g. the intake path writes
+    // possible_duplicate without ever running the arithmetic gate) — without this, an invoice
+    // that is BOTH a possible-duplicate and arithmetically inconsistent would hide the math error.
     // [BRIDGE-CREDITNOTA-SIGN] Same gate, same branch selection as write time:
     // a creditnota row (invoice_type) takes the sign-inverted gate, so a clean
     // negative creditnota reads "ready" here instead of a false "Aandacht nodig".

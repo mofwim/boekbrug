@@ -106,6 +106,11 @@ console.log('\n— [DEDUP-SOFT] a POSSIBLE duplicate is flagged for a human glan
   const dupOf = classifyImportHealth(inv({ field_confidence: { _safecore: { possible_duplicate: true, possible_duplicate_of: 'F-2001', possible_duplicate_reason: 'zelfde bedrag en datum' } } }))
   check('names the look-alike invoice + reason', dupOf.reasons.some((r) => r.includes('F-2001') && r.includes('zelfde bedrag en datum')))
   check('no possible-dup flag on a normal invoice', classifyImportHealth(inv({})).flags.possibleDuplicate === false)
+  // [DEDUP-SOFT #4] A _safecore that carries ONLY possible_duplicate (no arithmetic_ok — the intake
+  // path never ran the arithmetic gate) must STILL recompute arithmetic, so a possible-dup invoice
+  // that is ALSO math-inconsistent surfaces BOTH reasons, not just the dup one.
+  const both = classifyImportHealth(inv({ total_ex_btw: 100, btw_amount: 21, total_inc_btw: 130, field_confidence: { _safecore: { possible_duplicate: true } } }))
+  check('possible-dup + math error → BOTH reasons', both.flags.possibleDuplicate === true && both.flags.arithmetic === true)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

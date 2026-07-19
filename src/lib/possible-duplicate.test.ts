@@ -36,10 +36,30 @@ console.log("\n— provably different reliable vendors, same amount+date → NOT
   check("different supplier not flagged", r === null);
 }
 
-console.log("\n— exact number match is a HARD dup, not soft → skipped here —");
+console.log("\n— exact number + SAME date is a HARD dup (blocked upstream) → skipped here —");
 {
-  const r = assessPossibleDuplicate(input({ invoiceNumber: "F-2001" }), [cand({ invoice_number: "F-2001" })]);
-  check("exact-number candidate skipped", r === null);
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "F-2001", invoiceDate: "2026-03-10" }), [cand({ invoice_number: "F-2001", invoice_date: "2026-03-10" })]);
+  check("same number + same date candidate skipped", r === null);
+}
+
+console.log("\n— [CRITICAL] same number + total but DRIFTED date → flagged (hard key missed it) —");
+{
+  // OCR reads a different date the second time; the hard number-tier key filters on date and misses
+  // it. This must NOT slip through silently → strongest possible-dup flag.
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "26/3958", invoiceDate: "2026-03-10" }), [cand({ invoice_number: "26/3958", invoice_date: "2026-03-08" })]);
+  check("drifted-date same-number flagged", !!r && /zelfde factuurnummer/.test(r.reason));
+  // Stored original has a NULL date → also flagged.
+  const r2 = assessPossibleDuplicate(input({ invoiceNumber: "26/3958", invoiceDate: "2026-03-10" }), [cand({ invoice_number: "26/3958", invoice_date: null })]);
+  check("null-date same-number flagged", !!r2 && /zelfde factuurnummer/.test(r2.reason));
+  // But a same number across PROVABLY DIFFERENT vendors is not a dup (per-vendor numbering).
+  const r3 = assessPossibleDuplicate(input({ invoiceNumber: "INV-001", vendor: "Atapack B.V.", invoiceDate: "2026-03-10" }), [cand({ invoice_number: "INV-001", client_name: "Jansen Groothandel", invoice_date: "2026-03-08" })]);
+  check("same number, different supplier → not flagged", r3 === null);
+}
+
+console.log("\n— [ACCENT] an accent variant of the same vendor still matches —");
+{
+  const r = assessPossibleDuplicate(input({ vendor: "Café de Kroon", invoiceDate: "2026-03-10", invoiceNumber: "A-1" }), [cand({ client_name: "Cafe de Kroon", invoice_date: "2026-03-10", invoice_number: "A-2" })]);
+  check("Café ≡ Cafe → same amount+date flagged", !!r && r.reason === "zelfde bedrag, datum en afzender");
 }
 
 console.log("\n— same vendor + amount, a few days apart → possible (near-date re-import) —");

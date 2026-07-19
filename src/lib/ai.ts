@@ -1728,17 +1728,21 @@ Return JSON only.`;
       parsed.btw_rate = r !== undefined && [0, 9, 21].includes(r) ? r : undefined;
     }
 
+    // A derived money value is rounded to the cent — an unrounded ex+btw (e.g. 42.99999999999999)
+    // is stored verbatim into a numeric column and then never matches a clean re-read of 43.00 on
+    // an exact-equality dedup query, silently defeating duplicate detection (a double-book).
+    const round2 = (n: number) => Math.round(n * 100) / 100;
     // Reconcile: if total is missing but ex + btw exist → compute it
     if (parsed.total_inc_btw === undefined &&
         parsed.total_ex_btw !== undefined &&
         parsed.btw_amount !== undefined) {
-      parsed.total_inc_btw = parsed.total_ex_btw + parsed.btw_amount;
+      parsed.total_inc_btw = round2(parsed.total_ex_btw + parsed.btw_amount);
     }
     // Reconcile: if ex is missing but total + btw exist → compute it
     if (parsed.total_ex_btw === undefined &&
         parsed.total_inc_btw !== undefined &&
         parsed.btw_amount !== undefined) {
-      parsed.total_ex_btw = parsed.total_inc_btw - parsed.btw_amount;
+      parsed.total_ex_btw = round2(parsed.total_inc_btw - parsed.btw_amount);
     }
     // [EX-INCL-FIX] Recover a base that a mislabelled "Subtotaal" set equal to the incl total
     // while a real BTW is printed (impossible). Trusts incl + btw → ex = incl − btw.
