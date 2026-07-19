@@ -253,7 +253,21 @@ export default function BankClient() {
       if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
       return true
     })
-    if (!hasSafe) return
+    // [BANK-BATCH-ONLOAD] Also fire the pass when an unresolved MULTI-invoice batch exists (a
+    // wholesaler debiting a week of deliveries into one payment, e.g. "sumer food … 2 facturen").
+    // The single-match gate above deliberately skips these (>1 reference), so a statement whose
+    // ONLY auto-bookable payments were exact batches never auto-confirmed on page-open — it waited
+    // for the daily cron. runBankAutoConfirm already runs the batch pass; the server's
+    // planBatchAutoConfirm stays authoritative (books ONLY provably-exact ties: every number →
+    // exactly one unpaid invoice, one supplier, sum to the cent). This just decides "is it worth
+    // calling now". A non-tie / incomplete batch simply books nothing — the call is idempotent.
+    const hasBatch = (data.suggestions ?? []).some((s) => {
+      const refCount = (s.reference ?? '').split(',').map((x) => x.trim()).filter(Boolean).length
+      if (refCount < 2) return false
+      if (s.allCovered === true || confirmed[s.transactionId]?.allCovered === true) return false
+      return true
+    })
+    if (!hasSafe && !hasBatch) return
     autoRanRef.current = true
     void autoConfirm()
   }, [data, autoRunning, autoConfirm])
