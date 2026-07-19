@@ -97,5 +97,16 @@ console.log('\n— [REMINDER] a payment reminder is flagged for a human check (n
   check('no reminder flag on a normal invoice', classifyImportHealth(inv({})).flags.reminder === false)
 }
 
+console.log('\n— [DEDUP-SOFT] a POSSIBLE duplicate is flagged for a human glance (never auto-booked) —')
+{
+  const dup = classifyImportHealth(inv({ field_confidence: { _safecore: { possible_duplicate: true } } }))
+  check('possible dup → needs-review', dup.level === 'needs-review' && dup.flags.possibleDuplicate === true)
+  check('possible dup → owner-facing "mogelijk dubbel" reason',
+    dup.reasons.some((r) => r.includes('mogelijk dubbel') && r.includes('dubbele boeking')))
+  const dupOf = classifyImportHealth(inv({ field_confidence: { _safecore: { possible_duplicate: true, possible_duplicate_of: 'F-2001', possible_duplicate_reason: 'zelfde bedrag en datum' } } }))
+  check('names the look-alike invoice + reason', dupOf.reasons.some((r) => r.includes('F-2001') && r.includes('zelfde bedrag en datum')))
+  check('no possible-dup flag on a normal invoice', classifyImportHealth(inv({})).flags.possibleDuplicate === false)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

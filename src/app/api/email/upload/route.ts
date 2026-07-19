@@ -15,6 +15,7 @@ import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
 import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
+import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
@@ -202,6 +203,33 @@ export async function POST(req: NextRequest) {
       { status: 409 }
     );
   }
+  // [DEDUP-SOFT] Not a CONFIDENT duplicate — but is it a POSSIBLE one? (same amount + date, or
+  // same amount + vendor a few days apart, that the hard number/vendor key can't prove). Never
+  // blocks: the invoice imports, flagged "mogelijk dubbel met X" for a human glance (and held out
+  // of auto-confirm — a possible dup can never be silently booked as a second cost).
+  const possibleDup =
+    !(dup.duplicate && dup.match)
+      ? await collectPossibleDuplicate(
+          {
+            invoiceNumber: verification.invoice_number,
+            vendor: verification.vendor,
+            totalIncBtw: verification.total_inc_btw ?? verification.amount,
+            invoiceDate: verification.invoice_date,
+          },
+          async (total) => {
+            const { data } = await supabase
+              .from("invoices")
+              .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+              .eq("receiver_id", user.id)
+              .eq("direction", "incoming")
+              .eq("total_inc_btw", total)
+              .order("id", { ascending: false })
+              .limit(200);
+            return data ?? [];
+          }
+        )
+      : null;
+
   if (dup.duplicate && dup.match && force) {
     // The owner already saw "bestaat al" and chose to add anyway — record the override.
     await logAuditAction({
@@ -328,8 +356,10 @@ export async function POST(req: NextRequest) {
       // a future payment (EPC QR / pre-filled); BoekBrug never processes money.
       vendor_iban: verification.vendor_iban ?? null,
       payment_reference: verification.payment_reference ?? null,
-      // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields
-      field_confidence: verification.field_confidence ?? null,
+      // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields.
+      // [DEDUP-SOFT] Merge the possible-duplicate signal so the verify queue shows "mogelijk
+      // dubbel met X" and the invoice is held out of auto-confirm.
+      field_confidence: mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup) as typeof verification.field_confidence,
       // [DEDUP-CREDITNOTA / I3] A creditnota keeps NEGATIVE amounts (numSigned) and must be
       // TYPED as one, exactly like the email-sync and intake paths — otherwise the read-time
       // health classifier picks the positive-expecting arithmetic gate and a legitimately
@@ -356,5 +386,12 @@ export async function POST(req: NextRequest) {
       .eq("id", documentId);
   }
 
-  return NextResponse.json({ ok: true, invoice_id: invoice?.id });
+  return NextResponse.json({
+    ok: true,
+    invoice_id: invoice?.id,
+    // [DEDUP-SOFT] A soft, non-blocking heads-up so the UI can show "mogelijk dubbel" right away.
+    ...(possibleDup
+      ? { possibleDuplicate: { invoice_number: possibleDup.match.invoice_number, client_name: possibleDup.match.client_name, reason: possibleDup.reason } }
+      : {}),
+  });
 }

@@ -48,6 +48,7 @@ export interface ImportHealth {
     invoiceNumber: boolean // AI unsure about the invoice number
     invoiceDate: boolean // AI unsure about the date
     reminder: boolean // [REMINDER] a payment reminder — check the original isn't already booked
+    possibleDuplicate: boolean // [DEDUP-SOFT] a look-alike of an invoice already imported — human glance
   }
 }
 
@@ -97,6 +98,12 @@ export interface FieldConfidence {
     // booked, so it needs a human check (never bulk-confirmed as a second cost).
     reminder?: boolean
     reminder_of?: string
+    // [DEDUP-SOFT] This invoice looked like a POSSIBLE (not confident) duplicate at import — same
+    // amount + date, or same amount + vendor a few days apart. It was NOT blocked (too uncertain to
+    // reject), but the human should check it isn't a double booking. `_of` names the look-alike.
+    possible_duplicate?: boolean
+    possible_duplicate_of?: string
+    possible_duplicate_reason?: string
   }
 }
 
@@ -114,6 +121,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     invoiceNumber: false,
     invoiceDate: false,
     reminder: false,
+    possibleDuplicate: false,
   }
 
   const fc = inv.field_confidence
@@ -133,6 +141,18 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       storedSafecore.reminder_of
         ? `dit lijkt een herinnering voor factuur ${storedSafecore.reminder_of} — controleer of die al geboekt is`
         : 'dit lijkt een betalingsherinnering — controleer of de originele factuur al geboekt is'
+    )
+  }
+  // [DEDUP-SOFT] A POSSIBLE (not confident) duplicate — same amount + date, or same amount +
+  // vendor a few days apart. It was allowed in (too uncertain to block), but must never be
+  // bulk-confirmed as a second cost without a human glance. → needs-review with a clear "mogelijk
+  // dubbel met X" reason.
+  if (storedSafecore?.possible_duplicate === true) {
+    flags.possibleDuplicate = true
+    const of = storedSafecore.possible_duplicate_of
+    const why = storedSafecore.possible_duplicate_reason
+    reasons.push(
+      `mogelijk dubbel${of ? ` met factuur ${of}` : ''}${why ? ` (${why})` : ''} — controleer of dit geen dubbele boeking is`
     )
   }
   if (storedSafecore && storedSafecore.arithmetic_ok === false) {
@@ -232,7 +252,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
 
   const level: HealthLevel =
-    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder
+    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate
       ? 'needs-review'
       : 'clean'
 

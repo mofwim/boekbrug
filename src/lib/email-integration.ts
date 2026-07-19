@@ -22,7 +22,9 @@ import {
   normalizeInvoiceNumber,
   normalizeToIso,
   deriveDueDate,
+  type PossibleDuplicate,
 } from '@/lib/safecore'
+import { collectPossibleDuplicate } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 
@@ -2224,6 +2226,10 @@ export async function syncUserEmails(
       // [SAFECORE-GAP] carried to the insert when we cannot dedup an invoice —
       // recorded in field_confidence._safecore for the audit trail / human review.
       let dedupNote: { dedup: string; reason: string } | null = null
+      // [DEDUP-SOFT] A POSSIBLE (not confident) duplicate found AFTER the hard dedup passes —
+      // flagged so the verify queue shows "mogelijk dubbel met X" and it can never auto-advance as
+      // a second cost. Never blocks the import. Reset per attachment.
+      let possibleDup: PossibleDuplicate | null = null
 
       // [SUPPLIER-DEDUP] Resolve the canonical supplier BEFORE the duplicate check, so Check B
       // can key on supplier IDENTITY (supplier_id) rather than the STORED name string. Since the
@@ -2436,6 +2442,31 @@ export async function syncUserEmails(
             continue
           }
         }
+
+        // [DEDUP-SOFT] Reached here without a `continue` → NOT a confident duplicate. Is it a
+        // POSSIBLE one? (same amount + date, or same amount + vendor a few days apart, that the
+        // hard key can't prove). Flag it — never block — so the verify queue shows "mogelijk
+        // dubbel met X" and it is held out of auto-advance (a possible dup can never silently book
+        // a second cost). Best-effort: a query error degrades to no flag.
+        possibleDup = await collectPossibleDuplicate(
+          {
+            invoiceNumber: classification.invoiceNumber,
+            vendor: classification.vendor,
+            totalIncBtw: classification.totalIncBtw,
+            invoiceDate: classification.invoiceDate,
+          },
+          async (total) => {
+            const { data } = await supabase
+              .from('invoices')
+              .select('id, invoice_number, client_name, invoice_date, total_inc_btw')
+              .eq('receiver_id', userId)
+              .eq('direction', 'incoming')
+              .eq('total_inc_btw', total)
+              .order('id', { ascending: false })
+              .limit(200)
+            return data ?? []
+          }
+        )
       }
 
       // [DATE-GATE] Honest date: null when the AI could not read one — do NOT
@@ -2556,7 +2587,7 @@ export async function syncUserEmails(
       const isReminder = classification.isReminder === true
       // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) and the reminder
       // flag so the audit/human-review trail records WHY this invoice needs a human look.
-      if (!verdict.ok || dedupNote || isReminder) {
+      if (!verdict.ok || dedupNote || isReminder || possibleDup) {
         const safecore: Record<string, unknown> = {}
         if (!verdict.ok) {
           safecore.arithmetic_ok = false
@@ -2573,6 +2604,13 @@ export async function syncUserEmails(
           if (classification.reminderOfInvoiceNumber) {
             safecore.reminder_of = classification.reminderOfInvoiceNumber
           }
+        }
+        // [DEDUP-SOFT] Carry the possible-duplicate flag → classifyImportHealth turns it into a
+        // "mogelijk dubbel met X" needs-review warning that also blocks auto-advance.
+        if (possibleDup) {
+          safecore.possible_duplicate = true
+          safecore.possible_duplicate_of = possibleDup.match.invoice_number || possibleDup.match.client_name || possibleDup.match.id
+          safecore.possible_duplicate_reason = possibleDup.reason
         }
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),
