@@ -27,12 +27,17 @@ import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
+import { getVatScheme } from "./vat-scheme";
 
 export interface AutoConfirmed {
   transactionId: string;
   invoiceId: string;
   invoiceNumber: string | null;
   amount: number;
+  // [JET-GAP0] How sure the booking was: 'certain' (printed reference / IBAN + amount to the cent,
+  // or an exact multi-invoice batch tie) vs 'amount_only' (amount + counterpart name, single clear
+  // winner — booked but flagged "controleer"). Drives the honesty of the notification body.
+  tier: AutoConfirmTier;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,6 +55,16 @@ export async function runBankAutoConfirm(args: {
   userId: string;
 }): Promise<AutoConfirmed[]> {
   const { payClient, pipeline, userId } = args;
+
+  // [JET-GAP2] Is the owner on kasstelsel? Under kas the payment DATE an auto-booking writes is
+  // VAT-timing truth (it decides the BTW quarter), so an 'amount_only' match — amount + name but NO
+  // printed reference — must NOT auto-book: a wrong same-amount pick would land BTW in the wrong
+  // quarter. 'certain' (printed reference / IBAN to the cent) still auto-books. Own deploy-safe
+  // query; defaults factuur if the vat_scheme migration lags (then amount_only books as before,
+  // which is safe under accrual where the pay date is not VAT-timing).
+  const { data: schemeProf } = await pipeline
+    .from("profiles").select("vat_scheme").eq("id", userId).maybeSingle();
+  const ownerScheme = getVatScheme((schemeProf as { vat_scheme?: string | null } | null)?.vat_scheme);
 
   const txRows = await fetchAllRows((from, to) =>
     pipeline
@@ -98,6 +113,11 @@ export async function runBankAutoConfirm(args: {
     const inv = invById.get(invoiceId);
     if (!inv) continue;
 
+    // [JET-GAP2] Under kasstelsel, an amount-only match stays a human-confirm suggestion (it remains
+    // a pending transaction the /bank matcher surfaces for one-tap confirm) — never auto-booked,
+    // because the pay date it would write decides the BTW quarter. 'certain' still books.
+    if (tier === "amount_only" && ownerScheme === "kas") continue;
+
     // Defense-in-depth: the same invariants the confirm route enforces (incl. accountant
     // 'verwerkt' exclusion) — authoritative when payClient is service_role (no DB trigger).
     if (!isEligible(m.transaction, inv)) continue;
@@ -144,7 +164,7 @@ export async function runBankAutoConfirm(args: {
     // is the tx.invoice_id + invoice.status above; this row is only the collision-free undo index.
     await recordPaymentLinks(pipeline, userId, txId, [invoiceId]);
 
-    confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0 });
+    confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0, tier });
     await logAuditAction({
       userId,
       action: "bank.auto_confirmed",
@@ -201,7 +221,8 @@ export async function runBankAutoConfirm(args: {
     if (!bookedRows || (bookedRows as unknown[]).length === 0) continue; // tx already claimed → skip
 
     for (const inv of planInvs) {
-      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0 });
+      // A batch tie is 'certain' by construction (every number resolves + the sum equals the debit).
+      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0, tier: "certain" });
       bookedInvoiceIds.add(inv.id);
     }
     bookedTxIds.add(txId);
@@ -212,6 +233,36 @@ export async function runBankAutoConfirm(args: {
       entityId: txId,
       newValue: { invoice_ids: plan.invoiceIds, invoice_count: plan.invoiceIds.length, amount: row.amount ?? 0, reason: "exact_multi_invoice_batch_tie" },
     });
+  }
+
+  // ── [JET-GAP0] The bell lives HERE, inside the core, so it is IMPOSSIBLE to book an invoice
+  // paid from ANY of the six entry points (import, verify, cron, /bank page, email) without the
+  // owner being told. Before, only two callers notified — the other four moved money silently.
+  // The body is honest about tier: an 'amount_only' booking (matched on amount + name, not a
+  // printed reference) is flagged "controleer". Best-effort but LOGGED on failure — a swallowed
+  // insert must never regress to silent money. (Money is not moved here; a paid invoice is a fact
+  // recorded, one-tap reversible under "Bevestigd".)
+  if (confirmed.length > 0) {
+    const n = confirmed.length;
+    const amountOnly = confirmed.filter((c) => c.tier === "amount_only").length;
+    const body =
+      `${n === 1 ? "1 factuur is" : `${n} facturen zijn`} automatisch herkend in je bankafschrift en op ` +
+      `betaald gezet. Bekijk ze onder "Bevestigd" — elke koppeling draai je met één tik terug.` +
+      (amountOnly > 0
+        ? ` Let op: ${amountOnly === 1 ? "1 koppeling is" : `${amountOnly} koppelingen zijn`} alleen op bedrag ` +
+          "herkend (geen factuurnummer in de omschrijving) — controleer die even."
+        : "");
+    try {
+      const { error } = await pipeline.from("notifications").insert({
+        user_id: userId,
+        title: n === 1 ? "1 factuur automatisch gekoppeld" : `${n} facturen automatisch gekoppeld`,
+        body,
+        type: "payment",
+      });
+      if (error) console.error("[JET-GAP0] auto-confirm notification insert failed", { userId, error: error.message });
+    } catch (e) {
+      console.error("[JET-GAP0] auto-confirm notification threw", { userId, error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   return confirmed;

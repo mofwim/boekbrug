@@ -152,24 +152,9 @@ export async function importBankStatement(args: {
     }
   }
 
-  // [BANK-AUTO-FEEDBACK] The import books the near-certain payments SILENTLY on the server. The
-  // owner saw "facturen automatisch" nowhere — nothing told them their invoices had been marked
-  // paid. A single summary notification closes that gap: it says how many were booked and where to
-  // review/undo them (every auto-booking is one tap to reverse under "Gekoppeld"). Non-blocking.
-  if (autoBooked > 0) {
-    // Count in FACTUREN (invoices), the thing that actually changed state — not "betalingen": one
-    // batch payment settles several invoices, so "N betalingen" would overstate. Honest wording.
-    try {
-      await pipeline.from("notifications").insert({
-        user_id: userId,
-        title: autoBooked === 1 ? "1 factuur automatisch gekoppeld" : `${autoBooked} facturen automatisch gekoppeld`,
-        body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Bevestigd" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
-        type: "payment",
-      });
-    } catch {
-      /* non-blocking — the bookings + audit trail stand regardless of the notification */
-    }
-  }
+  // [JET-GAP0] The "X facturen automatisch gekoppeld" bell now fires from INSIDE runBankAutoConfirm
+  // (above), so it reaches the owner from every entry point — not only this import path — and can
+  // never be forgotten by a caller. `autoBooked` still travels back for the upload UI's toast.
 
   // ── raw passthrough store (best-effort — the transactions above are unaffected) ──
   let statementStored = false;

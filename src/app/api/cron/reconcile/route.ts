@@ -90,23 +90,9 @@ export async function GET(req: NextRequest) {
       // only) so uncategorized money shrinks on its own between logins.
       await applyLearnedBankCategories({ pipeline, userId: uid }).catch(() => []);
       usersProcessed += 1;
-      if (confirmed.length > 0) {
-        bookedTotal += confirmed.length;
-        // Tell the owner what the app did on their behalf (in-app bell; non-blocking).
-        try {
-          await pipeline.from("notifications").insert({
-            user_id: uid,
-            title: "Betalingen automatisch gekoppeld",
-            body:
-              confirmed.length === 1
-                ? "1 banktransactie is automatisch aan de juiste factuur gekoppeld en op betaald gezet."
-                : `${confirmed.length} banktransacties zijn automatisch aan de juiste facturen gekoppeld en op betaald gezet.`,
-            type: "payment",
-          });
-        } catch {
-          /* notification is non-essential */
-        }
-      }
+      // [JET-GAP0] The "automatisch gekoppeld" bell now lives INSIDE runBankAutoConfirm, so every
+      // entry point (incl. this cron) notifies from one place — no duplicate insert here.
+      if (confirmed.length > 0) bookedTotal += confirmed.length;
     } catch (e) {
       // Isolate + LOG (a persistently-failing user was previously an anonymous counter bump).
       failed += 1;
