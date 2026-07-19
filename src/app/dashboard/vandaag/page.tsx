@@ -68,6 +68,18 @@ export default async function VandaagPage() {
     .order("due_date", { ascending: true })
     .limit(100);
 
+  // [P1-STUCK-PROCESSING] Incoming invoices sitting in the verify queue (status='processing')
+  // — imported/photographed but not yet verified. A clean high-confidence one is auto-advanced
+  // to 'received'; the AMBIGUOUS / low-confidence ones stay here, and with no reminder they rot
+  // silently — their voorbelasting (BTW-aftrek) and cost never reach the books. Surface the count
+  // on the daily control center so the owner is nudged to clear them. Head-count only (no rows).
+  const { count: toVerifyCount } = await supabase
+    .from("invoices")
+    .select("id", { count: "exact", head: true })
+    .eq("receiver_id", user.id)
+    .eq("direction", "incoming")
+    .eq("status", "processing");
+
   const payable = (payableRaw ?? []) as unknown as VandaagInvoice[];
   const remind = (remindRaw ?? []) as unknown as VandaagInvoice[];
 
@@ -79,5 +91,5 @@ export default async function VandaagPage() {
   // instead of the reassuring checkmark. (Locked constraint #3: no false reassurance.)
   const loadFailed = !!payableErr || !!remindErr;
 
-  return <VandaagClient payable={payable} remind={remind} loadFailed={loadFailed} />;
+  return <VandaagClient payable={payable} remind={remind} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} />;
 }

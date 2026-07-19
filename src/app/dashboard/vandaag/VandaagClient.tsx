@@ -63,6 +63,7 @@ interface Props {
   payable: VandaagInvoice[]; // List 1 — incoming, status='received'
   remind: VandaagInvoice[]; // List 2 — outgoing, status IN ('sent','overdue')
   loadFailed?: boolean; // [COHERENCE-ERRSTATE] true when a server query errored
+  toVerifyCount?: number; // [P1-STUCK-PROCESSING] incoming invoices stuck in the verify queue
 }
 
 // ─── Date helpers (timezone-proof) ────────────────────────────────────────────
@@ -129,7 +130,7 @@ function accentOf(dueIso: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VandaagClient({ payable, remind, loadFailed }: Props) {
+export default function VandaagClient({ payable, remind, loadFailed, toVerifyCount = 0 }: Props) {
   const router = useRouter();
 
   // [TODAY-LISTS-V1] "Negeren" = session-only visual hide (no DB write, like
@@ -202,11 +203,38 @@ export default function VandaagClient({ payable, remind, loadFailed }: Props) {
         </p>
       </header>
 
+      {/* [P1-STUCK-PROCESSING] Nudge for invoices imported/photographed but not yet verified.
+          Ambiguous ones stay in the verify queue with no reminder and their cost + BTW-aftrek
+          never reach the books — so surface them here, on the daily control center. Shown even
+          when the payment lists are empty (an empty "all clear" while N invoices wait is a lie). */}
+      {!loadFailed && toVerifyCount > 0 && (
+        <button
+          onClick={() => router.push("/dashboard/incoming")}
+          style={{
+            width: "100%", textAlign: "left", cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 12,
+            background: "#FEF7E0", border: `1px solid #FBBC04`, borderRadius: 16,
+            padding: "14px 16px", marginBottom: 16,
+          }}
+        >
+          <span style={{ fontSize: 22 }}>📥</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: "#7A4F00" }}>
+              {toVerifyCount === 1 ? "1 factuur wacht op verificatie" : `${toVerifyCount} facturen wachten op verificatie`}
+            </span>
+            <span style={{ display: "block", fontSize: 13, color: "#7A4F00", marginTop: 1 }}>
+              Controleer ze zodat de kosten en BTW-aftrek in je boeken komen.
+            </span>
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+        </button>
+      )}
+
       {loadFailed ? (
         <LoadError onRetry={() => router.refresh()} />
-      ) : nothingToDo ? (
+      ) : nothingToDo && toVerifyCount === 0 ? (
         <EmptyAllClear />
-      ) : (
+      ) : nothingToDo ? null : (
         <>
           <ListSection
             title="Te betalen"
