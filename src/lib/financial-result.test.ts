@@ -64,6 +64,30 @@ console.log("\n— [SIGN] a refund keeps its sign (not abs'd into fabricated rev
   check("negative omzet does not inflate the zonder-tarief nudge", r.cashOmzetZonderBtw === 1000);
 }
 
+console.log("\n— [BANKKOSTEN-DEDUCTIBLE] bank 'fee' is a deductible VAT-exempt cost, never double-counted —");
+{
+  // A plain bank charge → deductible cost, €0 voorbelasting (vrijstelling betalingsverkeer).
+  const r1 = computeResult([], [{ amount: -12.10, category: "fee", invoice_id: null }], []);
+  check("fee debit → deductible kosten (12.10)", near(r1.kosten, 12.10));
+  check("fee → no voorbelasting (VAT-exempt)", r1.btwVoorbelasting === 0);
+  check("fee → no omzet", r1.omzet === 0);
+
+  // A reversed/refunded bank charge (credit) reduces cost, keeping its sign.
+  const r2 = computeResult([], [{ amount: 5, category: "fee", invoice_id: null }], []);
+  check("fee credit (reversal) reduces kosten by 5", r2.kosten === -5);
+
+  // THE NO-DOUBLE-COUNT PROOF: a 'fee' bank line (10) AND the card-triangle acquirer commission
+  // (passed as the 6th arg = 10) must each count ONCE → kosten 20, never 10 or 30. The triangle
+  // commission derives only from pos_income lines, disjoint from 'fee', so no euro is booked twice.
+  const r3 = computeResult([], [{ amount: -10, category: "fee", invoice_id: null }], [], [], undefined, 10);
+  check("bankkosten (10) + acquirer commission (10) each count once → 20", near(r3.kosten, 20));
+  check("neither the fee nor the commission invents voorbelasting", r3.btwVoorbelasting === 0);
+
+  // A fee line that is actually an invoice payment (invoice_id set) is still excluded (paid via its invoice).
+  const r4 = computeResult([], [{ amount: -9, category: "fee", invoice_id: "inv-x" }], []);
+  check("fee line with invoice_id is NOT double-counted", r4.kosten === 0);
+}
+
 console.log("\n— cash —");
 {
   const cash: ResultCashEntry[] = [
