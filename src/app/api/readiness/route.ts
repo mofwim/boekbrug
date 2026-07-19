@@ -20,6 +20,7 @@ import { needsDocument } from "@/lib/bank-identity";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import type { EftSettlement } from "@/lib/eft-parser";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
+import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, type KasTurnoverDay, type KasEntry, type Quarter } from "@/lib/kasboek";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 
@@ -308,6 +309,28 @@ export async function GET(req: NextRequest) {
   const aangifte = buildAangifte(result, completeness, quarterLabel);
   const hasUndecidableRate = aangifte.rows.some((r) => r.code === "1c");
 
+  // ── 5b) [KAS-NEGATIEF] The running cash drawer — did it ever go below zero this quarter? ──
+  // Recomputed EXACTLY like /api/kasboek (same inputs + same opening seed) so the readiness verdict
+  // and the accountant's kasboek agree on the drawer figure. Needs FULL HISTORY (everything up to
+  // quarter end, not just in-quarter) to carry the correct opening balance, and MUST paginate
+  // (fetchAllRows) — a truncated opening balance would be a wrong number (the task-#36 bug class).
+  const kasTurnoverRows = await fetchAllRows((from, to) => pipeline
+    .from("daily_turnover").select("turnover_date, cash_amount")
+    .eq("user_id", ownerId).lte("turnover_date", end)
+    .order("turnover_date", { ascending: true }).range(from, to));
+  const kasEntryRows = await fetchAllRows((from, to) => pipeline
+    .from("cash_entries").select("entry_date, direction, amount, category, description")
+    .eq("user_id", ownerId).lte("entry_date", end)
+    .order("entry_date", { ascending: true }).range(from, to));
+  const { data: kasProfile } = await pipeline
+    .from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
+  const kasTurnover = (kasTurnoverRows ?? []) as KasTurnoverDay[];
+  const kasEntries = (kasEntryRows ?? []) as unknown as KasEntry[];
+  const kasStarting = Number((kasProfile as { kas_opening_balance?: number | null } | null)?.kas_opening_balance) || 0;
+  const kasOpening = openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as Quarter, startingBalance: kasStarting });
+  const kasboek = buildKasboek({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as Quarter, openingBalance: kasOpening });
+  const negativeCashDay = lowestDrawerPoint(kasboek);
+
   // ── 6) Assemble the signals → the verdict ──
   const signals: ReadinessSignals = {
     quarterLabel,
@@ -329,6 +352,7 @@ export async function GET(req: NextRequest) {
     quarterDays,
     hasUndecidableRate,
     hasEuPurchase: completeness.hasEuPurchase,
+    negativeCashDay, // [KAS-NEGATIEF] a below-zero drawer blocks "klaar"
   };
   const report = buildReadiness(signals);
 

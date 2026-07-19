@@ -62,6 +62,11 @@ export interface ReadinessSignals {
   quarterDays: number;                  // calendar days in the quarter
   hasUndecidableRate: boolean;          // a sale landed in rubriek 1c (mis-derived rate)
   hasEuPurchase: boolean;               // an EU inkoop (rubriek 4b — accountant handles)
+  // [KAS-NEGATIEF] The lowest point the cash drawer reached this quarter, when it went BELOW zero
+  // (from lowestDrawerPoint). A negative kassaldo is physically impossible and the single biggest
+  // red flag the Belastingdienst uses to reject a cash administration (it implies hidden omzet), so
+  // it must BLOCK "klaar". Optional so older callers/tests keep compiling (undefined → no block).
+  negativeCashDay?: { date: string; balance: number } | null;
 }
 
 export interface ReconException {
@@ -284,6 +289,13 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       const okDays = Math.max(0, s.turnoverDays - exceptionDays);
       subscore = clamp01(okDays / s.turnoverDays);
       detail = `${okDays} van ${s.turnoverDays} kassadagen sluiten aan met bank en kas.`;
+      // [KAS-NEGATIEF] A negative drawer zeroes the cash subscore so the number visibly reflects the
+      // red flag (the line-409 honesty guard only caps 100→99). The hard block is the missing gate
+      // below (independent of till applicability); this only shapes the displayed score.
+      if (s.negativeCashDay && s.negativeCashDay.balance < 0) {
+        subscore = 0;
+        detail = `Kassaldo negatief op ${s.negativeCashDay.date} — dit onderdeel sluit niet aan.`;
+      }
       // Each disagreeing day is a RISK the owner should eyeball (not a blocking gap): it
       // travels to the accountant flagged, but a big daily gap is exactly what to catch.
       for (const e of s.reconExceptions) {
@@ -295,6 +307,23 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       }
     }
     dimensions.push({ key: "cash", label: DIM_LABEL.cash, weight: DIM_WEIGHT.cash, applicable, subscore, detail });
+  }
+
+  // [KAS-NEGATIEF] A negative cash balance blocks "klaar" — OUTSIDE the till-applicability guard on
+  // purpose: a pure-cash ZZP (no daily_turnover → the cash dimension is n.v.t.) can still run the
+  // drawer below zero, and a legally-impossible drawer must never ship as ready. Pushing a `missing`
+  // item makes missing.length > 0, so the final verdict can never be "ready". Never a wrong number —
+  // it computes nothing, it only refuses to say "klaar" on an impossible drawer (constraint: no
+  // false reassurance). The starting float is honored (opening balance from profile), so a shop that
+  // legitimately opened with cash in the till is not falsely flagged.
+  if (s.negativeCashDay && s.negativeCashDay.balance < 0) {
+    missing.push({
+      severity: "missing",
+      title: `Kassaldo negatief op ${s.negativeCashDay.date}: €${Math.abs(s.negativeCashDay.balance).toFixed(2)}`,
+      detail:
+        "Een negatief kassaldo kan niet — je kunt geen contant geld uitgeven dat er niet is. Dit is de grootste rode vlag voor de Belastingdienst (het wijst op niet-geboekte omzet). Controleer je beginsaldo, kasontvangsten en kasuitgaven.",
+      fix: FIX.kas,
+    });
   }
 
   // A business with money movement but NO recorded revenue is not a "channel we don't

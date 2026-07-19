@@ -230,5 +230,22 @@ console.log("\n— readiness never claims what it can't measure (honest note alw
   check("states the score only measures what was imported", r.notes.some((n) => /alleen wat is geïmporteerd/.test(n)));
 }
 
+console.log("\n— [KAS-NEGATIEF] a negative cash drawer blocks 'klaar' —");
+{
+  const r = buildReadiness(perfect({ negativeCashDay: { date: "2026-02-15", balance: -120 } }));
+  check("not ready when the drawer went negative", r.status !== "ready" && r.ready === false);
+  check("surfaced as a MISSING gap naming the date + amount", r.missing.some((m) => /Kassaldo negatief/.test(m.title) && /2026-02-15/.test(m.title) && /120/.test(m.title)));
+  check("the gap deep-links to Kas", r.missing.some((m) => m.fix?.href === "/dashboard/kas"));
+
+  // THE FALSE-GREEN TEST: a pure-cash business (no till dimension) must STILL be blocked.
+  const cashOnly = buildReadiness(perfect({ usesTurnover: false, turnoverDays: 0, negativeCashDay: { date: "2026-03-01", balance: -50 } }));
+  check("cash-only business (till n.v.t.) is STILL blocked on a negative drawer", cashOnly.status !== "ready" && cashOnly.ready === false);
+
+  // No false alarm: a non-negative / absent drawer stays ready.
+  check("undefined negativeCashDay → still ready (older callers, no false alarm)", buildReadiness(perfect()).status === "ready");
+  check("balance 0 → no gap (strict < 0)", buildReadiness(perfect({ negativeCashDay: { date: "2026-01-01", balance: 0 } })).status === "ready");
+  check("positive balance passed in → no gap", buildReadiness(perfect({ negativeCashDay: { date: "2026-01-01", balance: 50 } })).status === "ready");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

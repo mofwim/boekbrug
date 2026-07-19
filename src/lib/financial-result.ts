@@ -367,7 +367,8 @@ export function computeResult(
       }
     }
     else if (role === "kosten") kosten += -raw; // debit(−) → positive cost; refund(+) reduces it
-    // transfer / prive / tax / fee → excluded
+    // 'fee' (bankkosten) now maps to 'kosten' via PNL_ROLE — a deductible VAT-exempt cost; only
+    // transfer / prive / tax remain 'excluded'.
   }
 
   // 3) Cash book.
