@@ -278,9 +278,14 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // to /dashboard/bestanden?folder=..&focus=.. does not re-run the useState
   // initializers above, so without this the folder/focus were ignored until a manual
   // refresh. We read the params on every change, apply them, then clean the URL.
+  // [NAV] Remember an explicit ?from= origin (e.g. opened from de Brug) BEFORE the
+  // deep-link cleanup below strips the query, so "Terug" can still return there.
+  const fromOriginRef = useRef<string | null>(null);
   useEffect(() => {
     const folder = searchParams.get("folder");
     const focus = searchParams.get("focus");
+    const from = searchParams.get("from");
+    if (from) fromOriginRef.current = from;
     if (folder === null && focus === null) return;
     if (folder !== null) setCurrentFolderId(folder);
     if (focus !== null) setFocusId(focus);
@@ -833,9 +838,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             onClick={() => {
               if (navHistoryRef.current.length > 0) navigateBack();
               else {
-                // [NAV] Honour an explicit ?from= origin (e.g. opened from de Brug)
-                // so "Terug" returns where the user came from, not the role home.
-                const from = searchParams.get("from");
+                // [NAV] Honour the remembered ?from= origin (captured before the
+                // deep-link URL cleanup) so "Terug" returns where the user came
+                // from, not the role home.
+                const from = fromOriginRef.current;
                 const fromHref =
                   from === "brug" ? "/dashboard/brug"
                   : from === "werkplek" ? "/dashboard/werkplek"
