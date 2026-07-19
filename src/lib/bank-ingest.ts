@@ -21,6 +21,7 @@ import { dedupTransactions, mapToRows, dateRange, type ExistingTxKey } from "./b
 import { computeContentHash } from "./content-hash";
 import { resolveImportTarget } from "./bestanden";
 import { runBankAutoConfirm } from "./bank-auto-confirm";
+import { applyLearnedBankCategories } from "./bank-auto-categorize";
 
 export interface BankImportResult {
   format: string | null;
@@ -123,6 +124,13 @@ export async function importBankStatement(args: {
       autoBooked = confirmed.length;
     } catch (e) {
       console.error("[BANK-INGEST] auto-confirm after import failed (non-fatal)", e);
+    }
+    // [BANK-AUTO-CATEGORIZE] Immediately code the fresh lines the owner has taught us before, so a
+    // just-uploaded statement lands mostly categorized instead of a wall of uncategorized money.
+    try {
+      await applyLearnedBankCategories({ pipeline, userId });
+    } catch (e) {
+      console.error("[BANK-INGEST] auto-categorize after import failed (non-fatal)", e);
     }
   }
 

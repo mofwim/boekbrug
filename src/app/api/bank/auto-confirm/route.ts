@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
+import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,9 @@ export async function POST() {
   // from a bank import, and from the reconcile cron. The invoice→paid write uses the SESSION
   // client so the DB 'verwerkt' guard fires with a real auth.uid().
   const confirmed = await runBankAutoConfirm({ payClient: supabase, pipeline, userId: user.id });
+  // [BANK-AUTO-CATEGORIZE] Also code fresh bank lines from the owner's learned memory (confident
+  // only, reviewable) so the /bank load shrinks the uncategorized pile without a manual bulk tap.
+  const categorized = await applyLearnedBankCategories({ pipeline, userId: user.id }).catch(() => []);
 
-  return NextResponse.json({ ok: true, confirmed, count: confirmed.length });
+  return NextResponse.json({ ok: true, confirmed, count: confirmed.length, categorized: categorized.length });
 }
