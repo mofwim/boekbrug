@@ -7,51 +7,63 @@
 // next.config.ts (Next ignores app-router folders that start with ".", so the
 // file lives here and is mapped over).
 //
-// This is env-driven ON PURPOSE: the signing fingerprint doesn't exist until the
-// Android app is built + signed, so you finish the link by setting two Vercel
-// env vars — NO code change or redeploy of source needed:
-//   ANDROID_APP_PACKAGE       the app's applicationId, e.g. nl.boekbrug.app
-//   ANDROID_APP_FINGERPRINTS  the SHA-256 signing-cert fingerprint(s), each as
-//                             colon-separated hex. When you publish through Play
-//                             App Signing you'll have TWO (your upload key + the
-//                             Google-managed key) — list both, comma-separated.
-//   Find the Play fingerprint in Play Console → Test and release → Setup →
-//   App integrity → App signing key certificate (SHA-256).
+// The package name + signing fingerprint below are the ones baked into the
+// BoekBrug Android package generated with PWABuilder. They are NOT secrets —
+// assetlinks.json is a public file by design — so they live in code and the link
+// works the moment this deploys, no manual Vercel step required.
 //
-// Until both are set this returns an empty [] (valid JSON, verification simply
-// stays pending) so the endpoint never 500s.
+// [PLAY APP SIGNING] When you upload the .aab to Google Play, Google re-signs it
+// with its own managed key, which has a DIFFERENT SHA-256 than the upload key
+// below. Add that second fingerprint (Play Console → Test and release → Setup →
+// App integrity → App signing key certificate → SHA-256) via the env var — it's
+// merged with the built-ins, no code change needed:
+//   ANDROID_APP_FINGERPRINTS  extra SHA-256 fingerprint(s), comma-separated.
+//   ANDROID_APP_PACKAGE       override the package name if it ever changes.
 
 import { NextResponse } from "next/server";
 
-// Read env at request time so setting the vars in Vercel takes effect without a
-// source redeploy.
+// The upload-key identity from the generated package (public values).
+const DEFAULT_PACKAGE = "nl.boekbrug.twa";
+const DEFAULT_FINGERPRINTS = [
+  "DA:25:9A:66:E5:A3:67:08:BF:42:CF:15:42:20:9B:EB:9A:AF:9F:65:0C:89:6C:23:AB:B1:F9:4E:78:5E:97:E7",
+];
+
+// Read env at request time so adding the Play App Signing fingerprint in Vercel
+// takes effect without a source redeploy.
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  const packageName = process.env.ANDROID_APP_PACKAGE?.trim();
-  const fingerprints = (process.env.ANDROID_APP_FINGERPRINTS ?? "")
+  const packageName = process.env.ANDROID_APP_PACKAGE?.trim() || DEFAULT_PACKAGE;
+
+  const envFingerprints = (process.env.ANDROID_APP_FINGERPRINTS ?? "")
     .split(",")
     .map((f) => f.trim())
     .filter(Boolean);
 
-  const statements =
-    packageName && fingerprints.length > 0
-      ? [
-          {
-            relation: ["delegate_permission/common.handle_all_urls"],
-            target: {
-              namespace: "android_app",
-              package_name: packageName,
-              sha256_cert_fingerprints: fingerprints,
-            },
-          },
-        ]
-      : [];
+  // Built-in upload key + any env-added (e.g. Play App Signing) key, de-duped
+  // case-insensitively.
+  const seen = new Set<string>();
+  const fingerprints = [...DEFAULT_FINGERPRINTS, ...envFingerprints].filter((f) => {
+    const key = f.toUpperCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const statements = [
+    {
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: packageName,
+        sha256_cert_fingerprints: fingerprints,
+      },
+    },
+  ];
 
   return NextResponse.json(statements, {
     headers: {
-      // Asset Links verifiers re-fetch this; an hour of caching is plenty and
-      // keeps it snappy without pinning a stale/empty response for too long.
+      // Asset Links verifiers re-fetch this; an hour of caching is plenty.
       "cache-control": "public, max-age=3600",
     },
   });

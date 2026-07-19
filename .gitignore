@@ -64,3 +64,11 @@ node_modules/
 *credentials*
 # Sentry Config File
 .env.sentry-build-plugin
+
+# [ANDROID] Never commit signing keys or built app packages. Losing the keystore
+# means you can never update the Play listing again; leaking it lets anyone ship
+# malicious updates as BoekBrug. Keep it backed up OUTSIDE the repo.
+*.keystore
+*.jks
+*.aab
+*.apk
