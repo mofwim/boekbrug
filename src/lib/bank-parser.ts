@@ -28,6 +28,18 @@ export interface BankTransaction {
   rawLine: string;        // original line(s) for debugging
 }
 
+/**
+ * [BANK-BALANCE] The statement's own opening + closing balance, when the format carries it
+ * (MT940 :60F:/:62F:, CAMT.053 OPBD/CLBD). Signed euros: a debit (overdrawn) balance is
+ * negative. Either side may be null when a format/file omits it (e.g. CSV, or a partial
+ * statement) — reconciliation is then simply "not checkable", never a fabricated pass.
+ */
+export interface StatementBalance {
+  opening: number | null;
+  closing: number | null;
+  currency: string;
+}
+
 /** Result of parsing a bank file */
 export interface ParseResult {
   format: "MT940" | "CAMT053" | "CSV";
@@ -36,6 +48,24 @@ export interface ParseResult {
   currency: string;
   transactions: BankTransaction[];
   parseErrors: string[];  // non-fatal warnings
+  // [BANK-BALANCE] The statement's declared opening/closing balance for the completeness
+  // check (opening + Σtx must equal closing). null when the format carries no balance.
+  statementBalance?: StatementBalance | null;
+}
+
+/**
+ * [BANK-BALANCE] Parse one MT940 balance field value (:60F:/:62F:/:60M:/:62M:).
+ * Format: `C|D` + `YYMMDD` + `CCC`(currency) + amount (comma decimal, no thousands sep).
+ * Returns signed euros (D = debit balance = negative) + currency, or null when unreadable.
+ */
+export function parseMT940Balance(value: string): { amount: number; currency: string } | null {
+  const m = value.trim().match(/^([CD])\d{6}([A-Z]{3})([\d.,]+)$/);
+  if (!m) return null;
+  const [, sign, currency, rawAmount] = m;
+  // MT940 uses comma as the decimal separator and no thousands separator.
+  const magnitude = parseFloat(rawAmount.replace(/\./g, "").replace(",", "."));
+  if (!Number.isFinite(magnitude)) return null;
+  return { amount: sign === "D" ? -magnitude : magnitude, currency };
 }
 
 // ─── MT940 Parser ─────────────────────────────────────────────────────────────
@@ -187,6 +217,18 @@ export function parseMT940(content: string): ParseResult {
     if (currMatch) currency = currMatch[1];
   }
 
+  // [BANK-BALANCE] Opening = the FIRST 60F/60M (statement start); closing = the LAST 62F/62M
+  // (statement end). A multi-page file's intermediate M-balances cancel out, so first-open →
+  // last-close spans every :61: line — the reconciliation then proves no line is missing.
+  const openingTag = tags.find((t) => t.tag === "60F" || t.tag === "60M");
+  const closingTag = [...tags].reverse().find((t) => t.tag === "62F" || t.tag === "62M");
+  const openingBal = openingTag ? parseMT940Balance(openingTag.value) : null;
+  const closingBal = closingTag ? parseMT940Balance(closingTag.value) : null;
+  const statementBalance: StatementBalance | null =
+    openingBal || closingBal
+      ? { opening: openingBal?.amount ?? null, closing: closingBal?.amount ?? null, currency }
+      : null;
+
   // Process :61: + :86: pairs
   for (let i = 0; i < tags.length; i++) {
     if (tags[i].tag !== "61") continue;
@@ -205,6 +247,7 @@ export function parseMT940(content: string): ParseResult {
     currency,
     transactions,
     parseErrors: errors,
+    statementBalance,
   };
 }
 
@@ -235,8 +278,16 @@ function parseMT940Transaction(
 
   // Parse amount — MT940 uses comma as decimal separator
   const amount = parseFloat(amountStr.replace(",", "."));
+  // [BANK-BALANCE] SWIFT sign convention, incl. reversals:
+  //   C  = credit                → +   |   D  = debit                 → −
+  //   RD = Reversal of a Debit   → +   |   RC = Reversal of a Credit  → −
+  // A reversal UNDOES the original, so RC (undo a credit) nets to a DEBIT and RD (undo a
+  // debit) nets to a CREDIT. The earlier code grouped RC with credits and RD with debits —
+  // inverted — so every reversal booked with the WRONG sign (wrong omzet/kosten), and it
+  // also made a complete statement fail the new begin/eindsaldo reconciliation. The :62F:
+  // closing balance already reflects the true effect, so this is the sign that ties out.
   const signed =
-    creditDebit === "C" || creditDebit === "RC" ? amount : -amount;
+    creditDebit === "C" || creditDebit === "RD" ? amount : -amount;
 
   // Parse :86: description field
   // ING/ABN AMRO use structured sub-fields: /BENM//NAME/...
@@ -474,6 +525,33 @@ function decodeXmlEntities(s: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
 }
 
+/**
+ * [BANK-BALANCE] Extract the opening (OPBD) + closing (CLBD) booked balances from CAMT.053
+ * <Bal> blocks. Signed euros (DBIT = negative). Takes the FIRST OPBD and the LAST CLBD so a
+ * multi-statement file reconciles start-to-end. Ignores available-balance types (OPAV/CLAV/
+ * FWAV) — only the BOOKED balance ties to the booked entries. Returns null when neither exists.
+ */
+export function parseCamtStatementBalance(content: string, currency: string): StatementBalance | null {
+  const balPattern = /<Bal>([\s\S]*?)<\/Bal>/g;
+  let opening: number | null = null;
+  let closing: number | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = balPattern.exec(content)) !== null) {
+    const block = m[1];
+    const code = block.match(/<Cd>\s*(OPBD|CLBD)\s*<\/Cd>/)?.[1];
+    if (!code) continue;
+    const amtMatch = block.match(/<Amt[^>]*>([^<]+)<\/Amt>/);
+    if (!amtMatch) continue;
+    const mag = parseFloat(amtMatch[1]);
+    if (!Number.isFinite(mag)) continue;
+    const isDebit = (block.match(/<CdtDbtInd>\s*([^<]+?)\s*<\/CdtDbtInd>/)?.[1] ?? "CRDT") === "DBIT";
+    const signed = isDebit ? -mag : mag;
+    if (code === "OPBD" && opening === null) opening = signed; // first OPBD
+    if (code === "CLBD") closing = signed;                     // last CLBD wins
+  }
+  return opening !== null || closing !== null ? { opening, closing, currency } : null;
+}
+
 export function parseCAMT053(content: string): ParseResult {
   const errors: string[] = [];
   const transactions: BankTransaction[] = [];
@@ -520,6 +598,7 @@ export function parseCAMT053(content: string): ParseResult {
     currency,
     transactions,
     parseErrors: errors,
+    statementBalance: parseCamtStatementBalance(content, currency),
   };
 }
 

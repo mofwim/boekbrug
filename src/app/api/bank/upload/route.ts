@@ -63,5 +63,9 @@ export async function POST(req: NextRequest) {
     statementStored: result.statementStored,
     parseWarnings: result.parseWarnings,
     autoBooked: result.autoBooked, // [BANK-AUTO-FEEDBACK] payments the import auto-booked
+    // [BANK-BALANCE §2.6] Statement-completeness: null when it reconciles or can't be checked;
+    // a Dutch "afschrift sluit niet aan — €X ontbreekt" message when a line is missing/dropped.
+    balanceWarning: result.balanceWarning,
+    balanceReconciliation: result.balanceReconciliation,
   });
 }

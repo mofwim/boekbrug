@@ -1016,12 +1016,16 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // report it honestly rather than 422-ing (which would trap the file behind byte-hash
   // dedup on retry). Aligns the intake path with /api/bank/upload's lenient behavior.
   const unreadable = result.parseWarnings.length
-  const msg =
+  let msg =
     result.parsed === 0
       ? "Bankafschrift opgeslagen, maar er zijn geen transacties gelezen — controleer het bestand."
       : unreadable > 0
         ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
         : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
+  // [BANK-BALANCE §2.6] A statement whose begin/eindsaldo doesn't tie out to its own transactions
+  // is INCOMPLETE — surface it prominently (this is exactly the "missing bank line" the owner can't
+  // otherwise see), appended to the honest message and returned structured for the caller.
+  if (result.balanceWarning) msg += ` ${result.balanceWarning}`
   return NextResponse.json({
     ok: true,
     destination: "bank",
@@ -1031,6 +1035,7 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
     skipped: result.skipped,
     statementStored: result.statementStored,
     parseWarnings: result.parseWarnings,
+    balanceWarning: result.balanceWarning,
     message: msg,
   })
 }

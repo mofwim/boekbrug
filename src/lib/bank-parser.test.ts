@@ -84,5 +84,85 @@ console.log("\n— a fully-clean statement has zero parse errors (no false posit
   check("clean statement → 1 tx, 0 errors", r.transactions.length === 1 && r.parseErrors.length === 0);
 }
 
+console.log("\n— [BANK-BALANCE] MT940 opening/closing balance extraction —");
+{
+  const mt940 = [
+    ":25:NL91ABNA0417164300",
+    ":60F:C260101EUR1000,00",
+    ":61:2601020102C100,00NTRF",
+    ":86:/REMI/Betaling A",
+    ":61:2601030103D50,00NTRF",
+    ":86:/REMI/Betaling B",
+    ":62F:C260103EUR1050,00",
+  ].join("\n");
+  const r = parseMT940(mt940);
+  check("opening balance parsed = 1000", r.statementBalance?.opening === 1000);
+  check("closing balance parsed = 1050", r.statementBalance?.closing === 1050);
+  // opening + (100 − 50) = 1050 → this statement is internally complete
+  const sum = r.transactions.reduce((s, t) => s + t.amount, 0);
+  check("opening + Σtx equals closing (reconciles)", 1000 + sum === r.statementBalance?.closing);
+}
+
+console.log("\n— [BANK-BALANCE] MT940 debit (overdrawn) closing balance is negative —");
+{
+  const mt940 = [
+    ":60F:D260101EUR200,00",     // overdrawn by 200
+    ":61:2601020102C50,00NTRF",
+    ":86:/REMI/x",
+    ":62F:D260102EUR150,00",     // still overdrawn by 150
+  ].join("\n");
+  const r = parseMT940(mt940);
+  check("debit opening = −200", r.statementBalance?.opening === -200);
+  check("debit closing = −150", r.statementBalance?.closing === -150);
+}
+
+console.log("\n— [BANK-BALANCE] CAMT.053 OPBD/CLBD balance extraction —");
+{
+  const camt = [
+    '<BkToCstmrStmt>',
+    '<Acct><Id><IBAN>NL91ABNA0417164300</IBAN></Id></Acct>',
+    '<Bal><Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>',
+    '<Ntry><Amt Ccy="EUR">250.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><ValDt><Dt>2026-01-02</Dt></ValDt></Ntry>',
+    '<Ntry><Amt Ccy="EUR">50.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><ValDt><Dt>2026-01-03</Dt></ValDt></Ntry>',
+    '<Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1200.00</Amt><CdtDbtInd>CRDT</CdtDbtInd></Bal>',
+    '</BkToCstmrStmt>',
+  ].join("\n");
+  const r = parseCAMT053(camt);
+  check("OPBD opening = 1000", r.statementBalance?.opening === 1000);
+  check("CLBD closing = 1200", r.statementBalance?.closing === 1200);
+  const sum = r.transactions.reduce((s, t) => s + t.amount, 0);
+  check("opening + Σtx (250 − 50) = closing 1200", 1000 + sum === 1200);
+  check("a DBIT closing balance is read negative", parseCAMT053(camt.replace("<Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy=\"EUR\">1200.00</Amt><CdtDbtInd>CRDT", "<Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy=\"EUR\">1200.00</Amt><CdtDbtInd>DBIT")).statementBalance?.closing === -1200);
+}
+
+console.log("\n— [BANK-BALANCE] MT940 reversal signs (RC nets debit, RD nets credit) —");
+{
+  // A received payment (+100) that then bounces (RC 100 → net −100) leaves the balance where it
+  // started. RC must be NEGATIVE and RD POSITIVE, or the reversal books the wrong omzet/kosten
+  // AND a complete statement fails the begin/eindsaldo check.
+  const mt940 = [
+    ":60F:C260101EUR1000,00",
+    ":61:2601020102C100,00NTRF",     // credit +100
+    ":86:/REMI/Betaling",
+    ":61:2601030103RC100,00NTRF",    // reversal of that credit → −100
+    ":86:/REMI/Storno",
+    ":62F:C260103EUR1000,00",        // bank's real closing = 1000 (net zero movement)
+  ].join("\n");
+  const r = parseMT940(mt940);
+  check("RC (reversal of credit) is negative", r.transactions[1].amount === -100);
+  const sum = r.transactions.reduce((s, t) => s + t.amount, 0);
+  check("reversal nets to zero → opening + Σtx = closing (reconciles)", 1000 + sum === r.statementBalance?.closing);
+
+  // RD (reversal of a debit) must be positive.
+  const rd = parseMT940([
+    ":60F:C260101EUR1000,00",
+    ":61:2601020102RD50,00NTRF",     // reversal of a debit → +50
+    ":86:/REMI/Storno kosten",
+    ":62F:C260102EUR1050,00",
+  ].join("\n"));
+  check("RD (reversal of debit) is positive", rd.transactions[0].amount === 50);
+  check("RD statement reconciles (1000 + 50 = 1050)", 1000 + rd.transactions[0].amount === rd.statementBalance?.closing);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
