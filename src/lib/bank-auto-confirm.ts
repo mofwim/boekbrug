@@ -27,6 +27,7 @@ import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
+import { getVatScheme } from "./vat-scheme";
 
 export interface AutoConfirmed {
   transactionId: string;
@@ -54,6 +55,16 @@ export async function runBankAutoConfirm(args: {
   userId: string;
 }): Promise<AutoConfirmed[]> {
   const { payClient, pipeline, userId } = args;
+
+  // [JET-GAP2] Is the owner on kasstelsel? Under kas the payment DATE an auto-booking writes is
+  // VAT-timing truth (it decides the BTW quarter), so an 'amount_only' match — amount + name but NO
+  // printed reference — must NOT auto-book: a wrong same-amount pick would land BTW in the wrong
+  // quarter. 'certain' (printed reference / IBAN to the cent) still auto-books. Own deploy-safe
+  // query; defaults factuur if the vat_scheme migration lags (then amount_only books as before,
+  // which is safe under accrual where the pay date is not VAT-timing).
+  const { data: schemeProf } = await pipeline
+    .from("profiles").select("vat_scheme").eq("id", userId).maybeSingle();
+  const ownerScheme = getVatScheme((schemeProf as { vat_scheme?: string | null } | null)?.vat_scheme);
 
   const txRows = await fetchAllRows((from, to) =>
     pipeline
@@ -101,6 +112,11 @@ export async function runBankAutoConfirm(args: {
     if (!txId || !invoiceId) continue;
     const inv = invById.get(invoiceId);
     if (!inv) continue;
+
+    // [JET-GAP2] Under kasstelsel, an amount-only match stays a human-confirm suggestion (it remains
+    // a pending transaction the /bank matcher surfaces for one-tap confirm) — never auto-booked,
+    // because the pay date it would write decides the BTW quarter. 'certain' still books.
+    if (tier === "amount_only" && ownerScheme === "kas") continue;
 
     // Defense-in-depth: the same invariants the confirm route enforces (incl. accountant
     // 'verwerkt' exclusion) — authoritative when payClient is service_role (no DB trigger).
