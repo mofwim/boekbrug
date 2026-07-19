@@ -174,6 +174,14 @@ export async function runBankAutoConfirm(args: {
     });
   }
 
+  // [JET-GAP1 — DELIBERATELY NOT DONE] Auto-booking a partial-payment instalment was proposed, but
+  // the matching engine already makes a considered, documented decision the other way: completing an
+  // already-partly-paid invoice is a HUMAN decision, never a silent auto-book (bank-matching.ts caps
+  // a partial candidate at 0.6 so it surfaces as a one-tap "restant" suggestion, not an 'auto'). That
+  // honours "human intervention at maximum ambiguity" — a partial is genuinely more ambiguous (which
+  // instalment? the restant, or a coincidental same-amount line?). So partials stay a human confirm
+  // on /bank, by design; the auto path books only fully-open invoices + exact multi-invoice batches.
+
   // ── [BANK-BATCH] Automatic booking of unambiguous MULTI-invoice batches ──────────────────
   // The 1:1 pass above deliberately skips any payment that settles several invoices (a wholesaler
   // batching a week of deliveries into one debit — the common case for a shop). Those never
