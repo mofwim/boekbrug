@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { Roboto } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
+import { ServiceWorkerRegister } from "./ServiceWorkerRegister";
 import "./globals.css";
 
 const roboto = Roboto({
@@ -71,6 +72,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-full flex flex-col">
+        <ServiceWorkerRegister />
         {children}
         {/* [ANALYTICS] Vercel Web Analytics — cookieless & privacy-friendly, so
             no consent banner is required. Only reports on Vercel deploys. */}

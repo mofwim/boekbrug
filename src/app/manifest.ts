@@ -56,12 +56,10 @@ export default function manifest(): MetadataRoute.Manifest {
         icons: [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
       },
     ],
+    // NOTE: no favicon.ico here on purpose — app stores (and PWABuilder) reject
+    // .ico as a manifest icon type. The favicon lives in the HTML <head> via
+    // layout metadata; the manifest ships PNG-only (incl. maskable).
     icons: [
-      {
-        src: '/favicon.ico',
-        sizes: 'any',
-        type: 'image/x-icon',
-      },
       {
         src: '/icons/icon-192.png',
         sizes: '192x192',
