@@ -128,6 +128,9 @@ export default function BankClient() {
   // backend reported every reference number as covered (allCovered). The tx only
   // counts as "done" (→ Gekoppeld, leaves Te bevestigen) once allCovered is true.
   const [confirmed, setConfirmed] = useState<Record<string, { numbers: string[]; allCovered: boolean }>>({}) // txId → confirmation state
+  // [P1-UNCATEGORIZED] Count of bank lines with NO category (not tied to an invoice). Money on
+  // these lines is silently absent from the W&V/BTW until categorized — surface it, never hide it.
+  const [uncatCount, setUncatCount] = useState(0)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BANK-BATCH-CONFIRM] Bulk-confirm only for strong 'auto' single-invoice matches
   // (each already carries an unambiguous best candidate from the bank statement).
@@ -293,6 +296,10 @@ export default function BankClient() {
         const ig = await fetch('/api/bank/ignored')
         const igJson = await ig.json()
         if (!cancelled && ig.ok) setIgnoredList(igJson.suggestions ?? [])
+        // [P1-UNCATEGORIZED] The exact head-count of still-uncategorized bank lines.
+        const cat = await fetch('/api/bank/categorize')
+        const catJson = await cat.json().catch(() => ({}))
+        if (!cancelled && cat.ok) setUncatCount(Number(catJson.total_remaining ?? 0) || 0)
       } catch {
         /* silent — empty state shows the upload card */
       } finally {
@@ -892,6 +899,30 @@ export default function BankClient() {
       <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
         Upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
       </p>
+
+      {/* [P1-UNCATEGORIZED] Money that is NOT yet in your books. A bank line without a category
+          is silently excluded from the W&V/BTW — so make it loud, not invisible. Links straight
+          to the categorisation screen where these get an identity (kost, huur, fee, transfer…). */}
+      {uncatCount > 0 && (
+        <Link
+          href="/dashboard/bank/categoriseren"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
+            background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: R.md,
+            padding: '12px 14px', marginBottom: 16,
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#B06000' }}>label_important</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>
+              {uncatCount === 1 ? '1 banktransactie nog niet gecategoriseerd' : `${uncatCount} banktransacties nog niet gecategoriseerd`}
+            </span>
+            <span style={{ display: 'block', fontSize: 12, color: '#7A4F00', marginTop: 1 }}>
+              Dit geld telt nog niet mee in je winst &amp; verlies en BTW. Geef het een categorie →
+            </span>
+          </span>
+        </Link>
+      )}
 
       {/* Upload card */}
       <label
