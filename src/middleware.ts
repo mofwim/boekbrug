@@ -40,6 +40,9 @@ const PUBLIC_PATHS = [
   "/privacy",
   "/voorwaarden",
   "/cookies",
+  // [SHABSHAB] The slipper-fighting game is a standalone public arcade page —
+  // no login, so anyone (and the Android/TWA wrapper) can open it directly.
+  "/shabshab",
 ];
 
 function isPublic(pathname: string): boolean {
