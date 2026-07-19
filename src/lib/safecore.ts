@@ -286,7 +286,15 @@ export function isPlaceholderInvoiceNumber(n: string | null | undefined): boolea
  * normalization so "Atapack  B.V." and "atapack b.v." match.
  */
 export function normalizeVendor(v: string | null | undefined): string {
-  return (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  // Fold diacritics so "Café de Kroon" ≡ "Cafe de Kroon" — without this, an accent variant
+  // between two reads made the two vendors look "provably different" and suppressed a real
+  // duplicate flag (NFKD splits é into e + combining mark, which the range then strips).
+  return (v ?? '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
 }
 
 /**
@@ -426,6 +434,128 @@ export async function findSemanticDuplicate(
       'geen betrouwbaar factuurnummer en geen betrouwbare afzender — duplicaatcontrole niet mogelijk',
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SAFECORE Rule 2b — POSSIBLE (soft) duplicate signal
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// findSemanticDuplicate above is BINARY: a confident block (number/vendor+total+date
+// tie) or nothing. But there is a middle ground it stays silent on — a re-arrival the
+// hard key can't prove: same amount + same DATE but the number differs (OCR misread a
+// digit) or the sender is unknown; or same amount + same vendor a few days apart. Those
+// slipped through and DOUBLE-BOOKED the cost with no trace.
+//
+// This is NEVER a block — blocking on a loose signal would reject a legitimate invoice
+// (a missing crediteur, its own serious error). Instead it is a SOFT flag: the invoice
+// still imports, carrying "mogelijk dubbel met X" so the human eyeballs it in the verify
+// queue. Never silently dropped (it imports), never silently accepted (it is flagged) —
+// the human decides at exactly the point of maximum ambiguity. Pure; the caller fetches
+// the same-total candidates and passes them in.
+
+export interface PossibleDupCandidate {
+  id: string
+  invoice_number: string | null
+  client_name: string | null
+  invoice_date: string | null   // ISO as stored
+  total_inc_btw: number | null
+}
+
+export interface PossibleDuplicate {
+  match: SemanticDedupMatch
+  reason: string // short Dutch, owner-facing (e.g. "zelfde bedrag en datum")
+}
+
+// A re-import usually arrives close to the original; a monthly RECURRING bill (same
+// vendor + same amount) is ~a month apart. Keep the vendor-near-date window short so
+// recurring invoices are NOT flagged as possible duplicates.
+export const POSSIBLE_DUP_WINDOW_DAYS = 14
+
+// Legal-suffix noise stripped for a format-insensitive vendor comparison (mirrors
+// supplier-registry / email-integration vendorCoreKey — kept local so safecore stays
+// dependency-free and never imports the email layer).
+const VENDOR_CORE_NOISE = new Set(['bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc'])
+function vendorCore(v: string | null | undefined): string {
+  return normalizeVendor(v)
+    .replace(/\./g, '')            // collapse dotted acronyms first: "b.v." → "bv"
+    .replace(/[^a-z0-9\s]/g, ' ')  // other punctuation → separator
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !VENDOR_CORE_NOISE.has(t))
+    .join(' ')
+}
+
+function isoDay(raw: string | null | undefined): string | null {
+  return typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}/.test(raw) ? normalizeToIso(raw) : null
+}
+function daysApart(aIso: string, bIso: string): number | null {
+  const a = Date.parse(aIso), b = Date.parse(bIso)
+  if (Number.isNaN(a) || Number.isNaN(b)) return null
+  return Math.abs(a - b) / 86_400_000
+}
+
+/**
+ * Assess whether this invoice is a POSSIBLE (not confident) duplicate of one already in
+ * the system, given the candidates that share its exact total. Returns the best soft match
+ * + a short reason, or null. Pure. Signals, strongest first:
+ *   • same total + same DATE + same vendor
+ *   • same total + same DATE (vendor not provably different)
+ *   • same total + same VENDOR within POSSIBLE_DUP_WINDOW_DAYS (a near-date re-import)
+ * A provably-different reliable vendor is never a duplicate (a coincidental same-amount
+ * same-day bill from another supplier), and an exact invoice-number match is a HARD
+ * duplicate handled by findSemanticDuplicate, so it is skipped here.
+ */
+export function assessPossibleDuplicate(
+  input: SemanticDedupInput,
+  candidates: PossibleDupCandidate[],
+): PossibleDuplicate | null {
+  if (typeof input.totalIncBtw !== 'number' || !Number.isFinite(input.totalIncBtw)) return null
+  const totalCents = Math.round(input.totalIncBtw * 100)
+  const inDate = isoDay(input.invoiceDate)
+  const inVendorReliable = isReliableVendor(input.vendor)
+  const inCore = inVendorReliable ? vendorCore(input.vendor) : ''
+  const inNum = normalizeInvoiceNumber(input.invoiceNumber)
+
+  let best: PossibleDuplicate | null = null
+  let bestRank = 0
+  for (const c of candidates) {
+    if (typeof c.total_inc_btw !== 'number' || Math.round(c.total_inc_btw * 100) !== totalCents) continue
+
+    const cVendorReliable = isReliableVendor(c.client_name)
+    const cCore = cVendorReliable ? vendorCore(c.client_name) : ''
+    const bothVendorsReliable = inVendorReliable && cVendorReliable && inCore !== '' && cCore !== ''
+    if (bothVendorsReliable && inCore !== cCore) continue // provably a different supplier → not a dup
+    const sameVendor = bothVendorsReliable && inCore === cCore
+
+    const cDate = isoDay(c.invoice_date)
+    const sameDate = !!(inDate && cDate && inDate === cDate)
+    const gap = inDate && cDate ? daysApart(inDate, cDate) : null
+    const nearDate = gap != null && gap > 0 && gap <= POSSIBLE_DUP_WINDOW_DAYS
+    const sameNumber = !!(inNum && normalizeInvoiceNumber(c.invoice_number) === inNum)
+
+    let rank = 0, reason = ''
+    if (sameNumber && sameDate) {
+      // Same number + total + date IS a hard duplicate (findSemanticDuplicate blocks it before we
+      // run) — don't downgrade it to a mere "possible". Skip.
+      continue
+    } else if (sameNumber) {
+      // [DEDUP-SOFT-CRITICAL] Same invoice number + total but the DATE drifted (an OCR date misread,
+      // or a null date on either side): the hard number-tier key filters on date and MISSED it, so it
+      // would otherwise import + auto-book a SECOND cost silently. A per-vendor invoice number that
+      // repeats with the same total is all but certainly the same bill → flag it (strongest signal).
+      rank = 5; reason = 'zelfde factuurnummer en bedrag, andere datum'
+    }
+    else if (sameDate && sameVendor) { rank = 4; reason = 'zelfde bedrag, datum en afzender' }
+    else if (sameDate) { rank = 3; reason = 'zelfde bedrag en datum' }
+    else if (sameVendor && nearDate) { rank = 2; reason = 'zelfde bedrag en afzender, datum dichtbij' }
+    else continue
+
+    if (rank > bestRank) {
+      bestRank = rank
+      best = { match: { id: c.id, invoice_number: c.invoice_number, client_name: c.client_name }, reason }
+    }
+  }
+  return best
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [EXTRACT-DUE-DATE] Shared due-date derivation (pure, no I/O)
 // ─────────────────────────────────────────────────────────────────────────────

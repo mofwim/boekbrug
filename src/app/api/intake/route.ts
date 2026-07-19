@@ -45,7 +45,8 @@ import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
-import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore"
+import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
+import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -296,6 +297,10 @@ export async function POST(req: NextRequest) {
   // number+total(+date); placeholder number + reliable vendor → vendor+total+date;
   // otherwise un-dedupable (allowed for human review, never silently blocked).
   // Runs BEFORE storage/insert so a duplicate costs nothing.
+  // [DEDUP-SOFT] Carries a POSSIBLE (not confident) duplicate across to the insert, where it is
+  // merged into field_confidence so the verify queue shows "mogelijk dubbel met X" and the invoice
+  // is held out of auto-confirm. Never blocks — assigned only when NOT a hard duplicate.
+  let possibleDup: PossibleDuplicate | null = null
   if (decision.destination === "invoice" || decision.destination === "receipt") {
     const dup = await findSemanticDuplicate(
       {
@@ -438,6 +443,34 @@ export async function POST(req: NextRequest) {
       )
     }
     // tier 'none' (un-dedupable) → allow through; the human reviews in the queue.
+
+    // [DEDUP-SOFT] Not a CONFIDENT duplicate (or none) — is it a POSSIBLE one? (same amount +
+    // date, or same amount + vendor a few days apart). Never blocks; it imports flagged for a
+    // human glance and held out of auto-confirm. Skipped when a hard duplicate was found/forced.
+    if (!(dup.duplicate && dup.match)) {
+      possibleDup = await collectPossibleDuplicate(
+        {
+          invoiceNumber: v.invoice_number,
+          vendor: v.vendor,
+          totalIncBtw: v.total_inc_btw ?? v.amount,
+          invoiceDate: v.invoice_date,
+        },
+        async (total) => {
+          const { data } = await supabase
+            .from("invoices")
+            .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+            .eq("receiver_id", user.id)
+            .eq("direction", "incoming")
+            // A cent-wide band, not exact float equality: a legacy row stored as 42.9999… must
+            // still be fetched for the cent-precise in-code compare (assessPossibleDuplicate).
+            .gte("total_inc_btw", total - 0.005)
+            .lte("total_inc_btw", total + 0.005)
+            .order("id", { ascending: false })
+            .limit(200)
+          return data ?? []
+        }
+      )
+    }
   }
 
   // ── [INTAKE-IMG-PDF] Convert image → PDF BEFORE storage ─────────────────────
@@ -594,6 +627,13 @@ export async function POST(req: NextRequest) {
     if (decision.paidMethod) fieldConfidence._intake_paid_method = decision.paidMethod
     if (decision.paidDate) fieldConfidence._intake_paid_date = decision.paidDate
   }
+  // [DEDUP-SOFT] Merge the possible-duplicate signal into _safecore BEFORE the auto-advance check
+  // below, so classifyImportHealth reads it → needs-review → the invoice can NEVER auto-book as a
+  // second cost. The verify queue then shows "mogelijk dubbel met X".
+  if (possibleDup) {
+    const merged = mergePossibleDuplicate(fieldConfidence, possibleDup) as Record<string, unknown>
+    fieldConfidence._safecore = merged._safecore
+  }
 
   // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
   // directly as 'received' (booked, UNPAID, reversible). Never for a receipt (its "probably paid"
@@ -712,12 +752,18 @@ export async function POST(req: NextRequest) {
     vendor: v.vendor ?? null,
     invoice_number: v.invoice_number ?? null,
     total_inc_btw: v.total_inc_btw ?? v.amount ?? null,
+    // [DEDUP-SOFT] A soft, non-blocking heads-up so the intake UI can flag "mogelijk dubbel".
+    ...(possibleDup
+      ? { possibleDuplicate: { invoice_number: possibleDup.match.invoice_number, client_name: possibleDup.match.client_name, reason: possibleDup.reason } }
+      : {}),
     message:
       decision.destination === "receipt"
         ? "Bon herkend — controleer en bevestig (waarschijnlijk al betaald)."
-        : autoAdv.advance
-          ? "Factuur herkend en automatisch verwerkt ✓ — klaar voor de boekhouder."
-          : "Factuur herkend — controleer en bevestig.",
+        : possibleDup
+          ? `Factuur herkend — let op: mogelijk dubbel${possibleDup.match.invoice_number ? ` met ${possibleDup.match.invoice_number}` : ""} (${possibleDup.reason}). Controleer voor je bevestigt.`
+          : autoAdv.advance
+            ? "Factuur herkend en automatisch verwerkt ✓ — klaar voor de boekhouder."
+            : "Factuur herkend — controleer en bevestig.",
   })
 }
 

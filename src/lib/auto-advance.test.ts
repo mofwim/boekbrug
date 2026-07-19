@@ -105,5 +105,26 @@ console.log("\n— a clean invoice with NO per-field scores needs VERY-high over
   check("no field_confidence + only 0.72 overall → blocked", d2.advance === false);
 }
 
+console.log("\n— [DEDUP-SOFT] a POSSIBLE duplicate can NEVER auto-book (held for a human) —");
+{
+  // The cardinal guarantee: even a perfectly-read, high-confidence invoice must be BLOCKED from
+  // auto-advancing once it carries the possible-duplicate flag — otherwise a silent second cost.
+  // shouldAutoAdvanceInvoice gates on classifyImportHealth(level==='clean'); _safecore.possible_duplicate
+  // makes it needs-review, so this holds for the intake + email-sync paths that drive auto-advance.
+  const flagged = shouldAutoAdvanceInvoice(clean({
+    health: {
+      ...clean().health,
+      field_confidence: {
+        vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96,
+        _safecore: { possible_duplicate: true, possible_duplicate_of: "F-2001", possible_duplicate_reason: "zelfde bedrag en datum" },
+      },
+    },
+  }));
+  check("possible-dup flag → NOT auto-booked", flagged.advance === false && flagged.reason === "needs_review");
+  // And without the flag, the identical invoice DOES advance — proving the flag is what blocks it.
+  const same = shouldAutoAdvanceInvoice(clean());
+  check("same invoice without the flag → advances (flag is the cause)", same.advance === true);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

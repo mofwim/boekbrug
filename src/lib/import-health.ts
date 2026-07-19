@@ -48,6 +48,7 @@ export interface ImportHealth {
     invoiceNumber: boolean // AI unsure about the invoice number
     invoiceDate: boolean // AI unsure about the date
     reminder: boolean // [REMINDER] a payment reminder — check the original isn't already booked
+    possibleDuplicate: boolean // [DEDUP-SOFT] a look-alike of an invoice already imported — human glance
   }
 }
 
@@ -97,6 +98,12 @@ export interface FieldConfidence {
     // booked, so it needs a human check (never bulk-confirmed as a second cost).
     reminder?: boolean
     reminder_of?: string
+    // [DEDUP-SOFT] This invoice looked like a POSSIBLE (not confident) duplicate at import — same
+    // amount + date, or same amount + vendor a few days apart. It was NOT blocked (too uncertain to
+    // reject), but the human should check it isn't a double booking. `_of` names the look-alike.
+    possible_duplicate?: boolean
+    possible_duplicate_of?: string
+    possible_duplicate_reason?: string
   }
 }
 
@@ -114,6 +121,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     invoiceNumber: false,
     invoiceDate: false,
     reminder: false,
+    possibleDuplicate: false,
   }
 
   const fc = inv.field_confidence
@@ -135,13 +143,28 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
         : 'dit lijkt een betalingsherinnering — controleer of de originele factuur al geboekt is'
     )
   }
+  // [DEDUP-SOFT] A POSSIBLE (not confident) duplicate — same amount + date, or same amount +
+  // vendor a few days apart. It was allowed in (too uncertain to block), but must never be
+  // bulk-confirmed as a second cost without a human glance. → needs-review with a clear "mogelijk
+  // dubbel met X" reason.
+  if (storedSafecore?.possible_duplicate === true) {
+    flags.possibleDuplicate = true
+    const of = storedSafecore.possible_duplicate_of
+    const why = storedSafecore.possible_duplicate_reason
+    reasons.push(
+      `mogelijk dubbel${of ? ` met factuur ${of}` : ''}${why ? ` (${why})` : ''} — controleer of dit geen dubbele boeking is`
+    )
+  }
   if (storedSafecore && storedSafecore.arithmetic_ok === false) {
     flags.arithmetic = true
     // The stored reason is already owner-facing Dutch (e.g. "excl + BTW ≠ totaal").
     if (storedSafecore.reason) reasons.push(storedSafecore.reason)
     else reasons.push('mogelijke rekenfout in de bedragen')
-  } else if (!storedSafecore) {
-    // No stored verdict → recompute (covers the upload path + any legacy row).
+  } else if (!storedSafecore || storedSafecore.arithmetic_ok === undefined) {
+    // No stored arithmetic verdict → recompute. Covers the upload path, legacy rows, AND a
+    // _safecore that carries ONLY a non-arithmetic flag (e.g. the intake path writes
+    // possible_duplicate without ever running the arithmetic gate) — without this, an invoice
+    // that is BOTH a possible-duplicate and arithmetically inconsistent would hide the math error.
     // [BRIDGE-CREDITNOTA-SIGN] Same gate, same branch selection as write time:
     // a creditnota row (invoice_type) takes the sign-inverted gate, so a clean
     // negative creditnota reads "ready" here instead of a false "Aandacht nodig".
@@ -232,7 +255,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
 
   const level: HealthLevel =
-    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder
+    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate
       ? 'needs-review'
       : 'clean'
 
