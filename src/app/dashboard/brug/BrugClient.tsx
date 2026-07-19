@@ -121,6 +121,28 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
   const [showHidden, setShowHidden] = useState(false)
   const router = useRouter()
 
+  // [BRIDGE-TREE-HISTORY] Wire the in-page folder tree into browser history so the
+  // phone/OS back button walks back UP through the tree instead of leaving /brug
+  // on the very first tap. Each level change pushes a history entry carrying the
+  // cwd; popstate restores it. The URL never changes and the tree stays fully
+  // client-side (no refetch) — only at the tree root does OS-back leave the page.
+  useEffect(() => {
+    // Returning to /brug via back restores the last position; a fresh visit stamps root.
+    const saved = (window.history.state as { brugCwd?: string[] } | null)?.brugCwd
+    if (Array.isArray(saved) && saved.length) setCwd(saved)
+    else window.history.replaceState({ ...window.history.state, brugCwd: [] }, '')
+    const onPop = (e: PopStateEvent) => {
+      const next = (e.state as { brugCwd?: string[] } | null)?.brugCwd
+      setCwd(Array.isArray(next) ? next : [])
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  function navTree(next: string[]) {
+    window.history.pushState({ ...window.history.state, brugCwd: next }, '')
+    setCwd(next)
+  }
+
   // [BRIDGE-HUB] Layer 2 — accountant control center: pick a client (dropdown),
   // then switch tabs (Kwartaal / Documenten). The classic folder tree is reused
   // for the Documenten tab, scoped to the selected client.
@@ -325,7 +347,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
       {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 12, fontSize: 14 }}>
         <button
-          onClick={() => setCwd([])}
+          onClick={() => navTree([])}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: cwd.length === 0 ? M3.onSurface : M3.primary, fontWeight: cwd.length === 0 ? 700 : 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
         >
           Alles
@@ -334,7 +356,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
           <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 16, color: M3.outline }}>chevron_right</span>
             <button
-              onClick={() => setCwd(cwd.slice(0, i + 1))}
+              onClick={() => navTree(cwd.slice(0, i + 1))}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: i === cwd.length - 1 ? M3.onSurface : M3.primary, fontWeight: i === cwd.length - 1 ? 700 : 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
             >
               {seg}
@@ -370,7 +392,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
           {level.folders.map(f => (
             <button
               key={f.name}
-              onClick={() => setCwd([...cwd, f.name])}
+              onClick={() => navTree([...cwd, f.name])}
               style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, border: 'none', background: '#fff', boxShadow: EL1, cursor: 'pointer', fontFamily: FONT, textAlign: 'left', width: '100%' }}
             >
               <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>folder</span>
