@@ -492,22 +492,39 @@ export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[]
  * — never a tax figure — and it is fully reversible. Anything short of certain stays human.
  */
 export function isSafeAutoConfirm(m: TransactionMatch): boolean {
-  if (m.outcome !== "auto" || !m.best) return false;
-  const sig = m.best.signals;
-  // Two safe identities, BOTH requiring the exact amount:
-  //   reference + amount → the invoice number is printed in the payment (the original safe set).
-  //   [BANK-IBAN] iban + amount → the money went to the invoice's exact supplier account for the
-  //     exact sum. A full IBAN is supplier-specific (unlike a bare amount, which can collide), and
-  //     the matcher only yields 'auto' when ONE candidate clearly wins — two same-supplier invoices
-  //     of the same amount tie to 'choice', never here. So this stays a near-certain, single match.
-  const refAmt = sig.includes("reference") && sig.includes("amount");
-  const ibanAmt = sig.includes("iban") && sig.includes("amount");
-  if (!refAmt && !ibanAmt) return false;
-  if (parseReferenceNumbers(m.transaction.reference).length > 1) return false;
+  return autoConfirmTier(m) === "certain";
+}
+
+/** The two auto-confirm tiers, or null when a match must stay a human decision. */
+export type AutoConfirmTier =
+  | "certain" // invoice number printed (or IBAN) + exact amount — decisive identity, booked silently
+  | "amount_only"; // exact amount + matching counterpart NAME, single clear winner — booked but FLAGGED
+
+/**
+ * [BANK-AMOUNT-ONLY] Which tier — if any — may auto-book this match?
+ * Shared gates (both tiers): outcome 'auto' with a best candidate, the amount matches to the cent,
+ * it is a SINGLE invoice (parseReferenceNumbers ≤ 1 — a multi-invoice batch has its own path), and
+ * it is not flagged an instalment/deelbetaling.
+ *   - 'certain': the invoice NUMBER is printed in the statement OR the supplier IBAN matches. A
+ *     printed number / full IBAN is supplier-specific identity — immune to same-amount collisions.
+ *     Booked silently (this is the original safe set).
+ *   - 'amount_only': neither reference nor IBAN, but the counterpart NAME matches (an identity floor
+ *     — bare amount+date is too weak to ever auto-book). The matcher only yields 'auto' when ONE
+ *     candidate clearly leads, so a recurring same-amount supplier with several open invoices ties
+ *     to 'choice' and never reaches here. Booked, but the UI flags it "controleer" and it is one-tap
+ *     reversible. BTW/omzet are on accrual, so no tier ever moves a tax figure.
+ */
+export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
+  if (m.outcome !== "auto" || !m.best) return null;
+  if (parseReferenceNumbers(m.transaction.reference).length > 1) return null;
   if (isPartialPaymentHint(`${m.transaction.reference ?? ""} ${m.transaction.description ?? ""}`)) {
-    return false;
+    return null;
   }
-  return true;
+  const sig = m.best.signals;
+  if (!sig.includes("amount")) return null; // the amount is the money-truth — required by both tiers
+  if (sig.includes("reference") || sig.includes("iban")) return "certain";
+  if (sig.includes("counterpart")) return "amount_only";
+  return null; // amount + date only, no identity → too weak, stays human
 }
 
 // [BANK-REF-DECISIVE] Should the top of a candidate list be booked as 'auto'?

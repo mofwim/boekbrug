@@ -12,6 +12,7 @@ import {
   dedupeCandidates,
   isPartialPaymentHint,
   isSafeAutoConfirm,
+  autoConfirmTier,
   scorePair,
   normalizeIban,
   ibanMatches,
@@ -566,6 +567,45 @@ console.log("\n— [BANK-REF-DECISIVE] a UNIQUE printed invoice number wins 'aut
     ],
   );
   check("two printed numbers → stays a human choice (not auto)", twoPrinted.matches[0].outcome !== "auto");
+}
+
+console.log("\n— [BANK-AMOUNT-ONLY] autoConfirmTier: certain vs amount_only vs human —");
+{
+  // reference + amount → 'certain'
+  const ref = matchTransactions([tx({ amount: 1210, reference: "001-2026" })], [inv({ invoice_number: "001-2026", total_inc_btw: 1210 })]);
+  check("reference + amount → 'certain'", autoConfirmTier(ref.matches[0]) === "certain");
+
+  // iban + amount → 'certain'
+  const iban = matchTransactions(
+    [tx({ amount: 1210, counterpartIban: "NL91ABNA0417164300" })],
+    [inv({ invoice_number: "X-1", total_inc_btw: 1210, vendor_iban: "NL91ABNA0417164300", client_name: "Zzz Unrelated" })],
+  );
+  check("iban + amount → 'certain'", autoConfirmTier(iban.matches[0]) === "certain");
+
+  // amount + counterpart NAME, no reference/iban → 'amount_only' (the KPN/Metro case)
+  const amtName = matchTransactions(
+    [tx({ amount: 1210, date: "2026-02-10", counterpartName: "Jansen BV" })],
+    [inv({ invoice_number: "X-9", total_inc_btw: 1210, client_name: "Jansen BV", invoice_date: "2026-02-01" })],
+  );
+  check("amount + counterpart (no number/iban) → 'amount_only'", autoConfirmTier(amtName.matches[0]) === "amount_only");
+  check("...and isSafeAutoConfirm stays FALSE for amount_only (certain-only)", isSafeAutoConfirm(amtName.matches[0]) === false);
+
+  // amount + date only, NO counterpart name → too weak → null (stays human)
+  const amtDate = matchTransactions(
+    [tx({ amount: 1210, date: "2026-02-05", counterpartName: null })],
+    [inv({ invoice_number: "X-7", total_inc_btw: 1210, client_name: "Totally Different Co", invoice_date: "2026-02-01" })],
+  );
+  check("amount + date only (no name/number/iban) → null (human)", autoConfirmTier(amtDate.matches[0]) === null);
+
+  // an ambiguous same-amount/same-supplier pair is a 'choice', never a tier
+  const tie = matchTransactions(
+    [tx({ amount: 500, date: "2026-02-12", counterpartName: "Jansen BV" })],
+    [
+      inv({ id: "x", invoice_number: "JAN-1", total_inc_btw: 500, client_name: "Jansen BV", invoice_date: "2026-02-01" }),
+      inv({ id: "y", invoice_number: "JAN-2", total_inc_btw: 500, client_name: "Jansen BV", invoice_date: "2026-02-02" }),
+    ],
+  );
+  check("same-amount same-supplier tie → 'choice' → no tier", autoConfirmTier(tie.matches[0]) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

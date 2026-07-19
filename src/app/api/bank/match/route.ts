@@ -247,6 +247,26 @@ export async function GET() {
     linkedNumbersByTx.set(txId, [...ids].map((id) => numById.get(id) ?? "").filter((n) => n.length > 0));
   }
 
+  // [BANK-AMOUNT-ONLY] Which matched lines were auto-booked on amount+counterpart only (no printed
+  // number / IBAN) — those the owner asked to see flagged "controleer". Best-effort + wrapped: a
+  // not-yet-applied migration (no auto_match_reason column) just yields no flags, never an error.
+  const reasonByTx = new Map<string, string>();
+  if (matchedTx.length > 0) {
+    try {
+      const { data: reasonRows } = await pipeline
+        .from("bank_transactions")
+        .select("id, auto_match_reason")
+        .eq("user_id", user.id)
+        .in("id", matchedTx.map((r) => r.id));
+      // auto_match_reason is added by bank_auto_match_reason.sql — not yet in the generated types.
+      for (const rr of (reasonRows ?? []) as unknown as { id: string; auto_match_reason: string | null }[]) {
+        if (rr.auto_match_reason) reasonByTx.set(rr.id, rr.auto_match_reason);
+      }
+    } catch {
+      /* pre-migration: no column → no flags (correct — nothing was booked under this tier yet) */
+    }
+  }
+
   const linkedSuggestions = matchedTx.map((row) => {
     const t = rowToTransaction(row);
     // The AUTHORITATIVE paid numbers are the actually-linked invoices (join table / invoice_id).
@@ -269,6 +289,8 @@ export async function GET() {
       partiallyLinked: false,
       allCovered: true,
       coveredNumbers: covered,
+      // [BANK-AMOUNT-ONLY] 'amount_only' → the Gekoppeld card shows a "controleer" flag.
+      matchReason: reasonByTx.get(row.id) ?? null,
     };
   });
 

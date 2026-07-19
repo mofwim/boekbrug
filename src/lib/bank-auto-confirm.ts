@@ -17,9 +17,11 @@ import type { PipelineClient } from "./supabase-pipeline";
 import { fetchAllRows } from "./supabase-paginate";
 import {
   matchTransactions,
-  isSafeAutoConfirm,
+  autoConfirmTier,
   isEligible,
+  type AutoConfirmTier,
   type InvoiceForMatching,
+  type TransactionMatch,
 } from "./bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
@@ -80,10 +82,16 @@ export async function runBankAutoConfirm(args: {
   if (invoices.length === 0) return [];
   const invById = new Map(invoices.map((i) => [i.id, i]));
   const result = matchTransactions(transactions, invoices);
-  const safe = result.matches.filter(isSafeAutoConfirm);
+  // [BANK-AMOUNT-ONLY] Book BOTH auto tiers. 'certain' (printed number / IBAN + amount) is booked
+  // silently; 'amount_only' (exact amount + matching counterpart name, single clear winner) is
+  // booked too but tagged auto_match_reason='amount_only' so the Gekoppeld tab flags it
+  // "controleer". Both use the identical money discipline below and both are one-tap reversible.
+  const autoMatches = result.matches
+    .map((m): { m: TransactionMatch; tier: AutoConfirmTier | null } => ({ m, tier: autoConfirmTier(m) }))
+    .filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
 
   const confirmed: AutoConfirmed[] = [];
-  for (const m of safe) {
+  for (const { m, tier } of autoMatches) {
     const txId = m.transaction.transactionId;
     const invoiceId = m.best?.invoiceId;
     if (!txId || !invoiceId) continue;
@@ -106,9 +114,17 @@ export async function runBankAutoConfirm(args: {
     if (!payData || payData.length === 0) continue; // concurrently paid — not ours to link
 
     // (b) link the bank line → matched (single invoice ⇒ fully covered). 0 rows ⇒ roll back.
+    //     'amount_only' also stamps auto_match_reason so the UI can flag it "controleer". The
+    //     column is set ONLY for that tier, so a not-yet-applied migration leaves the 'certain'
+    //     path untouched (it never writes the column) — those keep booking; an 'amount_only' write
+    //     would just error → roll back → that one line stays a one-tap manual confirm (safe).
+    const linkPayload: Record<string, unknown> = { status: "matched", invoice_id: invoiceId };
+    if (tier === "amount_only") linkPayload.auto_match_reason = "amount_only";
     const { data: linkData, error: linkErr } = await pipeline
       .from("bank_transactions")
-      .update({ status: "matched", invoice_id: invoiceId })
+      // auto_match_reason is added by bank_auto_match_reason.sql and not yet in the generated types.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update(linkPayload as any)
       .eq("id", txId)
       .eq("user_id", userId)
       .eq("status", "pending")
@@ -134,7 +150,7 @@ export async function runBankAutoConfirm(args: {
       action: "bank.auto_confirmed",
       entityType: "invoice",
       entityId: invoiceId,
-      newValue: { transaction_id: txId, invoice_number: inv.invoice_number, amount: m.transaction.amount ?? 0, reason: "near_certain_reference_amount" },
+      newValue: { transaction_id: txId, invoice_number: inv.invoice_number, amount: m.transaction.amount ?? 0, tier, reason: tier === "amount_only" ? "amount_counterpart_single" : "near_certain_reference_amount" },
     });
   }
 

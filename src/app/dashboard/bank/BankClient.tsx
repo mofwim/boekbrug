@@ -95,6 +95,9 @@ interface Suggestion {
   coveredNumbers?: string[]
   // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
   explainedByPaid?: boolean
+  // [BANK-AMOUNT-ONLY] 'amount_only' when this line was auto-booked on amount+counterpart only
+  // (no printed number/IBAN) → the Gekoppeld card shows a "controleer" flag. null otherwise.
+  matchReason?: string | null
 }
 interface MatchResponse {
   ok: boolean
@@ -248,9 +251,12 @@ export default function BankClient() {
     const hasSafe = (data.suggestions ?? []).some((s) => {
       if (s.outcome !== 'auto' || !s.best) return false
       const sig = s.best.signals
-      const refAmt = sig.includes('reference') && sig.includes('amount')
-      const ibanAmt = sig.includes('iban') && sig.includes('amount')
-      if (!refAmt && !ibanAmt) return false
+      // Mirror the server's autoConfirmTier: 'certain' (reference/iban + amount) OR 'amount_only'
+      // (amount + counterpart name, no reference/iban). Both are single-invoice, non-instalment and
+      // auto-booked on load; the server stays authoritative on WHAT it books and the tier flag.
+      const certain = (sig.includes('reference') || sig.includes('iban')) && sig.includes('amount')
+      const amountOnly = sig.includes('amount') && sig.includes('counterpart') && !sig.includes('reference') && !sig.includes('iban')
+      if (!certain && !amountOnly) return false
       // single reference only (a multi-invoice batch is the engine's separate path), not an instalment
       if (s.reference && s.reference.split(',').map((x) => x.trim()).filter(Boolean).length > 1) return false
       if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
@@ -1584,6 +1590,21 @@ function TxCard({
             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
             {processing ? 'Bezig…' : 'Ontkoppelen'}
           </button>
+        </div>
+      )}
+      {/* [BANK-AMOUNT-ONLY] This line was auto-linked on the exact amount + a matching supplier
+          name (no invoice number/IBAN in the statement). Almost always right, but for a recurring
+          same-amount supplier it could be the wrong month — so flag it for a quick check. One tap
+          on Ontkoppelen above undoes it. Only on the Gekoppeld tab. */}
+      {isDoneTab && s.matchReason === 'amount_only' && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+          background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: R.sm, padding: '8px 10px',
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B06000' }}>rule</span>
+          <span style={{ fontSize: 12, color: '#7A4F00', lineHeight: 1.4 }}>
+            Automatisch gekoppeld op <strong>bedrag + naam</strong> (geen factuurnummer in het afschrift). Even controleren of dit de juiste factuur is.
+          </span>
         </div>
       )}
       {/* Transaction row */}
