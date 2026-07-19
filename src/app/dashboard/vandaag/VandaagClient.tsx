@@ -25,6 +25,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { BackLink } from "@/components/ui/BackLink";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
 import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
@@ -184,6 +185,9 @@ export default function VandaagClient({ payable, remind }: Props) {
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
+      {/* [NAV] Top-left back — consistent across the app (mobile). Vandaag had
+          no back control and no shared app bar, leaving no in-page way back. */}
+      <BackLink style={{ color: M3.primary, marginBottom: 12 }} />
       <header style={{ marginBottom: 24 }}>
         <h1
           style={{
