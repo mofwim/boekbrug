@@ -16,6 +16,8 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { regimeFlagNote } from "@/lib/regime-flags";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
+import { collectBadDebt } from "@/lib/bad-debt-collect";
+import { badDebtNote } from "@/lib/bad-debt";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function shiftDays(iso: string, days: number): string {
@@ -193,6 +195,15 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // [BAD-DEBT] Reclaimable BTW on sales invoices > 1 year past due and still unpaid (factuur only).
+  // An honest note — never auto-verrekend (the owner/accountant decides the period).
+  const badDebt = await collectBadDebt(pipeline, ownerId, sr.scheme, end);
+  const bdNote = badDebtNote(badDebt);
+  if (bdNote) regimeNotes.push(bdNote);
+
   const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes);
-  return NextResponse.json({ ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount });
+  return NextResponse.json({
+    ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount,
+    badDebtReclaimableBtw: Math.round(badDebt.totalReclaimableBtw), badDebtCount: badDebt.eligible.length,
+  });
 }
