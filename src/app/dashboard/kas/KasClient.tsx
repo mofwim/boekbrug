@@ -64,6 +64,7 @@ function todayIso(): string {
 
 export default function KasClient() {
   const [entries, setEntries] = useState<Entry[]>([])
+  const [search, setSearch] = useState('')  // [SEARCH] in-page live ledger filter
   const [balance, setBalance] = useState(0)
   // [KAS-OPENING] the drawer's starting float (beginsaldo) — a config value the owner sets once.
   const [openingBalance, setOpeningBalance] = useState(0)
@@ -239,6 +240,19 @@ export default function KasClient() {
     return CATS.find((c) => c.key === k)?.label ?? k
   }
 
+  // [SEARCH] In-page live filter over the cash ledger (omschrijving / categorie / bedrag).
+  const kasFold = (s: string) => (s ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+  const kq = kasFold(search.trim())
+  const kqDigits = search.replace(/[^\d]/g, '')
+  const kAmountLike = kqDigits.length >= 2 && /^[\d.,\s€-]+$/.test(search.trim())
+  const filteredEntries = kq
+    ? entries.filter((e) =>
+        kasFold(e.description ?? '').includes(kq) ||
+        kasFold(catLabel(e.category, e.direction)).includes(kq) ||
+        (kAmountLike && String(Math.trunc(Math.abs(e.amount ?? 0))) === kqDigits)
+      )
+    : entries
+
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
@@ -395,6 +409,25 @@ export default function KasClient() {
 
         {/* Ledger */}
         <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral, margin: '0 2px 10px' }}>BOEKINGEN</div>
+
+        {/* [SEARCH] In-page live filter over the ledger */}
+        {!loading && !loadError && entries.length > 0 && (
+          <div style={{ position: 'relative', marginBottom: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Zoek in boekingen (omschrijving, categorie, bedrag)…"
+              aria-label="Kasboekingen zoeken"
+              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
+            />
+            {search && (
+              <button onClick={() => setSearch('')} aria-label="Wissen"
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+            )}
+          </div>
+        )}
+
         {loading ? (
           <div style={{ height: 80, borderRadius: 16, background: '#f1f3f4' }} />
         ) : loadError ? (
@@ -405,9 +438,13 @@ export default function KasClient() {
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
             Nog geen kasboekingen. Voeg je eerste contante ontvangst of uitgave toe.
           </div>
+        ) : filteredEntries.length === 0 ? (
+          <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
+            Geen boekingen gevonden voor &ldquo;{search.trim()}&rdquo;.
+          </div>
         ) : (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, overflow: 'hidden' }}>
-            {entries.map((e, i) => (
+            {filteredEntries.map((e, i) => (
               <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: i > 0 ? '1px solid #e0e0e0' : 'none' }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
