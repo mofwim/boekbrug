@@ -60,6 +60,7 @@ import {
 import { fetchAllRows } from "./supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
+import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1368,7 +1369,12 @@ export async function buildClosingPackageZip(args: {
   const coveredBudget = new Map(
     allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
   );
-  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget);
+  // [KASSTELSEL] The concept aangifte in the ZIP must match the app: under cash basis the BTW is
+  // on the PAID date. Resolve the scheme for this quarter and, under kas, feed the settlement
+  // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
+  // a computed figure). Default factuur → byte-identical.
+  const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, kasResolution.opts);
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),
@@ -1396,6 +1402,18 @@ export async function buildClosingPackageZip(args: {
   const regimeNotes = regimeFlags.map(regimeFlagNote);
   for (const f of regimeFlags) {
     warnings.push({ code: `regime_${f.code}`, message: regimeFlagNote(f) });
+  }
+  // [KASSTELSEL] Note the basis on the concept, and hard-warn on paid-but-undated money (its BTW
+  // can't be placed in a quarter → the concept could be too low). The accountant sees both.
+  if (kasResolution.scheme === "kas") {
+    regimeNotes.push("Kasstelsel actief — de BTW is berekend op de BETAALdatum van de facturen (niet de factuurdatum).");
+    if (kasResolution.undatedPaidCount > 0) {
+      warnings.push({
+        code: "kas_undated_paid",
+        message: `${kasResolution.undatedPaidCount} betaalde factu(u)r(en) hebben geen betaaldatum — onder kasstelsel kan de betaalde BTW daardoor niet in het juiste kwartaal worden geplaatst. Koppel de bankbetaling of vul de betaaldatum in; anders is dit concept mogelijk te laag.`,
+      });
+      regimeNotes.push(`LET OP: ${kasResolution.undatedPaidCount} betaalde factu(u)r(en) zonder betaaldatum — concept mogelijk te laag.`);
+    }
   }
 
   // Only emit a concept when there is something to declare — sales, unrated cash omzet,

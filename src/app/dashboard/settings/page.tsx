@@ -32,6 +32,11 @@ export default function SettingsPage() {
   // [REGIME-FLAGS] KOR (kleineondernemersregeling) opt-in. Saved with the profile; drives the
   // accountant-handoff flag ("KOR is actief — bereken geen BTW"), never a figure by itself.
   const [korActive, setKorActive] = useState(false)
+  // [KASSTELSEL] BTW basis: factuurstelsel (accrual) vs kasstelsel (cash basis — BTW on the pay
+  // date). vat_scheme_since is the effective date; set when switching TO kas so a past quarter is
+  // never retroactively rewritten.
+  const [vatScheme, setVatScheme] = useState<'factuur' | 'kas'>('factuur')
+  const [vatSchemeSince, setVatSchemeSince] = useState<string | null>(null)
 
   // حالة دعوة المحاسب
   const [accountantEmail, setAccountantEmail] = useState('')
@@ -102,6 +107,8 @@ export default function SettingsPage() {
         setPostalCode(data.postal_code || '')
         setCity(data.city || '')
         setKorActive(!!data.kor_active)
+        setVatScheme(data.vat_scheme === 'kas' ? 'kas' : 'factuur')
+        setVatSchemeSince(data.vat_scheme_since ?? null)
       }
       // جلب محاسب الـ ZZP'er إذا كان مرتبطاً — via API (service role bypasses RLS)
       if (data?.role === 'zzper') {
@@ -151,6 +158,15 @@ export default function SettingsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // [KASSTELSEL] When switching TO kas, anchor the effective date to the CURRENT quarter's
+    // start (a clean boundary — no mid-quarter straddle): the current + future quarters compute
+    // kas, past quarters stay factuur and are never retroactively rewritten. Keep the existing
+    // since-date if already on kas. (A different agreed start-date is an accountant matter.)
+    const now = new Date()
+    const qStart = `${now.getFullYear()}-${String(Math.floor(now.getMonth() / 3) * 3 + 1).padStart(2, '0')}-01`
+    let since = vatSchemeSince
+    if (vatScheme === 'kas' && (profile.vat_scheme !== 'kas' || !since)) since = qStart
+
     // [BRIDGE-POLISH 3a-3] Store the CANONICAL form (normalized), never the raw
     // input — so what we persist always matches what was validated. KVK keeps
     // its trimmed digits; BTW/IBAN are upper-cased + whitespace-stripped.
@@ -166,6 +182,8 @@ export default function SettingsPage() {
         postal_code: postalCode,
         city: city,
         kor_active: korActive,
+        vat_scheme: vatScheme,
+        vat_scheme_since: since,
       })
       .eq('id', user.id)
 
@@ -176,6 +194,7 @@ export default function SettingsPage() {
       setBtw(normalizeBtw(btw))
       setIban(normalizeIban(iban))
       setKvk(kvk.trim())
+      setVatSchemeSince(since) // [KASSTELSEL] keep local since in sync with what we persisted
       setSuccessProfile('Profiel opgeslagen ✓')
     }
 
@@ -447,6 +466,43 @@ export default function SettingsPage() {
                   Onder de KOR breng je geen BTW in rekening. Je concept-aangifte krijgt dan een
                   duidelijke notitie voor je boekhouder — de omzet blijft kloppen, alleen de
                   BTW-afdracht vervalt.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {/* [KASSTELSEL] BTW-methode: factuurstelsel (accrual) vs kasstelsel (cash basis). */}
+          <div className="border-t border-gray-100 pt-4 space-y-2">
+            <span className="block text-sm font-medium text-gray-800">BTW-methode</span>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="vat_scheme"
+                checked={vatScheme === 'factuur'}
+                onChange={() => setVatScheme('factuur')}
+                className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm text-gray-800">Factuurstelsel (standaard)</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  BTW telt op de factuurdatum. De meeste ondernemers gebruiken dit.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="vat_scheme"
+                checked={vatScheme === 'kas'}
+                onChange={() => setVatScheme('kas')}
+                className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm text-gray-800">Kasstelsel</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  BTW telt op de betaaldatum — voor veel winkels/horeca verplicht. Ingaat vanaf het
+                  huidige kwartaal; eerdere kwartalen blijven ongewijzigd. Een betaalde factuur
+                  zonder betaaldatum blokkeert &ldquo;klaar&rdquo; tot je de betaling koppelt.
                 </span>
               </span>
             </label>
