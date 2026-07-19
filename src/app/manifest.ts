@@ -14,13 +14,48 @@ import type { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    // [PWA] id pins a stable app identity so the browser/Play treat updates as
+    // the same installed app even if start_url ever changes.
+    id: '/',
     name: 'BoekBrug',
     short_name: 'BoekBrug',
     description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
     start_url: '/',
+    // [PWA] scope "/" keeps the whole site inside the installed app window, so
+    // navigating anywhere in BoekBrug stays in-app instead of bouncing to Chrome.
+    scope: '/',
     display: 'standalone',
+    // [PWA] Dutch UI, left-to-right — helps the store + a11y label the app.
+    lang: 'nl',
+    dir: 'ltr',
+    orientation: 'any',
+    categories: ['finance', 'business', 'productivity'],
     background_color: '#f8f9fa',
     theme_color: '#1a73e8',
+    // [PWA] Long-press launcher shortcuts → deep links into the core flows.
+    shortcuts: [
+      {
+        name: 'Factuur scannen',
+        short_name: 'Scannen',
+        description: 'Snel een factuur of bon inschieten',
+        url: '/dashboard/upload',
+        icons: [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+      },
+      {
+        name: 'Mijn facturen',
+        short_name: 'Facturen',
+        description: 'Bekijk en beheer je facturen',
+        url: '/dashboard/facturen',
+        icons: [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+      },
+      {
+        name: 'Bank',
+        short_name: 'Bank',
+        description: 'Bankafschriften en matching',
+        url: '/dashboard/bank',
+        icons: [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+      },
+    ],
     icons: [
       {
         src: '/favicon.ico',
