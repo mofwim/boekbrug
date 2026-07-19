@@ -43,6 +43,12 @@ function formatDate(iso: string | null): string {
   return `${Number(m[3])} ${months[Number(m[2]) - 1]}`
 }
 
+// The "lijkt op" hint carries a normalized counterpart KEY (lowercased, noise stripped).
+// Title-case it so the owner sees a readable name, not a mangled internal string.
+function prettyKey(key: string): string {
+  return key.replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 export default function CategoriseClient() {
   const [items, setItems] = useState<Item[]>([])
   const [choice, setChoice] = useState<Record<string, string>>({})
@@ -255,7 +261,7 @@ export default function CategoriseClient() {
                         : it.suggested_source === 'memory'
                           ? ' · onthouden'
                           : it.suggested_source === 'similar'
-                            ? (it.suggested_similar_to ? ` · lijkt op ${it.suggested_similar_to}` : ' · lijkt op eerdere')
+                            ? (it.suggested_similar_to ? ` · lijkt op ${prettyKey(it.suggested_similar_to)}` : ' · lijkt op eerdere')
                             : it.suggested_confident ? ' · herkend' : ' · voorstel'}
                     </div>
                   </div>

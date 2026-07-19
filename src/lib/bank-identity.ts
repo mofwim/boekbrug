@@ -111,10 +111,13 @@ export function needsDocument(
 const KEY_NOISE = new Set([
   // legal suffixes
   'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'maatschap', 'holding', 'inzake',
-  // payment processors / methods
+  // payment processors / methods — MUST cover every acquirer POS_PAYOUT_RE knows, else the
+  // processor name survives the key and becomes a false "distinctive" similarity token
+  // (two unrelated shops settled via the same PSP would look alike). Parity is asserted by a test.
   'sumup', 'ccv', 'mollie', 'adyen', 'stripe', 'zettle', 'izettle', 'paypal',
   'payout', 'buckaroo', 'sisow', 'klarna', 'ideal', 'pin', 'pos', 'bea', 'gea',
   'betaalautomaat', 'geldautomaat',
+  'worldline', 'paysquare', 'equens', 'nets', 'omnikassa', 'rabo',
 ]);
 
 /**
@@ -177,9 +180,16 @@ export interface SimilarMemoryHit {
 }
 
 // Generic tokens that carry no business identity — a match on these alone must never
-// suggest (Dutch tussenvoegsels + a few universals). Distinct from KEY_NOISE, which
-// strips processors/legal suffixes upstream.
-const GENERIC_TOKENS = new Set(['van', 'de', 'der', 'den', 'het', 'een', 'en', 'the', 'and', 'aan']);
+// suggest. Distinct from KEY_NOISE (processors/legal suffixes, stripped upstream). Two
+// groups: (1) Dutch tussenvoegsels + a few universals, and (2) high-frequency first
+// names — "Pieter Bakker" and "Pieter Jansen" are different people, so a shared given
+// name is not a business-identity match. Kept conservative to avoid suppressing a genuine
+// sole-trader look-alike (a shared SURNAME token still carries the match).
+const GENERIC_TOKENS = new Set([
+  'van', 'de', 'der', 'den', 'het', 'een', 'en', 'the', 'and', 'aan',
+  'pieter', 'jan', 'hendrik', 'willem', 'johan', 'kees', 'henk', 'dirk', 'cor', 'gerard',
+  'sandra', 'marieke', 'anna', 'maria', 'linda', 'ingrid', 'petra', 'johanna',
+]);
 
 function keyTokens(key: string): string[] {
   return key.split(/\s+/).filter((t) => t.length > 0);
@@ -209,12 +219,15 @@ export function bestSimilarMemory(
   for (const m of memory) {
     if (!m.key || !m.category) continue;
     if (m.key === key) continue; // an exact match is handled by memory, not here
-    const bTokens = keyTokens(m.key);
-    if (bTokens.length === 0) continue;
-    const shared = bTokens.filter((t) => aSet.has(t));
+    const bSet = new Set(keyTokens(m.key));
+    if (bSet.size === 0) continue;
+    // Count DISTINCT shared tokens over DISTINCT token counts, so a repeated token in either
+    // name (counterpartKey doesn't dedup: "Jansen & Jansen" → "jansen jansen") can never push
+    // the score above 1.0 and silently defeat the disagreeing-category guard below.
+    const shared = [...bSet].filter((t) => aSet.has(t));
     if (shared.length === 0) continue;
     if (!shared.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t))) continue; // no distinctive overlap
-    const score = shared.length / Math.min(aTokens.length, bTokens.length);
+    const score = shared.length / Math.min(aSet.size, bSet.size);
     if (score < minScore) continue;
     hits.push({ category: m.category, matchedKey: m.key, score });
   }

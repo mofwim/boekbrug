@@ -144,6 +144,39 @@ console.log("\n— bestSimilarMemory (learn from a look-alike counterpart) —")
   check("exact key is excluded from similarity", bestSimilarMemory("jansen", [{ key: "jansen", category: "kosten" }]) === null);
   // Empty / null key → null.
   check("null key → null", bestSimilarMemory(null, mem) === null);
+
+  // [REVIEW-FIX #1] An acquirer/PSP name is noise, not a distinctive identity token: two
+  // unrelated shops settled via the same processor must NOT be matched on the processor name.
+  check("worldline-prefixed unrelated shops don't match on the PSP name",
+    bestSimilarMemory(counterpartKey("WORLDLINE*JANSEN"), [{ key: counterpartKey("WORLDLINE*PIETERSEN") ?? "", category: "kosten" }]) === null);
+  check("a bare OmniKassa memory doesn't match every OmniKassa merchant",
+    bestSimilarMemory(counterpartKey("OMNIKASSA ACME CATERING"), [{ key: counterpartKey("OMNIKASSA") ?? "x", category: "kosten" }]) === null);
+
+  // [REVIEW-FIX #2] Duplicate tokens must never push the score above 1.0 and defeat the
+  // ambiguity guard. "Jansen Jansen Advocaten" (kosten) vs "Jansen Bakkerij" (omzet) for query
+  // "Jansen" is a genuine disagreeing tie → suggest nothing.
+  const dupMem: MemoryEntry[] = [
+    { key: "jansen jansen advocaten", category: "kosten" },
+    { key: "jansen bakkerij", category: "omzet" },
+  ];
+  const dupHit = bestSimilarMemory("jansen", dupMem);
+  check("duplicate tokens can't defeat the disagreeing-category guard", dupHit === null);
+  check("score never exceeds 1.0", (bestSimilarMemory("jansen", [{ key: "jansen jansen advocaten", category: "kosten" }])?.score ?? 0) <= 1.0);
+
+  // [REVIEW-FIX #3] A shared first name is not a business match.
+  check("shared first name only → null",
+    bestSimilarMemory("pieter bakker", [{ key: "pieter jansen", category: "kosten" }]) === null);
+  check("shared SURNAME still matches (first name ignored, surname carries it)",
+    bestSimilarMemory("pieter bakker", [{ key: "jan bakker", category: "kosten" }])?.category === "kosten");
+}
+
+console.log("\n— KEY_NOISE mirrors the POS acquirer list (no drift) —");
+{
+  // Every acquirer/PSP name the classifier recognises must also be stripped by counterpartKey,
+  // or it re-enters as a false similarity token. Assert the specific ones the review flagged.
+  for (const acq of ["worldline", "paysquare", "equens", "nets", "omnikassa"]) {
+    check(`'${acq}' is stripped from the counterpart key`, counterpartKey(`${acq} WINKEL`) === "winkel");
+  }
 }
 
 console.log("\n— suggestIdentity with a similar hit (review-only, never confident) —");
