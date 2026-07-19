@@ -22,6 +22,8 @@ import {
   type QuarterSettlements,
   type InvoiceDirection,
 } from "./kas-payment-events";
+import { getVatScheme, resolveSchemeForQuarter, type VatScheme } from "./vat-scheme";
+import type { ComputeOpts } from "./financial-result";
 
 // [KASSTELSEL] Under cash basis an invoice counts ONLY when money moved: amount_paid > 0 (any
 // partial) OR status 'paid' (fully settled). NOT a bare 'sent'/'overdue' (unpaid sale) or
@@ -130,4 +132,55 @@ export async function fetchSettlementEvents(
   }
 
   return buildQuarterSettlements(headers, raw, start, end);
+}
+
+/** The VAT basis in force for a quarter, read from the owner's profile (own query → deploy-safe:
+ *  if the vat_scheme migration lags, it degrades to factuur). Used where only the scheme is needed
+ *  (the settlements are fetched separately, e.g. inside computeResultForRange). */
+export async function resolveOwnerScheme(
+  pipeline: PipelineClient,
+  ownerId: string,
+  quarterStart: string,
+): Promise<VatScheme> {
+  const { data: prof } = await pipeline
+    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", ownerId).maybeSingle();
+  const p = prof as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
+  return resolveSchemeForQuarter(getVatScheme(p?.vat_scheme), p?.vat_scheme_since ?? null, quarterStart);
+}
+
+/** What a money-read route needs to become scheme-aware in one call. */
+export interface SchemeResolution {
+  scheme: VatScheme;
+  opts: ComputeOpts;              // {} under factuur (computeResult runs accrual); kas inputs under kas
+  undatedPaidCount: number;      // paid money that couldn't be dated → block klaar/aangifte, suppress figures
+  estimatedPortionCount: number; // paid-date is an estimate (marked_paid_at) → block klaar
+}
+
+/**
+ * Resolve the VAT basis for one quarter and, under kas, gather its settlement inputs — the single
+ * entry point the money-read routes (/api/result, /api/aangifte, /api/readiness) use so they can
+ * never disagree on the scheme. `quarterStart` gates the per-quarter effective date; [start,end] is
+ * the window whose settlements to fetch. The profile is read in its OWN query (deploy-safe: if the
+ * vat_scheme migration lags, the select degrades to factuur, never a wrong number). Under factuur
+ * it returns empty opts so computeResult runs the accrual path byte-identical.
+ */
+export async function resolveSchemeSettlements(
+  pipeline: PipelineClient,
+  ownerId: string,
+  quarterStart: string,
+  start: string,
+  end: string,
+): Promise<SchemeResolution> {
+  const { data: prof } = await pipeline
+    .from("profiles").select("vat_scheme, vat_scheme_since").eq("id", ownerId).maybeSingle();
+  const p = prof as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
+  const scheme = resolveSchemeForQuarter(getVatScheme(p?.vat_scheme), p?.vat_scheme_since ?? null, quarterStart);
+  if (scheme !== "kas") return { scheme: "factuur", opts: {}, undatedPaidCount: 0, estimatedPortionCount: 0 };
+  const qs = await fetchSettlementEvents(pipeline, ownerId, start, end);
+  return {
+    scheme: "kas",
+    opts: { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice },
+    undatedPaidCount: qs.undatedPaidCount,
+    estimatedPortionCount: qs.estimatedCount,
+  };
 }

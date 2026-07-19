@@ -269,5 +269,23 @@ console.log("\n— [REGIME-FLAGS] special regimes are RISKS, never a block —")
   check("evidence invoice appears in the risk detail", r.risks.some((x) => /INK-22/.test(x.detail ?? "")));
 }
 
+console.log("\n— [KASSTELSEL] undated paid money blocks 'klaar' —");
+{
+  // Under cash basis, paid money we can't date can't be placed in a quarter → the BTW would be
+  // silently too low. It must block "klaar" (a hard gap), and default (undefined) must not.
+  const r = buildReadiness(perfect({ undatedPaidCount: 2 }));
+  check("not ready when paid money is undated", r.status !== "ready" && r.ready === false);
+  check("surfaced as a MISSING gap naming betaaldatum", r.missing.some((m) => /zonder betaaldatum/.test(m.title)));
+  check("gap links to the bank screen", r.missing.some((m) => m.fix?.href === "/dashboard/bank"));
+  const clean = buildReadiness(perfect({ undatedPaidCount: 0 }));
+  check("zero undated → still ready (factuur owners untouched: undefined→0)", clean.status === "ready");
+}
+{
+  // An estimated pay-date is a risk to eyeball, never a hard block.
+  const r = buildReadiness(perfect({ estimatedPaidCount: 3 }));
+  check("estimated pay-date is a risk, not a block", r.missing.every((m) => !/schatting/.test(m.title)) && r.risks.some((x) => /schatting/.test(x.title)));
+  check("still ready with only an estimated-date risk (score capped 99)", r.missing.length === 0 && r.status === "ready");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

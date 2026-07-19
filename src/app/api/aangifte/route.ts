@@ -15,6 +15,7 @@ import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { regimeFlagNote } from "@/lib/regime-flags";
+import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function shiftDays(iso: string, days: number): string {
@@ -118,7 +119,11 @@ export async function GET(req: NextRequest) {
       .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
       .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
   );
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget);
+  // [KASSTELSEL] Resolve the VAT basis for THIS quarter (per-quarter, so a pre-switch quarter
+  // stays factuur) and, under kas, gather the settlement inputs. Default factuur → accrual path
+  // byte-identical. The concept aangifte then declares BTW on the PAID date, not the invoice date.
+  const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end);
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, sr.opts);
 
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
@@ -127,17 +132,22 @@ export async function GET(req: NextRequest) {
   // [DATELESS] A verified invoice with NO invoice_date is silently dropped by the date-range
   // fetch above, so it is NOT in the figures — count those separately so the concept can warn
   // instead of quietly understating omzet/voorbelasting. (Matches the ZIP's dateless warning.)
-  const datelessRaw = await fetchAllRows((from, to) => pipeline
-    .from("invoices")
-    .select("status, receiver_id, direction")
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .is("invoice_date", null)
-    .order("id", { ascending: true }).range(from, to));
-  const datelessVerifiedCount = datelessRaw.filter((i) => {
-    const dir = i.direction === "incoming" || i.direction === "outgoing"
-      ? i.direction : (i.receiver_id === ownerId ? "incoming" : "outgoing");
-    return dir === "incoming" ? IN_OK.has(i.status ?? "") : OUT_OK.has(i.status ?? "");
-  }).length;
+  // Under KAS the invoice_date is irrelevant (invoices enter by payment date); the analogous
+  // "money we can't place" signal is sr.undatedPaidCount, surfaced as a hard note below.
+  let datelessVerifiedCount = 0;
+  if (sr.scheme !== "kas") {
+    const datelessRaw = await fetchAllRows((from, to) => pipeline
+      .from("invoices")
+      .select("status, receiver_id, direction")
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .is("invoice_date", null)
+      .order("id", { ascending: true }).range(from, to));
+    datelessVerifiedCount = datelessRaw.filter((i) => {
+      const dir = i.direction === "incoming" || i.direction === "outgoing"
+        ? i.direction : (i.receiver_id === ownerId ? "incoming" : "outgoing");
+      return dir === "incoming" ? IN_OK.has(i.status ?? "") : OUT_OK.has(i.status ?? "");
+    }).length;
+  }
 
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
@@ -167,6 +177,22 @@ export async function GET(req: NextRequest) {
   }).catch(() => []);
   const regimeNotes = regimeFlags.map(regimeFlagNote);
 
+  // [KASSTELSEL] Honest notes for the cash-basis concept. The BTW is on the paid date, and any
+  // paid-but-undated money is a HARD gap — surfaced so the concept is never quietly too low.
+  if (sr.scheme === "kas") {
+    regimeNotes.push("Kasstelsel actief — de BTW is berekend op de BETAALdatum van je facturen (niet de factuurdatum). Een onbetaalde factuur telt pas mee zodra hij betaald is.");
+    if (sr.undatedPaidCount > 0) {
+      regimeNotes.push(
+        `LET OP: ${sr.undatedPaidCount} betaalde factu(u)r(en) ${sr.undatedPaidCount === 1 ? "heeft" : "hebben"} geen betaaldatum, ` +
+        "dus de betaalde BTW kan (nog) niet in het juiste kwartaal worden geplaatst — dit concept is daardoor mogelijk te laag. " +
+        "Koppel de bankbetaling of vul de betaaldatum in voordat je indient.",
+      );
+    }
+    if (sr.estimatedPortionCount > 0) {
+      regimeNotes.push(`${sr.estimatedPortionCount} betaaldatum(s) ${sr.estimatedPortionCount === 1 ? "is" : "zijn"} een schatting (handmatig 'betaald' gemarkeerd) — controleer of het kwartaal klopt.`);
+    }
+  }
+
   const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes);
-  return NextResponse.json({ ok: true, year, quarter, aangifte });
+  return NextResponse.json({ ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount });
 }

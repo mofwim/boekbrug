@@ -17,7 +17,7 @@ import { reconcileTriangle, bankNetByDay } from "./triangle";
 import { netCommissionToBook, ACQUIRER_VENDOR_RE } from "./card-reconcile";
 import type { EftSettlement } from "./eft-parser";
 import type { PipelineClient } from "./supabase-pipeline";
-import { fetchSettlementEvents } from "./kas-payment-events-fetch";
+import { fetchSettlementEvents, resolveOwnerScheme } from "./kas-payment-events-fetch";
 import type { VatScheme } from "./vat-scheme";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
@@ -59,13 +59,14 @@ export async function computeResultForRange(args: {
   ownerId: string;
   start: string; // 'YYYY-MM-DD'
   end: string;   // 'YYYY-MM-DD'
-  // [KASSTELSEL] The VAT basis IN FORCE for this window (the caller resolves it per-quarter via
-  // resolveSchemeForQuarter, so a pre-switch quarter stays 'factuur'). Default 'factuur' → the
-  // accrual path runs byte-identical, and every existing caller is unchanged.
+  // [KASSTELSEL] The VAT basis in force for this window. Omitted → resolved from the owner's
+  // profile for the window START (per-quarter, so a pre-switch quarter stays factuur), which makes
+  // /api/result and the truth lens kas-aware with no route change. Pass explicitly only to override
+  // (e.g. tests). Default resolution degrades to factuur if the migration lags — never a wrong number.
   scheme?: VatScheme;
 }): Promise<RangeResult> {
   const { pipeline, ownerId, start, end } = args;
-  const scheme: VatScheme = args.scheme === "kas" ? "kas" : "factuur";
+  const scheme: VatScheme = args.scheme ?? (await resolveOwnerScheme(pipeline, ownerId, start));
 
   // Invoices for this owner (outgoing = sender, incoming = receiver) in the window.
   const invRows = await fetchAllRows((from, to) => pipeline
