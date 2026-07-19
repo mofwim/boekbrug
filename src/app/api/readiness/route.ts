@@ -324,7 +324,7 @@ export async function GET(req: NextRequest) {
     .eq("user_id", ownerId).lte("entry_date", end)
     .order("entry_date", { ascending: true }).range(from, to));
   const { data: kasProfile } = await pipeline
-    .from("profiles").select("kas_opening_balance, kor_active").eq("id", ownerId).maybeSingle();
+    .from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
   const kasTurnover = (kasTurnoverRows ?? []) as KasTurnoverDay[];
   const kasEntries = (kasEntryRows ?? []) as unknown as KasEntry[];
   const kasStarting = Number((kasProfile as { kas_opening_balance?: number | null } | null)?.kas_opening_balance) || 0;
@@ -334,8 +334,13 @@ export async function GET(req: NextRequest) {
 
   // ── 5c) [REGIME-FLAGS] Special BTW regimes the concept can't auto-compute (KOR / verlegd /
   // marge). Owner declares KOR (profiles.kor_active); verlegd/marge are phrase-gated on the
-  // owner's own invoice-line texts (fetched by invoice_id, tenant-safe). Surfaced as RISKS. ──
-  const korActive = !!(kasProfile as { kor_active?: boolean | null } | null)?.kor_active;
+  // owner's own invoice-line texts (fetched by invoice_id, tenant-safe). Surfaced as RISKS.
+  // [DEPLOY-SAFE] kor_active is fetched in its OWN query — never folded into the kas_opening_balance
+  // select above — so if the regime_kor.sql migration lags this deploy, a missing column only nulls
+  // korActive (→ no flags), and can NEVER collaterally drop the opening balance (a wrong number). ──
+  const { data: korProfile } = await pipeline
+    .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
+  const korActive = !!(korProfile as { kor_active?: boolean | null } | null)?.kor_active;
   const regimeInvoices: RegimeInvoiceRef[] = invRaw.map((i) => ({
     id: String(i.id),
     direction: effDir(i),

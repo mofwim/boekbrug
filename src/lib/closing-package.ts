@@ -1044,12 +1044,17 @@ export async function buildClosingPackageZip(args: {
   let clientName = "Onbekend";
   const { data: profile } = await supabase
     .from("profiles")
-    .select("company_name, full_name, kor_active")
+    .select("company_name, full_name")
     .eq("id", ownerId)
     .maybeSingle();
   if (profile) clientName = profile.company_name || profile.full_name || "Onbekend";
   // [REGIME-FLAGS] Owner's KOR declaration (drives the accountant-handoff flag, never a figure).
-  const korActive = !!(profile as { kor_active?: boolean | null } | null)?.kor_active;
+  // [DEPLOY-SAFE] Fetched in its OWN query — never folded into the clientName select above — so if
+  // the regime_kor.sql migration lags this deploy, a missing column only nulls korActive (→ no
+  // flags), and can NEVER break the client-name lookup or any figure in this package.
+  const { data: korProfile } = await supabase
+    .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
+  const korActive = !!(korProfile as { kor_active?: boolean | null } | null)?.kor_active;
 
   // Invoices of the quarter (both directions). Filter on STORED status only
   // (verified sets), within the quarter date range.
