@@ -65,10 +65,16 @@ node_modules/
 # Sentry Config File
 .env.sentry-build-plugin
 
-# [ANDROID] Never commit signing keys or built app packages. Losing the keystore
-# means you can never update the Play listing again; leaking it lets anyone ship
-# malicious updates as BoekBrug. Keep it backed up OUTSIDE the repo.
+# [ANDROID] Never commit signing keys, key credentials, or built app packages.
+# Losing the keystore means you can never update the Play listing again; leaking
+# it (or its passwords) lets anyone ship malicious updates as BoekBrug. Keep them
+# backed up OUTSIDE the repo.
 *.keystore
 *.jks
+*.p12
 *.aab
 *.apk
+# PWABuilder's key-credentials file (contains keystore + key passwords in plain text)
+signingkeyinfo.txt
+signing-key-info*
+*signing*info*
