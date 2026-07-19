@@ -1278,6 +1278,20 @@ STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees th
   and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
   total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
 
+FINAL SELF-CHECK on the three amounts — do this EVERY time, before returning:
+  1. total_ex_btw + btw_amount MUST equal total_inc_btw (within rounding). If it does not, you
+     misread at least one of the three. Re-read the invoice's FINAL total block ("Totaal te
+     betalen") and the printed BTW line, and correct the wrong value.
+  2. btw_amount ÷ total_ex_btw MUST be 0, 0.09, 0.21, or a BLEND between 0 and 0.21 (multi-rate).
+     A ratio ABOVE 0.21 (e.g. 0.29) is IMPOSSIBLE in the Netherlands — it means you grabbed the
+     wrong number. The usual cause on a horeca / wholesale invoice: the BTW-SPECIFICATIE table
+     lists BTW PER RATE (e.g. "9% over 240,00 → 21,60" and "21% over 50,00 → 10,50"). btw_amount
+     is the SUM of those BTW cells (21,60 + 10,50 = 32,10), NOT one row; total_ex_btw is the SUM
+     of the bases (240,00 + 50,00 = 290,00), NOT one row. Use the GRAND totals from the final
+     summary, never a single row of the per-rate table.
+  Only return amounts that pass checks 1 and 2. If after re-reading you still cannot make them
+  consistent, set them as best you can and LOWER field_confidence.amount so a human verifies.
+
 Per-field confidence rules:
 - field_confidence.vendor: how certain you are the vendor (sender) is correct.
   LOW (< 0.7) if sender/receiver were ambiguous, names were close, or the layout was unclear.
