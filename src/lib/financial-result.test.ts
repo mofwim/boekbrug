@@ -6,6 +6,7 @@ import {
   type ResultInvoice, type ResultBankTx, type ResultCashEntry,
 } from "./financial-result";
 import type { DailyTurnover } from "./turnover";
+import { buildSettlementEvents } from "./kas-payment-events";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -473,6 +474,63 @@ console.log("\n— [TRIANGLE] acquirer commission is booked as a cost, no BTW �
   check("commission booked → resultaat = 985 (honest)", near(withComm.resultaat, 985));
   check("commission adds NO voorbelasting", near(withComm.btwVoorbelasting, 0));
   check("a negative/zero commission is ignored", near(computeResult([], [], [], turnover, undefined, -5).kosten, 0));
+}
+
+console.log("\n— [KASSTELSEL] cash-basis invoice leg (scheme 'kas') —");
+{
+  const hdr = { invoiceId: "inv1", direction: "outgoing" as const, totalEx: 1000, totalBtw: 210, totalInc: 1210 };
+  // A fully-paid outgoing invoice, settled this quarter → same figures as factuur.
+  const events = buildSettlementEvents(hdr, 0, [{ payDate: "2026-02-10", amountApplied: 1210, estimated: false }]);
+  const r = computeResult([], [], [], [], undefined, 0, undefined, { scheme: "kas", settlements: events });
+  check("kas: full payment → omzet 1000", near(r.omzet, 1000));
+  check("kas: btwVerschuldigd 210", near(r.btwVerschuldigd, 210));
+  check("kas: booked at 21% in salesByRate", !!r.salesByRate.find((x) => x.rate === 21 && near(x.btw, 210)));
+}
+{
+  // Under kas the `invoices` array is IGNORED — only settlement events count. A huge unpaid
+  // invoice passed in `invoices` must contribute NOTHING when there are no settlements.
+  const bigInvoice: ResultInvoice[] = [{ direction: "outgoing", status: "paid", total_ex_btw: 99999, btw_amount: 20999 }];
+  const r = computeResult(bigInvoice, [], [], [], undefined, 0, undefined, { scheme: "kas", settlements: [] });
+  check("kas: unpaid invoice (no settlement) contributes 0 omzet", near(r.omzet, 0) && near(r.btwVerschuldigd, 0));
+}
+{
+  // Incoming purchase paid this quarter → kosten + voorbelasting, never a sale row.
+  const hdr = { invoiceId: "pur1", direction: "incoming" as const, totalEx: 500, totalBtw: 105, totalInc: 605 };
+  const events = buildSettlementEvents(hdr, 0, [{ payDate: "2026-03-01", amountApplied: 605, estimated: false }]);
+  const r = computeResult([], [], [], [], undefined, 0, undefined, { scheme: "kas", settlements: events });
+  check("kas: incoming → kosten 500", near(r.kosten, 500));
+  check("kas: incoming → voorbelasting 105", near(r.btwVoorbelasting, 105));
+  check("kas: incoming does NOT create a sales row", r.salesByRate.length === 0);
+}
+{
+  // A creditnota refunded this quarter nets omzet + BTW down (negative slice at the real rate).
+  const cn = { invoiceId: "cn1", direction: "outgoing" as const, totalEx: -100, totalBtw: -21, totalInc: -121 };
+  const events = buildSettlementEvents(cn, 0, [{ payDate: "2026-04-15", amountApplied: -121, estimated: false }]);
+  const r = computeResult([], [], [], [], undefined, 0, undefined, { scheme: "kas", settlements: events });
+  check("kas: creditnota nets omzet to −100", near(r.omzet, -100));
+  check("kas: creditnota nets btwVerschuldigd to −21", near(r.btwVerschuldigd, -21));
+  check("kas: creditnota nets the 21% rubriek (not a new 0% row)", !!r.salesByRate.find((x) => x.rate === 21 && near(x.btw, -21)));
+}
+{
+  // [MIXED] kas invoice settlement + a till day: both count once, no double (legs are orthogonal).
+  const hdr = { invoiceId: "inv2", direction: "outgoing" as const, totalEx: 200, totalBtw: 42, totalInc: 242 };
+  const events = buildSettlementEvents(hdr, 0, [{ payDate: "2026-02-02", amountApplied: 242, estimated: false }]);
+  const turnover: DailyTurnover[] = [{ turnover_date: "2026-02-02", base_9: 100, btw_9: 9, total_incl: 109, pin_amount: 0, cash_amount: 109 } as DailyTurnover];
+  const r = computeResult([], [], [], turnover, undefined, 0, undefined, { scheme: "kas", settlements: events });
+  check("kas mixed: omzet = invoice 200 + till 100", near(r.omzet, 300));
+  check("kas mixed: btwVerschuldigd = 42 + 9", near(r.btwVerschuldigd, 51));
+}
+{
+  // Sum invariant holds under kas: Σ salesByRate.btw === btwVerschuldigd (unrounded slices).
+  const h1 = { invoiceId: "a", direction: "outgoing" as const, totalEx: 1000, totalBtw: 90, totalInc: 1090 };  // 9%
+  const h2 = { invoiceId: "b", direction: "outgoing" as const, totalEx: 800, totalBtw: 168, totalInc: 968 };   // 21%
+  const ev = [
+    ...buildSettlementEvents(h1, 0, [{ payDate: "2026-01-10", amountApplied: 545, estimated: false }]), // half
+    ...buildSettlementEvents(h2, 0, [{ payDate: "2026-01-20", amountApplied: 968, estimated: false }]), // full
+  ];
+  const r = computeResult([], [], [], [], undefined, 0, undefined, { scheme: "kas", settlements: ev });
+  const sumRate = r.salesByRate.reduce((s, x) => s + x.btw, 0);
+  check("kas: Σ salesByRate.btw === btwVerschuldigd", near(sumRate, r.btwVerschuldigd));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

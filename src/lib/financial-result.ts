@@ -18,6 +18,18 @@ import { pnlRole } from "./bank-categories";
 import { turnoverNetOmzet, turnoverBtw, parsePosSettlement, type DailyTurnover } from "./turnover";
 import { nearestLegalRate } from "./btw-rate";
 import { isPosPayoutDescription } from "./bank-identity";
+import { computeSettlementSlices, type SettlementEvent, type PriorSettled } from "./kas-payment-events";
+import type { VatScheme } from "./vat-scheme";
+
+// [KASSTELSEL] Optional cash-basis inputs. When scheme==='kas', the invoice leg books the
+// quarter's SETTLEMENT slices (BTW on the paid date) instead of the full invoice on its
+// invoice-date; the caller supplies the quarter's events + the unrounded prior-quarter
+// cumulative. Absent/factuur → the accrual path runs byte-identical (default).
+export interface ComputeOpts {
+  scheme?: VatScheme;
+  settlements?: SettlementEvent[];
+  priorByInvoice?: Map<string, PriorSettled>;
+}
 
 export interface ResultInvoice {
   direction: "outgoing" | "incoming" | null;
@@ -220,6 +232,8 @@ export function computeResult(
   // both. When omitted, the budget is derived from the in-quarter `turnover` only (buffer days
   // then suppress in full — correct when there is no off-till excess, e.g. in unit tests).
   coveredBudget?: Map<string, number>,
+  // [KASSTELSEL] Cash-basis inputs; omit (or scheme 'factuur') for the accrual default.
+  opts: ComputeOpts = {},
 ): FinancialResult {
   let omzet = 0;
   let kosten = 0;
@@ -282,23 +296,44 @@ export function computeResult(
       })();
 
   // 1) Invoices — the BTW-exact core.
-  for (const inv of invoices) {
-    const ex = inv.total_ex_btw ?? 0;
-    const btw = inv.btw_amount ?? 0;
-    const st = inv.status ?? "";
-    if (inv.direction === "outgoing" && OUTGOING_OK.has(st)) {
-      omzet += ex;
-      btwVerschuldigd += btw;
-      // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
-      // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
-      // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
-      // instead of falling to rate-0 and over-declaring BTW.
-      // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
-      // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
-      addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
-    } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
-      kosten += ex;
-      btwVoorbelasting += btw;
+  if (opts.scheme === "kas") {
+    // [KASSTELSEL] Cash basis: BTW lands in the quarter the invoice is PAID. Book each
+    // settlement's omzet/BTW slice (proportional share, exact remainder on the closing
+    // payment) instead of the full invoice on its invoice-date. `invoices` is intentionally
+    // NOT read here — the settlement events ARE the verified, period-correct source. The
+    // turnover/cash/bank legs below stay identical (till revenue is sold=paid), so mixed
+    // reality is safe by construction. Rate is header-derived so a creditnota's negative
+    // slice nets the same rubriek instead of over-declaring.
+    const slices = computeSettlementSlices(opts.settlements ?? [], opts.priorByInvoice ?? new Map());
+    for (const s of slices) {
+      if (s.direction === "outgoing") {
+        omzet += s.ex;
+        btwVerschuldigd += s.btw;
+        addSale(s.rate, s.ex, s.btw);
+      } else {
+        kosten += s.ex;
+        btwVoorbelasting += s.btw;
+      }
+    }
+  } else {
+    for (const inv of invoices) {
+      const ex = inv.total_ex_btw ?? 0;
+      const btw = inv.btw_amount ?? 0;
+      const st = inv.status ?? "";
+      if (inv.direction === "outgoing" && OUTGOING_OK.has(st)) {
+        omzet += ex;
+        btwVerschuldigd += btw;
+        // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
+        // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
+        // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
+        // instead of falling to rate-0 and over-declaring BTW.
+        // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
+        // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
+        addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
+      } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
+        kosten += ex;
+        btwVoorbelasting += btw;
+      }
     }
   }
 
