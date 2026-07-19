@@ -22,6 +22,7 @@ import { computeContentHash } from "./content-hash";
 import { resolveImportTarget } from "./bestanden";
 import { runBankAutoConfirm } from "./bank-auto-confirm";
 import { applyLearnedBankCategories } from "./bank-auto-categorize";
+import { reconcileStatementBalance, balanceWarning, type BalanceReconciliation } from "./bank-statement-balance";
 
 export interface BankImportResult {
   format: string | null;
@@ -39,6 +40,12 @@ export interface BankImportResult {
   // [BANK-AUTO-FEEDBACK] How many near-certain payments the import auto-booked (marked invoices
   // paid + linked). Surfaced so the owner is told the automatic work happened, not left guessing.
   autoBooked: number;
+  // [BANK-BALANCE §2.6] The statement's own completeness check: opening + Σtx must equal closing.
+  // null when the format carries no balance (CSV) or the file omits one — never a fabricated pass.
+  balanceReconciliation: BalanceReconciliation | null;
+  // A ready owner-facing warning when the statement does NOT reconcile (a line is missing/dropped/
+  // duplicated), else null. Surfaced ALONGSIDE parseWarnings by both callers.
+  balanceWarning: string | null;
 }
 
 export async function importBankStatement(args: {
@@ -79,6 +86,17 @@ export async function importBankStatement(args: {
 
   const transactions = parsed?.transactions ?? [];
   const { min } = dateRange(transactions);
+
+  // [BANK-BALANCE §2.6] Prove the FILE is internally complete: opening + Σ(every parsed line) must
+  // equal the statement's declared closing balance. Runs on the full parse (NOT the deduped/inserted
+  // subset) so it validates the file itself — and because a line the parser DROPPED (parseErrors) is
+  // absent from the sum, this also catches a dropped line, not just a user-truncated upload. When the
+  // format carries no balance, it degrades to "not checkable" (never a fabricated pass).
+  const sb = parsed?.statementBalance ?? null;
+  const balanceReconciliation = sb
+    ? reconcileStatementBalance(sb.opening, sb.closing, transactions.map((t) => t.amount))
+    : null;
+  const balWarning = balanceReconciliation ? balanceWarning(balanceReconciliation) : null;
 
   // ── dedup + insert transactions (only when the parse yielded some) ──
   let inserted = 0;
@@ -229,5 +247,7 @@ export async function importBankStatement(args: {
     minDate: min,
     nonBankSpreadsheet,
     autoBooked, // [BANK-AUTO-FEEDBACK] how many payments the import auto-booked (for the upload UI)
+    balanceReconciliation,     // [BANK-BALANCE §2.6] statement completeness result (or null)
+    balanceWarning: balWarning, // owner-facing "afschrift sluit niet aan" message (or null)
   };
 }
