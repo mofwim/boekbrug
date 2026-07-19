@@ -352,7 +352,7 @@ export default function BankClient() {
       // [BANK-AUTO-FEEDBACK] Tell the owner right away when the import already booked payments for
       // them — the money moved silently on the server; a toast makes the automatic work visible.
       if ((upJson.autoBooked ?? 0) > 0) {
-        showToast(`${upJson.autoBooked} ${upJson.autoBooked === 1 ? 'factuur' : 'facturen'} automatisch gekoppeld ✓ — zie "Gekoppeld"`)
+        showToast(`${upJson.autoBooked} ${upJson.autoBooked === 1 ? 'factuur' : 'facturen'} automatisch gekoppeld ✓ — zie "Bevestigd"`)
       }
 
       // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the
@@ -447,7 +447,7 @@ export default function BankClient() {
           json?.warning === 'transaction_link_failed'
             ? 'Factuur betaald (koppeling volgt later).'
             : allCovered
-              ? 'Gekoppeld en gemarkeerd als betaald ✓'
+              ? 'Bevestigd en gemarkeerd als betaald ✓'
               : 'Factuur betaald ✓ · nog een factuur open'
         )
         // [BANK-MULTI-CONFIRM] Re-run matching so the just-paid invoice drops out of
@@ -843,7 +843,7 @@ export default function BankClient() {
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
     { key: 'pin' as const, label: 'Pinontvangsten', icon: 'point_of_sale', count: posList.length },
     { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredInQ.length },
-    { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
+    { key: 'done' as const, label: 'Bevestigd', icon: 'link', count: confirmedList.length },
   ]
   const activeListRaw =
     bankTab === 'confirm' ? toConfirm

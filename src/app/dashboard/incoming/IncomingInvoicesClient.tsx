@@ -85,6 +85,9 @@ interface IncomingInvoice {
   } | null;
   // [IMPORT-MONITOR] import-health verdict — drives the calm/attention surface
   health: ImportHealth;
+  // [INCOMING-BEVESTIGD] 'received' (verified, te betalen) or 'paid' (settled) on the Bevestigd
+  // tab; absent on pending ('processing') / ignored ('archived').
+  status?: string | null;
 }
 
 interface ConnectionStatus {
@@ -98,12 +101,13 @@ interface ConnectionStatus {
 interface Props {
   initialInvoices: IncomingInvoice[];
   ignoredInvoices: IncomingInvoice[];
+  confirmedInvoices: IncomingInvoice[];
   connectionStatus: ConnectionStatus;
   // [BOEK-011] Used by the Logo Universal Click pattern (Navigation Strategy v1.0)
   userRole: "zzper" | "accountant";
 }
 
-type Tab = "pending" | "ignored";
+type Tab = "pending" | "ignored" | "confirmed";
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -1515,7 +1519,28 @@ function InvoiceCard({
           )}
 
           {/* Actions — depend on mode */}
-          {mode === "pending" ? (
+          {mode === "confirmed" ? (
+            /* [INCOMING-BEVESTIGD] Already out of the queue — read-only status, no verify action.
+               'paid' = settled (green); 'received' = verified but still te betalen (blue). Full
+               management (mark paid, edit, accountant handoff) lives on Crediteuren. */
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px",
+                borderRadius: 980, fontSize: 13, fontWeight: 700,
+                background: invoice.status === "paid" ? "#e6f4ea" : "#e8f0fe",
+                color: invoice.status === "paid" ? "#137333" : "#1a56c4",
+              }}>
+                <span style={{ fontSize: 15 }}>{invoice.status === "paid" ? "✓" : "•"}</span>
+                {invoice.status === "paid" ? "Betaald" : "Bevestigd · te betalen"}
+              </span>
+              <a
+                href="/dashboard/incoming/manage"
+                style={{ marginLeft: "auto", fontSize: 13, fontWeight: 600, color: "#1a73e8", textDecoration: "none" }}
+              >
+                Beheren ›
+              </a>
+            </div>
+          ) : mode === "pending" ? (
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={onIgnore}
@@ -2076,6 +2101,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
 export default function IncomingInvoicesClient({
   initialInvoices,
   ignoredInvoices,
+  confirmedInvoices,
   connectionStatus,
   userRole,
 }: Props) {
@@ -2087,6 +2113,8 @@ export default function IncomingInvoicesClient({
 
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
+  // [INCOMING-BEVESTIGD] Read-only surface of recently confirmed invoices — no mutations here.
+  const [confirmed] = useState<IncomingInvoice[]>(confirmedInvoices);
   const [tab, setTab] = useState<Tab>("pending");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -2442,7 +2470,7 @@ export default function IncomingInvoicesClient({
     window.location.reload();
   }, [pending, reimportAllRunning]);
 
-  const list = tab === "pending" ? pending : ignored;
+  const list = tab === "pending" ? pending : tab === "confirmed" ? confirmed : ignored;
 
   // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────
   // HEALTH: "is anything WRONG?"  → invoices the AI/arithmetic flagged.
@@ -2603,6 +2631,7 @@ export default function IncomingInvoicesClient({
         >
           {([
             ["pending", `Te bevestigen${pending.length ? ` (${pending.length})` : ""}`],
+            ["confirmed", `Bevestigd${confirmed.length ? ` (${confirmed.length})` : ""}`],
             ["ignored", `Genegeerd${ignored.length ? ` (${ignored.length})` : ""}`],
           ] as const).map(([key, label]) => (
             <button
@@ -2690,15 +2719,17 @@ export default function IncomingInvoicesClient({
         ) : (
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>
             <div style={{ fontSize: 52, marginBottom: 16 }}>
-              {tab === "pending" ? "✅" : "📭"}
+              {tab === "pending" ? "✅" : tab === "confirmed" ? "🗂️" : "📭"}
             </div>
             <div style={{ fontWeight: 600, fontSize: 17, marginBottom: 8, color: "#202124" }}>
-              {tab === "pending" ? "Alles bijgewerkt" : "Geen genegeerde facturen"}
+              {tab === "pending" ? "Alles bijgewerkt" : tab === "confirmed" ? "Nog niets bevestigd" : "Geen genegeerde facturen"}
             </div>
             <div style={{ fontSize: 14, lineHeight: 1.5 }}>
               {tab === "pending"
                 ? "Nieuwe facturen verschijnen hier zodra ze binnenkomen."
-                : "Facturen die je negeert komen hier terecht."}
+                : tab === "confirmed"
+                  ? "Facturen die je verifieert of markeert als betaald verschijnen hier."
+                  : "Facturen die je negeert komen hier terecht."}
             </div>
           </div>
         )}

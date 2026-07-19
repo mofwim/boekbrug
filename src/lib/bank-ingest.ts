@@ -137,7 +137,7 @@ export async function importBankStatement(args: {
       await pipeline.from("notifications").insert({
         user_id: userId,
         title: autoBooked === 1 ? "1 factuur automatisch gekoppeld" : `${autoBooked} facturen automatisch gekoppeld`,
-        body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Gekoppeld" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
+        body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Bevestigd" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
         type: "payment",
       });
     } catch {
