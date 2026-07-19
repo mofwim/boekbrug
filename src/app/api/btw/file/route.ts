@@ -12,8 +12,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResultForRange } from "@/lib/compute-result-range";
+import { computeFilingDivergence } from "@/lib/btw-filing";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
+
+function quarterBounds(year: number, quarter: number): { start: string; end: string } {
+  const startMonth = (quarter - 1) * 3;
+  const start = `${year}-${pad(startMonth + 1)}-01`;
+  const endD = new Date(Date.UTC(year, startMonth + 3, 0));
+  const end = `${endD.getUTCFullYear()}-${pad(endD.getUTCMonth() + 1)}-${pad(endD.getUTCDate())}`;
+  return { start, end };
+}
 
 function parsePeriod(year: unknown, quarter: unknown): { year: number; quarter: number } | null {
   const y = Number(year);
@@ -21,6 +30,48 @@ function parsePeriod(year: unknown, quarter: unknown): { year: number; quarter: 
   if (!Number.isInteger(y) || y < 2000 || y > 2100) return null;
   if (!Number.isInteger(q) || q < 1 || q > 4) return null;
   return { year: y, quarter: q };
+}
+
+// GET ?year&quarter → the filing snapshot for this quarter (if any) + the live divergence.
+// Used by the Kwartaaloverzicht to show the "🔒 Ingediend" / suppletie state for any quarter.
+export async function GET(req: NextRequest) {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const sp = req.nextUrl.searchParams;
+  const period = parsePeriod(sp.get("year"), sp.get("quarter"));
+  if (!period) return NextResponse.json({ error: "invalid year/quarter" }, { status: 400 });
+  const { year, quarter } = period;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+  const { data: fRow } = await db
+    .from("btw_filings")
+    .select("filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo")
+    .eq("user_id", user.id)
+    .eq("year", year)
+    .eq("quarter", quarter)
+    .maybeSingle();
+  if (!fRow) return NextResponse.json({ ok: true, filed: null });
+
+  const figures = {
+    omzet: Number(fRow.omzet) || 0,
+    kosten: Number(fRow.kosten) || 0,
+    btwVerschuldigd: Number(fRow.btw_verschuldigd) || 0,
+    btwVoorbelasting: Number(fRow.btw_voorbelasting) || 0,
+    btwSaldo: Number(fRow.btw_saldo) || 0,
+  };
+  // Compare the frozen snapshot to the CURRENT live figures for this quarter.
+  const { start, end } = quarterBounds(year, quarter);
+  const pipeline = createPipelineClient();
+  const { result } = await computeResultForRange({ pipeline, ownerId: user.id, start, end });
+  const divergence = computeFilingDivergence(figures, {
+    omzet: result.omzet, kosten: result.kosten,
+    btwVerschuldigd: result.btwVerschuldigd, btwVoorbelasting: result.btwVoorbelasting, btwSaldo: result.btwSaldo,
+  });
+
+  return NextResponse.json({ ok: true, filed: { filedAt: fRow.filed_at, figures, divergence } });
 }
 
 export async function POST(req: NextRequest) {
@@ -32,11 +83,7 @@ export async function POST(req: NextRequest) {
   const period = parsePeriod(body?.year, body?.quarter);
   if (!period) return NextResponse.json({ error: "invalid year/quarter" }, { status: 400 });
   const { year, quarter } = period;
-
-  const startMonth = (quarter - 1) * 3;
-  const start = `${year}-${pad(startMonth + 1)}-01`;
-  const endD = new Date(Date.UTC(year, startMonth + 3, 0));
-  const end = `${endD.getUTCFullYear()}-${pad(endD.getUTCMonth() + 1)}-${pad(endD.getUTCDate())}`;
+  const { start, end } = quarterBounds(year, quarter);
 
   // Own filing only (no accountant dual-path here — filing is the owner's declaration).
   const pipeline = createPipelineClient();

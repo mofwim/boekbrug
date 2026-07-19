@@ -59,6 +59,14 @@ function ZzpView({ role }: { role: Role }) {
     omzet: number; verschuldigd: number; voorbelasting: number; saldo: number;
     salesByRate: { rate: number; omzet: number; btw: number }[];
   } | null>(null);
+  // [TRUTH-FILED] Filing state for THIS quarter: is it marked ingediend, and has the live truth
+  // diverged since (→ carry-forward vs suppletie). filingTick forces a refetch after file/unlock.
+  const [filed, setFiled] = useState<{
+    filedAt: string;
+    divergence: { changed: boolean; btwSaldoDelta: number; needsSuppletie: boolean };
+  } | null>(null);
+  const [filing, setFiling] = useState(false);
+  const [filingTick, setFilingTick] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -97,6 +105,39 @@ function ZzpView({ role }: { role: Role }) {
       } catch { /* leave recon null → the owner sees "…", never a wrong number */ }
     })();
   }, [quarter, year, mode]);
+
+  // [TRUTH-FILED] Load whether this quarter is marked ingediend + any divergence since.
+  useEffect(() => {
+    setFiled(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`);
+        if (!res.ok) return;
+        const j = await res.json();
+        if (!cancelled && j?.ok) setFiled(j.filed ?? null);
+      } catch { /* leave null — no badge, never a wrong claim */ }
+    })();
+    return () => { cancelled = true; };
+  }, [quarter, year, filingTick]);
+
+  // [TRUTH-FILED] Mark this quarter filed (freeze snapshot) / unlock (reversible).
+  async function toggleFiled(mark: boolean) {
+    setFiling(true);
+    try {
+      if (mark) {
+        await fetch("/api/btw/file", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ year, quarter }),
+        });
+      } else {
+        await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`, { method: "DELETE" });
+      }
+      setFilingTick((t) => t + 1);
+    } finally {
+      setFiling(false);
+    }
+  }
 
   // [CLOSING-PACKAGE] Download the full quarterly package (ZIP) for the accountant.
   async function handlePackageExport() {
@@ -309,6 +350,57 @@ function ZzpView({ role }: { role: Role }) {
                   <p className="text-sm font-semibold">Te betalen (5g)</p>
                   <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* [TRUTH-FILED] Filing status for this quarter — the frozen-aangifte layer. Marking a
+              quarter ingediend freezes its figures; if the live truth diverges later (a late
+              invoice), we show the carry-forward vs suppletie guidance. Reversible. */}
+          {recon && (
+            <div style={{ marginTop: 12 }}>
+              {filed?.divergence?.changed && (
+                <div style={{
+                  background: filed.divergence.needsSuppletie ? "#fce8e6" : "#fef7e0",
+                  border: `1px solid ${filed.divergence.needsSuppletie ? "#e57373" : "#fbbc04"}`,
+                  borderRadius: 12, padding: "12px 14px", marginBottom: 10,
+                }}>
+                  <p style={{ fontSize: 13.5, fontWeight: 700, margin: 0, color: filed.divergence.needsSuppletie ? "#a50e0e" : "#7a4f00" }}>
+                    {filed.divergence.needsSuppletie ? "⚠️ Suppletie nodig" : "Let op — dit kwartaal is gewijzigd sinds indiening"}
+                  </p>
+                  <p style={{ fontSize: 12.5, margin: "4px 0 0", lineHeight: 1.5, color: filed.divergence.needsSuppletie ? "#7a1c1c" : "#7a4f00" }}>
+                    De BTW is met <strong>{formatEur(Math.abs(filed.divergence.btwSaldoDelta))}</strong> {filed.divergence.btwSaldoDelta >= 0 ? "gestegen" : "gedaald"}.{" "}
+                    {filed.divergence.needsSuppletie
+                      ? "Meer dan €1.000 — dien een suppletie in."
+                      : "Onder €1.000 — verwerk dit in je volgende aangifte."}
+                  </p>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                {filed ? (
+                  <>
+                    <span style={{ fontSize: 12.5 }} className="text-muted-foreground">
+                      🔒 Ingediend op {new Date(filed.filedAt).toLocaleDateString("nl-NL")} · definitief
+                    </span>
+                    <button
+                      onClick={() => toggleFiled(false)}
+                      disabled={filing}
+                      className="text-xs font-semibold text-muted-foreground underline"
+                      style={{ cursor: filing ? "default" : "pointer", background: "none", border: "none", padding: 0 }}
+                    >
+                      {filing ? "Bezig…" : "Indiening ongedaan maken"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => toggleFiled(true)}
+                    disabled={filing}
+                    style={{ cursor: filing ? "default" : "pointer" }}
+                    className="w-full px-4 py-3 rounded-xl bg-indigo-600 text-white font-semibold text-sm"
+                  >
+                    {filing ? "Bezig…" : "Markeer dit kwartaal als ingediend"}
+                  </button>
+                )}
               </div>
             </div>
           )}
