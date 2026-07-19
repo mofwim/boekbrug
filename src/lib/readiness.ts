@@ -74,6 +74,12 @@ export interface ReadinessSignals {
   // importing the data — but they must travel to the accountant flagged, so they surface as
   // RISKS. Optional so older callers/tests keep compiling (undefined → none).
   regimeFlags?: RegimeFlag[];
+  // [KASSTELSEL] Under cash basis: paid money we could NOT date must BLOCK "klaar" — it would
+  // otherwise silently under-declare the quarter's BTW. estimatedPaidCount (paid-date only an
+  // estimate) also blocks, because a wrong estimate places the BTW in the wrong quarter. Both
+  // optional (undefined → 0 → no block) so factuur callers/tests are unchanged.
+  undatedPaidCount?: number;
+  estimatedPaidCount?: number;
 }
 
 export interface ReconException {
@@ -330,6 +336,32 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       detail:
         "Een negatief kassaldo kan niet — je kunt geen contant geld uitgeven dat er niet is. Dit is de grootste rode vlag voor de Belastingdienst (het wijst op niet-geboekte omzet). Controleer je beginsaldo, kasontvangsten en kasuitgaven.",
       fix: FIX.kas,
+    });
+  }
+
+  // [KASSTELSEL] Under cash basis, paid money that couldn't be dated must BLOCK "klaar": its BTW
+  // can't be placed in a quarter, so the aangifte would be silently too low. A hard gap (pushing
+  // `missing`), with the fix pointing to the bank screen where the owner links the payment.
+  const undatedPaid = s.undatedPaidCount ?? 0;
+  if (undatedPaid > 0) {
+    missing.push({
+      severity: "missing",
+      title: undatedPaid === 1
+        ? "1 betaalde factuur zonder betaaldatum"
+        : `${undatedPaid} betaalde facturen zonder betaaldatum`,
+      detail: "Je administratie staat op kasstelsel: de BTW telt op de betaaldatum. Deze betaalde factu(u)r(en) hebben geen datum, dus de BTW kan niet in het juiste kwartaal — koppel de bankbetaling of vul de betaaldatum in.",
+      fix: FIX.bank,
+    });
+  }
+  const estimatedPaid = s.estimatedPaidCount ?? 0;
+  if (estimatedPaid > 0) {
+    risks.push({
+      severity: "risk",
+      title: estimatedPaid === 1
+        ? "1 betaaldatum is een schatting"
+        : `${estimatedPaid} betaaldata zijn een schatting`,
+      detail: "De betaaldatum is 'handmatig betaald' i.p.v. uit een bankregel — controleer of het kwartaal klopt (onder kasstelsel bepaalt de betaaldatum het BTW-tijdvak).",
+      fix: FIX.bank,
     });
   }
 

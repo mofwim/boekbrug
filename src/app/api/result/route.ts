@@ -34,12 +34,13 @@ export async function GET(req: NextRequest) {
   if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
   const pipeline = createPipelineClient();
 
-  const { result, datelessVerifiedCount, reconciliation } = await computeResultForRange({
-    pipeline,
-    ownerId: owner.ownerId,
-    start,
-    end,
-  });
+  const { result, datelessVerifiedCount, reconciliation, scheme, undatedPaidCount, estimatedPortionCount } =
+    await computeResultForRange({
+      pipeline,
+      ownerId: owner.ownerId,
+      start,
+      end,
+    });
 
   return NextResponse.json({
     ok: true,
@@ -49,5 +50,10 @@ export async function GET(req: NextRequest) {
     result,
     datelessVerifiedCount, // [DATELESS] verified invoices excluded for want of a date (warn upstream)
     reconciliation,
+    // [KASSTELSEL] Under cash basis the figures are BTW-on-paid-date. undatedPaidCount > 0 means
+    // paid money couldn't be placed in a quarter → the figures are incomplete (surface, don't hide).
+    scheme,
+    undatedPaidCount,
+    estimatedPortionCount,
   });
 }

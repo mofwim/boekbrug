@@ -24,6 +24,7 @@ import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, type KasTurn
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
+import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -205,7 +206,11 @@ export async function GET(req: NextRequest) {
       .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
       .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
   );
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget);
+  // [KASSTELSEL] Resolve the VAT basis for THIS quarter and, under kas, the settlement inputs.
+  // Default factuur → the accrual path is byte-identical. Under kas the readiness figures + the
+  // klaar-gate reflect BTW on the paid date, and undated paid money blocks "klaar" (below).
+  const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end);
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, sr.opts);
 
   // [S3 · TRIANGLE-READY] The till-vs-terminal (EFT) leg of the card triangle — a day where the
   // terminal afrekening ≠ the till's PIN takings (a missing bon, a skim, a terminal fault) — is
@@ -378,6 +383,8 @@ export async function GET(req: NextRequest) {
     hasEuPurchase: completeness.hasEuPurchase,
     negativeCashDay, // [KAS-NEGATIEF] a below-zero drawer blocks "klaar"
     regimeFlags,     // [REGIME-FLAGS] KOR / verlegd / marge → risks, never a block
+    undatedPaidCount: sr.undatedPaidCount,       // [KASSTELSEL] undated paid money blocks "klaar"
+    estimatedPaidCount: sr.estimatedPortionCount, // [KASSTELSEL] estimated pay-date → risk
   };
   const report = buildReadiness(signals);
 

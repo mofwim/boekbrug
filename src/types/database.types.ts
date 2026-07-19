@@ -1331,6 +1331,8 @@ export type Database = {
           invoice_number_padding: number
           kas_opening_balance: number
           kor_active: boolean
+          vat_scheme: string
+          vat_scheme_since: string | null
           invoice_number_template: string | null
           kvk_number: string | null
           onboarding_done: boolean
@@ -1356,6 +1358,8 @@ export type Database = {
           invoice_number_padding?: number
           kas_opening_balance?: number
           kor_active?: boolean
+          vat_scheme?: string
+          vat_scheme_since?: string | null
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean
@@ -1381,6 +1385,8 @@ export type Database = {
           invoice_number_padding?: number
           kas_opening_balance?: number
           kor_active?: boolean
+          vat_scheme?: string
+          vat_scheme_since?: string | null
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean
