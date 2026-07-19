@@ -10,7 +10,8 @@
 // any other category — 'betaling' included — is automatically excluded from kosten/omzet/BTW,
 // while computeCashBalance still counts it in the drawer. This is exactly how the bank side works
 // (a bank line matched to an invoice is skipped as a cost, counted only as settlement).
-export const CASH_CATEGORIES = ["omzet", "kosten", "prive", "transfer", "tax", "fee", "betaling"] as const;
+// [CASH-COST-VAT] 'salaris' = cash wages: a real business cost, never any BTW/voorbelasting.
+export const CASH_CATEGORIES = ["omzet", "kosten", "salaris", "prive", "transfer", "tax", "fee", "betaling"] as const;
 export type CashCategory = (typeof CASH_CATEGORIES)[number];
 
 export function isCashCategory(v: unknown): v is CashCategory {

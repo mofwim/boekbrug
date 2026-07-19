@@ -22,7 +22,7 @@ export async function GET() {
 
   const { data: rows } = await supabase
     .from("cash_entries")
-    .select("id, entry_date, direction, amount, category, description")
+    .select("id, entry_date, direction, amount, category, description, document_id, btw_rate")
     .eq("user_id", user.id)
     .order("entry_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   let body: {
-    entry_date?: string; direction?: string; amount?: number; category?: string; description?: string; btw_rate?: number;
+    entry_date?: string; direction?: string; amount?: number; category?: string; description?: string; btw_rate?: number; document_id?: string;
   };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid body" }, { status: 400 }); }
 
@@ -90,8 +90,22 @@ export async function POST(req: NextRequest) {
     ? body.entry_date
     : undefined;
 
-  // BTW rate only makes sense on a cash sale (omzet); accept a valid Dutch rate.
-  const btwRate = category === "omzet" && [0, 9, 21].includes(Number(body.btw_rate))
+  // [CASH-COST-VAT] Verify the linked bon is a document THIS user owns before trusting it — an
+  // unowned/forged document_id must never unlock a voorbelasting deduction (a real, wrong number
+  // on the aangifte). Null it (and, below, the rate) when it isn't the owner's.
+  let documentId: string | null = null;
+  if (typeof body.document_id === "string" && body.document_id.length > 0) {
+    const { data: doc } = await supabase
+      .from("documents").select("id").eq("id", body.document_id).eq("user_id", user.id).maybeSingle();
+    if (doc) documentId = body.document_id;
+  }
+
+  // [CASH-COST-VAT] A BTW rate is accepted on a cash SALE (omzet), OR on a cash COST (kosten) ONLY
+  // when it carries an owned bon — the universal "no voorbelasting without a document" rule. On any
+  // other category (salaris, prive, transfer, tax, fee) the rate is forced null (wages/transfers
+  // carry no reclaimable BTW). Without a document a cost's rate is dropped → it books at full gross.
+  const rateAllowed = category === "omzet" || (category === "kosten" && documentId !== null);
+  const btwRate = rateAllowed && [0, 9, 21].includes(Number(body.btw_rate))
     ? Number(body.btw_rate)
     : null;
 
@@ -104,9 +118,10 @@ export async function POST(req: NextRequest) {
       category,
       description: body.description?.trim() || null,
       btw_rate: btwRate,
+      ...(documentId ? { document_id: documentId } : {}),
       ...(entryDate ? { entry_date: entryDate } : {}),
     })
-    .select("id, entry_date, direction, amount, category, description")
+    .select("id, entry_date, direction, amount, category, description, document_id")
     .single();
 
   if (error) {

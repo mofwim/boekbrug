@@ -49,8 +49,13 @@ export interface ResultCashEntry {
   direction: "in" | "out";
   amount: number | null;        // always positive
   category: string | null;
-  btw_rate: number | null;      // only set for a cash sale the owner rated
+  btw_rate: number | null;      // a cash SALE the owner rated, OR a documented cash COST's rate
   date?: string | null;         // [TURNOVER] entry_date — for the covered-day check
+  // [CASH-COST-VAT] The linked bon/receipt for a cash COST. Voorbelasting on a cash cost is
+  // claimed ONLY when this is set AND a rate is present — the universal "no voorbelasting without
+  // a document" rule. Absent → the cost books at full gross with €0 voorbelasting (never a
+  // fabricated deduction). null/undefined for a sale (a rated sale needs no purchase document).
+  document_id?: string | null;
 }
 
 /** The raw bank_transactions columns the result engine needs. */
@@ -385,7 +390,21 @@ export function computeResult(
         cashOmzetZonderBtw += amt; // no rate → counted as revenue, flagged for BTW
       }
     } else if (c.category === "kosten") {
-      kosten += amt; // cash expense; no voorbelasting without a bon rate
+      // [CASH-COST-VAT] A cash expense with a LINKED BON and a rate → split gross into net cost +
+      // voorbelasting (the reclaimable BTW), exactly like a purchase invoice. WITHOUT both a
+      // document AND a rate it books at FULL GROSS with €0 voorbelasting — we never invent a
+      // deduction from an undocumented cash line (the "no voorbelasting without a document" rule).
+      if (c.document_id && c.btw_rate && c.btw_rate > 0) {
+        const net = amt / (1 + c.btw_rate / 100);
+        kosten += net;
+        btwVoorbelasting += amt - net;
+      } else {
+        kosten += amt; // no bon or no rate → full gross, no voorbelasting
+      }
+    } else if (c.category === "salaris") {
+      // [CASH-COST-VAT] Wages paid in cash: a real business cost, but NEVER any BTW/voorbelasting
+      // (wages carry no VAT). Rate-free by construction — a stray rate/document is ignored.
+      kosten += amt;
     }
     // transfer / prive → excluded
   }

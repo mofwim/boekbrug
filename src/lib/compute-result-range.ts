@@ -90,7 +90,7 @@ export async function computeResultForRange(args: {
   // Cash entries in the window.
   const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
-    .select("direction, amount, category, btw_rate, entry_date")
+    .select("direction, amount, category, btw_rate, entry_date, document_id")
     .eq("user_id", ownerId)
     .gte("entry_date", start)
     .lte("entry_date", end)
@@ -99,6 +99,7 @@ export async function computeResultForRange(args: {
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount, category: c.category, btw_rate: c.btw_rate,
     date: c.entry_date,
+    document_id: (c as { document_id?: string | null }).document_id ?? null, // [CASH-COST-VAT]
   }));
 
   // [TURNOVER] Daily till Z-report, with a −5-day buffer: a sale on the last days BEFORE the

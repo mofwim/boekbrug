@@ -83,12 +83,13 @@ export async function GET(req: NextRequest) {
 
   const cashRows = await fetchAllRows((from, to) => pipeline
     .from("cash_entries")
-    .select("direction, amount, category, btw_rate, entry_date")
+    .select("direction, amount, category, btw_rate, entry_date, document_id")
     .eq("user_id", ownerId).gte("entry_date", start).lte("entry_date", end)
     .order("id", { ascending: true }).range(from, to));
   const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount, category: c.category, btw_rate: c.btw_rate, date: c.entry_date,
+    document_id: (c as { document_id?: string | null }).document_id ?? null, // [CASH-COST-VAT]
   }));
 
   // Turnover (widened covered set for the cross-quarter settlement lag).
