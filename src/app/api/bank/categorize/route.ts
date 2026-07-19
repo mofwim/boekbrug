@@ -2,8 +2,11 @@
 // [BANK-IDENTITY] Give bank lines a financial identity, and learn from it.
 //
 // GET  → the transactions still needing a category (pending, not tied to an invoice,
-//        not yet categorized), each with a suggestion (memory wins → AI classifier),
-//        plus the TRUE remaining total so the UI never claims "done" while lines remain.
+//        not yet categorized), each with a suggestion (exact memory wins → pattern
+//        classifier → a LOOK-ALIKE counterpart's category as a review-only pre-select →
+//        sign fallback), plus the TRUE remaining total so the UI never claims "done"
+//        while lines remain. The look-alike ('similar') suggestion is confident:false,
+//        so the one-click bulk sweep never auto-applies it — only the owner's tap does.
 // POST → confirm a category for one transaction and TRAIN the per-counterpart memory,
 //        OR (mode:"bulk") auto-apply ONLY the confident suggestions — memory matches and
 //        specific pattern matches (tax/prive/transfer/pos_income/fee). The bare
@@ -16,7 +19,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { counterpartKey, suggestIdentity } from "@/lib/bank-identity";
+import { counterpartKey, suggestIdentity, bestSimilarMemory, type MemoryEntry } from "@/lib/bank-identity";
 import { ALLOWED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
 
 // How many rows one GET page returns (the review list). The true remaining total is
@@ -95,13 +98,20 @@ export async function GET(req: NextRequest) {
     .eq("user_id", user.id);
 
   const memMap = new Map<string, string>();
-  for (const m of mem ?? []) memMap.set(m.counterpart_key, m.category);
+  const memEntries: MemoryEntry[] = [];
+  for (const m of mem ?? []) {
+    memMap.set(m.counterpart_key, m.category);
+    memEntries.push({ key: m.counterpart_key, category: m.category });
+  }
 
   let confidentAvailable = 0;
   const items = txs.map((t) => {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
-    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory);
+    // No EXACT memory? Borrow from a similar counterpart the owner categorized before — a
+    // review-only pre-select (confident:false), never auto-applied by the bulk sweep.
+    const similar = !memoryCategory ? bestSimilarMemory(key, memEntries) : null;
+    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar);
     if (suggestion.confident) confidentAvailable++;
     return {
       id: t.id,
@@ -113,6 +123,8 @@ export async function GET(req: NextRequest) {
       suggested_source: suggestion.source,
       // Only confident suggestions are eligible for the one-click bulk apply.
       suggested_confident: suggestion.confident,
+      // On a 'similar' suggestion: the memorized counterpart it resembles (for a "lijkt op …" hint).
+      suggested_similar_to: suggestion.similarTo ?? null,
     };
   });
 

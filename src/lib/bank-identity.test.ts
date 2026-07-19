@@ -5,7 +5,9 @@ import {
   counterpartKey,
   suggestIdentity,
   isPosPayoutDescription,
+  bestSimilarMemory,
   type TxIdentity,
+  type MemoryEntry,
 } from "./bank-identity";
 
 let passed = 0;
@@ -111,6 +113,57 @@ check("kosten fallback is NOT confident (never auto-apply)",
   suggestIdentity("Bol.com", "iDEAL", -49.99).confident === false);
 check("omzet fallback is NOT confident (never auto-apply)",
   suggestIdentity("Onbekend", "overboeking", 250).confident === false);
+
+console.log("\n— bestSimilarMemory (learn from a look-alike counterpart) —");
+{
+  const mem: MemoryEntry[] = [
+    { key: "jansen", category: "kosten" },
+    { key: "belastingdienst", category: "tax" },
+    { key: "albert heijn", category: "kosten" },
+  ];
+  // Subset: the new name contains the whole memorized name → score 1.0.
+  const h1 = bestSimilarMemory("jansen groothandel amsterdam", mem);
+  check("subset match borrows the category", h1?.category === "kosten" && h1?.matchedKey === "jansen");
+  // Superset the other way: memorized "albert heijn", new "albert heijn" + store no. → contained.
+  const h2 = bestSimilarMemory("albert heijn 1234", mem);
+  check("longer memorized name still matches on containment", h2?.category === "kosten");
+  // No shared token at all → null.
+  check("no overlap → null", bestSimilarMemory("gamma bouwmarkt", mem) === null);
+  // Only a generic tussenvoegsel shared → null (no distinctive token).
+  const genMem: MemoryEntry[] = [{ key: "van der berg", category: "kosten" }];
+  check("shared tussenvoegsel only → null", bestSimilarMemory("van der meer", genMem) === null);
+  // A distinctive shared surname DOES match despite the tussenvoegsel.
+  check("distinctive surname overlap matches", bestSimilarMemory("van der berg holding", genMem)?.category === "kosten");
+  // Ambiguous: two equally-similar memories disagree on category → suggest nothing.
+  const ambMem: MemoryEntry[] = [
+    { key: "amsterdam transport", category: "kosten" },
+    { key: "amsterdam catering", category: "omzet" },
+  ];
+  check("equally-similar but conflicting categories → null", bestSimilarMemory("amsterdam handel", ambMem) === null);
+  // An exact key is NOT a similarity hit (that path is exact-memory).
+  check("exact key is excluded from similarity", bestSimilarMemory("jansen", [{ key: "jansen", category: "kosten" }]) === null);
+  // Empty / null key → null.
+  check("null key → null", bestSimilarMemory(null, mem) === null);
+}
+
+console.log("\n— suggestIdentity with a similar hit (review-only, never confident) —");
+{
+  const hit = { category: "kosten", matchedKey: "jansen", score: 1 };
+  const s = suggestIdentity("Jansen Groothandel", "iDEAL", -320, null, hit);
+  check("similar borrows the category", s.category === "kosten");
+  check("similar source is 'similar'", s.source === "similar");
+  check("similar is NEVER confident (never auto-applied)", s.confident === false);
+  check("similar carries the look-alike key", s.similarTo === "jansen");
+  // Exact memory still wins over a similar hit.
+  const s2 = suggestIdentity("Jansen Groothandel", "iDEAL", -320, "prive", hit);
+  check("exact memory beats similar", s2.source === "memory" && s2.category === "prive");
+  // A confident pattern still beats a similar hit.
+  const s3 = suggestIdentity("Belastingdienst", "BTW", -1200, null, hit);
+  check("pattern (tax) beats similar", s3.source === "ai" && s3.category === "tax");
+  // No similar hit → the plain sign fallback is unchanged.
+  const s4 = suggestIdentity("Bol.com", "iDEAL", -49.99, null, null);
+  check("no similar → sign fallback unchanged", s4.category === "kosten" && s4.confident === false && s4.source === "ai");
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

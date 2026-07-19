@@ -27,8 +27,9 @@ interface Item {
   counterpart_name: string | null
   description: string | null
   suggested: string
-  suggested_source: 'memory' | 'ai'
+  suggested_source: 'memory' | 'ai' | 'similar'
   suggested_confident: boolean
+  suggested_similar_to?: string | null
   confirmed?: boolean
 }
 
@@ -253,7 +254,9 @@ export default function CategoriseClient() {
                         ? (it.confirmed ? ' · door jou bevestigd' : ' · automatisch ingevuld')
                         : it.suggested_source === 'memory'
                           ? ' · onthouden'
-                          : it.suggested_confident ? ' · herkend' : ' · voorstel'}
+                          : it.suggested_source === 'similar'
+                            ? (it.suggested_similar_to ? ` · lijkt op ${it.suggested_similar_to}` : ' · lijkt op eerdere')
+                            : it.suggested_confident ? ' · herkend' : ' · voorstel'}
                     </div>
                   </div>
                   <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: M3.onSurface, whiteSpace: 'nowrap' }}>
