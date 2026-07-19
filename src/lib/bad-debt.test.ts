@@ -9,7 +9,8 @@ function check(name: string, cond: boolean) {
 const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
 const inv = (over: Partial<BadDebtInput> = {}): BadDebtInput => ({
-  invoiceNumber: "2025-001", clientName: "Klant BV", direction: "outgoing", status: "overdue",
+  id: "inv-1", invoiceNumber: "2025-001", clientName: "Klant BV", direction: "outgoing", status: "overdue",
+  invoiceType: "factuur", originalInvoiceId: null,
   invoiceDate: "2025-01-01", dueDate: "2025-01-31", totalExBtw: 1000, btwAmount: 210, totalIncBtw: 1210, amountPaid: 0, ...over,
 });
 const run = (invoices: BadDebtInput[], asOf = "2026-07-19", scheme: "factuur" | "kas" = "factuur") =>
@@ -71,6 +72,50 @@ console.log("\n— asOf gate is inclusive of the exact anniversary —");
 {
   const r = run([inv({ dueDate: "2025-07-19" })], "2026-07-19"); // exactly 1 year
   check("exactly 1 year → eligible", r.eligible.length === 1);
+}
+
+console.log("\n— creditnota: original already reversed is NOT a bad debt —");
+{
+  // The owner credited INV-100 (still 'sent', unpaid) with CR-1 six weeks ago. INV-100 has aged
+  // past a year, but its BTW was already put back by the creditnota — reclaiming it = a refund
+  // not owed. The credited original AND the creditnota row must both drop out.
+  const original = inv({ id: "inv-100", invoiceNumber: "INV-100", dueDate: "2025-01-31", amountPaid: 0 });
+  const creditnota = inv({
+    id: "cr-1", invoiceNumber: "CR-1", invoiceType: "creditnota", originalInvoiceId: "inv-100",
+    status: "sent", invoiceDate: "2026-06-01", dueDate: "2026-06-01",
+    totalExBtw: -1000, btwAmount: -210, totalIncBtw: -1210, amountPaid: 0,
+  });
+  const r = run([original, creditnota]);
+  check("credited original + creditnota → nothing reclaimable", r.eligible.length === 0 && r.totalReclaimableBtw === 0);
+}
+
+console.log("\n— creditnota row never nets against a genuine bad debt —");
+{
+  // A genuine >1yr bad debt (INV-A, +210) alongside an OLD open creditnota (CR-9, btw -210) for a
+  // DIFFERENT original. The creditnota must not enter the pool and cancel the real reclaim to €0.
+  const genuine = inv({ id: "inv-A", invoiceNumber: "INV-A", dueDate: "2025-01-01", amountPaid: 0 });
+  const oldCredit = inv({
+    id: "cr-9", invoiceNumber: "CR-9", invoiceType: "creditnota", originalInvoiceId: "inv-999",
+    status: "sent", invoiceDate: "2025-01-01", dueDate: "2025-01-01",
+    totalExBtw: -1000, btwAmount: -210, totalIncBtw: -1210, amountPaid: 0,
+  });
+  const r = run([genuine, oldCredit]);
+  check("genuine reclaim survives (count 1, €210)", r.eligible.length === 1 && near(r.totalReclaimableBtw, 210));
+  check("no negative total, no phantom count", r.totalReclaimableBtw > 0);
+}
+
+console.log("\n— sub-euro reclaim is not surfaced as a bad debt (rounds to €0) —");
+{
+  // A large sale 99% paid, €0.30 of BTW left unpaid >1yr. It rounds to €0 on every surface, so the
+  // note must stay null rather than say "€0 terugvraagbaar".
+  const r = run([inv({ totalExBtw: 1000, btwAmount: 210, totalIncBtw: 1210, amountPaid: 1210 - 0.3 / 0.21 - 0.3 })]);
+  // Simpler explicit case: reclaimable exactly 0.30 via a tiny 30-cent unpaid remainder on BTW.
+  const tiny = detectBadDebt({ scheme: "factuur", asOf: "2026-07-19", invoices: [
+    inv({ totalExBtw: 1.43, btwAmount: 0.30, totalIncBtw: 1.73, amountPaid: 0, dueDate: "2025-01-01" }),
+  ] });
+  check("tiny reclaim is eligible internally", tiny.eligible.length === 1 && near(tiny.totalReclaimableBtw, 0.30));
+  check("but badDebtNote stays null (< €0.50)", badDebtNote(tiny) === null);
+  void r;
 }
 
 console.log("\n— badDebtNote —");

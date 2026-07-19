@@ -24,26 +24,33 @@ export async function collectBadDebt(
   asOf: string,
 ): Promise<BadDebtResult> {
   if (scheme !== "factuur") return EMPTY;
+  // NOTE: creditnotas are fetched too (they also sit in status 'sent') — the pure detector needs
+  // them to know which originals were reversed, and drops both the creditnota and its credited
+  // original. So the query must NOT filter invoice_type out.
   const rows = await fetchAllRows<{
-    invoice_number: string | null; client_name: string | null; direction: string | null;
-    status: string | null; invoice_date: string | null; due_date: string | null;
+    id: string | null; invoice_number: string | null; client_name: string | null; direction: string | null;
+    status: string | null; invoice_type: string | null; original_invoice_id: string | null;
+    invoice_date: string | null; due_date: string | null;
     total_ex_btw: number | null; btw_amount: number | null; total_inc_btw: number | null;
     amount_paid: number | null; receiver_id: string | null;
   }>((from, to) => pipeline
     .from("invoices")
-    .select("invoice_number, client_name, direction, status, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, receiver_id")
+    .select("id, invoice_number, client_name, direction, status, invoice_type, original_invoice_id, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, receiver_id")
     .eq("sender_id", ownerId)
     .in("status", ["sent", "overdue"])
     .order("id", { ascending: true }).range(from, to),
   ).catch(() => [] as never[]);
 
   const invoices: BadDebtInput[] = rows.map((r) => ({
+    id: r.id,
     invoiceNumber: r.invoice_number,
     clientName: r.client_name,
     direction: r.direction === "incoming" || r.direction === "outgoing"
       ? r.direction
       : r.receiver_id === ownerId ? "incoming" : "outgoing",
     status: r.status,
+    invoiceType: r.invoice_type,
+    originalInvoiceId: r.original_invoice_id,
     invoiceDate: r.invoice_date,
     dueDate: r.due_date,
     totalExBtw: r.total_ex_btw,

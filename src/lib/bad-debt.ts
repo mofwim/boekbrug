@@ -15,10 +15,13 @@
 import type { VatScheme } from "./vat-scheme";
 
 export interface BadDebtInput {
+  id: string | null;            // row id — to spot an original that has since been credited
   invoiceNumber: string | null;
   clientName: string | null;
   direction: "incoming" | "outgoing" | null;
   status: string | null;
+  invoiceType: string | null;   // 'creditnota' rows are reversals, never a receivable
+  originalInvoiceId: string | null; // on a creditnota: the invoice it reverses
   invoiceDate: string | null;   // ISO
   dueDate: string | null;       // ISO
   totalExBtw: number | null;
@@ -71,13 +74,26 @@ export function detectBadDebt(args: {
   const eligible: BadDebtInvoice[] = [];
   let usedInvoiceDateFallback = false;
 
+  // A creditnota fully reverses its original: the BTW you'd otherwise reclaim was already put back.
+  // So an original that has since been credited is NOT a bad debt (reclaiming it = a refund you're
+  // not owed), and the creditnota row itself is a reversal, never a receivable. Build the set of
+  // credited originals up front so we can drop both.
+  const creditedOriginalIds = new Set<string>();
+  for (const i of args.invoices) {
+    if (i.invoiceType === "creditnota" && i.originalInvoiceId != null) {
+      creditedOriginalIds.add(String(i.originalInvoiceId));
+    }
+  }
+
   for (const i of args.invoices) {
     if (i.direction !== "outgoing") continue;
+    if (i.invoiceType === "creditnota") continue;      // a creditnota is a reversal, not a receivable
+    if (i.id != null && creditedOriginalIds.has(String(i.id))) continue; // already reversed by a creditnota
     if (!DECLARED_OUTGOING.has(i.status ?? "")) continue; // draft/processing = not declared; paid = collected
 
     const inc = i.totalIncBtw != null ? Number(i.totalIncBtw) : (Number(i.totalExBtw) || 0) + (Number(i.btwAmount) || 0);
-    const grossAbs = Math.abs(inc);
-    if (grossAbs <= 0) continue;                       // a €0 / credit line is not a bad debt
+    if (!(inc > 0)) continue;                          // a €0 / negative (credit) line is not a bad debt
+    const grossAbs = inc;
     const paid = Math.max(0, Number(i.amountPaid) || 0);
     const unpaidFraction = Math.max(0, Math.min(1, (grossAbs - paid) / grossAbs));
     if (unpaidFraction <= 0) continue;                 // fully paid → nothing to reclaim
@@ -89,7 +105,7 @@ export function detectBadDebt(args: {
     if (!oneYear || oneYear > asOf) continue;           // not yet 1 year past due → not eligible
 
     const reclaimableBtw = (Number(i.btwAmount) || 0) * unpaidFraction;
-    if (Math.abs(reclaimableBtw) < 0.005) continue;     // no BTW to reclaim (0%-sale)
+    if (reclaimableBtw < 0.005) continue;               // no positive BTW to reclaim (0%-sale / sign glitch)
     eligible.push({
       invoiceNumber: i.invoiceNumber,
       clientName: i.clientName,
@@ -103,9 +119,13 @@ export function detectBadDebt(args: {
   return { eligible, totalReclaimableBtw, usedInvoiceDateFallback };
 }
 
-/** An honest Dutch note for the concept aangifte / accountant, or null when nothing is eligible. */
+// Below this the reclaimable BTW rounds to €0 on every surface — flagging "1 factuur, €0 terugvraagbaar"
+// reads as noise/contradiction, so we don't surface an immaterial sub-euro reclaim as a bad debt.
+export const BAD_DEBT_MIN_EUR = 0.5;
+
+/** An honest Dutch note for the concept aangifte / accountant, or null when nothing (material) is eligible. */
 export function badDebtNote(r: BadDebtResult): string | null {
-  if (r.eligible.length === 0 || r.totalReclaimableBtw < 0.005) return null;
+  if (r.eligible.length === 0 || r.totalReclaimableBtw < BAD_DEBT_MIN_EUR) return null;
   const n = r.eligible.length;
   const eur = `€${Math.round(r.totalReclaimableBtw).toLocaleString("nl-NL")}`;
   const labels = r.eligible.slice(0, 5).map((e) => e.invoiceNumber ?? "?").filter(Boolean).join(", ");

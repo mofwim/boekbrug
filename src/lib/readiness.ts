@@ -6,6 +6,7 @@
 // need attention. Fully testable (run: npx tsx src/lib/readiness.test.ts).
 //
 import type { RegimeFlag } from "./regime-flags";
+import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 
 // THE SCORE IS NOT COSMETIC. Every point is earned by a PROVABLE condition:
 //   score = 100 × Σ(weight·subscore over APPLICABLE dimensions) / Σ(weight over applicable)
@@ -487,7 +488,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
   // reclaimable (oninbare vordering, art. 29 Wet OB). Always a RISK, never a blocking gap — it is
   // money to get BACK, so it can never make an aangifte "too low", and whether/when to reclaim is
   // the owner's/accountant's call. Kasstelsel never reaches here (collector short-circuits to none).
-  if (s.badDebt && s.badDebt.reclaimableBtw >= 0.005 && s.badDebt.count > 0) {
+  if (s.badDebt && s.badDebt.reclaimableBtw >= BAD_DEBT_MIN_EUR && s.badDebt.count > 0) {
     const n = s.badDebt.count;
     risks.push({
       severity: "risk",
