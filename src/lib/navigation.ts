@@ -93,6 +93,11 @@ const PARENT_RULES: ParentRule[] = [
         }).toString()
         return `/dashboard/clients/${clientId}/kwartaal${qs ? `?${qs}` : ''}`
       }
+      // [NAV] Opened from a hub page (de Brug, werkplek) → return there, not to
+      // the role default. Loop-safe: those hubs' own "Terug" goes up, never back
+      // to the invoice.
+      if (from === 'brug') return '/dashboard/brug'
+      if (from === 'werkplek') return '/dashboard/werkplek'
       return role === 'accountant' ? '/dashboard/accountant' : '/dashboard/facturen'
     },
   },

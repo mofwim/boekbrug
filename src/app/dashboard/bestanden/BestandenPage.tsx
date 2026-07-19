@@ -832,7 +832,16 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           <button
             onClick={() => {
               if (navHistoryRef.current.length > 0) navigateBack();
-              else router.push(logoHref);
+              else {
+                // [NAV] Honour an explicit ?from= origin (e.g. opened from de Brug)
+                // so "Terug" returns where the user came from, not the role home.
+                const from = searchParams.get("from");
+                const fromHref =
+                  from === "brug" ? "/dashboard/brug"
+                  : from === "werkplek" ? "/dashboard/werkplek"
+                  : null;
+                router.push(fromHref ?? logoHref);
+              }
             }}
             style={{
               display: "flex", alignItems: "center", gap: 4,

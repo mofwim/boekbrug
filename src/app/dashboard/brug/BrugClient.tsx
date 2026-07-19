@@ -488,8 +488,8 @@ function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: bool
       <a
         href={
           node.folderId
-            ? `/dashboard/bestanden?folder=${node.folderId}&focus=${node.docId}`
-            : `/dashboard/bestanden?focus=${node.docId}`
+            ? `/dashboard/bestanden?folder=${node.folderId}&focus=${node.docId}&from=brug`
+            : `/dashboard/bestanden?focus=${node.docId}&from=brug`
         }
         title="Open in Mijn bestanden"
         aria-label="Open in Mijn bestanden"
