@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
@@ -31,7 +32,9 @@ export async function GET(req: NextRequest) {
     console.error("[CRON-RECONCILE] CRON_SECRET is not configured — the automatic reconcile is DISABLED.");
     return NextResponse.json({ error: "cron_secret_not_configured" }, { status: 401 });
   }
-  if (auth !== `Bearer ${secret}`) {
+  // [SECURITY] Constant-time compare — see /api/cron/email-sync; a plain !== leaks the secret via
+  // response timing over repeated guesses.
+  if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

@@ -1376,7 +1376,17 @@ const MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024
 export function normalizeAttachmentMime(mimeType: string, filename: string): string | null {
   const mt = (mimeType || "").toLowerCase()
   if (mt === "application/pdf") return "application/pdf"
-  if (mt.startsWith("image/")) return mt // existing broad image behaviour is preserved
+  if (mt.startsWith("image/")) {
+    // [SECURITY] Block SVG: an SVG is XML that can embed <script>, so storing one and later serving
+    // it inline (a signed Storage URL the browser opens) is a stored-XSS vector — and Claude can't
+    // read it as an invoice anyway. Match the BASE type (strip any `;charset=`/`;name=` parameters)
+    // and every svg spelling, so `image/svg+xml; charset=utf-8` can't slip past. Other image/*
+    // (incl. heic/tiff/bmp) are binary rasters: not script-capable, and an unreadable one still
+    // reaches the visible could-not-read path, so the broad passthrough is preserved for them.
+    const base = mt.split(";")[0].trim()
+    if (base.startsWith("image/svg")) return null
+    return mt
+  }
   // Wrong/generic MIME → infer from the extension. Only the types the classifier reads.
   const ext = (filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "")
   if (ext === "pdf") return "application/pdf"
@@ -1384,6 +1394,7 @@ export function normalizeAttachmentMime(mimeType: string, filename: string): str
   if (ext === "png") return "image/png"
   if (ext === "webp") return "image/webp"
   if (ext === "gif") return "image/gif"
+  // [SECURITY] Never infer svg from a spoofed/generic MIME + .svg name either.
   return null
 }
 

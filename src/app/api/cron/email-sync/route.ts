@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { syncUserEmails } from "@/lib/email-integration";
+import { timingSafeEqualStr } from "@/lib/timing-safe";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow the batch time (actual ceiling depends on the plan)
@@ -26,7 +27,9 @@ export async function GET(req: NextRequest) {
     console.error("[CRON-EMAIL-SYNC] CRON_SECRET is not configured — automatic email import is DISABLED for all users.");
     return NextResponse.json({ error: "cron_secret_not_configured" }, { status: 401 });
   }
-  if (auth !== `Bearer ${secret}`) {
+  // [SECURITY] Constant-time compare — a plain !== leaks, via response timing, how many leading
+  // bytes a guessed token matched, which can recover the secret over many attempts.
+  if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

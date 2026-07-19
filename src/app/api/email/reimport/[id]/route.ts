@@ -17,6 +17,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { classifyAttachment } from "@/lib/email-integration";
 import { evaluateArithmetic, deriveDueDate } from "@/lib/safecore";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -71,6 +72,13 @@ export async function POST(
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+
+  // [SECURITY] Rate-limit the manual re-read: every call runs an expensive Sonnet vision read on the
+  // raw PDF, so an unbounded endpoint lets one session burn AI budget. Uses the AI_OCR limits config
+  // (240/hr); the counter is keyed by (user, endpoint), so it's this endpoint's own bucket — a
+  // separate 240/hr allowance from the upload path, both bounding per-user AI spend.
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/reimport", ...RATE_LIMITS.AI_OCR });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   // Load + prove ownership. Keep the current values so a poorer re-read can't wipe metadata.
   const { data: invoice } = await supabase
