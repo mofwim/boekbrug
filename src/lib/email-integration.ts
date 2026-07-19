@@ -2229,6 +2229,18 @@ export async function syncUserEmails(
         btw: classification.vendorBtw ?? null,
       })
 
+      // [SUPPLIER-LEARN] Enrich a MISSING vendor IBAN from what we already learned about this
+      // supplier — a PRIOR invoice taught the registry its IBAN. Pure identity: it NEVER overwrites
+      // a read (only fills a blank), and it directly feeds the bank certain-tier auto-match
+      // (IBAN + amount), so a later invoice whose IBAN the reader couldn't find still auto-
+      // reconciles against the bank instead of waiting for a manual confirm. One query, only when
+      // the read left vendor_iban blank.
+      let learnedVendorIban: string | null = null
+      if (supplier?.id && !classification.vendorIban) {
+        const { data: sup } = await supabase.from('suppliers').select('iban').eq('id', supplier.id).maybeSingle()
+        learnedVendorIban = sup?.iban ?? null
+      }
+
       if (typeof classification.totalIncBtw === 'number') {
         const numberIsReal = !isPlaceholderInvoiceNumber(classification.invoiceNumber)
 
@@ -2640,7 +2652,7 @@ export async function syncUserEmails(
           source_message_id: dedupKey,
           // [PAY-SAFE-EXTRACT] vendor payment details — null when the AI didn't
           // find them (prepares a future payment; never processes money).
-          vendor_iban: classification.vendorIban ?? null,
+          vendor_iban: classification.vendorIban ?? learnedVendorIban ?? null,
           payment_reference: classification.paymentReference ?? null,
           // [BRIDGE-EXTRACT] per-field AI confidence + [BOEK-SAFECORE] _safecore
           // hold reason (merged when held; null when nothing to store).
