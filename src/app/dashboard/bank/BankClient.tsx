@@ -456,8 +456,13 @@ export default function BankClient() {
         if (!allCovered) await runMatch()
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
-      } else if (json?.error === 'invoice_already_paid') {
-        showToast('Deze factuur is al betaald.')
+      } else if (res.status === 409 && (json?.error === 'invoice_already_paid' || json?.error === 'transaction_already_processed')) {
+        // [BANK-409-BENIGN] Already booked — the auto-confirm on page-open (or another tab) got
+        // there first. That IS the desired outcome, so mark it done + refresh so it leaves the
+        // list, never a red "mislukt". The money is correct and reversible under Bevestigd.
+        setConfirmed((c) => ({ ...c, [txId]: { numbers: invoiceNumber ? [invoiceNumber] : [], allCovered: true } }))
+        showToast('Al bevestigd ✓')
+        await runMatch()
       } else {
         showToast('Bevestigen mislukt.')
       }
@@ -512,7 +517,12 @@ export default function BankClient() {
             body: JSON.stringify({ transactionId: s.transactionId, invoiceId }),
           })
           const json = await res.json()
-          if (res.ok) {
+          // [BANK-BATCH-409] A 409 "already processed / already paid" is NOT a failure — it means
+          // this payment is ALREADY booked (the auto-confirm on page-open, or a concurrent tab, got
+          // there first). That is exactly what the owner wanted, so treat it as done and let it drop
+          // out of the list. Only a REAL block (accountant 'verwerkt', not_eligible) counts as failed.
+          const alreadyDone = res.status === 409 && (json?.error === 'transaction_already_processed' || json?.error === 'invoice_already_paid')
+          if (res.ok || alreadyDone) {
             ok++
             const num = s.best?.invoiceNumber ?? ''
             const allCovered = json?.allCovered !== false
