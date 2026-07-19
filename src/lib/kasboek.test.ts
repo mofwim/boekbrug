@@ -1,6 +1,6 @@
 // [KASBOEK] Pure node test — run: npx tsx src/lib/kasboek.test.ts
 // Validated against the store's REAL "Kiwi 1ste kw 2026" cash book numbers.
-import { buildKasboek, openingBalanceForQuarter, type KasTurnoverDay, type KasEntry } from "./kasboek";
+import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, type KasTurnoverDay, type KasEntry } from "./kasboek";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -63,6 +63,39 @@ console.log("\n— pure / safe: no P&L notion, only balance —");
   // out-of-quarter rows are excluded.
   const oob = buildKasboek({ turnover: [{ turnover_date: "2026-04-01", cash_amount: 999 }], entries: [], year: 2026, quarter: 1, openingBalance: 0 });
   check("out-of-quarter day excluded", oob.months.length === 0 && near(oob.closingBalance, 0));
+}
+
+console.log("\n— [KAS-NEGATIEF] lowestDrawerPoint (the readiness-gate witness) —");
+{
+  // Mid-quarter dip below zero that RECOVERS to a positive close → still the violation (day-2).
+  const dip = buildKasboek({
+    turnover: [{ turnover_date: "2026-01-01", cash_amount: 50 }, { turnover_date: "2026-01-03", cash_amount: 500 }],
+    entries: [{ entry_date: "2026-01-02", direction: "out", amount: 200, category: "kosten", description: null }],
+    year: 2026, quarter: 1, openingBalance: 0,
+  });
+  const lp = lowestDrawerPoint(dip);
+  check("mid-quarter dip caught even though close is positive", lp !== null && lp.date === "2026-01-02" && near(lp.balance, -150));
+  check("...and the close itself is positive (scans eindsaldo, not closingBalance)", dip.closingBalance > 0);
+
+  // Negative carry-in opening, zero movements → caught at the quarter start.
+  const carryIn = buildKasboek({ turnover: [], entries: [], year: 2026, quarter: 1, openingBalance: -80 });
+  const lc = lowestDrawerPoint(carryIn);
+  check("negative carry-in with no activity is caught at quarter start", lc !== null && lc.date === "2026-01-01" && near(lc.balance, -80));
+
+  // Never negative → null (no false fraud flag).
+  const ok = buildKasboek({
+    turnover: [{ turnover_date: "2026-01-01", cash_amount: 300 }],
+    entries: [{ entry_date: "2026-01-02", direction: "out", amount: 100, category: "kosten", description: null }],
+    year: 2026, quarter: 1, openingBalance: 0,
+  });
+  check("never-negative drawer → null", lowestDrawerPoint(ok) === null);
+
+  // A legitimate till FLOAT (opening €500) covering a €400 cash-out → still positive → null.
+  const float = buildKasboek({
+    turnover: [], entries: [{ entry_date: "2026-01-05", direction: "out", amount: 400, category: "kosten", description: null }],
+    year: 2026, quarter: 1, openingBalance: 500,
+  });
+  check("float honored: €500 opening − €400 out stays positive → null (no false flag)", lowestDrawerPoint(float) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

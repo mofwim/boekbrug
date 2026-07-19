@@ -189,6 +189,28 @@ export function buildKasboek(args: {
 }
 
 /**
+ * [KAS-NEGATIEF] The lowest point the drawer reaches over the whole quarter, or null when it never
+ * goes below zero. A negative kassaldo is physically impossible (you cannot pay out cash you never
+ * had) and is the single strongest red flag the Belastingdienst uses to reject a cash administration
+ * (it implies hidden/verzwegen omzet). This is the pure witness the readiness gate blocks on.
+ *
+ * It scans EVERY day's eindsaldo (not just closingBalance): a drawer can dip negative mid-quarter and
+ * recover to a positive close, and that dip is still the violation. It also seeds the worst point with
+ * the OPENING balance so a negative carry-in with no in-quarter movements is caught too. Pure.
+ */
+export function lowestDrawerPoint(kb: Kasboek): { date: string; balance: number } | null {
+  const startMonth = (kb.quarter - 1) * 3;
+  const quarterStart = `${kb.year}-${String(startMonth + 1).padStart(2, "0")}-01`;
+  let worst = { date: quarterStart, balance: kb.openingBalance };
+  for (const m of kb.months) {
+    for (const row of m.rows) {
+      if (row.eindsaldo < worst.balance) worst = { date: row.date, balance: row.eindsaldo };
+    }
+  }
+  return worst.balance < 0 ? worst : null;
+}
+
+/**
  * Lay the Kasboek out as a cell matrix in the store's own format (monthly blocks: a title row,
  * a header row, one row per active day — Datum · Beginsaldo · Uitgaven · Omschrijving ·
  * Ontvangsten · Eindsaldo — then a month totals row). Pure: matrix in → matrix out; the SheetJS
