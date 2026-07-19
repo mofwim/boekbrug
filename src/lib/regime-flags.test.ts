@@ -62,6 +62,17 @@ console.log("\n— reverse charge (BTW verlegd) —");
   check("verleggingsregeling wording trips", codes(sig({ lines: [{ direction: "incoming", text: "Toepassing verleggingsregeling" }] })).includes("reverse_charge_purchase"));
   check("english 'reverse charge' trips", codes(sig({ lines: [{ direction: "outgoing", text: "Services (reverse charge)" }] })).includes("reverse_charge_sale"));
 }
+{
+  // [PRECISION] "verleg" is a substring of the very common word "overleg" (consultation) and of
+  // "verleggen" (to relocate). The gate must NOT trip on those — the reverse-charge invoice
+  // wording is legally "btw verlegd" (Art. 35a Wet OB), so we require "btw" adjacent.
+  const noTrip = (text: string) => codes(sig({ lines: [{ direction: "outgoing", text }] })).length === 0;
+  check("'Overleg met klant' does NOT trip", noTrip("Overleg met klant"));
+  check("'Juridisch overleg' does NOT trip", noTrip("Juridisch overleg"));
+  check("'werkoverleg' does NOT trip", noTrip("Voorbereiding werkoverleg"));
+  check("'kabel verleggen' (relocate) does NOT trip", noTrip("Kabel verleggen op locatie"));
+  check("but 'BTW verlegd' still trips", codes(sig({ lines: [{ direction: "outgoing", text: "Levering — BTW verlegd" }] })).includes("reverse_charge_sale"));
+}
 
 console.log("\n— margeregeling —");
 {

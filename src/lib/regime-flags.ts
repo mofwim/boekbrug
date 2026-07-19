@@ -54,10 +54,14 @@ export interface RegimeSignals {
   lines: RegimeLineSignal[];
 }
 
-// Phrase gates. Deliberately tax-specific stems so an ordinary invoice line never trips them:
-//  - "verleg" covers verlegd / verleggen / verlegging / verleggingsregeling; plus "reverse charge".
+// Phrase gates. Deliberately tax-specific so an ordinary invoice line never trips them:
+//  - reverse charge: require "btw" adjacent to "verleg" (the legally-mandated invoice wording is
+//    "btw verlegd", Art. 35a Wet OB), OR the full word "verleggingsregeling", OR "reverse charge".
+//    A bare "verleg" stem is NOT enough: it is a substring of the very common word "overleg"
+//    (consultation/meeting) and of "verleggen" (to relocate) — an unanchored gate false-flags a
+//    consultancy line like "Juridisch overleg" as reverse charge, which erodes trust.
 //  - margin scheme: the named regelingen only — NOT the bare word "marge" (winstmarge is common).
-const RE_REVERSE = /(btw[-\s]*)?verleg|verleggings|reverse[-\s]*charge/i;
+const RE_REVERSE = /btw[-\s]*verleg|verleggingsregeling|reverse[-\s]*charge/i;
 const RE_MARGIN = /margeregeling|marge[-\s]?regeling|globalisatieregeling|inkoopverklaring/i;
 
 /**
