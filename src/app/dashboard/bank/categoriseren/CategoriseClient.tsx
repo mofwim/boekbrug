@@ -27,8 +27,9 @@ interface Item {
   counterpart_name: string | null
   description: string | null
   suggested: string
-  suggested_source: 'memory' | 'ai'
+  suggested_source: 'memory' | 'ai' | 'similar'
   suggested_confident: boolean
+  suggested_similar_to?: string | null
   confirmed?: boolean
 }
 
@@ -40,6 +41,12 @@ function formatDate(iso: string | null): string {
   if (!m) return ''
   const months = ['jan.', 'feb.', 'mrt.', 'apr.', 'mei', 'jun.', 'jul.', 'aug.', 'sep.', 'okt.', 'nov.', 'dec.']
   return `${Number(m[3])} ${months[Number(m[2]) - 1]}`
+}
+
+// The "lijkt op" hint carries a normalized counterpart KEY (lowercased, noise stripped).
+// Title-case it so the owner sees a readable name, not a mangled internal string.
+function prettyKey(key: string): string {
+  return key.replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 export default function CategoriseClient() {
@@ -253,7 +260,9 @@ export default function CategoriseClient() {
                         ? (it.confirmed ? ' · door jou bevestigd' : ' · automatisch ingevuld')
                         : it.suggested_source === 'memory'
                           ? ' · onthouden'
-                          : it.suggested_confident ? ' · herkend' : ' · voorstel'}
+                          : it.suggested_source === 'similar'
+                            ? (it.suggested_similar_to ? ` · lijkt op ${prettyKey(it.suggested_similar_to)}` : ' · lijkt op eerdere')
+                            : it.suggested_confident ? ' · herkend' : ' · voorstel'}
                     </div>
                   </div>
                   <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: M3.onSurface, whiteSpace: 'nowrap' }}>
