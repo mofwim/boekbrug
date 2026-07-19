@@ -23,6 +23,7 @@ import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
 import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, type KasTurnoverDay, type KasEntry, type Quarter } from "@/lib/kasboek";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
+import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 
 export const dynamic = "force-dynamic";
 
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest) {
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence")
+    .select("id, invoice_number, direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start).lte("invoice_date", end)
     .order("id", { ascending: true }).range(from, to));
@@ -323,13 +324,31 @@ export async function GET(req: NextRequest) {
     .eq("user_id", ownerId).lte("entry_date", end)
     .order("entry_date", { ascending: true }).range(from, to));
   const { data: kasProfile } = await pipeline
-    .from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
+    .from("profiles").select("kas_opening_balance, kor_active").eq("id", ownerId).maybeSingle();
   const kasTurnover = (kasTurnoverRows ?? []) as KasTurnoverDay[];
   const kasEntries = (kasEntryRows ?? []) as unknown as KasEntry[];
   const kasStarting = Number((kasProfile as { kas_opening_balance?: number | null } | null)?.kas_opening_balance) || 0;
   const kasOpening = openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as Quarter, startingBalance: kasStarting });
   const kasboek = buildKasboek({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as Quarter, openingBalance: kasOpening });
   const negativeCashDay = lowestDrawerPoint(kasboek);
+
+  // ── 5c) [REGIME-FLAGS] Special BTW regimes the concept can't auto-compute (KOR / verlegd /
+  // marge). Owner declares KOR (profiles.kor_active); verlegd/marge are phrase-gated on the
+  // owner's own invoice-line texts (fetched by invoice_id, tenant-safe). Surfaced as RISKS. ──
+  const korActive = !!(kasProfile as { kor_active?: boolean | null } | null)?.kor_active;
+  const regimeInvoices: RegimeInvoiceRef[] = invRaw.map((i) => ({
+    id: String(i.id),
+    direction: effDir(i),
+    label: (i.invoice_number as string | null) ?? null,
+  }));
+  const omzetForKorCheck =
+    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
+  const regimeFlags = await collectRegimeFlags({
+    client: pipeline,
+    korActive,
+    omzetForKorCheck,
+    invoices: regimeInvoices,
+  }).catch(() => []);
 
   // ── 6) Assemble the signals → the verdict ──
   const signals: ReadinessSignals = {
@@ -353,6 +372,7 @@ export async function GET(req: NextRequest) {
     hasUndecidableRate,
     hasEuPurchase: completeness.hasEuPurchase,
     negativeCashDay, // [KAS-NEGATIEF] a below-zero drawer blocks "klaar"
+    regimeFlags,     // [REGIME-FLAGS] KOR / verlegd / marge → risks, never a block
   };
   const report = buildReadiness(signals);
 

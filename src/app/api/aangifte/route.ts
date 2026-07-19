@@ -13,6 +13,8 @@ import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
+import { regimeFlagNote } from "@/lib/regime-flags";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function shiftDays(iso: string, days: number): string {
@@ -52,7 +54,7 @@ export async function GET(req: NextRequest) {
   // Invoices (both directions) in the quarter. [PAGINATION] paged past the 1000-row cap.
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
+    .select("id, invoice_number, direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -146,6 +148,25 @@ export async function GET(req: NextRequest) {
     datelessVerifiedCount,
   };
 
-  const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`);
+  // [REGIME-FLAGS] Special regimes the concept can't auto-compute (KOR active, BTW verlegd,
+  // margeregeling) become honest notes on the concept, so the owner and the accountant see the
+  // same handoff the ZIP and readiness show. KOR is owner-declared; verlegd/marge are
+  // phrase-gated on the owner's own invoice-line texts (tenant-safe fetch by invoice_id).
+  const { data: regimeProf } = await pipeline
+    .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
+  const korActive = !!(regimeProf as { kor_active?: boolean | null } | null)?.kor_active;
+  const regimeInvoices: RegimeInvoiceRef[] = invRaw.map((i) => ({
+    id: String(i.id),
+    direction: effDir(i),
+    label: (i.invoice_number as string | null) ?? null,
+  }));
+  const omzetForKorCheck =
+    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
+  const regimeFlags = await collectRegimeFlags({
+    client: pipeline, korActive, omzetForKorCheck, invoices: regimeInvoices,
+  }).catch(() => []);
+  const regimeNotes = regimeFlags.map(regimeFlagNote);
+
+  const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes);
   return NextResponse.json({ ok: true, year, quarter, aangifte });
 }
