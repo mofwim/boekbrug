@@ -866,12 +866,11 @@ export default function BankClient() {
     : bankTab === 'ignored' ? ignoredInQ
     : confirmedList
 
-  // [BANK-FILTER] Only the "Geen factuur" tab is filtered (the long one).
-  // [SEARCH] Now genuinely searches AMOUNT too (the placeholder promised "bedrag"
-  // but the filter ignored it), and folds accents on name/reference.
+  // [SEARCH] In-page live filter — works on EVERY bank tab now (not only "Geen factuur"):
+  // searches counterpart / reference / date / amount, accent-folded.
   const fold = (x: string) => x.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
   const activeList =
-    bankTab === 'none' && filterText.trim()
+    filterText.trim()
       ? activeListRaw.filter((s) => {
           const raw = filterText.trim()
           const q = fold(raw)
@@ -1216,8 +1215,8 @@ export default function BankClient() {
             </Link>
           )}
 
-          {/* [BANK-FILTER] Search field for the long "Geen factuur" list. */}
-          {bankTab === 'none' && noMatch.length > 0 && (
+          {/* [SEARCH] In-page live filter — on every tab that has a list. */}
+          {activeListRaw.length > 0 && (
             <div style={{ position: 'relative', marginTop: 12 }}>
               <span
                 className="material-symbols-outlined"
@@ -1251,8 +1250,8 @@ export default function BankClient() {
               )}
             </div>
           )}
-          {/* Empty-filter hint */}
-          {bankTab === 'none' && filterText.trim() && activeList.length === 0 && (
+          {/* Empty-filter hint — any tab */}
+          {filterText.trim() && activeListRaw.length > 0 && activeList.length === 0 && (
             <p style={{ fontSize: 13, color: '#9aa0a6', margin: '14px 2px 0' }}>
               Geen transacties gevonden voor “{filterText.trim()}”.
             </p>
