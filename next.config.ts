@@ -15,7 +15,21 @@ const nextConfig: NextConfig = {
   // pulled into some client components, so without this Next.js tries to bundle
   // sharp for the browser and the build fails with "module not found". Marking it
   // here keeps sharp server-only (Node runtime), out of the client bundle.
-serverExternalPackages: ["sharp", "unpdf"],};
+  serverExternalPackages: ["sharp", "unpdf"],
+
+  // [ANDROID/TWA] Serve the Digital Asset Links file at its canonical well-known
+  // path. Next ignores app-router folders beginning with ".", so the handler
+  // lives at /api/well-known/assetlinks and is mapped here. This is what the
+  // Android TWA verifier fetches to drop the browser URL bar.
+  async rewrites() {
+    return [
+      {
+        source: "/.well-known/assetlinks.json",
+        destination: "/api/well-known/assetlinks",
+      },
+    ];
+  },
+};
 
 export default withSentryConfig(nextConfig, {
   // For all available options, see:

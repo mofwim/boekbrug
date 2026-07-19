@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { Roboto } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
+import { ServiceWorkerRegister } from "./ServiceWorkerRegister";
 import "./globals.css";
 
 const roboto = Roboto({
@@ -17,7 +18,13 @@ export const metadata: Metadata = {
   title: "BoekBrug — Financieel Command Center",
   description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/icons/icon-512.png", type: "image/png", sizes: "512x512" },
+    ],
+    // [ANDROID/iOS] Home-screen icon when BoekBrug is added to the home screen.
+    apple: "/icons/apple-touch-icon.png",
   },
   // [SEO] Twitter/X card — makes shared links render a large image card on
   // X, Slack, WhatsApp, etc. Image comes from the site-wide opengraph-image.
@@ -65,6 +72,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-full flex flex-col">
+        <ServiceWorkerRegister />
         {children}
         {/* [ANALYTICS] Vercel Web Analytics — cookieless & privacy-friendly, so
             no consent banner is required. Only reports on Vercel deploys. */}

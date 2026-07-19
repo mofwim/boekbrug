@@ -1702,6 +1702,8 @@ export async function syncUserEmails(
     // auth/permission), always an outage-hold. transientError = a capacity/network error (529/5xx/
     // 429/network) which is an outage-hold ONLY when the whole batch is failing (decided post-map) —
     // a lone transient failure still poison-pills so one stuck file can't freeze the watermark.
+    // (This supersedes main's single `modelError` field — configOutage uses the identical regex and
+    // transientError adds the capacity-outage case, so no case main handled is lost.)
     configOutage?: boolean
     transientError?: boolean
   }

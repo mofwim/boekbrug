@@ -116,5 +116,13 @@ export const config = {
   // exclude them from the matcher entirely — otherwise the auth guard below
   // redirects an unauthenticated crawler to /login and search engines / social
   // scrapers never see them.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|opengraph-image|twitter-image).*)"],
+  // [ANDROID/TWA] Same reasoning for the PWA/TWA install assets: the launcher
+  // icons under /icons/ and the Digital Asset Links file at
+  // /.well-known/assetlinks.json are fetched by Android / PWABuilder / Google's
+  // link verifier with no session — if the auth guard redirects them to /login
+  // the app icon is missing and the URL-bar-hiding verification silently fails.
+  // [PWA] sw.js must be reachable at the origin root (its scope) and offline.html
+  // is the fallback the worker serves with no session — both must skip the auth
+  // guard, or SW registration / the offline page break.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|icons/|\\.well-known/|sw.js|offline.html|opengraph-image|twitter-image).*)"],
 };
