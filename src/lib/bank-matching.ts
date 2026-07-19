@@ -510,6 +510,30 @@ export function isSafeAutoConfirm(m: TransactionMatch): boolean {
   return true;
 }
 
+// [BANK-REF-DECISIVE] Should the top of a candidate list be booked as 'auto'?
+// Yes when it clears autoConfidence AND EITHER:
+//   - it beats the 2nd candidate by autoMargin (a clear numeric lead — the original rule), OR
+//   - it UNIQUELY carries the printed-reference identity (invoice number in the statement +
+//     exact amount) that no other candidate has. A printed invoice number is decisive identity:
+//     it is immune to the same-amount / same-supplier collisions that otherwise drown it. Example
+//     (the ONS IT case): five monthly subscription invoices all €32,67 — the four without their
+//     number printed score ~0.90 on amount+counterpart+date and pull the 0.97 reference match's
+//     margin below autoMargin, forcing a 5-way 'choice' even though the bank literally prints
+//     "Incasso fact. 1260405". The uniqueness guard is essential: if TWO candidates both cite a
+//     printed number (e.g. a mis-parsed batch), neither is decisive → it stays a human 'choice'.
+// This only promotes to 'auto'; isSafeAutoConfirm still gates what the app books without a tap
+// (reference+amount, single reference, not an instalment), so a wrong printed-number match is
+// impossible here — referenceMatches already requires a whole-token, digit-bounded hit.
+function topReachesAuto(free: MatchCandidate[], opts: MatchOptions): boolean {
+  const top = free[0];
+  if (!top || top.confidence < opts.autoConfidence) return false;
+  const second = free[1];
+  const strongLead = !second || top.confidence - second.confidence >= opts.autoMargin;
+  const topHasRef = top.signals.includes("reference") && top.signals.includes("amount");
+  const uniqueRef = topHasRef && !free.slice(1).some((c) => c.signals.includes("reference"));
+  return strongLead || uniqueRef;
+}
+
 // ─── Main entry ────────────────────────────────────────────────────────────────
 
 /**
@@ -551,14 +575,9 @@ export function matchTransactions(
     let best: MatchCandidate | null = null;
 
     if (trimmed.length > 0) {
-      const top = trimmed[0];
-      const second = trimmed[1];
-      const strongLead =
-        !second || top.confidence - second.confidence >= opts.autoMargin;
-
-      if (top.confidence >= opts.autoConfidence && strongLead) {
+      if (topReachesAuto(trimmed, opts)) {
         outcome = "auto";
-        best = top;
+        best = trimmed[0];
       } else {
         outcome = "choice";
       }
@@ -594,10 +613,8 @@ export function matchTransactions(
 
     // Re-derive outcome from the remaining free candidates.
     const top = free[0];
-    const second = free[1];
-    const strongLead = !second || top.confidence - second.confidence >= opts.autoMargin;
 
-    if (top.confidence >= opts.autoConfidence && strongLead) {
+    if (topReachesAuto(free, opts)) {
       m.outcome = "auto";
       m.best = top;
       claimed.add(top.invoiceId); // auto → this invoice is taken

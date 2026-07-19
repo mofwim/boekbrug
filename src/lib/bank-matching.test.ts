@@ -535,5 +535,38 @@ console.log("\n— [BANK-AUTO-CONFIRM] only a near-certain single match is safe 
   check("reference but wrong amount → NOT safe", isSafeAutoConfirm(wrongAmount.matches[0]) === false);
 }
 
+console.log("\n— [BANK-REF-DECISIVE] a UNIQUE printed invoice number wins 'auto' amid same-amount siblings —");
+{
+  // The ONS IT case: a €32,67 monthly subscription debit whose statement prints
+  // "Incasso fact. 1260405". Five monthly invoices all €32,67 from the same supplier are
+  // in the system; four have no number printed (amount+counterpart+date only). Before the
+  // fix these four scored close enough to pull the reference match's margin below autoMargin
+  // → a 5-way 'choice'. Now the one with its number printed wins decisively.
+  const onsIt = matchTransactions(
+    [tx({ amount: -32.67, date: "2026-06-03", counterpartName: "ONS IT", description: "Incassobatch 409 Incasso fact. 1260405" })],
+    [
+      inv({ id: "a", invoice_number: "1260405", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-06-01" }),
+      inv({ id: "b", invoice_number: "1260341", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-05-04" }),
+      inv({ id: "c", invoice_number: "1260089", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-02-02" }),
+      inv({ id: "d", invoice_number: "1260274", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-04-02" }),
+      inv({ id: "e", invoice_number: "1260009", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-01-05" }),
+    ],
+  );
+  check("printed-number invoice becomes 'auto' (not a 5-way choice)", onsIt.matches[0].outcome === "auto");
+  check("the auto pick is the printed number 1260405", onsIt.matches[0].best?.invoiceId === "a");
+  check("and it is SAFE to auto-book (reference + amount, single)", isSafeAutoConfirm(onsIt.matches[0]) === true);
+
+  // Guard: if TWO candidates both have their number printed (an ambiguous/mis-parsed case),
+  // neither is decisive → it must stay a human 'choice', never a wrong auto-book.
+  const twoPrinted = matchTransactions(
+    [tx({ amount: -32.67, counterpartName: "ONS IT", description: "fact 1260405 1260341" })],
+    [
+      inv({ id: "a", invoice_number: "1260405", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-06-01" }),
+      inv({ id: "b", invoice_number: "1260341", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-05-04" }),
+    ],
+  );
+  check("two printed numbers → stays a human choice (not auto)", twoPrinted.matches[0].outcome !== "auto");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
