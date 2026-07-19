@@ -1309,11 +1309,11 @@ export async function buildClosingPackageZip(args: {
   // [PAGINATION] Busy shops book many cash entries a quarter — page past the cap so the
   // reconciliation engine sees every one (a dropped row understates omzet/kosten).
   const cashAllRows = await fetchAllRows<{
-    direction: string; amount: number | null; category: string | null; btw_rate: number | null; entry_date: string | null;
+    direction: string; amount: number | null; category: string | null; btw_rate: number | null; entry_date: string | null; document_id: string | null;
   }>((from, to) =>
     supabase
       .from("cash_entries")
-      .select("direction, amount, category, btw_rate, entry_date")
+      .select("direction, amount, category, btw_rate, entry_date, document_id")
       .eq("user_id", ownerId)
       .gte("entry_date", start)
       .lte("entry_date", end)
@@ -1326,6 +1326,7 @@ export async function buildClosingPackageZip(args: {
     category: c.category,
     btw_rate: c.btw_rate,
     date: c.entry_date,
+    document_id: c.document_id ?? null, // [CASH-COST-VAT] documented cash cost → voorbelasting
   }));
   // [PAGINATION] Same for bank lines — a quarter of a busy account can exceed 1000 rows.
   const bankAllRows = await fetchAllRows<{

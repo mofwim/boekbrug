@@ -81,6 +81,35 @@ console.log("\n— cash —");
   check("transfer + prive excluded from cash", near(r.omzet, 150) && r.kosten === 30);
 }
 
+console.log("\n— [CASH-COST-VAT] a cash cost reclaims voorbelasting ONLY with a linked bon —");
+{
+  // Documented cash cost @21% → net 100 cost + 21 voorbelasting (like a purchase invoice).
+  const documented = computeResult([], [], [
+    { direction: "out", amount: 121, category: "kosten", btw_rate: 21, document_id: "doc-1" },
+  ]);
+  check("documented cash cost nets ex-btw (121 → 100)", near(documented.kosten, 100));
+  check("documented cash cost claims voorbelasting (21)", near(documented.btwVoorbelasting, 21));
+
+  // Undocumented cash cost (no bon, no rate) → FULL gross, zero voorbelasting.
+  const undocumented = computeResult([], [], [
+    { direction: "out", amount: 121, category: "kosten", btw_rate: null, document_id: null },
+  ]);
+  check("undocumented cash cost books full gross (121)", near(undocumented.kosten, 121));
+  check("undocumented cash cost claims NO voorbelasting", undocumented.btwVoorbelasting === 0);
+
+  // Defense-in-depth: a rate BUT no document → still full gross, no deduction (guard needs BOTH).
+  const rateNoDoc = computeResult([], [], [
+    { direction: "out", amount: 109, category: "kosten", btw_rate: 9, document_id: null },
+  ]);
+  check("rate without a bon → full gross, no voorbelasting (guard needs BOTH)", near(rateNoDoc.kosten, 109) && rateNoDoc.btwVoorbelasting === 0);
+
+  // Salaris (cash wages) → a cost, never any BTW, even with a stray rate/doc.
+  const salaris = computeResult([], [], [
+    { direction: "out", amount: 500, category: "salaris", btw_rate: 21, document_id: "doc-x" },
+  ]);
+  check("cash salaris is a cost (500), never voorbelasting", near(salaris.kosten, 500) && salaris.btwVoorbelasting === 0);
+}
+
 console.log("\n— combined, no double count —");
 {
   const inv: ResultInvoice[] = [{ direction: "outgoing", status: "paid", total_ex_btw: 2000, btw_amount: 420 }];
