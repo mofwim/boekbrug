@@ -135,5 +135,34 @@ console.log("\n— [BANK-BALANCE] CAMT.053 OPBD/CLBD balance extraction —");
   check("a DBIT closing balance is read negative", parseCAMT053(camt.replace("<Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy=\"EUR\">1200.00</Amt><CdtDbtInd>CRDT", "<Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy=\"EUR\">1200.00</Amt><CdtDbtInd>DBIT")).statementBalance?.closing === -1200);
 }
 
+console.log("\n— [BANK-BALANCE] MT940 reversal signs (RC nets debit, RD nets credit) —");
+{
+  // A received payment (+100) that then bounces (RC 100 → net −100) leaves the balance where it
+  // started. RC must be NEGATIVE and RD POSITIVE, or the reversal books the wrong omzet/kosten
+  // AND a complete statement fails the begin/eindsaldo check.
+  const mt940 = [
+    ":60F:C260101EUR1000,00",
+    ":61:2601020102C100,00NTRF",     // credit +100
+    ":86:/REMI/Betaling",
+    ":61:2601030103RC100,00NTRF",    // reversal of that credit → −100
+    ":86:/REMI/Storno",
+    ":62F:C260103EUR1000,00",        // bank's real closing = 1000 (net zero movement)
+  ].join("\n");
+  const r = parseMT940(mt940);
+  check("RC (reversal of credit) is negative", r.transactions[1].amount === -100);
+  const sum = r.transactions.reduce((s, t) => s + t.amount, 0);
+  check("reversal nets to zero → opening + Σtx = closing (reconciles)", 1000 + sum === r.statementBalance?.closing);
+
+  // RD (reversal of a debit) must be positive.
+  const rd = parseMT940([
+    ":60F:C260101EUR1000,00",
+    ":61:2601020102RD50,00NTRF",     // reversal of a debit → +50
+    ":86:/REMI/Storno kosten",
+    ":62F:C260102EUR1050,00",
+  ].join("\n"));
+  check("RD (reversal of debit) is positive", rd.transactions[0].amount === 50);
+  check("RD statement reconciles (1000 + 50 = 1050)", 1000 + rd.transactions[0].amount === rd.statementBalance?.closing);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

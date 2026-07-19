@@ -278,8 +278,16 @@ function parseMT940Transaction(
 
   // Parse amount — MT940 uses comma as decimal separator
   const amount = parseFloat(amountStr.replace(",", "."));
+  // [BANK-BALANCE] SWIFT sign convention, incl. reversals:
+  //   C  = credit                → +   |   D  = debit                 → −
+  //   RD = Reversal of a Debit   → +   |   RC = Reversal of a Credit  → −
+  // A reversal UNDOES the original, so RC (undo a credit) nets to a DEBIT and RD (undo a
+  // debit) nets to a CREDIT. The earlier code grouped RC with credits and RD with debits —
+  // inverted — so every reversal booked with the WRONG sign (wrong omzet/kosten), and it
+  // also made a complete statement fail the new begin/eindsaldo reconciliation. The :62F:
+  // closing balance already reflects the true effect, so this is the sign that ties out.
   const signed =
-    creditDebit === "C" || creditDebit === "RC" ? amount : -amount;
+    creditDebit === "C" || creditDebit === "RD" ? amount : -amount;
 
   // Parse :86: description field
   // ING/ABN AMRO use structured sub-fields: /BENM//NAME/...
