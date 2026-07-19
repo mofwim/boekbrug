@@ -3,11 +3,14 @@
 // is paid in, equal the invoice header EXACTLY — to the cent, no rounding drift, no double-count.
 import {
   buildSettlementEvents,
+  buildQuarterSettlements,
   computeSettlementSlices,
   deriveRate,
   type InvoiceHeader,
   type SettlementRecord,
   type PriorSettled,
+  type HeaderWithPaid,
+  type RawSettlement,
 } from "./kas-payment-events";
 
 let passed = 0, failed = 0;
@@ -124,6 +127,64 @@ console.log("\n— date ordering is applied inside computeSettlementSlices —")
   const slices = computeSettlementSlices(shuffled, new Map());
   const total = slices.reduce((s, x) => s + x.ex, 0);
   check("Σ ex = 1000 regardless of input order", total === 1000);
+}
+
+console.log("\n— buildQuarterSettlements: prior/in-window split + undated detection —");
+{
+  const hdrMap = (over: Partial<HeaderWithPaid> = {}) => {
+    const h: HeaderWithPaid = { invoiceId: "inv1", direction: "outgoing", totalEx: 1000, totalBtw: 210, totalInc: 1210, amountPaidMagnitude: 1210, ...over };
+    return new Map([[h.invoiceId, h]]);
+  };
+  const raw = (over: Partial<RawSettlement> = {}): RawSettlement => ({ invoiceId: "inv1", payDate: "2026-05-01", magnitude: 1210, estimated: false, ...over });
+  const Q2 = ["2026-04-01", "2026-06-30"] as const;
+
+  // fully paid in-window
+  {
+    const q = buildQuarterSettlements(hdrMap(), [raw()], ...Q2);
+    check("full in-window → 1 event, closes", q.events.length === 1 && q.events[0].closesInvoice === true);
+    check("no prior, no undated", q.priorByInvoice.size === 0 && q.undatedPaidCount === 0);
+  }
+  // partial Q1 (prior) + closing Q2 (in-window)
+  {
+    const q = buildQuarterSettlements(hdrMap(), [raw({ payDate: "2026-03-01", magnitude: 605 }), raw({ payDate: "2026-05-01", magnitude: 605 })], ...Q2);
+    check("in-window event closes (cumulative reaches header)", q.events.length === 1 && q.events[0].closesInvoice === true);
+    check("priorByInvoice carries Q1's unrounded 500 ex", near(q.priorByInvoice.get("inv1")!.ex, 500));
+    check("priorByInvoice carries Q1's 105 btw", near(q.priorByInvoice.get("inv1")!.btw, 105));
+  }
+  // fully paid in a PRIOR quarter → nothing this quarter
+  {
+    const q = buildQuarterSettlements(hdrMap(), [raw({ payDate: "2026-02-01", magnitude: 1210 })], ...Q2);
+    check("prior-only invoice contributes NO in-window events", q.events.length === 0);
+    check("no undated (dated total == amount paid)", q.undatedPaidCount === 0);
+  }
+  // undated paid money: 605 dated by bank, 605 more marked paid with NO date
+  {
+    const q = buildQuarterSettlements(hdrMap({ amountPaidMagnitude: 1210 }), [raw({ payDate: "2026-05-01", magnitude: 605 })], ...Q2);
+    check("paid beyond the dated total → undatedPaidCount 1 (never silently under-declared)", q.undatedPaidCount === 1);
+  }
+  // an explicitly undated row (payDate null)
+  {
+    const q = buildQuarterSettlements(hdrMap({ amountPaidMagnitude: 1210 }), [raw({ payDate: null, magnitude: 1210 })], ...Q2);
+    check("null-date settlement → undatedPaidCount 1, no events", q.undatedPaidCount === 1 && q.events.length === 0);
+  }
+  // estimated date (marked_paid_at)
+  {
+    const q = buildQuarterSettlements(hdrMap(), [raw({ estimated: true })], ...Q2);
+    check("estimated in-window date → estimatedCount 1", q.estimatedCount === 1);
+  }
+  // rows for an unknown invoice are ignored
+  {
+    const q = buildQuarterSettlements(hdrMap(), [raw({ invoiceId: "other", magnitude: 999 })], ...Q2);
+    check("unknown-invoice rows ignored", q.events.length === 0 && q.undatedPaidCount === 0);
+  }
+  // creditnota (negative header) → signed-negative in-window event
+  {
+    const cnMap = hdrMap({ invoiceId: "cn1", totalEx: -100, totalBtw: -21, totalInc: -121, amountPaidMagnitude: 121 });
+    const q = buildQuarterSettlements(cnMap, [{ invoiceId: "cn1", payDate: "2026-05-02", magnitude: 121, estimated: false }], ...Q2);
+    check("creditnota event amountApplied is negative", q.events[0].amountApplied === -121);
+    const slices = computeSettlementSlices(q.events, q.priorByInvoice);
+    check("creditnota slice nets omzet −100", near(slices[0].ex, -100));
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

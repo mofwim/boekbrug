@@ -17,6 +17,8 @@ import { reconcileTriangle, bankNetByDay } from "./triangle";
 import { netCommissionToBook, ACQUIRER_VENDOR_RE } from "./card-reconcile";
 import type { EftSettlement } from "./eft-parser";
 import type { PipelineClient } from "./supabase-pipeline";
+import { fetchSettlementEvents } from "./kas-payment-events-fetch";
+import type { VatScheme } from "./vat-scheme";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -32,6 +34,12 @@ function isoShiftDays(iso: string, days: number): string {
 export interface RangeResult {
   result: FinancialResult;
   datelessVerifiedCount: number;
+  // [KASSTELSEL] Under cash basis: paid money we could NOT date (undatedPaidCount) MUST block
+  // klaar/aangifte — it would otherwise silently under-declare. estimatedPortionCount counts
+  // invoices whose paid-date is only an estimate (marked_paid_at). Both 0 under factuur.
+  undatedPaidCount: number;
+  estimatedPortionCount: number;
+  scheme: VatScheme;
   reconciliation: {
     totalCommission: number;
     commissionBooked: number;
@@ -51,8 +59,13 @@ export async function computeResultForRange(args: {
   ownerId: string;
   start: string; // 'YYYY-MM-DD'
   end: string;   // 'YYYY-MM-DD'
+  // [KASSTELSEL] The VAT basis IN FORCE for this window (the caller resolves it per-quarter via
+  // resolveSchemeForQuarter, so a pre-switch quarter stays 'factuur'). Default 'factuur' → the
+  // accrual path runs byte-identical, and every existing caller is unchanged.
+  scheme?: VatScheme;
 }): Promise<RangeResult> {
   const { pipeline, ownerId, start, end } = args;
+  const scheme: VatScheme = args.scheme === "kas" ? "kas" : "factuur";
 
   // Invoices for this owner (outgoing = sender, incoming = receiver) in the window.
   const invRows = await fetchAllRows((from, to) => pipeline
@@ -192,25 +205,51 @@ export async function computeResultForRange(args: {
       .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
   );
 
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, commissionToBook, coveredBudget);
+  // [KASSTELSEL] Under cash basis, the invoice leg is driven by SETTLEMENTS (BTW on the paid
+  // date), not the invoice_date. Only the invoice leg changes: the bank/cash/turnover legs are
+  // already payment-dated (a till sale, a bank credit, a cash entry all happen when money moves),
+  // so they stay identical. The acquirer-commission auto-book is disabled under kas (its cost is
+  // deductible when the acquirer's invoice is PAID, booked via that invoice's own settlement — so
+  // auto-booking the triangle delta here would place it in the wrong period / double-count).
+  let undatedPaidCount = 0;
+  let estimatedPortionCount = 0;
+  let kasOpts: Parameters<typeof computeResult>[7] = {};
+  if (scheme === "kas") {
+    const qs = await fetchSettlementEvents(pipeline, ownerId, start, end);
+    undatedPaidCount = qs.undatedPaidCount;
+    estimatedPortionCount = qs.estimatedCount;
+    kasOpts = { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice };
+  }
+  const result = computeResult(
+    invoices, bankTx, cashEntries, turnover, coveredDates,
+    scheme === "kas" ? 0 : commissionToBook, coveredBudget, kasOpts,
+  );
 
-  // [DATELESS] Verified invoices with NO invoice_date are dropped by the date-range fetch, so they
-  // are absent from the figures — count them (same rule as /api/aangifte) so the surface can warn.
+  // [DATELESS] Under FACTUUR: verified invoices with NO invoice_date are dropped by the date-range
+  // fetch, so they are absent from the figures — count them (same rule as /api/aangifte) so the
+  // surface can warn. Under KAS the invoice_date is irrelevant (invoices enter by payment date);
+  // the analogous "money we can't place" signal is undatedPaidCount, computed above.
   const OUTGOING_OK = new Set(["paid", "sent", "overdue"]);
-  const datelessRows = await fetchAllRows((from, to) => pipeline
-    .from("invoices")
-    .select("status, direction, receiver_id")
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .is("invoice_date", null)
-    .order("id", { ascending: true }).range(from, to));
-  const datelessVerifiedCount = datelessRows.filter((i) => {
-    const dir = effDir(i);
-    return dir === "incoming" ? INCOMING_OK.has(i.status ?? "") : OUTGOING_OK.has(i.status ?? "");
-  }).length;
+  let datelessVerifiedCount = 0;
+  if (scheme !== "kas") {
+    const datelessRows = await fetchAllRows((from, to) => pipeline
+      .from("invoices")
+      .select("status, direction, receiver_id")
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .is("invoice_date", null)
+      .order("id", { ascending: true }).range(from, to));
+    datelessVerifiedCount = datelessRows.filter((i) => {
+      const dir = effDir(i);
+      return dir === "incoming" ? INCOMING_OK.has(i.status ?? "") : OUTGOING_OK.has(i.status ?? "");
+    }).length;
+  }
 
   return {
     result,
     datelessVerifiedCount,
+    undatedPaidCount,
+    estimatedPortionCount,
+    scheme,
     reconciliation: {
       totalCommission: triangle.totalCommission,
       commissionBooked: commissionToBook,

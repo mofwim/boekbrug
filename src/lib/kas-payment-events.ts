@@ -105,6 +105,96 @@ export function buildSettlementEvents(
   return out;
 }
 
+/** One raw settlement as it comes from the DB: a MAGNITUDE (unsigned) applied on a day, plus
+ *  whether the day is an estimate (marked_paid_at) or null (paid but no resolvable date). The
+ *  sign is derived from the invoice header, never trusted from the stored amount. */
+export interface RawSettlement {
+  invoiceId: string;
+  payDate: string | null;  // null → paid but undated (money we can't place in a quarter)
+  magnitude: number;       // abs gross applied
+  estimated: boolean;
+}
+
+/** An invoice header plus the total magnitude recorded as paid (to detect undated paid money). */
+export interface HeaderWithPaid extends InvoiceHeader {
+  amountPaidMagnitude: number;
+}
+
+/** The per-quarter settlement inputs the engine needs, assembled from raw rows. Pure. */
+export interface QuarterSettlements {
+  events: SettlementEvent[];             // in-window events (this quarter)
+  priorByInvoice: Map<string, PriorSettled>; // unrounded ex/btw booked in earlier quarters (F1 seed)
+  undatedPaidCount: number;              // invoices with paid money we could NOT date → block klaar
+  estimatedCount: number;               // invoices whose in-window date came from marked_paid_at
+}
+
+/**
+ * Assemble a quarter's settlement events from raw DB rows — the PURE core of fetchSettlementEvents,
+ * so the risky grouping/splitting logic is node-testable. For each invoice:
+ *   - sign each dated magnitude by the header (creditnota → negative),
+ *   - split into prior (< start) and in-window ([start,end]),
+ *   - seed the in-window closing detection with the prior gross (priorInc),
+ *   - compute the unrounded prior ex/btw slices → priorByInvoice (so the closing event books the
+ *     exact remainder and never re-books an earlier quarter),
+ *   - flag paid-but-undated money (amountPaidMagnitude beyond the dated total) so it is NEVER
+ *     silently under-declared — it raises undatedPaidCount, which the routes use to block klaar.
+ * Pure. `start`/`end`/dates are ISO 'YYYY-MM-DD'.
+ */
+export function buildQuarterSettlements(
+  headers: Map<string, HeaderWithPaid>,
+  raw: RawSettlement[],
+  start: string,
+  end: string,
+): QuarterSettlements {
+  const byInvoice = new Map<string, RawSettlement[]>();
+  for (const r of raw) {
+    if (!headers.has(r.invoiceId)) continue; // ignore rows for invoices we don't own/know
+    (byInvoice.get(r.invoiceId) ?? byInvoice.set(r.invoiceId, []).get(r.invoiceId)!).push(r);
+  }
+
+  const events: SettlementEvent[] = [];
+  const priorByInvoice = new Map<string, PriorSettled>();
+  let undatedPaidCount = 0;
+  let estimatedCount = 0;
+
+  for (const [invoiceId, recs] of byInvoice) {
+    const header = headers.get(invoiceId)!;
+    const sign = header.totalInc >= 0 ? 1 : -1;
+
+    const dated = recs.filter((r) => r.payDate && r.payDate <= end);
+    const datedMagnitude = dated.reduce((s, r) => s + Math.abs(r.magnitude), 0);
+    // Paid money we could NOT date (undated rows, or amount_paid beyond what dated rows explain)
+    // must never vanish: flag the invoice so klaar/aangifte block instead of under-declaring.
+    const undatedMagnitude = Math.max(0, header.amountPaidMagnitude - datedMagnitude);
+    const hasUndated =
+      recs.some((r) => !r.payDate) || undatedMagnitude > SETTLEMENT_CLOSE_SLACK;
+    if (hasUndated) undatedPaidCount++;
+
+    const toRec = (r: RawSettlement) => ({ payDate: r.payDate as string, amountApplied: Math.abs(r.magnitude) * sign, estimated: r.estimated });
+    const sortByDate = (a: { payDate: string }, b: { payDate: string }) => (a.payDate < b.payDate ? -1 : a.payDate > b.payDate ? 1 : 0);
+    const prior = dated.filter((r) => (r.payDate as string) < start).map(toRec).sort(sortByDate);
+    const inWindow = dated.filter((r) => (r.payDate as string) >= start).map(toRec).sort(sortByDate);
+
+    // Unrounded prior slices (the F1 seed): run the tested core over prior records.
+    const priorInc = prior.reduce((s, r) => s + r.amountApplied, 0);
+    if (prior.length > 0) {
+      const priorEvents = buildSettlementEvents(header, 0, prior);
+      const priorSlices = computeSettlementSlices(priorEvents, new Map());
+      priorByInvoice.set(invoiceId, {
+        ex: priorSlices.reduce((s, x) => s + x.ex, 0),
+        btw: priorSlices.reduce((s, x) => s + x.btw, 0),
+      });
+    }
+
+    if (inWindow.length > 0) {
+      events.push(...buildSettlementEvents(header, priorInc, inWindow));
+      if (inWindow.some((r) => r.estimated)) estimatedCount++;
+    }
+  }
+
+  return { events, priorByInvoice, undatedPaidCount, estimatedCount };
+}
+
 /**
  * Turn settlement events into per-quarter omzet/BTW slices. Processes events in date order,
  * seeding each invoice's running total from `prior` (unrounded cumulative from earlier quarters).
