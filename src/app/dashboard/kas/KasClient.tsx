@@ -11,6 +11,7 @@ import { BackLink } from '@/components/ui/BackLink'
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
   surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
+  warning: '#E37400', // [COHERENCE-KAS-UPLOAD] calm amber for "couldn't read — check bestanden"
   primaryContainer: '#D3E3FD',
 }
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -64,7 +65,17 @@ function todayIso(): string {
 export default function KasClient() {
   const [entries, setEntries] = useState<Entry[]>([])
   const [balance, setBalance] = useState(0)
+  // [KAS-OPENING] the drawer's starting float (beginsaldo) — a config value the owner sets once.
+  const [openingBalance, setOpeningBalance] = useState(0)
+  const [openingEdit, setOpeningEdit] = useState(false)
+  const [openingInput, setOpeningInput] = useState('')
+  const [openingSaving, setOpeningSaving] = useState(false)
   const [loading, setLoading] = useState(true)
+  // [COHERENCE-ERRSTATE] Distinguish "loaded, drawer is empty" from "load failed".
+  // Without this, a /api/cash failure was swallowed and the page showed a reassuring
+  // €0,00 saldo + "Nog geen kasboekingen" — a false money figure indistinguishable
+  // from a fresh account (locked constraint #3: no false reassurance).
+  const [loadError, setLoadError] = useState(false)
 
   const [direction, setDirection] = useState<'in' | 'out'>('in')
   const [amount, setAmount] = useState('')
@@ -104,8 +115,24 @@ export default function KasClient() {
     try {
       const res = await fetch('/api/cash')
       const json = await res.json()
-      if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0) }
-    } catch { /* silent */ } finally { setLoading(false) }
+      if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0); setOpeningBalance(json.openingBalance ?? 0); setLoadError(false) }
+      else { setLoadError(true) }
+    } catch { setLoadError(true) } finally { setLoading(false) }
+  }
+
+  // [KAS-OPENING] Persist the starting float, then reload so the saldo reflects it immediately.
+  async function saveOpeningBalance() {
+    const val = Number((openingInput || '').replace(',', '.'))
+    if (!Number.isFinite(val) || val < 0) { setError('Beginsaldo moet 0 of hoger zijn'); return }
+    setOpeningSaving(true)
+    try {
+      const res = await fetch('/api/cash', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kas_opening_balance: val }),
+      })
+      if (res.ok) { setOpeningEdit(false); await load() }
+      else { const j = await res.json().catch(() => ({})); setError(j.error || 'Kon beginsaldo niet opslaan') }
+    } catch { setError('Verbinding mislukt') } finally { setOpeningSaving(false) }
   }
   // Initial load — inline async IIFE so no setState runs synchronously in the effect.
   useEffect(() => {
@@ -114,8 +141,11 @@ export default function KasClient() {
       try {
         const res = await fetch('/api/cash')
         const json = await res.json()
-        if (!cancelled && res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0) }
-      } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
+        if (!cancelled) {
+          if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0); setOpeningBalance(json.openingBalance ?? 0); setLoadError(false) }
+          else { setLoadError(true) }
+        }
+      } catch { if (!cancelled) setLoadError(true) } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
   }, [])
@@ -152,7 +182,11 @@ export default function KasClient() {
   // aftrekbaar. It is deliberately NOT a manual cash 'kosten' entry (that would drop the
   // voorbelasting and double-count once the same receipt is booked as an invoice).
   const [cashUploading, setCashUploading] = useState(false)
-  const [cashUploadMsg, setCashUploadMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  // [COHERENCE-KAS-UPLOAD] The link target depends on WHERE the file actually landed:
+  // a recognised invoice/receipt goes to the verify queue (Te verifiëren); an
+  // unreadable/unrecognised photo goes to Mijn bestanden. The success link must point
+  // to the real destination, never blindly to the verify queue on any res.ok.
+  const [cashUploadMsg, setCashUploadMsg] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string; link?: { href: string; label: string } } | null>(null)
   const cashFileRef = useRef<HTMLInputElement | null>(null)
 
   async function uploadCashInvoice(file: File) {
@@ -164,8 +198,23 @@ export default function KasClient() {
       form.append('paid_date', date) // the date chosen in the form above (defaults to today)
       const res = await fetch('/api/intake', { method: 'POST', body: form })
       const json = await res.json().catch(() => ({}))
-      if (res.ok) {
-        setCashUploadMsg({ kind: 'ok', text: 'Bon toegevoegd. Bevestig ‘contant betaald’ in Te verifiëren — daarna staat de betaling automatisch in je kasboek.' })
+      if (res.ok && json?.destination === 'document') {
+        // [COHERENCE-KAS-UPLOAD] The AI could not read the photo or did not recognise
+        // it as an invoice/bon, so paid_method=kas was NOT applied and the file went to
+        // Mijn bestanden — NOT the verify queue. Showing "bevestig in Te verifiëren"
+        // here would send the owner to an empty queue and the cash payment would never
+        // be booked. Surface the server's honest message + a link to where it actually is.
+        setCashUploadMsg({
+          kind: 'warn',
+          text: json?.message || 'We konden dit document niet lezen. Het staat in je bestanden — controleer het, of upload een duidelijkere foto als het een factuur of bon is.',
+          link: { href: `/dashboard/bestanden${json?.folder_id ? `?folder=${json.folder_id}` : ''}`, label: 'Ga naar Mijn bestanden →' },
+        })
+      } else if (res.ok) {
+        setCashUploadMsg({
+          kind: 'ok',
+          text: 'Bon toegevoegd. Bevestig ‘contant betaald’ in Te verifiëren — daarna staat de betaling automatisch in je kasboek.',
+          link: { href: '/dashboard/incoming', label: 'Ga naar Te verifiëren →' },
+        })
       } else if (json?.duplicate) {
         setCashUploadMsg({ kind: 'err', text: 'Deze bon staat er al — hij is eerder toegevoegd.' })
       } else {
@@ -195,14 +244,61 @@ export default function KasClient() {
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
         <BackLink style={{ color: M3.primary }} />
 
+        {/* [COHERENCE-ERRSTATE] A failed load must NOT show a reassuring €0,00 saldo that
+            looks like an empty drawer. Show the number ONLY when the data actually loaded;
+            on error surface an honest banner with a retry instead of a false money figure. */}
+        {loadError && (
+          <div style={{ margin: '16px 0 0', background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 16px' }}>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>We konden je kassaldo niet laden</div>
+            <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 4 }}>
+              Het bedrag hieronder is daarom <strong>niet</strong> je echte saldo. Probeer het opnieuw.
+            </div>
+            <button
+              type="button"
+              onClick={() => { setLoading(true); void load() }}
+              style={{ marginTop: 10, padding: '8px 16px', borderRadius: 10, border: 'none', background: M3.primary, color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Opnieuw proberen
+            </button>
+          </div>
+        )}
+
         {/* Balance */}
         <div style={{ margin: '16px 0 20px' }}>
           <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>KAS — SALDO IN KASSA</div>
-          <div style={{ fontFamily: FONT_NUM, fontSize: 34, fontWeight: 700, color: balance < 0 ? M3.error : M3.onSurface, marginTop: 4 }}>
-            {eur.format(balance)}
+          <div style={{ fontFamily: FONT_NUM, fontSize: 34, fontWeight: 700, color: loadError ? M3.neutral : balance < 0 ? M3.error : M3.onSurface, marginTop: 4 }}>
+            {loadError ? '—' : eur.format(balance)}
           </div>
           {balance < 0 && (
             <div style={{ fontSize: 12.5, color: M3.error, marginTop: 2 }}>Negatief saldo — je hebt meer uitgaven dan ontvangsten geboekt.</div>
+          )}
+          {/* [KAS-OPENING] Beginsaldo — the cash already in the drawer when you started. Included in
+              the saldo above; not counted as omzet. Set it once so the saldo matches reality. */}
+          {!openingEdit ? (
+            <button
+              type="button"
+              onClick={() => { setOpeningInput(openingBalance ? String(openingBalance).replace('.', ',') : ''); setOpeningEdit(true); setError('') }}
+              style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: M3.neutral, textAlign: 'left' }}
+            >
+              Beginsaldo kas: <strong style={{ color: M3.onSurface }}>{eur.format(openingBalance)}</strong> · wijzigen
+            </button>
+          ) : (
+            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12.5, color: M3.neutral }}>Beginsaldo kas €</span>
+              <input
+                inputMode="decimal" value={openingInput} onChange={(e) => setOpeningInput(e.target.value)}
+                placeholder="0,00" autoFocus
+                style={{ width: 90, padding: '6px 8px', borderRadius: 8, border: `1px solid ${M3.outlineVariant}`, fontSize: 14, fontFamily: FONT_NUM }}
+              />
+              <button type="button" onClick={saveOpeningBalance} disabled={openingSaving}
+                style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                {openingSaving ? 'Bezig…' : 'Opslaan'}
+              </button>
+              <button type="button" onClick={() => { setOpeningEdit(false); setError('') }}
+                style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${M3.outlineVariant}`, background: 'none', fontSize: 13, cursor: 'pointer', color: M3.neutral }}>
+                Annuleren
+              </button>
+            </div>
           )}
         </div>
 
@@ -225,10 +321,10 @@ export default function KasClient() {
             {cashUploading ? 'Bezig met uploaden…' : '📄 Bon uploaden'}
           </button>
           {cashUploadMsg && (
-            <div style={{ marginTop: 10, fontSize: 12.5, color: cashUploadMsg.kind === 'ok' ? M3.success : M3.error, lineHeight: 1.45 }}>
+            <div style={{ marginTop: 10, fontSize: 12.5, color: cashUploadMsg.kind === 'ok' ? M3.success : cashUploadMsg.kind === 'warn' ? M3.warning : M3.error, lineHeight: 1.45 }}>
               {cashUploadMsg.text}
-              {cashUploadMsg.kind === 'ok' && (
-                <> <a href="/dashboard/incoming" style={{ color: M3.primary, fontWeight: 600 }}>Ga naar Te verifiëren →</a></>
+              {cashUploadMsg.link && (
+                <> <a href={cashUploadMsg.link.href} style={{ color: M3.primary, fontWeight: 600 }}>{cashUploadMsg.link.label}</a></>
               )}
             </div>
           )}
@@ -301,6 +397,10 @@ export default function KasClient() {
         <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral, margin: '0 2px 10px' }}>BOEKINGEN</div>
         {loading ? (
           <div style={{ height: 80, borderRadius: 16, background: '#f1f3f4' }} />
+        ) : loadError ? (
+          <div style={{ background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.onSurface, fontSize: 14 }}>
+            Kon de boekingen niet laden. Dit is <strong>niet</strong> hetzelfde als een lege kas — probeer het opnieuw.
+          </div>
         ) : entries.length === 0 ? (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 16, padding: '24px 20px', textAlign: 'center', color: M3.neutral, fontSize: 14 }}>
             Nog geen kasboekingen. Voeg je eerste contante ontvangst of uitgave toe.

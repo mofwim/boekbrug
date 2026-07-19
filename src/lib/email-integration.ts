@@ -1664,6 +1664,10 @@ export async function syncUserEmails(
   // [COULD-NOT-READ] Attachments we could NOT read (API reject / unsupported /
   // unparseable) — kept in bestanden for the owner, NOT asserted "not an invoice".
   let couldNotRead = 0
+  // [BANK-LINK] Count of invoices that auto-advanced straight to 'received' this run.
+  // Only a 'received' invoice is matchable by the bank engine (EXCLUDED_STATUSES bars
+  // 'processing'), so we only bother running the linker post-loop when this is > 0.
+  let autoAdvanced = 0
 
   // [BOEK-011] resolveImportTarget owned by BOEK-033 — places file in correct folder
   const { resolveImportTarget } = await import('@/lib/bestanden')
@@ -1694,11 +1698,14 @@ export async function syncUserEmails(
     classification: Awaited<ReturnType<typeof classifyAttachment>>
     // [BOEK-011] true = transient error (retry next sync), never registry-skip
     classifyFailed: boolean
-    // [MODEL-OUTAGE] true = the failure is an APP-WIDE model/config error (e.g. an invalid
-    // CLAUDE_MODEL → HTTP 404 not_found), not this file's fault. Such a failure must NEVER count
-    // toward the poison-pill give-up — otherwise a few hours of a misconfigured model would bury
-    // EVERY real invoice as 'could_not_read'. It only holds the watermark until the model is fixed.
-    modelError?: boolean
+    // [MODEL-OUTAGE] configOutage = an APP-WIDE model/config error (invalid CLAUDE_MODEL → 404,
+    // auth/permission), always an outage-hold. transientError = a capacity/network error (529/5xx/
+    // 429/network) which is an outage-hold ONLY when the whole batch is failing (decided post-map) —
+    // a lone transient failure still poison-pills so one stuck file can't freeze the watermark.
+    // (This supersedes main's single `modelError` field — configOutage uses the identical regex and
+    // transientError adds the capacity-outage case, so no case main handled is lost.)
+    configOutage?: boolean
+    transientError?: boolean
   }
 
   // Mini concurrency limiter — no external dep. Inline so the helper stays
@@ -1958,12 +1965,30 @@ export async function syncUserEmails(
         // fault, so it must never be counted toward the poison-pill give-up (which would bury real
         // invoices as 'could_not_read'). It just holds the watermark until the model is fixed.
         const msg = err instanceof Error ? err.message : String(err)
-        const modelError = /not_found_error|404|authentication_error|permission_error|invalid[_ ]?api|model:/i.test(msg)
+        // [MODEL-OUTAGE] Two kinds of "not this file's fault" failure must HOLD the watermark and
+        // never poison-pill a real invoice:
+        //   (a) a CONFIG outage — invalid CLAUDE_MODEL id (404 not_found), auth/permission.
+        //   (b) a CAPACITY / transient outage — Anthropic 529 overloaded, 5xx, 429, network. A 5xx/
+        //       overloaded is the SERVER's state, never a verdict on this attachment, so a sustained
+        //       outage (e.g. ~3h overloaded) must not, after the retry budget, bury every real
+        //       invoice fetched during it as 'could_not_read'. isTransientAiError (shared with the
+        //       reader) recognises exactly these. A genuinely unreadable file does NOT throw one of
+        //       these — it returns a low-confidence FALLBACK (the could_not_read path below) — so the
+        //       poison-pill still protects the watermark against a truly stuck single file.
+        const { isTransientAiError } = await import('@/lib/ai')
+        // A CONFIG outage (invalid CLAUDE_MODEL → 404, auth/permission) is inherently app-wide, so it
+        // is ALWAYS an outage-hold. A TRANSIENT/CAPACITY error (529/5xx/429/network) is only an
+        // outage when the WHOLE batch is failing — a single file that deterministically produces a
+        // transient-looking error (e.g. a large PDF that always times out) must still poison-pill so
+        // it can't freeze the watermark forever. That batch-wide decision is made AFTER this map.
+        const configOutage = /not_found_error|404|authentication_error|permission_error|invalid[_ ]?api|model:/i.test(msg)
+        const transientError = isTransientAiError(err)
         return {
           attachment,
           classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
           classifyFailed: true,
-          modelError,
+          configOutage,
+          transientError,
         }
       }
     }
@@ -1975,16 +2000,32 @@ export async function syncUserEmails(
   // the watermark must not advance past them (they need a re-fetch to retry).
   const completedKeys = new Set<string>()
 
+  // [MODEL-OUTAGE] Decide, batch-wide, whether a TRANSIENT classify failure is a real outage or a
+  // single stuck file. A config outage anywhere ⇒ app-wide outage. Otherwise a transient error is an
+  // outage only when EVERY attachment this run failed (≥2, so nothing classified successfully) —
+  // proof the service is down, not that one file is bad. If some attachments succeeded, the service
+  // is up, so a transient failure on another file is that-file-specific and must still poison-pill
+  // (else a single deterministically-timing-out PDF would freeze the watermark forever, re-opening
+  // the exact bug the poison-pill prevents).
+  const classifiedTotal = classified.length
+  const classifiedFailed = classified.filter((c) => c.classifyFailed).length
+  const configOutageAny = classified.some((c) => c.configOutage)
+  const transientOutage = classifiedTotal >= 2 && classifiedFailed === classifiedTotal
+  const outageActive = configOutageAny || transientOutage
+
   // PHASE 2 — save loop, sequential by design (dedup correctness)
-  for (const { attachment, classification, classifyFailed, modelError } of classified) {
+  for (const { attachment, classification, classifyFailed, configOutage, transientError } of classified) {
     const wmKey = `${attachment.messageId}:${attachment.filename}`
+    // An outage-hold when: a config outage (always), or a transient error DURING a batch-wide outage.
+    // A lone transient failure (some files succeeded) is NOT an outage → it takes the poison-pill path.
+    const outageHold = configOutage || (transientError && outageActive)
     try {
       // [MODEL-OUTAGE] An app-wide model/config failure (invalid CLAUDE_MODEL → 404, auth) is not
       // this file's fault. NEVER count it toward the poison-pill give-up and NEVER register it as
       // could_not_read — just leave the watermark held so the invoice is re-read once the model is
       // fixed. Otherwise a misconfigured model for a few hours would permanently bury every real
       // invoice fetched during the outage (exactly what a bad model id did to the HVO invoices).
-      if (classifyFailed && modelError) {
+      if (classifyFailed && outageHold) {
         errors++
         continue
       }
@@ -2189,6 +2230,18 @@ export async function syncUserEmails(
         kvk: classification.vendorKvk ?? null,
         btw: classification.vendorBtw ?? null,
       })
+
+      // [SUPPLIER-LEARN] Enrich a MISSING vendor IBAN from what we already learned about this
+      // supplier — a PRIOR invoice taught the registry its IBAN. Pure identity: it NEVER overwrites
+      // a read (only fills a blank), and it directly feeds the bank certain-tier auto-match
+      // (IBAN + amount), so a later invoice whose IBAN the reader couldn't find still auto-
+      // reconciles against the bank instead of waiting for a manual confirm. One query, only when
+      // the read left vendor_iban blank.
+      let learnedVendorIban: string | null = null
+      if (supplier?.id && !classification.vendorIban) {
+        const { data: sup } = await supabase.from('suppliers').select('iban').eq('id', supplier.id).maybeSingle()
+        learnedVendorIban = sup?.iban ?? null
+      }
 
       if (typeof classification.totalIncBtw === 'number') {
         const numberIsReal = !isPlaceholderInvoiceNumber(classification.invoiceNumber)
@@ -2601,7 +2654,7 @@ export async function syncUserEmails(
           source_message_id: dedupKey,
           // [PAY-SAFE-EXTRACT] vendor payment details — null when the AI didn't
           // find them (prepares a future payment; never processes money).
-          vendor_iban: classification.vendorIban ?? null,
+          vendor_iban: classification.vendorIban ?? learnedVendorIban ?? null,
           payment_reference: classification.paymentReference ?? null,
           // [BRIDGE-EXTRACT] per-field AI confidence + [BOEK-SAFECORE] _safecore
           // hold reason (merged when held; null when nothing to store).
@@ -2664,6 +2717,11 @@ export async function syncUserEmails(
       } else {
         saved++
         completedKeys.add(wmKey) // [watermark] saved = complete
+        // [BANK-LINK] Remember that a matchable ('received') invoice landed this run, so we can
+        // run the safe bank linker ONCE after the loop (not per-invoice — the engine scans the
+        // whole statement each call). Only auto-advanced invoices are eligible: a held/processing
+        // one is barred by EXCLUDED_STATUSES anyway.
+        if (autoAdv.advance && verdict.ok) autoAdvanced++
 
         // [BOEK-SAFECORE] When held for an arithmetic problem, audit it —
         // truth in the log. Non-fatal. (Only on a held invoice; a clean
@@ -2856,6 +2914,21 @@ export async function syncUserEmails(
         '[BOEK-011] Watermark held — oldest fetched email not yet complete (transient failure or batch boundary)'
       )
     }
+    }
+  }
+
+  // [BANK-LINK] Close the circle immediately for invoices that auto-advanced to 'received' this
+  // run. Their payment may already be sitting in an imported bank statement (this is exactly the
+  // gap where invoice 26703066 showed "24 dagen te laat" while its €771,72 batch afschrijving sat
+  // matched-but-unlinked). Run the SAME safe engine the daily cron runs — it books ONLY provably
+  // exact reference+amount / iban+amount / exact-batch matches — so there is no risk of a wrong
+  // link, just an earlier one. Best-effort and non-fatal: a failure defers to the cron / /bank page.
+  if (autoAdvanced > 0) {
+    try {
+      const { runBankAutoConfirm } = await import('@/lib/bank-auto-confirm')
+      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId })
+    } catch (e) {
+      console.error('[BANK-LINK] post-import auto-confirm failed (non-fatal)', e)
     }
   }
 

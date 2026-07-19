@@ -17,9 +17,11 @@ import type { PipelineClient } from "./supabase-pipeline";
 import { fetchAllRows } from "./supabase-paginate";
 import {
   matchTransactions,
-  isSafeAutoConfirm,
+  autoConfirmTier,
   isEligible,
+  type AutoConfirmTier,
   type InvoiceForMatching,
+  type TransactionMatch,
 } from "./bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
@@ -61,7 +63,7 @@ export async function runBankAutoConfirm(args: {
   const invRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, amount_paid")
       .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
       .neq("status", "paid")
       .order("id", { ascending: true })
@@ -70,13 +72,26 @@ export async function runBankAutoConfirm(args: {
   if (txRows.length === 0 || invRows.length === 0) return [];
 
   const transactions = (txRows as BankTransactionDbRow[]).map((r) => rowToTransaction(r));
-  const invoices = invRows as InvoiceForMatching[];
+  const allInvoices = invRows as (InvoiceForMatching & { amount_paid?: number | null })[];
+  // [PARTIAL-PAY] Auto-confirm books full-amount matches by writing status='paid' directly (not
+  // via apply_bank_payment), so it must NEVER touch an invoice that is mid-instalment (amount_paid
+  // > 0): a full-amount payment landing on a partially-settled invoice would over-pay it. Those are
+  // left for the human to complete through the partial-aware confirm route (which caps at the
+  // remaining balance). A fully-unpaid invoice (amount_paid 0) is unaffected — the common case.
+  const invoices = allInvoices.filter((i) => Math.max(0, Number(i.amount_paid ?? 0)) === 0);
+  if (invoices.length === 0) return [];
   const invById = new Map(invoices.map((i) => [i.id, i]));
   const result = matchTransactions(transactions, invoices);
-  const safe = result.matches.filter(isSafeAutoConfirm);
+  // [BANK-AMOUNT-ONLY] Book BOTH auto tiers. 'certain' (printed number / IBAN + amount) is booked
+  // silently; 'amount_only' (exact amount + matching counterpart name, single clear winner) is
+  // booked too but tagged auto_match_reason='amount_only' so the Gekoppeld tab flags it
+  // "controleer". Both use the identical money discipline below and both are one-tap reversible.
+  const autoMatches = result.matches
+    .map((m): { m: TransactionMatch; tier: AutoConfirmTier | null } => ({ m, tier: autoConfirmTier(m) }))
+    .filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
 
   const confirmed: AutoConfirmed[] = [];
-  for (const m of safe) {
+  for (const { m, tier } of autoMatches) {
     const txId = m.transaction.transactionId;
     const invoiceId = m.best?.invoiceId;
     if (!txId || !invoiceId) continue;
@@ -99,9 +114,17 @@ export async function runBankAutoConfirm(args: {
     if (!payData || payData.length === 0) continue; // concurrently paid — not ours to link
 
     // (b) link the bank line → matched (single invoice ⇒ fully covered). 0 rows ⇒ roll back.
+    //     'amount_only' also stamps auto_match_reason so the UI can flag it "controleer". The
+    //     column is set ONLY for that tier, so a not-yet-applied migration leaves the 'certain'
+    //     path untouched (it never writes the column) — those keep booking; an 'amount_only' write
+    //     would just error → roll back → that one line stays a one-tap manual confirm (safe).
+    const linkPayload: Record<string, unknown> = { status: "matched", invoice_id: invoiceId };
+    if (tier === "amount_only") linkPayload.auto_match_reason = "amount_only";
     const { data: linkData, error: linkErr } = await pipeline
       .from("bank_transactions")
-      .update({ status: "matched", invoice_id: invoiceId })
+      // auto_match_reason is added by bank_auto_match_reason.sql and not yet in the generated types.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update(linkPayload as any)
       .eq("id", txId)
       .eq("user_id", userId)
       .eq("status", "pending")
@@ -127,7 +150,7 @@ export async function runBankAutoConfirm(args: {
       action: "bank.auto_confirmed",
       entityType: "invoice",
       entityId: invoiceId,
-      newValue: { transaction_id: txId, invoice_number: inv.invoice_number, amount: m.transaction.amount ?? 0, reason: "near_certain_reference_amount" },
+      newValue: { transaction_id: txId, invoice_number: inv.invoice_number, amount: m.transaction.amount ?? 0, tier, reason: tier === "amount_only" ? "amount_counterpart_single" : "near_certain_reference_amount" },
     });
   }
 
@@ -155,42 +178,27 @@ export async function runBankAutoConfirm(args: {
     const tx = rowToTransaction(row);
     if (!planInvs.every((inv) => isEligible(tx, inv))) continue; // accountant-'verwerkt' + invariants
 
-    // Pay every invoice in the tie. Track the ones WE flipped so a failure rolls back cleanly —
-    // a batch must be all-or-nothing, never a half-booked payment.
-    const flipped: string[] = [];
-    let ok = true;
-    for (const inv of planInvs) {
-      const { data, error } = await payClient
-        .from("invoices")
-        .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: tx.date || null })
-        .eq("id", inv.id).neq("status", "paid").select("id");
-      if (error) { ok = false; break; }            // verwerkt/RLS/other → abort the batch
-      if (data && data.length > 0) flipped.push(inv.id);
-      // data empty ⇒ concurrently paid by id ⇒ still covered ⇒ continue
-    }
-    const rollback = async () => {
-      for (const id of flipped) {
-        const inv = invById.get(id);
-        await payClient.from("invoices")
-          .update({ status: inv?.status ?? "received", payment_method: null, marked_paid_at: null, payment_date: null })
-          .eq("id", id).eq("status", "paid");
-      }
-    };
-    if (!ok) { await rollback(); continue; }
-
-    // Link the bank line to the batch (status matched + a representative invoice_id — the same
-    // shape the manual allCovered path writes). A link race rolls the whole batch back.
-    const rep = plan.invoiceIds[plan.invoiceIds.length - 1];
-    const { data: linkData, error: linkErr } = await pipeline
-      .from("bank_transactions")
-      .update({ status: "matched", invoice_id: rep })
-      .eq("id", txId).eq("user_id", userId).eq("status", "pending").select("id");
-    if (linkErr || !linkData || linkData.length === 0) { await rollback(); continue; }
-
-    // [BANK-TX-INVOICES] Record EVERY invoice this batch paid (not just the representative), so the
-    // whole batch reverses by id — the reason the join table exists (a batch used to carry only one
-    // invoice_id, forcing an unsafe number-based reversal for the other N−1).
-    await recordPaymentLinks(pipeline, userId, txId, plan.invoiceIds);
+    // [BANK-BATCH-ATOMIC] Book the whole tie in ONE database transaction via book_bank_batch.
+    // The RPC locks the bank line FIRST (the mutex), re-verifies every invoice is still unpaid +
+    // not accountant-'verwerkt' under that lock, then pays them all, links the tx, and records the
+    // join rows — all-or-nothing. This closes the concurrent half-rollback the multi-statement
+    // path had: two overlapping runs over the same batch tx could leave one invoice unpaid while
+    // the tx showed 'matched' (and never retried). Now the loser blocks on the lock and gets an
+    // EMPTY result → skips. If any invoice turned unpayable in the window the whole batch aborts
+    // (error) and nothing is written. Reversal index (bank_tx_invoices) is written INSIDE the txn.
+    //
+    // Outcomes: rows returned ⇒ booked · empty (no error) ⇒ tx already claimed by a concurrent run
+    // ⇒ skip · error ⇒ an invoice is no longer payable (or the migration isn't applied yet) ⇒
+    // leave the whole batch for the human. Degrades safely: a missing function just means batches
+    // aren't auto-booked until book_bank_batch_atomic.sql is applied.
+    const { data: bookedRows, error: batchErr } = await payClient.rpc("book_bank_batch", {
+      p_user_id: userId,
+      p_tx_id: txId,
+      p_invoice_ids: plan.invoiceIds,
+      p_pay_date: tx.date || null,
+    });
+    if (batchErr) continue;                                        // not payable / not applied → skip
+    if (!bookedRows || (bookedRows as unknown[]).length === 0) continue; // tx already claimed → skip
 
     for (const inv of planInvs) {
       confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0 });

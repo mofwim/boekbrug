@@ -78,6 +78,9 @@ interface IncomingRow {
   accountant_status: string | null       // 'verwerkt' etc. — read-only badge
   direction: string
   total_inc_btw: number | null
+  // [PARTIAL-PAY] running total already settled by instalments (0 when fully open). A value between
+  // 0 and |total_inc_btw| means the invoice is a deelbetaling: still openstaand, part paid.
+  amount_paid?: number | null
   total_ex_btw: number | null
   btw_amount: number | null
   invoice_date: string | null
@@ -405,31 +408,21 @@ export default function IncomingManageClient({
     setPayCtx(null); setProcessingId(ctx.id)
     patchLocal(ctx.id, { status: ctx.newStatus })
 
-    // Tight, specific update: status + payment fields. Never amounts (B.4 guards
-    // them, and we don't even include them). Session client → auth.uid()=receiver
-    // → B.4 receiver-exclusion fires → write passes for a non-verwerkt invoice.
-    const patch: Record<string, any> = { status: ctx.newStatus }
-    if (ctx.newStatus === 'paid') {
-      patch.payment_method = ctx.paymentMethod ?? 'bank'
-      patch.marked_paid_at = new Date().toISOString()
-      patch.payment_date   = ctx.paymentDate ?? new Date().toISOString().slice(0, 10)
-      // [PAY-SAFE-CONFIRM] Confirmed paid → the "prepared" marker has served
-      // its purpose; clear it so a paid row never shows "wacht op bevestiging".
-      patch.payment_prepared_at = null
-    } else {
-      patch.payment_method = null
-      patch.marked_paid_at = null
-      patch.payment_date   = null
-      // [PAY-SAFE-CONFIRM] Undo paid → back to a clean unpaid row, no stale marker.
-      patch.payment_prepared_at = null
-    }
-
-    const { error } = await supabase
-      .from('invoices')
-      .update(patch)
-      .eq('id', ctx.id)
-      .eq('receiver_id', profile.id)        // ownership guard (incoming → receiver)
-      .eq('direction', 'incoming')
+    // [PAY-TOGGLE] Route through the server so the mutation is AUDITED and — crucially on undo —
+    // any bank transaction matched to this invoice is DETACHED (never a paid-undone invoice beside
+    // a still-'matched' tx that the owner could pay a second time). The old direct client write did
+    // neither.
+    const res = await fetch('/api/invoice/pay-toggle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceId: ctx.id,
+        action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
+        paymentMethod: ctx.paymentMethod ?? 'bank',
+        paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+      }),
+    })
+    const json = await res.json().catch(() => ({} as { error?: string }))
+    const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
 
     if (error) {
       // rollback optimistic
@@ -443,6 +436,10 @@ export default function IncomingManageClient({
         showToast(error.message || 'Bijwerken mislukt')
       }
     } else if (ctx.newStatus === 'paid') {
+      const patch = {
+        payment_method: (ctx.paymentMethod ?? 'bank') as 'kas' | 'bank',
+        payment_date: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+      }
       // reflect the new payment fields locally
       patchLocal(ctx.id, {
         payment_method: patch.payment_method,
@@ -721,6 +718,27 @@ export default function IncomingManageClient({
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>
+
+                      {/* [PARTIAL-PAY] Deelbetaling — part already settled, rest openstaand. Only
+                          while 0 < amount_paid < |total| (a fully-paid invoice shows the 'paid'
+                          chip instead). Makes the running balance visible where the owner pays. */}
+                      {(() => {
+                        const paid = Math.max(0, inv.amount_paid ?? 0)
+                        const tot = Math.abs(inv.total_inc_btw ?? 0)
+                        if (!(paid > 0.005 && paid < tot - 0.005)) return null
+                        const remaining = Math.max(0, tot - paid)
+                        return (
+                          <span
+                            title={`Deelbetaling: € ${paid.toFixed(2)} van € ${tot.toFixed(2)} betaald`}
+                            style={{
+                              fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
+                              border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Deels betaald · € {remaining.toFixed(2)} open
+                          </span>
+                        )
+                      })()}
 
                       {/* received → confirm payment (gated by no-double-pay check).
                           After prepare, becomes a prominent "Ik heb betaald" CTA

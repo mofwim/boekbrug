@@ -54,7 +54,13 @@ export async function GET(req: NextRequest) {
     description: r.description,
   }));
 
-  const opening = openingBalanceForQuarter({ turnover, entries, year, quarter: quarter as Quarter });
+  // [KAS-OPENING] Seed the very first period with the drawer's starting float so the Kasboek
+  // eindsaldo matches the headline saldo and reality. openingBalanceForQuarter then carries it
+  // forward through every prior quarter's movements.
+  const { data: prof } = await supabase.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle();
+  const startingBalance = Number((prof as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+
+  const opening = openingBalanceForQuarter({ turnover, entries, year, quarter: quarter as Quarter, startingBalance });
   const kb = buildKasboek({ turnover, entries, year, quarter: quarter as Quarter, openingBalance: opening });
 
   if (format === "xlsx") {

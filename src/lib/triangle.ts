@@ -84,13 +84,44 @@ export function reconcileTriangle(input: TriangleInput): TriangleResult {
   const tillByDay = new Map<string, DailyTurnover>();
   for (const t of input.turnover) tillByDay.set(t.turnover_date, t);
 
+  // [TRIANGLE-LAG] Acquirer payouts post T+0..T+2 after the takings day. When the bank line carries
+  // no "DAT." takings-date marker, bankNetByDay keyed it to the BOOKING day — a different day than
+  // eftGross (keyed to the takings day). That split the pair (eftGross on day D with no bankNet, a
+  // payout on D+1 with no eftGross), so Leg B commission was never booked and the fee silently
+  // vanished. Re-attribute a payout that lands on a PURE settlement day (no eft AND no till of its
+  // own) back to the nearest EARLIER takings day within the lag window that still lacks a payout —
+  // so the gross↔net pair reunites and commission = gross − net is booked. Same-day payouts are
+  // untouched; a payout with a genuine same-day eft/till keeps its day.
+  const LAG_DAYS = 3;
+  const dayMs = 86_400_000;
+  const bankByDay = new Map<string, number>(input.bankNetByDay ?? []);
+  const hasCardActivity = (d: string) => eftByDay.has(d) || (tillByDay.get(d)?.pin_amount ?? null) != null;
+  for (const [payoutDay, net] of [...bankByDay.entries()].sort()) {
+    if (hasCardActivity(payoutDay)) continue; // a real card day keeps its own payout
+    const pt = Date.parse(payoutDay);
+    if (Number.isNaN(pt)) continue;
+    let target: string | null = null;
+    for (let back = 1; back <= LAG_DAYS && !target; back++) {
+      const cand = new Date(pt - back * dayMs).toISOString().slice(0, 10);
+      // Pull back only to a takings day that HAS card activity and does NOT already carry a payout.
+      if (hasCardActivity(cand) && !bankByDay.has(cand)) target = cand;
+    }
+    if (target) {
+      bankByDay.set(target, r2((bankByDay.get(target) ?? 0) + net));
+      bankByDay.delete(payoutDay);
+      days.add(target);
+    }
+  }
+  // The re-attribution may have emptied some payout days; rebuild the day set from what remains.
+  for (const d of bankByDay.keys()) days.add(d);
+
   const inputs: CardDayInput[] = [...days].sort().map((date) => {
     const till = tillByDay.get(date);
     return {
       date,
       tillPin: till ? till.pin_amount : null,
       eftGross: eftByDay.has(date) ? eftByDay.get(date)! : null,
-      bankNet: input.bankNetByDay?.has(date) ? input.bankNetByDay.get(date)! : null,
+      bankNet: bankByDay.has(date) ? bankByDay.get(date)! : null,
       ledgerPin: input.pinLedgerByDay?.has(date) ? input.pinLedgerByDay.get(date)! : null,
     };
   });

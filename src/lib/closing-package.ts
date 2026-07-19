@@ -36,6 +36,7 @@ import {
   type InvoiceForQuarterly,
 } from "./quarterly";
 import { calcBtwRate } from "./export";
+import { csvCell } from "./csv-safe";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
@@ -113,7 +114,11 @@ export interface ClosingPackageSummary {
   quarter: string;                   // "Q1 2026"
   outgoingCount: number;
   incomingCount: number;
-  filesIncluded: number;
+  filesIncluded: number;             // total files in the ZIP (invoices-with-PDF + bank + shared)
+  // [READINESS-EVIDENCE] How many INVOICES carry a source document (PDF). This is the ONLY
+  // invoice-evidence count; filesIncluded also folds in bank-statement + shared files and must
+  // NEVER be read as an invoice-evidence signal (that inflated readiness to a false 100%).
+  invoicesWithPdf: number;
   bankStatementIncluded: boolean;
   warnings: ClosingPackageWarning[];
   generatedAt: string;               // ISO
@@ -273,12 +278,11 @@ async function resolvePaymentDates(
   return result;
 }
 
-/** CSV cell escaper (semicolon-separated, Excel NL). */
+/** CSV cell escaper (semicolon-separated, Excel NL). Delegates to the shared csvCell so a
+ *  vendor-controlled cell (e.g. an AI-extracted supplier name '=HYPERLINK(...)') is
+ *  formula-injection-neutralised before it reaches the accountant's Excel — not just RFC-quoted. */
 function esc(v: string | number): string {
-  const s = String(v ?? "");
-  return s.includes(";") || s.includes("\n") || s.includes('"')
-    ? `"${s.replace(/"/g, '""')}"`
-    : s;
+  return csvCell(v);
 }
 
 /** Map a PackageInvoice to the quarterly lib's shape (computes btw_rate). */
@@ -473,6 +477,9 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
+  // [READINESS-EVIDENCE] Count INVOICE PDFs specifically (distinct from filesIncluded, which also
+  // folds in bank + shared files) so the summary can report a true invoices-with-evidence figure.
+  let invoicePdfCount = 0;
 
   let filesIncluded = 0;
 
@@ -533,6 +540,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 
       zip.file(`facturen-en-bonnen/${dir}/${bucket}/${baseName}.pdf`, bytes);
       filesIncluded++;
+      invoicePdfCount++;
     }
   }
 
@@ -637,6 +645,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     outgoingCount: outgoing.length,
     incomingCount: incoming.length,
     filesIncluded,
+    invoicesWithPdf: invoicePdfCount, // [READINESS-EVIDENCE] invoice-evidence count only
     bankStatementIncluded: bankFiles.length > 0,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -1012,6 +1021,7 @@ export async function summarizeClosingPackage(args: {
     // [C#3] Match what the ZIP actually ships: invoices-with-PDF + bank statement file(s)
     // + owner-shared docs for this quarter. (km is not a feature yet → 0.)
     filesIncluded: withPdf + bankFilePaths.length + shared.paths.length,
+    invoicesWithPdf: withPdf, // [READINESS-EVIDENCE] invoice-evidence count only
     bankStatementIncluded,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -1072,6 +1082,22 @@ export async function buildClosingPackageZip(args: {
   // Warn (with labels) so the accountant knows to assign a date instead of losing the BTW.
   const datelessZip = datelessWarning(await datelessVerifiedInvoices(supabase, ownerId));
   if (datelessZip) warnings.push(datelessZip);
+
+  // [PACKAGE-UNVERIFIED] Mirror the summary's 'unverified_in_queue' warning into the ACTUAL ZIP.
+  // Invoices still 'processing' (in the verify queue) are correctly excluded from the verified set,
+  // but without this the downloaded overzicht.json/csv carried NO mention of them — voorbelasting
+  // silently understated and the accountant had zero signal. The preview summary warned; the ZIP
+  // (the thing the accountant actually receives) did not. Same wording as summarizeClosingPackage.
+  const unverifiedInQuarterZip = all.filter((i) => i.status === "processing").length;
+  if (unverifiedInQuarterZip > 0) {
+    warnings.push({
+      code: "unverified_in_queue",
+      message:
+        unverifiedInQuarterZip === 1
+          ? "1 factuur staat nog in de verwerkingsrij — verifieer die voordat je afsluit."
+          : `${unverifiedInQuarterZip} facturen staan nog in de verwerkingsrij — verifieer ze voordat je afsluit.`,
+    });
+  }
 
   // ── Resolve PDF storage paths ──
   // outgoing → invoices.pdf_url ; incoming → documents.file_url via document_id.
@@ -1377,10 +1403,15 @@ export async function buildClosingPackageZip(args: {
   ).catch(() => []);
   const kasTurnover: KasTurnoverDay[] = (kasTurnoverRaw ?? []) as KasTurnoverDay[];
 
+  // [KAS-OPENING] Seed the first period with the drawer's starting float so the accountant's
+  // Kasboek eindsaldo matches the app's headline saldo and reality.
+  const { data: kasProf } = await supabase.from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
+  const kasStartingBalance = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+
   // Only emit the sheet when the drawer has any life this quarter (takings or movements).
   const kb = buildKasboek({
     turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter,
-    openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter }),
+    openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter, startingBalance: kasStartingBalance }),
   });
   const kasboekXlsx: Uint8Array | null =
     kb.months.length > 0 || kb.openingBalance !== 0

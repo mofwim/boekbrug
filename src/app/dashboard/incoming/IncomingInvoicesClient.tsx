@@ -61,6 +61,9 @@ interface IncomingInvoice {
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
+  // [PARTIAL-PAY] running total settled by instalments (0 when unpaid). A value 0 < amount_paid <
+  // |total| means the invoice is a deelbetaling: still openstaand, but part is already received.
+  amount_paid?: number | null;
   invoice_date: string;
   invoice_number: string;
   source: string;
@@ -82,6 +85,9 @@ interface IncomingInvoice {
   } | null;
   // [IMPORT-MONITOR] import-health verdict — drives the calm/attention surface
   health: ImportHealth;
+  // [INCOMING-BEVESTIGD] 'received' (verified, te betalen) or 'paid' (settled) on the Bevestigd
+  // tab; absent on pending ('processing') / ignored ('archived').
+  status?: string | null;
 }
 
 interface ConnectionStatus {
@@ -95,12 +101,13 @@ interface ConnectionStatus {
 interface Props {
   initialInvoices: IncomingInvoice[];
   ignoredInvoices: IncomingInvoice[];
+  confirmedInvoices: IncomingInvoice[];
   connectionStatus: ConnectionStatus;
   // [BOEK-011] Used by the Logo Universal Click pattern (Navigation Strategy v1.0)
   userRole: "zzper" | "accountant";
 }
 
-type Tab = "pending" | "ignored";
+type Tab = "pending" | "ignored" | "confirmed";
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -1364,6 +1371,25 @@ function InvoiceCard({
           <span style={{ fontWeight: 700, fontSize: 18, color: "#202124", whiteSpace: "nowrap" }}>
             {formatSignedAmount(invoice.total_inc_btw)}
           </span>
+          {/* [PARTIAL-PAY] Deelbetaling badge — part received, rest still openstaand. Shown only
+              while 0 < amount_paid < total (a fully-paid invoice leaves this list entirely). */}
+          {(() => {
+            const paid = Math.max(0, invoice.amount_paid ?? 0);
+            const total = Math.abs(invoice.total_inc_btw ?? 0);
+            if (!(paid > 0.005 && paid < total - 0.005)) return null;
+            const remaining = Math.max(0, total - paid);
+            return (
+              <span
+                title={`Deelbetaling: € ${paid.toFixed(2)} van € ${total.toFixed(2)} ontvangen`}
+                style={{
+                  fontSize: 11, fontWeight: 600, color: "#b06000", background: "#fef7e0",
+                  border: "1px solid #fde293", borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap",
+                }}
+              >
+                Deels betaald · € {remaining.toFixed(2)} open
+              </span>
+            );
+          })()}
           <span
             style={{
               fontSize: 18, color: "#dadce0",
@@ -1493,7 +1519,28 @@ function InvoiceCard({
           )}
 
           {/* Actions — depend on mode */}
-          {mode === "pending" ? (
+          {mode === "confirmed" ? (
+            /* [INCOMING-BEVESTIGD] Already out of the queue — read-only status, no verify action.
+               'paid' = settled (green); 'received' = verified but still te betalen (blue). Full
+               management (mark paid, edit, accountant handoff) lives on Crediteuren. */
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px",
+                borderRadius: 980, fontSize: 13, fontWeight: 700,
+                background: invoice.status === "paid" ? "#e6f4ea" : "#e8f0fe",
+                color: invoice.status === "paid" ? "#137333" : "#1a56c4",
+              }}>
+                <span style={{ fontSize: 15 }}>{invoice.status === "paid" ? "✓" : "•"}</span>
+                {invoice.status === "paid" ? "Betaald" : "Bevestigd · te betalen"}
+              </span>
+              <a
+                href="/dashboard/incoming/manage"
+                style={{ marginLeft: "auto", fontSize: 13, fontWeight: 600, color: "#1a73e8", textDecoration: "none" }}
+              >
+                Beheren ›
+              </a>
+            </div>
+          ) : mode === "pending" ? (
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={onIgnore}
@@ -2054,6 +2101,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
 export default function IncomingInvoicesClient({
   initialInvoices,
   ignoredInvoices,
+  confirmedInvoices,
   connectionStatus,
   userRole,
 }: Props) {
@@ -2065,6 +2113,8 @@ export default function IncomingInvoicesClient({
 
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
+  // [INCOMING-BEVESTIGD] Read-only surface of recently confirmed invoices — no mutations here.
+  const [confirmed] = useState<IncomingInvoice[]>(confirmedInvoices);
   const [tab, setTab] = useState<Tab>("pending");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -2420,7 +2470,7 @@ export default function IncomingInvoicesClient({
     window.location.reload();
   }, [pending, reimportAllRunning]);
 
-  const list = tab === "pending" ? pending : ignored;
+  const list = tab === "pending" ? pending : tab === "confirmed" ? confirmed : ignored;
 
   // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────
   // HEALTH: "is anything WRONG?"  → invoices the AI/arithmetic flagged.
@@ -2581,6 +2631,7 @@ export default function IncomingInvoicesClient({
         >
           {([
             ["pending", `Te bevestigen${pending.length ? ` (${pending.length})` : ""}`],
+            ["confirmed", `Bevestigd${confirmed.length ? ` (${confirmed.length})` : ""}`],
             ["ignored", `Genegeerd${ignored.length ? ` (${ignored.length})` : ""}`],
           ] as const).map(([key, label]) => (
             <button
@@ -2668,15 +2719,17 @@ export default function IncomingInvoicesClient({
         ) : (
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>
             <div style={{ fontSize: 52, marginBottom: 16 }}>
-              {tab === "pending" ? "✅" : "📭"}
+              {tab === "pending" ? "✅" : tab === "confirmed" ? "🗂️" : "📭"}
             </div>
             <div style={{ fontWeight: 600, fontSize: 17, marginBottom: 8, color: "#202124" }}>
-              {tab === "pending" ? "Alles bijgewerkt" : "Geen genegeerde facturen"}
+              {tab === "pending" ? "Alles bijgewerkt" : tab === "confirmed" ? "Nog niets bevestigd" : "Geen genegeerde facturen"}
             </div>
             <div style={{ fontSize: 14, lineHeight: 1.5 }}>
               {tab === "pending"
                 ? "Nieuwe facturen verschijnen hier zodra ze binnenkomen."
-                : "Facturen die je negeert komen hier terecht."}
+                : tab === "confirmed"
+                  ? "Facturen die je verifieert of markeert als betaald verschijnen hier."
+                  : "Facturen die je negeert komen hier terecht."}
             </div>
           </div>
         )}

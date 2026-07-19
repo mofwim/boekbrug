@@ -49,11 +49,25 @@ export function Trash({ onBack }: TrashProps) {
 
   const permanentDelete = async (ids: string[]) => {
     if (!confirm(`${ids.length} bestand(en) permanent verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
-    await Promise.all(ids.map(id =>
-      fetch(`/api/files/${id}`, { method: "DELETE" })
-    ));
-    setItems(p => p.filter(d => !ids.includes(d.id)));
+    // [COHERENCE-TRASH] Call the REAL purge endpoint and only remove rows that actually
+    // deleted. The old code hit the deprecated DELETE /api/files/[id] (410 Gone) and
+    // filtered items unconditionally, so files silently stayed trashed and reappeared on
+    // reload while the app claimed success. Now we check res.ok per file and report failures.
+    const results = await Promise.all(ids.map(async id => {
+      try {
+        const res = await fetch(`/api/bestanden/trash?id=${id}`, { method: "DELETE" });
+        return { id, ok: res.ok };
+      } catch {
+        return { id, ok: false };
+      }
+    }));
+    const deletedIds = results.filter(r => r.ok).map(r => r.id);
+    const failed = results.length - deletedIds.length;
+    if (deletedIds.length > 0) setItems(p => p.filter(d => !deletedIds.includes(d.id)));
     setSelected(new Set());
+    if (failed > 0) {
+      alert(`${failed} bestand(en) konden niet worden verwijderd. Ze staan nog in de prullenbak — probeer het opnieuw.`);
+    }
   };
 
   const emptyTrash = () => permanentDelete(items.map(i => i.id));

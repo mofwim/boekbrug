@@ -25,6 +25,10 @@ export interface InvoiceForMatching {
   id: string;
   invoice_number: string | null;
   total_inc_btw: number | null;
+  // [PARTIAL-PAY] amount already settled by earlier instalments (magnitude; 0/absent when fully
+  // open). The matcher targets the REMAINING balance (|total| − amount_paid), so the next
+  // instalment's payment matches on amount instead of scoring low against the full invoice.
+  amount_paid?: number | null;
   invoice_date: string | null; // ISO "YYYY-MM-DD"
   due_date: string | null; // ISO
   client_name: string | null; // counterpart (customer for outgoing, vendor for incoming)
@@ -345,7 +349,18 @@ export function scorePair(
   const reasons: string[] = [];
 
   const refOk = referenceMatches(tx, inv.invoice_number);
-  const amtOk = amountMatches(tx.amount, inv.total_inc_btw, opts.amountEpsilon);
+  // [PARTIAL-PAY] When earlier instalments already settled part of the invoice, the payment we're
+  // scoring should match the REMAINING balance, not the full total — so the €600 second instalment
+  // of a €1000 invoice (€400 paid) scores an exact 'amount' hit against the €600 that's left. Sign
+  // is preserved (a creditnota total is negative; amount_paid is a magnitude). A fully-open invoice
+  // (amount_paid 0/absent) keeps the full total → identical to before, so the auto path (which
+  // excludes partials entirely) is unchanged.
+  const paidSoFar = Math.max(0, inv.amount_paid ?? 0);
+  const amountTarget: number | null =
+    inv.total_inc_btw == null || paidSoFar <= 0.005
+      ? inv.total_inc_btw
+      : (inv.total_inc_btw < 0 ? -1 : 1) * Math.max(0, Math.abs(inv.total_inc_btw) - paidSoFar);
+  const amtOk = amountMatches(tx.amount, amountTarget, opts.amountEpsilon);
   const ibanOk = ibanMatches(tx.counterpartIban, inv.vendor_iban);
   const dateBonus = dateProximityScore(
     tx.date,
@@ -382,7 +397,11 @@ export function scorePair(
     if (amtOk) {
       confidence += 0.5;
       signals.push("amount");
-      reasons.push(`bedrag €${inv.total_inc_btw} komt exact overeen`);
+      reasons.push(
+        paidSoFar > 0.005
+          ? `bedrag komt overeen met het restant (€${(amountTarget ?? 0).toFixed(2)})`
+          : `bedrag €${inv.total_inc_btw} komt exact overeen`,
+      );
     }
     // [BANK-IBAN] Same bank account as the invoice's counterpart — a strong, supplier-specific
     // identity. Paired with an EXACT amount it reaches 'auto' (IBAN + amount ≈ reference + amount:
@@ -417,6 +436,15 @@ export function scorePair(
   if (isPartialPaymentHint(`${tx.reference ?? ""} ${tx.description ?? ""}`)) {
     confidence = Math.min(confidence, 0.6);
     reasons.push("lijkt een deelbetaling — controleer");
+  }
+
+  // [PARTIAL-PAY] Completing an already-partly-paid invoice is a human decision, never a silent
+  // auto-book: cap it to a 'choice' (still a strong, listed candidate) so the owner sees "restant"
+  // and confirms. The auto path excludes partials outright, so this only shapes the suggestion UI —
+  // and it prevents a misleading 'auto' badge on the last instalment.
+  if (paidSoFar > 0.005) {
+    confidence = Math.min(confidence, 0.6);
+    reasons.push(`restant van deelbetaling (€${(amountTarget ?? 0).toFixed(2)} open)`);
   }
 
   confidence = Math.min(1, Math.max(0, confidence));
@@ -464,22 +492,63 @@ export function dedupeCandidates(candidates: MatchCandidate[]): MatchCandidate[]
  * — never a tax figure — and it is fully reversible. Anything short of certain stays human.
  */
 export function isSafeAutoConfirm(m: TransactionMatch): boolean {
-  if (m.outcome !== "auto" || !m.best) return false;
-  const sig = m.best.signals;
-  // Two safe identities, BOTH requiring the exact amount:
-  //   reference + amount → the invoice number is printed in the payment (the original safe set).
-  //   [BANK-IBAN] iban + amount → the money went to the invoice's exact supplier account for the
-  //     exact sum. A full IBAN is supplier-specific (unlike a bare amount, which can collide), and
-  //     the matcher only yields 'auto' when ONE candidate clearly wins — two same-supplier invoices
-  //     of the same amount tie to 'choice', never here. So this stays a near-certain, single match.
-  const refAmt = sig.includes("reference") && sig.includes("amount");
-  const ibanAmt = sig.includes("iban") && sig.includes("amount");
-  if (!refAmt && !ibanAmt) return false;
-  if (parseReferenceNumbers(m.transaction.reference).length > 1) return false;
+  return autoConfirmTier(m) === "certain";
+}
+
+/** The two auto-confirm tiers, or null when a match must stay a human decision. */
+export type AutoConfirmTier =
+  | "certain" // invoice number printed (or IBAN) + exact amount — decisive identity, booked silently
+  | "amount_only"; // exact amount + matching counterpart NAME, single clear winner — booked but FLAGGED
+
+/**
+ * [BANK-AMOUNT-ONLY] Which tier — if any — may auto-book this match?
+ * Shared gates (both tiers): outcome 'auto' with a best candidate, the amount matches to the cent,
+ * it is a SINGLE invoice (parseReferenceNumbers ≤ 1 — a multi-invoice batch has its own path), and
+ * it is not flagged an instalment/deelbetaling.
+ *   - 'certain': the invoice NUMBER is printed in the statement OR the supplier IBAN matches. A
+ *     printed number / full IBAN is supplier-specific identity — immune to same-amount collisions.
+ *     Booked silently (this is the original safe set).
+ *   - 'amount_only': neither reference nor IBAN, but the counterpart NAME matches (an identity floor
+ *     — bare amount+date is too weak to ever auto-book). The matcher only yields 'auto' when ONE
+ *     candidate clearly leads, so a recurring same-amount supplier with several open invoices ties
+ *     to 'choice' and never reaches here. Booked, but the UI flags it "controleer" and it is one-tap
+ *     reversible. BTW/omzet are on accrual, so no tier ever moves a tax figure.
+ */
+export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
+  if (m.outcome !== "auto" || !m.best) return null;
+  if (parseReferenceNumbers(m.transaction.reference).length > 1) return null;
   if (isPartialPaymentHint(`${m.transaction.reference ?? ""} ${m.transaction.description ?? ""}`)) {
-    return false;
+    return null;
   }
-  return true;
+  const sig = m.best.signals;
+  if (!sig.includes("amount")) return null; // the amount is the money-truth — required by both tiers
+  if (sig.includes("reference") || sig.includes("iban")) return "certain";
+  if (sig.includes("counterpart")) return "amount_only";
+  return null; // amount + date only, no identity → too weak, stays human
+}
+
+// [BANK-REF-DECISIVE] Should the top of a candidate list be booked as 'auto'?
+// Yes when it clears autoConfidence AND EITHER:
+//   - it beats the 2nd candidate by autoMargin (a clear numeric lead — the original rule), OR
+//   - it UNIQUELY carries the printed-reference identity (invoice number in the statement +
+//     exact amount) that no other candidate has. A printed invoice number is decisive identity:
+//     it is immune to the same-amount / same-supplier collisions that otherwise drown it. Example
+//     (the ONS IT case): five monthly subscription invoices all €32,67 — the four without their
+//     number printed score ~0.90 on amount+counterpart+date and pull the 0.97 reference match's
+//     margin below autoMargin, forcing a 5-way 'choice' even though the bank literally prints
+//     "Incasso fact. 1260405". The uniqueness guard is essential: if TWO candidates both cite a
+//     printed number (e.g. a mis-parsed batch), neither is decisive → it stays a human 'choice'.
+// This only promotes to 'auto'; isSafeAutoConfirm still gates what the app books without a tap
+// (reference+amount, single reference, not an instalment), so a wrong printed-number match is
+// impossible here — referenceMatches already requires a whole-token, digit-bounded hit.
+function topReachesAuto(free: MatchCandidate[], opts: MatchOptions): boolean {
+  const top = free[0];
+  if (!top || top.confidence < opts.autoConfidence) return false;
+  const second = free[1];
+  const strongLead = !second || top.confidence - second.confidence >= opts.autoMargin;
+  const topHasRef = top.signals.includes("reference") && top.signals.includes("amount");
+  const uniqueRef = topHasRef && !free.slice(1).some((c) => c.signals.includes("reference"));
+  return strongLead || uniqueRef;
 }
 
 // ─── Main entry ────────────────────────────────────────────────────────────────
@@ -523,14 +592,9 @@ export function matchTransactions(
     let best: MatchCandidate | null = null;
 
     if (trimmed.length > 0) {
-      const top = trimmed[0];
-      const second = trimmed[1];
-      const strongLead =
-        !second || top.confidence - second.confidence >= opts.autoMargin;
-
-      if (top.confidence >= opts.autoConfidence && strongLead) {
+      if (topReachesAuto(trimmed, opts)) {
         outcome = "auto";
-        best = top;
+        best = trimmed[0];
       } else {
         outcome = "choice";
       }
@@ -566,10 +630,8 @@ export function matchTransactions(
 
     // Re-derive outcome from the remaining free candidates.
     const top = free[0];
-    const second = free[1];
-    const strongLead = !second || top.confidence - second.confidence >= opts.autoMargin;
 
-    if (top.confidence >= opts.autoConfidence && strongLead) {
+    if (topReachesAuto(free, opts)) {
       m.outcome = "auto";
       m.best = top;
       claimed.add(top.invoiceId); // auto → this invoice is taken

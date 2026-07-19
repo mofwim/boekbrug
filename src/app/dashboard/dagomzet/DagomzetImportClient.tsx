@@ -141,6 +141,12 @@ export default function DagomzetImportClient() {
           op je kassa bewaard — niet als omzet.
         </p>
 
+        {/* [COHERENCE-DAGOMZET] Booked-omzet insights first (KPI's, trend, BTW/betaalwijzen),
+            so a returning owner sees their kassa-omzet before the import panel. Single
+            instance (the page no longer renders its own); remounts after a commit via
+            refreshTick. Renders nothing when there is no booked data yet. */}
+        <TurnoverInsights key={refreshTick} />
+
         {/* Upload */}
         <label style={{
           display: 'block', border: `2px dashed ${M3.outlineVariant}`, borderRadius: 14, padding: '22px 16px',
@@ -311,9 +317,6 @@ export default function DagomzetImportClient() {
             </div>
           </div>
         )}
-
-        {/* [TURNOVER-ANALYTICS] Insights over what's already imported (remounts after a commit). */}
-        <TurnoverInsights key={refreshTick} />
       </div>
     </div>
   )

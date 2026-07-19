@@ -209,6 +209,7 @@ export type Database = {
       }
       bank_tx_invoices: {
         Row: {
+          amount_applied: number | null
           created_at: string | null
           id: string
           invoice_id: string
@@ -216,6 +217,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          amount_applied?: number | null
           created_at?: string | null
           id?: string
           invoice_id: string
@@ -223,6 +225,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          amount_applied?: number | null
           created_at?: string | null
           id?: string
           invoice_id?: string
@@ -1054,6 +1057,7 @@ export type Database = {
         Row: {
           accountant_note: string | null
           accountant_status: string | null
+          amount_paid: number
           btw_amount: number | null
           client_address: string | null
           client_btw_number: string | null
@@ -1098,6 +1102,7 @@ export type Database = {
         Insert: {
           accountant_note?: string | null
           accountant_status?: string | null
+          amount_paid?: number
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
@@ -1142,6 +1147,7 @@ export type Database = {
         Update: {
           accountant_note?: string | null
           accountant_status?: string | null
+          amount_paid?: number
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
@@ -1323,6 +1329,7 @@ export type Database = {
           iban: string | null
           id: string
           invoice_number_padding: number
+          kas_opening_balance: number
           invoice_number_template: string | null
           kvk_number: string | null
           onboarding_done: boolean
@@ -1346,6 +1353,7 @@ export type Database = {
           iban?: string | null
           id: string
           invoice_number_padding?: number
+          kas_opening_balance?: number
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean
@@ -1369,6 +1377,7 @@ export type Database = {
           iban?: string | null
           id?: string
           invoice_number_padding?: number
+          kas_opening_balance?: number
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean
@@ -1511,6 +1520,32 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      apply_bank_payment: {
+        Args: {
+          p_user_id: string
+          p_tx_id: string
+          p_invoice_id: string
+          p_amount: number
+          p_pay_date: string | null
+        }
+        Returns: {
+          applied: number
+          amount_paid: number
+          total: number
+          is_paid: boolean
+        }[]
+      }
+      book_bank_batch: {
+        Args: {
+          p_user_id: string
+          p_tx_id: string
+          p_invoice_ids: string[]
+          p_pay_date: string | null
+        }
+        Returns: {
+          invoice_id: string
+        }[]
+      }
       check_rate_limit: {
         Args: {
           p_endpoint: string
@@ -1532,6 +1567,10 @@ export type Database = {
       is_my_accountant_client: { Args: { client: string }; Returns: boolean }
       next_invoice_seq: {
         Args: { p_type: string; p_user_id: string; p_year: number }
+        Returns: number
+      }
+      recompute_invoice_amount_paid: {
+        Args: { p_user_id: string; p_invoice_id: string }
         Returns: number
       }
       vault_delete_secret: { Args: { p_secret_id: string }; Returns: boolean }

@@ -54,6 +54,7 @@ export interface VandaagInvoice {
   invoice_date: string | null; // ISO date
   due_date: string | null; // ISO date — page.tsx already filters out nulls
   total_inc_btw: number | null; // STORED total — read-only, never computed here
+  amount_paid?: number | null; // [PARTIAL-PAY] settled so far; remaining = |total| − amount_paid
   status: string;
   direction: string;
 }
@@ -61,6 +62,8 @@ export interface VandaagInvoice {
 interface Props {
   payable: VandaagInvoice[]; // List 1 — incoming, status='received'
   remind: VandaagInvoice[]; // List 2 — outgoing, status IN ('sent','overdue')
+  loadFailed?: boolean; // [COHERENCE-ERRSTATE] true when a server query errored
+  toVerifyCount?: number; // [P1-STUCK-PROCESSING] incoming invoices stuck in the verify queue
 }
 
 // ─── Date helpers (timezone-proof) ────────────────────────────────────────────
@@ -127,7 +130,7 @@ function accentOf(dueIso: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VandaagClient({ payable, remind }: Props) {
+export default function VandaagClient({ payable, remind, loadFailed, toVerifyCount = 0 }: Props) {
   const router = useRouter();
 
   // [TODAY-LISTS-V1] "Negeren" = session-only visual hide (no DB write, like
@@ -200,9 +203,38 @@ export default function VandaagClient({ payable, remind }: Props) {
         </p>
       </header>
 
-      {nothingToDo ? (
+      {/* [P1-STUCK-PROCESSING] Nudge for invoices imported/photographed but not yet verified.
+          Ambiguous ones stay in the verify queue with no reminder and their cost + BTW-aftrek
+          never reach the books — so surface them here, on the daily control center. Shown even
+          when the payment lists are empty (an empty "all clear" while N invoices wait is a lie). */}
+      {!loadFailed && toVerifyCount > 0 && (
+        <button
+          onClick={() => router.push("/dashboard/incoming")}
+          style={{
+            width: "100%", textAlign: "left", cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 12,
+            background: "#FEF7E0", border: `1px solid #FBBC04`, borderRadius: 16,
+            padding: "14px 16px", marginBottom: 16,
+          }}
+        >
+          <span style={{ fontSize: 22 }}>📥</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: "#7A4F00" }}>
+              {toVerifyCount === 1 ? "1 factuur wacht op verificatie" : `${toVerifyCount} facturen wachten op verificatie`}
+            </span>
+            <span style={{ display: "block", fontSize: 13, color: "#7A4F00", marginTop: 1 }}>
+              Controleer ze zodat de kosten en BTW-aftrek in je boeken komen.
+            </span>
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+        </button>
+      )}
+
+      {loadFailed ? (
+        <LoadError onRetry={() => router.refresh()} />
+      ) : nothingToDo && toVerifyCount === 0 ? (
         <EmptyAllClear />
-      ) : (
+      ) : nothingToDo ? null : (
         <>
           <ListSection
             title="Te betalen"
@@ -450,20 +482,28 @@ function InvoiceCard({
             {formatDateNL(invoice.due_date)}
           </div>
 
-          {/* [TODAY-UX-FIELDS] STORED total — read directly from total_inc_btw,
-              never computed here. null → no amount shown (we never invent one). */}
-          {typeof invoice.total_inc_btw === "number" && (
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 700,
-                color: M3.onSurface,
-                marginTop: 6,
-              }}
-            >
-              {formatEuroNL(invoice.total_inc_btw)}
-            </div>
-          )}
+          {/* [TODAY-UX-FIELDS] STORED total — read directly from total_inc_btw, never computed here.
+              [PARTIAL-PAY] When a deelbetaling already settled part of it, show the REMAINING
+              openstaand (the reconciled truth the bank matcher booked), with the full total as a
+              sub-note — never the full total as "te betalen" when only part is left. */}
+          {typeof invoice.total_inc_btw === "number" && (() => {
+            const total = invoice.total_inc_btw;
+            const paid = Math.max(0, invoice.amount_paid ?? 0);
+            const isPartial = paid > 0.005 && paid < Math.abs(total) - 0.005;
+            const openstaand = isPartial ? (total < 0 ? -1 : 1) * (Math.abs(total) - paid) : total;
+            return (
+              <div style={{ marginTop: 6 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface }}>
+                  {formatEuroNL(openstaand)}
+                </div>
+                {isPartial && (
+                  <div style={{ fontSize: 12, color: "#b06000", marginTop: 2 }}>
+                    deels betaald · van {formatEuroNL(total)}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* "Negeren" — session-only visual hide. No DB, no status change. */}
@@ -535,6 +575,55 @@ function InvoiceCard({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Load-error state ─────────────────────────────────────────────────────────
+// [COHERENCE-ERRSTATE] Shown when a server query failed. It is deliberately NOT
+// the calm "✓ niets" checkmark: on an error we do not KNOW there is nothing to do,
+// so we must not claim it. Honest wording + a retry, never false reassurance.
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      style={{
+        background: "#FCECEA",
+        border: `1px solid ${M3.error}`,
+        borderRadius: 16,
+        padding: "32px 24px",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+      <div
+        style={{
+          fontSize: 17,
+          fontWeight: 600,
+          color: M3.onSurface,
+          marginBottom: 4,
+        }}
+      >
+        We konden je taken niet laden
+      </div>
+      <div style={{ fontSize: 14, color: M3.onSurfaceVariant, marginBottom: 16 }}>
+        Er ging iets mis bij het ophalen. Dit betekent <strong>niet</strong> dat je
+        niets hoeft te doen — probeer het opnieuw.
+      </div>
+      <button
+        onClick={onRetry}
+        style={{
+          padding: "10px 20px",
+          borderRadius: 12,
+          border: "none",
+          background: M3.primary,
+          color: "#fff",
+          fontSize: 15,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        Opnieuw proberen
+      </button>
     </div>
   );
 }

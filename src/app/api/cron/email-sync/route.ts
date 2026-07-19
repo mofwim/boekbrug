@@ -43,11 +43,12 @@ export async function GET(req: NextRequest) {
   const userIds = [...new Set((conns ?? []).map((c) => c.user_id).filter((x): x is string => !!x))];
 
   let synced = 0, failed = 0, saved = 0, truncated = 0;
-  // [CRON-FAIRNESS] Rotate the start each run (by the UTC hour) so a fixed tail of mailboxes never
-  // permanently starves when the full list can't finish within maxDuration; a soft deadline stops
-  // cleanly between users. Full round-robin needs a persisted cursor — this is the stateless
-  // mitigation. Error-isolated: one user's failure never stops the rest.
-  const offset = userIds.length > 0 ? new Date().getUTCHours() % userIds.length : 0;
+  // [CRON-FAIRNESS] Rotate the start each run so a fixed tail of mailboxes never permanently starves
+  // when the list can't finish within maxDuration. The cron fires once a day at a FIXED hour, so
+  // getUTCHours() was constant → the same tail starved forever. Key the offset off the EPOCH DAY: it
+  // advances one each daily run, so the start walks the whole list and every mailbox reaches the head
+  // within N days. A soft deadline stops cleanly between users; one user's failure never stops the rest.
+  const offset = userIds.length > 0 ? Math.floor(Date.now() / 86_400_000) % userIds.length : 0;
   const ordered = [...userIds.slice(offset), ...userIds.slice(0, offset)];
   const startedAt = Date.now();
   const DEADLINE_MS = 250_000;

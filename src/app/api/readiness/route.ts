@@ -71,7 +71,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
   const verifiedInvoiceCount = summary.outgoingCount + summary.incomingCount;
-  const invoicesWithEvidence = summary.filesIncluded;
+  // [READINESS-EVIDENCE] Use the invoices-with-PDF count, NOT filesIncluded — the latter also
+  // counts bank-statement + shared files, which let the invoice-evidence dimension hit a false 100%
+  // (dropping the "X facturen missen het originele document" gap) while verified invoices had no PDF.
+  const invoicesWithEvidence = summary.invoicesWithPdf;
 
   // ── 2) Bank — transactions DATED in the quarter, and how many still need a bon ──
   const bank = await fetchAllRows((from, to) => pipeline
@@ -248,6 +251,27 @@ export async function GET(req: NextRequest) {
           kind: "terminal",
           note: `Kassa-PIN (${d.tillPin ?? "?"}) wijkt af van terminal-afrekening (${d.eftGross ?? "?"})`,
           diff: d.grossDiff ?? 0,
+        });
+      }
+      // [S3-COMMISSION] A day with a card PAYOUT (net into the bank) + till PIN takings but NO
+      // terminal settlement (eftGross) → the acquirer fee (gross − net) can't be booked as a cost,
+      // so quarterly profit is silently OVERSTATED and readiness would still say 'klaar'. Surface it
+      // as a risk with the fix (upload that day's terminal-afrekening) so fees are never silently
+      // unbooked. Only when a real positive fee exists (net < gross), never on a refund/partial day.
+      for (const d of triangle.days) {
+        if (d.eftGross != null) continue;                    // has a terminal receipt → fee is booked
+        if (!(typeof d.tillPin === "number" && d.tillPin > 0)) continue;
+        if (!(typeof d.bankNet === "number" && d.bankNet > 0)) continue;
+        const feeApprox = Math.round((d.tillPin - d.bankNet) * 100) / 100;
+        if (feeApprox <= 0.01) continue;                     // net ≥ gross → no fee to book
+        const key = d.date + "|commission";
+        if (seen.has(key)) continue;
+        seen.add(key);
+        reconExceptions.push({
+          date: d.date,
+          kind: "terminal",
+          note: `Betaalkosten (~€${feeApprox.toFixed(2)}) nog niet geboekt — upload de terminal-afrekening van deze dag zodat de commissie als kosten meetelt`,
+          diff: feeApprox,
         });
       }
     } catch {

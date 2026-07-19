@@ -127,6 +127,23 @@ export async function POST(req: NextRequest) {
     // null → not a recognised turnover/ledger sheet; continue to the document path below.
   }
 
+  // ── [UBL-INTAKE] XML e-invoice (UBL / Peppol) → the invoice pipeline, not the opaque document
+  //    bin. A B2B/overheid supplier's factuur.xml was being filed as 'unsupported_type' with NO
+  //    invoice row, so its voorbelasting silently never reached the aangifte (a missing invoice).
+  //    We parse the standard UBL leaf elements and create a verify-queue invoice (status
+  //    'processing') so the human confirms it into Crediteuren exactly like a PDF invoice. A CAMT
+  //    bank statement is excluded (looksLikeUblInvoice returns false) and still falls to the bank
+  //    handler / document store below. ──
+  if (/\.xml$/i.test(file.name) || file.type === "text/xml" || file.type === "application/xml") {
+    const xmlText = buffer.toString("utf8")
+    const { looksLikeUblInvoice } = await import("@/lib/ubl-invoice")
+    if (looksLikeUblInvoice(xmlText)) {
+      const ublResp = await handleUblInvoice(xmlText, buffer, file, user.id, supabase, force)
+      if (ublResp) return ublResp
+      // null → couldn't extract anything usable; fall through to the safe document store.
+    }
+  }
+
   // ── Type guard for the AI path: only pdf/image go to the extractor ──────────
   const okForAi =
     file.type === "application/pdf" ||
@@ -742,6 +759,97 @@ async function storeRawIncoming(
   } catch {
     return null // storage is a convenience; the booking is the money-truth
   }
+}
+
+// ── [UBL-INTAKE] UBL / Peppol XML e-invoice handler ─────────────────────────────────────────
+// Parses the standard UBL leaf elements and creates a verify-queue invoice (status 'processing')
+// so an e-invoice's BTW/voorbelasting flows into Crediteuren + the aangifte like a PDF invoice,
+// instead of being filed as an opaque 'unsupported_type' document. Returns a NextResponse on
+// success, or null when nothing usable could be extracted (caller then falls to the document store).
+async function handleUblInvoice(
+  xmlText: string,
+  buffer: Buffer,
+  file: File,
+  userId: string,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  force: boolean,
+): Promise<NextResponse | null> {
+  const { parseUblInvoice } = await import("@/lib/ubl-invoice")
+  const v = parseUblInvoice(xmlText)
+  // Need at least a number OR a gross total to be worth booking as an invoice; else it's not a
+  // recognisable e-invoice → let the safe document store keep it.
+  if (!v.invoiceNumber && v.totalIncBtw == null) return null
+
+  const hash = computeContentHash(buffer)
+  // Byte-hash dedup (same file re-uploaded) — surface the existing one instead of a second row.
+  const { data: dupDoc } = await supabase
+    .from("documents").select("id, folder_id, invoice_id")
+    .eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
+  if (dupDoc && !force) {
+    return NextResponse.json({
+      duplicate: true, destination: dupDoc.invoice_id ? "invoice" : "document",
+      error: "Deze e-factuur is al geïmporteerd.",
+      existing: { id: dupDoc.id, folder_id: dupDoc.folder_id ?? null },
+    }, { status: 409 })
+  }
+
+  const documentId = await storeRawIncoming(buffer, file, userId, supabase, "ubl_invoice")
+
+  // For a creditnota the extracted totals are positive in UBL; store them NEGATIVE to match the
+  // app's one-sign convention ([BOEK-031] / camera path).
+  const sign = v.isCreditNote ? -1 : 1
+  const totalExBtw = v.totalExBtw != null ? sign * Math.abs(v.totalExBtw) : 0
+  const btwAmount = v.btwAmount != null ? sign * Math.abs(v.btwAmount) : 0
+  const totalIncBtw = v.totalIncBtw != null ? sign * Math.abs(v.totalIncBtw) : 0
+
+  const fieldConfidence = {
+    // A structured e-invoice is high-confidence per field where present; flag any missing field so
+    // the verify queue's health badge asks the human to complete it (never a silent wrong number).
+    vendor: v.supplierName ? 0.95 : 0.2,
+    invoice_number: v.invoiceNumber ? 0.98 : 0.2,
+    invoice_date: v.invoiceDate ? 0.98 : 0.2,
+    _source: "ubl_xml",
+  } as InvoiceFieldConfidence
+
+  const pipeline = createPipelineClient()
+  const { data: invoice, error: dbError } = await pipeline
+    .from("invoices")
+    .insert({
+      sender_id: null,
+      receiver_id: userId,
+      direction: "incoming",
+      status: "processing", // always human-verified — a new machine-read path stays gated
+      source: "upload",
+      client_name: v.supplierName || "Onbekende afzender",
+      invoice_date: v.invoiceDate,
+      due_date: v.dueDate,
+      invoice_number: v.invoiceNumber || `UBL-${Date.now()}`,
+      invoice_type: v.isCreditNote ? "creditnota" : "factuur",
+      total_ex_btw: totalExBtw,
+      btw_amount: btwAmount,
+      total_inc_btw: totalIncBtw,
+      document_id: documentId,
+      vendor_iban: v.vendorIban ?? null,
+      field_confidence: fieldConfidence,
+    })
+    .select("id")
+    .single()
+
+  if (dbError) {
+    if (documentId) await pipeline.from("documents").delete().eq("id", documentId)
+    return NextResponse.json({ error: dbError.message }, { status: 500 })
+  }
+  if (invoice?.id && documentId) {
+    await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId)
+  }
+
+  return NextResponse.json({
+    ok: true,
+    destination: "invoice",
+    invoice_id: invoice?.id ?? null,
+    document_id: documentId,
+    message: "E-factuur (UBL) ingelezen — controleer de gegevens in de verificatierij.",
+  })
 }
 
 // ── Daily-sales report handler — a "OMZET VAN DD/MM/YYYY" PDF is one day of turnover ─────────

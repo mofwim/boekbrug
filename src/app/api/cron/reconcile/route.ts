@@ -19,6 +19,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -64,13 +65,14 @@ export async function GET(req: NextRequest) {
   let failed = 0;
   let truncated = 0;
 
-  // [CRON-FAIRNESS] Rotate the start each run (by the UTC hour) so, if the full list can't finish
-  // within maxDuration, a FIXED tail never permanently starves — over the day everyone reaches the
-  // head. The soft deadline stops cleanly BETWEEN users (never mid-write), so a truncation can't
-  // leave a half-linked payment. Full round-robin needs a persisted cursor; this is the cheap,
-  // stateless version that removes the "always the same users starve" failure.
+  // [CRON-FAIRNESS] Rotate the start each run so, if the full list can't finish within maxDuration,
+  // a FIXED tail never permanently starves. On Vercel Pro this cron now fires HOURLY, so key the
+  // offset off the EPOCH HOUR — it advances by one each run, walking the start across the whole list
+  // so every user reaches the head within N hours (was N days when it ran daily). The soft deadline
+  // stops cleanly BETWEEN users (never mid-write), so a truncation can't leave a half-linked payment.
   const arr = [...userIds];
-  const offset = arr.length > 0 ? new Date().getUTCHours() % arr.length : 0;
+  const epochHour = Math.floor(Date.now() / 3_600_000);
+  const offset = arr.length > 0 ? epochHour % arr.length : 0;
   const ordered = [...arr.slice(offset), ...arr.slice(0, offset)];
   const startedAt = Date.now();
   const DEADLINE_MS = 250_000; // stop ~50s before the 300s ceiling, between users
@@ -84,6 +86,9 @@ export async function GET(req: NextRequest) {
     try {
       const confirmed = await runBankAutoConfirm({ payClient: pipeline, pipeline, userId: uid });
       await reconcileCashSettlements(pipeline, uid);
+      // [BANK-AUTO-CATEGORIZE] Code fresh bank lines from the owner's learned memory (confident
+      // only) so uncategorized money shrinks on its own between logins.
+      await applyLearnedBankCategories({ pipeline, userId: uid }).catch(() => []);
       usersProcessed += 1;
       if (confirmed.length > 0) {
         bookedTotal += confirmed.length;

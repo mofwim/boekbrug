@@ -100,7 +100,27 @@ function RegisterContent() {
     setLoading(true)
     setError('')
 
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
+    // [COHERENCE-REGISTER] Pass the registration fields as signUp metadata so the
+    // SECURITY DEFINER handle_new_user trigger writes them into the profile server-side.
+    // Previously the browser did a profiles.upsert right after signUp, but with email
+    // confirmation ON there is no session yet, so the anon client hit RLS and the flow
+    // dead-ended before the "check your e-mail" screen. The trigger has no such problem.
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+          role, // 'zzper' | 'accountant'
+          company_name: companyName,
+          kvk_number: kvk,
+          btw_number: btw,
+          // register already collected role + company, so skip the wizard's
+          // welcome/role/company screens (step 4 = Gmail for ZZP, invite for accountant).
+          onboarding_step: 4,
+        },
+      },
+    })
 
     if (signUpError) {
       if (signUpError.status === 422 || signUpError.message?.toLowerCase().includes('already')) {
@@ -127,33 +147,9 @@ function RegisterContent() {
       return
     }
 
-    // [BOEK-015] fix: the on_auth_user_created trigger already inserted a profile
-    // row (with default role='zzper'). Using UPSERT instead of INSERT so we
-    // UPDATE that trigger-created row with the real registration data instead
-    // of hitting a 23505 duplicate-key error → "Registratie mislukt".
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: data.user.id,
-        role,
-        full_name: fullName,
-        company_name: companyName,
-        kvk_number: kvk,
-        btw_number: btw,
-        email,
-        // [BOEK-015] P2: register already collected role + company + KVK + BTW.
-        // ZZP: skip to step 4 (Gmail) — no need to ask company data again.
-        // Accountant: step 4 is "invite client". Both land correctly.
-        // page.tsx roleWasSet reads step>=2 → true → Welcome+Role skipped.
-        onboarding_step: 4,
-      }, { onConflict: 'id' })
-
-    if (profileError) {
-      console.error('[BOEK-015] register profile upsert failed:', profileError)
-      setError('Profiel aanmaken mislukt — probeer opnieuw')
-      setLoading(false)
-      return
-    }
+    // [COHERENCE-REGISTER] The profile is now written by the handle_new_user trigger
+    // from the signUp metadata above (SECURITY DEFINER, so it works whether or not a
+    // session exists). No client-side profiles write here — that was the RLS dead end.
 
     // [BOEK-015] fix: if email confirmation is enabled, signUp returns a user
     // but NO active session. Check and guide the user instead of a silent
@@ -164,6 +160,29 @@ function RegisterContent() {
       setLoading(false)
       return
     }
+
+    // [COHERENCE-REGISTER] Defensive self-heal for the confirmation-OFF path: a session
+    // exists, so this authenticated upsert passes RLS and writes the exact registration
+    // data. It is redundant when the handle_new_user metadata trigger is applied (same
+    // values), but it guarantees the accountant role + company/kvk/btw are stored even if
+    // that migration hasn't been applied yet — closing the silent-wrong-data window. The
+    // no-session (confirmation-ON) path above can't do this (anon RLS) and relies on the
+    // trigger. Best-effort: a failure here never blocks the redirect.
+    await supabase
+      .from('profiles')
+      .upsert({
+        id: data.user.id,
+        role,
+        full_name: fullName,
+        company_name: companyName,
+        kvk_number: kvk,
+        btw_number: btw,
+        email,
+        onboarding_step: 4,
+      }, { onConflict: 'id' })
+      .then(({ error }) => {
+        if (error) console.error('[COHERENCE-REGISTER] post-session profile upsert failed (non-fatal):', error)
+      })
 
     const redirectUrl = searchParams.get('redirect')
     router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/onboarding')

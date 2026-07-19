@@ -12,6 +12,7 @@ import {
   dedupeCandidates,
   isPartialPaymentHint,
   isSafeAutoConfirm,
+  autoConfirmTier,
   scorePair,
   normalizeIban,
   ibanMatches,
@@ -445,6 +446,36 @@ console.log("\n— [BANK-PARTIAL] instalment references are detected and kept ou
   ).confidence >= DEFAULT_OPTIONS.autoConfidence);
 }
 
+console.log("\n— [PARTIAL-PAY] the matcher targets the REMAINING balance of a part-paid invoice —");
+{
+  // €1000 invoice, €400 already settled (amount_paid=400) → €600 remaining. A €600 payment must
+  // score an exact 'amount' hit against the REMAINING, not miss against the €1000 total.
+  const second = scorePair(
+    tx({ amount: -600, reference: null, description: "betaling", counterpartIban: "NL11BANK0123456789" }),
+    inv({ total_inc_btw: 1000, amount_paid: 400, direction: "incoming", status: "received", vendor_iban: "NL11BANK0123456789" }),
+    DEFAULT_OPTIONS,
+  );
+  check("second instalment (€600) matches the €600 remaining → 'amount' signal", second.signals.includes("amount"));
+  check("a part-paid completion is a human choice, never silent auto (≤ 0.6)", second.confidence <= 0.6);
+
+  // The FULL amount must NOT match a part-paid invoice's remaining (a duplicate full payment is not
+  // the €600 that's left) — so it can't be mistaken for the outstanding balance.
+  const fullOnPartial = scorePair(
+    tx({ amount: -1000, reference: null, description: "betaling", counterpartIban: "NL11BANK0123456789" }),
+    inv({ total_inc_btw: 1000, amount_paid: 400, direction: "incoming", status: "received", vendor_iban: "NL11BANK0123456789" }),
+    DEFAULT_OPTIONS,
+  );
+  check("full €1000 does NOT match the €600 remaining ('amount' absent)", !fullOnPartial.signals.includes("amount"));
+
+  // A fully-open invoice (amount_paid absent/0) is unchanged: the full amount still matches the total.
+  const fresh = scorePair(
+    tx({ amount: -1000, reference: null, description: "betaling", counterpartIban: "NL11BANK0123456789" }),
+    inv({ total_inc_btw: 1000, direction: "incoming", status: "received", vendor_iban: "NL11BANK0123456789" }),
+    DEFAULT_OPTIONS,
+  );
+  check("fully-open invoice unchanged: full amount matches the total", fresh.signals.includes("amount"));
+}
+
 console.log("\n— [BANK-CHOICE-NOCLAIM] an ambiguous choice does not steal a candidate from another tx —");
 {
   // Two €500 "Jansen" credits, two €500 "Jansen" invoices → each tx matches both by
@@ -503,6 +534,78 @@ console.log("\n— [BANK-AUTO-CONFIRM] only a near-certain single match is safe 
     [inv({ invoice_number: "001-2026", total_inc_btw: 500 })],
   );
   check("reference but wrong amount → NOT safe", isSafeAutoConfirm(wrongAmount.matches[0]) === false);
+}
+
+console.log("\n— [BANK-REF-DECISIVE] a UNIQUE printed invoice number wins 'auto' amid same-amount siblings —");
+{
+  // The ONS IT case: a €32,67 monthly subscription debit whose statement prints
+  // "Incasso fact. 1260405". Five monthly invoices all €32,67 from the same supplier are
+  // in the system; four have no number printed (amount+counterpart+date only). Before the
+  // fix these four scored close enough to pull the reference match's margin below autoMargin
+  // → a 5-way 'choice'. Now the one with its number printed wins decisively.
+  const onsIt = matchTransactions(
+    [tx({ amount: -32.67, date: "2026-06-03", counterpartName: "ONS IT", description: "Incassobatch 409 Incasso fact. 1260405" })],
+    [
+      inv({ id: "a", invoice_number: "1260405", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-06-01" }),
+      inv({ id: "b", invoice_number: "1260341", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-05-04" }),
+      inv({ id: "c", invoice_number: "1260089", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-02-02" }),
+      inv({ id: "d", invoice_number: "1260274", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-04-02" }),
+      inv({ id: "e", invoice_number: "1260009", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-01-05" }),
+    ],
+  );
+  check("printed-number invoice becomes 'auto' (not a 5-way choice)", onsIt.matches[0].outcome === "auto");
+  check("the auto pick is the printed number 1260405", onsIt.matches[0].best?.invoiceId === "a");
+  check("and it is SAFE to auto-book (reference + amount, single)", isSafeAutoConfirm(onsIt.matches[0]) === true);
+
+  // Guard: if TWO candidates both have their number printed (an ambiguous/mis-parsed case),
+  // neither is decisive → it must stay a human 'choice', never a wrong auto-book.
+  const twoPrinted = matchTransactions(
+    [tx({ amount: -32.67, counterpartName: "ONS IT", description: "fact 1260405 1260341" })],
+    [
+      inv({ id: "a", invoice_number: "1260405", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-06-01" }),
+      inv({ id: "b", invoice_number: "1260341", total_inc_btw: 32.67, direction: "incoming", client_name: "ONS IT", invoice_date: "2026-05-04" }),
+    ],
+  );
+  check("two printed numbers → stays a human choice (not auto)", twoPrinted.matches[0].outcome !== "auto");
+}
+
+console.log("\n— [BANK-AMOUNT-ONLY] autoConfirmTier: certain vs amount_only vs human —");
+{
+  // reference + amount → 'certain'
+  const ref = matchTransactions([tx({ amount: 1210, reference: "001-2026" })], [inv({ invoice_number: "001-2026", total_inc_btw: 1210 })]);
+  check("reference + amount → 'certain'", autoConfirmTier(ref.matches[0]) === "certain");
+
+  // iban + amount → 'certain'
+  const iban = matchTransactions(
+    [tx({ amount: 1210, counterpartIban: "NL91ABNA0417164300" })],
+    [inv({ invoice_number: "X-1", total_inc_btw: 1210, vendor_iban: "NL91ABNA0417164300", client_name: "Zzz Unrelated" })],
+  );
+  check("iban + amount → 'certain'", autoConfirmTier(iban.matches[0]) === "certain");
+
+  // amount + counterpart NAME, no reference/iban → 'amount_only' (the KPN/Metro case)
+  const amtName = matchTransactions(
+    [tx({ amount: 1210, date: "2026-02-10", counterpartName: "Jansen BV" })],
+    [inv({ invoice_number: "X-9", total_inc_btw: 1210, client_name: "Jansen BV", invoice_date: "2026-02-01" })],
+  );
+  check("amount + counterpart (no number/iban) → 'amount_only'", autoConfirmTier(amtName.matches[0]) === "amount_only");
+  check("...and isSafeAutoConfirm stays FALSE for amount_only (certain-only)", isSafeAutoConfirm(amtName.matches[0]) === false);
+
+  // amount + date only, NO counterpart name → too weak → null (stays human)
+  const amtDate = matchTransactions(
+    [tx({ amount: 1210, date: "2026-02-05", counterpartName: null })],
+    [inv({ invoice_number: "X-7", total_inc_btw: 1210, client_name: "Totally Different Co", invoice_date: "2026-02-01" })],
+  );
+  check("amount + date only (no name/number/iban) → null (human)", autoConfirmTier(amtDate.matches[0]) === null);
+
+  // an ambiguous same-amount/same-supplier pair is a 'choice', never a tier
+  const tie = matchTransactions(
+    [tx({ amount: 500, date: "2026-02-12", counterpartName: "Jansen BV" })],
+    [
+      inv({ id: "x", invoice_number: "JAN-1", total_inc_btw: 500, client_name: "Jansen BV", invoice_date: "2026-02-01" }),
+      inv({ id: "y", invoice_number: "JAN-2", total_inc_btw: 500, client_name: "Jansen BV", invoice_date: "2026-02-02" }),
+    ],
+  );
+  check("same-amount same-supplier tie → 'choice' → no tier", autoConfirmTier(tie.matches[0]) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

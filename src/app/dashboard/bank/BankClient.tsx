@@ -93,6 +93,11 @@ interface Suggestion {
   // [BANK-SLOT-PERSIST] Server-computed reference numbers already paid against this tx,
   // so a paid slot shows "Betaald" after a reload (session confirm state is gone).
   coveredNumbers?: string[]
+  // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
+  explainedByPaid?: boolean
+  // [BANK-AMOUNT-ONLY] 'amount_only' when this line was auto-booked on amount+counterpart only
+  // (no printed number/IBAN) → the Gekoppeld card shows a "controleer" flag. null otherwise.
+  matchReason?: string | null
 }
 interface MatchResponse {
   ok: boolean
@@ -126,6 +131,9 @@ export default function BankClient() {
   // backend reported every reference number as covered (allCovered). The tx only
   // counts as "done" (→ Gekoppeld, leaves Te bevestigen) once allCovered is true.
   const [confirmed, setConfirmed] = useState<Record<string, { numbers: string[]; allCovered: boolean }>>({}) // txId → confirmation state
+  // [P1-UNCATEGORIZED] Count of bank lines with NO category (not tied to an invoice). Money on
+  // these lines is silently absent from the W&V/BTW until categorized — surface it, never hide it.
+  const [uncatCount, setUncatCount] = useState(0)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BANK-BATCH-CONFIRM] Bulk-confirm only for strong 'auto' single-invoice matches
   // (each already carries an unambiguous best candidate from the bank statement).
@@ -234,16 +242,41 @@ export default function BankClient() {
     if (autoRanRef.current) return
     if (autoRunning) return
     if (!data) return
-    const hasSafe = (data.suggestions ?? []).some(
-      (s) =>
-        s.outcome === 'auto' &&
-        !!s.best &&
-        s.best.signals.includes('reference') &&
-        s.best.signals.includes('amount') &&
-        (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
-        !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
-    )
-    if (!hasSafe) return
+    // [BANK-IBAN] Mirror the server's isSafeAutoConfirm EXACTLY: the safe set is
+    // (reference + amount) OR (iban + amount). The old gate only checked reference+amount,
+    // so an invoice matched purely by supplier IBAN + exact sum (e.g. the HVO invoices, which
+    // carry no printed invoice number in the payment) never tripped the on-load auto-run —
+    // it sat unlinked until the daily cron. The server stays authoritative; this only decides
+    // "are there any safe matches worth calling autoConfirm for right now".
+    const hasSafe = (data.suggestions ?? []).some((s) => {
+      if (s.outcome !== 'auto' || !s.best) return false
+      const sig = s.best.signals
+      // Mirror the server's autoConfirmTier: 'certain' (reference/iban + amount) OR 'amount_only'
+      // (amount + counterpart name, no reference/iban). Both are single-invoice, non-instalment and
+      // auto-booked on load; the server stays authoritative on WHAT it books and the tier flag.
+      const certain = (sig.includes('reference') || sig.includes('iban')) && sig.includes('amount')
+      const amountOnly = sig.includes('amount') && sig.includes('counterpart') && !sig.includes('reference') && !sig.includes('iban')
+      if (!certain && !amountOnly) return false
+      // single reference only (a multi-invoice batch is the engine's separate path), not an instalment
+      if (s.reference && s.reference.split(',').map((x) => x.trim()).filter(Boolean).length > 1) return false
+      if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
+      return true
+    })
+    // [BANK-BATCH-ONLOAD] Also fire the pass when an unresolved MULTI-invoice batch exists (a
+    // wholesaler debiting a week of deliveries into one payment, e.g. "sumer food … 2 facturen").
+    // The single-match gate above deliberately skips these (>1 reference), so a statement whose
+    // ONLY auto-bookable payments were exact batches never auto-confirmed on page-open — it waited
+    // for the daily cron. runBankAutoConfirm already runs the batch pass; the server's
+    // planBatchAutoConfirm stays authoritative (books ONLY provably-exact ties: every number →
+    // exactly one unpaid invoice, one supplier, sum to the cent). This just decides "is it worth
+    // calling now". A non-tie / incomplete batch simply books nothing — the call is idempotent.
+    const hasBatch = (data.suggestions ?? []).some((s) => {
+      const refCount = (s.reference ?? '').split(',').map((x) => x.trim()).filter(Boolean).length
+      if (refCount < 2) return false
+      if (s.allCovered === true || confirmed[s.transactionId]?.allCovered === true) return false
+      return true
+    })
+    if (!hasSafe && !hasBatch) return
     autoRanRef.current = true
     void autoConfirm()
   }, [data, autoRunning, autoConfirm])
@@ -269,6 +302,10 @@ export default function BankClient() {
         const ig = await fetch('/api/bank/ignored')
         const igJson = await ig.json()
         if (!cancelled && ig.ok) setIgnoredList(igJson.suggestions ?? [])
+        // [P1-UNCATEGORIZED] The exact head-count of still-uncategorized bank lines.
+        const cat = await fetch('/api/bank/categorize')
+        const catJson = await cat.json().catch(() => ({}))
+        if (!cancelled && cat.ok) setUncatCount(Number(catJson.total_remaining ?? 0) || 0)
       } catch {
         /* silent — empty state shows the upload card */
       } finally {
@@ -315,7 +352,7 @@ export default function BankClient() {
       // [BANK-AUTO-FEEDBACK] Tell the owner right away when the import already booked payments for
       // them — the money moved silently on the server; a toast makes the automatic work visible.
       if ((upJson.autoBooked ?? 0) > 0) {
-        showToast(`${upJson.autoBooked} ${upJson.autoBooked === 1 ? 'factuur' : 'facturen'} automatisch gekoppeld ✓ — zie "Gekoppeld"`)
+        showToast(`${upJson.autoBooked} ${upJson.autoBooked === 1 ? 'factuur' : 'facturen'} automatisch gekoppeld ✓ — zie "Bevestigd"`)
       }
 
       // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the
@@ -410,7 +447,7 @@ export default function BankClient() {
           json?.warning === 'transaction_link_failed'
             ? 'Factuur betaald (koppeling volgt later).'
             : allCovered
-              ? 'Gekoppeld en gemarkeerd als betaald ✓'
+              ? 'Bevestigd en gemarkeerd als betaald ✓'
               : 'Factuur betaald ✓ · nog een factuur open'
         )
         // [BANK-MULTI-CONFIRM] Re-run matching so the just-paid invoice drops out of
@@ -776,7 +813,10 @@ export default function BankClient() {
   // invoice means the voorbelasting (deductible BTW) on that cost is not claimed, so the owner
   // pays more BTW than they should. The bank line is the one signal that survives a silent
   // import miss, so we turn it from a dead-end into a prompt to recover the document.
-  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0)
+  // [BANK-PAID-EXPLAINED] Exclude a debit that matches an already-PAID invoice (marked paid by hand
+  // in Crediteuren): the invoice exists and its voorbelasting is already claimed, so flagging it as a
+  // "missende inkoopfactuur" is a false alarm the owner can never clear.
+  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0 && !s.explainedByPaid)
   const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).filter(inQ).sort(byDateDesc)
   // [BANK-QUARTER] Ignored tab, filtered to the selected quarter too.
   const ignoredInQ = (ignoredList ?? []).filter(inQ)
@@ -803,7 +843,7 @@ export default function BankClient() {
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
     { key: 'pin' as const, label: 'Pinontvangsten', icon: 'point_of_sale', count: posList.length },
     { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredInQ.length },
-    { key: 'done' as const, label: 'Gekoppeld', icon: 'link', count: confirmedList.length },
+    { key: 'done' as const, label: 'Bevestigd', icon: 'link', count: confirmedList.length },
   ]
   const activeListRaw =
     bankTab === 'confirm' ? toConfirm
@@ -865,6 +905,30 @@ export default function BankClient() {
       <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
         Upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
       </p>
+
+      {/* [P1-UNCATEGORIZED] Money that is NOT yet in your books. A bank line without a category
+          is silently excluded from the W&V/BTW — so make it loud, not invisible. Links straight
+          to the categorisation screen where these get an identity (kost, huur, fee, transfer…). */}
+      {uncatCount > 0 && (
+        <Link
+          href="/dashboard/bank/categoriseren"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
+            background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: R.md,
+            padding: '12px 14px', marginBottom: 16,
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#B06000' }}>label_important</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>
+              {uncatCount === 1 ? '1 banktransactie nog niet gecategoriseerd' : `${uncatCount} banktransacties nog niet gecategoriseerd`}
+            </span>
+            <span style={{ display: 'block', fontSize: 12, color: '#7A4F00', marginTop: 1 }}>
+              Dit geld telt nog niet mee in je winst &amp; verlies en BTW. Geef het een categorie →
+            </span>
+          </span>
+        </Link>
+      )}
 
       {/* Upload card */}
       <label
@@ -1110,6 +1174,24 @@ export default function BankClient() {
             <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
               Leveranciers zonder gevonden factuur. Koppel het bestand, of negeer de transactie als er geen factuur bij hoort (zoals huur of een lening).
             </p>
+          )}
+
+          {/* [COHERENCE-ORPHAN] Entry point to the bank-line categorisation screen. It
+              was a real, P&L-feeding feature (give every uncategorised debit/credit an
+              identity: kost, huur, fee, transfer…) with NO link anywhere — reachable only
+              by typing the URL. Surface it here, where uncategorised "geen factuur" lines
+              live, so those costs can actually reach the W&V/BTW. */}
+          {bankTab === 'none' && noMatch.length > 0 && (
+            <Link
+              href="/dashboard/bank/categoriseren"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10,
+                fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>label</span>
+              Geef deze regels een categorie →
+            </Link>
           )}
 
           {/* [BANK-FILTER] Search field for the long "Geen factuur" list. */}
@@ -1508,6 +1590,21 @@ function TxCard({
             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
             {processing ? 'Bezig…' : 'Ontkoppelen'}
           </button>
+        </div>
+      )}
+      {/* [BANK-AMOUNT-ONLY] This line was auto-linked on the exact amount + a matching supplier
+          name (no invoice number/IBAN in the statement). Almost always right, but for a recurring
+          same-amount supplier it could be the wrong month — so flag it for a quick check. One tap
+          on Ontkoppelen above undoes it. Only on the Gekoppeld tab. */}
+      {isDoneTab && s.matchReason === 'amount_only' && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+          background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: R.sm, padding: '8px 10px',
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B06000' }}>rule</span>
+          <span style={{ fontSize: 12, color: '#7A4F00', lineHeight: 1.4 }}>
+            Automatisch gekoppeld op <strong>bedrag + naam</strong> (geen factuurnummer in het afschrift). Even controleren of dit de juiste factuur is.
+          </span>
         </div>
       )}
       {/* Transaction row */}

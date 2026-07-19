@@ -194,25 +194,20 @@ export default function FacturenClient({ profile }: { profile: any }) {
   async function executePay(ctx: ConfirmPayCtx) {
     setPayCtx(null); setProcessingId(ctx.id)
     updateOptimistic(ctx.id, { status: ctx.newStatus })
-    const patch: any = { status: ctx.newStatus }
-    if (ctx.newStatus === 'paid') {
-      // [BOEK-003] payment_method required by DB constraint (paid ⟹ method).
-      // shared is GENERATED from status='paid' — accountant sees it automatically.
-      // sent_to_accountant removed (model A: shared is computed, no manual gate).
-      patch.payment_method = ctx.paymentMethod ?? 'bank'
-      patch.marked_paid_at = new Date().toISOString()
-      // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Falls back to today
-      // if the modal somehow didn't supply one. marked_paid_at stays the precise
-      // confirmation timestamp; payment_date is the accounting day.
-      patch.payment_date = ctx.paymentDate ?? new Date().toISOString().slice(0, 10)
-    } else {
-      // [BOEK-003] undo payment → clear method + timestamp (back to 'sent')
-      patch.payment_method = null
-      patch.marked_paid_at = null
-      // [BRIDGE-QUARTER] undo → clear the payment date too
-      patch.payment_date = null
-    }
-    const { error } = await supabase.from('invoices').update(patch).eq('id', ctx.id)
+    // [PAY-TOGGLE] Route through the audited server endpoint (same as Crediteuren). On UNDO it also
+    // detaches any bank transaction matched to this invoice — the old direct client write undid the
+    // invoice side only, stranding the tx as 'matched' (payable a second time) and left no audit row.
+    const res = await fetch('/api/invoice/pay-toggle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceId: ctx.id,
+        action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
+        paymentMethod: ctx.paymentMethod ?? 'bank',
+        paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+      }),
+    })
+    const json = await res.json().catch(() => ({} as { error?: string }))
+    const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
     if (error) {
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       updateOptimistic(ctx.id, { status: prev })
@@ -289,7 +284,12 @@ export default function FacturenClient({ profile }: { profile: any }) {
   }
 
   async function handleDeleteRequest(id: string, number: string, status: string) {
-    if (status === 'paid') { router.push(`/dashboard/invoice/new?type=creditnota&original=${id}`); return }
+    // [COHERENCE-CREDITNOTA] A paid invoice may never be deleted — it is corrected with
+    // a creditnota. Send the owner to the invoice detail with ?action=credit, which opens
+    // the creditnota dialog that calls /api/invoice/creditnota (copies lines, keeps the
+    // link). The old target (/invoice/new?type=creditnota) was a dead blank form that
+    // produced an orphan creditnota with original_invoice_id=null.
+    if (status === 'paid') { router.push(`/dashboard/invoice/${id}?action=credit`); return }
     setDeleteCtx({ id, number, status })
   }
 
@@ -351,11 +351,21 @@ export default function FacturenClient({ profile }: { profile: any }) {
           ...(result.invoice_type   ? { invoice_type: result.invoice_type }     : {}),
         })
         const displayNumber = result.invoice_number || ctx.number
-        showToast(
-          ctx.isResend
-            ? (displayNumber ? `Factuur ${displayNumber} opnieuw verzonden ✓` : 'Factuur opnieuw verzonden ✓')
-            : (displayNumber ? `Factuur ${displayNumber} verzonden ✓` : 'Factuur verzonden ✓')
-        )
+        // [SEND-PDF-HONEST] A pdf_failed response means the number was issued but the PDF/email did
+        // NOT go out — never toast "verzonden ✓". Tell the owner to resend so the state is honest.
+        if (result.warning === 'pdf_failed' || result.delivered === false) {
+          showToast(
+            displayNumber
+              ? `Factuur ${displayNumber} kreeg een nummer, maar de PDF kon niet worden gemaakt — verstuur opnieuw`
+              : 'De PDF kon niet worden gemaakt — verstuur de factuur opnieuw'
+          )
+        } else {
+          showToast(
+            ctx.isResend
+              ? (displayNumber ? `Factuur ${displayNumber} opnieuw verzonden ✓` : 'Factuur opnieuw verzonden ✓')
+              : (displayNumber ? `Factuur ${displayNumber} verzonden ✓` : 'Factuur verzonden ✓')
+          )
+        }
       }
     } catch {
       // [BOEK-RESEND] rollback to original status on network failure too

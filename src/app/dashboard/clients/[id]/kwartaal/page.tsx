@@ -117,6 +117,10 @@ export default function KwartaalPage() {
   const [sortAsc, setSortAsc] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  // [COHERENCE-CLOSING] Generate the closing package right where the accountant finishes
+  // the quarter — no need to go back to /dashboard/quarterly and re-pick the same client.
+  const [packaging, setPackaging] = useState(false)
+  const [packageError, setPackageError] = useState<string | null>(null)
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // The accountant clicks an enriched notification and lands on the exact row:
@@ -322,6 +326,42 @@ export default function KwartaalPage() {
           <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>Documenten — bekijk in Brug</span>
           <span style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
         </button>
+
+        {/* [COHERENCE-CLOSING] Download the closing package HERE — the exact place the
+            accountant finishes marking the quarter Verwerkt. It used to live only on
+            /dashboard/quarterly and the Brug, forcing a client re-selection at the finish
+            line. clientId/q/year are already in scope. Same ZIP endpoint as QuarterlyOverview. */}
+        <button
+          onClick={async () => {
+            setPackaging(true); setPackageError(null)
+            try {
+              const qp = new URLSearchParams({ year: String(year), quarter: String(q), clientId })
+              const res = await fetch(`/api/closing-package?${qp}`)
+              if (!res.ok) { setPackageError('Pakket genereren mislukt — probeer opnieuw.'); return }
+              const blob = await res.blob()
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `kwartaalpakket-Q${q}-${year}.zip`
+              a.click()
+              URL.revokeObjectURL(url)
+            } catch {
+              setPackageError('Pakket genereren mislukt — probeer opnieuw.')
+            } finally {
+              setPackaging(false)
+            }
+          }}
+          disabled={packaging}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: packaging ? '#F1F3F4' : '#1A73E8', border: 'none', borderRadius: 8, cursor: packaging ? 'default' : 'pointer', transition: 'background 0.1s ease', width: '100%' }}
+        >
+          <span className="text-xl">📦</span>
+          <span className="text-xs font-semibold" style={{ color: packaging ? '#5F6368' : '#FFFFFF', fontSize: 13 }}>
+            {packaging ? 'Kwartaalpakket genereren…' : 'Download kwartaalpakket (ZIP)'}
+          </span>
+        </button>
+        {packageError && (
+          <p style={{ fontSize: 12.5, color: '#B3261E', margin: '-8px 2px 0' }}>{packageError}</p>
+        )}
 
         {/* Quarter summary */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>

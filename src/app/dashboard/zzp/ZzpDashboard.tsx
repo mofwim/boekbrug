@@ -155,6 +155,15 @@ export function ZzpDashboard({ profile }: { profile: any }) {
           {/* Bon/factuur toevoegen — foto of bestand → AI sorteert (daily add). */}
           <IntakeButton variant="card" />
 
+          {/* [TRUTH-LENS] Je financiële waarheid — één doorlopend, live beeld (omzet, kosten,
+              winst, BTW) met een tijd-lens (kwartaal / jaar / alles). Zelfde cijfers als de
+              aangifte, want zelfde reconcile-pijplijn. */}
+          <ActionCard
+            icon="monitoring" iconBg="#0B8043" iconColor="#fff"
+            label="Je waarheid" sub="Omzet, winst en BTW — live, elke periode"
+            onClick={() => router.push('/dashboard/waarheid')}
+          />
+
           {/* [UPLOAD-HUB] Alles uploaden — one page for MANY files at once (facturen, bonnen,
               bankafschriften). The scattered per-screen uploads still work; this is the single door. */}
           <ActionCard

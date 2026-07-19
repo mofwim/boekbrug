@@ -284,10 +284,14 @@ export function OnboardingWizard({
       }
       if (step === 4) {
         if (clientEmail.trim()) {
+          // [COHERENCE-ONBOARDING] The route reads `clientEmail` (see /api/invite/client
+          // and InviteClient.tsx). Sending `client_email` made it 400 "Email verplicht",
+          // which the .catch swallowed → the invite was never created while onboarding
+          // showed success. Send the field name the route actually expects.
           await fetch("/api/invite/client", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ client_email: clientEmail.trim() }),
+            body: JSON.stringify({ clientEmail: clientEmail.trim() }),
           }).catch(() => {});
         }
         await persistStep(5);
@@ -337,14 +341,28 @@ export function OnboardingWizard({
   }
 
   const isDone = (role === "zzp" && step === 6) || (role === "accountant" && step === 5);
-  const hideNextButton = step === 3 || step === "3A" || step === 4;
+  // [COHERENCE-ONBOARDING] Hide the shared "Volgende" ONLY on the step that supplies
+  // its OWN forward button — the ZZP Gmail step (StepGmail renders "Volgende →" once
+  // connected, or the user taps "Sla over"). Every other step needs this button:
+  //  • numeric step 3 = StepManual (ZZP "Jouw bedrijf") / StepOfficeDetails (accountant
+  //    "Jouw kantoor") — neither has an internal submit, so hiding it stranded the
+  //    typed legal identity (only "Sla over" advanced, discarding it).
+  //  • accountant step 4 = StepInviteClient — no internal button either, so the invite
+  //    was never sent and StepDone (step 5) was unreachable.
+  // The previous `step === 3 || step === "3A" || step === 4` hid the button on ALL of
+  // these (the "3A"/"3B" string states are legacy dead code the navigation never sets).
+  const hideNextButton = role === "zzp" && step === 4;
   const showSkip =
     !isDone && step !== 1 && step !== 2 &&
     !(role === "zzp" && step === 6) &&
     !(role === "accountant" && step === 5);
 
-  // [BOEK-015] Fix 3: disable Volgende until company_name is filled
-  const isCompanyStep = step === "3B" || (role === "accountant" && step === 3);
+  // [BOEK-015] Fix 3: disable Volgende until company_name is filled.
+  // [COHERENCE-ONBOARDING] numeric step 3 is the company/office step for BOTH personas
+  // (ZZP StepManual + accountant StepOfficeDetails); the old guard only matched the
+  // legacy "3B" string for ZZP, so once the button was restored the ZZP name-required
+  // rule (and the "Vul je bedrijfsnaam in" hint) had no teeth. Match numeric 3 too.
+  const isCompanyStep = step === "3B" || step === 3;
   const kvkVal = company.kvk_number.trim();
   // [FACTUUR-B] also disable "Volgende" while a typed numbering value is unparseable
   const numberingTrimmed = invoiceStart.trim();

@@ -25,6 +25,7 @@ interface IncomingInvoiceRow {
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
+  amount_paid?: number | null;
   invoice_date: string;
   invoice_number: string;
   source: string;
@@ -42,12 +43,15 @@ interface IncomingInvoiceRow {
   // [IMPORT-MONITOR] Part 1 — read-time health verdict (clean | needs-review +
   // plain-language reasons). Computed server-side from existing signals only.
   health: ImportHealth;
+  // [INCOMING-BEVESTIGD] Only set on the "Bevestigd" list — 'received' (verified, te betalen)
+  // or 'paid' (settled). NULL/absent on pending (always 'processing') + ignored ('archived').
+  status?: string | null;
 }
 
 // Plain column list — no join. The join broke the query and emptied the page.
 // [BRIDGE-CREDITNOTA-SIGN] + invoice_type (badge + sign-inverted health gate).
 const INVOICE_COLUMNS =
-  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
+  "id, client_name, client_email, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();
@@ -102,6 +106,20 @@ export default async function IncomingPage() {
     .order("created_at", { ascending: false })
     .limit(50);
 
+  // [INCOMING-BEVESTIGD] Confirmed invoices — verified out of the queue ('received', te betalen)
+  // or already settled ('paid'). Before this tab they vanished to /incoming/manage (Crediteuren),
+  // which felt like the work was lost. Surfacing the recent ones here — in place, read-only with a
+  // status badge — closes that gap. Newest first, bounded; the full ledger stays on Crediteuren.
+  const { data: confirmedRaw } = await supabase
+    .from("invoices")
+    .select(`${INVOICE_COLUMNS}, status`)
+    .eq("receiver_id", user.id)
+    .eq("direction", "incoming")
+    .in("status", ["received", "paid"])
+    .order("invoice_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(50);
+
   // [BOEK-011] Base rows — cast through unknown (Supabase returns a wide union).
   // [IMPORT-MONITOR] Also omit `health` here: it is computed below, not selected.
   const pendingBase = (pendingRaw ?? []) as unknown as Omit<
@@ -112,12 +130,16 @@ export default async function IncomingPage() {
     IncomingInvoiceRow,
     "folder_id" | "folder_name" | "health"
   >[];
+  const confirmedBase = (confirmedRaw ?? []) as unknown as Omit<
+    IncomingInvoiceRow,
+    "folder_id" | "folder_name" | "health"
+  >[];
 
   // [BOEK-011] Resolve folder PATH for each invoice — safe, never breaks the page.
   // 1. Get the folder_id for each linked document
   // 2. Load all the user's folders once
   // 3. Walk parent_id up to build the full path: "2026 / Q1 / maart / Facturen"
-  const allDocIds = [...pendingBase, ...ignoredBase]
+  const allDocIds = [...pendingBase, ...ignoredBase, ...confirmedBase]
     .map((inv) => inv.document_id)
     .filter((id): id is string => !!id);
 
@@ -200,6 +222,7 @@ export default async function IncomingPage() {
 
   const pendingInvoices = withFolder(pendingBase);
   const ignoredInvoices = withFolder(ignoredBase);
+  const confirmedInvoices = withFolder(confirmedBase);
 
   const connectionStatus = {
     connected: !!connection,
@@ -213,6 +236,7 @@ export default async function IncomingPage() {
     <IncomingInvoicesClient
       initialInvoices={pendingInvoices}
       ignoredInvoices={ignoredInvoices}
+      confirmedInvoices={confirmedInvoices}
       connectionStatus={connectionStatus}
       userRole={userRole}
     />

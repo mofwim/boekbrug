@@ -21,6 +21,7 @@ import { dedupTransactions, mapToRows, dateRange, type ExistingTxKey } from "./b
 import { computeContentHash } from "./content-hash";
 import { resolveImportTarget } from "./bestanden";
 import { runBankAutoConfirm } from "./bank-auto-confirm";
+import { applyLearnedBankCategories } from "./bank-auto-categorize";
 
 export interface BankImportResult {
   format: string | null;
@@ -124,6 +125,13 @@ export async function importBankStatement(args: {
     } catch (e) {
       console.error("[BANK-INGEST] auto-confirm after import failed (non-fatal)", e);
     }
+    // [BANK-AUTO-CATEGORIZE] Immediately code the fresh lines the owner has taught us before, so a
+    // just-uploaded statement lands mostly categorized instead of a wall of uncategorized money.
+    try {
+      await applyLearnedBankCategories({ pipeline, userId });
+    } catch (e) {
+      console.error("[BANK-INGEST] auto-categorize after import failed (non-fatal)", e);
+    }
   }
 
   // [BANK-AUTO-FEEDBACK] The import books the near-certain payments SILENTLY on the server. The
@@ -137,7 +145,7 @@ export async function importBankStatement(args: {
       await pipeline.from("notifications").insert({
         user_id: userId,
         title: autoBooked === 1 ? "1 factuur automatisch gekoppeld" : `${autoBooked} facturen automatisch gekoppeld`,
-        body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Gekoppeld" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
+        body: `Uit je bankafschrift ${autoBooked === 1 ? "is 1 factuur" : `zijn ${autoBooked} facturen`} herkend en als betaald gemarkeerd. Bekijk ze onder "Bevestigd" op de Bank-pagina — je kunt elke koppeling met één tik ongedaan maken.`,
         type: "payment",
       });
     } catch {
