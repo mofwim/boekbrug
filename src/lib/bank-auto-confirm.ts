@@ -33,6 +33,10 @@ export interface AutoConfirmed {
   invoiceId: string;
   invoiceNumber: string | null;
   amount: number;
+  // [JET-GAP0] How sure the booking was: 'certain' (printed reference / IBAN + amount to the cent,
+  // or an exact multi-invoice batch tie) vs 'amount_only' (amount + counterpart name, single clear
+  // winner — booked but flagged "controleer"). Drives the honesty of the notification body.
+  tier: AutoConfirmTier;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,7 +148,7 @@ export async function runBankAutoConfirm(args: {
     // is the tx.invoice_id + invoice.status above; this row is only the collision-free undo index.
     await recordPaymentLinks(pipeline, userId, txId, [invoiceId]);
 
-    confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0 });
+    confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0, tier });
     await logAuditAction({
       userId,
       action: "bank.auto_confirmed",
@@ -201,7 +205,8 @@ export async function runBankAutoConfirm(args: {
     if (!bookedRows || (bookedRows as unknown[]).length === 0) continue; // tx already claimed → skip
 
     for (const inv of planInvs) {
-      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0 });
+      // A batch tie is 'certain' by construction (every number resolves + the sum equals the debit).
+      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0, tier: "certain" });
       bookedInvoiceIds.add(inv.id);
     }
     bookedTxIds.add(txId);
@@ -212,6 +217,36 @@ export async function runBankAutoConfirm(args: {
       entityId: txId,
       newValue: { invoice_ids: plan.invoiceIds, invoice_count: plan.invoiceIds.length, amount: row.amount ?? 0, reason: "exact_multi_invoice_batch_tie" },
     });
+  }
+
+  // ── [JET-GAP0] The bell lives HERE, inside the core, so it is IMPOSSIBLE to book an invoice
+  // paid from ANY of the six entry points (import, verify, cron, /bank page, email) without the
+  // owner being told. Before, only two callers notified — the other four moved money silently.
+  // The body is honest about tier: an 'amount_only' booking (matched on amount + name, not a
+  // printed reference) is flagged "controleer". Best-effort but LOGGED on failure — a swallowed
+  // insert must never regress to silent money. (Money is not moved here; a paid invoice is a fact
+  // recorded, one-tap reversible under "Bevestigd".)
+  if (confirmed.length > 0) {
+    const n = confirmed.length;
+    const amountOnly = confirmed.filter((c) => c.tier === "amount_only").length;
+    const body =
+      `${n === 1 ? "1 factuur is" : `${n} facturen zijn`} automatisch herkend in je bankafschrift en op ` +
+      `betaald gezet. Bekijk ze onder "Bevestigd" — elke koppeling draai je met één tik terug.` +
+      (amountOnly > 0
+        ? ` Let op: ${amountOnly === 1 ? "1 koppeling is" : `${amountOnly} koppelingen zijn`} alleen op bedrag ` +
+          "herkend (geen factuurnummer in de omschrijving) — controleer die even."
+        : "");
+    try {
+      const { error } = await pipeline.from("notifications").insert({
+        user_id: userId,
+        title: n === 1 ? "1 factuur automatisch gekoppeld" : `${n} facturen automatisch gekoppeld`,
+        body,
+        type: "payment",
+      });
+      if (error) console.error("[JET-GAP0] auto-confirm notification insert failed", { userId, error: error.message });
+    } catch (e) {
+      console.error("[JET-GAP0] auto-confirm notification threw", { userId, error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   return confirmed;
