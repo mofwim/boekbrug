@@ -9,6 +9,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { BackLink } from '@/components/ui/BackLink'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
 import { lastCompletedQuarter } from '@/lib/quarter'
 
@@ -205,6 +206,9 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
+      {/* [NAV] Top-left back — consistent across the app (mobile). Goes to the
+          parent (werkplek / accountant home); the tree has its own breadcrumb. */}
+      <BackLink role={role === 'accountant' ? 'accountant' : 'zzper'} style={{ color: M3.primary, marginBottom: 10 }} />
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: 0, letterSpacing: -0.3 }}>

@@ -183,6 +183,15 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard/werkplek',
   },
 
+  // ── brug (the bridge) → werkplek (zzp) / accountant home ─────────────────
+  // [NAV] The bridge is reached from the ZZP werkplek (owner) or the accountant
+  // home. Its in-page folder tree has its own breadcrumb + OS-back handling.
+  {
+    match: /^\/dashboard\/brug$/,
+    parent: (_, role) =>
+      role === 'accountant' ? '/dashboard/accountant' : '/dashboard/werkplek',
+  },
+
   // ── all other /dashboard/* → home per role ────────────────────────────────
   // covers: /facturen, /klanten, /bestanden, /incoming, /quarterly,
   //         /settings, /werkplek (zzp), etc.
