@@ -21,10 +21,22 @@ interface TruthResult {
   omzet: number; kosten: number; resultaat: number;
   btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number;
 }
+interface Divergence {
+  changed: boolean;
+  omzetDelta: number; kostenDelta: number;
+  btwVerschuldigdDelta: number; btwVoorbelastingDelta: number; btwSaldoDelta: number;
+  needsSuppletie: boolean;
+}
+interface FiledInfo {
+  filedAt: string;
+  figures: TruthResult;
+  divergence: Divergence;
+}
 interface TruthResponse {
   ok: boolean;
   lens: Lens; label: string; quarter: number | null; year: number | null;
   isLiveWindow: boolean;
+  filed: FiledInfo | null;
   result: TruthResult;
   datelessVerifiedCount: number;
   reconciliation: { grossMismatchDays: number; incompleteDays: number };
@@ -42,6 +54,7 @@ export default function WaarheidClient() {
   const [data, setData] = useState<TruthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [filing, setFiling] = useState(false);
 
   const load = useCallback(async (l: Lens) => {
     setLoading(true); setError(false);
@@ -59,7 +72,28 @@ export default function WaarheidClient() {
 
   useEffect(() => { void load(lens); }, [lens, load]);
 
+  // [TRUTH-FILED] Mark this quarter as filed (freeze the snapshot) / un-file it (unlock).
+  const setFiled = useCallback(async (mark: boolean) => {
+    if (!data?.quarter || !data?.year) return;
+    setFiling(true);
+    try {
+      if (mark) {
+        await fetch("/api/btw/file", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ year: data.year, quarter: data.quarter }),
+        });
+      } else {
+        await fetch(`/api/btw/file?year=${data.year}&quarter=${data.quarter}`, { method: "DELETE" });
+      }
+      await load(lens);
+    } finally {
+      setFiling(false);
+    }
+  }, [data, lens, load]);
+
   const r = data?.result;
+  const isQuarterLens = !!(data?.quarter && data?.year);
+  const div = data?.filed?.divergence;
 
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 14px 96px", fontFamily: FONT, color: M.onSurface }}>
@@ -104,15 +138,41 @@ export default function WaarheidClient() {
         </div>
       ) : data && r ? (
         <>
-          {/* Period + living/final state */}
+          {/* Period + living/final/filed state */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
             <span style={{ fontSize: 15, fontWeight: 700 }}>{data.label}</span>
-            {data.isLiveWindow ? (
+            {data.filed ? (
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#3730a3", background: "#e8eaf6", borderRadius: 980, padding: "2px 10px" }}>
+                🔒 Ingediend · definitief
+              </span>
+            ) : data.isLiveWindow ? (
               <span style={{ fontSize: 11.5, fontWeight: 700, color: M.warnFg, background: M.warnBg, borderRadius: 980, padding: "2px 10px" }}>loopt nog</span>
             ) : (
               <span style={{ fontSize: 11.5, fontWeight: 700, color: "#137333", background: M.goodBg, borderRadius: 980, padding: "2px 10px" }}>afgesloten periode</span>
             )}
           </div>
+
+          {/* [TRUTH-FILED] Divergence since filing → the suppletie heads-up. This is the payoff of
+              the whole "living truth vs frozen aangifte" split: the only app that tells the owner a
+              late invoice moved a quarter they already sent to the Belastingdienst. */}
+          {data.filed && div?.changed && (
+            <div style={{
+              background: div.needsSuppletie ? "#fce8e6" : M.warnBg,
+              border: `1px solid ${div.needsSuppletie ? "#e57373" : "#fbbc04"}`,
+              borderRadius: 14, padding: "12px 14px", marginBottom: 14,
+            }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: div.needsSuppletie ? "#a50e0e" : M.warnFg, marginBottom: 4 }}>
+                {div.needsSuppletie ? "⚠️ Suppletie nodig" : "Let op — dit kwartaal is gewijzigd"}
+              </div>
+              <div style={{ fontSize: 12.5, color: div.needsSuppletie ? "#7a1c1c" : M.warnFg, lineHeight: 1.5 }}>
+                Sinds je indiening is de BTW met <strong>{eur.format(Math.abs(div.btwSaldoDelta))}</strong> {div.btwSaldoDelta >= 0 ? "gestegen" : "gedaald"}
+                {" "}(je {div.btwSaldoDelta >= 0 ? "moet meer betalen" : "krijgt meer terug"}).{" "}
+                {div.needsSuppletie
+                  ? "Dat is meer dan €1.000 — dien een suppletie in bij de Belastingdienst."
+                  : "Onder €1.000 mag je dit verwerken in je volgende aangifte."}
+              </div>
+            </div>
+          )}
 
           {/* Resultaat — the headline */}
           <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
@@ -164,6 +224,40 @@ export default function WaarheidClient() {
               </p>
             )}
           </div>
+
+          {/* [TRUTH-FILED] File / unlock — only for a single-quarter lens. Filing freezes the
+              snapshot so later divergence surfaces as a suppletie; unlocking is always allowed
+              (reversible). */}
+          {isQuarterLens && (
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${M.line}` }}>
+              {data.filed ? (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5, color: M.muted }}>
+                    Ingediend op {new Date(data.filed.filedAt).toLocaleDateString("nl-NL")}
+                  </span>
+                  <button
+                    onClick={() => setFiled(false)}
+                    disabled={filing}
+                    style={{ background: "none", border: "none", color: M.muted, fontSize: 12.5, fontWeight: 600, cursor: filing ? "default" : "pointer", textDecoration: "underline", padding: 0 }}
+                  >
+                    {filing ? "Bezig…" : "Indiening ongedaan maken"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setFiled(true)}
+                  disabled={filing}
+                  style={{ width: "100%", padding: "13px 0", borderRadius: 12, background: M.primary, border: "none", color: "#fff", fontWeight: 700, fontSize: 14, cursor: filing ? "default" : "pointer" }}
+                >
+                  {filing ? "Bezig…" : "Markeer als ingediend bij de Belastingdienst"}
+                </button>
+              )}
+              <p style={{ fontSize: 11.5, color: M.muted, margin: "8px 2px 0", lineHeight: 1.5 }}>
+                Dit legt de cijfers van dit kwartaal vast. Komt er later nog een factuur bij, dan
+                zien we het verschil en zeggen we of een suppletie nodig is.
+              </p>
+            </div>
+          )}
         </>
       ) : null}
     </div>

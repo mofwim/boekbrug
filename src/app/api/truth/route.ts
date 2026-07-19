@@ -14,6 +14,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { computeResultForRange } from "@/lib/compute-result-range";
+import { computeFilingDivergence } from "@/lib/btw-filing";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function iso(d: Date): string { return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; }
@@ -99,6 +100,50 @@ export async function GET(req: NextRequest) {
     end: win.end,
   });
 
+  // [TRUTH-FILED] When the lens is exactly one quarter, look up whether it was filed. If so, the
+  // period is LOCKED (definitief) and we compare the frozen snapshot to the current live figures —
+  // any divergence is a correction the owner must be told about (carry-forward vs suppletie).
+  let filed: null | {
+    filedAt: string;
+    figures: { omzet: number; kosten: number; btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number };
+    divergence: ReturnType<typeof computeFilingDivergence>;
+  } = null;
+  if (win.quarter && win.year) {
+    // btw_filings is not yet in the generated types (added by btw_filings.sql) → relaxed client.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: fRow } = await (pipeline as any)
+      .from("btw_filings")
+      .select("filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo")
+      .eq("user_id", owner.ownerId)
+      .eq("year", win.year)
+      .eq("quarter", win.quarter)
+      .maybeSingle();
+    const row = fRow as unknown as {
+      filed_at: string; omzet: number; kosten: number;
+      btw_verschuldigd: number; btw_voorbelasting: number; btw_saldo: number;
+    } | null;
+    if (row) {
+      const figures = {
+        omzet: Number(row.omzet) || 0,
+        kosten: Number(row.kosten) || 0,
+        btwVerschuldigd: Number(row.btw_verschuldigd) || 0,
+        btwVoorbelasting: Number(row.btw_voorbelasting) || 0,
+        btwSaldo: Number(row.btw_saldo) || 0,
+      };
+      filed = {
+        filedAt: row.filed_at,
+        figures,
+        divergence: computeFilingDivergence(figures, {
+          omzet: result.omzet,
+          kosten: result.kosten,
+          btwVerschuldigd: result.btwVerschuldigd,
+          btwVoorbelasting: result.btwVoorbelasting,
+          btwSaldo: result.btwSaldo,
+        }),
+      };
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     lens,
@@ -107,9 +152,11 @@ export async function GET(req: NextRequest) {
     label: win.label,
     quarter: win.quarter ?? null,
     year: win.year ?? null,
-    // [TRUTH-LENS] true when the window includes today (this quarter / ytd / all / current year):
-    // the figures are LIVING, not a final filed period. The UI says "loopt nog" instead of "definitief".
-    isLiveWindow: win.isLiveWindow,
+    // [TRUTH-LENS] true when the window includes today AND it isn't a filed (locked) quarter: the
+    // figures are LIVING, not a final period. A filed quarter is "definitief" even if it's current.
+    isLiveWindow: win.isLiveWindow && !filed,
+    // [TRUTH-FILED] present only for a single-quarter lens that has been filed.
+    filed,
     result,
     datelessVerifiedCount,
     reconciliation,
