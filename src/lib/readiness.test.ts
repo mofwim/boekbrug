@@ -247,5 +247,27 @@ console.log("\n— [KAS-NEGATIEF] a negative cash drawer blocks 'klaar' —");
   check("positive balance passed in → no gap", buildReadiness(perfect({ negativeCashDay: { date: "2026-01-01", balance: 50 } })).status === "ready");
 }
 
+console.log("\n— [REGIME-FLAGS] special regimes are RISKS, never a block —");
+{
+  // A KOR-active shop did its part (imported everything); the regime is the accountant's to
+  // apply. So it must surface as a risk and NOT lower the "klaar" verdict.
+  const r = buildReadiness(perfect({
+    regimeFlags: [{ code: "kor", title: "KOR is actief — bereken geen BTW", detail: "…" }],
+  }));
+  check("KOR flag surfaces as a risk", r.risks.some((x) => /KOR is actief/.test(x.title)));
+  check("KOR flag is NOT a missing gap", !r.missing.some((x) => /KOR/.test(x.title)));
+  check("still ready with only a regime risk (score capped at 99 by the honesty guard)",
+    r.missing.length === 0 && r.status === "ready" && r.score === 99);
+  const clean = buildReadiness(perfect());
+  check("no regime flags → untouched (still 100)", clean.score === 100 && clean.risks.length === 0);
+}
+{
+  // A phrase-gated flag carries its evidence into the risk detail.
+  const r = buildReadiness(perfect({
+    regimeFlags: [{ code: "reverse_charge_purchase", title: "Inkoop met BTW verlegd (rubriek 2a)", detail: "…", evidence: "INK-22" }],
+  }));
+  check("evidence invoice appears in the risk detail", r.risks.some((x) => /INK-22/.test(x.detail ?? "")));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

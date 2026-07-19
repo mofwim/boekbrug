@@ -29,6 +29,9 @@ export default function SettingsPage() {
   const [address, setAddress] = useState('')
   const [postalCode, setPostalCode] = useState('')
   const [city, setCity] = useState('')
+  // [REGIME-FLAGS] KOR (kleineondernemersregeling) opt-in. Saved with the profile; drives the
+  // accountant-handoff flag ("KOR is actief — bereken geen BTW"), never a figure by itself.
+  const [korActive, setKorActive] = useState(false)
 
   // حالة دعوة المحاسب
   const [accountantEmail, setAccountantEmail] = useState('')
@@ -98,6 +101,7 @@ export default function SettingsPage() {
         setAddress(data.address || '')
         setPostalCode(data.postal_code || '')
         setCity(data.city || '')
+        setKorActive(!!data.kor_active)
       }
       // جلب محاسب الـ ZZP'er إذا كان مرتبطاً — via API (service role bypasses RLS)
       if (data?.role === 'zzper') {
@@ -160,7 +164,8 @@ export default function SettingsPage() {
         iban: normalizeIban(iban) || null,
         address: address,
         postal_code: postalCode,
-        city: city
+        city: city,
+        kor_active: korActive,
       })
       .eq('id', user.id)
 
@@ -424,6 +429,28 @@ export default function SettingsPage() {
 
           {successProfile && <p className="text-sm text-green-600">{successProfile}</p>}
           {errorProfile && <p className="text-sm text-red-500">{errorProfile}</p>}
+
+          {/* [REGIME-FLAGS] KOR — kleineondernemersregeling opt-in. Saved with the profile. */}
+          <div className="border-t border-gray-100 pt-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={korActive}
+                onChange={e => setKorActive(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">
+                  Ik gebruik de kleineondernemersregeling (KOR)
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Onder de KOR breng je geen BTW in rekening. Je concept-aangifte krijgt dan een
+                  duidelijke notitie voor je boekhouder — de omzet blijft kloppen, alleen de
+                  BTW-afdracht vervalt.
+                </span>
+              </span>
+            </label>
+          </div>
 
           {/* زر الحفظ */}
           <button

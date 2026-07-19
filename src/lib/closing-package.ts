@@ -58,6 +58,8 @@ import {
   type AangifteCompleteness,
 } from "./aangifte";
 import { fetchAllRows } from "./supabase-paginate";
+import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
+import { regimeFlagNote } from "./regime-flags";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1046,6 +1048,13 @@ export async function buildClosingPackageZip(args: {
     .eq("id", ownerId)
     .maybeSingle();
   if (profile) clientName = profile.company_name || profile.full_name || "Onbekend";
+  // [REGIME-FLAGS] Owner's KOR declaration (drives the accountant-handoff flag, never a figure).
+  // [DEPLOY-SAFE] Fetched in its OWN query — never folded into the clientName select above — so if
+  // the regime_kor.sql migration lags this deploy, a missing column only nulls korActive (→ no
+  // flags), and can NEVER break the client-name lookup or any figure in this package.
+  const { data: korProfile } = await supabase
+    .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
+  const korActive = !!(korProfile as { kor_active?: boolean | null } | null)?.kor_active;
 
   // Invoices of the quarter (both directions). Filter on STORED status only
   // (verified sets), within the quarter date range.
@@ -1369,12 +1378,32 @@ export async function buildClosingPackageZip(args: {
       (i) => typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim()),
     ),
   };
+  // [REGIME-FLAGS] Special regimes the concept can't auto-compute (KOR active / BTW verlegd /
+  // margeregeling). KOR is owner-declared; verlegd/marge are phrase-gated on the owner's own
+  // invoice-line texts (tenant-safe fetch by invoice_id). Each becomes BOTH a note on the concept
+  // and a "Let op" warning in the overzicht, so the accountant sees the handoff next to the
+  // evidence. This is exactly the "accountant-handoff" the package exists for.
+  const regimeInvoices: RegimeInvoiceRef[] = all.map((i) => ({
+    id: i.id,
+    direction: i.direction === "incoming" ? "incoming" : "outgoing",
+    label: i.invoice_number,
+  }));
+  const omzetForKorCheck =
+    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
+  const regimeFlags = await collectRegimeFlags({
+    client: supabase, korActive, omzetForKorCheck, invoices: regimeInvoices,
+  }).catch(() => []);
+  const regimeNotes = regimeFlags.map(regimeFlagNote);
+  for (const f of regimeFlags) {
+    warnings.push({ code: `regime_${f.code}`, message: regimeFlagNote(f) });
+  }
+
   // Only emit a concept when there is something to declare — sales, unrated cash omzet,
   // or reclaimable voorbelasting. An empty quarter gets no invented filing.
   const hasDeclarable =
     result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
   const conceptAangifte = hasDeclarable
-    ? buildAangifte(result, completeness, `Q${quarter} ${year}`)
+    ? buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes)
     : null;
 
   // [KASBOEK] The cash book as the accountant's own running-balance sheet (Kiwi .xlsx layout),

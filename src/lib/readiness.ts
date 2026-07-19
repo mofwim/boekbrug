@@ -5,6 +5,8 @@
 // signals other modules compute and turns them into ONE verdict + the few things that
 // need attention. Fully testable (run: npx tsx src/lib/readiness.test.ts).
 //
+import type { RegimeFlag } from "./regime-flags";
+
 // THE SCORE IS NOT COSMETIC. Every point is earned by a PROVABLE condition:
 //   score = 100 × Σ(weight·subscore over APPLICABLE dimensions) / Σ(weight over applicable)
 // A dimension we cannot measure for this owner (e.g. till reconciliation for a ZZP with no
@@ -67,6 +69,11 @@ export interface ReadinessSignals {
   // red flag the Belastingdienst uses to reject a cash administration (it implies hidden omzet), so
   // it must BLOCK "klaar". Optional so older callers/tests keep compiling (undefined → no block).
   negativeCashDay?: { date: string; balance: number } | null;
+  // [REGIME-FLAGS] Special BTW regimes the concept aangifte does NOT auto-compute (KOR active,
+  // BTW verlegd, margeregeling). They do NOT block "klaar" — the owner did their part by
+  // importing the data — but they must travel to the accountant flagged, so they surface as
+  // RISKS. Optional so older callers/tests keep compiling (undefined → none).
+  regimeFlags?: RegimeFlag[];
 }
 
 export interface ReconException {
@@ -425,6 +432,18 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
   // there is any activity (not on a truly empty quarter).
   if (hasActivity) {
     notes.push("Voorbelasting telt alleen ingevoerde inkoopfacturen/bonnen — ontbreekt er een bon, dan is je BTW-aftrek te laag en betaal je te veel.");
+  }
+
+  // [REGIME-FLAGS] Special regimes (KOR / BTW verlegd / margeregeling) travel to the accountant
+  // flagged as RISKS — never a blocking gap (the owner imported the data; the regime is the
+  // accountant's to apply). A KOR-active shop, a verlegd purchase or a margeregeling sale would
+  // otherwise silently ride out in a concept whose 5a is computed as if the regime didn't apply.
+  for (const f of s.regimeFlags ?? []) {
+    risks.push({
+      severity: "risk",
+      title: f.title,
+      detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
   }
 
   // ── The score: weighted mean over APPLICABLE dimensions only (n.v.t. is excluded, never

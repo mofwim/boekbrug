@@ -1330,6 +1330,7 @@ export type Database = {
           id: string
           invoice_number_padding: number
           kas_opening_balance: number
+          kor_active: boolean
           invoice_number_template: string | null
           kvk_number: string | null
           onboarding_done: boolean
@@ -1354,6 +1355,7 @@ export type Database = {
           id: string
           invoice_number_padding?: number
           kas_opening_balance?: number
+          kor_active?: boolean
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean
@@ -1378,6 +1380,7 @@ export type Database = {
           id?: string
           invoice_number_padding?: number
           kas_opening_balance?: number
+          kor_active?: boolean
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean

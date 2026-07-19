@@ -67,6 +67,10 @@ export function buildAangifte(
   input: AangifteInput,
   completeness: AangifteCompleteness,
   quarterLabel: string,
+  // [REGIME-FLAGS] Optional accountant-handoff notes (KOR / BTW verlegd / margeregeling) —
+  // regimes this concept does NOT auto-compute. Appended to the notes so the concept the
+  // owner sees and the ZIP hands over is honest about what the accountant must still handle.
+  regimeNotes?: string[],
 ): ConceptAangifte {
   let btw1a = 0, om1a = 0, btw1b = 0, om1b = 0, btw1c = 0, om1c = 0, om1e = 0;
   for (const s of input.salesByRate) {
@@ -129,6 +133,9 @@ export function buildAangifte(
       "daarom NIET mee in dit kwartaal — voer de factuurdatum in zodat de omzet/voorbelasting compleet is.",
     );
   }
+  // [REGIME-FLAGS] Special-regime notes last (KOR / verlegd / marge) — the concept is only a
+  // mapping of the rate we read; these regimes change what the accountant must file.
+  for (const rn of regimeNotes ?? []) notes.push(rn);
 
   return {
     quarterLabel,
