@@ -19,6 +19,11 @@ import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 
 export interface ReadinessSignals {
   quarterLabel: string;                 // "Q1 2026"
+  // [AUTO-EXCLUDE-REVIEW] The numeric quarter, so a deep-link can scope the review list to
+  // EXACTLY the lines a quarter-scoped count flagged (counted ⟺ shown). Optional so older
+  // callers/tests keep compiling (absent → the link opens the all-time review list).
+  year?: number;
+  quarter?: number;
 
   // ── Invoices (evidence) ──
   verifiedInvoiceCount: number;         // verified in/out invoices in the quarter
@@ -49,6 +54,18 @@ export interface ReadinessSignals {
   // omzet, which would double-count the sale (the invoice already booked it on its own date). A
   // risk to eyeball, not a hard block. Optional (older callers omit it → treated as 0).
   probablePaymentAsOmzetCount?: number;
+  // [AUTO-EXCLUDE-REVIEW] Bank lines the app AUTO-CODED (category_confirmed=false) into an EXCLUDED
+  // identity — privé / overboeking / belasting (pnlRole 'excluded') — that the owner never reviewed.
+  // An excluded line is removed from omzet, kosten AND BTW entirely, and it is invisible to every
+  // other readiness signal (undocumentedCount skips non-'kosten'; unmatchedIncomeCount needs a null
+  // category). So a real business receipt or cost the classifier MISlabelled (a look-alike name, a
+  // memory-key collision) silently falls out of the whole administration with no trace — a hidden
+  // cost/revenue (constraint #1) that a green "klaar" would paper over (constraint #3). A RISK, never
+  // a hard block: these are USUALLY correct (BTW payments, ATM, private withdrawals), so blocking
+  // every quarter would make the verdict useless — but the owner must be told to eyeball them once.
+  // Self-clearing: confirming a line (category_confirmed=true) drops it from this count. Optional
+  // (undefined → 0 → no risk) so older callers/tests are unchanged.
+  unreviewedExcludedCount?: number;
 
   // ── Till / cash reconciliation (retail triangle: till ⇄ bank ⇄ drawer) ──
   usesTurnover: boolean;                // daily_turnover rows exist → the triangle applies
@@ -289,6 +306,31 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               : `${dubbel} ontvangsten als omzet geboekt lijken op een factuurbetaling`,
           detail: "Het bedrag is gelijk aan een factuur. Als dit de betaling van die factuur is, koppel hem — anders telt de omzet dubbel (de factuur telt al mee).",
           fix: FIX.bank,
+        });
+      }
+      // [AUTO-EXCLUDE-REVIEW] Lines the app auto-coded as privé/overboeking/belasting and the owner
+      // never confirmed. These are EXCLUDED from omzet, kosten and BTW, so a MISlabelled one silently
+      // hides a real receipt or cost. A RISK (self-clearing on confirm), never a block — most are
+      // correct, but readiness must not say "klaar" in silence while machine-excluded money sits
+      // unreviewed. Points at the review list so one pass clears the correct ones.
+      const autoExcluded = s.unreviewedExcludedCount ?? 0;
+      if (autoExcluded > 0) {
+        // Scope the deep-link to THIS quarter so the review list shows exactly the counted lines
+        // (counted ⟺ shown) — else an older quarter's flagged lines could fall off the review page
+        // and the risk could never be cleared. Falls back to the all-time review list.
+        const reviewHref =
+          s.year && s.quarter
+            ? `/dashboard/bank/categoriseren?view=review&year=${s.year}&quarter=${s.quarter}`
+            : "/dashboard/bank/categoriseren?view=review";
+        risks.push({
+          severity: "risk",
+          title:
+            autoExcluded === 1
+              ? "1 bankregel automatisch als privé/overboeking/belasting geboekt"
+              : `${autoExcluded} bankregels automatisch als privé/overboeking/belasting geboekt`,
+          detail:
+            "Deze regel(s) zijn automatisch ingedeeld als privé, overboeking of belasting en tellen daarom NIET mee in je omzet, kosten of BTW. Controleer eenmalig of er geen zakelijke ontvangst of kost tussen zit — die zou anders buiten je boekhouding vallen.",
+          fix: { label: "Controleer", href: reviewHref },
         });
       }
     }

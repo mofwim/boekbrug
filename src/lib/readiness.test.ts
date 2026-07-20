@@ -41,6 +41,25 @@ console.log("\n— [TRUST-READY] a received payment with no invoice blocks 'klaa
   check("zero unmatched income → still ready (no false alarm)", clean.status === "ready");
 }
 
+console.log("\n— [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting lines surface for review —");
+{
+  // The money-hiding case: a line auto-coded (unconfirmed) as an EXCLUDED identity is dropped from
+  // omzet/kosten/BTW. If it was MISlabelled, a real receipt/cost silently leaves the books. It must
+  // surface — as a RISK (self-clearing on confirm), never a hard block (most are correct).
+  const r = buildReadiness(perfect({ unreviewedExcludedCount: 4 }));
+  check("surfaced as a RISK, not a blocking gap", r.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));
+  check("does NOT block 'klaar' (still ready — only a review nudge)", r.status === "ready" && r.ready === true);
+  check("the risk deep-links to the review list", r.risks.some((m) => m.fix?.href === "/dashboard/bank/categoriseren?view=review"));
+  // With year/quarter present, the link is quarter-scoped so it opens EXACTLY the counted lines.
+  const scoped = buildReadiness(perfect({ unreviewedExcludedCount: 2, year: 2026, quarter: 1 }));
+  check("deep-link is quarter-scoped when year/quarter known", scoped.risks.some((m) => m.fix?.href === "/dashboard/bank/categoriseren?view=review&year=2026&quarter=1"));
+  check("singular phrasing for a single line", buildReadiness(perfect({ unreviewedExcludedCount: 1 })).risks.some((m) => /^1 bankregel /.test(m.title)));
+  const clean = buildReadiness(perfect({ unreviewedExcludedCount: 0 }));
+  check("zero → no risk (no false alarm)", !clean.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));
+  const legacy = buildReadiness(perfect());
+  check("undefined count → treated as 0 (older callers keep working)", !legacy.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));
+}
+
 console.log("\n— [PACKAGE-READINESS] invoices still in the verify queue block 'klaar' —");
 {
   // A real bill dated in the quarter but not yet verified reaches the accountant nowhere —
