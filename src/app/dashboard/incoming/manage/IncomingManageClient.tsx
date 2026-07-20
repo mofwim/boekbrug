@@ -199,6 +199,7 @@ export default function IncomingManageClient({
 
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
   const [filter, setFilter]             = useState<FilterTab>('all')
+  const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortBy, setSortBy]             = useState<SortKey>('added_desc')
   const [showSortMenu, setShowSortMenu] = useState(false)
@@ -264,12 +265,22 @@ export default function IncomingManageClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionParam, focusId, invoices.length])
 
+  // [SEARCH] In-page live filter (leverancier / factuurnummer / bedrag), on top of the
+  // status tabs — in place, no navigation.
+  const mFold = (x: string) => (x ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+  const rawS = search.trim()
+  const sq = mFold(rawS)
+  const sDigits = rawS.replace(/[^\d]/g, '')
+  const sAmountLike = sDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawS)
   const displayed = sortRows(
-    invoices.filter(inv =>
-      filter === 'all' ? true
-        : filter === 'auto' ? isAutoVerified(inv)
-        : inv.status === filter,
-    ),
+    invoices.filter(inv => {
+      const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
+      if (!tabOk) return false
+      if (!rawS) return true
+      return mFold(inv.client_name ?? '').includes(sq)
+        || mFold(inv.invoice_number ?? '').includes(sq)
+        || (sAmountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === sDigits)
+    }),
     sortBy,
   )
   // [AUTO-ADVANCE] Count for the review nudge — how many invoices the app booked for you.
@@ -618,8 +629,28 @@ export default function IncomingManageClient({
             {autoCount === 1 ? '1 factuur is automatisch verwerkt — bekijk' : `${autoCount} facturen zijn automatisch verwerkt — bekijk`}
           </button>
         )}
+        {/* [SEARCH] In-page live filter */}
+        {invoices.length > 0 && (
+          <div style={{ position: 'relative', marginBottom: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Zoek op leverancier, factuurnummer of bedrag…"
+              aria-label="Inkomende facturen zoeken"
+              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: '1px solid #d1d1d6', fontSize: 14, outline: 'none', background: '#fff', color: '#1c1c1e' }}
+            />
+            {search && (
+              <button onClick={() => setSearch('')} aria-label="Wissen"
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+            )}
+          </div>
+        )}
+
         {displayed.length === 0 ? (
-          <EmptyState />
+          rawS ? (
+            <p style={{ textAlign: 'center', color: '#8e8e93', fontSize: 14, padding: '40px 16px' }}>Geen facturen gevonden voor &ldquo;{rawS}&rdquo;.</p>
+          ) : <EmptyState />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {displayed.map(inv => {
