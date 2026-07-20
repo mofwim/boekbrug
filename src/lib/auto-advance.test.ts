@@ -97,6 +97,23 @@ console.log("\n— [FIX] missing amount confidence does NOT skip the money gate 
   check("amount score 0.6 → blocked (by health needs_review)", d4.advance === false);
 }
 
+console.log("\n— [FIND-GAP] a HIGH amount score must not mask a LOW gross (total_inc_btw) score —");
+{
+  // The bug: `.find` took the FIRST present of [amount, total, total_inc_btw]. A high `amount` (0.96)
+  // masked a below-HIGH `total_inc_btw` (0.75) — and total_inc_btw is the value that actually becomes
+  // the booked gross. 0.75 sits in the [0.7 health line, 0.8 high bar) band: health passes it, so the
+  // ONLY thing that can catch it is this money gate. Now the MINIMUM of present money scores must
+  // clear the high bar (fail-closed), so the low gross score is no longer masked by the high amount.
+  const masked = shouldAutoAdvanceInvoice(clean({ confidence: 0.99, health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, total_inc_btw: 0.75 } } }));
+  check("high amount + below-HIGH total_inc_btw → blocked (min money score gate)", masked.advance === false && masked.reason === "amount_confidence_below_high_bar");
+  // Same with a below-HIGH `total` behind a high `amount`.
+  const maskedTotal = shouldAutoAdvanceInvoice(clean({ confidence: 0.99, health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.95, total: 0.75 } } }));
+  check("high amount + below-HIGH total → blocked", maskedTotal.advance === false && maskedTotal.reason === "amount_confidence_below_high_bar");
+  // All money scores high → still advances (no false block).
+  const allHigh = shouldAutoAdvanceInvoice(clean({ confidence: 0.99, health: { ...clean().health, field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96, total: 0.95, total_inc_btw: 0.92 } } }));
+  check("all money scores high → advances", allHigh.advance === true);
+}
+
 console.log("\n— a clean invoice with NO per-field scores needs VERY-high overall (no free pass) —");
 {
   const d = shouldAutoAdvanceInvoice(clean({ confidence: 0.95, health: { total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121, invoice_date: "2026-05-10", invoice_number: "2026-9", invoice_type: "factuur", field_confidence: null } }));

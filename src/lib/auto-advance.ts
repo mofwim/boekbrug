@@ -96,11 +96,18 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // The MONEY field's own confidence is the one that must never be wrong. If the model reported
   // it, it must clear HIGH_CONF. If it did NOT report it, we don't skip the check — we demand a
   // VERY_HIGH overall confidence instead (fail-closed, never fail-open on a missing money score).
-  const amountScore = fc
-    ? [fc.amount, fc.total, fc.total_inc_btw].find((n): n is number => typeof n === "number")
-    : undefined;
-  if (typeof amountScore === "number") {
-    if (amountScore < HIGH_CONF) return { advance: false, reason: "amount_confidence_below_high_bar" };
+  //
+  // [FIND-GAP] Take the MINIMUM across EVERY present money score, not the first present one. A
+  // `.find` returned the first defined of [amount, total, total_inc_btw] — so a high `amount` score
+  // masked a LOW `total_inc_btw` score (and total_inc_btw is the value that actually becomes the
+  // booked gross). That auto-booked an invoice whose gross the model was NOT confident about. Any
+  // present money score below the bar must block (fail-closed) — mirrors the Math.min over the other
+  // per-field scores below.
+  const moneyScores = fc
+    ? [fc.amount, fc.total, fc.total_inc_btw].filter((n): n is number => typeof n === "number")
+    : [];
+  if (moneyScores.length > 0) {
+    if (Math.min(...moneyScores) < HIGH_CONF) return { advance: false, reason: "amount_confidence_below_high_bar" };
   } else if (!(typeof s.confidence === "number" && s.confidence >= VERY_HIGH_OVERALL)) {
     return { advance: false, reason: "no_amount_confidence_and_overall_not_very_high" };
   }
