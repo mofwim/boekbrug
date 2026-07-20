@@ -36,10 +36,18 @@ console.log("\n— provably different reliable vendors, same amount+date → NOT
   check("different supplier not flagged", r === null);
 }
 
-console.log("\n— exact number + SAME date is a HARD dup (blocked upstream) → skipped here —");
+console.log("\n— exact number + SAME date + EXACT total is a HARD dup (blocked upstream) → skipped here —");
 {
-  const r = assessPossibleDuplicate(input({ invoiceNumber: "F-2001", invoiceDate: "2026-03-10" }), [cand({ invoice_number: "F-2001", invoice_date: "2026-03-10" })]);
-  check("same number + same date candidate skipped", r === null);
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "F-2001", invoiceDate: "2026-03-10", totalIncBtw: 121 }), [cand({ invoice_number: "F-2001", invoice_date: "2026-03-10", total_inc_btw: 121 })]);
+  check("same number + same date + EXACT total skipped", r === null);
+}
+
+console.log("\n— [DBLCHK] same number + same date but SUB-CENT total drift → flagged (hard exact-eq misses it) —");
+{
+  // Hard gate matches total with exact float .eq; soft uses cent-round. 121.004 is cent-equal to
+  // 121.00 but NOT exactly equal, so the hard gate misses it — the soft detector must flag, not skip.
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "F-2001", invoiceDate: "2026-03-10", totalIncBtw: 121 }), [cand({ invoice_number: "F-2001", invoice_date: "2026-03-10", total_inc_btw: 121.004 })]);
+  check("sub-cent drift same-number+same-date flagged", !!r && /zelfde factuurnummer/.test(r.reason));
 }
 
 console.log("\n— [CRITICAL] same number + total but DRIFTED date → flagged (hard key missed it) —");

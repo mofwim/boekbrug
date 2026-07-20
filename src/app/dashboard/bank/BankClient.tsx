@@ -653,12 +653,23 @@ export default function BankClient() {
       // total covers the transaction amount (fixes the multi-invoice disappear
       // bug: confirming one of three must not hide the rest).
       for (const file of files) {
-        const form = new FormData()
-        form.append('file', file)
-        form.append('transactionId', txId)
-        form.append('direction', isCredit ? 'outgoing' : 'incoming')
-        const res = await fetch('/api/bank/attach-invoice', { method: 'POST', body: form })
-        const json = await res.json()
+        const postAttach = async (force: boolean) => {
+          const form = new FormData()
+          form.append('file', file)
+          form.append('transactionId', txId)
+          form.append('direction', isCredit ? 'outgoing' : 'incoming')
+          if (force) form.append('force', 'true')
+          const r = await fetch('/api/bank/attach-invoice', { method: 'POST', body: form })
+          return { r, j: await r.json() }
+        }
+        let { r: res, j: json } = await postAttach(false)
+        // [DEDUP-SOFT] A possible-duplicate is UNCERTAIN — surface it as a decision, never a silent
+        // block or a silent double-book. The owner confirms it is a different bill → re-send with force.
+        if (res.status === 409 && json?.duplicate && json?.canForce) {
+          const proceed = window.confirm(`${json?.detail || json?.error || 'Mogelijk dubbel.'}\n\nToch koppelen?`)
+          if (!proceed) { lastMsg = 'Overgeslagen (mogelijk dubbel).'; continue }
+          ;({ r: res, j: json } = await postAttach(true))
+        }
         if (res.ok) {
           ok++
           if (json?.amountWarning) lastMsg = 'Let op: controleer het bedrag.'

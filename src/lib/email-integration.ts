@@ -372,11 +372,17 @@ async function markEmailNeedsReauth(
       .eq('provider', provider)
       .maybeSingle()
     if (!row?.id) return
-    if (row.needs_reauth === true) return // already flagged → don't re-write or re-notify
-    await supabase
+    if (row.needs_reauth === true) return // cheap pre-check → skip the write when already flagged
+    // Atomic false→true flip: guard the update on needs_reauth=false and notify ONLY when this call
+    // actually made the transition. Without this, two concurrent refreshes (manual sync + cron) could
+    // both read false and both notify. .select() returns the rows this update changed → 0 = lost the race.
+    const { data: flipped } = await supabase
       .from('email_connections')
       .update({ needs_reauth: true })
       .eq('id', row.id)
+      .eq('needs_reauth', false)
+      .select('id')
+    if (!flipped || flipped.length === 0) return // another refresh already flagged + notified
     console.error('[EMAIL-HEALTH] connection needs re-auth', { userId, provider, reason })
     try {
       await createNotification({

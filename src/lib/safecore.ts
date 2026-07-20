@@ -531,17 +531,25 @@ export function assessPossibleDuplicate(
     const nearDate = gap != null && gap > 0 && gap <= POSSIBLE_DUP_WINDOW_DAYS
     const sameNumber = !!(inNum && normalizeInvoiceNumber(c.invoice_number) === inNum)
 
+    // The hard gate (findSemanticDuplicate) matches the total with EXACT float equality; this soft
+    // detector matches on cent-rounded equality. So a sub-cent total drift (100.004 vs 100.00, both
+    // one cent) is CENT-equal here but the hard gate's exact .eq misses it. Only treat a same-number
+    // pair as "already hard-blocked" when the totals are exactly equal — otherwise the hard gate
+    // could not have caught it and we must flag it, or it double-books silently.
+    const exactSameTotal = c.total_inc_btw === input.totalIncBtw
     let rank = 0, reason = ''
-    if (sameNumber && sameDate) {
-      // Same number + total + date IS a hard duplicate (findSemanticDuplicate blocks it before we
-      // run) — don't downgrade it to a mere "possible". Skip.
+    if (sameNumber && sameDate && exactSameTotal) {
+      // Same number + EXACT total + date IS a hard duplicate (findSemanticDuplicate blocks it before
+      // we run) — don't downgrade it to a mere "possible". Skip.
       continue
     } else if (sameNumber) {
-      // [DEDUP-SOFT-CRITICAL] Same invoice number + total but the DATE drifted (an OCR date misread,
-      // or a null date on either side): the hard number-tier key filters on date and MISSED it, so it
-      // would otherwise import + auto-book a SECOND cost silently. A per-vendor invoice number that
-      // repeats with the same total is all but certainly the same bill → flag it (strongest signal).
-      rank = 5; reason = 'zelfde factuurnummer en bedrag, andere datum'
+      // [DEDUP-SOFT-CRITICAL] Same invoice number + (cent-)equal total, but the hard number-tier key
+      // missed it — because the DATE drifted (OCR misread / null date), OR the total is only cent-
+      // equal not exactly equal (sub-cent float the hard exact-.eq can't match). Either way it would
+      // otherwise import + auto-book a SECOND cost silently. A per-vendor number repeating with the
+      // same amount is all but certainly the same bill → flag it (strongest signal).
+      rank = 5
+      reason = sameDate ? 'zelfde factuurnummer en bedrag' : 'zelfde factuurnummer en bedrag, andere datum'
     }
     else if (sameDate && sameVendor) { rank = 4; reason = 'zelfde bedrag, datum en afzender' }
     else if (sameDate) { rank = 3; reason = 'zelfde bedrag en datum' }
