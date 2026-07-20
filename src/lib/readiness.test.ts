@@ -49,10 +49,10 @@ console.log("\n— [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting
   const r = buildReadiness(perfect({ unreviewedExcludedCount: 4 }));
   check("surfaced as a RISK, not a blocking gap", r.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));
   check("does NOT block 'klaar' (still ready — only a review nudge)", r.status === "ready" && r.ready === true);
-  check("the risk deep-links to the review list", r.risks.some((m) => m.fix?.href === "/dashboard/bank/categoriseren?view=review"));
-  // With year/quarter present, the link is quarter-scoped so it opens EXACTLY the counted lines.
+  check("the risk deep-links to the EXCLUDED-only review list", r.risks.some((m) => m.fix?.href === "/dashboard/bank/categoriseren?view=review&only=excluded"));
+  // With year/quarter present, the link is quarter-scoped AND excluded-only → opens EXACTLY the counted lines.
   const scoped = buildReadiness(perfect({ unreviewedExcludedCount: 2, year: 2026, quarter: 1 }));
-  check("deep-link is quarter-scoped when year/quarter known", scoped.risks.some((m) => m.fix?.href === "/dashboard/bank/categoriseren?view=review&year=2026&quarter=1"));
+  check("deep-link is quarter-scoped + excluded-only when year/quarter known", scoped.risks.some((m) => m.fix?.href === "/dashboard/bank/categoriseren?view=review&only=excluded&year=2026&quarter=1"));
   check("singular phrasing for a single line", buildReadiness(perfect({ unreviewedExcludedCount: 1 })).risks.some((m) => /^1 bankregel /.test(m.title)));
   const clean = buildReadiness(perfect({ unreviewedExcludedCount: 0 }));
   check("zero → no risk (no false alarm)", !clean.risks.some((m) => /privé\/overboeking\/belasting/.test(m.title)));

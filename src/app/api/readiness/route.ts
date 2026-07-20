@@ -93,7 +93,8 @@ export async function GET(req: NextRequest) {
   // An excluded line is dropped from omzet, kosten AND BTW, and is invisible to undocumentedCount
   // (skips non-'kosten') and unmatchedIncomeCount (needs a null category). So a MISlabelled one hides
   // a real cost/receipt with no trace. Surfaced as a review RISK (never a block); self-clearing on
-  // confirm. Counts regardless of status — an excluded identity is rarely invoice-linked anyway.
+  // confirm. Scoped to status='pending' AND no invoice_id so it MATCHES the review list the
+  // "Controleer" deep-link opens (categorize ?scope=review) — every counted line is reachable there.
   let unreviewedExcludedCount = 0;
   // [TRUST-READY] Count received payments (credits) we can't yet explain: pending,
   // no linked invoice, and no category at all. Card takings are auto-categorised

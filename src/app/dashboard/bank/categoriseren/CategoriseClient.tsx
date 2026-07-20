@@ -71,6 +71,9 @@ export default function CategoriseClient() {
         const sp = new URLSearchParams(window.location.search)
         const y = sp.get('year'), q = sp.get('quarter')
         if (y && q) reviewQuery += `&year=${encodeURIComponent(y)}&quarter=${encodeURIComponent(q)}`
+        // [AUTO-EXCLUDE-REVIEW] Forward only=excluded so the readiness deep-link shows just the
+        // flagged privé/overboeking/belasting lines (the counted set), not every categorised line.
+        if (sp.get('only') === 'excluded') reviewQuery += '&only=excluded'
       }
       const url = which === 'review' ? reviewQuery : '/api/bank/categorize'
       const res = await fetch(url)
