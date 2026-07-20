@@ -315,13 +315,16 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       // unreviewed. Points at the review list so one pass clears the correct ones.
       const autoExcluded = s.unreviewedExcludedCount ?? 0;
       if (autoExcluded > 0) {
-        // Scope the deep-link to THIS quarter so the review list shows exactly the counted lines
-        // (counted ⟺ shown) — else an older quarter's flagged lines could fall off the review page
-        // and the risk could never be cleared. Falls back to the all-time review list.
+        // Scope the deep-link to THIS quarter AND to only the excluded (privé/overboeking/belasting)
+        // lines, so the review list shows EXACTLY the counted set — counted ⟺ shown. Without the
+        // quarter scope an older quarter's flagged lines could fall off the review page; without
+        // only=excluded the owner would hunt the flagged rows among unrelated omzet/kosten lines and
+        // the small excluded set keeps the 200-row page from truncating the oldest ones. Falls back
+        // to the all-time excluded review list when the quarter isn't known.
         const reviewHref =
           s.year && s.quarter
-            ? `/dashboard/bank/categoriseren?view=review&year=${s.year}&quarter=${s.quarter}`
-            : "/dashboard/bank/categoriseren?view=review";
+            ? `/dashboard/bank/categoriseren?view=review&only=excluded&year=${s.year}&quarter=${s.quarter}`
+            : "/dashboard/bank/categoriseren?view=review&only=excluded";
         risks.push({
           severity: "risk",
           title:

@@ -77,3 +77,10 @@ export function pnlRole(category: string | null | undefined): PnlRole | undefine
   if (!category) return undefined;
   return PNL_ROLE[category as BankCategory];
 }
+
+// [AUTO-EXCLUDE-REVIEW] The categories pnlRole maps to 'excluded' — kept entirely out of
+// omzet/kosten/BTW. Derived from PNL_ROLE so it can never drift from the role mapping. Used to
+// scope the readiness "Controleer" deep-link to exactly the auto-excluded lines it flagged.
+export const EXCLUDED_CATEGORIES: readonly BankCategory[] = (Object.keys(PNL_ROLE) as BankCategory[]).filter(
+  (c) => PNL_ROLE[c] === "excluded",
+);

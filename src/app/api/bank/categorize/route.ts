@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { counterpartKey, suggestIdentity, bestSimilarMemory, type MemoryEntry } from "@/lib/bank-identity";
-import { ALLOWED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
+import { ALLOWED_CATEGORIES, EXCLUDED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
 
 // How many rows one GET page returns (the review list). The true remaining total is
 // reported separately via an exact head-count, so a capped page never reads as "done".
@@ -52,6 +52,11 @@ export async function GET(req: NextRequest) {
     const y = Number(sp.get("year"));
     const q = Number(sp.get("quarter"));
     const quarterScoped = Number.isInteger(y) && q >= 1 && q <= 4;
+    // [AUTO-EXCLUDE-REVIEW] ?only=excluded shows ONLY the auto-excluded lines (privé/overboeking/
+    // belasting) the readiness risk flagged — not every categorised line. This makes the deep-link
+    // land on exactly the counted set (so the owner isn't hunting the flagged rows among omzet/kosten
+    // ones), and keeps that set small enough that the 200-row page never truncates the oldest ones.
+    const onlyExcluded = sp.get("only") === "excluded";
     let query = supabase
       .from("bank_transactions")
       .select("id, date, amount, counterpart_name, description, category, category_source, category_confirmed")
@@ -59,6 +64,7 @@ export async function GET(req: NextRequest) {
       .eq("status", "pending")
       .is("invoice_id", null)
       .not("category", "is", null);
+    if (onlyExcluded) query = query.in("category", [...EXCLUDED_CATEGORIES]);
     if (quarterScoped) {
       const sm = (q - 1) * 3;
       const start = `${y}-${String(sm + 1).padStart(2, "0")}-01`;
