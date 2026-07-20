@@ -337,7 +337,7 @@ export async function sendDraftQueueEmail({
           ${safeBody}
         </div>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">
-          ${escape(accountantName)} · via BoekBrug — De brug tussen jou en je boekhouder
+          ${escapeHtml(accountantName)} · via BoekBrug — De brug tussen jou en je boekhouder
         </p>
       </div>
     `

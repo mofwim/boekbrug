@@ -47,10 +47,12 @@ export async function GET(req: NextRequest) {
   const pipeline = createPipelineClient();
 
   // Every non-accountant profile is a potential owner. Once-per-quarter, so a full scan is fine.
+  // `.neq("role","accountant")` alone drops NULL-role profiles (SQL: NULL <> 'accountant' → NULL,
+  // not TRUE), silently excluding legacy/edge owners from the nudge. Include them explicitly.
   const { data: profiles, error: profErr } = await pipeline
     .from("profiles")
     .select("id, role")
-    .neq("role", "accountant");
+    .or("role.is.null,role.neq.accountant");
   if (profErr) {
     return NextResponse.json({ error: "kon profielen niet laden" }, { status: 500 });
   }

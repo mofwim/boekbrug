@@ -30,6 +30,7 @@ import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
+import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
@@ -266,6 +267,44 @@ export async function POST(req: NextRequest) {
           match: { id: dup.match.id, invoice_number: dup.match.invoice_number, vendor: dup.match.client_name },
           detail:
             "Als dit dezelfde factuur is, koppel de bestaande factuur aan deze betaling in plaats van hem opnieuw toe te voegen. Weet je zeker dat het een andere factuur is? Dan kun je hem alsnog toevoegen.",
+        },
+        { status: 409 }
+      );
+    }
+
+    // [DEDUP-SOFT] The hard gate above only catches an exact number (or vendor+total+date) match with
+    // an EXACT total. But attach books straight to 'paid' with NO verify queue to hold an uncertain
+    // match — so a re-arrival the hard key can't prove (a placeholder/OCR invoice-number drift, or
+    // sub-cent float noise the exact-equality fetch misses) would double-book the cost + voorbelasting
+    // SILENTLY. Run the same soft detector the other three ingestion paths use, over a cent-band fetch,
+    // and WARN (overridable via `force`) instead of auto-booking a possible duplicate. Uncertain ⇒ warn,
+    // never a hard block: the owner can confirm it is genuinely a different bill.
+    const possibleDup = await collectPossibleDuplicate(
+      { invoiceNumber: verification.invoice_number, vendor: verification.vendor, totalIncBtw, invoiceDate },
+      async (total) => {
+        const { data } = await pipeline
+          .from("invoices")
+          .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+          .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
+          .eq("direction", direction)
+          .gte("total_inc_btw", total - 0.005)
+          .lte("total_inc_btw", total + 0.005)
+          .order("id", { ascending: false })
+          .limit(200);
+        return data ?? [];
+      },
+    );
+    if (possibleDup) {
+      return NextResponse.json(
+        {
+          error: "Deze factuur lijkt mogelijk al in de app te staan.",
+          duplicate: true,
+          semantic: true,
+          possible: true,
+          canForce: true,
+          match: { id: possibleDup.match.id, invoice_number: possibleDup.match.invoice_number, vendor: possibleDup.match.client_name },
+          reason: possibleDup.reason,
+          detail: `Mogelijk dubbel${possibleDup.match.invoice_number ? ` met factuur ${possibleDup.match.invoice_number}` : ""} (${possibleDup.reason}). Weet je zeker dat dit een andere factuur is? Dan kun je hem alsnog toevoegen.`,
         },
         { status: 409 }
       );

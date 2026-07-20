@@ -73,7 +73,7 @@ export default async function VandaagPage() {
   // to 'received'; the AMBIGUOUS / low-confidence ones stay here, and with no reminder they rot
   // silently — their voorbelasting (BTW-aftrek) and cost never reach the books. Surface the count
   // on the daily control center so the owner is nudged to clear them. Head-count only (no rows).
-  const { count: toVerifyCount } = await supabase
+  const { count: toVerifyCount, error: toVerifyErr } = await supabase
     .from("invoices")
     .select("id", { count: "exact", head: true })
     .eq("receiver_id", user.id)
@@ -84,7 +84,7 @@ export default async function VandaagPage() {
   // list above (it filters `due_date IS NOT NULL` to date-sort). So a real cost the owner still
   // owes appears on NO task list and can be silently forgotten. Surface a count nudge here so it is
   // never invisible — the owner opens it to add a date / pay. Head-count only (no rows).
-  const { count: datelessPayableCount } = await supabase
+  const { count: datelessPayableCount, error: datelessErr } = await supabase
     .from("invoices")
     .select("id", { count: "exact", head: true })
     .eq("receiver_id", user.id)
@@ -104,7 +104,9 @@ export default async function VandaagPage() {
   // reassured that nothing is due or overdue, hiding real payment obligations. Pass
   // the failure through so the client can show an honest "we could not load" state
   // instead of the reassuring checkmark. (Locked constraint #3: no false reassurance.)
-  const loadFailed = !!payableErr || !!remindErr;
+  // Fold the count-query errors in too: a lone count failure must not silently coerce to 0 and show
+  // a false "all clear" (a dateless payable / a verify-queue item could be hidden). No false calm.
+  const loadFailed = !!payableErr || !!remindErr || !!toVerifyErr || !!datelessErr;
 
   return <VandaagClient payable={payable} remind={remind} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} />;
 }
