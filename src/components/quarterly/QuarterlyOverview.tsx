@@ -136,10 +136,28 @@ function ZzpView({ role }: { role: Role }) {
     setFiling(true);
     try {
       if (mark) {
-        await fetch("/api/btw/file", {
+        // [FILING-GATE] The server warns (409) when the quarter still has unconfirmed invoices whose
+        // money isn't in the figures yet. Surface that instead of freezing an incomplete snapshot;
+        // the owner can still proceed (their declaration) → re-POST with acknowledge.
+        const res = await fetch("/api/btw/file", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ year, quarter }),
         });
+        if (res.status === 409) {
+          const j = await res.json().catch(() => ({}));
+          const proceed = window.confirm(
+            `${j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd."}\n\nToch als ingediend markeren?`,
+          );
+          if (!proceed) return;
+          const res2 = await fetch("/api/btw/file", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ year, quarter, acknowledge: true }),
+          });
+          if (!res2.ok) { window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return; }
+        } else if (!res.ok) {
+          // Never leave a failed freeze looking successful.
+          window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return;
+        }
       } else {
         await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`, { method: "DELETE" });
       }

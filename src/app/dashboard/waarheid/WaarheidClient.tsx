@@ -82,10 +82,26 @@ export default function WaarheidClient() {
     setFiling(true);
     try {
       if (mark) {
-        await fetch("/api/btw/file", {
+        // [FILING-GATE] Server warns (409) when the quarter has unconfirmed invoices not yet in the
+        // figures. Surface it; the owner can still proceed (their declaration) → re-POST acknowledge.
+        const res = await fetch("/api/btw/file", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ year: data.year, quarter: data.quarter }),
         });
+        if (res.status === 409) {
+          const j = await res.json().catch(() => ({}));
+          const proceed = window.confirm(
+            `${j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd."}\n\nToch als ingediend markeren?`,
+          );
+          if (!proceed) return;
+          const res2 = await fetch("/api/btw/file", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ year: data.year, quarter: data.quarter, acknowledge: true }),
+          });
+          if (!res2.ok) { window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return; }
+        } else if (!res.ok) {
+          window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return;
+        }
       } else {
         await fetch(`/api/btw/file?year=${data.year}&quarter=${data.quarter}`, { method: "DELETE" });
       }
