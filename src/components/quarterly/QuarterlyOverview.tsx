@@ -58,6 +58,10 @@ function ZzpView({ role }: { role: Role }) {
   const [recon, setRecon] = useState<{
     omzet: number; verschuldigd: number; voorbelasting: number; saldo: number;
     salesByRate: { rate: number; omzet: number; btw: number }[];
+    // [HONESTY] Carried so the "BTW te betalen (5g)" tile can never read silently too low —
+    // omzet booked with no rate (cashOmzetZonderBtw) and verified-but-dateless invoices both
+    // leave the reconciled figure incomplete; surface them here exactly as Resultaat does.
+    cashOmzetZonderBtw: number; datelessVerifiedCount: number;
   } | null>(null);
   // [TRUTH-FILED] Filing state for THIS quarter: is it marked ingediend, and has the live truth
   // diverged since (→ carry-forward vs suppletie). filingTick forces a refetch after file/unlock.
@@ -77,9 +81,13 @@ function ZzpView({ role }: { role: Role }) {
       quarter: String(quarter),
       mode,
     });
+    // [NAN-GUARD] Only store a real summary — an error body ({error}) would otherwise become
+    // `data` and render "€ NaN" in the Facturen tiles. On a bad response leave data null (→ the
+    // loading/empty state), never a broken figure shown as data.
     fetch(`/api/quarterly?${params}`)
-      .then((r) => r.json())
-      .then(setData)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setData(d && !d.error ? d : null))
+      .catch(() => setData(null))
       .finally(() => setLoading(false));
 
     // [TRUST-OWNER] Reconciled omzet + BTW in parallel — accrual (invoice date), all channels,
@@ -99,8 +107,10 @@ function ZzpView({ role }: { role: Role }) {
         const voorbelasting = Number(a?.aangifte?.voorbelasting);
         const saldo = Number(a?.aangifte?.saldo);
         const salesByRate = Array.isArray(r?.result?.salesByRate) ? r.result.salesByRate : [];
+        const cashOmzetZonderBtw = Number(r?.result?.cashOmzetZonderBtw) || 0;
+        const datelessVerifiedCount = Number(r?.datelessVerifiedCount) || 0;
         if ([omzet, verschuldigd, voorbelasting, saldo].every(Number.isFinite)) {
-          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate });
+          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate, cashOmzetZonderBtw, datelessVerifiedCount });
         }
       } catch { /* leave recon null → the owner sees "…", never a wrong number */ }
     })();
@@ -354,6 +364,25 @@ function ZzpView({ role }: { role: Role }) {
             </div>
           )}
 
+          {/* [HONESTY] Same nudges Resultaat shows — so the "BTW te betalen (5g)" above is never
+              read as complete when it isn't. Omzet with no rate isn't in the BTW; a dateless
+              verified invoice is dropped from the quarter entirely. */}
+          {recon && recon.cashOmzetZonderBtw > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {formatEur(recon.cashOmzetZonderBtw)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
+              niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet
+              voor een compleet BTW-cijfer.
+            </div>
+          )}
+          {recon && recon.datelessVerifiedCount > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {recon.datelessVerifiedCount === 1
+                ? "1 geverifieerde factuur heeft geen datum"
+                : `${recon.datelessVerifiedCount} geverifieerde facturen hebben geen datum`} en telt daardoor niet mee in dit
+              kwartaal. Vul de factuurdatum in, anders is je omzet of BTW-aftrek te laag.
+            </div>
+          )}
+
           {/* [TRUTH-FILED] Filing status for this quarter — the frozen-aangifte layer. Marking a
               quarter ingediend freezes its figures; if the live truth diverges later (a late
               invoice), we show the carry-forward vs suppletie guidance. Reversible. */}
@@ -505,6 +534,8 @@ function AccountantView({ role }: { role: Role }) {
   const [recon, setRecon] = useState<{
     omzet: number; verschuldigd: number; voorbelasting: number; saldo: number;
     salesByRate: { rate: number; omzet: number; btw: number }[];
+    // [HONESTY] see the owner view — surfaced so the accountant's 5g tile is never silently low.
+    cashOmzetZonderBtw: number; datelessVerifiedCount: number;
   } | null>(null);
 
   useEffect(() => {
@@ -538,9 +569,11 @@ function AccountantView({ role }: { role: Role }) {
       quarter: String(quarter),
       clientId: selectedClientId,
     });
+    // [NAN-GUARD] Same as the owner view — never let an error body become `data` and render NaN.
     fetch(`/api/quarterly?${params}`)
-      .then((r) => r.json())
-      .then(setData)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setData(d && !d.error ? d : null))
+      .catch(() => setData(null))
       .finally(() => setLoading(false));
 
     // [TRUST-ACCOUNTANT] Reconciled figures in parallel — same source as the owner + ZIP.
@@ -558,8 +591,10 @@ function AccountantView({ role }: { role: Role }) {
         const voorbelasting = Number(a?.aangifte?.voorbelasting);
         const saldo = Number(a?.aangifte?.saldo);
         const salesByRate = Array.isArray(r?.result?.salesByRate) ? r.result.salesByRate : [];
+        const cashOmzetZonderBtw = Number(r?.result?.cashOmzetZonderBtw) || 0;
+        const datelessVerifiedCount = Number(r?.datelessVerifiedCount) || 0;
         if ([omzet, verschuldigd, voorbelasting, saldo].every(Number.isFinite)) {
-          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate });
+          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate, cashOmzetZonderBtw, datelessVerifiedCount });
         }
       } catch { /* leave recon null → tiles show a dash, never a wrong number */ }
     })();
@@ -756,6 +791,22 @@ function AccountantView({ role }: { role: Role }) {
                   <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* [HONESTY] Surface the same incompleteness signals to the accountant before handover. */}
+          {recon && recon.cashOmzetZonderBtw > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {formatEur(recon.cashOmzetZonderBtw)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
+              niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet.
+            </div>
+          )}
+          {recon && recon.datelessVerifiedCount > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {recon.datelessVerifiedCount === 1
+                ? "1 geverifieerde factuur heeft geen datum"
+                : `${recon.datelessVerifiedCount} geverifieerde facturen hebben geen datum`} en telt daardoor niet mee in dit
+              kwartaal — vul de factuurdatum in, anders is de omzet of BTW-aftrek te laag.
             </div>
           )}
 

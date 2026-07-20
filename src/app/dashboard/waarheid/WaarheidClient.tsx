@@ -20,6 +20,10 @@ type Lens = "this-quarter" | "last-quarter" | "ytd" | "all";
 interface TruthResult {
   omzet: number; kosten: number; resultaat: number;
   btwVerschuldigd: number; btwVoorbelasting: number; btwSaldo: number;
+  // [HONESTY] Revenue booked with NO BTW rate (cash/bank/un-split till day): counted in omzet
+  // but its BTW is NOT in btwSaldo. On the screen literally titled "je financiële waarheid" this
+  // must be surfaced, exactly like Resultaat/Brug do — else "BTW te betalen" reads silently too low.
+  cashOmzetZonderBtw?: number;
 }
 interface Divergence {
   changed: boolean;
@@ -213,6 +217,12 @@ export default function WaarheidClient() {
             <p style={{ margin: "0 0 6px" }}>
               Op basis van factuurdatum (niet betaaldatum) — dit is je fiscale resultaat, niet je banksaldo.
             </p>
+            {(r.cashOmzetZonderBtw ?? 0) > 0 && (
+              <p style={{ margin: "0 0 6px", color: M.warnFg }}>
+                ⚠️ {eur.format(r.cashOmzetZonderBtw ?? 0)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
+                niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet.
+              </p>
+            )}
             {data.datelessVerifiedCount > 0 && (
               <p style={{ margin: "0 0 6px", color: M.warnFg }}>
                 ⚠️ {data.datelessVerifiedCount} bevestigde factu{data.datelessVerifiedCount === 1 ? "ur telt" : "ren tellen"} nog niet mee — er ontbreekt een datum.

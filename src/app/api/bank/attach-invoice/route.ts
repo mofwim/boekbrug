@@ -178,7 +178,14 @@ export async function POST(req: NextRequest) {
     aiTotal != null && Math.abs(aiTotal - bankAmount) <= AMOUNT_TOLERANCE;
   const totalIncBtw = amountAgrees ? aiTotal! : bankAmount;
   // Keep the AI's BTW split only if the totals agree (otherwise it's unreliable).
-  const totalExBtw = amountAgrees ? (verification.total_ex_btw ?? 0) : 0;
+  // [SILENT-LOSS FIX] The NET (total_ex_btw) must NEVER fall to 0 while a real bank payment
+  // moved: the engine books cost/revenue from total_ex_btw (financial-result.ts), and this row
+  // is created 'paid' with its bank line simultaneously carrying invoice_id (excluded from the
+  // bank leg). If the AI gives no split (a rent/receipt with no separable BTW — the exact case
+  // the comment above allows) or the totals disagree, we book the FULL GROSS as net cost with
+  // €0 BTW (the engine's "no voorbelasting without a document" rule) so the cost is counted, not
+  // silently dropped from kosten/resultaat. BTW alone stays 0 when the AI can't find it.
+  const totalExBtw = amountAgrees ? (verification.total_ex_btw ?? totalIncBtw) : totalIncBtw;
   const btwAmount = amountAgrees ? (verification.btw_amount ?? 0) : 0;
   const amountWarning = aiTotal != null && !amountAgrees;
 
