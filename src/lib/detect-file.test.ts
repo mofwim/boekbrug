@@ -1,5 +1,5 @@
 // [DETECT] Pure node test — run: npx tsx src/lib/detect-file.test.ts
-import { looksLikeSpreadsheetBinary, detectSheetKind, looksLikeEftReceipt } from "./detect-file";
+import { looksLikeSpreadsheetBinary, detectSheetKind, looksLikeEftReceipt, looksLikeBankStatementFile } from "./detect-file";
 import type { Cell } from "./turnover-import";
 
 let passed = 0, failed = 0;
@@ -49,6 +49,29 @@ console.log("\n— looksLikeEftReceipt —");
   check("a normal invoice is NOT an EFT receipt",
     !looksLikeEftReceipt("Factuur 2026-001\nSligro\nTotaal incl. BTW 50,88"));
   check("empty → false", !looksLikeEftReceipt(""));
+}
+
+console.log("\n— looksLikeBankStatementFile (email→bank surfacing) —");
+{
+  // Accountant-grade formats: extension alone is decisive.
+  check("MT940 .sta detected", looksLikeBankStatementFile("NL91ABNA_20260401.sta"));
+  check("MT940 .940 detected", looksLikeBankStatementFile("mutaties.940"));
+  check("CAMT .camt detected", looksLikeBankStatementFile("statement.camt"));
+  check("CAMT .053 extension detected", looksLikeBankStatementFile("bank.053"));
+
+  // Ambiguous containers: only with a statement hint in the name.
+  check("CAMT.053 xml (name says camt) detected", looksLikeBankStatementFile("camt053_NL12INGB_2026Q1.xml"));
+  check("rekeningafschrift csv detected", looksLikeBankStatementFile("rekeningafschrift-april.csv"));
+  check("transacties csv detected", looksLikeBankStatementFile("transacties_2026.csv"));
+
+  // Must NOT fire — otherwise a real invoice is mislabelled a bankafschrift.
+  check("UBL e-invoice .xml NOT flagged", looksLikeBankStatementFile("factuur-2026-001.xml") === false);
+  check("generic report.csv NOT flagged (too broad)", looksLikeBankStatementFile("report.csv") === false);
+  check("a PDF invoice NOT flagged (handled by classifier)", looksLikeBankStatementFile("factuur.pdf") === false);
+  check("an image receipt NOT flagged", looksLikeBankStatementFile("bonnetje.jpg") === false);
+  check("empty/undefined → false", looksLikeBankStatementFile("") === false && looksLikeBankStatementFile(undefined) === false);
+  // A vendor whose name merely contains 'statement' as a substring of a PDF is still not matched (wrong ext).
+  check("statement in a .pdf name NOT flagged (ext gate)", looksLikeBankStatementFile("statement-of-work.pdf") === false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

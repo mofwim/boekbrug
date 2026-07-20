@@ -41,6 +41,47 @@ export function detectSheetKind(matrix: Cell[][]): SheetKind {
 }
 
 /**
+ * [EMAIL→BANK] True when an email attachment's NAME looks like a machine-readable bank
+ * statement (MT940 / CAMT.053 / a bank CSV export) rather than an invoice.
+ *
+ * WHY name-only (no bytes): the email fetcher drops these today because their MIME
+ * normalises to null (not pdf/image), so they never reach the invoice classifier — and
+ * we deliberately do NOT download or parse the money data here. This detector only lets
+ * the pipeline SURFACE that a statement arrived (record it in the skip registry with an
+ * actionable "upload it at Bank" reason) instead of dropping it silently. It NEVER causes
+ * an auto-import of bank transactions — money still moves only through the reviewed Bank
+ * upload flow. So a false positive is low-harm (a mislabel in the Overgeslagen list), and
+ * a false negative just preserves today's silent-drop behaviour for that one odd name.
+ *
+ * PDFs are intentionally NOT matched: a PDF "rekeningafschrift" already reaches the AI
+ * classifier, which recognises statements and records them with their own reason. This is
+ * only for the accountant-grade formats that get dropped before any classification.
+ */
+export function looksLikeBankStatementFile(filename: string | null | undefined): boolean {
+  const name = (filename || "").toLowerCase().trim();
+  if (!name) return false;
+  const ext = name.match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+
+  // Accountant-grade bank export formats — the extension alone is decisive. SWIFT MT940
+  // (.sta/.940/.mt940) and ISO 20022 CAMT.053 (.camt/.053): nothing else uses these, and
+  // the app's own bank parser reads exactly them. A PDF/image never lands here.
+  if (ext === "sta" || ext === "940" || ext === "mt940" || ext === "mt9" || ext === "camt" || ext === "053") {
+    return true;
+  }
+
+  // Ambiguous containers: .xml can be a UBL e-invoice, .csv/.txt can be anything. Only
+  // treat them as a statement when the FILENAME clearly says so — never on the extension
+  // alone — so a UBL invoice or an unrelated CSV is not mislabelled a bankafschrift.
+  if (ext === "xml" || ext === "csv" || ext === "txt") {
+    return /camt|mt940|afschrift|rekeningoverzicht|rekening-?overzicht|bankstatement|statement|transacties|mutaties|bij-?en-?afschrijvingen/.test(
+      name,
+    );
+  }
+
+  return false;
+}
+
+/**
  * True when OCR/plain text is a payment-terminal settlement receipt (Equens CTAP
  * "TOTALEN RAPPORT" with an EFT/BETALING total). Used to route a photographed receipt to
  * the EFT parser instead of the generic invoice extractor.
