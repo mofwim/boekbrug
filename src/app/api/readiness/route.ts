@@ -17,6 +17,7 @@ import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 import { needsDocument } from "@/lib/bank-identity";
+import { pnlRole } from "@/lib/bank-categories";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import type { EftSettlement } from "@/lib/eft-parser";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
@@ -83,10 +84,17 @@ export async function GET(req: NextRequest) {
   // ── 2) Bank — transactions DATED in the quarter, and how many still need a bon ──
   const bank = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, invoice_id, date, status, description, counterpart_name")
+    .select("amount, category, category_confirmed, invoice_id, date, status, description, counterpart_name")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
   let undocumentedCount = 0;
+  // [AUTO-EXCLUDE-REVIEW] Lines the app auto-coded (category_confirmed !== true) into an EXCLUDED
+  // identity — privé / overboeking / belasting (pnlRole 'excluded') — that the owner never reviewed.
+  // An excluded line is dropped from omzet, kosten AND BTW, and is invisible to undocumentedCount
+  // (skips non-'kosten') and unmatchedIncomeCount (needs a null category). So a MISlabelled one hides
+  // a real cost/receipt with no trace. Surfaced as a review RISK (never a block); self-clearing on
+  // confirm. Counts regardless of status — an excluded identity is rarely invoice-linked anyway.
+  let unreviewedExcludedCount = 0;
   // [TRUST-READY] Count received payments (credits) we can't yet explain: pending,
   // no linked invoice, and no category at all. Card takings are auto-categorised
   // 'pos_income' on import and are reconciled via the till triangle, so they carry a
@@ -95,6 +103,12 @@ export async function GET(req: NextRequest) {
   let unmatchedIncomeCount = 0;
   for (const t of bank) {
     const credit = (t.amount ?? 0) > 0;
+    // [AUTO-EXCLUDE-REVIEW] An auto-coded, unconfirmed EXCLUDED line (transfer/prive/tax) — money the
+    // app kept out of the books without the owner's review. Checked first so BOTH a hidden receipt
+    // (credit) and a hidden cost (debit) are caught. category_confirmed !== true = never eyeballed.
+    if (t.category != null && (t as { category_confirmed?: boolean | null }).category_confirmed !== true && pnlRole(t.category) === "excluded") {
+      unreviewedExcludedCount++;
+    }
     // [TRUST-READY] Unexplained INCOME is a gap REGARDLESS of status: a credit with no
     // linked invoice and no category is money-in we can't place. Restricting to 'pending'
     // let a credit that was touched (status advanced by some other flow) but never
@@ -376,6 +390,8 @@ export async function GET(req: NextRequest) {
     undocumentedCount,
     unmatchedIncomeCount,
     probablePaymentAsOmzetCount,
+    unreviewedExcludedCount, // [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting, unreviewed
+
     usesTurnover: turnover.length > 0,
     turnoverDays: turnover.length,
     reconExceptions,

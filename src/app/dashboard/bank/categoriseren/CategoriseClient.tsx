@@ -88,7 +88,12 @@ export default function CategoriseClient() {
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => { if (!cancelled) await load('todo') })()
+    // [AUTO-EXCLUDE-REVIEW] Honour ?view=review so the readiness "Controleer" link lands straight in
+    // the review list (auto-coded privé/overboeking/belasting to eyeball), not the to-do queue.
+    const wantReview = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'review'
+    const initial: Mode = wantReview ? 'review' : 'todo'
+    if (wantReview) setMode('review')
+    ;(async () => { if (!cancelled) await load(initial) })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
