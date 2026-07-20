@@ -80,6 +80,21 @@ export default async function VandaagPage() {
     .eq("direction", "incoming")
     .eq("status", "processing");
 
+  // [DATELESS-TASK] A confirmed incoming bill with NO due date is excluded from the "Te betalen"
+  // list above (it filters `due_date IS NOT NULL` to date-sort). So a real cost the owner still
+  // owes appears on NO task list and can be silently forgotten. Surface a count nudge here so it is
+  // never invisible — the owner opens it to add a date / pay. Head-count only (no rows).
+  const { count: datelessPayableCount } = await supabase
+    .from("invoices")
+    .select("id", { count: "exact", head: true })
+    .eq("receiver_id", user.id)
+    .eq("direction", "incoming")
+    .eq("status", "received")
+    .is("due_date", null)
+    // Exclude incoming credit notes (negative total): they REDUCE what's owed, so "controleer of
+    // betaal" would mislabel them. Mirrors the InvoiceCard isCredit rule.
+    .gte("total_inc_btw", 0);
+
   const payable = (payableRaw ?? []) as unknown as VandaagInvoice[];
   const remind = (remindRaw ?? []) as unknown as VandaagInvoice[];
 
@@ -91,5 +106,5 @@ export default async function VandaagPage() {
   // instead of the reassuring checkmark. (Locked constraint #3: no false reassurance.)
   const loadFailed = !!payableErr || !!remindErr;
 
-  return <VandaagClient payable={payable} remind={remind} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} />;
+  return <VandaagClient payable={payable} remind={remind} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} />;
 }
