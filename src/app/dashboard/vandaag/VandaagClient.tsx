@@ -64,6 +64,7 @@ interface Props {
   remind: VandaagInvoice[]; // List 2 — outgoing, status IN ('sent','overdue')
   loadFailed?: boolean; // [COHERENCE-ERRSTATE] true when a server query errored
   toVerifyCount?: number; // [P1-STUCK-PROCESSING] incoming invoices stuck in the verify queue
+  datelessPayableCount?: number; // [DATELESS-TASK] confirmed incoming bills with no due date (else invisible)
 }
 
 // ─── Date helpers (timezone-proof) ────────────────────────────────────────────
@@ -130,7 +131,7 @@ function accentOf(dueIso: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VandaagClient({ payable, remind, loadFailed, toVerifyCount = 0 }: Props) {
+export default function VandaagClient({ payable, remind, loadFailed, toVerifyCount = 0, datelessPayableCount = 0 }: Props) {
   const router = useRouter();
 
   // [TODAY-LISTS-V1] "Negeren" = session-only visual hide (no DB write, like
@@ -230,9 +231,35 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         </button>
       )}
 
+      {/* [DATELESS-TASK] Confirmed bills with no due date are excluded from the date-sorted "Te
+          betalen" list, so without this they'd sit on no task list at all. Surface them so a cost
+          the owner still owes can never be silently forgotten behind an empty "all clear". */}
+      {!loadFailed && datelessPayableCount > 0 && (
+        <button
+          onClick={() => router.push("/dashboard/incoming/manage")}
+          style={{
+            width: "100%", textAlign: "left", cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 12,
+            background: "#FEF7E0", border: `1px solid #FBBC04`, borderRadius: 16,
+            padding: "14px 16px", marginBottom: 16,
+          }}
+        >
+          <span style={{ fontSize: 22 }}>📅</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: "#7A4F00" }}>
+              {datelessPayableCount === 1 ? "1 factuur zonder vervaldatum" : `${datelessPayableCount} facturen zonder vervaldatum`}
+            </span>
+            <span style={{ display: "block", fontSize: 13, color: "#7A4F00", marginTop: 1 }}>
+              Deze staan op geen betaallijst — controleer of betaal ze.
+            </span>
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+        </button>
+      )}
+
       {loadFailed ? (
         <LoadError onRetry={() => router.refresh()} />
-      ) : nothingToDo && toVerifyCount === 0 ? (
+      ) : nothingToDo && toVerifyCount === 0 && datelessPayableCount === 0 ? (
         <EmptyAllClear />
       ) : nothingToDo ? null : (
         <>
