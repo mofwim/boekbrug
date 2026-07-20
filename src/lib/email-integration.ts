@@ -28,6 +28,7 @@ import { collectPossibleDuplicate } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 import { createNotification } from '@/lib/notifications'
+import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
 // Legal suffixes / entity noise stripped when comparing two vendor names for the
 // duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
@@ -574,6 +575,20 @@ export interface GmailAttachment {
   size: number
 }
 
+// [EMAIL→BANK] A machine-readable bank statement (MT940 / CAMT.053 / bank CSV) seen as an
+// email attachment. It is NEVER downloaded, parsed, or auto-imported — only its identity is
+// carried out of the fetcher so the sync loop can SURFACE it (skip-registry row with an
+// actionable "upload it at Bank" reason) instead of dropping it silently. Money data still
+// enters ONLY through the reviewed Bank upload flow. Bytes are deliberately absent here.
+export interface BankStatementRef {
+  messageId: string
+  filename: string
+  // "certain" = a bank-statement-specific extension; "ambiguous" = a generic .xml/.csv/.txt
+  // whose name merely hints (could still be a UBL e-invoice). Drives how tentative the
+  // surfaced reason is, so a possible purchase invoice is not flatly called a bankafschrift.
+  kind: BankStatementNameKind
+}
+
 /**
  * [BIG-MAILBOX] Pick the ceiling of an oldest-anchored listing window so a mailbox with more
  * matching messages than one sync can page still makes progress OLDEST-first, instead of forever
@@ -639,6 +654,8 @@ export async function fetchGmailAttachments(
   // sync can page) — so mail NEWER than the processed slice is deferred to the next sync. The caller
   // uses it to keep the client auto-continuing instead of stopping between cron cycles.
   windowNarrowed: boolean
+  // [EMAIL→BANK] Bank statements seen this fetch (surfaced, never ingested).
+  statements: BankStatementRef[]
 }> {
   const afterDate = Math.floor(syncAfterMs / 1000)
   // [OWN-SENT] Exclude the owner's OWN outbound mail. A ZZP'er emails invoices to
@@ -759,6 +776,7 @@ export async function fetchGmailAttachments(
   })
 
   const results: GmailAttachment[] = []
+  const statements: BankStatementRef[] = []
   let attachmentsOk = true
 
   // 2. Fetch each message in parallel (max 10 at a time)
@@ -767,6 +785,7 @@ export async function fetchGmailAttachments(
     const fetched = await Promise.all(chunk.map(m => fetchMessageAttachments(m.id, accessToken)))
     for (const f of fetched) {
       results.push(...f.items)
+      statements.push(...f.statements)
       if (!f.ok) attachmentsOk = false
     }
   }
@@ -783,13 +802,13 @@ export async function fetchGmailAttachments(
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements }
 }
 
 async function fetchMessageAttachments(
   messageId: string,
   accessToken: string
-): Promise<{ items: GmailAttachment[]; ok: boolean }> {
+): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[] }> {
   const res = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -797,7 +816,7 @@ async function fetchMessageAttachments(
 
   // [BOEK-011 throttle×watermark] ok:false = this email wasn't fully read; the
   // caller marks the whole fetch incomplete so the watermark holds.
-  if (!res.ok) return { items: [], ok: false }
+  if (!res.ok) return { items: [], ok: false, statements: [] }
 
   const msg = await res.json()
   const headers: Array<{ name: string; value: string }> = msg.payload?.headers || []
@@ -817,6 +836,10 @@ async function fetchMessageAttachments(
   }
 
   const pending: PendingAttachment[] = []
+  // [EMAIL→BANK] Machine-readable bank statements found while walking parts — surfaced,
+  // never fetched or ingested (see BankStatementRef). Deduped by filename within a message.
+  const statements: BankStatementRef[] = []
+  const statementSeen = new Set<string>()
 
   // Recursively find attachment parts
   function walkParts(parts: unknown[]): void {
@@ -844,7 +867,20 @@ async function fetchMessageAttachments(
       // always passes). Dropping here first contradicted that and lost real attachments.
       if (!filename) continue
       const mimeType = normalizeAttachmentMime(rawMime, filename)
-      if (!mimeType) continue
+      if (!mimeType) {
+        // [EMAIL→BANK] This attachment is being DROPPED (unreadable MIME — not a pdf/image the
+        // classifier can read). If its name looks like a machine-readable bank statement (MT940
+        // / CAMT.053 / bank CSV), surface it instead of dropping it silently: the owner learns
+        // it arrived (skip-registry row, actionable reason) and can upload it via the reviewed
+        // Bank flow. Running INSIDE the null-MIME branch guarantees an importable pdf/image can
+        // NEVER be diverted here. Bytes are never fetched; no money is auto-imported.
+        const kind = looksLikeBankStatementFile(filename)
+        if (kind && !statementSeen.has(filename)) {
+          statementSeen.add(filename)
+          statements.push({ messageId, filename, kind })
+        }
+        continue
+      }
 
       // [BOEK-011 PERF] Same signature/logo pre-filter as Outlook. Gmail's
       // has:attachment already hides most inline images, so this rarely fires
@@ -914,7 +950,7 @@ async function fetchMessageAttachments(
   // attachment fetch (filters already ran in walkParts) — one failure marks
   // this email incomplete so the watermark holds this round.
   const items = resolved.filter((a): a is GmailAttachment => a !== null)
-  return { items, ok: items.length === resolved.length }
+  return { items, ok: items.length === resolved.length, statements }
 }
 
 // ─── Outlook token exchange ──────────────────────────────────────────────────
@@ -1024,6 +1060,8 @@ export async function fetchOutlookAttachments(
   messageIndex: Array<{ messageId: string; date: string }>
   // [BIG-MAILBOX] see fetchGmailAttachments — true when a backlog forced a narrowed window.
   windowNarrowed: boolean
+  // [EMAIL→BANK] Bank statements seen this fetch (surfaced, never ingested).
+  statements: BankStatementRef[]
 }> {
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
@@ -1140,6 +1178,7 @@ export async function fetchOutlookAttachments(
   })
 
   const results: GmailAttachment[] = []
+  const statements: BankStatementRef[] = []
 
   // [BOEK-011] Only messages that actually have attachments — the check moved
   // here from the $filter (see InefficientFilter note above).
@@ -1184,11 +1223,12 @@ export async function fetchOutlookAttachments(
     )
     for (const f of fetched) {
       results.push(...f.items)
+      statements.push(...f.statements)
       if (!f.ok) attachmentsOk = false
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements }
 }
 
 async function fetchOutlookMessageAttachments(
@@ -1200,7 +1240,7 @@ async function fetchOutlookMessageAttachments(
     hasAttachments?: boolean
   },
   accessToken: string
-): Promise<{ items: GmailAttachment[]; ok: boolean }> {
+): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[] }> {
   const attRes = await graphFetch(
     `https://graph.microsoft.com/v1.0/me/messages/${message.id}/attachments`,
     accessToken
@@ -1215,7 +1255,7 @@ async function fetchOutlookMessageAttachments(
       messageId: message.id,
       status: attRes.status,
     })
-    return { items: [], ok: false }
+    return { items: [], ok: false, statements: [] }
   }
 
   const attData = await attRes.json()
@@ -1233,6 +1273,9 @@ async function fetchOutlookMessageAttachments(
   const from = fromName && fromAddr ? `${fromName} <${fromAddr}>` : (fromAddr || fromName)
 
   const out: GmailAttachment[] = []
+  // [EMAIL→BANK] Bank statements seen on this message — surfaced, never fetched/ingested.
+  const statements: BankStatementRef[] = []
+  const statementSeen = new Set<string>()
 
   for (const att of attachments) {
     // Only file attachments carry contentBytes. Inline/item attachments (e.g.
@@ -1244,10 +1287,21 @@ async function fetchOutlookMessageAttachments(
     const rawMime = att.contentType || ''
     const filename = att.name || ''
     if (!filename) continue
+
     // [H2] Same mislabelled-MIME recovery as Gmail — a real PDF/image sent with a generic
     // content-type is normalised by extension instead of being dropped unseen.
     const mimeType = normalizeAttachmentMime(rawMime, filename)
-    if (!mimeType) continue
+    if (!mimeType) {
+      // [EMAIL→BANK] Being dropped (unreadable MIME). Surface a machine-readable bank statement
+      // (MT940 / CAMT.053 / bank CSV) instead of losing it silently. Inside the null-MIME branch
+      // so an importable pdf/image can never be diverted; bytes are never used, no auto-import.
+      const kind = looksLikeBankStatementFile(filename)
+      if (kind && !statementSeen.has(filename)) {
+        statementSeen.add(filename)
+        statements.push({ messageId: message.id, filename, kind })
+      }
+      continue
+    }
 
     // [BOEK-011 PERF] Drop signature/logo images before they cost a Claude call.
     // Conservative: PDFs always pass, only tiny/chrome-named images are dropped.
@@ -1267,7 +1321,7 @@ async function fetchOutlookMessageAttachments(
     })
   }
 
-  return { items: out, ok: true }
+  return { items: out, ok: true, statements }
 }
 
 // ─── AI Classification ────────────────────────────────────────────────────────
@@ -1708,6 +1762,10 @@ export async function syncUserEmails(
   // sync can page — i.e. mail newer than this run's slice is still waiting. Surfaced in `remaining`
   // so the client's auto-continue keeps going instead of stopping between cron cycles.
   let windowNarrowed = false
+  // [EMAIL→BANK] Bank statements seen this fetch. Handled OUTSIDE the invoice balance math
+  // (they were never invoice candidates): recorded in the skip registry so the owner is told
+  // to upload them at Bank, never auto-ingested. See the statement-surface block after fetch.
+  let statements: BankStatementRef[] = []
   try {
     if (tokens.provider === 'gmail') {
       const r = await fetchGmailAttachments(accessToken, syncAfterMs)
@@ -1715,6 +1773,7 @@ export async function syncUserEmails(
       fetchComplete = r.complete
       messageIndex = r.messageIndex
       windowNarrowed = r.windowNarrowed
+      statements = r.statements
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
@@ -1723,10 +1782,75 @@ export async function syncUserEmails(
       fetchComplete = r.complete
       messageIndex = r.messageIndex
       windowNarrowed = r.windowNarrowed
+      statements = r.statements
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
     return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+  }
+
+  // [EMAIL→BANK] Surface any machine-readable bank statements (MT940 / CAMT.053 / bank CSV)
+  // seen in this fetch. These are NOT invoices and are NEVER auto-imported — booking bank
+  // money stays a reviewed, explicit action on the Bank page (locked constraint #4: money
+  // moves only on explicit human action). Dropping them silently (the prior behaviour) meant
+  // the owner never learned the statement arrived. So we record each in the skip registry —
+  // it then appears in "Overgeslagen bij import" with an actionable reason — and notify ONCE
+  // per newly-seen statement so it isn't a passive list the owner must remember to open.
+  //
+  // Deliberately OUTSIDE the invoice balance math below: a statement was never an invoice
+  // candidate (it never entered `attachments`), so it must not inflate `fetched` or the
+  // balanced() reconciliation. The upsert is idempotent (unique user+message key), so a
+  // re-sync of the same email neither duplicates the row nor re-notifies.
+  if (statements.length > 0) {
+    const surfacedSeen = new Set<string>()
+    for (const st of statements) {
+      const key = `${st.messageId}:${st.filename}`
+      if (surfacedSeen.has(key)) continue
+      surfacedSeen.add(key)
+      // Honesty by confidence tier: a bank-statement-specific extension (.sta/.camt/…) is named
+      // plainly; a generic .xml/.csv whose name merely hints stays tentative — it could be a UBL
+      // e-invoice with real voorbelasting, so we must not flatly call it a bankafschrift.
+      const reason =
+        st.kind === 'certain'
+          ? 'bankafschrift ontvangen — upload het bij Bank om je transacties te importeren'
+          : 'mogelijk bankafschrift of e-factuur — als het een afschrift is, upload het bij Bank'
+      const notifBody =
+        st.kind === 'certain'
+          ? `"${st.filename}" lijkt een bankafschrift. Bankgegevens worden niet automatisch uit e-mail geïmporteerd — upload het bestand bij Bank om je transacties veilig in te lezen.`
+          : `"${st.filename}" lijkt een bankafschrift of e-factuur, maar kon niet automatisch worden gelezen. Controleer het: is het een afschrift, upload het dan bij Bank.`
+      try {
+        const { data: inserted } = await supabase
+          .from('email_skipped_attachments')
+          .upsert(
+            {
+              user_id: userId,
+              source_message_id: key,
+              filename: st.filename,
+              reason,
+            },
+            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true },
+          )
+          .select('id')
+        // Notify only when the row was NEWLY inserted (ignoreDuplicates returns [] on conflict),
+        // so the owner is nudged exactly once per statement — never nagged on every sync.
+        if (inserted && inserted.length > 0) {
+          await createNotification({
+            userId,
+            title: st.kind === 'certain' ? 'Bankafschrift ontvangen via e-mail' : 'Mogelijk bankafschrift via e-mail',
+            body: notifBody,
+            type: 'status',
+            link: '/dashboard/bank',
+          })
+        }
+      } catch (e) {
+        // Non-fatal: surfacing a statement must never break the invoice sync. Logged so a
+        // persistent failure is visible rather than a silent swallow.
+        console.error('[EMAIL→BANK] statement surface failed (non-fatal)', {
+          key,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
   }
 
   let verified = 0
