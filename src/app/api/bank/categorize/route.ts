@@ -42,13 +42,31 @@ export async function GET(req: NextRequest) {
     // Already-categorised, still-pending lines (auto-applied or confirmed). Show the
     // STORED category so the owner can see + change it. Unconfirmed (machine-applied)
     // first, so the guesses that most deserve a look sit at the top.
-    const { data: rows } = await supabase
+    //
+    // [AUTO-EXCLUDE-REVIEW] Optional ?year&quarter scopes the list to one quarter so the
+    // readiness "Controleer" deep-link lands on EXACTLY the lines it counted (the count is
+    // quarter-scoped). Without this, an older quarter's flagged lines could fall off the
+    // 200-row all-time page → the risk could never be cleared. Absent params → all-time
+    // (the plain "review wrong categories" entry point) — unchanged behaviour.
+    const sp = req.nextUrl.searchParams;
+    const y = Number(sp.get("year"));
+    const q = Number(sp.get("quarter"));
+    const quarterScoped = Number.isInteger(y) && q >= 1 && q <= 4;
+    let query = supabase
       .from("bank_transactions")
       .select("id, date, amount, counterpart_name, description, category, category_source, category_confirmed")
       .eq("user_id", user.id)
       .eq("status", "pending")
       .is("invoice_id", null)
-      .not("category", "is", null)
+      .not("category", "is", null);
+    if (quarterScoped) {
+      const sm = (q - 1) * 3;
+      const start = `${y}-${String(sm + 1).padStart(2, "0")}-01`;
+      const endD = new Date(Date.UTC(y, sm + 3, 0));
+      const end = `${endD.getUTCFullYear()}-${String(endD.getUTCMonth() + 1).padStart(2, "0")}-${String(endD.getUTCDate()).padStart(2, "0")}`;
+      query = query.gte("date", start).lte("date", end);
+    }
+    const { data: rows } = await query
       .order("category_confirmed", { ascending: true })
       .order("date", { ascending: false })
       .limit(PAGE_SIZE);

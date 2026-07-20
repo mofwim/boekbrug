@@ -63,7 +63,16 @@ export default function CategoriseClient() {
 
   async function load(which: Mode = mode) {
     try {
-      const url = which === 'review' ? '/api/bank/categorize?scope=review' : '/api/bank/categorize'
+      // [AUTO-EXCLUDE-REVIEW] Forward ?year&quarter into the review fetch so the readiness
+      // deep-link scopes the review list to exactly the quarter it counted (else an older
+      // quarter's flagged lines could fall off the all-time page and never clear).
+      let reviewQuery = '/api/bank/categorize?scope=review'
+      if (typeof window !== 'undefined') {
+        const sp = new URLSearchParams(window.location.search)
+        const y = sp.get('year'), q = sp.get('quarter')
+        if (y && q) reviewQuery += `&year=${encodeURIComponent(y)}&quarter=${encodeURIComponent(q)}`
+      }
+      const url = which === 'review' ? reviewQuery : '/api/bank/categorize'
       const res = await fetch(url)
       const json = await res.json()
       if (res.ok) {

@@ -19,6 +19,11 @@ import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 
 export interface ReadinessSignals {
   quarterLabel: string;                 // "Q1 2026"
+  // [AUTO-EXCLUDE-REVIEW] The numeric quarter, so a deep-link can scope the review list to
+  // EXACTLY the lines a quarter-scoped count flagged (counted ⟺ shown). Optional so older
+  // callers/tests keep compiling (absent → the link opens the all-time review list).
+  year?: number;
+  quarter?: number;
 
   // ── Invoices (evidence) ──
   verifiedInvoiceCount: number;         // verified in/out invoices in the quarter
@@ -310,6 +315,13 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       // unreviewed. Points at the review list so one pass clears the correct ones.
       const autoExcluded = s.unreviewedExcludedCount ?? 0;
       if (autoExcluded > 0) {
+        // Scope the deep-link to THIS quarter so the review list shows exactly the counted lines
+        // (counted ⟺ shown) — else an older quarter's flagged lines could fall off the review page
+        // and the risk could never be cleared. Falls back to the all-time review list.
+        const reviewHref =
+          s.year && s.quarter
+            ? `/dashboard/bank/categoriseren?view=review&year=${s.year}&quarter=${s.quarter}`
+            : "/dashboard/bank/categoriseren?view=review";
         risks.push({
           severity: "risk",
           title:
@@ -318,7 +330,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               : `${autoExcluded} bankregels automatisch als privé/overboeking/belasting geboekt`,
           detail:
             "Deze regel(s) zijn automatisch ingedeeld als privé, overboeking of belasting en tellen daarom NIET mee in je omzet, kosten of BTW. Controleer eenmalig of er geen zakelijke ontvangst of kost tussen zit — die zou anders buiten je boekhouding vallen.",
-          fix: { label: "Controleer", href: "/dashboard/bank/categoriseren?view=review" },
+          fix: { label: "Controleer", href: reviewHref },
         });
       }
     }

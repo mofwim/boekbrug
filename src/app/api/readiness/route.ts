@@ -104,9 +104,18 @@ export async function GET(req: NextRequest) {
   for (const t of bank) {
     const credit = (t.amount ?? 0) > 0;
     // [AUTO-EXCLUDE-REVIEW] An auto-coded, unconfirmed EXCLUDED line (transfer/prive/tax) — money the
-    // app kept out of the books without the owner's review. Checked first so BOTH a hidden receipt
-    // (credit) and a hidden cost (debit) are caught. category_confirmed !== true = never eyeballed.
-    if (t.category != null && (t as { category_confirmed?: boolean | null }).category_confirmed !== true && pnlRole(t.category) === "excluded") {
+    // app kept out of the books without the owner's review. Catches BOTH a hidden receipt (credit)
+    // and a hidden cost (debit); category_confirmed !== true = never eyeballed. Scoped to
+    // status='pending' AND no invoice_id to MATCH the review list the "Controleer" link opens
+    // (categorize ?scope=review) — so every counted line is reachable and the risk is self-clearing;
+    // a line that got matched/linked has been resolved by another flow and needs no re-review.
+    if (
+      t.status === "pending" &&
+      !t.invoice_id &&
+      t.category != null &&
+      (t as { category_confirmed?: boolean | null }).category_confirmed !== true &&
+      pnlRole(t.category) === "excluded"
+    ) {
       unreviewedExcludedCount++;
     }
     // [TRUST-READY] Unexplained INCOME is a gap REGARDLESS of status: a credit with no
@@ -381,6 +390,8 @@ export async function GET(req: NextRequest) {
   // ── 6) Assemble the signals → the verdict ──
   const signals: ReadinessSignals = {
     quarterLabel,
+    year,
+    quarter, // [AUTO-EXCLUDE-REVIEW] scope the review deep-link to this quarter (counted ⟺ shown)
     verifiedInvoiceCount,
     invoicesWithEvidence,
     unverifiedInvoiceCount,
