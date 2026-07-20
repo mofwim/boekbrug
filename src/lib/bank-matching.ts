@@ -81,6 +81,11 @@ export interface MatchCandidate {
   confidence: number; // 0..1
   signals: MatchSignal[];
   reason: string; // short Dutch explanation
+  // [BANK-AMOUNT-ONLY] The raw counterpart-name similarity (0..1) for THIS pairing. A sim ≥ the
+  // nameSimThreshold (0.5) is enough to LIST a candidate, but auto-BOOKING on name alone
+  // (the 'amount_only' tier) demands a STRONG match — see autoConfirmTier / HIGH_NAME_SIM.
+  // Optional: candidates built outside matchTransactions (e.g. batch reconcile) may omit it.
+  nameSim?: number;
 }
 
 /** Outcome class for one transaction. */
@@ -344,7 +349,7 @@ export function scorePair(
   tx: BankTransaction,
   inv: InvoiceForMatching,
   opts: MatchOptions
-): { confidence: number; signals: MatchSignal[]; reason: string } {
+): { confidence: number; signals: MatchSignal[]; reason: string; nameSim: number } {
   const signals: MatchSignal[] = [];
   const reasons: string[] = [];
 
@@ -449,7 +454,7 @@ export function scorePair(
 
   confidence = Math.min(1, Math.max(0, confidence));
   const reason = reasons.length ? reasons.join(" · ") : "geen duidelijke match";
-  return { confidence, signals, reason };
+  return { confidence, signals, reason, nameSim: sim };
 }
 
 /**
@@ -500,6 +505,13 @@ export type AutoConfirmTier =
   | "certain" // invoice number printed (or IBAN) + exact amount — decisive identity, booked silently
   | "amount_only"; // exact amount + matching counterpart NAME, single clear winner — booked but FLAGGED
 
+// [BANK-AMOUNT-ONLY] Auto-booking on NAME alone (no printed number/IBAN) demands a STRONG name, not
+// the mere 0.5 that lists a candidate. nameSimilarity gives 0.9–1.0 for the same supplier (exact
+// tokens / full containment) but ~0.6 for a shared-token collision ("De Vries Bouw" vs "De Vries
+// Transport"). A same-amount coincidence from such a look-alike must NOT auto-mark an invoice paid
+// unattended — below the bar it stays a human one-tap (outcome 'auto' still pre-selects it in the UI).
+export const HIGH_NAME_SIM = 0.8;
+
 /**
  * [BANK-AMOUNT-ONLY] Which tier — if any — may auto-book this match?
  * Shared gates (both tiers): outcome 'auto' with a best candidate, the amount matches to the cent,
@@ -523,7 +535,13 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
   const sig = m.best.signals;
   if (!sig.includes("amount")) return null; // the amount is the money-truth — required by both tiers
   if (sig.includes("reference") || sig.includes("iban")) return "certain";
-  if (sig.includes("counterpart")) return "amount_only";
+  if (sig.includes("counterpart")) {
+    // [BANK-AMOUNT-ONLY] Auto-book on name ONLY when the name is a STRONG match. A merely-similar
+    // name (0.5–0.8: a shared token like a common first word + "B.V.") is enough to LIST the
+    // candidate but too weak to mark an invoice paid with no human — a same-amount coincidence from
+    // a different supplier could win. Below the bar → null (stays a human one-tap, still pre-selected).
+    return (m.best.nameSim ?? 0) >= HIGH_NAME_SIM ? "amount_only" : null;
+  }
   return null; // amount + date only, no identity → too weak, stays human
 }
 
@@ -570,7 +588,7 @@ export function matchTransactions(
 
     for (const inv of invoices) {
       if (!isEligible(tx, inv)) continue;
-      const { confidence, signals, reason } = scorePair(tx, inv, opts);
+      const { confidence, signals, reason, nameSim } = scorePair(tx, inv, opts);
       if (confidence < opts.choiceThreshold) continue;
       candidates.push({
         invoiceId: inv.id,
@@ -580,6 +598,7 @@ export function matchTransactions(
         confidence,
         signals,
         reason,
+        nameSim,
       });
     }
 

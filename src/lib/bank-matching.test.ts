@@ -608,5 +608,28 @@ console.log("\n— [BANK-AMOUNT-ONLY] autoConfirmTier: certain vs amount_only vs
   check("same-amount same-supplier tie → 'choice' → no tier", autoConfirmTier(tie.matches[0]) === null);
 }
 
+console.log("\n— [BANK-AMOUNT-ONLY] a WEAK (look-alike) name must NOT auto-book on amount alone —");
+{
+  // A shared-token collision: "De Vries Bouw" pays €640, but the only same-amount open invoice is
+  // from "De Vries Transport" (a DIFFERENT supplier). nameSimilarity ~0.6 (shared "de vries") clears
+  // the 0.5 LIST bar and, with a close date, the pair reaches outcome 'auto' with a single winner —
+  // yet marking THIS invoice paid would be a wrong-invoice link. It must stay a human one-tap.
+  const weak = matchTransactions(
+    [tx({ amount: 640, date: "2026-03-10", counterpartName: "De Vries Bouw", reference: null })],
+    [inv({ invoice_number: "DV-9", total_inc_btw: 640, client_name: "De Vries Transport", invoice_date: "2026-03-06" })],
+  );
+  const sim = nameSimilarity("De Vries Bouw", "De Vries Transport");
+  check("look-alike name sim is in the weak band [0.5, 0.8)", sim >= 0.5 && sim < 0.8);
+  check("the pair still reaches outcome 'auto' (single winner)", weak.matches[0].outcome === "auto");
+  check("but a WEAK name is NOT auto-booked (stays human) → tier null", autoConfirmTier(weak.matches[0]) === null);
+
+  // A STRONG name (same supplier, sim ≥ 0.8) still auto-books 'amount_only' — no false block.
+  const strong = matchTransactions(
+    [tx({ amount: 640, date: "2026-03-10", counterpartName: "De Vries Bouw", reference: null })],
+    [inv({ invoice_number: "DV-1", total_inc_btw: 640, client_name: "De Vries Bouw", invoice_date: "2026-03-06" })],
+  );
+  check("strong name (same supplier) still auto-books amount_only", autoConfirmTier(strong.matches[0]) === "amount_only");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
