@@ -28,7 +28,7 @@ import { collectPossibleDuplicate } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
 import { createNotification } from '@/lib/notifications'
-import { looksLikeBankStatementFile } from '@/lib/detect-file'
+import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
 // Legal suffixes / entity noise stripped when comparing two vendor names for the
 // duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
@@ -583,6 +583,10 @@ export interface GmailAttachment {
 export interface BankStatementRef {
   messageId: string
   filename: string
+  // "certain" = a bank-statement-specific extension; "ambiguous" = a generic .xml/.csv/.txt
+  // whose name merely hints (could still be a UBL e-invoice). Drives how tentative the
+  // surfaced reason is, so a possible purchase invoice is not flatly called a bankafschrift.
+  kind: BankStatementNameKind
 }
 
 /**
@@ -862,22 +866,21 @@ async function fetchMessageAttachments(
       // inline/forwarded parts; isLikelyInvoiceCandidate already treats 0 as "keep" (a PDF
       // always passes). Dropping here first contradicted that and lost real attachments.
       if (!filename) continue
-
-      // [EMAIL→BANK] A machine-readable bank statement (MT940 / CAMT.053 / bank CSV) is NOT
-      // an invoice and normalises to a null MIME below → it would be dropped silently. Record
-      // it FIRST so the owner learns a statement arrived (skip-registry row, actionable
-      // reason) and can upload it via the reviewed Bank flow. Bytes are never fetched here; no
-      // money is auto-imported. Kept out of the invoice `pending` list entirely.
-      if (looksLikeBankStatementFile(filename)) {
-        if (!statementSeen.has(filename)) {
+      const mimeType = normalizeAttachmentMime(rawMime, filename)
+      if (!mimeType) {
+        // [EMAIL→BANK] This attachment is being DROPPED (unreadable MIME — not a pdf/image the
+        // classifier can read). If its name looks like a machine-readable bank statement (MT940
+        // / CAMT.053 / bank CSV), surface it instead of dropping it silently: the owner learns
+        // it arrived (skip-registry row, actionable reason) and can upload it via the reviewed
+        // Bank flow. Running INSIDE the null-MIME branch guarantees an importable pdf/image can
+        // NEVER be diverted here. Bytes are never fetched; no money is auto-imported.
+        const kind = looksLikeBankStatementFile(filename)
+        if (kind && !statementSeen.has(filename)) {
           statementSeen.add(filename)
-          statements.push({ messageId, filename })
+          statements.push({ messageId, filename, kind })
         }
         continue
       }
-
-      const mimeType = normalizeAttachmentMime(rawMime, filename)
-      if (!mimeType) continue
 
       // [BOEK-011 PERF] Same signature/logo pre-filter as Outlook. Gmail's
       // has:attachment already hides most inline images, so this rarely fires
@@ -1285,21 +1288,20 @@ async function fetchOutlookMessageAttachments(
     const filename = att.name || ''
     if (!filename) continue
 
-    // [EMAIL→BANK] Surface a machine-readable bank statement (MT940 / CAMT.053 / bank CSV)
-    // instead of dropping it at the null-MIME gate below. Recorded by name only; bytes are
-    // never used, no money is auto-imported (mirrors the Gmail path).
-    if (looksLikeBankStatementFile(filename)) {
-      if (!statementSeen.has(filename)) {
-        statementSeen.add(filename)
-        statements.push({ messageId: message.id, filename })
-      }
-      continue
-    }
-
     // [H2] Same mislabelled-MIME recovery as Gmail — a real PDF/image sent with a generic
     // content-type is normalised by extension instead of being dropped unseen.
     const mimeType = normalizeAttachmentMime(rawMime, filename)
-    if (!mimeType) continue
+    if (!mimeType) {
+      // [EMAIL→BANK] Being dropped (unreadable MIME). Surface a machine-readable bank statement
+      // (MT940 / CAMT.053 / bank CSV) instead of losing it silently. Inside the null-MIME branch
+      // so an importable pdf/image can never be diverted; bytes are never used, no auto-import.
+      const kind = looksLikeBankStatementFile(filename)
+      if (kind && !statementSeen.has(filename)) {
+        statementSeen.add(filename)
+        statements.push({ messageId: message.id, filename, kind })
+      }
+      continue
+    }
 
     // [BOEK-011 PERF] Drop signature/logo images before they cost a Claude call.
     // Conservative: PDFs always pass, only tiny/chrome-named images are dropped.
@@ -1805,6 +1807,17 @@ export async function syncUserEmails(
       const key = `${st.messageId}:${st.filename}`
       if (surfacedSeen.has(key)) continue
       surfacedSeen.add(key)
+      // Honesty by confidence tier: a bank-statement-specific extension (.sta/.camt/…) is named
+      // plainly; a generic .xml/.csv whose name merely hints stays tentative — it could be a UBL
+      // e-invoice with real voorbelasting, so we must not flatly call it a bankafschrift.
+      const reason =
+        st.kind === 'certain'
+          ? 'bankafschrift ontvangen — upload het bij Bank om je transacties te importeren'
+          : 'mogelijk bankafschrift of e-factuur — als het een afschrift is, upload het bij Bank'
+      const notifBody =
+        st.kind === 'certain'
+          ? `"${st.filename}" lijkt een bankafschrift. Bankgegevens worden niet automatisch uit e-mail geïmporteerd — upload het bestand bij Bank om je transacties veilig in te lezen.`
+          : `"${st.filename}" lijkt een bankafschrift of e-factuur, maar kon niet automatisch worden gelezen. Controleer het: is het een afschrift, upload het dan bij Bank.`
       try {
         const { data: inserted } = await supabase
           .from('email_skipped_attachments')
@@ -1813,7 +1826,7 @@ export async function syncUserEmails(
               user_id: userId,
               source_message_id: key,
               filename: st.filename,
-              reason: 'bankafschrift ontvangen — upload het bij Bank om je transacties te importeren',
+              reason,
             },
             { onConflict: 'user_id,source_message_id', ignoreDuplicates: true },
           )
@@ -1823,8 +1836,8 @@ export async function syncUserEmails(
         if (inserted && inserted.length > 0) {
           await createNotification({
             userId,
-            title: 'Bankafschrift ontvangen via e-mail',
-            body: `"${st.filename}" lijkt een bankafschrift. Bankgegevens worden niet automatisch uit e-mail geïmporteerd — upload het bestand bij Bank om je transacties veilig in te lezen.`,
+            title: st.kind === 'certain' ? 'Bankafschrift ontvangen via e-mail' : 'Mogelijk bankafschrift via e-mail',
+            body: notifBody,
             type: 'status',
             link: '/dashboard/bank',
           })

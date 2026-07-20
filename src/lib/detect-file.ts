@@ -56,29 +56,41 @@ export function detectSheetKind(matrix: Cell[][]): SheetKind {
  * PDFs are intentionally NOT matched: a PDF "rekeningafschrift" already reaches the AI
  * classifier, which recognises statements and records them with their own reason. This is
  * only for the accountant-grade formats that get dropped before any classification.
+ *
+ * Returns a CONFIDENCE tier, not a plain bool, so the caller can be honest about WHY:
+ *   "certain"   — a bank-statement-specific extension (.sta/.940/.camt/.053): nothing
+ *                 else uses these, so the surfaced reason can name it a bankafschrift.
+ *   "ambiguous" — a generic container (.xml/.csv/.txt) whose NAME hints at a statement.
+ *                 A UBL e-invoice can also be .xml, so the reason must stay tentative
+ *                 (do not flatly call a possible purchase invoice a bankafschrift).
+ *   null        — not a statement.
  */
-export function looksLikeBankStatementFile(filename: string | null | undefined): boolean {
+export type BankStatementNameKind = "certain" | "ambiguous";
+
+export function looksLikeBankStatementFile(filename: string | null | undefined): BankStatementNameKind | null {
   const name = (filename || "").toLowerCase().trim();
-  if (!name) return false;
+  if (!name) return null;
   const ext = name.match(/\.([a-z0-9]+)$/)?.[1] ?? "";
 
   // Accountant-grade bank export formats — the extension alone is decisive. SWIFT MT940
   // (.sta/.940/.mt940) and ISO 20022 CAMT.053 (.camt/.053): nothing else uses these, and
   // the app's own bank parser reads exactly them. A PDF/image never lands here.
   if (ext === "sta" || ext === "940" || ext === "mt940" || ext === "mt9" || ext === "camt" || ext === "053") {
-    return true;
+    return "certain";
   }
 
   // Ambiguous containers: .xml can be a UBL e-invoice, .csv/.txt can be anything. Only
   // treat them as a statement when the FILENAME clearly says so — never on the extension
   // alone — so a UBL invoice or an unrelated CSV is not mislabelled a bankafschrift.
   if (ext === "xml" || ext === "csv" || ext === "txt") {
-    return /camt|mt940|afschrift|rekeningoverzicht|rekening-?overzicht|bankstatement|statement|transacties|mutaties|bij-?en-?afschrijvingen/.test(
-      name,
-    );
+    const hinted =
+      /camt|mt940|afschrift|rekeningoverzicht|rekening-?overzicht|bankstatement|statement|transacties|mutaties|bij-?en-?afschrijvingen/.test(
+        name,
+      );
+    return hinted ? "ambiguous" : null;
   }
 
-  return false;
+  return null;
 }
 
 /**

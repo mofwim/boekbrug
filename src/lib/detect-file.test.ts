@@ -53,25 +53,26 @@ console.log("\n— looksLikeEftReceipt —");
 
 console.log("\n— looksLikeBankStatementFile (email→bank surfacing) —");
 {
-  // Accountant-grade formats: extension alone is decisive.
-  check("MT940 .sta detected", looksLikeBankStatementFile("NL91ABNA_20260401.sta"));
-  check("MT940 .940 detected", looksLikeBankStatementFile("mutaties.940"));
-  check("CAMT .camt detected", looksLikeBankStatementFile("statement.camt"));
-  check("CAMT .053 extension detected", looksLikeBankStatementFile("bank.053"));
+  // Accountant-grade formats: extension alone is decisive → "certain".
+  check("MT940 .sta → certain", looksLikeBankStatementFile("NL91ABNA_20260401.sta") === "certain");
+  check("MT940 .940 → certain", looksLikeBankStatementFile("mutaties.940") === "certain");
+  check("CAMT .camt → certain", looksLikeBankStatementFile("statement.camt") === "certain");
+  check("CAMT .053 extension → certain", looksLikeBankStatementFile("bank.053") === "certain");
 
-  // Ambiguous containers: only with a statement hint in the name.
-  check("CAMT.053 xml (name says camt) detected", looksLikeBankStatementFile("camt053_NL12INGB_2026Q1.xml"));
-  check("rekeningafschrift csv detected", looksLikeBankStatementFile("rekeningafschrift-april.csv"));
-  check("transacties csv detected", looksLikeBankStatementFile("transacties_2026.csv"));
+  // Ambiguous containers: only with a statement hint in the name → "ambiguous"
+  // (an .xml could still be a UBL e-invoice, so the reason must stay tentative).
+  check("CAMT.053 xml (name says camt) → ambiguous", looksLikeBankStatementFile("camt053_NL12INGB_2026Q1.xml") === "ambiguous");
+  check("rekeningafschrift csv → ambiguous", looksLikeBankStatementFile("rekeningafschrift-april.csv") === "ambiguous");
+  check("transacties csv → ambiguous", looksLikeBankStatementFile("transacties_2026.csv") === "ambiguous");
 
   // Must NOT fire — otherwise a real invoice is mislabelled a bankafschrift.
-  check("UBL e-invoice .xml NOT flagged", looksLikeBankStatementFile("factuur-2026-001.xml") === false);
-  check("generic report.csv NOT flagged (too broad)", looksLikeBankStatementFile("report.csv") === false);
-  check("a PDF invoice NOT flagged (handled by classifier)", looksLikeBankStatementFile("factuur.pdf") === false);
-  check("an image receipt NOT flagged", looksLikeBankStatementFile("bonnetje.jpg") === false);
-  check("empty/undefined → false", looksLikeBankStatementFile("") === false && looksLikeBankStatementFile(undefined) === false);
+  check("UBL e-invoice .xml NOT flagged", looksLikeBankStatementFile("factuur-2026-001.xml") === null);
+  check("generic report.csv NOT flagged (too broad)", looksLikeBankStatementFile("report.csv") === null);
+  check("a PDF invoice NOT flagged (handled by classifier)", looksLikeBankStatementFile("factuur.pdf") === null);
+  check("an image receipt NOT flagged", looksLikeBankStatementFile("bonnetje.jpg") === null);
+  check("empty/undefined → null", looksLikeBankStatementFile("") === null && looksLikeBankStatementFile(undefined) === null);
   // A vendor whose name merely contains 'statement' as a substring of a PDF is still not matched (wrong ext).
-  check("statement in a .pdf name NOT flagged (ext gate)", looksLikeBankStatementFile("statement-of-work.pdf") === false);
+  check("statement in a .pdf name NOT flagged (ext gate)", looksLikeBankStatementFile("statement-of-work.pdf") === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
