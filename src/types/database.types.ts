@@ -805,6 +805,8 @@ export type Database = {
           connected_at: string | null
           email: string | null
           id: string
+          last_synced_email_at: string | null
+          needs_reauth: boolean
           provider: string
           refresh_token_secret_id: string | null
           tokens_encrypted_at: string | null
@@ -815,6 +817,8 @@ export type Database = {
           connected_at?: string | null
           email?: string | null
           id?: string
+          last_synced_email_at?: string | null
+          needs_reauth?: boolean
           provider: string
           refresh_token_secret_id?: string | null
           tokens_encrypted_at?: string | null
@@ -825,6 +829,8 @@ export type Database = {
           connected_at?: string | null
           email?: string | null
           id?: string
+          last_synced_email_at?: string | null
+          needs_reauth?: boolean
           provider?: string
           refresh_token_secret_id?: string | null
           tokens_encrypted_at?: string | null
