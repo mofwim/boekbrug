@@ -87,6 +87,34 @@ export async function POST(req: NextRequest) {
 
   // Own filing only (no accountant dual-path here — filing is the owner's declaration).
   const pipeline = createPipelineClient();
+
+  // [FILING-GATE] Don't freeze a quarter as "ingediend" while incoming invoices dated in it are
+  // still unconfirmed ('processing') — their cost + voorbelasting are NOT yet in the figures, so the
+  // snapshot would be demonstrably incomplete. This is a WARNING, not a hard block: filing is the
+  // owner's own declaration, so the client re-POSTs with { acknowledge: true } after confirming.
+  // (Previously the client ignored the response entirely and froze silently.)
+  if (body?.acknowledge !== true) {
+    const { count: processingCount } = await pipeline
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .eq("status", "processing")
+      .gte("invoice_date", start)
+      .lte("invoice_date", end);
+    if ((processingCount ?? 0) > 0) {
+      return NextResponse.json(
+        {
+          error: "quarter_not_ready",
+          notReady: true,
+          processingCount: processingCount ?? 0,
+          reason: `${processingCount} inkoopfactu(u)r(en) in dit kwartaal zijn nog niet gecontroleerd — hun bedrag en BTW staan nog niet in de cijfers.`,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const { result } = await computeResultForRange({ pipeline, ownerId: user.id, start, end });
 
   const snapshot = {
