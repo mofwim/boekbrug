@@ -186,8 +186,34 @@ export async function POST(req: NextRequest) {
   // €0 BTW (the engine's "no voorbelasting without a document" rule) so the cost is counted, not
   // silently dropped from kosten/resultaat. BTW alone stays 0 when the AI can't find it.
   const totalExBtw = amountAgrees ? (verification.total_ex_btw ?? totalIncBtw) : totalIncBtw;
-  const btwAmount = amountAgrees ? (verification.btw_amount ?? 0) : 0;
+  // BTW may only be non-zero when we actually KEPT the AI's split. On any gross fallback (ex ?? gross,
+  // or the disagree branch) it stays 0 — so total_ex_btw can never end up = gross WHILE btw != 0 (an
+  // over-stated deductible base). [ADV-REVIEW residual: btw gated on the split being present.]
+  const btwAmount = amountAgrees && verification.total_ex_btw != null ? (verification.btw_amount ?? 0) : 0;
   const amountWarning = aiTotal != null && !amountAgrees;
+
+  // [OUTGOING-BTW TRUTH] A bank CREDIT is booked as omzet from total_ex_btw. The gross-as-net fallback
+  // above is SAFE only for an incoming COST (understating our own VAT reclaim to 0 is conservative).
+  // For an OUTGOING sale it is NOT: booking the gross at a silent 0% either FABRICATES revenue (a
+  // supplier refund is not a sale) or HIDES the output VAT owed — it lands in rubriek 1e where no
+  // readiness check or alert catches it (adversarial review, CONFIRMED). So we never auto-book an
+  // outgoing document whose BTW we can't trust: only proceed with a reliable split, otherwise refuse
+  // and let the owner add the sale/creditnota manually with the correct rate. No file/insert yet →
+  // nothing to roll back. The bank credit stays visible in "Geen factuur" so it is never lost.
+  if (
+    direction === "outgoing" &&
+    !(amountAgrees && verification.total_ex_btw != null && verification.btw_amount != null)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "We konden de BTW op deze inkomende betaling niet betrouwbaar aflezen. Voeg de verkoopfactuur of creditnota handmatig toe met het juiste BTW-tarief, zodat omzet en BTW kloppen.",
+        needs_manual_btw: true,
+        amountWarning,
+      },
+      { status: 422 },
+    );
+  }
 
   // 6b. [BANK-ATTACH-DEDUP] Semantic duplicate gate — the SAME invoice as a different file.
   //     Byte-hash (step 4) only catches the identical file. The real double-book risk here:
@@ -358,22 +384,36 @@ export async function POST(req: NextRequest) {
   //     engine. We don't compute whether the linked invoices' total "covers" the
   //     transaction (that would reintroduce amount-matching we chose not to
   //     build). The owner decides when the transaction is dealt with.
-  const { error: linkErr } = await pipeline
+  const { data: linkedRows, error: linkErr } = await pipeline
     .from("bank_transactions")
     .update({ invoice_id: invoice.id })
     .eq("id", transactionId)
     .eq("user_id", user.id)
-    .eq("status", "pending"); // never touch an already-settled row
+    .eq("status", "pending") // never touch an already-settled row
+    .select("id");
 
-  if (linkErr) {
-    // The invoice is created + paid + shared regardless; only the soft link failed.
-    console.error("[BANK-ATTACH] transaction link failed:", linkErr.message);
-    return NextResponse.json({
-      ok: true,
-      invoice_id: invoice.id,
-      warning: "transaction_link_failed",
-      amountWarning,
-    });
+  // [DOUBLE-COUNT GUARD] The engine excludes a bank line from the kosten/omzet leg ONLY when its
+  // invoice_id column is set (financial-result.ts:345). If this write errored OR matched 0 rows (the
+  // tx is no longer 'pending' — e.g. a concurrent settle, which the .eq filter drops WITHOUT an
+  // error), the still-categorized bank line stays counted. Leaving the freshly-'paid' invoice — now
+  // carrying the FULL gross cost, not the old €0 — in place would DOUBLE-COUNT the money. So we do
+  // NOT return ok: roll the invoice + document + file back (as the dbError path above does) and ask
+  // the owner to retry, so nothing is ever half-booked. (Adversarial review, CONFIRMED double-count.)
+  if (linkErr || !linkedRows || linkedRows.length === 0) {
+    console.error(
+      "[BANK-ATTACH] transaction link failed:",
+      linkErr?.message ?? "0 rows matched (transaction not pending)",
+    );
+    await pipeline.from("invoices").delete().eq("id", invoice.id);
+    await pipeline.from("documents").delete().eq("id", documentId);
+    await supabase.storage.from("documents").remove([storagePath]);
+    return NextResponse.json(
+      {
+        error: "Koppelen aan de banktransactie is niet gelukt — probeer het opnieuw.",
+        link_failed: true,
+      },
+      { status: 409 },
+    );
   }
 
   // [BANK-TX-INVOICES] Record THIS invoice in the reversal index. Attach supports several invoices
