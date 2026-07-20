@@ -95,6 +95,7 @@ interface ConnectionStatus {
   provider: "gmail" | "outlook" | null;
   email: string | null;
   connected_at: string | null;
+  needs_reauth: boolean;
   pending_count: number;
 }
 
@@ -323,6 +324,9 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
   if (status.connected) {
     const providerName = status.provider === "gmail" ? "Gmail" : "Outlook";
+    // [EMAIL-HEALTH] The grant can be dead while the row still exists — never render the calm green
+    // "verbonden" state in that case, or the automatic import rots silently behind a false ✓.
+    const needsReauth = status.needs_reauth;
 
     return (
       <div
@@ -338,12 +342,12 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontWeight: 600, fontSize: 15, color: "#202124" }}>
-                {providerName} verbonden
+                {needsReauth ? `${providerName} — verbinding verlopen` : `${providerName} verbonden`}
               </span>
               <span
                 style={{
                   width: 8, height: 8, borderRadius: "50%",
-                  background: "#34a853", display: "inline-block",
+                  background: needsReauth ? "#ea4335" : "#34a853", display: "inline-block",
                 }}
               />
             </div>
@@ -352,6 +356,23 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             </div>
           </div>
         </div>
+
+        {needsReauth && (
+          <div style={{ background: "#FCE8E6", border: "1px solid #F5B5AE", borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: "#B3261E", marginBottom: 6 }}>
+              Automatisch inlezen is gestopt
+            </div>
+            <div style={{ fontSize: 13, color: "#8C1D18", marginBottom: 10, lineHeight: 1.45 }}>
+              Je {providerName}-koppeling is verlopen. Er komen geen nieuwe facturen meer binnen totdat je opnieuw verbindt.
+            </div>
+            <a
+              href={`/api/email/connect?provider=${status.provider}`}
+              style={{ display: "inline-block", background: "#B3261E", color: "#fff", borderRadius: 10, padding: "9px 16px", fontWeight: 600, fontSize: 14, textDecoration: "none" }}
+            >
+              Verbind {providerName} opnieuw
+            </a>
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 8 }}>
           <button

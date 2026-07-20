@@ -2,6 +2,7 @@
 // كل functions الإيميل في مكان واحد — Resend
 
 import { Resend } from 'resend'
+import * as Sentry from '@sentry/nextjs'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL, formatEuroNL } from './format-nl'
 
@@ -14,6 +15,29 @@ let _resend: Resend | null = null
 function getResend(): Resend {
   if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
   return _resend
+}
+
+// [TRUST-DELIVERY] Resend does NOT throw on an API rejection — it resolves with { error }. A sender
+// that ignores it tells the app "verstuurd" while nothing was delivered (a silent dead-end). Every
+// sender routes its result here:
+//   - critical mail (accountant invite / draft-queue to the accountant / GDPR export summary) THROWS
+//     so the caller surfaces a real failure instead of a false success;
+//   - best-effort notifications are logged AND captured in Sentry (never lost) but never break the
+//     main action they accompany.
+async function deliverEmail(
+  result: { error: unknown } | null | undefined,
+  opts: { label: string; critical: boolean },
+): Promise<void> {
+  const err = result?.error
+  if (!err) return
+  console.error(`[TRUST-DELIVERY] ${opts.label} e-mail mislukt`, err)
+  if (opts.critical) {
+    throw new Error(`E-mail versturen mislukt (${opts.label})`)
+  }
+  Sentry.captureException(
+    err instanceof Error ? err : new Error(`${opts.label} e-mail mislukt`),
+    { extra: { label: opts.label } },
+  )
 }
 
 // [M2] Escape any user-controlled string interpolated into an HTML email body. Client
@@ -40,7 +64,7 @@ export async function sendAccountantInvite({
   zzperName: string
   acceptUrl: string
 }) {
-  await getResend().emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${zzperName} wil je toevoegen als boekhouder`,
@@ -57,6 +81,7 @@ export async function sendAccountantInvite({
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'accountant-invite', critical: true })
 }
 
 // ── إيميل دعوة العميل من قبل المحاسب ─────────────────────────────────────────
@@ -199,7 +224,7 @@ export async function sendMessageNotification({
   messagePreview: string
   conversationUrl: string
 }) {
-  await getResend().emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `Nieuw bericht van ${senderName}`,
@@ -219,6 +244,7 @@ export async function sendMessageNotification({
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'message-notification', critical: false })
 }
 // ── إشعار المحاسب بإنهاء الربط من قبل العميل ──────────────────────────────────
 export async function sendAccountantUnlinkedNotification({
@@ -230,7 +256,7 @@ export async function sendAccountantUnlinkedNotification({
   accountantName: string
   clientName: string
 }) {
-  await getResend().emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${clientName} heeft de koppeling beëindigd`,
@@ -244,6 +270,7 @@ export async function sendAccountantUnlinkedNotification({
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'accountant-unlinked', critical: false })
 }
 
 // ── إشعار العميل بإنهاء الربط من قبل المحاسب ──────────────────────────────────
@@ -256,7 +283,7 @@ export async function sendClientUnlinkedNotification({
   clientName: string
   accountantName: string
 }) {
-  await getResend().emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${accountantName} heeft de koppeling beëindigd`,
@@ -270,6 +297,7 @@ export async function sendClientUnlinkedNotification({
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'client-unlinked', critical: false })
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // [BOEK-030] APPEND THIS FUNCTION to src/lib/email.ts (end of file).
@@ -298,7 +326,7 @@ export async function sendDraftQueueEmail({
 }) {
   const safeBody = escapeHtml(body).replace(/\r?\n/g, '<br>')
 
-  await getResend().emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject,
@@ -314,6 +342,7 @@ export async function sendDraftQueueEmail({
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'draft-queue', critical: true })
 
   // clientName is intentionally available for future personalization / subject use.
   void clientName
@@ -347,7 +376,7 @@ export async function sendAccountExportSummary({
       ? `<p style="color:#999; font-size:13px;">${skippedCount} bestand(en) konden niet worden opgehaald en zijn overgeslagen.</p>`
       : ''
 
-  await getResend().emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: 'Je BoekBrug-gegevensexport',
@@ -365,4 +394,5 @@ export async function sendAccountExportSummary({
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'account-export', critical: true })
 }

@@ -77,7 +77,8 @@ export default async function IncomingPage() {
   // Email connection status
   const { data: connection } = await supabase
     .from("email_connections")
-    .select("provider, email, connected_at")
+    // needs_reauth post-dates the generated types → cast on read (as the sync path does).
+    .select("provider, email, connected_at, needs_reauth")
     .eq("user_id", user.id)
     .limit(1)
     .single();
@@ -229,6 +230,9 @@ export default async function IncomingPage() {
     provider: (connection?.provider ?? null) as 'gmail' | 'outlook' | null,
     email: (connection?.email ?? null) as string | null,
     connected_at: connection?.connected_at ?? null,
+    // [EMAIL-HEALTH] true = the OAuth grant died; the automatic import has stopped and the owner
+    // must reconnect. Surfaced as a banner so the connection can no longer rot silently green.
+    needs_reauth: connection?.needs_reauth ?? false,
     pending_count: pendingInvoices.length,
   };
 

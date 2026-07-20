@@ -10,6 +10,7 @@
 // route refuses to run (fail-closed) rather than exposing an open all-user trigger.
 
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { syncUserEmails } from "@/lib/email-integration";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
@@ -85,7 +86,11 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       failed += 1;
+      // [OBSERVABILITY] A per-user sync failure is non-fatal to the batch, but it must not vanish
+      // into a log line the cron returns 200 over — capture it so a mailbox that stops importing
+      // is visible to us, not only to the (now-notified) owner.
       console.error("[CRON-EMAIL-SYNC] user sync failed (non-fatal)", { uid, error: e instanceof Error ? e.message : String(e) });
+      Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "email-sync" }, extra: { uid } });
     }
   }
 

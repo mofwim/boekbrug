@@ -105,9 +105,14 @@ export default function DailyTruth() {
 
   const { toPay, toReceive, bank, attention, attentionCount } = data
   const lastDate = formatDate(bank.lastDate)
-  // [NO-CODEER] Uncoded bank debits no longer count as "not clear" — coding a bare debit
-  // gives no BTW and can double-count an invoice, so it isn't an open task the owner owes.
-  // "Alles is bij" now reflects only real open money: nothing to pay and nothing to receive.
+  // [NO-CODEER] Uncoded bank debits are NOT tasks the owner owes — the per-line categorize flow was
+  // deliberately removed, so a bank-only retail user permanently carries hundreds of un-invoiced
+  // debits. So "Alles is bij" reflects only real open MONEY (nothing to pay, nothing to receive) and
+  // must NOT be gated on those debits, or the box would never appear (perpetual false nag).
+  // [ALLES-IS-BIJ TRUTH] The honesty bug was the SUBTITLE claiming "niets te documenteren" — a
+  // per-line completeness the app deliberately doesn't track. That false claim is removed (the
+  // subtitle is now money-only); the genuine missing-inkoopfactuur (voorbelasting) gap stays surfaced
+  // where it is actually actionable — the bank screen's "Geen factuur" tab, not this summary box.
   const allClear = toPay.count === 0 && toReceive.count === 0
 
   // incoming → the manage surface (pay / mark paid); outgoing → the invoice detail.
@@ -139,7 +144,7 @@ export default function DailyTruth() {
           <div>
             <div style={{ fontSize: 15, fontWeight: 600, color: '#0B5345' }}>Alles is bij</div>
             <div style={{ fontSize: 13, color: '#0B5345', marginTop: 2 }}>
-              Niets openstaand en niets te documenteren.
+              Niets openstaand — geen facturen te betalen of te ontvangen.
             </div>
           </div>
         </div>

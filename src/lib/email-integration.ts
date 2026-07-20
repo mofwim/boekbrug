@@ -27,6 +27,7 @@ import {
 import { collectPossibleDuplicate } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
+import { createNotification } from '@/lib/notifications'
 
 // Legal suffixes / entity noise stripped when comparing two vendor names for the
 // duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
@@ -226,6 +227,14 @@ export async function saveEmailTokens(params: {
     return { success: false, error: upsertErr.message }
   }
 
+  // [EMAIL-HEALTH] A successful (re)connect or token refresh means the grant is healthy again —
+  // clear any stale needs_reauth flag so the reconnect banner disappears. Cast: post-migration column.
+  await supabase
+    .from('email_connections')
+    .update({ needs_reauth: false })
+    .eq('user_id', userId)
+    .eq('provider', provider)
+
   // [BOEK-011] Single active connection per user. If the user is SWITCHING
   // providers (e.g. connected Gmail in May, now connects Outlook), remove the
   // OTHER provider's connection so sync doesn't straddle two accounts and the
@@ -341,6 +350,50 @@ export async function deleteEmailConnection(
  * Saves the new access_token (and refresh_token if returned) back to Vault.
  * Returns the new access_token, or null on failure.
  */
+/**
+ * [EMAIL-HEALTH] A connection's OAuth grant is definitively dead (revoked / refresh_token expired).
+ * Flip `needs_reauth` so the UI can stop lying "verbonden ✓" and the owner is told the automatic
+ * import has stopped. Idempotent + one-time-notify: only the FALSE→TRUE edge fires a notification,
+ * so a dead grant polled every 2h doesn't spam. Best-effort — NEVER throws (it runs inside the sync
+ * path, which must not abort on a health-flag write). The `needs_reauth` column post-dates the
+ * generated types, so writes cast like the sibling last_synced_email_at column already does.
+ */
+async function markEmailNeedsReauth(
+  userId: string,
+  provider: 'gmail' | 'outlook',
+  reason: string,
+): Promise<void> {
+  try {
+    const supabase = createPipelineClient()
+    const { data: row } = await supabase
+      .from('email_connections')
+      .select('id, email, needs_reauth')
+      .eq('user_id', userId)
+      .eq('provider', provider)
+      .maybeSingle()
+    if (!row?.id) return
+    if (row.needs_reauth === true) return // already flagged → don't re-write or re-notify
+    await supabase
+      .from('email_connections')
+      .update({ needs_reauth: true })
+      .eq('id', row.id)
+    console.error('[EMAIL-HEALTH] connection needs re-auth', { userId, provider, reason })
+    try {
+      await createNotification({
+        userId,
+        title: 'E-mailkoppeling verlopen',
+        body: `Je ${provider === 'gmail' ? 'Gmail' : 'Outlook'}-koppeling${row.email ? ` (${row.email})` : ''} is verlopen. Er worden geen facturen meer automatisch ingelezen totdat je opnieuw verbindt.`,
+        type: 'status',
+        link: '/dashboard/incoming',
+      })
+    } catch {
+      /* notification is best-effort — the flag is the source of truth */
+    }
+  } catch (err) {
+    console.error('[EMAIL-HEALTH] markEmailNeedsReauth failed', { userId, provider, err })
+  }
+}
+
 async function refreshAccessToken(userId: string): Promise<string | null> {
   const tokens = await getEmailTokens(userId)
   if (!tokens) {
@@ -386,16 +439,26 @@ async function refreshAccessToken(userId: string): Promise<string | null> {
         status: response.status,
         body: errBody,
       })
+      // [EMAIL-HEALTH] 400/401 = the grant is definitively dead (invalid_grant / revoked /
+      // expired refresh_token) — flag it so the owner is told, not silently stuck. A 429/5xx is
+      // transient (rate-limit / provider blip): leave it, the next cron round retries.
+      if (response.status === 400 || response.status === 401) {
+        await markEmailNeedsReauth(userId, tokens.provider, `refresh_http_${response.status}`)
+      }
       return null
     }
     refreshData = await response.json()
   } catch (err) {
+    // Network/transport failure is transient — do NOT flag needs_reauth, just retry next round.
     console.error('[BOEK-011] Refresh network error', { userId, err })
     return null
   }
 
   if (!refreshData.access_token) {
     console.error('[BOEK-011] Refresh returned no access_token', { userId, refreshData })
+    // A 200 with no access_token means the provider rejected the grant without an HTTP error —
+    // treat it as definitively dead so the connection doesn't rot green.
+    await markEmailNeedsReauth(userId, tokens.provider, 'refresh_no_access_token')
     return null
   }
 
