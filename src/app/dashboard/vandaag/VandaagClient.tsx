@@ -178,6 +178,25 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   const nothingToDo =
     visiblePayable.length === 0 && visibleRemind.length === 0;
 
+  // [SEARCH] In-page live filter. Smart: while searching it WIDENS beyond today's
+  // 3-day window to the full payable/remind sets (minus dismissed), so you can find
+  // any invoice this page tracks — in place, no navigation.
+  const [search, setSearch] = useState("");
+  const vFold = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  const rawV = search.trim();
+  const vq = vFold(rawV);
+  const vDigits = rawV.replace(/[^\d]/g, "");
+  const vAmountLike = vDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawV);
+  const matchV = (inv: VandaagInvoice) =>
+    vFold(inv.client_name ?? "").includes(vq) ||
+    vFold(inv.invoice_number ?? "").includes(vq) ||
+    (vAmountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === vDigits);
+  const searching = rawV.length > 0;
+  const canSearch = payable.length > 0 || remind.length > 0;
+  const displayPayable = searching ? payable.filter((i) => !dismissed.has(i.id) && matchV(i)) : visiblePayable;
+  const displayRemind = searching ? remind.filter((i) => !dismissed.has(i.id) && matchV(i)) : visibleRemind;
+  const noneShown = displayPayable.length === 0 && displayRemind.length === 0;
+
   return (
     <div
       style={{
@@ -257,8 +276,39 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         </button>
       )}
 
+      {/* [SEARCH] In-page live filter — widens beyond today's window while searching */}
+      {!loadFailed && canSearch && (
+        <div style={{ position: "relative", marginBottom: 16 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Zoek op klant, factuurnummer of bedrag…"
+            aria-label="Facturen zoeken"
+            style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
+          />
+          {search && (
+            <button onClick={() => setSearch("")} aria-label="Wissen"
+              style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
+          )}
+        </div>
+      )}
+
       {loadFailed ? (
         <LoadError onRetry={() => router.refresh()} />
+      ) : searching ? (
+        noneShown ? (
+          <p style={{ textAlign: "center", color: "#8e8e93", fontSize: 14, padding: "40px 16px" }}>
+            Geen facturen gevonden voor &ldquo;{rawV}&rdquo;.
+          </p>
+        ) : (
+          <>
+            <ListSection title="Te betalen" subtitle="Facturen die jij moet betalen"
+              invoices={displayPayable} onOpen={open} onConfirmPaid={confirmPaid} onDismiss={dismiss} />
+            <ListSection title="Herinner je klant" subtitle="Verstuurde facturen die nog niet betaald zijn"
+              invoices={displayRemind} onOpen={open} onConfirmPaid={null} onDismiss={dismiss} />
+          </>
+        )
       ) : nothingToDo && toVerifyCount === 0 && datelessPayableCount === 0 ? (
         <EmptyAllClear />
       ) : nothingToDo ? null : (
