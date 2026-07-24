@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { BackLink } from '@/components/ui/BackLink'
+import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 // [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
@@ -517,6 +518,9 @@ export default function SettingsPage() {
             {loadingProfile ? 'Opslaan...' : 'Opslaan'}
           </button>
         </div>
+
+        {/* [PUSH] Meldingen (push notifications) — self-hides when unavailable */}
+        <PushNotificationCard />
 
         {/* [FACTUUR-B] Factuurnummering — ZZP'er only */}
         {profile.role === 'zzper' && (
