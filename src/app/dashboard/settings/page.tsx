@@ -38,6 +38,10 @@ export default function SettingsPage() {
   // never retroactively rewritten.
   const [vatScheme, setVatScheme] = useState<'factuur' | 'kas'>('factuur')
   const [vatSchemeSince, setVatSchemeSince] = useState<string | null>(null)
+  // [REMINDERS] Automatic payment reminders — opt-in + cadence, saved with the profile.
+  // Default OFF: nothing is ever e-mailed to a client until the owner turns this on.
+  const [remindersEnabled, setRemindersEnabled] = useState(false)
+  const [reminderOffsetsText, setReminderOffsetsText] = useState('14, 30')
 
   // حالة دعوة المحاسب
   const [accountantEmail, setAccountantEmail] = useState('')
@@ -110,6 +114,13 @@ export default function SettingsPage() {
         setKorActive(!!data.kor_active)
         setVatScheme(data.vat_scheme === 'kas' ? 'kas' : 'factuur')
         setVatSchemeSince(data.vat_scheme_since ?? null)
+        setRemindersEnabled(!!data.reminders_enabled)
+        setReminderOffsetsText(
+          (Array.isArray(data.reminder_offsets) && data.reminder_offsets.length > 0
+            ? data.reminder_offsets
+            : [14, 30]
+          ).join(', ')
+        )
       }
       // جلب محاسب الـ ZZP'er إذا كان مرتبطاً — via API (service role bypasses RLS)
       if (data?.role === 'zzper') {
@@ -168,6 +179,16 @@ export default function SettingsPage() {
     let since = vatSchemeSince
     if (vatScheme === 'kas' && (profile.vat_scheme !== 'kas' || !since)) since = qStart
 
+    // [REMINDERS] Parse the cadence text into positive ints (unique, ascending).
+    // Empty/garbage falls back to the default {14,30} so the schedule is never blank.
+    const parsedOffsets = Array.from(new Set(
+      reminderOffsetsText
+        .split(',')
+        .map(s => parseInt(s.trim(), 10))
+        .filter(n => Number.isInteger(n) && n > 0)
+    )).sort((a, b) => a - b)
+    const finalOffsets = parsedOffsets.length > 0 ? parsedOffsets : [14, 30]
+
     // [BRIDGE-POLISH 3a-3] Store the CANONICAL form (normalized), never the raw
     // input — so what we persist always matches what was validated. KVK keeps
     // its trimmed digits; BTW/IBAN are upper-cased + whitespace-stripped.
@@ -185,6 +206,8 @@ export default function SettingsPage() {
         kor_active: korActive,
         vat_scheme: vatScheme,
         vat_scheme_since: since,
+        reminders_enabled: remindersEnabled,
+        reminder_offsets: finalOffsets,
       })
       .eq('id', user.id)
 
@@ -196,6 +219,7 @@ export default function SettingsPage() {
       setIban(normalizeIban(iban))
       setKvk(kvk.trim())
       setVatSchemeSince(since) // [KASSTELSEL] keep local since in sync with what we persisted
+      setReminderOffsetsText(finalOffsets.join(', ')) // [REMINDERS] reflect the normalized cadence
       setSuccessProfile('Profiel opgeslagen ✓')
     }
 
@@ -507,6 +531,45 @@ export default function SettingsPage() {
                 </span>
               </span>
             </label>
+          </div>
+
+          {/* [REMINDERS] Automatische betalingsherinneringen — opt-in + cadence. */}
+          <div className="border-t border-gray-100 pt-4 space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={remindersEnabled}
+                onChange={e => setRemindersEnabled(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">
+                  Stuur automatisch betalingsherinneringen
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Staat een verstuurde factuur na de vervaldatum nog open, dan mailt BoekBrug je klant
+                  automatisch een vriendelijke herinnering met het openstaande bedrag. Een betaalde
+                  factuur wordt nooit herinnerd — jij hoeft niets te doen.
+                </span>
+              </span>
+            </label>
+            {remindersEnabled && (
+              <div className="pl-7">
+                <label className="block text-xs font-medium text-gray-500 mb-1">
+                  Herinner na (dagen na vervaldatum)
+                </label>
+                <input
+                  type="text"
+                  value={reminderOffsetsText}
+                  onChange={e => setReminderOffsetsText(e.target.value)}
+                  className="w-40 border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder="14, 30"
+                />
+                <span className="block text-xs text-gray-400 mt-1">
+                  Bijv. &ldquo;14, 30&rdquo;: een vriendelijke herinnering na 14 dagen, een steviger na 30.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* زر الحفظ */}
