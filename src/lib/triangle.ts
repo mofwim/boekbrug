@@ -16,7 +16,7 @@
 
 import { reconcileCardPeriod, type CardDayInput, type CardPeriodResult } from "./card-reconcile";
 import type { EftSettlement } from "./eft-parser";
-import { parsePosSettlement, type DailyTurnover } from "./turnover";
+import { posTakingsDay, SETTLE_LAG_DAYS, type DailyTurnover } from "./turnover";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -31,7 +31,7 @@ export function bankNetByDay(
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const l of posLines) {
-    const d = parsePosSettlement(l.description).date ?? l.date;
+    const d = posTakingsDay(l.description, l.date);
     if (!d) continue;
     out.set(d, r2((out.get(d) ?? 0) + (l.amount ?? 0)));
   }
@@ -92,7 +92,15 @@ export function reconcileTriangle(input: TriangleInput): TriangleResult {
   // own) back to the nearest EARLIER takings day within the lag window that still lacks a payout —
   // so the gross↔net pair reunites and commission = gross − net is booked. Same-day payouts are
   // untouched; a payout with a genuine same-day eft/till keeps its day.
-  const LAG_DAYS = 3;
+  // [SETTLE-LAG] Use the SAME window financial-result uses to suppress the payout's omzet, so the
+  // commission is re-attributed to the exact day the omzet was already counted. At the old 3, a
+  // DAT-less payout posting T+4/T+5 onto a pure settlement day (long weekend + holiday) found no
+  // takings day within reach → its fee was silently dropped and resultaat overstated, while
+  // financial-result still (correctly) suppressed that day's omzet at back=5. Widening to 5 only
+  // adds targets for payouts that previously found NONE (stayed orphaned at €0 commission); every
+  // payout that already matched at back≤3 is untouched (the loop stops at the first target), and
+  // same-day / genuine-card-day payouts never enter this block at all.
+  const LAG_DAYS = SETTLE_LAG_DAYS;
   const dayMs = 86_400_000;
   const bankByDay = new Map<string, number>(input.bankNetByDay ?? []);
   const hasCardActivity = (d: string) => eftByDay.has(d) || (tillByDay.get(d)?.pin_amount ?? null) != null;
@@ -112,8 +120,17 @@ export function reconcileTriangle(input: TriangleInput): TriangleResult {
       days.add(target);
     }
   }
-  // The re-attribution may have emptied some payout days; rebuild the day set from what remains.
+  // The re-attribution moves a payout OFF its (pure settlement) booking day onto the takings day.
+  // Rebuild the day set: add any payout day that still holds money, then DROP any day now left with
+  // NO witness at all (no till row, no EFT, no bank line, no PIN-ledger) — otherwise an emptied
+  // settlement day lingers as a phantom "incomplete" row in the reconciliation + accountant CSV. A
+  // genuinely un-attributable payout still carries its bankNet here, so it is kept and surfaced.
   for (const d of bankByDay.keys()) days.add(d);
+  for (const d of [...days]) {
+    const hasWitness =
+      tillByDay.has(d) || eftByDay.has(d) || bankByDay.has(d) || !!input.pinLedgerByDay?.has(d);
+    if (!hasWitness) days.delete(d);
+  }
 
   const inputs: CardDayInput[] = [...days].sort().map((date) => {
     const till = tillByDay.get(date);

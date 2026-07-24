@@ -80,16 +80,21 @@ console.log("\n— an EFT day with no till row is still surfaced (never dropped)
   check("it is incomplete (no till to verify against)", res.days[0].status === "incomplete");
 }
 
-console.log("\n— a bank payout on a day with no till/EFT is surfaced, not dropped —");
+console.log("\n— a bank payout that can't be tied to any takings day (outside the pull-back window) is surfaced, not dropped —");
 {
+  // A T+1..T+5 payout on a pure settlement day is re-attributed to its takings day (tested under
+  // [SETTLE-LAG]). But a payout with NO card day within the pull-back window can't be tied — it must
+  // still be surfaced (never silently dropped), carrying its net so the money isn't lost.
   const res = reconcileTriangle({
     turnover: [till("2026-07-12", 1546.46)],
     eftSettlements: [eft("2026-07-12", 1546.46)],
-    bankNetByDay: new Map([["2026-07-13", 980]]), // mis-keyed / weekend-merged payout
+    bankNetByDay: new Map([["2026-07-20", 980]]), // 8 days after → no card day within the 5-day pull-back
   });
-  check("the orphan bank day appears", res.days.some((d) => d.date === "2026-07-13"));
-  check("orphan bank day is incomplete (no gross to verify against)",
-    res.days.find((d) => d.date === "2026-07-13")?.status === "incomplete");
+  check("the un-attributable bank day appears", res.days.some((d) => d.date === "2026-07-20"));
+  check("it is incomplete (no gross to verify against)",
+    res.days.find((d) => d.date === "2026-07-20")?.status === "incomplete");
+  check("it still carries its bankNet (money not lost)",
+    near(res.days.find((d) => d.date === "2026-07-20")?.bankNet ?? -1, 980));
 }
 
 console.log("\n— buildCardReconciliationCsv (the accountant's view) —");
@@ -123,6 +128,49 @@ console.log("\n— [RE-REVIEW MED-2] an orphan PIN-ledger day (no till/EFT/bank)
   check("it is surfaced as incomplete (no till to tie to), not silently dropped", day?.status === "incomplete");
   const csv = buildCardReconciliationCsv("Q3 2026", tri);
   check("the ledger-only day is reviewable in the accountant CSV", csv.includes("2026-08-10") && /Grootboek PIN/.test(csv));
+}
+
+console.log("\n— [SETTLE-LAG] a DAT-less payout T+5 on a pure settlement day re-attributes back so the fee is booked —");
+{
+  // Takings day 05-08 (till + EFT). The card batch pays out NET, DAT-less, booked 05-13 (T+5 over a
+  // long weekend + holiday) → keyed to its booking day 05-13, which has no till/EFT of its own.
+  // At the OLD 3-day window this stayed orphaned on 05-13 → commission silently dropped, resultaat
+  // overstated. At the shared 5-day window it re-attributes to 05-08 and books the fee there.
+  const res = reconcileTriangle({
+    turnover: [till("2026-05-08", 1000)],
+    eftSettlements: [eft("2026-05-08", 1000)],
+    bankNetByDay: new Map([["2026-05-13", 980]]), // DAT-less net payout, booked T+5
+  });
+  check("commission (1000−980=20) is booked at the takings day (would be 0 at LAG_DAYS=3)",
+    near(res.totalCommission, 20));
+  check("no orphan incomplete payout day at 05-13", !res.days.some((d) => d.date === "2026-05-13"));
+  check("the takings day 05-08 carries the re-attributed net", res.days.some((d) => d.date === "2026-05-08" && near(d.bankNet ?? -1, 980)));
+}
+
+console.log("\n— [SETTLE-LAG] a T+2 pull-back still works (no regression from widening 3→5) —");
+{
+  const res = reconcileTriangle({
+    turnover: [till("2026-05-08", 1000)],
+    eftSettlements: [eft("2026-05-08", 1000)],
+    bankNetByDay: new Map([["2026-05-10", 985]]), // DAT-less, booked T+2
+  });
+  check("T+2 payout still re-attributes and books commission 15", near(res.totalCommission, 15));
+  check("no orphan day at 05-10", !res.days.some((d) => d.date === "2026-05-10"));
+}
+
+console.log("\n— [SETTLE-LAG] a takings day that ALREADY has its own payout is not hijacked by a back=5 scan —");
+{
+  // Two adjacent card days each with their own DAT-keyed payout; a third stray DAT-less payout must
+  // not steal a day that already carries a payout (guard: !bankByDay.has(cand)).
+  const res = reconcileTriangle({
+    turnover: [till("2026-05-08", 1000), till("2026-05-09", 500)],
+    eftSettlements: [eft("2026-05-08", 1000), eft("2026-05-09", 500)],
+    bankNetByDay: new Map([["2026-05-08", 990], ["2026-05-09", 495]]), // each day already has its payout
+  });
+  check("both days keep their own payout (none hijacked)",
+    near(res.days.find((d) => d.date === "2026-05-08")?.bankNet ?? -1, 990) &&
+    near(res.days.find((d) => d.date === "2026-05-09")?.bankNet ?? -1, 495));
+  check("commission = (1000−990)+(500−495) = 15", near(res.totalCommission, 15));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
