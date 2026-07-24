@@ -26,8 +26,9 @@ export default async function DashboardLayout({
     profile = data
   }
 
-  // [SUBNAV] Role-aware home target for the shared sub-page header.
-  const homeHref = profile?.role === 'accountant' ? '/dashboard/accountant' : '/dashboard'
+  // [SUBNAV] Viewer role for the shared sub-page header (resolves role-aware
+  // parent/home via src/lib/navigation.ts).
+  const subnavRole = profile?.role === 'accountant' ? 'accountant' : 'zzper'
 
   return (
     <>
@@ -41,7 +42,7 @@ export default async function DashboardLayout({
       )}
       {/* [SUBNAV] Shared sub-page header — renders only on stranded routes (see
           DashboardChrome). Placed before {children} so its sticky bar sits at top. */}
-      {profile && <DashboardChrome homeHref={homeHref} />}
+      {profile && <DashboardChrome role={subnavRole} />}
       {children}
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}

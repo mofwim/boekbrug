@@ -6,7 +6,6 @@
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
 import { useEffect, useRef, useState } from 'react'
-import { BackLink } from '@/components/ui/BackLink'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
@@ -256,8 +255,6 @@ export default function KasClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <BackLink style={{ color: M3.primary }} />
-
         {/* [COHERENCE-ERRSTATE] A failed load must NOT show a reassuring €0,00 saldo that
             looks like an empty drawer. Show the number ONLY when the data actually loaded;
             on error surface an honest banner with a retry instead of a false money figure. */}
