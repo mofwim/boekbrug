@@ -797,10 +797,11 @@ function NewInvoicePageContent() {
     if (!invoiceDate) { errs.invoiceDate = true; hasAnyError = true }
     if (!dueDate) { errs.dueDate = true; hasAnyError = true }
 
-    // [FACTUUR-A] Art. 35a sub c — customer address is mandatory ON A FACTUUR
-    // (not on an offerte/pro forma). Enforced on both save modes for factuur
-    // so a draft can't grow into a sendable invoice missing its address.
-    if (invoiceType === 'factuur' && !clientAddress.trim()) {
+    // [FACTUUR-A] Art. 35a sub c — customer address is mandatory on a FACTUUR and a
+    // CREDITNOTA (both are legal invoices; the send route rejects issuance without it),
+    // not on an offerte/pro forma. Enforce it inline here so the owner sees a red field
+    // up-front instead of a late 400 from /api/invoice/send.
+    if ((invoiceType === 'factuur' || invoiceType === 'creditnota') && !clientAddress.trim()) {
       errs.clientAddress = true; hasAnyError = true
     }
     // [FACTUUR-A] Leverdatum required for factuur (Art. 35a sub f)
@@ -1159,7 +1160,7 @@ function NewInvoicePageContent() {
                 )}
               </div>
               <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label="E-mailadres" type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
-              <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} required={invoiceType === 'factuur'} hasError={!!fieldErrors.clientAddress} />
+              <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} required={invoiceType === 'factuur' || invoiceType === 'creditnota'} hasError={!!fieldErrors.clientAddress} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label="Postcode" focusColor={cfg.focusColor} />
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />
