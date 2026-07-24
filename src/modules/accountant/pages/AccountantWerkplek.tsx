@@ -13,21 +13,12 @@ import { useParentPath } from '@/lib/navigation-hooks'
 
 const TOOLS = [
   {
-    // [AANGIFTE-AGENDA] Daily driver — every client's BTW deadline + readiness in
-    // one board. Placed first: it's the screen the accountant opens each morning.
+    // [WERKBOARD] Daily driver — the BTW deadline, every client's klaar-status and
+    // score, and a one-tap reminder, on one board. First: the morning screen.
     icon: '🗓️',
-    label: 'Aangifte-agenda',
-    sub: 'BTW-deadlines en status per klant',
+    label: 'Aangifte & status',
+    sub: 'BTW-deadline, klaar-status en herinneren per klant',
     href: '/dashboard/accountant/agenda',
-    isNew: true,
-  },
-  {
-    // [KLAAR-OVERZICHT] Cross-client readiness board — same score/verdict the
-    // client sees on "Ben ik klaar?", for every client at once.
-    icon: '✅',
-    label: 'Wie is klaar?',
-    sub: 'Klaar-status en score per klant',
-    href: '/dashboard/accountant/status',
     isNew: true,
   },
   {

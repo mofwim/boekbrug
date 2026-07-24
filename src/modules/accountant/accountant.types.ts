@@ -113,30 +113,9 @@ export interface QuarterRange {
   end: string     // YYYY-MM-DD — inclusive
 }
 
-// ─────────────────────────────────────────────────────────
-// [AANGIFTE-AGENDA] BTW filing agenda across all clients
-// ─────────────────────────────────────────────────────────
-
-/**
- * One client's honest readiness for the quarter currently being filed. Reuses
- * ClientReadiness (provable counts only — no "ready" verdict). The agenda derives
- * a display status from these facts; it never stores a klaar/niet-klaar flag.
- */
-export interface AangifteAgendaItem {
-  client_id: string
-  client_name: string          // company_name || full_name
-  readiness: ClientReadiness
-}
-
-/**
- * The full BTW-aangifte agenda for one accountant: the single filing period
- * (previous quarter) with its deadline, plus every linked client's readiness for
- * that period, sorted needs-attention first.
- */
-export interface AangifteAgenda {
-  year: number
-  quarter: number
-  deadline: string             // YYYY-MM-DD — Belastingdienst deadline
-  daysUntilDeadline: number    // negative = overdue
-  items: AangifteAgendaItem[]
-}
+// [WERKBOARD] The per-client BTW filing agenda (AangifteAgenda / AangifteAgendaItem)
+// was merged into the unified Aangifte & status board, which renders each client's
+// RICH readiness (score + status from /api/readiness) instead of the lightweight
+// facts these types carried. The pure deadline helpers in accountant.service
+// (getAangifteDeadline / getActiveAangifte / daysUntil) live on — the board's
+// deadline hero uses them — but these list types are no longer needed.

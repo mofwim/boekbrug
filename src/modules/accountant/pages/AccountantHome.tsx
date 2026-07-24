@@ -203,9 +203,9 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             the client-by-client workflow). Route/page untouched — reachable via
             werkplek. werkplek now full-width. */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
-          {/* [AANGIFTE-AGENDA] Daily driver first — the BTW deadline board. Same
-              card shape as werkplek; a coloured accent marks it as the primary
-              daily destination. */}
+          {/* [WERKBOARD] Daily driver first — the unified BTW-deadline + klaar-status
+              board. Same card shape as werkplek; a coloured accent marks it as the
+              primary daily destination. */}
           <button
             onClick={() => router.push('/dashboard/accountant/agenda')}
             style={{
@@ -220,8 +220,8 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           >
             <span style={{ fontSize: 20 }}>🗓️</span>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Aangifte-agenda</p>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>BTW-deadlines en status per klant</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Aangifte &amp; status</p>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>BTW-deadline, klaar-status en herinneren</p>
             </div>
             <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
           </button>
