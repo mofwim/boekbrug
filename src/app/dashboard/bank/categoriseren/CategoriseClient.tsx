@@ -10,7 +10,6 @@
 // page with more behind it says so, and offers a one-tap sweep of the confident ones.
 
 import { useEffect, useState } from 'react'
-import { BackLink } from '@/components/ui/BackLink'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
@@ -174,8 +173,6 @@ export default function CategoriseClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <BackLink style={{ color: M3.primary }} />
-
         <header style={{ margin: '16px 0 16px' }}>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Wat is dit?</h1>
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>
