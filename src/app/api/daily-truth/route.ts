@@ -22,6 +22,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { needsDocument } from "@/lib/bank-identity";
+import { computeDrawerBalance } from "@/lib/cash";
 
 // Days-until-due window that counts as "needs attention now" (mirrors the Vandaag
 // page). Overdue (negative) always qualifies; so does anything due within 3 days.
@@ -158,25 +159,35 @@ export async function GET() {
     .filter((it) => it.dueDate && dayNumberFromIso(it.dueDate) - todayNum <= ATTENTION_WINDOW_DAYS)
     .sort((a, b) => dayNumberFromIso(a.dueDate as string) - dayNumberFromIso(b.dueDate as string));
 
-  // [CASH-LEDGER] Kas — opt-in by use. Only surfaced when the owner records cash, so a
-  // bank-only owner never sees it. Balance = money in − money out (transfers included:
-  // they change the drawer, just not the P&L).
-  const { data: cashRows } = await pipeline
-    .from("cash_entries")
-    .select("direction, amount")
-    .eq("user_id", user.id);
+  // [CASH-LEDGER] Kas — opt-in by use. Only surfaced when the owner handles cash. The drawer balance
+  // MUST be the SAME figure the Kas page shows (computeDrawerBalance): opening float + cash_entries
+  // net + the till's daily CASH takings. The old version summed cash_entries ONLY — so a till shop's
+  // home showed a wrong, often NEGATIVE saldo (a false "meer uitgaven dan ontvangsten" alarm) that
+  // disagreed with the Kas page by exactly the till-cash + opening amount.
+  const [{ data: cashRows }, { data: tillRows }, { data: kasProf }] = await Promise.all([
+    pipeline.from("cash_entries").select("direction, amount").eq("user_id", user.id),
+    pipeline.from("daily_turnover").select("cash_amount").eq("user_id", user.id),
+    pipeline.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle(),
+  ]);
   const cash = cashRows ?? [];
-  const kasBalance = cash.reduce(
-    (s, e) => s + (e.direction === "in" ? e.amount ?? 0 : -(e.amount ?? 0)),
-    0,
-  );
+  const till = (tillRows ?? []) as { cash_amount: number | null }[];
+  const kasOpening = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+  const tillCashTotal = till.reduce((s, t) => s + (Number(t.cash_amount) || 0), 0);
+  const kasBalance = computeDrawerBalance({
+    openingBalance: kasOpening,
+    entries: cash.map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
+    tillCashAmounts: till.map((t) => t.cash_amount),
+  });
+  // A shop with till-cash takings (or an opening float) handles cash even without manual entries, so
+  // the home surfaces the drawer whenever ANY of the three sources is present — matching the Kas page.
+  const kasUsed = cash.length > 0 || tillCashTotal !== 0 || kasOpening !== 0;
 
   return NextResponse.json({
     ok: true,
     toPay,
     toReceive,
     bank: { lastDate: lastBankDate, undocumented },
-    kas: { used: cash.length > 0, balance: kasBalance },
+    kas: { used: kasUsed, balance: kasBalance },
     attention: attentionAll.slice(0, 3),
     attentionCount: attentionAll.length,
   });
