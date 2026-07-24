@@ -18,6 +18,10 @@ import Link from "next/link";
 import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
+// [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
+// "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
+// before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
+import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-normalize-client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1696,8 +1700,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // structured outcome (never throws) — the modal renders the destination.
   const uploadOne = async (file: File): Promise<IntakeResult> => {
     try {
+      // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
+      // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
+      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES);
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", uploadFile);
       const res = await fetch("/api/intake", { method: "POST", body: formData });
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
 

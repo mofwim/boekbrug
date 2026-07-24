@@ -30,6 +30,10 @@ export function isPng(b: Uint8Array): boolean {
   );
 }
 
+/** The intake upload cap, mirroring /api/intake's server-side MAX_BYTES (10 MB). Shared so
+ *  every upload surface enforces the SAME number and re-encodes images to fit under it. */
+export const MAX_INTAKE_UPLOAD_BYTES = 10 * 1024 * 1024;
+
 // A full-resolution phone photo (12–48 MP) drawn onto a canvas can EXCEED the mobile
 // canvas area limit (iOS Safari ≈ 16.7 MP); over that, the browser does not always
 // throw — it can yield an all-WHITE canvas, so toBlob returns a valid-but-blank JPEG

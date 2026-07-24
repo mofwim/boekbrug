@@ -17,7 +17,7 @@ import Link from 'next/link'
 // to a bounded JPEG in the browser BEFORE upload — otherwise an iPhone invoice reaches the
 // reader as an "unsupported type" and is silently filed away as unreadable. Same shared
 // converter the multi-page combine uses, so both paths agree on the bytes that reach the reader.
-import { normalizeImageForUpload } from '@/lib/image-normalize-client'
+import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
 // [MULTI-PAGE] "Eén factuur, meerdere pagina's" — combine the photos of ONE paper invoice into a
 // single PDF in the browser, then send it as ONE file (same /api/intake → one invoice), instead of
 // N separate invoices. Same combiner the ZZP intake button uses.
@@ -32,11 +32,11 @@ const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
 // spreadsheet exports a shop uploads monthly (kassa Z-report, PIN/kas grootboek).
 const ACCEPT = 'image/*,application/pdf,.pdf,.xml,.mt940,.sta,.camt,.053,.txt,.940,.xls,.xlsx,.csv'
-// [SIZE-GUARD] The server rejects anything over 10 MB (/api/intake MAX_BYTES). Enforce the SAME
-// cap in the browser so a too-big file fails instantly with a clear reason — instead of the owner
-// waiting through a full upload over a slow mobile link only to be refused. Images are shrunk
-// under this cap by normalizeImageForUpload; a too-big PDF is the one case we simply can't send.
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+// [SIZE-GUARD] The server rejects anything over 10 MB (/api/intake MAX_BYTES). We enforce the SAME
+// shared cap (MAX_INTAKE_UPLOAD_BYTES) in the browser so a too-big file fails instantly with a clear
+// reason — instead of the owner waiting through a full upload over a slow mobile link only to be
+// refused. Images are shrunk under this cap by normalizeImageForUpload; a too-big PDF is the one
+// case we simply can't send.
 // [MULTI-PAGE] Cap the pages of one paper invoice, mirroring the intake button.
 const MAX_PAGES = 20
 
@@ -125,11 +125,11 @@ export default function UploadClient() {
           // [INTAKE-IMG-NORMALIZE] Make an unreadable/oversized photo readable BEFORE upload. A
           // HEIC/HEIF/WebP/BMP/TIFF (or a huge JPG/PNG) becomes a bounded JPEG the reader accepts;
           // a normal JPG/PNG/PDF is returned untouched. Never throws — worst case the original goes.
-          const uploadFile = await normalizeImageForUpload(item.file, MAX_UPLOAD_BYTES)
+          const uploadFile = await normalizeImageForUpload(item.file, MAX_INTAKE_UPLOAD_BYTES)
           // [SIZE-GUARD] After shrinking images, anything still over the server cap can't be sent.
           // In practice this is only a very large PDF (we can't safely shrink a PDF here). Fail with
           // an honest reason instead of a wasted full upload that the server would refuse anyway.
-          if (uploadFile.size > MAX_UPLOAD_BYTES) {
+          if (uploadFile.size > MAX_INTAKE_UPLOAD_BYTES) {
             patch(item.id, {
               status: 'error',
               message: `Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Splits een grote PDF of maak een foto.`,
