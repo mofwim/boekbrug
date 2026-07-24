@@ -258,7 +258,22 @@ export async function POST(req: NextRequest) {
   const receiverName = me?.company_name || me?.full_name || null
 
   const base64 = buffer.toString("base64")
-  const v = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName)
+  // [AI-CONFIG-SAFE] Opt into throwOnTransient so a CONFIG/AUTH/transient reader failure (missing or
+  // rotated ANTHROPIC_API_KEY, 401/403/5xx, network) is NOT swallowed into the confidence-0 FALLBACK.
+  // Without this, such a failure returns is_invoice:false and a REAL invoice the owner just uploaded
+  // gets filed as a plain 'document' — its cost + voorbelasting silently lost. A genuine "not an
+  // invoice" is still a normal parsed return (never an exception), so only true infra failures throw.
+  // Nothing is stored for the image/PDF path until AFTER this call, so returning here files nothing.
+  let v: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>
+  try {
+    v = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName, { throwOnTransient: true })
+  } catch (aiErr) {
+    console.error("[AI-CONFIG-SAFE] intake AI read failed — filing nothing, asking for retry", aiErr)
+    return NextResponse.json(
+      { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
+      { status: 503 },
+    )
+  }
 
   const decision = decideFromAi({
     is_invoice: v.is_invoice,
