@@ -1092,6 +1092,7 @@ export type Database = {
           payment_reference: string | null
           pdf_url: string | null
           receiver_id: string | null
+          reminders_paused: boolean
           replaced_by_number: string | null
           search_vector: unknown
           sender_id: string | null
@@ -1137,6 +1138,7 @@ export type Database = {
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
+          reminders_paused?: boolean
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
@@ -1182,6 +1184,7 @@ export type Database = {
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
+          reminders_paused?: boolean
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
@@ -1236,6 +1239,44 @@ export type Database = {
             columns: ["sender_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoice_reminders: {
+        Row: {
+          day_offset: number
+          email_to: string | null
+          id: string
+          invoice_id: string
+          sent_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          day_offset: number
+          email_to?: string | null
+          id?: string
+          invoice_id: string
+          sent_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          day_offset?: number
+          email_to?: string | null
+          id?: string
+          invoice_id?: string
+          sent_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_reminders_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
             referencedColumns: ["id"]
           },
         ]
@@ -1347,6 +1388,8 @@ export type Database = {
           postal_code: string | null
           preferred_language: string | null
           referral_accountant_id: string | null
+          reminder_offsets: number[]
+          reminders_enabled: boolean
           role: string | null
           subscription_plan: string | null
           subscription_stripe_id: string | null
@@ -1374,6 +1417,8 @@ export type Database = {
           postal_code?: string | null
           preferred_language?: string | null
           referral_accountant_id?: string | null
+          reminder_offsets?: number[]
+          reminders_enabled?: boolean
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
@@ -1401,6 +1446,8 @@ export type Database = {
           postal_code?: string | null
           preferred_language?: string | null
           referral_accountant_id?: string | null
+          reminder_offsets?: number[]
+          reminders_enabled?: boolean
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
