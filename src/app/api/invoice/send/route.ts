@@ -42,6 +42,7 @@ import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 import * as Sentry from '@sentry/nextjs'
 
 // [FACTUUR-A] Storage bucket for generated invoice PDFs.
@@ -461,6 +462,24 @@ export async function POST(request: NextRequest) {
       } catch (notifErr) {
         console.error('[FACTUUR-A] Notification block error', { invoiceId, notifErr })
         // Low severity — don't bother Sentry
+      }
+    }
+
+    // ── 15b. Close the circle from the SEND side ──────────────
+    // [BANK-CIRCLE-SEND] A sales invoice that just became 'sent' may match a payment ALREADY sitting
+    // in the bank — the statement was imported before this invoice existed, so it lingered as an
+    // "ontvangen betaling zonder factuur" that only the incoming-bank flow (not invoice creation) ever
+    // re-checked. Re-run the SAME safe auto-confirm now so the payment gets linked at issuance time.
+    // Books only isSafeAutoConfirm matches, idempotent, one-tap reversible. Best-effort — a failure
+    // here must never break a legally-sent invoice, and the cron/import paths remain the backstop.
+    // First issuance only: a resend re-delivers an already-'sent' invoice (this pass already ran on
+    // its original send, and a later-arriving payment is caught by the incoming-bank flow + cron), so
+    // skip the full user-wide scan on the latency-sensitive resend path.
+    if (!resend) {
+      try {
+        await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+      } catch (autoErr) {
+        console.error('[BANK-CIRCLE-SEND] post-send auto-confirm failed (non-fatal)', { invoiceId, autoErr })
       }
     }
 

@@ -23,6 +23,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 // [BOEK-031] BOEK-SECURITY-2 — audit logs via service_role helper — May 2026
 import { logAuditAction, getClientIP } from '@/lib/audit'
 // [FACTUUR-A] unified numbering + legal delivery — June 2026
@@ -314,6 +316,16 @@ export async function POST(request: NextRequest) {
           })
         }
       }
+    }
+
+    // [BANK-CIRCLE-SEND] A creditnota is issued 'sent' and is immediately matchable to a refund line
+    // that may already sit in the bank (the money moved before the credit document existed). Re-run
+    // the same safe auto-confirm so that refund gets linked at issuance. Best-effort, idempotent,
+    // one-tap reversible — never breaks the (already-committed) creditnota.
+    try {
+      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+    } catch (autoErr) {
+      console.error('[BANK-CIRCLE-SEND] post-creditnota auto-confirm failed (non-fatal)', { creditnota_id: creditnota.id, autoErr })
     }
 
     return NextResponse.json({
