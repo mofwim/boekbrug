@@ -6,10 +6,9 @@
 //
 // [TODAY-UX-CLARITY] Clarity pass — the card now answers the two questions the
 // owner actually has ("why is this in front of me?" / "what do I do?"):
-//   1. Urgency: every overdue invoice shows the real day count ("59 dagen te
+//   1. Urgency: every overdue invoice shows the real day count ("36 dagen te
 //      laat" — owner decision; the earlier calm "Al lang open" label hid the
-//      number). Long-open rows keep the calm amber COLOR and their own group,
-//      so old routine bills still don't scream red.
+//      number), rendered red, in ONE flat list sorted by the chosen order.
 //   2. "Al betaald?" context action — jumps to the manage surface to confirm
 //      (Vandaag stays READ-ONLY; the write happens where the logic already lives).
 //   3. One clear primary verb per direction ("Betalen" / "Herinnering") instead
@@ -40,16 +39,16 @@ const M3 = {
   primary: "#1A73E8",
   onSurface: "#202124",
   onSurfaceVariant: "#5F6368",
-  warning: "#E37400", // soon-due / long-open (calm amber)
+  warning: "#E37400", // soon-due (calm amber)
   error: "#B3261E", // recently overdue (real attention)
   hairline: "#E0E0E0",
   hover: "#F1F3F4",
 };
 
-// Long-overdue threshold (days). Past this, the row moves to the "Al langer
-// open" group with the calm amber accent (the label itself always shows the
-// real day count — see clarity rationale above).
-const LONG_OPEN_DAYS = 30;
+// [OWNER-DECISION] The old 30-day "Al langer open" tier (separate calm-amber
+// group rendered BELOW the active items) is gone: with real day counts on the
+// cards it read as a sorting bug — "36 dagen te laat" listed after "10 dagen
+// te laat". One flat list in the chosen order, and every overdue row is red.
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -102,24 +101,15 @@ function daysUntilDue(dueIso: string): number {
   return dayNumberFromIso(dueIso) - todayDayNumber();
 }
 
-function isLongOpen(dueIso: string): boolean {
-  return daysUntilDue(dueIso) <= -LONG_OPEN_DAYS;
-}
-
 // Urgency tier drives BOTH the label and the colour, so they can never disagree.
-type Urgency = "long-open" | "overdue" | "soon";
+type Urgency = "overdue" | "soon";
 
 function urgencyOf(dueIso: string): Urgency {
-  const d = daysUntilDue(dueIso);
-  if (d <= -LONG_OPEN_DAYS) return "long-open";
-  if (d < 0) return "overdue";
-  return "soon";
+  return daysUntilDue(dueIso) < 0 ? "overdue" : "soon";
 }
 
-// Human Dutch due-date status. [OWNER-DECISION] Long-overdue now shows the real
-// day count ("59 dagen te laat") instead of the calm "Al lang open" — the owner
-// wants the concrete number. The calm-amber COLOR and the "Al langer open"
-// grouping stay (urgencyOf/accentOf unchanged).
+// Human Dutch due-date status. [OWNER-DECISION] Every overdue invoice shows the
+// real day count ("36 dagen te laat") — no calm tier, no grouping.
 function dueLabel(dueIso: string): string {
   const d = daysUntilDue(dueIso);
   if (d < 0) {
@@ -131,8 +121,9 @@ function dueLabel(dueIso: string): string {
   return `Vervalt over ${d} dagen`;
 }
 
-// Calm amber for soon-due AND long-open; saved red only for the recently overdue
-// window (1–29 days) where a nudge is genuinely useful, not alarming.
+// Red for ANY overdue invoice, amber for soon-due. (The old scheme colored a
+// 30+-days-late row CALMER than a 10-days-late one — indefensible once both
+// sit in one flat list showing real day counts.)
 function accentOf(dueIso: string): string {
   return urgencyOf(dueIso) === "overdue" ? M3.error : M3.warning;
 }
@@ -183,8 +174,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   const confirmPaid = (id: string) =>
     router.push(`/dashboard/incoming/manage?focus=${id}&action=pay`);
 
-  // [SORT] Owner-chosen order, applied inside each list (and within the
-  // active / "al langer open" groups, which preserve incoming order).
+  // [SORT] Owner-chosen order, applied inside each list.
   const [sortBy, setSortBy] = useState<SortKey>("due_asc");
   const [showSortMenu, setShowSortMenu] = useState(false);
 
@@ -413,8 +403,7 @@ function filterWindow(
 }
 
 // ─── List section ─────────────────────────────────────────────────────────────
-// [TODAY-UX-CLARITY] header shows a count; long-open items are grouped under a
-// calm sub-heading, separated from the soon/recently-due items.
+// [TODAY-UX-CLARITY] header shows a count; one flat list in the chosen order.
 
 function ListSection({
   title,
@@ -434,9 +423,8 @@ function ListSection({
 }) {
   if (invoices.length === 0) return null;
 
-  // Split: active (soon + recently overdue) vs long-open (calm, grouped below).
-  const active = invoices.filter((inv) => !isLongOpen(inv.due_date as string));
-  const longOpen = invoices.filter((inv) => isLongOpen(inv.due_date as string));
+  // One flat list in the chosen sort order — no "Al langer open" split (it made
+  // a 36-days-late invoice render BELOW a 10-days-late one: looked like a bug).
 
   const countLabel =
     invoices.length === 1 ? "1 factuur" : `${invoices.length} facturen`;
@@ -481,7 +469,7 @@ function ListSection({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {active.map((inv) => (
+        {invoices.map((inv) => (
           <InvoiceCard
             key={inv.id}
             invoice={inv}
@@ -491,34 +479,6 @@ function ListSection({
           />
         ))}
       </div>
-
-      {longOpen.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: M3.onSurfaceVariant,
-              textTransform: "uppercase",
-              letterSpacing: "0.5px",
-              margin: "0 0 8px",
-            }}
-          >
-            Al langer open
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {longOpen.map((inv) => (
-              <InvoiceCard
-                key={inv.id}
-                invoice={inv}
-                onOpen={onOpen}
-                onConfirmPaid={onConfirmPaid}
-                onDismiss={onDismiss}
-              />
-            ))}
-          </div>
-        </div>
-      )}
     </section>
   );
 }
