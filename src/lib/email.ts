@@ -396,3 +396,92 @@ export async function sendAccountExportSummary({
   })
   await deliverEmail(__sendResult, { label: 'account-export', critical: true })
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// [REMINDERS] Automatic payment reminder — appended to src/lib/email.ts (single
+// home for all Resend sends). Sent by the reminder cron for an outgoing invoice
+// that is still openstaand past its due date.
+//
+// TRUST / FINANCIAL-TRUTH contract:
+//   * best-effort (critical:false) — a failed reminder is logged + captured, and
+//     NEVER breaks the cron or any other action. It is a notification, not a
+//     legal delivery.
+//   * shows `openstaand` (the amount STILL owed), computed by the caller via
+//     openstaandOf — never the full total, so a part-paid invoice is honest.
+//   * every third-party-visible string (client/company name, invoice number) is
+//     HTML-escaped; the amount + date are pre-formatted numbers/dates (no free
+//     text). Reuses the existing brand template + footer.
+//   * always carries an "already paid? ignore this" line — paid-but-unreconciled
+//     is the #1 cause of a false "overdue", and we must never dun someone twice.
+//   * `firm` only softens/firms the WORDING (tier 30 vs 14) — it changes nothing
+//     financial.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function sendInvoiceReminder({
+  toEmail,
+  clientName,
+  zzperName,
+  invoiceNumber,
+  openstaand,
+  dueDate,
+  firm = false,
+  pdfBuffer,
+}: {
+  toEmail: string
+  clientName: string
+  zzperName: string
+  invoiceNumber: string
+  /** Amount STILL owed (from openstaandOf) — never the full total. */
+  openstaand: number
+  /** ISO due date — shown as the (passed) vervaldatum. */
+  dueDate: string
+  /** Firmer wording for a later tier (e.g. day 30). Wording only — no money change. */
+  firm?: boolean
+  /** Re-attach the invoice PDF when available. */
+  pdfBuffer?: Buffer
+}) {
+  const heading = firm ? 'Betalingsherinnering' : 'Herinnering'
+  const subject = firm
+    ? `Betalingsherinnering: factuur ${invoiceNumber}`
+    : `Herinnering: factuur ${invoiceNumber}`
+
+  const intro = firm
+    ? `Onze administratie laat zien dat factuur <strong>${escapeHtml(invoiceNumber)}</strong> van <strong>${escapeHtml(zzperName)}</strong> nog niet is voldaan. De vervaldatum is inmiddels verstreken.`
+    : `Een vriendelijke herinnering dat factuur <strong>${escapeHtml(invoiceNumber)}</strong> van <strong>${escapeHtml(zzperName)}</strong> nog openstaat.`
+
+  const attachmentLine = pdfBuffer
+    ? `<p style="color: #555;">De factuur is nogmaals bijgevoegd als PDF.</p>`
+    : ''
+
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">${heading}</h2>
+        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
+        <p style="color: #555;">${intro}</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0;">
+          <p style="margin:4px 0; color:#202124;"><strong>Factuurnummer:</strong> ${escapeHtml(invoiceNumber)}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Openstaand bedrag:</strong> ${formatEuroNL(openstaand)}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>
+        </div>
+        ${attachmentLine}
+        <p style="color: #999; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze herinnering als niet verzonden beschouwen.</p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+    ...(pdfBuffer
+      ? {
+          attachments: [
+            {
+              filename: `${invoiceNumber}.pdf`,
+              content: pdfBuffer,
+            },
+          ],
+        }
+      : {})
+  })
+  // Best-effort: a reminder that fails to send must never break the cron run.
+  await deliverEmail(__sendResult, { label: 'invoice-reminder', critical: false })
+}

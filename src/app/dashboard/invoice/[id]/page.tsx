@@ -11,6 +11,7 @@ import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'ne
 import dynamic from 'next/dynamic'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
+import { InvoiceReminders } from '@/components/invoice/InvoiceReminders'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
@@ -495,6 +496,14 @@ export default function InvoiceDetailPage() {
               </p>
             </div>
           )}
+
+          {/* [REMINDERS] Per-invoice reminder history + pause (outgoing sent/overdue only) */}
+          <InvoiceReminders
+            invoiceId={invoiceId}
+            direction={invoice.direction}
+            status={invoice.status}
+            remindersPaused={invoice.reminders_paused}
+          />
 
           {/* [BOEK-031] Send banner — only for draft invoices — May 2026 */}
           {invoice.status === 'draft' && (
