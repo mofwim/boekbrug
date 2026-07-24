@@ -136,3 +136,26 @@ export function reminderTierDue(input: ReminderDecisionInput): number | null {
 
   return currentTier;
 }
+
+/**
+ * The amount still owed on an invoice — the ONLY figure a reminder may show.
+ *
+ * A reminder is a financial statement to a third party: showing the FULL total
+ * on an invoice that is half-paid is a wrong number (the client already paid
+ * part), and "a wrong number breaks trust" is a locked app principle. So the
+ * reminder always shows openstaand = |total| − amount_paid, never the total.
+ *
+ * Pure + defensive: magnitude only (handles a stray creditnota sign), never
+ * negative (an over-linked payment clamps to 0), rounded to cents so float
+ * noise from OCR/xlsx totals can't leak a €599,9999 into the e-mail.
+ */
+export function openstaandOf(
+  total: number | null | undefined,
+  amountPaid: number | null | undefined,
+): number {
+  const t = typeof total === "number" && Number.isFinite(total) ? Math.abs(total) : 0;
+  const p = typeof amountPaid === "number" && Number.isFinite(amountPaid) && amountPaid > 0 ? amountPaid : 0;
+  const remaining = t - p;
+  if (remaining <= 0) return 0;
+  return Math.round(remaining * 100) / 100;
+}

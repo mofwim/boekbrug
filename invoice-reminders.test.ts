@@ -11,6 +11,7 @@
 
 import {
   reminderTierDue,
+  openstaandOf,
   dayNumberFromIso,
   amsterdamTodayDayNumber,
   type ReminderDecisionInput,
@@ -116,6 +117,26 @@ check("unsorted/dirty schedule {30,14,14,-5,0} still yields tier 14 at day 14",
   reminderTierDue(base({ offsets: [30, 14, 14, -5, 0] })) === 14);
 check("single-tier schedule {7} at 7 days → tier 7",
   reminderTierDue(base({ offsets: [7], todayDayNumber: dueDay + 7 })) === 7);
+
+console.log("\n— openstaand: the ONLY amount a reminder may show —");
+check("fully unpaid → full total",
+  openstaandOf(1000, 0) === 1000);
+check("partial paid → remaining only (not the total)",
+  openstaandOf(1000, 400) === 600);
+check("paid to the cent → 0",
+  openstaandOf(1000, 1000) === 0);
+check("over-linked payment → clamps to 0 (never negative)",
+  openstaandOf(1000, 1200) === 0);
+check("negative amount_paid ignored → full total",
+  openstaandOf(1000, -50) === 1000);
+check("creditnota sign stripped → magnitude",
+  openstaandOf(-1000, 0) === 1000);
+check("float noise rounded to cents",
+  openstaandOf(1000, 400.004) === 600);
+check("null total → 0",
+  openstaandOf(null, 0) === 0);
+check("NaN paid treated as 0",
+  openstaandOf(1000, NaN) === 1000);
 
 console.log("\n— helpers —");
 check("dayNumberFromIso parses date prefix",
