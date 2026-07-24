@@ -11,6 +11,8 @@ import {
   type ImportHealth,
   type FieldConfidence,
 } from "@/lib/import-health";
+// [QUEUE-COMPLETE] pages past PostgREST's silent ~1000-row cap.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export const dynamic = "force-dynamic";
 
@@ -87,7 +89,13 @@ export default async function IncomingPage() {
   // Sorted by invoice_date (newest first): created_at is the IMPORT moment,
   // which for backfilled email syncs has nothing to do with the invoice's real
   // date — sorting on it made the queue look shuffled.
-  const { data: pendingRaw } = await supabase
+  //
+  // [QUEUE-COMPLETE] fetchAllRows, no cap: this is the ONLY surface where a
+  // 'processing' invoice can be verified, while the badges elsewhere
+  // (ZzpDashboard, Vandaag's toVerifyCount) show the EXACT head-count. With
+  // the old .limit(100), a large mailbox backfill said "130 wachten" while
+  // the queue showed 100 and rows 101+ were unreachable.
+  const pendingRaw = await fetchAllRows((from, to) => supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
     .eq("receiver_id", user.id)
@@ -95,17 +103,24 @@ export default async function IncomingPage() {
     .eq("status", "processing")
     .order("invoice_date", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(100);
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   // [BOEK-011] Ignored invoices — status 'archived', can be restored
-  const { data: ignoredRaw } = await supabase
+  // [QUEUE-COMPLETE] Also uncapped (was 50): an archived invoice beyond the
+  // cap was invisible on the only surface that can restore it (Bewaarplicht —
+  // archive is the app's "delete", so recovery must always be reachable).
+  const ignoredRaw = await fetchAllRows((from, to) => supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
     .eq("status", "archived")
     .order("created_at", { ascending: false })
-    .limit(50);
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   // [INCOMING-BEVESTIGD] Confirmed invoices — verified out of the queue ('received', te betalen)
   // or already settled ('paid'). Before this tab they vanished to /incoming/manage (Crediteuren),

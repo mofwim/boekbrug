@@ -8,7 +8,17 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
-import type { InvoiceStatusFilter } from '@/hooks/useInfiniteInvoices'
+import type { InvoiceStatusFilter, InvoiceRow } from '@/hooks/useInfiniteInvoices'
+
+// [BOEK-029] Archived rows carry only the columns their end-of-list card renders.
+type ArchivedRow = {
+  id: string
+  invoice_number: string | null
+  total_inc_btw: number | null
+  replaced_by_number: string | null
+  invoice_date: string | null
+  invoice_type: string | null
+}
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
@@ -94,7 +104,7 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 ]
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export default function FacturenClient({ profile }: { profile: any }) {
+export default function FacturenClient({ profile }: { profile: { id: string } }) {
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -128,17 +138,20 @@ export default function FacturenClient({ profile }: { profile: any }) {
   // the param, so it never clobbers the user's input.
   const searchParam = searchParams.get('search') ?? ''
   const [search, setSearch] = useState(searchParam)
-  useEffect(() => { setSearch(searchParam) }, [searchParam])
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchParam), 0)
+    return () => clearTimeout(t)
+  }, [searchParam])
 
   // [SEARCH] In-page live filter, SERVER-backed: finds ALL matching invoices (every
   // status, not only the loaded/paginated rows), in place — no navigation, no reload.
   // Active from 2 chars; falls back to the normal infinite list when empty.
-  const [searchResults, setSearchResults] = useState<any[] | null>(null)
+  const [searchResults, setSearchResults] = useState<InvoiceRow[] | null>(null)
   const [searchLoading, setSearchLoading] = useState(false)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
-  const [archivedInvoices, setArchivedInvoices] = useState<any[]>([])
+  const [archivedInvoices, setArchivedInvoices] = useState<ArchivedRow[]>([])
 
   useEffect(() => {
     if (!profile?.id) return
@@ -148,18 +161,24 @@ export default function FacturenClient({ profile }: { profile: any }) {
       .eq('sender_id', profile.id)
       .eq('status', 'archived')
       .order('created_at', { ascending: false })
-      .then(({ data }) => setArchivedInvoices(data ?? []))
+      .then(({ data }) => setArchivedInvoices((data ?? []) as unknown as ArchivedRow[]))
   }, [profile?.id])
 
   // [SEARCH] Debounced server query over ALL the user's invoices (any status), so a
   // match that hasn't been scrolled into the infinite list is still found instantly.
   useEffect(() => {
     const q = search.trim()
-    if (q.length < 2) { setSearchResults(null); setSearchLoading(false); return }
+    if (q.length < 2) {
+      const t0 = setTimeout(() => { setSearchResults(null); setSearchLoading(false) }, 0)
+      return () => clearTimeout(t0)
+    }
     const esc = q.replace(/[,()%_*\\":]/g, ' ').trim()
-    if (esc.length < 1) { setSearchResults([]); setSearchLoading(false); return }
+    if (esc.length < 1) {
+      const t0 = setTimeout(() => { setSearchResults([]); setSearchLoading(false) }, 0)
+      return () => clearTimeout(t0)
+    }
     let active = true
-    setSearchLoading(true)
+    const tLoad = setTimeout(() => setSearchLoading(true), 0)
     const t = setTimeout(async () => {
       const { data } = await supabase
         .from('invoices')
@@ -170,10 +189,10 @@ export default function FacturenClient({ profile }: { profile: any }) {
         .order('created_at', { ascending: false })
         .limit(50)
       if (!active) return
-      setSearchResults((data as any[]) ?? [])
+      setSearchResults((data ?? []) as unknown as InvoiceRow[])
       setSearchLoading(false)
     }, 250)
-    return () => { active = false; clearTimeout(t) }
+    return () => { active = false; clearTimeout(tLoad); clearTimeout(t) }
   }, [search, profile.id])
 
   const statusMap: Record<FilterTab, InvoiceStatusFilter> = {
@@ -190,13 +209,15 @@ export default function FacturenClient({ profile }: { profile: any }) {
   useEffect(() => {
     if (!focusId || loading) return
     if (!invoices.some(i => i.id === focusId)) return
-    setExpandedId(focusId)
-    setHighlightId(focusId)
+    const applyTimer = setTimeout(() => {
+      setExpandedId(focusId)
+      setHighlightId(focusId)
+    }, 0)
     const scrollTimer = setTimeout(() => {
       rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
-    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+    return () => { clearTimeout(applyTimer); clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, loading, invoices.length])
 
@@ -213,6 +234,21 @@ export default function FacturenClient({ profile }: { profile: any }) {
         return true
       })
   const sorted = sort === 'desc' ? displayed : [...displayed].reverse()
+
+  // [TAB-DRAIN] Offerte/Credit are CLIENT-side filters over server pages of
+  // 'all'. When the loaded pages contain zero (or few) pro_forma/creditnota
+  // rows, the list used to render "Geen facturen" with the scroll sentinel
+  // unmounted — loadMore could never fire and every older offerte/creditnota
+  // was unreachable (a dead end). While such a tab shows fewer than a handful
+  // of rows and older pages exist, keep pulling pages until matches appear or
+  // the pages run out.
+  const typeFiltered = filter === 'offerte' || filter === 'credit'
+  useEffect(() => {
+    if (!typeFiltered || searching) return
+    if (loading || !hasMore) return
+    if (displayed.length >= 5) return
+    loadMore()
+  }, [typeFiltered, searching, loading, hasMore, displayed.length, loadMore])
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
@@ -408,7 +444,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
     const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting && hasMore && !loading && !searching) loadMore() }, { threshold: 0.1 })
     obs.observe(el)
     return () => obs.disconnect()
-  }, [hasMore, loading, searching])
+  }, [hasMore, loading, searching, loadMore])
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
@@ -515,6 +551,13 @@ export default function FacturenClient({ profile }: { profile: any }) {
             <p style={{ textAlign: 'center', color: '#5F6368', fontSize: 14, padding: '48px 16px', fontFamily: FONT }}>
               Geen facturen gevonden voor &ldquo;{search.trim()}&rdquo;
             </p>
+          ) : typeFiltered && (hasMore || loading) ? (
+            // [TAB-DRAIN] Older pages are still being pulled in — an honest
+            // "searching" state, never a false "Geen facturen" while matches
+            // may exist further back.
+            <p style={{ textAlign: 'center', color: '#5F6368', fontSize: 14, padding: '48px 16px', fontFamily: FONT }}>
+              Zoeken in oudere facturen…
+            </p>
           ) : <EmptyState />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -523,8 +566,8 @@ export default function FacturenClient({ profile }: { profile: any }) {
               const isOfferte = inv.invoice_type === 'pro_forma'
               const isPaid    = inv.status === 'paid'
               const expanded  = expandedId === inv.id
-              const totalExBtw = (inv as any).total_ex_btw ?? null
-              const btwAmount = (inv as any).btw_amount ?? (typeof inv.total_inc_btw === 'number' && typeof totalExBtw === 'number'
+              const totalExBtw = inv.total_ex_btw ?? null
+              const btwAmount = inv.btw_amount ?? (typeof inv.total_inc_btw === 'number' && typeof totalExBtw === 'number'
                 ? inv.total_inc_btw - totalExBtw
                 : null)
               const invoiceType = inv.invoice_type === 'creditnota' ? 'creditnota'
@@ -706,7 +749,13 @@ export default function FacturenClient({ profile }: { profile: any }) {
                               .eq('id', inv.id)
                               .single()
 
-                            const src = full ?? inv as any
+                            const src = (full ?? inv) as {
+                              client_name?: string | null; client_email?: string | null
+                              client_address?: string | null; client_postal_code?: string | null
+                              client_city?: string | null; client_btw_number?: string | null
+                              total_inc_btw?: number | null; total_ex_btw?: number | null
+                              btw_amount?: number | null
+                            }
                             router.push(
                               `/dashboard/invoice/new?from_offerte=${inv.id}` +
                               `&client_name=${encodeURIComponent(src.client_name ?? '')}` +
@@ -732,7 +781,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
                     <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 16 }}>
                         <InfoLine label="Aan"       value={inv.client_name} />
-                        {(inv as any).client_btw_number && <InfoLine label="BTW" value={(inv as any).client_btw_number} />}
+                        {(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number && <InfoLine label="BTW" value={(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number ?? null} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
                         <InfoLine label={`BTW (${calcBtw(btwAmount, totalExBtw)}%)`} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />

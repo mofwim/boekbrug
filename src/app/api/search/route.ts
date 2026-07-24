@@ -75,6 +75,17 @@ function buildOr(fields: string[], terms: string[]): string {
     .join(",");
 }
 
+// Loose structural shape shared by all search-hit rows (invoices, documents,
+// profiles, clients) — fields vary per source; absent keys read undefined.
+type Hit = { id: string; created_at?: string | null } & Partial<
+  Record<
+    | "invoice_number" | "client_name" | "client_email" | "status" | "direction"
+    | "file_name" | "ai_doc_type" | "doc_type" | "notes" | "period" | "folder_id"
+    | "full_name" | "company_name" | "email" | "kvk_number" | "name" | "city",
+    string | null
+  >
+> & { total_inc_btw?: number | null; year?: number | null };
+
 function dedup(arr: SearchResult[]): SearchResult[] {
   const seen = new Set<string>();
   return arr.filter((r) => { if (seen.has(r.id)) return false; seen.add(r.id); return true; });
@@ -235,7 +246,7 @@ export async function GET(req: NextRequest) {
           )
           .order("created_at", { ascending: false })
           .limit(8)
-      : Promise.resolve({ data: [] as any[] }),
+      : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 2: documents — own, non-trashed
     target === "all" || target === "documents"
@@ -247,7 +258,7 @@ export async function GET(req: NextRequest) {
           .or(buildOr(["file_name", "doc_type", "ai_doc_type", "notes"], terms))
           .order("created_at", { ascending: false })
           .limit(4)
-      : Promise.resolve({ data: [] as any[] }),
+      : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 3: clients — accountant: linked profiles; zzp'er: own clients registry
     target === "all" || target === "clients"
@@ -259,14 +270,14 @@ export async function GET(req: NextRequest) {
               .in("id", senderIds.filter((id) => id !== user.id))
               .or(buildOr(["full_name", "company_name", "email", "kvk_number"], terms))
               .limit(5)
-          : Promise.resolve({ data: [] as any[] })
+          : Promise.resolve({ data: [] as Hit[] })
         : supabase
             .from("clients")
             .select("id, name, email, kvk_number, city, created_at")
             .eq("user_id", user.id)
             .or(buildOr(["name", "email", "kvk_number", "city"], terms))
             .limit(5)
-      : Promise.resolve({ data: [] as any[] }),
+      : Promise.resolve({ data: [] as Hit[] }),
   ]);
 
   // ── [SEARCH] Fuzzy augmentation (typo tolerance) when results are sparse ──────
@@ -277,11 +288,11 @@ export async function GET(req: NextRequest) {
   type RpcCaller = {
     rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
   };
-  const safeRpc = async (fn: string, args: Record<string, unknown>): Promise<any[]> => {
+  const safeRpc = async (fn: string, args: Record<string, unknown>): Promise<Hit[]> => {
     try {
       const { data, error } = await (supabase as unknown as RpcCaller).rpc(fn, args);
       if (error) return [];
-      return (data ?? []) as any[];
+      return (data ?? []) as Hit[];
     } catch {
       return [];
     }
@@ -293,53 +304,62 @@ export async function GET(req: NextRequest) {
   // non-existent number would surface an unrelated invoice. Requires a letter.
   const nameLike = /\p{L}/u.test(q);
 
-  let invoiceRows: any[] = invoicesRes.data ?? [];
+  let invoiceRows: Hit[] = (invoicesRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "invoices") && invoiceRows.length < 3) {
     // RLS scopes the fuzzy rows to what this user may already see.
     invoiceRows = [...invoiceRows, ...(await safeRpc("search_invoices_fuzzy", { q }))];
   }
 
-  let clientRows: any[] = clientsRes.data ?? [];
+  let clientRows: Hit[] = (clientsRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "clients") && role !== "accountant" && clientRows.length < 3) {
     clientRows = [...clientRows, ...(await safeRpc("search_clients_fuzzy", { q }))];
   }
 
-  let docRows: any[] = docsRes.data ?? [];
+  let docRows: Hit[] = (docsRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "documents") && docRows.length < 3) {
     docRows = [...docRows, ...(await safeRpc("search_documents_fuzzy", { q }))];
   }
 
   const invoices: SearchResult[] = dedup(
     rankRows(invoiceRows, q, (inv) => [inv.invoice_number, inv.client_name, inv.client_email])
-      .map((inv: any) => ({
+      .map((inv) => ({
         type: "invoice" as const,
         id: inv.id,
         title: inv.invoice_number ?? "—",
         subtitle: inv.client_name ?? "",
         meta: inv.total_inc_btw != null ? fmt(inv.total_inc_btw) : undefined,
-        status: inv.status,
-        // Received (incoming) invoices live on /dashboard/incoming, not /facturen
-        // (which lists only the user's own sent invoices). Both consume ?focus=.
+        status: inv.status ?? undefined,
+        // [SEARCH-LANDING] Route each hit to a surface that can actually SHOW it:
+        //  · incoming received/paid → /incoming/manage?focus= (it fetches the
+        //    focused row by id when outside its window — always lands). The old
+        //    /incoming?focus= target opened the verify tab, which neither
+        //    contains confirmed rows nor switches tabs → the hit was invisible.
+        //  · other incoming (processing/archived/…) → /incoming?focus= (queue).
+        //  · outgoing → the invoice DETAIL page — renders any id, unlike
+        //    /facturen?focus= which only expands rows in its loaded pages
+        //    (a hit older than ~20 rows silently showed nothing).
         href: inv.direction === "incoming"
-          ? `/dashboard/incoming?focus=${inv.id}`
-          : `/dashboard/facturen?focus=${inv.id}`,
-        createdAt: inv.created_at,
+          ? (inv.status === "received" || inv.status === "paid"
+              ? `/dashboard/incoming/manage?focus=${inv.id}`
+              : `/dashboard/incoming?focus=${inv.id}`)
+          : `/dashboard/invoice/${inv.id}`,
+        createdAt: inv.created_at ?? "",
       }))
   ).slice(0, 8);
 
   const documents: SearchResult[] = dedup(
     rankRows(docRows, q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
-      .map((doc: any) => ({
+      .map((doc) => ({
         type: "document" as const,
         id: doc.id,
-        title: doc.file_name,
+        title: doc.file_name ?? "—",
         subtitle: doc.ai_doc_type ?? doc.doc_type ?? "document",
         meta: [doc.period, doc.year].filter(Boolean).join(" · ") || undefined,
         // Bestanden reads ?folder=&focus= (root docs carry no folder → focus only)
         href: doc.folder_id
           ? `/dashboard/bestanden?folder=${doc.folder_id}&focus=${doc.id}`
           : `/dashboard/bestanden?focus=${doc.id}`,
-        createdAt: doc.created_at,
+        createdAt: doc.created_at ?? "",
       }))
   ).slice(0, 4);
 
@@ -348,7 +368,7 @@ export async function GET(req: NextRequest) {
       role === "accountant"
         ? [row.full_name, row.company_name, row.email, row.kvk_number]
         : [row.name, row.email, row.kvk_number, row.city]
-    ).map((row: any) =>
+    ).map((row) =>
       role === "accountant"
         ? {
             type: "client" as const,
@@ -359,7 +379,7 @@ export async function GET(req: NextRequest) {
             // Accountant clients are linked zzp'er PROFILES → the accountant views
             // them at /dashboard/clients/{id}, NOT the owner's own /dashboard/klanten.
             href: `/dashboard/clients/${row.id}`,
-            createdAt: row.created_at,
+            createdAt: row.created_at ?? "",
           }
         : {
             type: "client" as const,
@@ -368,7 +388,7 @@ export async function GET(req: NextRequest) {
             subtitle: row.email ?? row.city ?? "",
             meta: row.kvk_number ? `KVK ${row.kvk_number}` : undefined,
             href: `/dashboard/klanten?focus=${row.id}`,
-            createdAt: row.created_at,
+            createdAt: row.created_at ?? "",
           }
     )
   ).slice(0, 5);

@@ -22,13 +22,18 @@ import type { InvoiceForQuarterly } from "@/lib/quarterly";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 
 // [BOEK-FOUNDATION-TYPES] Helper: safely calculate btw_rate from nullable fields
+// [CREDITNOTA-RATE] Guard on !== 0, not > 0: a creditnota stores NEGATIVE
+// amounts, and the old `exBtw > 0` bucketed it under "0%" with a non-zero
+// negative BTW — a nonsense row that made the accountant's on-screen
+// btwBreakdown disagree with the closing-package CSV (export.ts calcBtwRate,
+// which already handles negatives: -21/-100 → 21%). Same maths now.
 function calculateBtwRate(
   totalExBtw: number | null,
   btwAmount: number | null
 ): number {
   const exBtw = totalExBtw ?? 0;
   const btw = btwAmount ?? 0;
-  return exBtw > 0 ? Math.round((btw / exBtw) * 100) : 0;
+  return exBtw !== 0 ? Math.round((btw / exBtw) * 100) : 0;
 }
 
 export async function GET(req: NextRequest) {
