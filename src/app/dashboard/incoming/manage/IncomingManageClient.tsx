@@ -29,6 +29,8 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
+// [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
+import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 import { crossQuarterPayment } from '@/lib/quarter'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
@@ -216,6 +218,90 @@ export default function IncomingManageClient({
     match: { id?: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
   } | null>(null)
   const [checkingId, setCheckingId]     = useState<string | null>(null)
+
+  // ── [BUNDEL-BETALING] Multi-select → pay several open inkoopfacturen of the
+  // same leverancier in ONE transfer. Selection is a set of ids; the rows are
+  // derived from this page's own list (single client-owned array, no pagination).
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Record<string, true>>({})
+  // The sheet snapshot: the rows being paid + the pure-built QR/details.
+  const [bundleCtx, setBundleCtx] = useState<{ rows: IncomingRow[]; built: BundelBetalingResult } | null>(null)
+  // Bank/Contant + date dialog for the WHOLE set (one answer, N invoices).
+  const [bundlePayRows, setBundlePayRows] = useState<IncomingRow[] | null>(null)
+  const [bundleBusy, setBundleBusy] = useState(false)
+
+  const selectedRows = invoices.filter(i => selectedIds[i.id])
+  // Live validation — pure and cheap, so the action bar can explain itself
+  // (same-IBAN rule, missing IBAN, sum) on every tap.
+  const bundleBuilt = selectedRows.length >= 2 ? buildBundelBetaling(selectedRows) : null
+  const openSum = selectedRows.reduce((s, r) => {
+    const tot = Math.abs(r.total_inc_btw ?? 0)
+    return s + Math.max(0, tot - Math.max(0, r.amount_paid ?? 0))
+  }, 0)
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = { ...prev }
+      if (next[id]) delete next[id]
+      else next[id] = true
+      return next
+    })
+  }
+  function exitSelectMode() { setSelectMode(false); setSelectedIds({}) }
+
+  // ── [BUNDEL-BETALING] "Ja, ik heb betaald" for the whole set: one Bank/Contant
+  // + date answer, then N audited pay-toggle writes (the SAME server path as a
+  // single invoice — every mutation audited, nothing new invented). Failures
+  // (e.g. a verwerkt lock) leave that invoice open and are reported honestly.
+  async function executeBundlePay(rows: IncomingRow[], method: 'bank' | 'kas', paymentDate: string) {
+    setBundlePayRows(null)
+    setBundleBusy(true)
+    let okCount = 0
+    const failedNumbers: string[] = []
+    for (const row of rows) {
+      try {
+        const res = await fetch('/api/invoice/pay-toggle', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId: row.id, action: 'pay', paymentMethod: method, paymentDate }),
+        })
+        if (res.ok) {
+          okCount++
+          patchLocal(row.id, {
+            status: 'paid',
+            payment_method: method,
+            payment_date: paymentDate,
+            payment_prepared_at: null,
+          })
+        } else {
+          failedNumbers.push(row.invoice_number ?? '—')
+        }
+      } catch {
+        failedNumbers.push(row.invoice_number ?? '—')
+      }
+    }
+    if (okCount > 0) {
+      // One summary notification for the batch (service role via API; non-blocking).
+      try {
+        await fetch('/api/notifications/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Inkoopfacturen betaald',
+            body: `${okCount} inkoopfacturen zijn gemarkeerd als betaald.`,
+            type: 'payment',
+          }),
+        })
+      } catch { /* non-blocking — payments already succeeded */ }
+      // [CASH-SETTLE] keep the kasboek in sync once for the whole batch.
+      fetch('/api/cash/settle', { method: 'POST' }).catch(() => {})
+    }
+    showToast(
+      failedNumbers.length === 0
+        ? `${okCount} inkoopfacturen betaald ✓`
+        : `${okCount} betaald ✓ — niet gelukt: ${failedNumbers.join(', ')}`
+    )
+    setBundleBusy(false)
+    exitSelectMode()
+  }
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // Lands the user on the exact row: auto-expand, scroll into view, brief highlight.
@@ -543,6 +629,13 @@ export default function IncomingManageClient({
         padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
+          {/* [BUNDEL-BETALING] Toggle multi-select — pick several open facturen
+              van één leverancier and prepare ONE transfer for the sum. */}
+          <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+            style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>checklist</span>
+            {selectMode ? 'Klaar' : 'Selecteer'}
+          </button>
           <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
           </Link>
@@ -674,11 +767,20 @@ export default function IncomingManageClient({
                     transition: 'box-shadow 0.4s ease',
                   }}
                 >
-                  {/* Main row */}
+                  {/* Main row — in select mode a tap toggles the bundle selection
+                      (only for open 'received' rows); otherwise it expands. */}
                   <div
-                    onClick={() => setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'background 0.4s ease' }}
+                    onClick={() => selectMode
+                      ? (inv.status === 'received' && toggleSelect(inv.id))
+                      : setExpandedId(expanded ? null : inv.id)}
+                    style={{ background: selectedIds[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: selectMode && inv.status !== 'received' ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && inv.status !== 'received' ? 0.4 : 1 }}
                   >
+                    {/* [BUNDEL-BETALING] selection indicator */}
+                    {selectMode && inv.status === 'received' && (
+                      <span className="material-symbols-outlined" style={{ fontSize: 22, color: selectedIds[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
+                        {selectedIds[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
+                      </span>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         {/* [BRIDGE-POLISH 3a-1 parity] incoming direction marker */}
@@ -852,6 +954,79 @@ export default function IncomingManageClient({
           </div>
         )}
       </main>
+
+      {/* ── [BUNDEL-BETALING] Selection action bar — one transfer for the set.
+          Enabled when the pure builder approves (≥2 open rows, same IBAN). ── */}
+      {selectMode && (
+        <div style={{
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + env(safe-area-inset-bottom))`,
+          maxWidth: 648, margin: '0 auto', zIndex: 60,
+          background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          padding: '12px 16px', fontFamily: FONT,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
+                {selectedRows.length} geselecteerd · {fmtEur(Math.round(openSum * 100) / 100)}
+              </p>
+              <p style={{ fontSize: 11.5, color: bundleBuilt && !bundleBuilt.ok ? M3.error : '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {selectedRows.length < 2
+                  ? 'Kies minimaal 2 open inkoopfacturen'
+                  : bundleBuilt && !bundleBuilt.ok
+                    ? bundleBuilt.error
+                    : `Eén betaling aan ${bundleBuilt?.beneficiaryName ?? 'deze leverancier'}`}
+              </p>
+            </div>
+            <button
+              onClick={() => { if (bundleBuilt?.ok) setBundleCtx({ rows: selectedRows, built: bundleBuilt }) }}
+              disabled={!bundleBuilt?.ok || bundleBusy}
+              style={{
+                flexShrink: 0, border: 'none', borderRadius: R.full, padding: '10px 18px',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
+                background: bundleBuilt?.ok && !bundleBusy ? M3.primary : M3.surfaceVariant,
+                color: bundleBuilt?.ok && !bundleBusy ? '#fff' : '#9AA0A6',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
+              {bundleBusy ? 'Bezig…' : 'Betalen'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── [BUNDEL-BETALING] Prepare sheet for the whole set — one QR, the
+          per-factuur lines, copyable details. Same discipline as the single
+          PreparePaymentSheet: pure preparation, closing changes nothing. ── */}
+      {bundleCtx && (
+        <BundelBetalenSheet
+          rows={bundleCtx.rows}
+          built={bundleCtx.built}
+          onClose={() => {
+            for (const row of bundleCtx.rows) markPrepared(row)
+            setBundleCtx(null)
+          }}
+          onConfirmPaid={() => {
+            const rows = bundleCtx.rows
+            for (const row of rows) markPrepared(row)
+            setBundleCtx(null)
+            setBundlePayRows(rows)
+          }}
+          onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
+        />
+      )}
+
+      {/* ── [BUNDEL-BETALING] One Bank/Contant + date answer for the whole set ── */}
+      {bundlePayRows && (
+        <BottomSheet
+          title={`${bundlePayRows.length} inkoopfacturen markeren als betaald?`}
+          body={`De geselecteerde inkoopfacturen van ${bundlePayRows[0]?.client_name ?? 'deze leverancier'} worden allemaal als betaald gemarkeerd.`}
+          confirmLabel="Ja, markeer als betaald"
+          confirmBg={M3.success}
+          onConfirm={() => { /* paymentChoice handles it */ }}
+          onCancel={() => setBundlePayRows(null)}
+          paymentChoice={(method, paymentDate) => executeBundlePay(bundlePayRows, method, paymentDate)}
+        />
+      )}
 
       {/* ── Pay dialog (Bank/Contant + date on mark-paid; single confirm on undo) ── */}
       {payCtx && (
@@ -1188,6 +1363,119 @@ function PreparePaymentSheet({
         {/* [PAY-SAFE-CONFIRM] Closing the QR ≠ paid. Ask directly — "Ja" routes
             to the Bank/Contant + date flow; "Nog niet" just closes (stays unpaid).
             Wording = "verstuurd" (sent), not "aangekomen" — SEPA takes time. */}
+        <p style={{ fontSize: 15, fontWeight: 700, color: '#202124', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
+          Heb je de betaling verstuurd?
+        </p>
+        <button onClick={onConfirmPaid} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+          Ja, ik heb betaald
+        </button>
+        <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.surfaceVariant, color: '#5f6368', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
+          Nog niet
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── [BUNDEL-BETALING] Prepare sheet for SEVERAL invoices of one supplier ─────
+// Mirror of PreparePaymentSheet, fed by the pure buildBundelBetaling result:
+// one QR for the sum, the per-factuur lines, copyable IBAN/bedrag/kenmerk.
+// PURE preparation — no DB write, no money movement; the owner confirms the
+// transfer inside their OWN bank app.
+function BundelBetalenSheet({
+  rows,
+  built,
+  onClose,
+  onConfirmPaid,
+  onCopied,
+}: {
+  rows: IncomingRow[]
+  built: BundelBetalingResult
+  onClose: () => void
+  onConfirmPaid: () => void
+  onCopied: (what: string) => void
+}) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [qrError, setQrError] = useState<string | null>(null)
+
+  const amount = built.amount ?? 0
+  const reference = built.reference ?? ''
+  const ibanDisplay = (built.iban ?? '').replace(/(.{4})/g, '$1 ').trim()
+
+  useEffect(() => {
+    let cancelled = false
+    async function gen() {
+      if (!built.epcPayload) { setQrError(built.error ?? 'Geen QR mogelijk'); return }
+      try {
+        // Dynamic import keeps qrcode out of the main bundle until needed.
+        const QR = await import('qrcode')
+        const url = await QR.toDataURL(built.epcPayload, { margin: 1, width: 240 })
+        if (!cancelled) setQrDataUrl(url)
+      } catch {
+        if (!cancelled) setQrError('QR kon niet worden gegenereerd')
+      }
+    }
+    gen()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [built.epcPayload])
+
+  async function copy(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      onCopied(label)
+    } catch {
+      onCopied(label) // best-effort; clipboard may be blocked in some contexts
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>
+          {rows.length} facturen betalen
+        </p>
+        <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 16 }}>
+          Eén overboeking van {fmtEur(amount)} aan {built.beneficiaryName ?? '—'}.
+          Scan met je bankapp of kopieer de gegevens — je betaalt in je eigen bank.
+        </p>
+
+        {/* The invoices this ONE transfer settles */}
+        <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '4px 14px', marginBottom: 16 }}>
+          {(built.items ?? []).map((it, i) => (
+            <div key={it.invoiceId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderBottom: i === (built.items?.length ?? 0) - 1 ? 'none' : '1px solid #EEF0F1' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT_NUM }}>
+                {it.invoiceNumber ?? '—'}
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
+                {fmtEur(it.amount)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* QR */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          {qrDataUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={qrDataUrl} alt="Betaal-QR" width={220} height={220} style={{ borderRadius: 12, border: '1px solid #E0E0E0' }} />
+          ) : qrError ? (
+            <div style={{ fontSize: 13, color: M3.error, textAlign: 'center', padding: 20 }}>{qrError}</div>
+          ) : (
+            <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9AA0A6' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 32 }}>hourglass_empty</span>
+            </div>
+          )}
+        </div>
+
+        {/* Copy rows */}
+        <CopyRow label="IBAN" value={ibanDisplay} raw={built.iban ?? ''} onCopy={copy} />
+        <CopyRow label="Bedrag" value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
+        {reference && <CopyRow label="Kenmerk" value={reference} raw={reference} onCopy={copy} />}
+        <CopyRow label="Naam" value={built.beneficiaryName ?? '—'} raw={built.beneficiaryName ?? ''} onCopy={copy} />
+
+        {/* Same honest confirm as the single sheet: closing the QR ≠ paid. */}
         <p style={{ fontSize: 15, fontWeight: 700, color: '#202124', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
           Heb je de betaling verstuurd?
         </p>
