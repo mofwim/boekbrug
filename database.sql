@@ -59,6 +59,11 @@
 --       SECTION 5 below is DROPPED in prod (COUNT(*)+1, race-prone) — do NOT use.
 --     • B.4 'verwerkt' guard trigger on invoices (fires on
 --       accountant_status='verwerkt'; bypassed when auth.uid() IS NULL).
+--       [AUDIT-2026-07] Now reproducible from the repo: SECTION 5 defines
+--       prevent_verwerkt_invoice_changes() + invoices_verwerkt_guard, and
+--       supabase/migrations/invoice_accountant_write_guard.sql applies the
+--       same to an already-provisioned DB (prod's own copy, if named
+--       differently, coexists harmlessly).
 --
 --   RLS:
 --     • The invitations SELECT policy below is scoped to the inviter (zzper_id)
@@ -1210,17 +1215,69 @@ BEGIN
   IF OLD.receiver_id = auth.uid() AND OLD.direction = 'incoming' THEN
     RETURN NEW;
   END IF;
-  -- Everyone else (accountant) — protected columns
-  IF (NEW.total_ex_btw  IS DISTINCT FROM OLD.total_ex_btw)  OR
-     (NEW.btw_amount    IS DISTINCT FROM OLD.btw_amount)    OR
-     (NEW.total_inc_btw IS DISTINCT FROM OLD.total_inc_btw) OR
-     (NEW.invoice_date  IS DISTINCT FROM OLD.invoice_date)  OR
-     (NEW.due_date      IS DISTINCT FROM OLD.due_date)      OR
-     (NEW.sender_id     IS DISTINCT FROM OLD.sender_id)
+  -- Everyone else (accountant) — protected columns.
+  -- [AUDIT-2026-07] Extended (invoice_accountant_write_guard.sql): the
+  -- accountant UPDATE policy is not column-restricted, so direction/status/
+  -- receiver_id/payment fields were still writable outside every guarded app
+  -- path. The accountant's only legitimate invoice write is accountant_status.
+  IF (NEW.total_ex_btw        IS DISTINCT FROM OLD.total_ex_btw)        OR
+     (NEW.btw_amount          IS DISTINCT FROM OLD.btw_amount)          OR
+     (NEW.total_inc_btw       IS DISTINCT FROM OLD.total_inc_btw)       OR
+     (NEW.invoice_date        IS DISTINCT FROM OLD.invoice_date)        OR
+     (NEW.due_date            IS DISTINCT FROM OLD.due_date)            OR
+     (NEW.sender_id           IS DISTINCT FROM OLD.sender_id)           OR
+     (NEW.receiver_id         IS DISTINCT FROM OLD.receiver_id)         OR
+     (NEW.direction           IS DISTINCT FROM OLD.direction)           OR
+     (NEW.status              IS DISTINCT FROM OLD.status)              OR
+     (NEW.amount_paid         IS DISTINCT FROM OLD.amount_paid)         OR
+     (NEW.payment_method      IS DISTINCT FROM OLD.payment_method)      OR
+     (NEW.payment_date        IS DISTINCT FROM OLD.payment_date)        OR
+     (NEW.marked_paid_at      IS DISTINCT FROM OLD.marked_paid_at)      OR
+     (NEW.payment_prepared_at IS DISTINCT FROM OLD.payment_prepared_at) OR
+     (NEW.pay_token           IS DISTINCT FROM OLD.pay_token)           OR
+     (NEW.invoice_number      IS DISTINCT FROM OLD.invoice_number)      OR
+     (NEW.invoice_type        IS DISTINCT FROM OLD.invoice_type)
   THEN
     RAISE EXCEPTION
-      'Permission denied: only invoice owner can modify amounts or dates (invoice_id: %)',
+      'Permission denied: only the invoice owner can modify amounts, dates, status or payment fields (invoice_id: %)',
       OLD.id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- ── [AUDIT-2026-07] B.4 'verwerkt' guard — now reproducible from the repo ────
+-- (invoice_accountant_write_guard.sql). Once the accountant marks an invoice
+-- 'verwerkt', its financial fields are frozen for every SESSION write (owner
+-- included); changing accountant_status itself stays allowed (the undo flow).
+-- The error message deliberately contains 'verwerkt' — pay-toggle and the
+-- confirm route detect the conflict by that substring.
+CREATE OR REPLACE FUNCTION public.prevent_verwerkt_invoice_changes()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.accountant_status IS DISTINCT FROM 'verwerkt' THEN
+    RETURN NEW;
+  END IF;
+  IF (NEW.total_ex_btw   IS DISTINCT FROM OLD.total_ex_btw)   OR
+     (NEW.btw_amount     IS DISTINCT FROM OLD.btw_amount)     OR
+     (NEW.total_inc_btw  IS DISTINCT FROM OLD.total_inc_btw)  OR
+     (NEW.invoice_date   IS DISTINCT FROM OLD.invoice_date)   OR
+     (NEW.due_date       IS DISTINCT FROM OLD.due_date)       OR
+     (NEW.invoice_number IS DISTINCT FROM OLD.invoice_number) OR
+     (NEW.status         IS DISTINCT FROM OLD.status)         OR
+     (NEW.amount_paid    IS DISTINCT FROM OLD.amount_paid)    OR
+     (NEW.payment_method IS DISTINCT FROM OLD.payment_method) OR
+     (NEW.payment_date   IS DISTINCT FROM OLD.payment_date)   OR
+     (NEW.marked_paid_at IS DISTINCT FROM OLD.marked_paid_at)
+  THEN
+    RAISE EXCEPTION
+      'Factuur % is verwerkt door de boekhouder — vraag eerst om de verwerking ongedaan te maken',
+      COALESCE(OLD.invoice_number, OLD.id::text);
   END IF;
   RETURN NEW;
 END;
@@ -1328,6 +1385,11 @@ CREATE TRIGGER documents_search_vector_trigger
 CREATE TRIGGER prevent_accountant_amount_changes
   BEFORE UPDATE ON public.invoices
   FOR EACH ROW EXECUTE FUNCTION public.prevent_accountant_amount_changes();
+
+-- [AUDIT-2026-07] B.4 verwerkt guard (see prevent_verwerkt_invoice_changes above)
+CREATE TRIGGER invoices_verwerkt_guard
+  BEFORE UPDATE ON public.invoices
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_verwerkt_invoice_changes();
 
 
 -- =====================================================
