@@ -160,7 +160,34 @@ export default function KwartaalPage() {
         .gte('invoice_date', dateStart)
         .lte('invoice_date', dateEnd)
 
-      const merged = [...(outgoing ?? []), ...(incoming ?? [])]
+      // [FIN-4-ROWS] NULL-direction rows this client owns are counted by the
+      // reconciled tiles (which infer direction from ownership) but were absent
+      // from the two typed queries above, so "tile total ≠ sum of visible rows".
+      // Fetch them by ownership, infer direction the same way, and keep only the
+      // (direction, status) combos the sections show — so the list matches the tiles.
+      const { data: nullDir } = await supabase
+        .from('invoices')
+        .select('*, invoice_lines(*), invoice_type, replaced_by_number')
+        .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
+        .is('direction', null)
+        .in('status', ['sent', 'received', 'paid'])
+        .gte('invoice_date', dateStart)
+        .lte('invoice_date', dateEnd)
+
+      const inferred = (nullDir ?? [])
+        .map((inv) => {
+          const dir = inv.receiver_id === clientId ? 'incoming'
+            : inv.sender_id === clientId ? 'outgoing' : null
+          return dir ? { ...inv, direction: dir } : null
+        })
+        .filter((inv): inv is NonNullable<typeof inv> => inv !== null)
+        .filter((inv) =>
+          inv.direction === 'outgoing'
+            ? inv.status === 'sent' || inv.status === 'paid'
+            : inv.status === 'received' || inv.status === 'paid'
+        )
+
+      const merged = [...(outgoing ?? []), ...(incoming ?? []), ...inferred]
       setInvoices(merged)
       setLoading(false)
 
