@@ -472,10 +472,15 @@ export async function POST(request: NextRequest) {
     // re-checked. Re-run the SAME safe auto-confirm now so the payment gets linked at issuance time.
     // Books only isSafeAutoConfirm matches, idempotent, one-tap reversible. Best-effort — a failure
     // here must never break a legally-sent invoice, and the cron/import paths remain the backstop.
-    try {
-      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
-    } catch (autoErr) {
-      console.error('[BANK-CIRCLE-SEND] post-send auto-confirm failed (non-fatal)', { invoiceId, autoErr })
+    // First issuance only: a resend re-delivers an already-'sent' invoice (this pass already ran on
+    // its original send, and a later-arriving payment is caught by the incoming-bank flow + cron), so
+    // skip the full user-wide scan on the latency-sensitive resend path.
+    if (!resend) {
+      try {
+        await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+      } catch (autoErr) {
+        console.error('[BANK-CIRCLE-SEND] post-send auto-confirm failed (non-fatal)', { invoiceId, autoErr })
+      }
     }
 
     // ── 16. Response ──────────────────────────────────────────
