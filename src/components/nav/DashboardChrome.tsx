@@ -61,8 +61,13 @@ const STATIC_TITLES = new Map<string, string>([
 // shared bar never stacks on an existing one.
 const PATTERN_TITLES: ReadonlyArray<[RegExp, string]> = [
   // Invoice edit — page registers "Factuur bewerken · {number}". Listed before
-  // any /invoice/[^/]+ pattern so the /edit child isn't swallowed by it.
+  // the /invoice/[^/]+ pattern so the /edit child isn't swallowed by it.
   [/^\/dashboard\/invoice\/[^/]+\/edit$/, "Factuur bewerken"],
+  // Invoice detail — the page keeps its own context toolbar (number/badge/status/
+  // actions/PDF) below the shared bar, so the shared title stays generic "Factuur".
+  // Excludes /invoice/new (a distinct create page, migrated separately) so it
+  // isn't matched here while it still renders its own bar.
+  [/^\/dashboard\/invoice\/(?!new$)[^/]+$/, "Factuur"],
   // ZZP client detail — the page registers the client name via useSubPageHeader.
   [/^\/dashboard\/klanten\/[^/]+$/, "Klant"],
   // Accountant client quarter — registers "Q{q} {year} — {client}" + sort action.
