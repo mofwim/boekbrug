@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { computeCashBalance, isCashCategory } from "@/lib/cash";
+import { computeDrawerBalance, isCashCategory } from "@/lib/cash";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 
@@ -42,11 +42,6 @@ export async function GET() {
   const tillRows = await fetchAllRows((from, to) =>
     supabase.from("daily_turnover").select("cash_amount").eq("user_id", user.id).order("turnover_date", { ascending: true }).range(from, to),
   );
-  const entriesBalance = computeCashBalance(
-    (allMoves as { direction: string; amount: number | null }[]).map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
-  );
-  const tillCashIn = (tillRows as { cash_amount: number | null }[]).reduce((s, t) => s + (Number(t.cash_amount) || 0), 0);
-
   // [KAS-OPENING] Add the drawer's starting float (beginsaldo) so the saldo matches reality from
   // day one — a shop that began with cash in the till isn't understated by that amount.
   const { data: prof } = await supabase
@@ -56,7 +51,13 @@ export async function GET() {
     .maybeSingle();
   const opening = Number((prof as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
 
-  const balance = Math.round((opening + entriesBalance + tillCashIn) * 100) / 100;
+  // [KAS-SALDO] One shared definition (computeDrawerBalance) so this page and the home snapshot
+  // can never diverge: opening float + cash_entries net + till daily-cash takings.
+  const balance = computeDrawerBalance({
+    openingBalance: opening,
+    entries: (allMoves as { direction: string; amount: number | null }[]).map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
+    tillCashAmounts: (tillRows as { cash_amount: number | null }[]).map((t) => t.cash_amount),
+  });
 
   return NextResponse.json({ ok: true, entries, balance, openingBalance: opening, count: entries.length });
 }

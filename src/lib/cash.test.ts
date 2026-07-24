@@ -1,5 +1,5 @@
 // [CASH-LEDGER] Pure node test — run: npx tsx src/lib/cash.test.ts
-import { computeCashBalance, isCashCategory, buildCashSettlement, computeCashSettlementSync, settlementGross } from "./cash";
+import { computeCashBalance, computeDrawerBalance, isCashCategory, buildCashSettlement, computeCashSettlementSync, settlementGross } from "./cash";
 
 let passed = 0;
 let failed = 0;
@@ -105,6 +105,26 @@ console.log("\n— [CASH-SETTLE][F1] a corrected invoice amount HEALS the stale 
   );
   check("wrong drawer direction → toUpdate (heals 'out' → 'in')", dirHeal.toUpdate.length === 1);
 }
+
+console.log("\n— computeDrawerBalance (the ONE saldo shown on both the Kas page and the home) —");
+// The reported bug: two omzet cash_entries (−150 out, +109 in) net −41; a till day of 100 cash;
+// opening 0. Home showed −41 (entries only); Kas page showed 59 (all three). 59 is the truth.
+check("entries + till cash + opening → the true drawer (the −41 vs 59 bug)",
+  computeDrawerBalance({
+    openingBalance: 0,
+    entries: [{ direction: "out", amount: 150 }, { direction: "in", amount: 109 }],
+    tillCashAmounts: [100],
+  }) === 59);
+check("cash_entries alone (no till, no opening) still matches computeCashBalance",
+  computeDrawerBalance({ openingBalance: 0, entries: [{ direction: "in", amount: 40 }], tillCashAmounts: [] }) === 40);
+check("opening float is included",
+  computeDrawerBalance({ openingBalance: 25, entries: [], tillCashAmounts: [] }) === 25);
+check("null/empty inputs → 0 (no NaN)",
+  computeDrawerBalance({ openingBalance: null, entries: [], tillCashAmounts: [null, null] }) === 0);
+check("till-only shop (no manual entries) shows its drawer",
+  computeDrawerBalance({ openingBalance: 0, entries: [], tillCashAmounts: [200, 50] }) === 250);
+check("rounds to the cent",
+  computeDrawerBalance({ openingBalance: 0.1, entries: [{ direction: "in", amount: 0.2 }], tillCashAmounts: [] }) === 0.3);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

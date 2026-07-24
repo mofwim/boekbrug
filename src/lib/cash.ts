@@ -158,3 +158,24 @@ export function computeCashBalance(entries: CashMovement[]): number {
     0,
   );
 }
+
+/**
+ * The FULL drawer balance shown as "SALDO IN KASSA": the configured opening float (beginsaldo),
+ * PLUS the net of every cash_entries movement (computeCashBalance), PLUS the till's daily CASH
+ * takings (daily_turnover.cash_amount). Those takings are physical cash in the drawer but live in
+ * daily_turnover, NOT cash_entries — so summing cash_entries alone understates the drawer and can
+ * show a FALSE negative "meer uitgaven dan ontvangsten" alarm for every till shop.
+ *
+ * Every surface that displays the drawer balance — the Kas page AND the home snapshot — MUST use
+ * this one definition, or they diverge and one shows a wrong (often negative) saldo. Pure.
+ */
+export function computeDrawerBalance(input: {
+  openingBalance?: number | null;
+  entries: CashMovement[];
+  tillCashAmounts: Array<number | null>;
+}): number {
+  const opening = Number(input.openingBalance) || 0;
+  const entriesBalance = computeCashBalance(input.entries);
+  const tillCashIn = input.tillCashAmounts.reduce<number>((s, v) => s + (Number(v) || 0), 0);
+  return Math.round((opening + entriesBalance + tillCashIn) * 100) / 100;
+}
