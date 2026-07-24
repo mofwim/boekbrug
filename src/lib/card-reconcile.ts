@@ -152,13 +152,28 @@ export function netCommissionToBook(rawCommission: number, acquirerFeesAlreadyBo
   return Math.max(0, r2(rawCommission - Math.max(0, acquirerFeesAlreadyBooked)));
 }
 
-/** Reconcile a period of card days and aggregate the commission + exception counts. */
-export function reconcileCardPeriod(inputs: CardDayInput[]): CardPeriodResult {
+/**
+ * Reconcile a period of card days and aggregate the commission + exception counts.
+ *
+ * [CROSS-QUARTER] `isInWindow`, when given, marks which days belong to the REPORTING period. Days
+ * outside it are still reconciled and returned in `days[]` (so a buffer day can ANCHOR the
+ * re-attribution of a cross-boundary payout — see reconcileTriangle), but they contribute NOTHING to
+ * `totalCommission` / `grossMismatchDays` / `incompleteDays`. This is what lets a payout that posts a
+ * few days into the next quarter book its commission in the quarter that OWNS the takings day, exactly
+ * once, without the neighbouring quarter also counting it. With no predicate → byte-identical to
+ * before (every day contributes).
+ */
+export function reconcileCardPeriod(
+  inputs: CardDayInput[],
+  isInWindow?: (date: string) => boolean,
+): CardPeriodResult {
   const days = inputs.map(reconcileCardDay);
   let totalCommission = 0;
   let grossMismatchDays = 0;
   let incompleteDays = 0;
   for (const d of days) {
+    if (isInWindow && !isInWindow(d.date)) continue; // buffer anchor — reconciled, but not this period's figure
+
     // Book commission (Leg B = eftGross − bankNet) unless a MONEY-relevant break makes the day
     // suspect: a card_gross break (till ≠ terminal → the gross itself is uncertain) or an
     // implausible commission. A ledger_pin break must NOT withhold it — the bookkeeper's PIN

@@ -45,6 +45,13 @@ export interface TriangleInput {
   pinLedgerByDay?: Map<string, number>;
   /** Per takings-day NET card settlement from the bank (Σ pos_income keyed by DAT date). */
   bankNetByDay?: Map<string, number>;
+  // [CROSS-QUARTER] The REPORTING period. When set, days OUTSIDE [windowStart, windowEnd] are still
+  // built + reconciled (so a −5/+5 buffer day can ANCHOR the re-attribution of a payout that settles
+  // across the quarter boundary), but they contribute nothing to totalCommission / the exception
+  // counts — only the quarter that OWNS the takings day books its fee. Omit → every day counts (the
+  // reporting-only CSV callers pass nothing and are byte-identical).
+  windowStart?: string;
+  windowEnd?: string;
 }
 
 export interface TriangleResult extends CardPeriodResult {
@@ -143,7 +150,11 @@ export function reconcileTriangle(input: TriangleInput): TriangleResult {
     };
   });
 
-  const period = reconcileCardPeriod(inputs);
+  const inWindow =
+    input.windowStart != null && input.windowEnd != null
+      ? (d: string) => d >= input.windowStart! && d <= input.windowEnd!
+      : undefined;
+  const period = reconcileCardPeriod(inputs, inWindow);
   return { ...period, eftGrossByDay: eftByDay };
 }
 
