@@ -19,7 +19,6 @@ import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
 const R = { lg: 16, full: 999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
-const LONG_OPEN_DAYS = 30
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -59,16 +58,17 @@ function daysUntilDue(dueIso: string): number {
 }
 function dueLabel(dueIso: string): string {
   const d = daysUntilDue(dueIso)
-  // [OWNER-DECISION] Long-overdue shows the real day count (matches Vandaag);
-  // the calm amber accent for long-open rows stays (dueAccent unchanged).
+  // [OWNER-DECISION] Every overdue invoice shows the real day count, red —
+  // matches Vandaag (no calm 30+-day tier anywhere).
   if (d < 0) return Math.abs(d) === 1 ? '1 dag te laat' : `${Math.abs(d)} dagen te laat`
   if (d === 0) return 'Vervalt vandaag'
   if (d === 1) return 'Vervalt morgen'
   return `Vervalt over ${d} dagen`
 }
 function dueAccent(dueIso: string): string {
-  const d = daysUntilDue(dueIso)
-  return d < 0 && d > -LONG_OPEN_DAYS ? M3.error : M3.warning
+  // Red for ANY overdue row, amber for soon-due — a 30+-days-late invoice must
+  // never look CALMER than a 10-days-late one.
+  return daysUntilDue(dueIso) < 0 ? M3.error : M3.warning
 }
 function formatDate(iso: string | null): string | null {
   if (!iso) return null

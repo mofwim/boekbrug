@@ -821,9 +821,15 @@ async function fetchMessageAttachments(
   const msg = await res.json()
   const headers: Array<{ name: string; value: string }> = msg.payload?.headers || []
 
-  const subject = headers.find(h => h.name === 'Subject')?.value || ''
-  const from = headers.find(h => h.name === 'From')?.value || ''
-  const date = headers.find(h => h.name === 'Date')?.value || ''
+  // [NAN-DATE-GUARD] Case-INsensitive header lookup: RFC 5322 header names are
+  // case-insensitive and real senders do emit `date:`/`from:` in lowercase. The
+  // old exact match returned '' for those, which fed a NaN timestamp into the
+  // watermark walk (hang) and lost the sender fallback.
+  const headerVal = (name: string) =>
+    headers.find(h => h.name.toLowerCase() === name)?.value || ''
+  const subject = headerVal('subject')
+  const from = headerVal('from')
+  const date = headerVal('date')
 
   // [BOEK-011] Intermediate shape — explicit flag, no guessing by string length
   interface PendingAttachment {
@@ -3114,23 +3120,48 @@ export async function syncUserEmails(
       return true
     }
 
-    const sortedMsgs = [...messageIndex].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    // [NAN-DATE-GUARD] A message whose date didn't parse (missing/malformed
+    // Date header) can NEVER enter the walk: its timestamp is NaN, and since
+    // NaN === NaN is false the group loop below would not advance → the sync
+    // would spin forever (observed as a 300s timeout on every sync, and a hung
+    // cron run starving every mailbox after this one). Rule, conservative:
+    //  · every dateless message complete → they don't constrain the timeline;
+    //    walk the dated messages normally.
+    //  · any dateless message incomplete → HOLD the watermark entirely (the
+    //    same all-or-nothing rule an incomplete timestamp group gets), so its
+    //    attachments are retried next sync and nothing is lost.
+    const datelessMsgs = messageIndex.filter(
+      (m) => !Number.isFinite(new Date(m.date).getTime())
     )
+    const datelessIncomplete = datelessMsgs.some(
+      (m) => !messageComplete(m.messageId)
+    )
+    if (datelessMsgs.length > 0) {
+      console.log('[NAN-DATE-GUARD] Messages with unparseable dates in window', {
+        count: datelessMsgs.length,
+        incomplete: datelessIncomplete,
+      })
+    }
+
+    const sortedMsgs = messageIndex
+      .filter((m) => Number.isFinite(new Date(m.date).getTime()))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
     let candidateIso: string | null = null
-    let i = 0
-    while (i < sortedMsgs.length) {
-      const t = new Date(sortedMsgs[i].date).getTime()
-      let j = i
-      let groupComplete = true
-      while (j < sortedMsgs.length && new Date(sortedMsgs[j].date).getTime() === t) {
-        if (!messageComplete(sortedMsgs[j].messageId)) groupComplete = false
-        j++
+    if (!datelessIncomplete) {
+      let i = 0
+      while (i < sortedMsgs.length) {
+        const t = new Date(sortedMsgs[i].date).getTime()
+        let j = i
+        let groupComplete = true
+        while (j < sortedMsgs.length && new Date(sortedMsgs[j].date).getTime() === t) {
+          if (!messageComplete(sortedMsgs[j].messageId)) groupComplete = false
+          j++
+        }
+        if (!groupComplete) break
+        if (Number.isFinite(t)) candidateIso = new Date(t).toISOString()
+        i = j
       }
-      if (!groupComplete) break
-      if (Number.isFinite(t)) candidateIso = new Date(t).toISOString()
-      i = j
     }
 
     if (candidateIso) {

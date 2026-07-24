@@ -23,6 +23,11 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { needsDocument } from "@/lib/bank-identity";
 import { computeDrawerBalance } from "@/lib/cash";
+// [PAGINATION] PostgREST silently caps a single .select() at ~1000 rows. The
+// home totals promise EXACT stored sums ("a wrong number breaks trust"), and a
+// busy account's bank_transactions easily exceed 1000 — lastBankDate and the
+// undocumented count were computed over an arbitrary subset. Page everything.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 // Days-until-due window that counts as "needs attention now" (mirrors the Vandaag
 // page). Overdue (negative) always qualifies; so does anything due within 3 days.
@@ -76,12 +81,15 @@ export async function GET() {
 
   // 1. Te betalen — confirmed incoming invoices, not yet paid. 'processing'/'draft'
   //    are not yet confirmed by the owner, so excluded. Sum of stored totals = exact.
-  const { data: payRows } = await pipeline
+  const payRows = await fetchAllRows((from, to) => pipeline
     .from("invoices")
     .select(SELECT)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .in("status", ["received", "sent", "overdue"]);
+    .in("status", ["received", "sent", "overdue"])
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   const pay = (payRows ?? []) as InvoiceRow[];
   const toPay = {
@@ -92,12 +100,15 @@ export async function GET() {
 
   // 2. Te ontvangen — your OWN sent invoices still unpaid (money owed TO you).
   //    Sum of stored totals = exact. A POS-only shop simply has none of these.
-  const { data: recvRows } = await pipeline
+  const recvRows = await fetchAllRows((from, to) => pipeline
     .from("invoices")
     .select(SELECT)
     .eq("sender_id", user.id)
     .eq("direction", "outgoing")
-    .in("status", ["sent", "overdue"]);
+    .in("status", ["sent", "overdue"])
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   const recv = (recvRows ?? []) as InvoiceRow[];
   const toReceive = {
@@ -114,10 +125,13 @@ export async function GET() {
   //    COUNT of open tasks, never a money figure. (It also fixes the old heuristic,
   //    which wrongly treated a "betaalautomaat" card PURCHASE as takings and skipped
   //    it — a purchase does need a receipt.)
-  const { data: txRows } = await pipeline
+  const txRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
     .select("date, amount, status, invoice_id, counterpart_name, description, category")
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   const txs = txRows ?? [];
 
@@ -164,9 +178,18 @@ export async function GET() {
   // net + the till's daily CASH takings. The old version summed cash_entries ONLY — so a till shop's
   // home showed a wrong, often NEGATIVE saldo (a false "meer uitgaven dan ontvangsten" alarm) that
   // disagreed with the Kas page by exactly the till-cash + opening amount.
-  const [{ data: cashRows }, { data: tillRows }, { data: kasProf }] = await Promise.all([
-    pipeline.from("cash_entries").select("direction, amount").eq("user_id", user.id),
-    pipeline.from("daily_turnover").select("cash_amount").eq("user_id", user.id),
+  // [PAGINATION] cash_entries / daily_turnover also page past the ~1000-row cap
+  // (a cash-heavy shop exceeds it) — a truncated sum here showed a wrong drawer
+  // saldo that disagreed with the Kas page.
+  const [cashRows, tillRows, { data: kasProf }] = await Promise.all([
+    fetchAllRows((from, to) => pipeline
+      .from("cash_entries").select("direction, amount").eq("user_id", user.id)
+      .order("id", { ascending: true }).range(from, to)
+    ).catch(() => null),
+    fetchAllRows((from, to) => pipeline
+      .from("daily_turnover").select("cash_amount").eq("user_id", user.id)
+      .order("id", { ascending: true }).range(from, to)
+    ).catch(() => null),
     pipeline.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle(),
   ]);
   const cash = cashRows ?? [];

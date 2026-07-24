@@ -12,6 +12,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { quarterStartDate, quarterEndDate } from "@/lib/quarterly";
+// [PAGINATION] PostgREST silently caps a single .select() at ~1000 rows — a
+// full-year or all-clients export beyond that was truncated with NO warning,
+// so the accountant's CSV understated omzet/voorbelasting while the on-screen
+// figures (paginated) were right. Same fix class as kluis/closing-package.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import {
   type InvRow,
   type InvoiceExportRowFull,
@@ -128,16 +133,23 @@ for (const link of clientLinks) {
     // restricted to the VERIFIED set, then attribute each row to its owning client
     // by direction.
     const idList = clientIds.join(",");
-    const { data: rawData, error } = await supabase
-      .from("invoices")
-      .select(INVOICE_SELECT_WITH_OWNERS)
-      .or(`sender_id.in.(${idList}),receiver_id.in.(${idList})`)
-      .in("status", ["sent", "paid", "overdue", "received"])
-      .gte("invoice_date", start)
-      .lte("invoice_date", end)
-      .order("invoice_date", { ascending: true });
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    // [PAGINATION] fetchAllRows pages past the ~1000-row cap; stable id
+    // tiebreak keeps pages disjoint when many invoices share a date.
+    let rawData: unknown[];
+    try {
+      rawData = await fetchAllRows((from, to) => supabase
+        .from("invoices")
+        .select(INVOICE_SELECT_WITH_OWNERS)
+        .or(`sender_id.in.(${idList}),receiver_id.in.(${idList})`)
+        .in("status", ["sent", "paid", "overdue", "received"])
+        .gte("invoice_date", start)
+        .lte("invoice_date", end)
+        .order("invoice_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to));
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "export_failed" }, { status: 500 });
+    }
 
     // Safe cast via unknown — select constant guarantees the shape
     const data = (rawData as unknown) as InvRowWithOwners[];
@@ -194,29 +206,41 @@ for (const link of clientLinks) {
   // as well as OUTGOING sales (sender_id). The old `.eq("sender_id", targetId)`
   // fetched sales only, so every expense was absent from the CSV even though it
   // appears in the quarterly screen and the closing package.
-  let query = supabase
-    .from("invoices")
-    .select(INVOICE_SELECT)
-    .or(`sender_id.eq.${targetId},receiver_id.eq.${targetId}`)
-    .neq("status", "archived")
-    .gte("invoice_date", start)
-    .lte("invoice_date", end)
-    .order("invoice_date", { ascending: true });
-
   // [FIN-1] Status: honour an explicit filter for either role; otherwise default
   // to the VERIFIED set used by the quarterly screen + closing package
   // ({sent,paid,overdue,received}), so the CSV never leaks draft/processing/unclear
   // and matches the numbers the user was just looking at. (Before: the ZZP path
   // had NO status filter — leaking unverified rows — and the accountant path
   // defaulted to paid-only, disagreeing with the on-screen quarter.)
-  if (isValidStatus(statusFilter)) {
-    query = query.eq("status", statusFilter);
-  } else {
-    query = query.in("status", ["sent", "paid", "overdue", "received"]);
-  }
+  //
+  // [PAGINATION] Built as a per-page factory (a builder is single-use once
+  // awaited): fetchAllRows pages past the ~1000-row cap with a stable
+  // invoice_date+id order, so a full-year export can never silently truncate.
+  const makeQuery = (from: number, to: number) => {
+    let q = supabase
+      .from("invoices")
+      .select(INVOICE_SELECT)
+      .or(`sender_id.eq.${targetId},receiver_id.eq.${targetId}`)
+      .neq("status", "archived")
+      .gte("invoice_date", start)
+      .lte("invoice_date", end);
+    if (isValidStatus(statusFilter)) {
+      q = q.eq("status", statusFilter);
+    } else {
+      q = q.in("status", ["sent", "paid", "overdue", "received"]);
+    }
+    return q
+      .order("invoice_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
+  };
 
-  const { data: rawData, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  let rawData: unknown[];
+  try {
+    rawData = await fetchAllRows(makeQuery);
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "export_failed" }, { status: 500 });
+  }
 
   // Safe cast via unknown — select constant guarantees the shape
   const data = (rawData as unknown) as InvRow[];

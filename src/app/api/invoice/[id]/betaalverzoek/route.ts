@@ -22,7 +22,7 @@ export async function POST(
   // Owner-scoped fetch (RLS + explicit sender_id). Only the fields the logic needs.
   const { data: invoice } = await supabase
     .from('invoices')
-    .select('id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, client_name, pay_token, due_date')
+    .select('id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
     .eq('id', id)
     .eq('sender_id', user.id)
     .single()

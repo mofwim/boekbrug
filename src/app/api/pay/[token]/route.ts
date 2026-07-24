@@ -35,7 +35,7 @@ export async function GET(
 
   const { data: invoice } = await pipeline
     .from('invoices')
-    .select('id, sender_id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, client_name, pay_token, due_date')
+    .select('id, sender_id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
     .eq('pay_token', token)
     .maybeSingle()
   if (!invoice) return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
