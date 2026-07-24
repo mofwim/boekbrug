@@ -2882,6 +2882,10 @@ export async function syncUserEmails(
             // Raw gross only — never auto-book a total derived from the 'amount' fallback (that
             // path also bypasses the dedup gate, which keys on totalIncBtw).
             totalIncBtw: typeof classification.totalIncBtw === 'number' ? classification.totalIncBtw : null,
+            // [BTW-GATE] Pass the explicit rate so a genuine 0%-BTW email invoice can auto-book
+            // (the gate holds a zero-BTW invoice UNLESS btwRate === 0). Without it the email path
+            // sent undefined → every zero-BTW invoice was held for manual review, unlike intake.
+            btwRate: classification.btwRate ?? null,
             health: {
               total_ex_btw: classification.totalExBtw ?? 0,
               btw_amount: classification.btwAmount ?? 0,
