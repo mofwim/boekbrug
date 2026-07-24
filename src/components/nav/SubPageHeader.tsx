@@ -1,10 +1,15 @@
 // src/components/nav/SubPageHeader.tsx
-// [SUBNAV] A lightweight, DATA-FREE sticky top bar for /dashboard sub-pages that
-// would otherwise have NO header and NO way back. Deliberately NOT the full
-// DashboardHeader (which needs notifications / message counts / logout handlers,
-// and so only lives on the two home pages). This bar carries only navigation:
+// [SUBNAV] A lightweight, DATA-FREE sticky top bar for /dashboard sub-pages.
+// Deliberately NOT the full DashboardHeader (which needs notifications / message
+// counts / logout handlers, and so only lives on the two home pages). This bar
+// carries only navigation:
 //   [←  back]   BoekBrug (home)   ·   Page title
-// It is mounted once from the dashboard layout via DashboardChrome — never
+//
+// Back + home targets come from the app's SINGLE SOURCE OF TRUTH for navigation
+// (src/lib/navigation.ts) — exactly like BackLink ("the one and only back
+// button"). The back arrow links to the canonical PARENT (never router.back() /
+// history), so it is structurally loop-safe and identical to every other Terug
+// in the app. Mounted once from the dashboard layout via DashboardChrome — never
 // per-page — so the whole app shares one consistent sub-page header.
 //
 // Mobile / PWA: the bar honours env(safe-area-inset-top) so on a notched device
@@ -13,27 +18,23 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { getParentPath, getHomePath, type Role } from "@/lib/navigation";
 
 export default function SubPageHeader({
   title,
-  homeHref,
+  role,
 }: {
   title: string;
-  /** Role-aware home target (ZZP → /dashboard, accountant → /dashboard/accountant). */
-  homeHref: string;
+  /** Viewer role — resolves role-dependent parents/home. Null → treated as zzper. */
+  role: Role | null;
 }) {
-  const router = useRouter();
+  const pathname = usePathname();
+  const search = useSearchParams();
 
-  const onBack = () => {
-    // Prefer the real previous page; fall back to home when the page was opened
-    // directly (deep link / fresh tab) and there is no in-app history to pop.
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-    } else {
-      router.push(homeHref);
-    }
-  };
+  const navRole: Role = role === "accountant" ? "accountant" : "zzper";
+  const backHref = getParentPath(pathname ?? "/dashboard", navRole, search);
+  const homeHref = getHomePath(navRole);
 
   return (
     <header
@@ -54,9 +55,9 @@ export default function SubPageHeader({
         fontFamily: "'Roboto', sans-serif",
       }}
     >
-      {/* Back */}
-      <button
-        onClick={onBack}
+      {/* Back → canonical parent (single source of truth, loop-safe) */}
+      <Link
+        href={backHref}
         aria-label="Terug"
         style={{
           background: "none",
@@ -71,10 +72,10 @@ export default function SubPageHeader({
           transition: "background 0.1s",
         }}
         onMouseEnter={(e) =>
-          ((e.currentTarget as HTMLButtonElement).style.backgroundColor = "#F1F3F4")
+          ((e.currentTarget as HTMLAnchorElement).style.backgroundColor = "#F1F3F4")
         }
         onMouseLeave={(e) =>
-          ((e.currentTarget as HTMLButtonElement).style.backgroundColor = "transparent")
+          ((e.currentTarget as HTMLAnchorElement).style.backgroundColor = "transparent")
         }
       >
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -86,7 +87,7 @@ export default function SubPageHeader({
             strokeLinejoin="round"
           />
         </svg>
-      </button>
+      </Link>
 
       {/* Brand / home */}
       <Link

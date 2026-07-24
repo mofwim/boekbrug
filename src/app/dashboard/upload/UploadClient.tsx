@@ -13,7 +13,6 @@
 
 import { useCallback, useRef, useState } from 'react'
 import Link from 'next/link'
-import { BackLink } from '@/components/ui/BackLink'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
@@ -179,8 +178,6 @@ export default function UploadClient() {
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <BackLink style={{ color: M3.primary }} />
-
         <div style={{ margin: '16px 0 8px' }}>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: 0 }}>Uploaden</h1>
           <p style={{ fontSize: 13.5, color: M3.neutral, marginTop: 4, lineHeight: 1.5 }}>

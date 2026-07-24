@@ -6,7 +6,6 @@
 // state exactly what each depends on. It is loudly a CONCEPT — never a filing.
 
 import { useEffect, useState } from 'react'
-import { BackLink } from '@/components/ui/BackLink'
 import { useSearchParams } from 'next/navigation'
 import { quarterFromParams } from '@/lib/quarter'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
@@ -51,7 +50,6 @@ export default function AangifteClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <BackLink style={{ color: M3.primary }} />
         <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 8px' }}>
           Concept BTW-aangifte {data ? `— ${data.quarterLabel}` : ''}
         </h1>
