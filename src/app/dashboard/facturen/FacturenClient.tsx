@@ -814,17 +814,18 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                           onClick={e => {
                             e.stopPropagation()
                             if (processingId === inv.id) return
-                            const isVoldaan = inv.status === 'voldaan' || isPaid
+                            // 'voldaan' is UI-only, never a DB status — a paid
+                            // creditnota IS the "voldaan" state (status 'paid').
                             setPayCtx({
                               id: inv.id,
                               number: inv.invoice_number ?? '',
-                              newStatus: isVoldaan ? 'sent' : 'paid',
+                              newStatus: isPaid ? 'sent' : 'paid',
                               invoiceType: 'creditnota',
                             })
                           }}
-                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: (inv.status === 'voldaan' || isPaid) ? M3.successContainer : '#FEF7E0', color: (inv.status === 'voldaan' || isPaid) ? '#137333' : '#EA8600' }}>
+                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: isPaid ? M3.successContainer : '#FEF7E0', color: isPaid ? '#137333' : '#EA8600' }}>
                           {processingId === inv.id ? '...'
-                            : (inv.status === 'voldaan' || isPaid) ? '✓ Voldaan'
+                            : isPaid ? '✓ Voldaan'
                             : 'Voldaan!'}
                         </button>
                       )}

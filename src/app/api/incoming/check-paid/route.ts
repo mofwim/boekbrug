@@ -72,6 +72,13 @@ export async function POST(req: NextRequest) {
   // Anchor on vendor_iban when present (precise); else fall back to client_name
   // (vendor) via case-insensitive match. Amount is always required so we never
   // warn on amount alone or vendor alone.
+  // Recency via payment_date OR marked_paid_at: a `.gte('payment_date', …)`
+  // alone (SQL: NULL >= x → NULL) silently excluded a paid twin whose
+  // payment_date is NULL — e.g. one auto-booked from a dateless bank line
+  // (bank-auto-confirm writes payment_date: null when the tx has no date) or a
+  // legacy row. Those are exactly the twins the warning exists to catch. Fall
+  // back to marked_paid_at (the confirmation timestamp, always set on a paid
+  // row) so recency still bounds the match.
   let query = supabase
     .from('invoices')
     .select('id, invoice_number, client_name, total_inc_btw, payment_date, marked_paid_at, vendor_iban')
@@ -80,7 +87,7 @@ export async function POST(req: NextRequest) {
     .eq('status', 'paid')
     .eq('total_inc_btw', amount)
     .neq('id', target.id)
-    .gte('payment_date', sinceIso)
+    .or(`payment_date.gte.${sinceIso},and(payment_date.is.null,marked_paid_at.gte.${sinceIso})`)
     .limit(1)
 
   if (target.vendor_iban) {

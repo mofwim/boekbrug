@@ -91,9 +91,11 @@ export default async function VandaagPage() {
     .eq("direction", "incoming")
     .eq("status", "received")
     .is("due_date", null)
-    // Exclude incoming credit notes (negative total): they REDUCE what's owed, so "controleer of
-    // betaal" would mislabel them. Mirrors the InvoiceCard isCredit rule.
-    .gte("total_inc_btw", 0);
+    // Exclude incoming credit notes (NEGATIVE total): they REDUCE what's owed, so "controleer of
+    // betaal" would mislabel them. Mirrors the InvoiceCard isCredit rule. A NULL total is NOT a
+    // creditnota — it's a real dateless bill whose amount wasn't read — so keep it counted; a
+    // plain `.gte(total,0)` dropped it (SQL: NULL >= 0 → NULL) and hid a genuine payable.
+    .or("total_inc_btw.gte.0,total_inc_btw.is.null");
 
   const payable = (payableRaw ?? []) as unknown as VandaagInvoice[];
   const remind = (remindRaw ?? []) as unknown as VandaagInvoice[];

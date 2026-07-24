@@ -2736,7 +2736,7 @@ export default function IncomingInvoicesClient({
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#8e8e93" }}>
             <div style={{ fontSize: 44, marginBottom: 14 }}>🔍</div>
             <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#1c1c1e" }}>Geen facturen gevonden</div>
-            <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : "genegeerd"}.</div>
+            <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : tab === "confirmed" ? "bevestigd" : "genegeerd"}.</div>
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>
