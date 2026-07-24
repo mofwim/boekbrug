@@ -265,7 +265,7 @@ export async function POST(req: NextRequest) {
 
   const { data: me } = await supabase
     .from("profiles")
-    .select("company_name, full_name")
+    .select("company_name, full_name, kvk_number, btw_number, iban")
     .eq("id", user.id)
     .maybeSingle()
   const receiverName = me?.company_name || me?.full_name || null
@@ -279,7 +279,16 @@ export async function POST(req: NextRequest) {
   // Nothing is stored for the image/PDF path until AFTER this call, so returning here files nothing.
   let v: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>
   try {
-    v = await verifyInvoiceFromPdf(base64, effectiveType, file.name, receiverName, { throwOnTransient: true })
+    // [RECEIVER-IDENTITY] Pass our own KVK/BTW/IBAN (as email-sync/upload/reimport do) so the
+    // extractor drops any vendor_kvk/btw/iban equal to the owner's own — otherwise a camera/file
+    // upload could store the OWNER'S OWN IBAN as vendor_iban on a self-referencing document, which
+    // later feeds the IBAN+amount bank auto-match tier.
+    v = await verifyInvoiceFromPdf(base64, effectiveType, file.name, receiverName, {
+      throwOnTransient: true,
+      receiverKvk: me?.kvk_number || null,
+      receiverBtw: me?.btw_number || null,
+      receiverIban: me?.iban || null,
+    })
   } catch (aiErr) {
     console.error("[AI-CONFIG-SAFE] intake AI read failed — filing nothing, asking for retry", aiErr)
     return NextResponse.json(
