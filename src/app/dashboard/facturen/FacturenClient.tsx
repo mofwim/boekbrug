@@ -4,9 +4,7 @@
 // [BOEK-029] Client component — profile always passed from server wrapper
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
-import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useParentPath } from '@/lib/navigation-hooks'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -101,8 +99,6 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
   const { byInvoice: recon, confirmMatch } = useInvoiceReconciliation()
-  // [BOEK-029] Navigation strategy — parent is always /dashboard for ZZP
-  const parentHref = useParentPath(profile.role ?? 'zzper')
 
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [sort, setSort]                 = useState<SortOrder>('desc')
@@ -417,17 +413,16 @@ export default function FacturenClient({ profile }: { profile: any }) {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
 
-      {/* ── Top App Bar ── */}
+      {/* ── Filters toolbar ── [SUBNAV] back + "Mijn facturen" title now come from
+          the shared sub-page header (see DashboardChrome); this block keeps the
+          page's own controls (sort/refresh/search/filter) and sticks directly
+          BELOW the shared bar via top: calc(56px + safe-area). */}
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px', position: 'sticky', top: 0, zIndex: 50,
+        padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Link href={parentHref} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT, textDecoration: 'none' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-          </Link>
-          <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center' }}>Mijn facturen</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
           <div style={{ display: 'flex', gap: 6 }}>
             {/* Sort */}
             <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
