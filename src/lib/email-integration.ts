@@ -2225,8 +2225,27 @@ export async function syncUserEmails(
   const transientOutage = classifiedTotal >= 2 && classifiedFailed === classifiedTotal
   const outageActive = configOutageAny || transientOutage
 
+  // [AUTO-ESCALATE] Optional stronger-model retry for a read that FAILS the arithmetic gate (usually
+  // a mis-read of a crowded multi-rate invoice — horeca statiegeld, blended BTW — not a genuinely
+  // broken one). Default OFF: with AUTO_ESCALATE_MODEL unset this whole feature is a no-op, so the
+  // sync stays pure-Haiku at zero extra cost, identical to before. Set AUTO_ESCALATE_MODEL to a valid
+  // id (e.g. claude-sonnet-5) to re-read only the gate-failures on that model; AUTO_ESCALATE_MAX caps
+  // how many per sync so a batch of truly-broken invoices can't blow the function time/cost budget.
+  const ESCALATE_MODEL = (process.env.AUTO_ESCALATE_MODEL || '').trim()
+  const MAX_ESCALATIONS = (() => {
+    const raw = Number(process.env.AUTO_ESCALATE_MAX)
+    if (Number.isFinite(raw) && raw >= 0 && raw <= 40) return Math.round(raw)
+    return 10
+  })()
+  let escalationsUsed = 0
+  let escalated = 0
+
   // PHASE 2 — save loop, sequential by design (dedup correctness)
-  for (const { attachment, classification, classifyFailed, configOutage, transientError } of classified) {
+  for (const __item of classified) {
+    // `classification` is a `let` so [AUTO-ESCALATE] can swap in a corrected stronger-model read
+    // before the insert; everything downstream then uses the better read transparently.
+    const { attachment, classifyFailed, configOutage, transientError } = __item
+    let classification = __item.classification
     const wmKey = `${attachment.messageId}:${attachment.filename}`
     // An outage-hold when: a config outage (always), or a transient error DURING a batch-wide outage.
     // A lone transient failure (some files succeeded) is NOT an outage → it takes the poison-pill path.
@@ -2774,9 +2793,42 @@ export async function syncUserEmails(
       // [BRIDGE-CREDITNOTA-SIGN] A creditnota takes the sign-inverted branch
       // (amounts must be NEGATIVE + consistent); normal invoices keep the
       // exact original gate.
-      const verdict = evaluateArithmetic(classification, {
+      let verdict = evaluateArithmetic(classification, {
         isCreditNote: classification.isCreditNote === true,
       })
+
+      // [AUTO-ESCALATE] The cheap read failed the arithmetic gate. If enabled, re-read THIS file on
+      // the stronger model (raw PDF layout) and adopt it ONLY if the better read now passes — so a
+      // Haiku mis-read (impossible BTW rate, excl+BTW≠totaal) is corrected at import instead of
+      // sitting in the verify queue. Best-effort: any failure keeps the original held read.
+      if (!verdict.ok && ESCALATE_MODEL && escalationsUsed < MAX_ESCALATIONS) {
+        escalationsUsed++
+        try {
+          const better = await classifyAttachment(
+            attachment.data,
+            attachment.mimeType,
+            attachment.filename,
+            receiverName,
+            { model: ESCALATE_MODEL, preferRawPdf: true, receiverKvk, receiverBtw, receiverIban },
+          )
+          if (better.isInvoice) {
+            const betterVerdict = evaluateArithmetic(better, {
+              isCreditNote: better.isCreditNote === true,
+            })
+            if (betterVerdict.ok) {
+              console.log('[AUTO-ESCALATE] stronger re-read fixed a held invoice', {
+                filename: attachment.filename,
+                model: ESCALATE_MODEL,
+              })
+              classification = better
+              verdict = betterVerdict
+              escalated++
+            }
+          }
+        } catch (e) {
+          console.error('[AUTO-ESCALATE] re-read failed (non-fatal)', e)
+        }
+      }
 
       // Merge, don't overwrite: keep the AI's fieldConfidence, add _safecore
       // only when held. When there's nothing at all, keep null (parity with the
@@ -3021,6 +3073,10 @@ export async function syncUserEmails(
         errors++
       }
     }
+  }
+
+  if (escalationsUsed > 0) {
+    console.log('[AUTO-ESCALATE] summary', { model: ESCALATE_MODEL, tried: escalationsUsed, fixed: escalated })
   }
 
   // [POISON-PILL] Clear the failure counter for every attachment that completed this run (saved,
