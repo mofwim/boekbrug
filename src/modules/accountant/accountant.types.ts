@@ -112,3 +112,10 @@ export interface QuarterRange {
   start: string   // YYYY-MM-DD — inclusive
   end: string     // YYYY-MM-DD — inclusive
 }
+
+// [WERKBOARD] The per-client BTW filing agenda (AangifteAgenda / AangifteAgendaItem)
+// was merged into the unified Aangifte & status board, which renders each client's
+// RICH readiness (score + status from /api/readiness) instead of the lightweight
+// facts these types carried. The pure deadline helpers in accountant.service
+// (getAangifteDeadline / getActiveAangifte / daysUntil) live on — the board's
+// deadline hero uses them — but these list types are no longer needed.

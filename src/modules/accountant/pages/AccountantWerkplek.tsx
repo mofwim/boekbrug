@@ -11,6 +11,15 @@ import { useRouter } from 'next/navigation'
 
 const TOOLS = [
   {
+    // [WERKBOARD] Daily driver — the BTW deadline, every client's klaar-status and
+    // score, and a one-tap reminder, on one board. First: the morning screen.
+    icon: '🗓️',
+    label: 'Aangifte & status',
+    sub: 'BTW-deadline, klaar-status en herinneren per klant',
+    href: '/dashboard/accountant/agenda',
+    isNew: true,
+  },
+  {
     icon: '👥',
     label: 'Klanten beheren',
     sub: 'Toevoegen, koppelen, verwijderen',
