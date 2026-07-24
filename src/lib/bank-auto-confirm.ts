@@ -1,10 +1,11 @@
 // src/lib/bank-auto-confirm.ts
 // [BANK-AUTO-CONFIRM-CORE] The server-side safe-set pass, extracted so the circle closes from
 // ANY entry point — the /bank page, an invoice verify, a bank IMPORT, and a background cron —
-// not only when a browser happens to sit on /dashboard/bank. It books ONLY isSafeAutoConfirm
-// matches (invoice number printed in the statement AND amount to the cent, single invoice) —
-// the same 0.97 identity the UI would pre-select — so moving it server-side changes WHERE it
-// runs, never WHAT it books. Fully reversible (owner can unlink) and audited.
+// not only when a browser happens to sit on /dashboard/bank. It books the two auto tiers:
+// 'certain' (invoice number printed in the statement OR supplier IBAN, + amount to the cent —
+// booked silently) and 'amount_only' (exact amount + strong counterpart name + date proximity,
+// single clear winner — booked but flagged "controleer"; blocked under kasstelsel), plus the
+// provably-exact multi-invoice batch ties. Fully reversible (owner can unlink) and audited.
 //
 // payClient vs pipeline: the invoice→'paid' write goes through `payClient`. A ROUTE passes its
 // SESSION client, so the DB 'verwerkt' guard trigger fires with a real auth.uid(); a CRON or a
@@ -118,17 +119,43 @@ export async function runBankAutoConfirm(args: {
     // because the pay date it would write decides the BTW quarter. 'certain' still books.
     if (tier === "amount_only" && ownerScheme === "kas") continue;
 
+    // [BANK-HIDDEN-COMPETITOR] The matcher's "single clear winner" is judged against the VISIBLE
+    // candidate pool — but a same-amount invoice sitting in the verify queue ('processing', not yet
+    // human-verified) or mid-instalment (amount_paid > 0) is excluded from that pool, so its absence
+    // MANUFACTURES false uniqueness. Concrete: a monthly €89 incasso arrives while this month's
+    // invoice is still unverified → last month's open invoice is the "only" candidate and books,
+    // while the money paid THIS month's bill. When such a hidden same-amount competitor exists, an
+    // 'amount_only' match is not genuinely unambiguous — leave it a human one-tap. 'certain'
+    // (printed number / IBAN) is supplier-doc identity and stays immune to this.
+    if (tier === "amount_only") {
+      const txAmt = m.transaction.amount ?? 0;
+      const hiddenCompetitor = allInvoices.some(
+        (i) =>
+          i.id !== invoiceId &&
+          (i.status === "processing" || Math.max(0, Number(i.amount_paid ?? 0)) > 0) &&
+          typeof i.total_inc_btw === "number" &&
+          Math.abs(Math.abs(txAmt) - Math.abs(i.total_inc_btw)) <= 0.01,
+      );
+      if (hiddenCompetitor) continue;
+    }
+
     // Defense-in-depth: the same invariants the confirm route enforces (incl. accountant
     // 'verwerkt' exclusion) — authoritative when payClient is service_role (no DB trigger).
     if (!isEligible(m.transaction, inv)) continue;
 
     // (a) invoice → paid. .select() detects a concurrent pay (0 rows) → skip, never re-own.
     //     [BANK-PAYDATE] the real settlement date is the bank line's date (cross-quarter safe).
+    //     [B4-WRITE-GUARD] Re-assert the accountant 'verwerkt' exclusion IN the WHERE clause, not
+    //     only in the (possibly minutes-stale) isEligible read above. From cron/import/intake the
+    //     payClient is service-role — no DB trigger with auth.uid() — so without this, an invoice
+    //     the accountant locked in the read-to-write window was still flipped to 'paid'. The .or
+    //     keeps NULL accountant_status matchable (NEQ alone would exclude NULL rows in SQL).
     const { data: payData, error: payErr } = await payClient
       .from("invoices")
       .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: m.transaction.date || null })
       .eq("id", invoiceId)
       .neq("status", "paid")
+      .or("accountant_status.is.null,accountant_status.neq.verwerkt")
       .select("id");
     if (payErr) continue; // verwerkt/RLS/other — leave for the human, don't fail the batch
     if (!payData || payData.length === 0) continue; // concurrently paid — not ours to link
@@ -151,11 +178,20 @@ export async function runBankAutoConfirm(args: {
       .select("id");
 
     if (linkErr || !linkData || linkData.length === 0) {
-      await payClient
+      // [ROLLBACK-LOUD] The rollback itself can fail (transient DB error) — that leaves an invoice
+      // 'paid' with NO linked bank line, the exact state this design promises never exists. It
+      // cannot be silent: log it with ids so it is findable and fixable (the owner can also undo
+      // via pay-toggle). A double fault is rare; an invisible double fault is a lost truth.
+      const { error: rbErr } = await payClient
         .from("invoices")
         .update({ status: inv.status, payment_method: null, marked_paid_at: null, payment_date: null })
         .eq("id", invoiceId)
         .eq("status", "paid");
+      if (rbErr) {
+        console.error("[BANK-AUTO-CONFIRM] pay rollback FAILED — invoice may be paid with no bank link", {
+          userId, invoiceId, txId, error: rbErr.message,
+        });
+      }
       continue;
     }
 

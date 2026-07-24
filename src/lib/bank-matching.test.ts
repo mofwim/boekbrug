@@ -629,6 +629,42 @@ console.log("\n— [BANK-AMOUNT-ONLY] a WEAK (look-alike) name must NOT auto-boo
     [inv({ invoice_number: "DV-1", total_inc_btw: 640, client_name: "De Vries Bouw", invoice_date: "2026-03-06" })],
   );
   check("strong name (same supplier) still auto-books amount_only", autoConfirmTier(strong.matches[0]) === "amount_only");
+
+  // [BANK-AMOUNT-ONLY-DATE] name+amount WITHOUT date proximity must NOT auto-book: an unrelated
+  // same-surname credit arriving MONTHS after the invoice was the wrong-paid trap. Outside the
+  // 45-day window → tier null (stays a human one-tap).
+  const farDate = matchTransactions(
+    [tx({ amount: 150, date: "2026-08-20", counterpartName: "J. Jansen", reference: null })],
+    [inv({ invoice_number: "JC-7", total_inc_btw: 150, client_name: "Jansen Consultancy", invoice_date: "2026-02-01", due_date: "2026-02-15" })],
+  );
+  check("amount+name but months-late (no date proximity) → tier null (human)",
+    autoConfirmTier(farDate.matches[0]) === null);
+  // 'certain' (printed reference) is document identity — date distance never blocks it.
+  const farRef = matchTransactions(
+    [tx({ amount: 150, date: "2026-08-20", reference: "JC-1007" })],
+    [inv({ invoice_number: "JC-1007", total_inc_btw: 150, client_name: "Jansen Consultancy", invoice_date: "2026-02-01" })],
+  );
+  check("printed reference months later still 'certain' (late payments are real)",
+    autoConfirmTier(farRef.matches[0]) === "certain");
+}
+
+console.log("\n— [TRUST-MATCH-YEAR] a bare-year invoice number never reference-matches —");
+{
+  // Sequential numbering can reach literally "2026"; the year in ANY description ("Huur juli
+  // 2026") is a whole-token hit → with a coincidental cent-exact amount that booked SILENTLY as
+  // 'certain'. A bare year is not identity → no reference match (amount/name/date still list it).
+  const year = matchTransactions(
+    [tx({ amount: 850, date: "2026-07-01", description: "Huur juli 2026", counterpartName: "Vastgoed X" })],
+    [inv({ invoice_number: "2026", total_inc_btw: 850, client_name: "Andere Leverancier", invoice_date: "2026-06-25" })],
+  );
+  check("needle '2026' in 'Huur juli 2026' → NOT a reference match (no silent certain)",
+    autoConfirmTier(year.matches[0]) !== "certain");
+  // A real number that merely CONTAINS a year ("2026014") still matches its printed form.
+  const containsYear = matchTransactions(
+    [tx({ amount: 850, reference: "factuur 2026014" })],
+    [inv({ invoice_number: "2026-014", total_inc_btw: 850 })],
+  );
+  check("a number containing a year ('2026-014') still reference-matches", autoConfirmTier(containsYear.matches[0]) === "certain");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

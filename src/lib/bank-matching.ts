@@ -159,6 +159,13 @@ export function referenceMatches(
   if (!invoiceNumber) return false;
   const needle = normalizeRef(invoiceNumber);
   if (needle.length < 4) return false; // too short → unsafe
+  // [TRUST-MATCH-YEAR] A needle that IS a bare calendar year can whole-token match the year in any
+  // free-text description ("Huur juli 2026") — the parser already drops bare years from extracted
+  // references (bank-parser), but the description scan below had no such guard, so an owner whose
+  // sequential numbering reaches "2026" could get a SILENT 'certain' booking on a coincidental
+  // cent-exact amount. A year is not identity; refuse it here (the amount/name/date signals still
+  // list the pair as a human choice — fail-safe, never fail-silent).
+  if (/^20[2-3]\d$/.test(needle)) return false;
   // [TRUST-MATCH] A plain substring test let a short PURELY-NUMERIC invoice number
   // match as a fragment of a LONGER number: invoice "2050" matched reference
   // "26302050" and auto-pre-selected the WRONG invoice for a one-click confirm. For a
@@ -540,7 +547,15 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
     // name (0.5–0.8: a shared token like a common first word + "B.V.") is enough to LIST the
     // candidate but too weak to mark an invoice paid with no human — a same-amount coincidence from
     // a different supplier could win. Below the bar → null (stays a human one-tap, still pre-selected).
-    return (m.best.nameSim ?? 0) >= HIGH_NAME_SIM ? "amount_only" : null;
+    //
+    // [BANK-AMOUNT-ONLY-DATE] AND require date proximity (the 'date' signal: within the 45-day
+    // window of the invoice/due date). Without it, name+amount alone booked UNBOUNDED into the
+    // future: a €150 credit from an unrelated "J. Jansen" (single shared surname token → sim ≥ 0.9)
+    // arriving MONTHS after an open €150 invoice to "Jansen Consultancy" auto-marked it paid — the
+    // real debtor never chased. A payment plausibly settling an invoice arrives near it; one that
+    // doesn't is exactly the coincidence this tier must not book. Fail-safe: outside the window the
+    // pair stays a pre-selected human one-tap.
+    return (m.best.nameSim ?? 0) >= HIGH_NAME_SIM && sig.includes("date") ? "amount_only" : null;
   }
   return null; // amount + date only, no identity → too weak, stays human
 }
