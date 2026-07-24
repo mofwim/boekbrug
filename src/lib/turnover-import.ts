@@ -179,7 +179,28 @@ export function normalizeTurnoverSheet(matrix: Cell[][]): NormalizeResult {
     dataRow += 1;
 
     const gross = num(row[cols.gross]);
-    if (gross === 0) continue; // an empty day — nothing to import
+    if (gross === 0) {
+      // [TURNOVER-BLANK-GROSS] A blank "Omzet incl." is normally an empty day — skip it. But if the
+      // row still carries PIN/cash/other takings OR per-rate bases, it's a REAL sales day with a
+      // MISSING gross total: silently continuing would drop that day's omzet + BTW (a hidden revenue
+      // understatement). We still don't import it — a fabricated gross would guess the BTW split — but
+      // we WARN so the human sees the day, fixes the sheet, and re-imports, instead of losing it.
+      const payActivity =
+        (cols.pin >= 0 ? num(row[cols.pin]) : 0) +
+        (cols.cash >= 0 ? num(row[cols.cash]) : 0) +
+        sumCols(row, cols.other);
+      const rateActivity =
+        sumCols(row, cols.otherRate0) + sumCols(row, cols.otherRate9) + sumCols(row, cols.otherRate21) +
+        sumCols(row, cols.htRate0) + sumCols(row, cols.htRate9) + sumCols(row, cols.htRate21);
+      if (payActivity > 0 || rateActivity > 0) {
+        warnings.push({
+          row: dataRow,
+          code: "gross_missing_with_payments",
+          message: `Dag ${date}: er staan betalingen of BTW-bedragen, maar "Omzet incl." is leeg — deze dag is NIET geïmporteerd. Vul de omzet aan en importeer opnieuw.`,
+        });
+      }
+      continue; // never import a day with an unknown gross (the BTW-split would be a guess)
+    }
     const netTotal = cols.net >= 0 ? num(row[cols.net]) : 0;
 
     const hasHT = cols.htRate0.length + cols.htRate9.length + cols.htRate21.length > 0;
