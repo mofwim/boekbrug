@@ -6,7 +6,7 @@
 // hardest on the "must keep" cases, especially vendors whose NAME contains
 // chrome words like 'logo' / 'icon' / 'banner' (the bug in the first draft,
 // where substring matching would have dropped their invoices).
-import { isLikelyInvoiceCandidate } from "./src/lib/email-integration";
+import { isLikelyInvoiceCandidate } from "./email-integration";
 
 let passed = 0;
 let failed = 0;
