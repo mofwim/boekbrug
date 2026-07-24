@@ -26,9 +26,11 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     // Invoices settled in cash, BOTH directions: an incoming (purchase) paid in cash (drawer ↓)
     // AND an outgoing (sales) invoice paid in cash (drawer ↑). Owner-scoped via the RLS .or so a
     // cash sale finally reaches the drawer instead of being invisible. Both stay P&L-neutral.
+    // [CASH-PARTIAL] amount_paid = the portion the BANK already settled (instalments). The cash
+    // settlement books only the REMAINDER — see settlementGross.
     const { data: invRows, error: invErr } = await supabase
       .from("invoices")
-      .select("id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name")
+      .select("id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid")
       .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
       .eq("status", "paid")
       .eq("payment_method", "kas");

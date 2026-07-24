@@ -67,6 +67,17 @@ console.log("\n— sign independence: a positive (credit) batch reconciles too �
   check("bankAmount = 750", r.bankAmount === 750);
 }
 
+console.log("\n— [BATCH-SIGN] a creditnota slot REDUCES the batch total (net, not Σ|…|) —");
+{
+  // Invoice €300 + creditnota −€20 → the supplier debits the NET €280. The old Σ|amount| showed
+  // "ties" against a −€320 debit (300+20) — a green light on a €40 over-charge.
+  const net = reconcileBatch([slot("F-1", 300), slot("CN-1", -20)], -280);
+  check("net €280 against a −€280 debit → ties", net.status === "ties");
+  const overcharge = reconcileBatch([slot("F-1", 300), slot("CN-1", -20)], -320);
+  check("the −€320 over-charge is a MISMATCH (was a false tie)", overcharge.status === "mismatch");
+  check("diff reports the €40 gap", Math.abs(overcharge.diff - -40) < 0.005);
+}
+
 console.log("\n— a corrupt (non-finite) amount is treated as unmatched, not a tie —");
 {
   const r = reconcileBatch([slot("a", 900), slot("b", Number.NaN)], -900);

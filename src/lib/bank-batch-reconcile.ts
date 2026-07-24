@@ -64,7 +64,7 @@ export interface BatchReconcile {
   slotCount: number;
   /** Slots whose invoice is in the system with a usable (finite) amount. */
   matchedCount: number;
-  /** Sum of matched invoice gross totals, absolute euros. */
+  /** NET sum of matched invoice totals (a creditnota is negative), absolute euros. */
   total: number;
   /** The bank transaction amount, absolute euros. */
   bankAmount: number;
@@ -98,7 +98,12 @@ export function reconcileBatch(
   );
   const matchedCount = known.length;
   const allMatched = slots.length > 0 && matchedCount === slots.length;
-  const total = known.reduce((sum, s) => sum + Math.abs(s.amount as number), 0);
+  // [BATCH-SIGN] NET sum, not Σ|amount|. A creditnota slot carries a NEGATIVE total and REDUCES
+  // what the supplier debits: invoice €300 + creditnota −€20 against a −€280 debit is the real
+  // tie. The old magnitude sum showed "ties" for that batch against a −€320 debit (300+|−20|=320)
+  // — a green light on a €40 over-charge. All-positive batches are unchanged (net == Σ|…|). The
+  // magnitude of the net is compared, so credit(+) and debit(−) batches both reconcile.
+  const total = Math.abs(known.reduce((sum, s) => sum + (s.amount as number), 0));
   const anyConfirmed = slots.some((s) => s.isConfirmed);
 
   let status: BatchStatus;

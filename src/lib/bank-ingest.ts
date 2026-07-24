@@ -14,6 +14,7 @@
 //     (lines the parser could not read) travel back so the caller can surface them.
 
 import type { PipelineClient } from "./supabase-pipeline";
+import { fetchAllRows } from "./supabase-paginate";
 import { parseBankFile } from "./bank-parser";
 import { looksLikeSpreadsheetBinary, detectSheetKind } from "./detect-file";
 import { sheetBytesToMatrix } from "./xlsx-adapter";
@@ -106,13 +107,23 @@ export async function importBankStatement(args: {
     let existing: ExistingTxKey[] = [];
     const { max } = dateRange(transactions);
     if (min && max) {
-      const { data } = await pipeline
-        .from("bank_transactions")
-        .select("date, amount, description, counterpart_name, reference")
-        .eq("user_id", userId)
-        .gte("date", min)
-        .lte("date", max);
-      existing = (data ?? []) as ExistingTxKey[];
+      // [PAGINATE] MUST fetch ALL rows in the window, not PostgREST's silent ~1000-row first page.
+      // This SELECT is the dedup gate: a busy shop with >1000 transactions in the statement's date
+      // range got a TRUNCATED "existing" set on re-upload, so hundreds of already-stored lines found
+      // no fingerprint and were inserted a SECOND time — double-counting omzet/kosten everywhere
+      // downstream while the import honestly reported "N skipped". Every other consumer of this
+      // table already paginates (supabase-paginate.ts documents this exact trap); now the gate does.
+      const rows = await fetchAllRows((from, to) =>
+        pipeline
+          .from("bank_transactions")
+          .select("date, amount, description, counterpart_name, reference")
+          .eq("user_id", userId)
+          .gte("date", min)
+          .lte("date", max)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      existing = rows as ExistingTxKey[];
     }
     const dd = dedupTransactions(transactions, existing);
     skipped = dd.skipped;

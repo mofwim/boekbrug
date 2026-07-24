@@ -43,20 +43,32 @@ export async function GET(req: NextRequest) {
   // Only iterate users who actually have something to reconcile — pending bank lines (auto-
   // confirm candidates), paid-in-cash incoming invoices (cash settle), or existing betaling
   // entries (orphan cleanup). Keeps the run bounded to the users where work exists.
-  const [pendingTx, kasInv, betaling] = await Promise.all([
-    fetchAllRows<{ user_id: string | null }>((from, to) =>
-      pipeline.from("bank_transactions").select("user_id").eq("status", "pending")
-        .order("id", { ascending: true }).range(from, to)),
-    // BOTH directions of cash-paid invoices — a cash SALE (sender_id) must settle into the
-    // drawer too, not only a cash purchase (receiver_id).
-    fetchAllRows<{ sender_id: string | null; receiver_id: string | null }>((from, to) =>
-      pipeline.from("invoices").select("sender_id, receiver_id")
-        .eq("status", "paid").eq("payment_method", "kas")
-        .order("id", { ascending: true }).range(from, to)),
-    fetchAllRows<{ user_id: string | null }>((from, to) =>
-      pipeline.from("cash_entries").select("user_id").eq("category", "betaling")
-        .order("id", { ascending: true }).range(from, to)),
-  ]).catch(() => [[], [], []] as [{ user_id: string | null }[], { sender_id: string | null; receiver_id: string | null }[], { user_id: string | null }[]]);
+  // [CRON-HONEST] A total discovery failure must NOT read as a green run. The old
+  // `.catch(() => [[], [], []])` turned a DB outage into `{ok:true, users:0}` — a silent full
+  // no-op that status-code monitoring reads as healthy, hour after hour. Fail loudly (500) so
+  // alerting fires and the scheduler retries; the whole reconcile is idempotent, so a retry is safe.
+  let pendingTx: { user_id: string | null }[];
+  let kasInv: { sender_id: string | null; receiver_id: string | null }[];
+  let betaling: { user_id: string | null }[];
+  try {
+    [pendingTx, kasInv, betaling] = await Promise.all([
+      fetchAllRows<{ user_id: string | null }>((from, to) =>
+        pipeline.from("bank_transactions").select("user_id").eq("status", "pending")
+          .order("id", { ascending: true }).range(from, to)),
+      // BOTH directions of cash-paid invoices — a cash SALE (sender_id) must settle into the
+      // drawer too, not only a cash purchase (receiver_id).
+      fetchAllRows<{ sender_id: string | null; receiver_id: string | null }>((from, to) =>
+        pipeline.from("invoices").select("sender_id, receiver_id")
+          .eq("status", "paid").eq("payment_method", "kas")
+          .order("id", { ascending: true }).range(from, to)),
+      fetchAllRows<{ user_id: string | null }>((from, to) =>
+        pipeline.from("cash_entries").select("user_id").eq("category", "betaling")
+          .order("id", { ascending: true }).range(from, to)),
+    ]);
+  } catch (e) {
+    console.error("[CRON-RECONCILE] user discovery failed — aborting run (will retry next schedule)", e);
+    return NextResponse.json({ ok: false, error: "user discovery failed" }, { status: 500 });
+  }
 
   const userIds = new Set<string>();
   for (const r of pendingTx) if (r.user_id) userIds.add(r.user_id);
@@ -103,5 +115,8 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, users: userIds.size, usersProcessed, bookedTotal, failed, truncated });
+  // [CRON-HONEST] ok reflects the truth: per-user failures are isolated (the run itself completed,
+  // so no 500 → no noisy hourly retries for one flaky user), but ok:false makes them visible to
+  // any body-reading monitor instead of an always-green flag.
+  return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated });
 }
