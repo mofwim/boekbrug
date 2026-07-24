@@ -186,6 +186,18 @@ export async function POST(request: NextRequest) {
         )
       }
 
+      // [FACTUUR-A] Art. 35a sub e — the DATE OF ISSUE is a mandatory invoice element. Without this
+      // an undated factuur could be issued (number minted + e-mailed), which is legally invalid AND
+      // date-driven downstream (a dateless invoice is dropped from the quarter's date-range → invisible
+      // in /result and /aangifte). Enforce a real ISO date BEFORE minting the number so the check never
+      // burns a sequence number. (The UI already requires it; this is the server backstop.)
+      if (!invoice.invoice_date || !/^\d{4}-\d{2}-\d{2}/.test(String(invoice.invoice_date))) {
+        return NextResponse.json(
+          { error: 'Factuurdatum ontbreekt — verplicht op een factuur (Art. 35a Wet OB 1968)' },
+          { status: 400 }
+        )
+      }
+
       // [SEC-SELLER] Art. 35a sub a/b — the SELLER's own name/address, BTW-id and
       // KvK are mandatory on a legal invoice. They were never enforced, so an
       // invoice could be issued (number consumed, e-mailed) with these printed as
