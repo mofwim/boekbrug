@@ -3,26 +3,30 @@
 // src/app/dashboard/layout.tsx, before {children}, so any dashboard page can
 // inherit a consistent top bar without drawing its own.
 //
-// Same philosophy as GlobalSearchLauncher: a simple, deterministic exact-path
-// list — no DOM probing. A route appears here once its page has been migrated
-// ONTO the shared bar (its own in-flow BackLink / bespoke top bar removed), so
-// there is never a double header. Pages not yet migrated (or that keep their own
-// full DashboardHeader — the two homes) simply aren't in the map and render
-// nothing here.
+// Title resolution, in priority order:
+//   1. A dynamic config a page registered via useSubPageHeader() — used for
+//      routes whose title/actions aren't a static path→label mapping
+//      (/dashboard/invoice/[id] → "Factuur 263323", a client name, …).
+//   2. STATIC_TITLES — exact path → fixed label, for pages already migrated onto
+//      the shared bar. Added in the same change that removes a page's old chrome.
+//   3. PATTERN_TITLES — a base label for a dynamic route TEMPLATE, so the bar
+//      shows instantly (e.g. "Factuur") before the page's effect fills in the
+//      concrete title. Prevents an empty-bar flash on first paint.
+// If none match, render nothing (pages that keep their own full DashboardHeader —
+// the two homes — or their own Drive header — bestanden).
 //
-// Matching is EXACT-path to avoid prefix collisions (e.g. "/dashboard/incoming"
-// could get a bar while its child "/dashboard/incoming/manage" — with its own
-// chrome — would not).
+// Exact-path matching for STATIC_TITLES avoids prefix collisions (e.g.
+// "/dashboard/bank" vs its child "/dashboard/bank/categoriseren").
 
 "use client";
 
 import { usePathname } from "next/navigation";
 import SubPageHeader from "./SubPageHeader";
+import { useSubPageHeaderConfig } from "./SubPageHeaderContext";
 import type { Role } from "@/lib/navigation";
 
-// Exact route → page title. A page is added here in the same change that removes
-// its old bespoke chrome, so the shared bar replaces it (never stacks on it).
-const SUBPAGE_TITLES = new Map<string, string>([
+// Exact route → fixed page title (static, migrated pages).
+const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/vandaag", "Vandaag"],
   ["/dashboard/brug", "Brug"],
   ["/dashboard/kas", "Kas"],
@@ -45,12 +49,27 @@ const SUBPAGE_TITLES = new Map<string, string>([
   ["/dashboard/accountant/werkplek", "Mijn werkplek"],
 ]);
 
+// Base label for a dynamic route TEMPLATE — shown until the page registers a
+// concrete title via useSubPageHeader(). Ordered; first match wins. A template
+// is added here in the same change that removes that page's bespoke bar, so the
+// shared bar never stacks on an existing one. (Empty until the first dynamic
+// page is migrated.)
+const PATTERN_TITLES: ReadonlyArray<[RegExp, string]> = [];
+
+function patternTitle(pathname: string): string | undefined {
+  for (const [re, label] of PATTERN_TITLES) {
+    if (re.test(pathname)) return label;
+  }
+  return undefined;
+}
+
 export default function DashboardChrome({ role }: { role: Role | null }) {
   const pathname = usePathname();
+  const ctx = useSubPageHeaderConfig();
   if (!pathname) return null;
 
-  const title = SUBPAGE_TITLES.get(pathname);
+  const title = ctx?.title ?? STATIC_TITLES.get(pathname) ?? patternTitle(pathname);
   if (!title) return null;
 
-  return <SubPageHeader title={title} role={role} />;
+  return <SubPageHeader title={title} role={role} actions={ctx?.actions} />;
 }

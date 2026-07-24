@@ -20,14 +20,18 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { getParentPath, getHomePath, type Role } from "@/lib/navigation";
+import type { ReactNode } from "react";
 
 export default function SubPageHeader({
   title,
   role,
+  actions,
 }: {
   title: string;
   /** Viewer role — resolves role-dependent parents/home. Null → treated as zzper. */
   role: Role | null;
+  /** Optional right-aligned node (page-provided menu/action), via SubPageHeaderContext. */
+  actions?: ReactNode;
 }) {
   const pathname = usePathname();
   const search = useSearchParams();
@@ -120,10 +124,18 @@ export default function SubPageHeader({
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
           minWidth: 0,
+          flex: 1,
         }}
       >
         {title}
       </span>
+
+      {/* Optional page-provided actions, right-aligned */}
+      {actions ? (
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}>
+          {actions}
+        </div>
+      ) : null}
     </header>
   );
 }
