@@ -20,6 +20,7 @@ import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { summarizeClosingPackage } from "@/lib/closing-package";
 import { createNotification } from "@/lib/notifications";
 import { previousQuarter, buildQuarterCloseNotice } from "@/lib/quarter-close";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -49,12 +50,18 @@ export async function GET(req: NextRequest) {
   // Every non-accountant profile is a potential owner. Once-per-quarter, so a full scan is fine.
   // `.neq("role","accountant")` alone drops NULL-role profiles (SQL: NULL <> 'accountant' → NULL,
   // not TRUE), silently excluding legacy/edge owners from the nudge. Include them explicitly.
-  const { data: profiles, error: profErr } = await pipeline
-    .from("profiles")
-    .select("id, role")
-    .or("role.is.null,role.neq.accountant");
-  if (profErr) {
-    return NextResponse.json({ error: "kon profielen niet laden" }, { status: 500 });
+  // [PAGINATION] fetchAllRows past the silent ~1000-row cap: beyond it the tail
+  // of owners (and their accountants) never received the once-per-quarter nudge.
+  let profiles: { id: string; role: string | null }[];
+  try {
+    profiles = await fetchAllRows((from, to) => pipeline
+      .from("profiles")
+      .select("id, role")
+      .or("role.is.null,role.neq.accountant")
+      .order("id", { ascending: true })
+      .range(from, to));
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "kon profielen niet laden" }, { status: 500 });
   }
   const ownerIds = [...new Set((profiles ?? []).map((p) => p.id).filter((x): x is string => !!x))];
 
