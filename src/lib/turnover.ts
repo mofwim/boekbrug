@@ -116,6 +116,28 @@ export function sumPosSettlements(
   return { total, count, matchedLines };
 }
 
+// [SETTLE-LAG] The ONE shared settlement-lag window (days) for card/PIN acquirer payouts. A payout
+// posts T+0..T+5 after the takings day (a long weekend + a bank holiday can stretch a batch to five
+// days), never before. TWO engines must use the SAME window or a payout's omzet and its commission
+// land on different days:
+//   · financial-result.matchedCoveredDay looks back this many days to SUPPRESS the till's already-
+//     counted omzet at the real takings day (no double-count).
+//   · triangle re-attributes a DAT-less payout back this many days to that SAME takings day so the
+//     acquirer COMMISSION (gross − net) is booked there (not silently dropped).
+// If these two drift apart, a T+4/T+5 DAT-less payout gets its omzet suppressed on day D but its fee
+// orphaned on the payout day → commission lost → resultaat overstated. Keep them locked here.
+export const SETTLE_LAG_DAYS = 5;
+
+/**
+ * The takings DAY a card/PIN bank line belongs to: the settlement's embedded "DAT." date when the
+ * terminal printed it, else the bank BOOKING date as a fallback (which may itself be null when the
+ * line carries neither). Shared by triangle + financial-result so the DAT-else-booking rule can
+ * never drift between them. Pure.
+ */
+export function posTakingsDay(description: string | null, bookingDate: string | null): string | null {
+  return parsePosSettlement(description).date ?? bookingDate;
+}
+
 export interface ReconcileInput {
   turnover: DailyTurnover;
   /** Σ bank pos_income amounts whose parsed DAT == turnover_date (positive euros). */
