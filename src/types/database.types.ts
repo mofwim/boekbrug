@@ -1279,6 +1279,13 @@ export type Database = {
             referencedRelation: "invoices"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "invoice_reminders_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       messages: {

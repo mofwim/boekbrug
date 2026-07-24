@@ -206,14 +206,28 @@ export default function SettingsPage() {
         kor_active: korActive,
         vat_scheme: vatScheme,
         vat_scheme_since: since,
-        reminders_enabled: remindersEnabled,
-        reminder_offsets: finalOffsets,
       })
       .eq('id', user.id)
 
     if (error) {
       setErrorProfile('Opslaan mislukt — probeer opnieuw')
     } else {
+      // [REMINDERS] Persist the reminder preferences in a SEPARATE, best-effort
+      // update — never bundled with the core save above. Reason: if this deploys
+      // before the invoice_reminders migration is applied, those two columns don't
+      // exist yet; bundling them would make the WHOLE profile save fail ("column
+      // does not exist") and brick Instellingen for every user. Split out, a
+      // pre-migration miss is a silent no-op here while name/KVK/BTW still save.
+      // Post-migration it simply succeeds. Order of deploy vs. migration no longer
+      // matters.
+      const { error: remErr } = await supabase
+        .from('profiles')
+        .update({ reminders_enabled: remindersEnabled, reminder_offsets: finalOffsets })
+        .eq('id', user.id)
+      if (remErr) {
+        console.warn('[REMINDERS] reminder-preferences save skipped (migration applied?)', remErr.message)
+      }
+
       // Reflect the normalized values back into the form fields
       setBtw(normalizeBtw(btw))
       setIban(normalizeIban(iban))

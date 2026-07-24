@@ -65,7 +65,7 @@ COMMENT ON COLUMN public.invoices.reminders_paused IS
 CREATE TABLE IF NOT EXISTS public.invoice_reminders (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   invoice_id  uuid NOT NULL REFERENCES public.invoices(id) ON DELETE CASCADE,
-  user_id     uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id     uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   day_offset  integer NOT NULL,            -- which tier (e.g. 14 or 30)
   sent_at     timestamptz NOT NULL DEFAULT now(),
   email_to    text,                        -- recipient at send time (audit)
