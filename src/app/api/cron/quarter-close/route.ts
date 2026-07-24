@@ -21,7 +21,6 @@ import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { summarizeClosingPackage } from "@/lib/closing-package";
 import { createNotification } from "@/lib/notifications";
 import { previousQuarter, buildQuarterCloseNotice } from "@/lib/quarter-close";
-import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
