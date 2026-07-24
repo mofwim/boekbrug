@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { BackLink } from '@/components/ui/BackLink'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { createClient } from '@/lib/supabase'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
@@ -34,6 +34,8 @@ export default function KlantDetailClient({ client, invoices, totals }: {
   client: Client; invoices: KlantInvoice[]; totals: { billed: number; open: number; count: number }
 }) {
   const router = useRouter()
+  // [SUBNAV] Push the client's name as the shared sub-page header title.
+  useSubPageHeader({ title: client.name }, [client.name])
   const [notes, setNotes] = useState(client.notes ?? '')
   const [savedNote, setSavedNote] = useState<string>(client.notes ?? '')
   const [savingNote, setSavingNote] = useState(false)
@@ -65,8 +67,6 @@ export default function KlantDetailClient({ client, invoices, totals }: {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <BackLink label="Klanten" style={{ color: M3.primary }} />
-
         <header style={{ margin: '16px 0 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div>
             <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 2px' }}>{client.name}</h1>

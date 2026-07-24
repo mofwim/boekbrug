@@ -52,9 +52,11 @@ const STATIC_TITLES = new Map<string, string>([
 // Base label for a dynamic route TEMPLATE — shown until the page registers a
 // concrete title via useSubPageHeader(). Ordered; first match wins. A template
 // is added here in the same change that removes that page's bespoke bar, so the
-// shared bar never stacks on an existing one. (Empty until the first dynamic
-// page is migrated.)
-const PATTERN_TITLES: ReadonlyArray<[RegExp, string]> = [];
+// shared bar never stacks on an existing one.
+const PATTERN_TITLES: ReadonlyArray<[RegExp, string]> = [
+  // ZZP client detail — the page registers the client name via useSubPageHeader.
+  [/^\/dashboard\/klanten\/[^/]+$/, "Klant"],
+];
 
 function patternTitle(pathname: string): string | undefined {
   for (const [re, label] of PATTERN_TITLES) {
