@@ -173,5 +173,34 @@ console.log("\n— [SETTLE-LAG] a takings day that ALREADY has its own payout is
   check("commission = (1000−990)+(500−495) = 15", near(res.totalCommission, 15));
 }
 
+console.log("\n— [CROSS-QUARTER] a boundary payout books commission in EXACTLY the quarter that owns the takings day —");
+{
+  // Takings 06-29 (Q2, till+eft 1000); DAT-less net payout 980 booked 07-02 (Q3). Both quarters are
+  // computed over the SAME buffered neighbourhood (allTurnover ±5) so both re-attribute 07-02 → 06-29;
+  // only the quarter whose window contains 06-29 books the €20 fee.
+  const anchors = [till("2026-06-29", 1000)];
+  const eftAt = [eft("2026-06-29", 1000)];
+  const payout = new Map([["2026-07-02", 980]]);
+  const q2 = reconcileTriangle({ turnover: anchors, eftSettlements: eftAt, bankNetByDay: payout, windowStart: "2026-04-01", windowEnd: "2026-06-30" });
+  const q3 = reconcileTriangle({ turnover: anchors, eftSettlements: eftAt, bankNetByDay: payout, windowStart: "2026-07-01", windowEnd: "2026-09-30" });
+  check("Q2 (owns 06-29) books the €20 commission", near(q2.totalCommission, 20));
+  check("Q3 books €0 for the same payout (no double-count)", q3.totalCommission === 0);
+  check("06-29 is still present as an anchor in Q3 (re-attribution target), just not counted",
+    q3.days.some((d) => d.date === "2026-06-29"));
+}
+
+console.log("\n— [CROSS-QUARTER] an ambiguous next-quarter payout is NOT stolen by the prior quarter —");
+{
+  // A DAT-less payout 07-02 whose real takings day is 07-01 (Q3). With the early-Q3 day present as an
+  // anchor in BOTH runs, both pull to the nearest card day 07-01 → only Q3 books it; Q2 must book €0.
+  const anchors = [till("2026-06-29", 1000), till("2026-07-01", 500)];
+  const eftAt = [eft("2026-06-29", 1000), eft("2026-07-01", 500)];
+  const payout = new Map([["2026-07-02", 490]]); // belongs to 07-01
+  const q2 = reconcileTriangle({ turnover: anchors, eftSettlements: eftAt, bankNetByDay: payout, windowStart: "2026-04-01", windowEnd: "2026-06-30" });
+  const q3 = reconcileTriangle({ turnover: anchors, eftSettlements: eftAt, bankNetByDay: payout, windowStart: "2026-07-01", windowEnd: "2026-09-30" });
+  check("Q2 does NOT steal the 07-01 payout (books €0)", q2.totalCommission === 0);
+  check("Q3 (owns 07-01) books the €10 commission", near(q3.totalCommission, 10));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
