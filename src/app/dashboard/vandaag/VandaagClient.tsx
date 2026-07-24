@@ -15,7 +15,6 @@
 //      of the ambiguous "Bekijk / betaal".
 //   4. "Negeren" reads as "verbergen voor vandaag" (hide), not "delete".
 //   5. Section header shows a count ("1 factuur") for a sense of control.
-//   6. Long-overdue items are grouped separately from soon-due ones.
 //
 // Payment state is `status` ONLY (never payment_date/marked_paid_at). Direction-
 // aware navigation: incoming → IncomingManageClient (?focus=), outgoing → invoice
