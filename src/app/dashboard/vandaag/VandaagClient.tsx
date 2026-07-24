@@ -6,9 +6,10 @@
 //
 // [TODAY-UX-CLARITY] Clarity pass — the card now answers the two questions the
 // owner actually has ("why is this in front of me?" / "what do I do?"):
-//   1. Calmer urgency: a long-overdue invoice reads "Al lang open" (calm amber),
-//      NOT a scary red "59 dagen te laat" — a routine supplier bill is not a
-//      catastrophe, and it is often already paid-but-unrecorded.
+//   1. Urgency: every overdue invoice shows the real day count ("59 dagen te
+//      laat" — owner decision; the earlier calm "Al lang open" label hid the
+//      number). Long-open rows keep the calm amber COLOR and their own group,
+//      so old routine bills still don't scream red.
 //   2. "Al betaald?" context action — jumps to the manage surface to confirm
 //      (Vandaag stays READ-ONLY; the write happens where the logic already lives).
 //   3. One clear primary verb per direction ("Betalen" / "Herinnering") instead
@@ -45,8 +46,9 @@ const M3 = {
   hover: "#F1F3F4",
 };
 
-// Long-overdue threshold (days). Past this, we drop the alarming day-counter in
-// favour of a calm "al lang open" — see clarity rationale above.
+// Long-overdue threshold (days). Past this, the row moves to the "Al langer
+// open" group with the calm amber accent (the label itself always shows the
+// real day count — see clarity rationale above).
 const LONG_OPEN_DAYS = 30;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -114,10 +116,12 @@ function urgencyOf(dueIso: string): Urgency {
   return "soon";
 }
 
-// Human Dutch due-date status. Long-overdue is deliberately calm (no big number).
+// Human Dutch due-date status. [OWNER-DECISION] Long-overdue now shows the real
+// day count ("59 dagen te laat") instead of the calm "Al lang open" — the owner
+// wants the concrete number. The calm-amber COLOR and the "Al langer open"
+// grouping stay (urgencyOf/accentOf unchanged).
 function dueLabel(dueIso: string): string {
   const d = daysUntilDue(dueIso);
-  if (d <= -LONG_OPEN_DAYS) return "Al lang open";
   if (d < 0) {
     const late = Math.abs(d);
     return late === 1 ? "1 dag te laat" : `${late} dagen te laat`;

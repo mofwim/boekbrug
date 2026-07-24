@@ -59,7 +59,8 @@ function daysUntilDue(dueIso: string): number {
 }
 function dueLabel(dueIso: string): string {
   const d = daysUntilDue(dueIso)
-  if (d <= -LONG_OPEN_DAYS) return 'Al lang open'
+  // [OWNER-DECISION] Long-overdue shows the real day count (matches Vandaag);
+  // the calm amber accent for long-open rows stays (dueAccent unchanged).
   if (d < 0) return Math.abs(d) === 1 ? '1 dag te laat' : `${Math.abs(d)} dagen te laat`
   if (d === 0) return 'Vervalt vandaag'
   if (d === 1) return 'Vervalt morgen'
