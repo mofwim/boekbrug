@@ -28,6 +28,10 @@ import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
 import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
+// [SORT] Same ordering module as Inkoopfacturen (IncomingManageClient) — one
+// implementation, no drifting copies. Vandaag offers the subset of keys whose
+// columns it actually selects (no created_at / payment_date here).
+import { sortRows, SORTS, type SortKey } from "@/lib/invoice-sort";
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -129,6 +133,15 @@ function accentOf(dueIso: string): string {
   return urgencyOf(dueIso) === "overdue" ? M3.error : M3.warning;
 }
 
+// [SORT] Keys Vandaag can honour: the page's SELECT has no created_at and its
+// rows are unpaid (payment_date is meaningless), so 'added_desc'/'paydate_desc'
+// are excluded. Default 'due_asc' = the page's historical order (oldest due
+// first), so nothing changes until the owner picks another order.
+const VANDAAG_SORT_KEYS: SortKey[] = [
+  "due_asc", "invdate_desc", "invdate_asc", "amount_desc", "amount_asc", "vendor_asc",
+];
+const VANDAAG_SORTS = SORTS.filter((s) => VANDAAG_SORT_KEYS.includes(s.id));
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function VandaagClient({ payable, remind, loadFailed, toVerifyCount = 0, datelessPayableCount = 0 }: Props) {
@@ -166,13 +179,18 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   const confirmPaid = (id: string) =>
     router.push(`/dashboard/incoming/manage?focus=${id}&action=pay`);
 
+  // [SORT] Owner-chosen order, applied inside each list (and within the
+  // active / "al langer open" groups, which preserve incoming order).
+  const [sortBy, setSortBy] = useState<SortKey>("due_asc");
+  const [showSortMenu, setShowSortMenu] = useState(false);
+
   const visiblePayable = useMemo(
-    () => filterWindow(payable, dismissed),
-    [payable, dismissed]
+    () => filterWindow(payable, dismissed, sortBy),
+    [payable, dismissed, sortBy]
   );
   const visibleRemind = useMemo(
-    () => filterWindow(remind, dismissed),
-    [remind, dismissed]
+    () => filterWindow(remind, dismissed, sortBy),
+    [remind, dismissed, sortBy]
   );
 
   const nothingToDo =
@@ -193,8 +211,9 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
     (vAmountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === vDigits);
   const searching = rawV.length > 0;
   const canSearch = payable.length > 0 || remind.length > 0;
-  const displayPayable = searching ? payable.filter((i) => !dismissed.has(i.id) && matchV(i)) : visiblePayable;
-  const displayRemind = searching ? remind.filter((i) => !dismissed.has(i.id) && matchV(i)) : visibleRemind;
+  // [SORT] Search results honour the chosen order too.
+  const displayPayable = searching ? sortRows(payable.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visiblePayable;
+  const displayRemind = searching ? sortRows(remind.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visibleRemind;
   const noneShown = displayPayable.length === 0 && displayRemind.length === 0;
 
   return (
@@ -294,6 +313,44 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         </div>
       )}
 
+      {/* [SORT] Sorteren op — same options/module as Inkoopfacturen. Inline SVG
+          icon (never the icon font, which renders as raw text when it fails to
+          load). Default 'due_asc' keeps the page's historical order. */}
+      {!loadFailed && canSearch && (
+        <div style={{ position: "relative", marginBottom: 16 }}>
+          <button
+            onClick={() => setShowSortMenu((p) => !p)}
+            title="Sorteren"
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, width: "100%", padding: "10px 14px", background: "#F1F3F4", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: "inherit" }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#49454F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M7 4v13M7 17l-3-3M7 17l3-3" /><path d="M17 20V7M17 7l-3 3M17 7l3 3" />
+              </svg>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#49454F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {VANDAAG_SORTS.find((s) => s.id === sortBy)?.label ?? "Sorteren"}
+              </span>
+            </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#49454F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: showSortMenu ? "rotate(180deg)" : "none" }}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          {showSortMenu && (
+            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100, background: "#fff", borderRadius: 12, marginTop: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+              {VANDAAG_SORTS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => { setSortBy(s.id); setShowSortMenu(false); }}
+                  style={{ display: "block", width: "100%", padding: "12px 16px", textAlign: "left", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? "#D3E3FD" : "#fff", color: sortBy === s.id ? "#041E49" : M3.onSurface, borderBottom: "0.5px solid #F1F3F4" }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {loadFailed ? (
         <LoadError onRetry={() => router.refresh()} />
       ) : searching ? (
@@ -336,19 +393,19 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
 }
 
 // Keep only invoices due within 3 days (or overdue) and not session-dismissed,
-// oldest-due first. Defensive null-guard on due_date (page.tsx excludes nulls).
+// in the owner-chosen order (default: oldest-due first — the page's historical
+// behaviour). Defensive null-guard on due_date (page.tsx excludes nulls).
 function filterWindow(
   invoices: VandaagInvoice[],
-  dismissed: Set<string>
+  dismissed: Set<string>,
+  sortBy: SortKey
 ): VandaagInvoice[] {
-  return invoices
-    .filter((inv) => inv.due_date && !dismissed.has(inv.id))
-    .filter((inv) => daysUntilDue(inv.due_date as string) <= 3)
-    .sort(
-      (a, b) =>
-        dayNumberFromIso(a.due_date as string) -
-        dayNumberFromIso(b.due_date as string)
-    );
+  return sortRows(
+    invoices
+      .filter((inv) => inv.due_date && !dismissed.has(inv.id))
+      .filter((inv) => daysUntilDue(inv.due_date as string) <= 3),
+    sortBy
+  );
 }
 
 // ─── List section ─────────────────────────────────────────────────────────────
