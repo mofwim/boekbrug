@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
-import { BackLink } from '@/components/ui/BackLink'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 
 // Skeleton للرسائل أثناء التحميل
 function MessageSkeleton({ isMe }: { isMe: boolean }) {
@@ -131,24 +131,16 @@ export default function ConversationPage() {
 
   const otherName = otherProfile?.company_name || otherProfile?.full_name || '...'
 
-  return (
-    <div className="min-h-screen bg-[#f8f9fa] flex flex-col">
+  // [SUBNAV] Conversation partner's name as the shared sub-page header title
+  // (back is provided there too). The chat fills exactly the space below the
+  // shared bar (height below), so the composer stays pinned on-screen.
+  useSubPageHeader({ title: otherName }, [otherName])
 
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <BackLink className="text-gray-400 hover:text-gray-600 text-sm" style={{ color: 'inherit' }} />
-          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-sm flex-shrink-0">
-            {otherName[0]?.toUpperCase() || '?'}
-          </div>
-          <div>
-            <p className="text-sm font-bold text-gray-900">{otherName}</p>
-            {otherProfile?.email && (
-              <p className="text-xs text-gray-400">{otherProfile.email}</p>
-            )}
-          </div>
-        </div>
-      </div>
+  return (
+    <div
+      className="bg-[#f8f9fa] flex flex-col"
+      style={{ height: 'calc(100dvh - 56px - env(safe-area-inset-top))' }}
+    >
 
       {/* Berichten */}
       <div className="flex-1 max-w-3xl w-full mx-auto px-6 py-4 space-y-3 overflow-y-auto">
