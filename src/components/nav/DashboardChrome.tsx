@@ -37,6 +37,12 @@ const SUBPAGE_TITLES = new Map<string, string>([
   ["/dashboard/waarheid", "Waarheid"],
   ["/dashboard/bank", "Bank"],
   ["/dashboard/bank/categoriseren", "Wat is dit?"],
+  ["/dashboard/settings", "Instellingen"],
+  ["/dashboard/messages", "Berichten"],
+  ["/dashboard/werkplek", "Mijn werkplek"],
+  ["/dashboard/clients/invite", "Klant toevoegen"],
+  ["/dashboard/clients/beheer", "Klanten beheren"],
+  ["/dashboard/accountant/werkplek", "Mijn werkplek"],
 ]);
 
 export default function DashboardChrome({ role }: { role: Role | null }) {

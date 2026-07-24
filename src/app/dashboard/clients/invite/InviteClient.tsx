@@ -7,7 +7,6 @@
 
 import { useState } from 'react'
 import { ErrorMessage } from '@/components/ui/Feedback'
-import { BackLink } from '@/components/ui/BackLink'
 
 export default function InviteClient() {
   const [clientEmail, setClientEmail] = useState('')
@@ -40,14 +39,6 @@ export default function InviteClient() {
 
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
-
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto flex items-center gap-3">
-          <BackLink className="text-gray-400 hover:text-gray-600 text-sm" style={{ color: 'inherit' }} />
-          <h1 className="text-lg font-bold text-gray-900">Klant toevoegen</h1>
-        </div>
-      </div>
 
       <div className="max-w-2xl mx-auto px-6 py-6">
         <div className="bg-white rounded-2xl p-5 shadow-sm space-y-4">

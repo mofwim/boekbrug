@@ -32,24 +32,6 @@ export default function WerkplekClient() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
 
-      {/* Sticky header — Material You top app bar */}
-      <div style={{
-        background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
-        position: 'sticky', top: 0, zIndex: 50,
-      }}>
-        {/* [CONTROL] deterministic parent (/dashboard) via replace — the old
-            router.back() was history-dependent and could loop (nav contract). */}
-        <button onClick={() => router.replace('/dashboard')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-          Terug
-        </button>
-        <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center', marginRight: 64 }}>
-          Mijn werkplek
-        </h1>
-      </div>
-
       <main style={{ maxWidth: 480, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {ITEMS.map(item => (
