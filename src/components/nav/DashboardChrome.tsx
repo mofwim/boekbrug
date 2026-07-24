@@ -51,6 +51,8 @@ const STATIC_TITLES = new Map<string, string>([
   // search/filter/sort controls as a secondary sticky toolbar offset below it.
   ["/dashboard/facturen", "Mijn facturen"],
   ["/dashboard/klanten", "Mijn klanten"],
+  ["/dashboard/incoming/manage", "Inkoopfacturen"],
+  ["/dashboard/incoming", "Inkomend"],
 ]);
 
 // Base label for a dynamic route TEMPLATE — shown until the page registers a

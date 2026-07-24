@@ -15,7 +15,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
-import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
@@ -2134,10 +2133,8 @@ export default function IncomingInvoicesClient({
   userRole,
 }: Props) {
   // [BOEK-011] Navigation paths — resolved through the central navigation helper
-  // homeHref   = role-based home (Logo target — Rule 1 of Navigation Strategy v1.0)
-  // parentHref = canonical parent of the current page (Terug target — Rule 2)
-  const homeHref = useHomePath(userRole);
-  const parentHref = useParentPath(userRole);
+  // [SUBNAV] Logo (home) + Terug (canonical parent) now come from the shared
+  // sub-page header (DashboardChrome), so this page no longer computes them.
 
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
@@ -2550,54 +2547,6 @@ export default function IncomingInvoicesClient({
           - Logo + Terug are separate concerns: Logo = escape hatch from anywhere,
             Terug = explicit parent (/dashboard for /dashboard/incoming) */}
       <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
-        {/* Logo row */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <Link
-            href={homeHref}
-            style={{
-              fontSize: 22,
-              fontWeight: 700,
-              color: "#1a73e8",
-              textDecoration: "none",
-              letterSpacing: -0.3,
-            }}
-          >
-            BoekBrug
-          </Link>
-        </div>
-
-        {/* [BOEK-011] Terug — canonical parent via useParentPath.
-            For /dashboard/incoming the parent is /dashboard (zzp home),
-            but the rule lives in src/lib/navigation.ts now — not here. */}
-        <Link
-          href={parentHref}
-          style={{
-            color: "#1a73e8",
-            textDecoration: "none",
-            fontSize: 17,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            marginBottom: 8,
-          }}
-        >
-          ‹ Terug
-        </Link>
-        <h1
-          style={{
-            fontSize: 28, fontWeight: 700, color: "#202124",
-            margin: 0, letterSpacing: -0.5,
-          }}
-        >
-          Inkomend
-        </h1>
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}
         {pending.length === 0 ? (

@@ -25,7 +25,6 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
-import { useParentPath } from '@/lib/navigation-hooks'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
@@ -195,8 +194,6 @@ export default function IncomingManageClient({
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
   const { byInvoice: recon, confirmMatch } = useInvoiceReconciliation()
-  const parentHref = useParentPath(profile.role ?? 'zzper')
-
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
@@ -537,17 +534,15 @@ export default function IncomingManageClient({
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
 
-      {/* ── Top App Bar ── */}
+      {/* ── Controls toolbar ── [SUBNAV] back + "Inkoopfacturen" title come from the
+          shared sub-page header; this block keeps the Verificatie link + filter/sort,
+          sticking directly below the shared bar. */}
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px', position: 'sticky', top: 0, zIndex: 50,
+        padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Link href={parentHref} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT, textDecoration: 'none' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-          </Link>
-          <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center' }}>Inkoopfacturen</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
           <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
           </Link>
