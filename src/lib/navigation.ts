@@ -137,6 +137,13 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard/accountant',
   },
 
+  // ── accountant/status (Klaar-overzicht) → accountant home ────────────────
+  // [KLAAR-OVERZICHT] The cross-client readiness board — parent is the home.
+  {
+    match: /^\/dashboard\/accountant\/status$/,
+    parent: () => '/dashboard/accountant',
+  },
+
   // ── /dashboard/accountant itself → home (no parent) ──────────────────────
   {
     match: /^\/dashboard\/accountant$/,

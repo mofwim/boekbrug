@@ -22,6 +22,15 @@ const TOOLS = [
     isNew: true,
   },
   {
+    // [KLAAR-OVERZICHT] Cross-client readiness board — same score/verdict the
+    // client sees on "Ben ik klaar?", for every client at once.
+    icon: '✅',
+    label: 'Wie is klaar?',
+    sub: 'Klaar-status en score per klant',
+    href: '/dashboard/accountant/status',
+    isNew: true,
+  },
+  {
     icon: '👥',
     label: 'Klanten beheren',
     sub: 'Toevoegen, koppelen, verwijderen',

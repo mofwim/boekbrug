@@ -156,6 +156,44 @@ export async function getAccountantClients(
 }
 
 // ─────────────────────────────────────────────────────────
+// Linked client list (lightweight — id + name only)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * All clients linked to this accountant as {id, name} only — no per-client
+ * readiness queries. Used by surfaces that fetch their own detail client-side
+ * (e.g. the Klaar-overzicht, which pulls each client's rich readiness from
+ * /api/readiness?clientId=…). Sorted alphabetically for a stable board.
+ */
+export async function getLinkedClientList(
+  accountantId: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const supabase = await createServerSupabaseClient()
+
+  const { data } = await supabase
+    .from('accountant_clients')
+    .select(`
+      profiles!zzper_id (
+        id,
+        full_name,
+        company_name
+      )
+    `)
+    .eq('accountant_id', accountantId)
+
+  if (!data) return []
+
+  type LinkedProfile = { id: string; full_name: string | null; company_name: string | null }
+  const rows = data as unknown as Array<{ profiles: LinkedProfile | null }>
+
+  return rows
+    .map(row => row.profiles)
+    .filter((p): p is LinkedProfile => p !== null)
+    .map(p => ({ id: p.id, name: p.company_name || p.full_name || 'Onbekend' }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'nl'))
+}
+
+// ─────────────────────────────────────────────────────────
 // Client detail
 // ─────────────────────────────────────────────────────────
 
