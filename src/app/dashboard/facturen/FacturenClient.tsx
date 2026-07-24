@@ -113,6 +113,82 @@ export default function FacturenClient({ profile }: { profile: any }) {
   const [verwerktCtx, setVerwerktCtx] = useState<{ id: string; number: string } | null>(null)
   const [requestSent, setRequestSent] = useState(false)
 
+  // ── [BUNDEL-BETAALVERZOEK] Multi-select → one payment link for several open
+  // facturen of the same klant. Selected rows are kept as OBJECTS (not just ids)
+  // so the selection survives filter/search changes that drop rows from view.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Record<string, { id: string; number: string; client: string; amount: number }>>({})
+  const [bundle, setBundle] = useState<{ url: string; amount: number; reference: string; count: number; iban: string } | null>(null)
+  const [bundleLoading, setBundleLoading] = useState(false)
+  const [bundleQr, setBundleQr] = useState('')
+  const [bundleCopied, setBundleCopied] = useState(false)
+
+  const selectedList = Object.values(selected)
+  const selectedSum = selectedList.reduce((s, r) => s + r.amount, 0)
+  // ONE customer pays the bundle — the button explains itself when clients mix.
+  const sameClient = new Set(selectedList.map(r => r.client.trim().toLowerCase())).size <= 1
+
+  // The row fields the bundle selection reads — a subset of both the infinite
+  // list's InvoiceRow and the server-search rows.
+  type BundelRow = {
+    id: string
+    invoice_number?: string | null
+    client_name?: string | null
+    status: string
+    invoice_type?: string | null
+    total_inc_btw?: number | null
+  }
+
+  // Only an issued, unpaid verkoopfactuur can join a bundle (same rule as the lib).
+  const isBundelbaar = (inv: BundelRow) =>
+    (inv.invoice_type == null || inv.invoice_type === 'factuur') &&
+    ['sent', 'overdue', 'processing'].includes(inv.status)
+
+  function toggleSelect(inv: BundelRow) {
+    setSelected(prev => {
+      const next = { ...prev }
+      if (next[inv.id]) delete next[inv.id]
+      else next[inv.id] = {
+        id: inv.id,
+        number: inv.invoice_number ?? '',
+        client: inv.client_name ?? '',
+        amount: inv.total_inc_btw ?? 0,
+      }
+      return next
+    })
+  }
+
+  function exitSelectMode() { setSelectMode(false); setSelected({}) }
+
+  async function createBundle() {
+    if (selectedList.length < 2 || !sameClient || bundleLoading) return
+    setBundleLoading(true); setBundleQr(''); setBundleCopied(false)
+    try {
+      const res = await fetch('/api/invoice/betaalverzoek-bundel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceIds: selectedList.map(r => r.id) }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { showToast(data.error || 'Betaalverzoek maken mislukt'); return }
+      setBundle({ url: data.url, amount: data.amount, reference: data.reference, count: data.count, iban: data.iban })
+      exitSelectMode()
+      try {
+        // A QR of the pay LINK — scan to OPEN the payment page (handy at a counter).
+        const QR = await import('qrcode')
+        setBundleQr(await QR.toDataURL(data.url, { margin: 1, width: 220 }))
+      } catch { /* the link below always works without the QR */ }
+    } catch {
+      showToast('Betaalverzoek maken mislukt')
+    } finally {
+      setBundleLoading(false)
+    }
+  }
+
+  async function bundleCopy(value: string) {
+    try { await navigator.clipboard.writeText(value) } catch { /* clipboard may be blocked */ }
+    setBundleCopied(true); setTimeout(() => setBundleCopied(false), 1500)
+  }
+
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // Reached when the accountant marks an OUTGOING invoice 'verwerkt'. Lands on
   // the row: auto-expand, scroll, brief highlight. Best-effort — if the row
@@ -424,6 +500,13 @@ export default function FacturenClient({ profile }: { profile: any }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
           <div style={{ display: 'flex', gap: 6 }}>
+            {/* [BUNDEL-BETAALVERZOEK] Toggle multi-select — pick several open
+                facturen of één klant and mint one payment link for the sum. */}
+            <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+              style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>checklist</span>
+              {selectMode ? 'Klaar' : 'Selecteer'}
+            </button>
             {/* Sort */}
             <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
               style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -550,11 +633,20 @@ export default function FacturenClient({ profile }: { profile: any }) {
                     transition: 'box-shadow 0.4s ease',
                   }}
                 >
-                  {/* Main row */}
+                  {/* Main row — in select mode a tap toggles the bundle selection
+                      (only for open verkoopfacturen); otherwise it expands. */}
                   <div
-                    onClick={() => setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'background 0.4s ease' }}
+                    onClick={() => selectMode
+                      ? (isBundelbaar(inv) && toggleSelect(inv))
+                      : setExpandedId(expanded ? null : inv.id)}
+                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
                   >
+                    {/* [BUNDEL-BETAALVERZOEK] selection indicator */}
+                    {selectMode && isBundelbaar(inv) && (
+                      <span className="material-symbols-outlined" style={{ fontSize: 22, color: selected[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
+                        {selected[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
+                      </span>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
@@ -798,8 +890,47 @@ export default function FacturenClient({ profile }: { profile: any }) {
         )}
       </main>
 
+      {/* ── [BUNDEL-BETAALVERZOEK] Selection action bar — replaces the FAB while
+          selecting. Enabled at ≥2 facturen of the same klant. ── */}
+      {selectMode && (
+        <div style={{
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + env(safe-area-inset-bottom))`,
+          maxWidth: 648, margin: '0 auto', zIndex: 60,
+          background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          padding: '12px 16px', fontFamily: FONT,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
+                {selectedList.length} geselecteerd · {fmtEur(selectedSum)}
+              </p>
+              <p style={{ fontSize: 11.5, color: !sameClient ? M3.error : '#5F6368', margin: '2px 0 0' }}>
+                {!sameClient
+                  ? 'Kies facturen van dezelfde klant'
+                  : selectedList.length < 2
+                    ? 'Kies minimaal 2 openstaande facturen'
+                    : `Eén betaallink voor ${selectedList[0]?.client || 'deze klant'}`}
+              </p>
+            </div>
+            <button
+              onClick={createBundle}
+              disabled={selectedList.length < 2 || !sameClient || bundleLoading}
+              style={{
+                flexShrink: 0, border: 'none', borderRadius: R.full, padding: '10px 18px',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
+                background: (selectedList.length >= 2 && sameClient && !bundleLoading) ? M3.primary : M3.surfaceVariant,
+                color: (selectedList.length >= 2 && sameClient && !bundleLoading) ? '#fff' : '#9AA0A6',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
+              {bundleLoading ? 'Bezig…' : 'Betaalverzoek'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── [BOEK-029] FAB — fixed bottom-right — Material You ── */}
-      <button
+      {!selectMode && <button
         onClick={() => router.push('/dashboard/invoice/new')}
         style={{
           position: 'fixed',
@@ -821,7 +952,55 @@ export default function FacturenClient({ profile }: { profile: any }) {
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
         Nieuwe factuur
-      </button>
+      </button>}
+
+      {/* ── [BUNDEL-BETAALVERZOEK] Share modal — one link + QR for the whole set ── */}
+      {bundle && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 320, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={() => setBundle(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
+          >
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>
+              Betaalverzoek voor {bundle.count} facturen
+            </h3>
+            <p style={{ fontSize: 13.5, color: '#5F6368', lineHeight: 1.5, margin: '0 0 16px' }}>
+              Deel deze link met je klant. Ze betalen {fmtEur(bundle.amount)} in één overboeking —
+              met kenmerk <span style={{ fontWeight: 600, color: '#3C4043' }}>{bundle.reference || '—'}</span>.
+              Zodra de betaling in je bankafschrift binnenkomt, herkent BoekBrug alle facturen tegelijk.
+            </p>
+
+            {bundleQr && (
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={bundleQr} alt="QR naar betaalpagina" width={180} height={180} style={{ borderRadius: 12 }} />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 12, padding: 8, marginBottom: 12 }}>
+              <input readOnly value={bundle.url} onFocus={e => e.currentTarget.select()}
+                style={{ flex: 1, background: 'transparent', fontSize: 13, color: '#3C4043', border: 'none', outline: 'none', padding: '0 6px', minWidth: 0 }} />
+              <button onClick={() => bundleCopy(bundle.url)}
+                style={{ flexShrink: 0, background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontFamily: FONT }}>
+                {bundleCopied ? 'Gekopieerd' : 'Kopieer link'}
+              </button>
+            </div>
+
+            <p style={{ fontSize: 11.5, color: '#9AA0A6', lineHeight: 1.5, margin: '0 0 16px' }}>
+              BoekBrug verwerkt de betaling niet — het geld gaat direct naar je eigen IBAN
+              ({bundle.iban.replace(/(.{4})/g, '$1 ').trim()}).
+            </p>
+
+            <button onClick={() => setBundle(null)}
+              style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 14, fontWeight: 600, border: `1px solid ${M3.surfaceVariant}`, cursor: 'pointer', fontFamily: FONT }}>
+              Sluiten
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── [BOEK-029] Fix 3: Smart pay dialog — factuur vs creditnota ── */}
       {payCtx && (

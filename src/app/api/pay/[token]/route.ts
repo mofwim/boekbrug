@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
-import { toPublicPayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
+import { toPublicPayView, toPublicBundlePayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
@@ -38,7 +38,9 @@ export async function GET(
     .select('id, sender_id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, client_name, pay_token, due_date')
     .eq('pay_token', token)
     .maybeSingle()
-  if (!invoice) return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+  // [BUNDEL-BETAALVERZOEK] Not a single-invoice token → maybe a bundle token.
+  // Same contract: minimal projection or a 404 that never confirms existence.
+  if (!invoice) return bundleView(pipeline, token)
 
   // The owner's OWN payout details — the beneficiary.
   const { data: owner } = await pipeline
@@ -53,6 +55,48 @@ export async function GET(
   )
   // null = not payable (draft, wrong type, missing IBAN). 404 — no existence leak.
   if (!view) return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+
+  return NextResponse.json(view)
+}
+
+// [BUNDEL-BETAALVERZOEK] Resolve a bundle token → the combined public view
+// (per-invoice lines + one sum + one QR). toPublicBundlePayView is the single
+// allowlist; anything not renderable → the same 404 as an unknown token.
+async function bundleView(pipeline: ReturnType<typeof createPipelineClient>, token: string) {
+  const notFound = NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+
+  const { data: bundle } = await pipeline
+    .from('pay_bundles')
+    .select('id, user_id')
+    .eq('token', token)
+    .maybeSingle()
+  if (!bundle) return notFound
+
+  const { data: links } = await pipeline
+    .from('pay_bundle_invoices')
+    .select('invoice_id')
+    .eq('bundle_id', bundle.id)
+  const ids = (links ?? []).map((l) => l.invoice_id)
+  if (ids.length === 0) return notFound
+
+  const { data: invoices } = await pipeline
+    .from('invoices')
+    .select('id, sender_id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
+    .in('id', ids)
+    .eq('sender_id', bundle.user_id)
+  if (!invoices || invoices.length === 0) return notFound
+
+  const { data: owner } = await pipeline
+    .from('profiles')
+    .select('iban, company_name, full_name')
+    .eq('id', bundle.user_id)
+    .single()
+
+  const view = toPublicBundlePayView(
+    invoices as BetaalverzoekInvoice[],
+    owner ?? { iban: null, company_name: null, full_name: null }
+  )
+  if (!view) return notFound
 
   return NextResponse.json(view)
 }
