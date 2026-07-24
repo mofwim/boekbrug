@@ -6,6 +6,10 @@
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
 import { useEffect, useRef, useState } from 'react'
+// [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
+// an "unsupported type" and be filed unreadable — the contant-betaald flow then never books. Convert
+// to a bounded JPEG before upload (a PDF/normal JPG/PNG passes through untouched).
+import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
@@ -192,8 +196,10 @@ export default function KasClient() {
   async function uploadCashInvoice(file: File) {
     setCashUploading(true); setCashUploadMsg(null)
     try {
+      // [INTAKE-IMG-NORMALIZE] Make an unreadable/oversized photo readable before upload.
+      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES)
       const form = new FormData()
-      form.append('file', file)
+      form.append('file', uploadFile)
       form.append('paid_method', 'kas')
       form.append('paid_date', date) // the date chosen in the form above (defaults to today)
       const res = await fetch('/api/intake', { method: 'POST', body: form })

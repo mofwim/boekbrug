@@ -15,6 +15,10 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { combineImagesToPdf } from '@/lib/combine-images-pdf'
+// [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
+// "unsupported type" and is filed as unreadable — losing the invoice. Normalize to a bounded JPEG
+// before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
+import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF',
@@ -110,8 +114,11 @@ export default function IntakeButton({
     setBusy(true)
     setOpen(false)
     try {
+      // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
+      // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
+      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES)
       const fd = new FormData()
-      fd.append('file', file)
+      fd.append('file', uploadFile)
       // [INTAKE-FORCE] "toch toevoegen" — override a false-positive SEMANTIC duplicate.
       if (force) fd.append('force', 'true')
       const res = await fetch('/api/intake', { method: 'POST', body: fd })

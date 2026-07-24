@@ -11,8 +11,17 @@
 // payments (reversible); everything else is filed in bestanden. Duplicates are blocked (with a
 // "toch toevoegen" escape only for an uncertain semantic match).
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+// [INTAKE-IMG-NORMALIZE] Convert a picked HEIC/HEIF/WebP/BMP/TIFF (or an oversized JPG/PNG)
+// to a bounded JPEG in the browser BEFORE upload — otherwise an iPhone invoice reaches the
+// reader as an "unsupported type" and is silently filed away as unreadable. Same shared
+// converter the multi-page combine uses, so both paths agree on the bytes that reach the reader.
+import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [MULTI-PAGE] "Eén factuur, meerdere pagina's" — combine the photos of ONE paper invoice into a
+// single PDF in the browser, then send it as ONE file (same /api/intake → one invoice), instead of
+// N separate invoices. Same combiner the ZZP intake button uses.
+import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
@@ -23,6 +32,13 @@ const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
 // spreadsheet exports a shop uploads monthly (kassa Z-report, PIN/kas grootboek).
 const ACCEPT = 'image/*,application/pdf,.pdf,.xml,.mt940,.sta,.camt,.053,.txt,.940,.xls,.xlsx,.csv'
+// [SIZE-GUARD] The server rejects anything over 10 MB (/api/intake MAX_BYTES). We enforce the SAME
+// shared cap (MAX_INTAKE_UPLOAD_BYTES) in the browser so a too-big file fails instantly with a clear
+// reason — instead of the owner waiting through a full upload over a slow mobile link only to be
+// refused. Images are shrunk under this cap by normalizeImageForUpload; a too-big PDF is the one
+// case we simply can't send.
+// [MULTI-PAGE] Cap the pages of one paper invoice, mirroring the intake button.
+const MAX_PAGES = 20
 
 type Status = 'queued' | 'busy' | 'done' | 'duplicate' | 'error'
 interface Item {
@@ -65,6 +81,19 @@ export default function UploadClient() {
   const running = useRef(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
+  // [BLOB-CLEANUP] Every preview is an objectURL; without revoking them a big batch leaks blobs in
+  // memory until the tab closes (heavy on a phone). We keep the URLs alive while their result row is
+  // on screen (the thumbnail + "Bekijk bestand" link use them) and revoke ALL of them on unmount.
+  const objectUrls = useRef<string[]>([])
+  useEffect(() => () => { for (const u of objectUrls.current) URL.revokeObjectURL(u) }, [])
+
+  // [MULTI-PAGE] Collect the photos of ONE paper invoice, combine → one PDF → one invoice.
+  const [mpMode, setMpMode] = useState(false)
+  const [mpPages, setMpPages] = useState<File[]>([])
+  const [combining, setCombining] = useState(false)
+  const [mpError, setMpError] = useState<string | null>(null)
+  const mpFileRef = useRef<HTMLInputElement>(null)
+  const mpCameraRef = useRef<HTMLInputElement>(null)
   // [REPROCESS] Book the kassa/grootboek/dagomzet files already sitting in bestanden — no re-upload.
   const [reproc, setReproc] = useState<{ busy: boolean; done: boolean; summary?: ReprocSummary; results?: ReprocResult[] }>({ busy: false, done: false })
   const runReprocess = useCallback(async () => {
@@ -93,8 +122,22 @@ export default function UploadClient() {
         const item = pending.current.shift()!
         patch(item.id, { status: 'busy' })
         try {
+          // [INTAKE-IMG-NORMALIZE] Make an unreadable/oversized photo readable BEFORE upload. A
+          // HEIC/HEIF/WebP/BMP/TIFF (or a huge JPG/PNG) becomes a bounded JPEG the reader accepts;
+          // a normal JPG/PNG/PDF is returned untouched. Never throws — worst case the original goes.
+          const uploadFile = await normalizeImageForUpload(item.file, MAX_INTAKE_UPLOAD_BYTES)
+          // [SIZE-GUARD] After shrinking images, anything still over the server cap can't be sent.
+          // In practice this is only a very large PDF (we can't safely shrink a PDF here). Fail with
+          // an honest reason instead of a wasted full upload that the server would refuse anyway.
+          if (uploadFile.size > MAX_INTAKE_UPLOAD_BYTES) {
+            patch(item.id, {
+              status: 'error',
+              message: `Bestand te groot (${(uploadFile.size / 1024 / 1024).toFixed(1)} MB) — max 10 MB. Splits een grote PDF of maak een foto.`,
+            })
+            continue
+          }
           const fd = new FormData()
-          fd.append('file', item.file)
+          fd.append('file', uploadFile)
           if (item.force) fd.append('force', 'true') // "toch toevoegen" override for a semantic dup
           const res = await fetch('/api/intake', { method: 'POST', body: fd })
           const data = await res.json().catch(() => ({}))
@@ -106,7 +149,7 @@ export default function UploadClient() {
           } else if (res.status === 409 && data.duplicate) {
             patch(item.id, { status: 'duplicate', message: data.error || 'Al toegevoegd', canForce: !!data.canForce })
           } else if (res.status === 429) {
-            // Rate limit (60 documenten/uur) — NOT a broken file. Say so honestly + offer a retry.
+            // Rate limit (240 documenten/uur, RATE_LIMITS.AI_OCR) — NOT a broken file. Say so honestly + offer a retry.
             patch(item.id, { status: 'error', rateLimited: true, message: data.error || 'Te veel tegelijk — probeer dit bestand zo opnieuw.' })
           } else {
             patch(item.id, { status: 'error', message: data.error || 'Lezen mislukt — probeer dit bestand opnieuw.' })
@@ -125,16 +168,53 @@ export default function UploadClient() {
   const addFiles = useCallback((files: FileList | File[] | null) => {
     const arr = files ? Array.from(files) : []
     if (arr.length === 0) return
-    const newItems: Item[] = arr.map((file) => ({
-      id: nextId(), file, status: 'queued' as Status,
+    const newItems: Item[] = arr.map((file) => {
       // An objectURL for every file: shown as an inline thumbnail for images, and opened by the
       // "bekijk" link for any file — so the owner recognises/checks each one without leaving the page.
-      preview: URL.createObjectURL(file),
-    }))
+      const preview = URL.createObjectURL(file)
+      objectUrls.current.push(preview) // [BLOB-CLEANUP] revoked on unmount
+      return { id: nextId(), file, status: 'queued' as Status, preview }
+    })
     setItems((prev) => [...prev, ...newItems])
     pending.current.push(...newItems)
     void kick()
   }, [kick])
+
+  // [MULTI-PAGE] Add photos to the "one invoice, many pages" tray. Only images belong here
+  // (a paper invoice is photographed); a picked non-image is ignored so the tray stays clean.
+  const addMpPages = useCallback((fl: FileList | null) => {
+    if (!fl || fl.length === 0) return
+    const imgs = Array.from(fl).filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(f.name))
+    if (imgs.length === 0) { setMpError('Kies foto’s van de pagina’s.'); return }
+    setMpError(null)
+    setMpPages((prev) => {
+      const merged = [...prev, ...imgs]
+      if (merged.length > MAX_PAGES) { setMpError(`Maximaal ${MAX_PAGES} pagina’s per factuur.`); return merged.slice(0, MAX_PAGES) }
+      return merged
+    })
+  }, [])
+
+  const removeMpPage = useCallback((idx: number) => {
+    setMpPages((prev) => prev.filter((_, i) => i !== idx))
+  }, [])
+
+  // Combine the collected pages into ONE PDF in the browser, then hand that single PDF to the
+  // normal upload queue → /api/intake extracts ONE invoice from all pages (the multi-page path).
+  const combineAndUpload = useCallback(async () => {
+    if (mpPages.length === 0 || combining) return
+    setCombining(true); setMpError(null)
+    try {
+      const pdf = await combineImagesToPdf(mpPages)
+      addFiles([pdf])
+      setMpMode(false); setMpPages([])
+    } catch (e) {
+      // combineImagesToPdf names the failing page ("Pagina 2 kon niet…") — surface it as-is so the
+      // owner knows which photo to redo; keep the other pages in the tray for a quick retry.
+      setMpError(e instanceof Error && /Pagina/.test(e.message) ? e.message : 'Combineren mislukt — voeg de pagina’s los toe.')
+    } finally {
+      setCombining(false)
+    }
+  }, [mpPages, combining, addFiles])
 
   // Re-try a file that failed (a transient AI error or a rate-limit that has since cleared).
   const retry = useCallback((item: Item) => {
@@ -223,6 +303,73 @@ export default function UploadClient() {
           <p style={{ fontSize: 11.5, color: '#8e8e93', margin: '14px 4px 0', lineHeight: 1.45 }}>
             Je kunt meerdere foto’s of bestanden in één keer selecteren. Eén PDF = één factuur.
           </p>
+        </div>
+
+        {/* [MULTI-PAGE] "Eén factuur, meerdere pagina's" — combine the photos of ONE paper invoice
+            into a single PDF so it lands as ONE invoice, not one per page. */}
+        <div style={{ marginTop: 14, background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 14, padding: 14 }}>
+          {!mpMode ? (
+            <>
+              <p style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, margin: 0 }}>Factuur met meerdere pagina’s?</p>
+              <p style={{ fontSize: 12.5, color: M3.neutral, margin: '4px 0 10px', lineHeight: 1.5 }}>
+                Hoort een papieren factuur bij elkaar? Voeg de pagina’s hier samen tot <strong>één factuur</strong> —
+                anders wordt elke foto een aparte factuur.
+              </p>
+              <button onClick={() => { setMpMode(true); setMpError(null) }}
+                style={{ background: M3.primaryContainer, color: '#041E49', border: 'none', borderRadius: 999, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}>
+                📄 Pagina’s samenvoegen
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <p style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, margin: 0 }}>Eén factuur, meerdere pagina’s</p>
+                <button onClick={() => { setMpMode(false); setMpPages([]); setMpError(null) }}
+                  style={{ background: 'transparent', border: 'none', color: M3.neutral, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
+                  Annuleren
+                </button>
+              </div>
+              <p style={{ fontSize: 12.5, color: M3.neutral, margin: '4px 0 10px', lineHeight: 1.5 }}>
+                Voeg de pagina’s in volgorde toe. We maken er één PDF van en lezen die als <strong>één factuur</strong>.
+              </p>
+
+              <input ref={mpFileRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
+                onChange={(e) => { addMpPages(e.target.files); if (mpFileRef.current) mpFileRef.current.value = '' }} />
+              <input ref={mpCameraRef} type="file" accept="image/*" capture="environment" multiple style={{ display: 'none' }}
+                onChange={(e) => { addMpPages(e.target.files); if (mpCameraRef.current) mpCameraRef.current.value = '' }} />
+
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button onClick={() => mpFileRef.current?.click()}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, border: `1px solid ${M3.outlineVariant}`, cursor: 'pointer', background: M3.surface, color: M3.onSurface, fontFamily: FONT, fontSize: 13.5, fontWeight: 600 }}>
+                  📎 Foto’s kiezen
+                </button>
+                <button onClick={() => mpCameraRef.current?.click()}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 10, border: `1px solid ${M3.outlineVariant}`, cursor: 'pointer', background: M3.surface, color: M3.onSurface, fontFamily: FONT, fontSize: 13.5, fontWeight: 600 }}>
+                  📷 Pagina fotograferen
+                </button>
+              </div>
+
+              {mpPages.length > 0 && (
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {mpPages.map((f, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: M3.onSurface }}>
+                      <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, background: M3.primaryContainer, color: '#041E49', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                      <button onClick={() => removeMpPage(i)} aria-label={`Pagina ${i + 1} verwijderen`}
+                        style={{ flexShrink: 0, background: 'transparent', border: 'none', color: M3.error, fontSize: 16, lineHeight: 1, cursor: 'pointer', fontFamily: FONT }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {mpError && <p style={{ fontSize: 12, color: M3.error, margin: '8px 0 0', lineHeight: 1.4 }}>{mpError}</p>}
+
+              <button onClick={combineAndUpload} disabled={combining || mpPages.length === 0}
+                style={{ marginTop: 12, width: '100%', background: combining || mpPages.length === 0 ? '#C7C7CC' : M3.primary, color: '#fff', border: 'none', borderRadius: 12, padding: '12px 18px', fontSize: 14, fontWeight: 700, cursor: combining || mpPages.length === 0 ? 'default' : 'pointer', fontFamily: FONT }}>
+                {combining ? 'Bezig met samenvoegen…' : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? '' : '’s'} → één factuur` : 'Voeg eerst pagina’s toe'}
+              </button>
+            </>
+          )}
         </div>
 
         {/* [REPROCESS] Book kassa/grootboek/dagomzet files you already uploaded earlier — no re-upload. */}
@@ -363,7 +510,7 @@ export default function UploadClient() {
                   ↻ Alle {errs.length} mislukte opnieuw proberen
                 </button>
                 <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 2px 0', lineHeight: 1.45 }}>
-                  Mislukt komt meestal door de limiet van 60 documenten per uur of een tijdelijke leesfout — opnieuw proberen lost het vaak op.
+                  Mislukt komt meestal door de limiet van 240 documenten per uur of een tijdelijke leesfout — opnieuw proberen lost het vaak op.
                 </p>
               </div>
             )}
