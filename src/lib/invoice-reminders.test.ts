@@ -15,7 +15,7 @@ import {
   dayNumberFromIso,
   amsterdamTodayDayNumber,
   type ReminderDecisionInput,
-} from "./src/lib/invoice-reminders";
+} from "./invoice-reminders";
 
 let passed = 0;
 let failed = 0;

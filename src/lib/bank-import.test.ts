@@ -1,5 +1,5 @@
 // [BOEK-016] Pure node test for bank-import.ts — run: npx tsx bank-import.test.ts
-import type { BankTransaction } from "./src/lib/bank-parser";
+import type { BankTransaction } from "./bank-parser";
 import {
   contentKey,
   dedupTransactions,
@@ -7,7 +7,7 @@ import {
   dateRange,
   rowToTransaction,
   type ExistingTxKey,
-} from "./src/lib/bank-import";
+} from "./bank-import";
 
 let passed = 0;
 let failed = 0;
