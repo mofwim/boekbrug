@@ -36,7 +36,7 @@ npx web-push generate-vapid-keys
 | --- | --- | --- |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | client + server | the VAPID **public** key. Safe to expose. |
 | `VAPID_PRIVATE_KEY` | server only | the VAPID **private** key. **Secret** — never commit. |
-| `VAPID_SUBJECT` | server only | a contact the push service can reach, e.g. `mailto:support@boekbrug.nl` |
+| `VAPID_SUBJECT` | server only | any address you can be reached at — it does **not** need to be a boekbrug.nl mailbox. `mailto:` + your own email (e.g. your Gmail) is fine, or `https://boekbrug.nl`. Only used by the push service to contact the sender if there's a problem. |
 
 If any of the three is missing, push is simply **off**: the server no-ops and the
 settings card hides itself. Rotating the keys invalidates existing subscriptions;
