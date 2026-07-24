@@ -2376,8 +2376,42 @@ export async function syncUserEmails(
         .limit(1)
 
       if (existingByMessage && existingByMessage.length > 0) {
-        duplicate++
-        completedKeys.add(wmKey) // [watermark] duplicate = already complete
+        // [SAMENAME-VISIBLE] Reaching here means: same messageId:filename as an
+        // already-imported invoice, YET the byte-hash gate (Check 0) just passed
+        // — i.e. DIFFERENT bytes. That is a SECOND, DISTINCT invoice sharing a
+        // filename with the first in one email (e.g. two attachments both named
+        // "factuur.pdf"). The old code counted it as a duplicate and dropped it
+        // with no trace: no skip row, no audit, invisible to the owner. The
+        // (receiver_id, source_message_id) uniqueness means it cannot be inserted
+        // under this key here, but it must NOT vanish — surface it in the skip
+        // registry with an actionable reason so the owner can add it by hand.
+        try {
+          const skipPipeline = createPipelineClient()
+          await skipPipeline
+            .from('email_skipped_attachments')
+            .upsert(
+              {
+                user_id: userId,
+                // Distinct key so this row can't collide with a genuine
+                // not-an-invoice skip of the SAME attachment name.
+                source_message_id: `${dedupKey}:samename:${contentHash.slice(0, 16)}`,
+                filename: attachment.filename,
+                reason: 'tweede bijlage met dezelfde bestandsnaam in deze e-mail — niet automatisch geïmporteerd; open de e-mail om deze factuur handmatig toe te voegen',
+              },
+              { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+            )
+          await logAuditAction({
+            userId,
+            action: 'document.duplicate_blocked',
+            entityType: 'document',
+            entityId: existingByMessage[0].id,
+            newValue: { file_name: attachment.filename, reason: 'same_filename_distinct_bytes', path: 'email' },
+          })
+        } catch (e) {
+          console.error('[SAMENAME-VISIBLE] could not register same-name attachment', e)
+        }
+        skipped++
+        completedKeys.add(wmKey) // [watermark] handled (registered) = complete
         continue
       }
 
