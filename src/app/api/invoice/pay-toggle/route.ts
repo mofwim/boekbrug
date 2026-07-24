@@ -49,7 +49,25 @@ export async function POST(req: NextRequest) {
 
   const isIncoming = inv.direction === "incoming";
 
+  // [PAY-GUARD] 'paid' may only be entered from a genuinely PAYABLE state: a
+  // verified incoming Crediteur ('received') or a delivered outgoing invoice
+  // ('sent'; stored-'overdue' included defensively for legacy rows). A row in
+  // the verify queue ('processing'), a never-sent 'draft', or an 'archived'
+  // one must NEVER become paid — that would inject unverified AI-extracted
+  // amounts straight into the BTW figures (voorbelasting/omzet count 'paid'),
+  // and a later undo would launder it into a verified 'received'/'sent'.
+  const PAYABLE = isIncoming ? ["received"] : ["sent", "overdue"];
+
   if (action === "pay") {
+    if (inv.status === "paid") {
+      return NextResponse.json({ error: "invoice_already_paid" }, { status: 409 });
+    }
+    if (!inv.status || !PAYABLE.includes(inv.status)) {
+      return NextResponse.json(
+        { error: "not_payable", detail: `status '${inv.status}' kan niet als betaald worden gemarkeerd`, status: inv.status },
+        { status: 409 }
+      );
+    }
     const paymentMethod = body.paymentMethod === "kas" ? "kas" : "bank";
     const paymentDate = typeof body.paymentDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.paymentDate)
       ? body.paymentDate : new Date().toISOString().slice(0, 10);
@@ -61,7 +79,9 @@ export async function POST(req: NextRequest) {
         payment_prepared_at: null,
       })
       .eq("id", invoiceId)
-      .neq("status", "paid")
+      // Race-proof mirror of the PAY-GUARD above: the row must STILL be in a
+      // payable state at write time, not merely at pre-check time.
+      .in("status", PAYABLE)
       .select("id");
     if (error) {
       if (error.message?.toLowerCase().includes("verwerkt")) {
@@ -82,6 +102,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ── action === 'undo' ──────────────────────────────────────────────────────
+  // [PAY-GUARD] Undo is only meaningful on a PAID invoice. Guarding here also
+  // prevents the destructive bank-link detach below from running for a row
+  // that was never paid (a stray undo used to silently strip its links).
+  if (inv.status !== "paid") {
+    return NextResponse.json(
+      { error: "not_paid", detail: "alleen een betaalde factuur kan worden teruggezet" },
+      { status: 409 }
+    );
+  }
+
   // [BANK-UNLINK] If a bank transaction is matched to this invoice, DETACH it first so we never
   // leave a paid-undone invoice beside a still-'matched' tx (which the pending-only matcher could
   // never resurface). Cover both the direct invoice_id link and any bank_tx_invoices join rows.
@@ -103,16 +133,22 @@ export async function POST(req: NextRequest) {
   try { await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId }); } catch { /* non-fatal */ }
 
   const restoredStatus = isIncoming ? "received" : "sent";
-  const { error: undoErr } = await supabase
+  const { data: undoData, error: undoErr } = await supabase
     .from("invoices")
     .update({ status: restoredStatus, payment_method: null, marked_paid_at: null, payment_date: null, payment_prepared_at: null })
     .eq("id", invoiceId)
-    .eq("status", "paid");
+    .eq("status", "paid")
+    .select("id");
   if (undoErr) {
     if (undoErr.message?.toLowerCase().includes("verwerkt")) {
       return NextResponse.json({ error: "verwerkt", invoiceNumber: inv.invoice_number }, { status: 409 });
     }
     return NextResponse.json({ error: "undo_failed", detail: undoErr.message }, { status: 500 });
+  }
+  // [PAY-GUARD] Honest zero-row report: if the row raced away from 'paid'
+  // between the pre-check and this write, say so instead of claiming success.
+  if (!undoData || undoData.length === 0) {
+    return NextResponse.json({ error: "status_conflict", detail: "factuur is niet (meer) betaald" }, { status: 409 });
   }
 
   await logAuditAction({
