@@ -5,6 +5,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import SentryUserProvider from '@/components/providers/SentryUserProvider'
 import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
+import DashboardChrome from '@/components/nav/DashboardChrome'
 
 export default async function DashboardLayout({
   children,
@@ -25,6 +26,9 @@ export default async function DashboardLayout({
     profile = data
   }
 
+  // [SUBNAV] Role-aware home target for the shared sub-page header.
+  const homeHref = profile?.role === 'accountant' ? '/dashboard/accountant' : '/dashboard'
+
   return (
     <>
       {profile && (
@@ -35,6 +39,9 @@ export default async function DashboardLayout({
           role={profile.role}
         />
       )}
+      {/* [SUBNAV] Shared sub-page header — renders only on stranded routes (see
+          DashboardChrome). Placed before {children} so its sticky bar sits at top. */}
+      {profile && <DashboardChrome homeHref={homeHref} />}
       {children}
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}
