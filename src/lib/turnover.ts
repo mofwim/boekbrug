@@ -118,14 +118,17 @@ export function sumPosSettlements(
 
 // [SETTLE-LAG] The ONE shared settlement-lag window (days) for card/PIN acquirer payouts. A payout
 // posts T+0..T+5 after the takings day (a long weekend + a bank holiday can stretch a batch to five
-// days), never before. TWO engines must use the SAME window or a payout's omzet and its commission
-// land on different days:
+// days), never before. TWO engines must look back the SAME number of days or they disagree on
+// whether a payout is even attributable:
 //   · financial-result.matchedCoveredDay looks back this many days to SUPPRESS the till's already-
-//     counted omzet at the real takings day (no double-count).
-//   · triangle re-attributes a DAT-less payout back this many days to that SAME takings day so the
-//     acquirer COMMISSION (gross − net) is booked there (not silently dropped).
-// If these two drift apart, a T+4/T+5 DAT-less payout gets its omzet suppressed on day D but its fee
-// orphaned on the payout day → commission lost → resultaat overstated. Keep them locked here.
+//     counted omzet near the real takings day (no double-count).
+//   · triangle re-attributes a DAT-less payout back this many days to a takings day so the acquirer
+//     COMMISSION (gross − net) is booked there (not silently dropped).
+// The window must match: with triangle at 3 and financial-result at 5, a T+4/T+5 DAT-less payout had
+// its omzet suppressed but its fee orphaned on the payout day → commission lost → resultaat
+// overstated. (The two still pick the exact day by slightly different tie-breaks when SEVERAL covered
+// days sit in the window — a pre-existing detail card-reconcile guards via commission_negative — but
+// the window length itself must never drift, which is why it lives here.)
 export const SETTLE_LAG_DAYS = 5;
 
 /**
