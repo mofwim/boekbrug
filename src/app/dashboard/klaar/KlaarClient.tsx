@@ -13,6 +13,8 @@ import { lastCompletedQuarter } from '@/lib/quarter'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+// [GROUP-RECON] A per-day reconciliation risk titles itself with a leading ISO date.
+const RECON_DATE = /^\d{4}-\d{2}-\d{2}:/
 
 type DimensionKey = 'invoices' | 'bank' | 'cash' | 'vat'
 interface Dimension { key: DimensionKey; label: string; weight: number; applicable: boolean; subscore: number; detail: string }
@@ -59,6 +61,9 @@ export default function KlaarClient() {
   // SAME cancellable effect — clicking refresh then quickly changing quarter can no longer
   // land stale-quarter data (the superseded request's cancelled flag is always set).
   const [reloadKey, setReloadKey] = useState(0)
+  // [DECLUTTER] The score rubric + honest-limits notes are reassurance, not the answer.
+  // They start folded so the first screen is only: verdict, what to do, hand-over button.
+  const [showDetails, setShowDetails] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -74,6 +79,13 @@ export default function KlaarClient() {
   const report = data?.report ?? null
   const meta = report ? STATUS_META[report.status] : STATUS_META.attention
   const teBetalen = data ? data.concept.saldo >= 0 : true
+  // [GROUP-RECON] The per-day kassa↔bank/kas discrepancies arrive as separate risks whose
+  // titles start with an ISO date (e.g. "2026-04-15: bank ontving €239 minder…"). Three
+  // dense technical lines crowd "Even controleren", so collapse them into one tap-through
+  // row and keep the rest of the risks (auto-verified invoice, auto-excluded lines) inline.
+  const reconRisks = report ? report.risks.filter((r) => RECON_DATE.test(r.title)) : []
+  const otherRisks = report ? report.risks.filter((r) => !RECON_DATE.test(r.title)) : []
+  const hasRisks = otherRisks.length > 0 || reconRisks.length > 0
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -149,34 +161,29 @@ export default function KlaarClient() {
             )}
 
             {/* ── Eyeball these (risks) ── */}
-            {report.risks.length > 0 && (
+            {hasRisks && (
               <Section title="Even controleren" tone="error" icon="visibility">
-                {report.risks.map((r, i) => <ItemRow key={i} item={r} tone="error" />)}
+                {otherRisks.map((r, i) => <ItemRow key={i} item={r} tone="error" />)}
+                {reconRisks.length > 0 && (
+                  <ItemRow
+                    tone="error"
+                    item={{
+                      severity: 'risk',
+                      title: `${reconRisks.length} ${reconRisks.length === 1 ? 'dag waar' : 'dagen waarop'} kassa en bank niet aansluiten`,
+                      detail: 'Op deze dag(en) telde de kassa iets anders dan de bank of kas ontving — loop ze na bij Dagomzet.',
+                      fix: { label: 'Naar Dagomzet', href: '/dashboard/dagomzet' },
+                    }}
+                  />
+                )}
               </Section>
             )}
 
-            {report.missing.length === 0 && report.risks.length === 0 && (
+            {report.missing.length === 0 && !hasRisks && (
               <div style={{ background: M3.successContainer, color: M3.success, borderRadius: 14, padding: '14px 16px', fontSize: 14, fontWeight: 600, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
                 Niets openstaand — alles sluit aan.
               </div>
             )}
-
-            {/* ── The rubric behind the score (never a black box) ── */}
-            <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '6px 16px', marginBottom: 16 }}>
-              <div style={{ fontSize: 11.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', padding: '12px 0 6px', fontWeight: 600 }}>
-                Waar de score op gebaseerd is
-              </div>
-              {/* [DISAMBIGUATE] Each row shows two figures — the colored number is how
-                  COMPLETE that part is; the grey chip is how heavily it WEIGHS in the total.
-                  Two bare percentages side by side read as competing scores, so name them. */}
-              <div style={{ fontSize: 12, color: M3.neutral, lineHeight: 1.45, padding: '0 0 8px' }}>
-                Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>gekleurde percentage</b> is hoe compleet dit onderdeel is. Het <b style={{ color: M3.onSurface, fontWeight: 600 }}>grijze label</b> is hoe zwaar het meetelt in je totaalscore.
-              </div>
-              {report.dimensions.map((d, i) => (
-                <DimRow key={d.key} d={d} last={i === report.dimensions.length - 1} />
-              ))}
-            </div>
 
             {/* ── Concept BTW summary (the number they hand over) ── */}
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '14px 18px', marginBottom: 16 }}>
@@ -194,10 +201,37 @@ export default function KlaarClient() {
               </Link>
             </div>
 
-            {/* ── Honest limits ── */}
-            <div style={{ fontSize: 12, color: M3.neutral, lineHeight: 1.6 }}>
-              {report.notes.map((n, i) => <div key={i} style={{ marginBottom: 4 }}>• {n}</div>)}
-            </div>
+            {/* ── Details, folded ── The score rubric and the honest-limits notes are
+                reassurance the owner reaches for when a number surprises them — not the
+                answer to "ben ik klaar?". Folded so they never crowd the verdict. */}
+            <button
+              onClick={() => setShowDetails((v) => !v)}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', justifyContent: 'center', padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
+            >
+              {showDetails ? 'Details verbergen' : 'Toon hoe de score is opgebouwd'}
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                {showDetails ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+
+            {showDetails && (
+              <>
+                {/* The rubric behind the score (never a black box) */}
+                <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '6px 16px', margin: '4px 0 16px' }}>
+                  <div style={{ fontSize: 11.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', padding: '12px 0 8px', fontWeight: 600 }}>
+                    Waar de score op gebaseerd is
+                  </div>
+                  {report.dimensions.map((d, i) => (
+                    <DimRow key={d.key} d={d} last={i === report.dimensions.length - 1} />
+                  ))}
+                </div>
+
+                {/* Honest limits */}
+                <div style={{ fontSize: 12, color: M3.neutral, lineHeight: 1.6 }}>
+                  {report.notes.map((n, i) => <div key={i} style={{ marginBottom: 4 }}>• {n}</div>)}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -258,14 +292,9 @@ function DimRow({ d, last }: { d: Dimension; last: boolean }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.neutral }}>{DIM_ICON[d.key]}</span>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: M3.onSurface }}>{d.label}</span>
-        {/* Weight as a muted chip — reads as a label ("how much it counts"), not a score.
-            Hidden when n.v.t.: a non-applicable part is EXCLUDED from the score, so it
-            weighs nothing here — showing "weegt 20%" would contradict that. */}
-        {pct != null && (
-          <span style={{ fontSize: 10.5, color: M3.neutral, fontWeight: 600, background: '#f1f3f4', borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap' }}>
-            weegt {d.weight}%
-          </span>
-        )}
+        {/* One figure per row: how COMPLETE this part is. The weight it carries in the total
+            is an internal detail — a second percentage beside this one only read as a rival
+            score, so it's gone. The bar + colour already convey "how done". */}
         <span style={{ fontSize: 13, fontWeight: 700, fontFamily: FONT_NUM, color: pct == null ? M3.neutral : barColor, minWidth: 44, textAlign: 'right' }}>
           {pct == null ? 'n.v.t.' : `${pct}%`}
         </span>
