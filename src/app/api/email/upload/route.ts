@@ -19,6 +19,7 @@ import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { escapeLikeValue } from "@/lib/sanitize";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -176,7 +177,7 @@ export async function POST(req: NextRequest) {
         .eq("receiver_id", user.id)
         .eq("direction", "incoming")
         .eq("total_inc_btw", q.total);
-      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", q.vendor);
+      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor));
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
       // [DEDUP-NUMBER-NORM] Compare the number whitespace-normalized in code (an exact .eq
       // missed "26 / 3958" vs "26/3958"); the candidate set is already pinned by total(+date).

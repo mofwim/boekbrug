@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
           title: notice.accountantTitle,
           body: notice.accountantBody,
           type: "status",
-          link: "/dashboard/clients",
+          link: "/dashboard/clients/beheer",
         });
         notifiedAccountants += 1;
       }
