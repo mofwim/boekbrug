@@ -16,10 +16,13 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import {
+  getActiveAangifte,
   getCurrentQuarter,
   getQuarterRange,
 } from './accountant.service'
 import type {
+  AangifteAgenda,
+  AangifteAgendaItem,
   AccountantOverview,
   ClientDetail,
   ClientReadiness,
@@ -225,6 +228,83 @@ export async function getAccountantOverview(
     clients_with_open_questions: clients.filter(c => c.readiness.openQuestions > 0).length,
     clients_missing_bank: clients.filter(c => !c.readiness.hasBankData).length,
   }
+}
+
+// ─────────────────────────────────────────────────────────
+// [AANGIFTE-AGENDA] BTW filing agenda across all clients
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Attention rank for one client, lowest = show first. Derived purely from honest
+ * facts (no stored "ready" flag):
+ *   0  niets ontvangen  — no shared invoices AND no bank data (must be chased)
+ *   1  vraag open       — ≥1 invoice waiting on the client
+ *   2  in behandeling   — invoices left to process, or bank still missing
+ *   3  alles verwerkt   — every shared invoice processed and bank data present
+ */
+function agendaRank(r: ClientReadiness): number {
+  if (r.sharedInvoices === 0 && !r.hasBankData) return 0
+  if (r.openQuestions > 0) return 1
+  const unprocessed = r.sharedInvoices - r.processedInvoices
+  if (unprocessed > 0 || !r.hasBankData) return 2
+  return 3
+}
+
+/**
+ * The BTW-aangifte agenda for this accountant: one filing period (the previous
+ * quarter, via getActiveAangifte) with its deadline, plus every linked client's
+ * honest readiness for that exact quarter — sorted needs-attention first so the
+ * accountant opens this page each morning and sees who still needs chasing before
+ * the deadline. Reuses computeClientReadiness (both invoice directions, real
+ * bank_transactions signal); adds no new financial logic.
+ */
+export async function getAangifteAgenda(
+  accountantId: string,
+): Promise<AangifteAgenda> {
+  const supabase = await createServerSupabaseClient()
+  const { year, quarter, deadline, daysUntilDeadline } = getActiveAangifte()
+
+  const { data } = await supabase
+    .from('accountant_clients')
+    .select(`
+      profiles!zzper_id (
+        id,
+        full_name,
+        company_name
+      )
+    `)
+    .eq('accountant_id', accountantId)
+
+  if (!data) return { year, quarter, deadline, daysUntilDeadline, items: [] }
+
+  type LinkedProfile = { id: string; full_name: string | null; company_name: string | null }
+  const rows = data as unknown as Array<{ profiles: LinkedProfile | null }>
+
+  const items = await Promise.all(
+    rows.map(async (row): Promise<AangifteAgendaItem | null> => {
+      const profile = row.profiles
+      if (!profile) return null
+      const readiness = await computeClientReadiness(supabase, profile.id, year, quarter)
+      return {
+        client_id: profile.id,
+        client_name: profile.company_name || profile.full_name || 'Onbekend',
+        readiness,
+      }
+    }),
+  )
+
+  const valid = items.filter((i): i is AangifteAgendaItem => i !== null)
+
+  // Needs-attention first: by rank, then by most invoices left to process.
+  valid.sort((a, b) => {
+    const r = agendaRank(a.readiness) - agendaRank(b.readiness)
+    if (r !== 0) return r
+    const aOpen = a.readiness.sharedInvoices - a.readiness.processedInvoices
+    const bOpen = b.readiness.sharedInvoices - b.readiness.processedInvoices
+    return bOpen - aOpen
+  })
+
+  return { year, quarter, deadline, daysUntilDeadline, items: valid }
 }
 
 // ─────────────────────────────────────────────────────────

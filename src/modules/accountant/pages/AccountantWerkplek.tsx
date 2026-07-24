@@ -13,6 +13,15 @@ import { useParentPath } from '@/lib/navigation-hooks'
 
 const TOOLS = [
   {
+    // [AANGIFTE-AGENDA] Daily driver — every client's BTW deadline + readiness in
+    // one board. Placed first: it's the screen the accountant opens each morning.
+    icon: '🗓️',
+    label: 'Aangifte-agenda',
+    sub: 'BTW-deadlines en status per klant',
+    href: '/dashboard/accountant/agenda',
+    isNew: true,
+  },
+  {
     icon: '👥',
     label: 'Klanten beheren',
     sub: 'Toevoegen, koppelen, verwijderen',
