@@ -73,6 +73,10 @@ const PATTERN_TITLES: ReadonlyArray<[RegExp, string]> = [
   [/^\/dashboard\/invoice\/(?!new$)[^/]+$/, "Factuur"],
   // ZZP client detail — the page registers the client name via useSubPageHeader.
   [/^\/dashboard\/klanten\/[^/]+$/, "Klant"],
+  // Conversation — the page registers the partner's name via useSubPageHeader;
+  // this base label shows on first paint. The /dashboard/messages LIST is an exact
+  // STATIC key ("Berichten"), resolved before patterns, so it is unaffected.
+  [/^\/dashboard\/messages\/[^/]+$/, "Gesprek"],
   // Accountant client quarter — registers "Q{q} {year} — {client}" + sort action.
   // Listed before the client-detail pattern below (more specific path first).
   [/^\/dashboard\/clients\/[^/]+\/kwartaal$/, "Kwartaal"],
