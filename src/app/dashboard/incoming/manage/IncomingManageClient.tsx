@@ -136,7 +136,7 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 export default function IncomingManageClient({
   profile,
   initialInvoices,
-}: { profile: any; initialInvoices: IncomingRow[] }) {
+}: { profile: { id: string }; initialInvoices: IncomingRow[] }) {
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -181,15 +181,19 @@ export default function IncomingManageClient({
     if (!focusId) return
     // Only act if the focused row actually exists in this list.
     if (!invoices.some(i => i.id === focusId)) return
-    setExpandedId(focusId)
-    setHighlightId(focusId)
+    // Expand + highlight on the next tick (never synchronously in the effect
+    // body — avoids a cascading re-render during the effects pass).
+    const applyTimer = setTimeout(() => {
+      setExpandedId(focusId)
+      setHighlightId(focusId)
+    }, 0)
     // Wait a tick for the row to render, then scroll to it.
     const scrollTimer = setTimeout(() => {
       rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
     // Fade the highlight after a few seconds — a cue, not a permanent state.
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
-    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+    return () => { clearTimeout(applyTimer); clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId])
 
