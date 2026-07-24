@@ -27,6 +27,9 @@ export interface BetaalverzoekInvoice {
   invoice_number: string | null;
   payment_reference: string | null;
   total_inc_btw: number | null;
+  // [PARTIAL-PAY] running total already settled by instalments (0/absent when
+  // fully open). The request must ask for the REMAINDER, never the full total.
+  amount_paid?: number | null;
   client_name: string | null;
   pay_token: string | null;
   due_date?: string | null;
@@ -91,7 +94,13 @@ export function buildBetaalverzoek(
 
   // A creditnota's total is negative (a refund the OWNER owes) — you cannot ask the
   // customer to pay a negative amount. Guard on a strictly-positive amount.
-  const amount = invoice.total_inc_btw ?? 0;
+  //
+  // [PARTIAL-PAY] Request the REMAINING openstaand, never the full total: a
+  // customer who already paid a bank-confirmed €400 instalment on a €1.000
+  // invoice must see €600 on the pay page/QR, not the full €1.000 again.
+  const total = invoice.total_inc_btw ?? 0;
+  const paid = Math.max(0, invoice.amount_paid ?? 0);
+  const amount = paid > 0.005 ? Math.max(0, total - paid) : total;
   if (!Number.isFinite(amount) || amount <= 0) {
     return { ok: false, error: "Het factuurbedrag is niet geschikt voor een betaalverzoek." };
   }
@@ -145,11 +154,19 @@ export function toPublicPayView(
   invoice: BetaalverzoekInvoice,
   owner: BetaalverzoekOwner
 ): PublicPayView | null {
-  const alreadyPaid = invoice.status === "paid";
+  // [PARTIAL-PAY] An invoice fully settled by instalments (amount_paid covers
+  // the total) may still carry status 'sent' — treat it as paid here so the
+  // customer sees "already paid" instead of a €0-request 404.
+  const totalAmt = invoice.total_inc_btw ?? 0;
+  const paidAmt = Math.max(0, invoice.amount_paid ?? 0);
+  const settledByInstalments = totalAmt > 0 && paidAmt >= totalAmt - 0.005;
+  const alreadyPaid = invoice.status === "paid" || settledByInstalments;
   // A paid invoice still renders (so the customer sees "already paid"), but we must
   // still be able to build the beneficiary/amount block. Build with a payable-status
-  // stand-in when it's paid, so buildBetaalverzoek's status guard doesn't reject it.
-  const probe = alreadyPaid ? { ...invoice, status: "sent" } : invoice;
+  // stand-in when it's paid (amount_paid stripped so the shown amount is the
+  // full total, matching the status-'paid' rendering), so buildBetaalverzoek's
+  // guards don't reject it.
+  const probe = alreadyPaid ? { ...invoice, status: "sent", amount_paid: 0 } : invoice;
   const built = buildBetaalverzoek(probe, owner);
   if (!built.ok) return null;
 

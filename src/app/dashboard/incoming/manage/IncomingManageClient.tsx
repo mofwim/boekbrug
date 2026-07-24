@@ -1055,7 +1055,17 @@ function PreparePaymentSheet({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
 
-  const amount = inv.total_inc_btw ?? 0
+  // [PARTIAL-PAY] The QR must request the REMAINING openstaand, never the full
+  // total: a €1.000 invoice with a €400 bank-confirmed instalment would
+  // otherwise pre-fill €1.000 in the owner's bank app → €600 over-payment.
+  // Same remainder rule as the "Deels betaald · €X open" chip on the card;
+  // sign preserved (a negative creditnota stays negative → EPC refuses it).
+  const amount = (() => {
+    const total = inv.total_inc_btw ?? 0
+    const paid = Math.max(0, inv.amount_paid ?? 0)
+    if (paid <= 0.005) return total
+    return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid)
+  })()
   // Reference: betalingskenmerk when present, else the invoice number (the EPC
   // remittance field — what the owner quotes when paying).
   const reference = (inv.payment_reference ?? inv.invoice_number ?? '').trim()

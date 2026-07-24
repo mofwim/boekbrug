@@ -81,5 +81,22 @@ console.log("\n— toPublicPayView: paid + non-payable —");
   check("no owner IBAN → null (can't build a safe view)", toPublicPayView(inv({}), { ...OWNER, iban: null }) === null);
 }
 
+console.log("\n— [PARTIAL-PAY] deelbetaling: request the REMAINDER, never the full total —");
+{
+  // €1.000 invoice, €400 bank-confirmed instalment → the request asks €600.
+  const partial = buildBetaalverzoek(inv({ total_inc_btw: 1000, amount_paid: 400 }), OWNER);
+  check("partial-paid invoice requests the remaining amount", partial.ok && partial.amount === 600);
+  check("remaining amount reaches the EPC payload", !!partial.epcPayload && partial.epcPayload.includes("EUR600"));
+  const view = toPublicPayView(inv({ total_inc_btw: 1000, amount_paid: 400 }), OWNER);
+  check("public pay view shows the remainder too", view !== null && view.amount === 600 && view.alreadyPaid === false);
+  // amount_paid 0 / absent → unchanged full-total behaviour.
+  check("no instalments → full total (absent field)", buildBetaalverzoek(inv({ total_inc_btw: 1000 }), OWNER).amount === 1000);
+  check("no instalments → full total (zero field)", buildBetaalverzoek(inv({ total_inc_btw: 1000, amount_paid: 0 }), OWNER).amount === 1000);
+  // Fully settled by instalments (status still 'sent') → "already paid", not a €0 request or 404.
+  const settled = toPublicPayView(inv({ total_inc_btw: 1000, amount_paid: 1000 }), OWNER);
+  check("instalment-settled invoice renders as alreadyPaid", settled !== null && settled.alreadyPaid === true);
+  check("instalment-settled build alone is refused (no €0 QR)", !buildBetaalverzoek(inv({ total_inc_btw: 1000, amount_paid: 1000 }), OWNER).ok);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
