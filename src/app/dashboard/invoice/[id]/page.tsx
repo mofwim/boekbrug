@@ -8,9 +8,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
-import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { getParentPath } from '@/lib/navigation'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
@@ -119,12 +117,10 @@ export default function InvoiceDetailPage() {
     }
   }, [invoice, searchParams, pathname])
 
-  // [NAVIGATION] Back target = the page's canonical parent, resolved centrally
-  // by getParentPath. The invoice/[id] rule already folds in the "opened from a
-  // client's kwartaal page" context (?from=client&clientId=…&q=&year=), so this
-  // stays a single explicit ancestor href — a <Link>, never router.back(), so it
-  // cannot loop.
-  const terugHref = getParentPath(pathname, 'zzper', searchParams)
+  // [NAVIGATION] Back is now provided by the shared sub-page header, which
+  // resolves the canonical parent via getParentPath with the page's search params
+  // — so the "opened from a client's kwartaal" context (?from=client&clientId=…)
+  // is preserved there, not here.
 
   // [FACTUUR-A] Resend handler — calls /api/invoice/send with resend:true — June 2026
   // Re-delivers PDF+email; does NOT touch invoice_number or status.
@@ -359,9 +355,12 @@ export default function InvoiceDetailPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA' }}>
 
-      {/* [DS] Header — Material You sticky, frosted glass */}
+      {/* [DS] Context toolbar — [SUBNAV] back + generic "Factuur" title come from
+          the shared sub-page header; this bar keeps the invoice-specific context
+          (number + type badge + status chip + actions + PDF) and sticks directly
+          below the shared bar. */}
       <div style={{
-        position: 'sticky', top: 0, zIndex: 10,
+        position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 10,
         backgroundColor: 'rgba(255,255,255,0.9)',
         backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
@@ -369,27 +368,6 @@ export default function InvoiceDetailPage() {
       }}>
         <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [DS] Back button — Material You circular tonal.
-                [NAVIGATION] <Link> to the canonical parent (terugHref), never
-                router.back() — cannot loop. */}
-            <Link
-              href={terugHref}
-              aria-label="Terug"
-              style={{
-                width: 36, height: 36,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                borderRadius: 9999,
-                border: 'none',
-                backgroundColor: 'transparent',
-                color: '#5F6368',
-                cursor: 'pointer',
-                fontSize: 18,
-                textDecoration: 'none',
-                transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
-              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</Link>
             {loading ? (
               <div style={{ height: 16, width: 144, backgroundColor: '#f1f3f4', borderRadius: 9999 }} />
             ) : (
