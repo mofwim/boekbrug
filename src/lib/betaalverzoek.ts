@@ -28,16 +28,13 @@ export interface BetaalverzoekInvoice {
   payment_reference: string | null;
   total_inc_btw: number | null;
   // [PARTIAL-PAY] running total already settled by instalments (0/absent when
-  // fully open). The request must ask for the REMAINDER, never the full total.
+  // fully open). Both flows request only what is still OPEN: the single-invoice
+  // request asks for the REMAINDER (never the full total), and the bundle asks
+  // the per-invoice open amount so a half-paid invoice is never over-asked.
   amount_paid?: number | null;
   client_name: string | null;
   pay_token: string | null;
   due_date?: string | null;
-  // [BUNDEL-BETAALVERZOEK] Running total already settled ([PARTIAL-PAY] column).
-  // The bundle asks only for what is still OPEN per invoice, so a half-paid
-  // invoice in a bundle never gets over-asked. Optional: the single-invoice
-  // flow doesn't read it.
-  amount_paid?: number | null;
 }
 
 /** The owner's own payout details (from their profile). The beneficiary of the QR. */
