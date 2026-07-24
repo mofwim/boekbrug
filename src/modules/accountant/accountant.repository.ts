@@ -122,8 +122,14 @@ export async function getAccountantClients(
 
   const { year, quarter } = getCurrentQuarter()
 
+  // The joined `profiles` relation post-dates the generated types → shape cast.
+  type LinkedProfileRow = {
+    created_at: string | null
+    profiles: { id: string; full_name: string | null; company_name: string | null; email: string | null } | null
+  }
+
   const summaries = await Promise.all(
-    data.map(async (row: any) => {
+    (data as unknown as LinkedProfileRow[]).map(async (row) => {
       const profile = row.profiles
       if (!profile) return null
 
@@ -259,8 +265,13 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
   // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes sent/received
   const todos: TodoItem[] = []
 
+  // The joined `profiles` relation post-dates the generated types → shape cast.
+  type TodoLinkRow = {
+    profiles: { id: string; full_name: string | null; company_name: string | null } | null
+  }
+
   await Promise.all(
-    links.map(async (row: any) => {
+    (links as unknown as TodoLinkRow[]).map(async (row) => {
       const profile = row.profiles
       if (!profile) return
 
@@ -291,12 +302,18 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
       }
 
       // 2. Shared invoices not yet 'verwerkt' (this quarter, both directions).
+      // [NULL-SEMANTICS] NOT (col = 'verwerkt') is NULL — row EXCLUDED — for a
+      // NULL accountant_status, and a freshly shared invoice is exactly that
+      // (no DB default; only accountant actions ever set it). The old filter
+      // therefore hid every untouched invoice from this todo count while the
+      // readiness score counted them — adjacent surfaces disagreed. IS NULL
+      // must be matched explicitly.
       const { count: unprocessedCount } = await supabase
         .from('invoices')
         .select('id', { count: 'exact', head: true })
         .or(bothDirections)
         .eq('shared', true)
-        .not('accountant_status', 'eq', 'verwerkt')
+        .or('accountant_status.is.null,accountant_status.neq.verwerkt')
         .gte('invoice_date', start)
         .lte('invoice_date', end)
 
