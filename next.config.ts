@@ -29,6 +29,41 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
+  // [SEC-HEADERS] Baseline security response headers on every route. These are
+  // the safe, non-breaking set — deliberately NOT a strict Content-Security-Policy,
+  // which would need per-source allow-listing for Supabase / Sentry / Vercel and
+  // could silently break the app. What we DO set:
+  //   · Strict-Transport-Security — force HTTPS for 2 years incl. subdomains.
+  //     `preload` is only a hint; the header alone never submits us to the
+  //     browser preload list (that requires a manual submission), so it is safe.
+  //   · X-Frame-Options: SAMEORIGIN — clickjacking guard. SAMEORIGIN (not DENY)
+  //     so we retain the option to embed our own pages (e.g. a /pay widget).
+  //   · X-Content-Type-Options: nosniff — no MIME-sniffing of our responses.
+  //   · Referrer-Policy — send only the origin to third parties, full path
+  //     same-origin. Keeps client/invoice paths out of external Referer logs.
+  //   · Permissions-Policy — deny camera/microphone/geolocation/topics. NB: the
+  //     invoice-photo flow uses <input capture>, a native file-input attribute
+  //     that is NOT gated by the Permissions-Policy `camera` directive (that
+  //     governs getUserMedia only), so denying camera here does not break it.
+  //   · X-DNS-Prefetch-Control: on — small latency win on outbound links.
+  async headers() {
+    const securityHeaders = [
+      {
+        key: "Strict-Transport-Security",
+        value: "max-age=63072000; includeSubDomains; preload",
+      },
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      {
+        key: "Permissions-Policy",
+        value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+      },
+      { key: "X-DNS-Prefetch-Control", value: "on" },
+    ];
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
 };
 
 export default withSentryConfig(nextConfig, {
