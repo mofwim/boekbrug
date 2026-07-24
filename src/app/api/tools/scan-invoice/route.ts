@@ -20,6 +20,7 @@
 // while the small output-token ceiling caps the worst case per request.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -195,6 +196,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Het bestand is te groot (max 8 MB).' }, { status: 413 })
   }
   const base64 = buf.toString('base64')
+
+  // [SEC-COST] Durable cost gate — placed right before the PAID Claude call, after the cheap
+  // validation above, so only requests that would actually spend money consume a scan slot.
+  // The in-memory limiter is per serverless INSTANCE; this DB-backed, atomic limiter holds the
+  // ceiling ACROSS instances (an attacker hitting cold/rotating instances can't bypass it).
+  // Caveat: it is keyed on the client IP (clientIp reads x-forwarded-for), which a determined
+  // attacker can rotate — so this bounds naive/single-source abuse, not a spoofing botnet; the
+  // bounded max_tokens + Haiku model cap the worst case per surviving call. Fail-open only if the
+  // limiter STORE itself errors (availability over a hard block).
+  try {
+    const durable = await checkRateLimit({ userId: `scan-ip:${ip}`, endpoint: '/api/tools/scan-invoice', ...RATE_LIMITS.PUBLIC_SCAN })
+    if (!durable.allowed) return rateLimitResponse(durable)
+  } catch (e) {
+    console.error('[SCAN-TOOL] durable rate-limit check failed (allowing)', e)
+  }
 
   let text: string
   try {

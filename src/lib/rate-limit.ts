@@ -44,6 +44,10 @@ export const RATE_LIMITS = {
   // TOKEN (a uuid), so a single leaked/shared link can't be hammered, while a real
   // customer refreshing the page a few times is never blocked.
   PUBLIC_PAY:          { maxRequests: 120, windowMinutes: 60 },   // 120 reads / hour per link
+  // [SEC-COST] Public, login-free invoice scanner → paid Claude call. Durable per-IP ceiling so a
+  // rotating-instance attacker can't drive unbounded ANTHROPIC spend (the in-route in-memory gate
+  // is per-instance only). Sits just above the honest client's 3/day.
+  PUBLIC_SCAN:         { maxRequests: 10, windowMinutes: 1440 },  // 10 scans / day per IP
 } as const
 
 // ── Main function ─────────────────────────────────────
