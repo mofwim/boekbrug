@@ -30,6 +30,8 @@ import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
+import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const M3 = {
@@ -126,70 +128,15 @@ const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'auto',     label: 'Automatisch verwerkt'  },
 ]
 
-// ─── [SORT] Ordering the list — the same options the market (Moneybird, e-Boekhouden,
-// Exact) offers, so the owner can find an invoice by whatever date/number matters to them,
-// not only "date added". Default stays 'added_desc' (nieuwste import bovenaan) so the screen
-// looks unchanged until the owner picks another order.
-type SortKey =
-  | 'added_desc' | 'invdate_desc' | 'invdate_asc'
-  | 'due_asc' | 'paydate_desc' | 'amount_desc' | 'amount_asc' | 'vendor_asc'
-const SORTS: { id: SortKey; label: string }[] = [
-  { id: 'added_desc',   label: 'Toegevoegd (nieuwste eerst)'  },
-  { id: 'invdate_desc', label: 'Factuurdatum (nieuwste eerst)' },
-  { id: 'invdate_asc',  label: 'Factuurdatum (oudste eerst)'   },
-  { id: 'due_asc',      label: 'Vervaldatum (eerst verlopen)'  },
-  { id: 'paydate_desc', label: 'Betaaldatum (nieuwste eerst)'  },
-  { id: 'amount_desc',  label: 'Bedrag (hoog → laag)'          },
-  { id: 'amount_asc',   label: 'Bedrag (laag → hoog)'          },
-  { id: 'vendor_asc',   label: 'Leverancier (A–Z)'             },
-]
-
-// Comparators — a MISSING value always sorts LAST (a dateless/amountless invoice must never
-// jump to the top and hide a real one), regardless of asc/desc. Dates are ISO "YYYY-MM-DD"
-// so a plain string compare is chronological.
-function cmpDate(a: string | null, b: string | null, dir: 'asc' | 'desc'): number {
-  const aa = a ?? '', bb = b ?? ''
-  if (!aa && !bb) return 0
-  if (!aa) return 1
-  if (!bb) return -1
-  return dir === 'asc' ? aa.localeCompare(bb) : bb.localeCompare(aa)
-}
-function cmpNum(a: number | null, b: number | null, dir: 'asc' | 'desc'): number {
-  const aNull = a == null, bNull = b == null
-  if (aNull && bNull) return 0
-  if (aNull) return 1
-  if (bNull) return -1
-  return dir === 'asc' ? (a as number) - (b as number) : (b as number) - (a as number)
-}
-function cmpStr(a: string | null, b: string | null): number {
-  const aa = (a ?? '').trim(), bb = (b ?? '').trim()
-  if (!aa && !bb) return 0
-  if (!aa) return 1
-  if (!bb) return -1
-  return aa.localeCompare(bb, 'nl', { sensitivity: 'base' })
-}
-// Array.prototype.sort is stable, so equal keys keep the incoming order (created_at desc
-// from the server) — a deterministic tiebreak with no extra code.
-function sortRows(rows: IncomingRow[], key: SortKey): IncomingRow[] {
-  const s = [...rows]
-  switch (key) {
-    case 'invdate_desc': return s.sort((a, b) => cmpDate(a.invoice_date, b.invoice_date, 'desc'))
-    case 'invdate_asc':  return s.sort((a, b) => cmpDate(a.invoice_date, b.invoice_date, 'asc'))
-    case 'due_asc':      return s.sort((a, b) => cmpDate(a.due_date, b.due_date, 'asc'))
-    case 'paydate_desc': return s.sort((a, b) => cmpDate(a.payment_date, b.payment_date, 'desc'))
-    case 'amount_desc':  return s.sort((a, b) => cmpNum(a.total_inc_btw, b.total_inc_btw, 'desc'))
-    case 'amount_asc':   return s.sort((a, b) => cmpNum(a.total_inc_btw, b.total_inc_btw, 'asc'))
-    case 'vendor_asc':   return s.sort((a, b) => cmpStr(a.client_name, b.client_name))
-    case 'added_desc':
-    default:             return s.sort((a, b) => cmpDate(a.created_at, b.created_at, 'desc'))
-  }
-}
+// [SORT] Ordering moved to the shared module (@/lib/invoice-sort) — SORTS,
+// SortKey and sortRows are imported above. Default stays 'added_desc' (nieuwste
+// import bovenaan) so the screen looks unchanged until the owner picks another order.
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function IncomingManageClient({
   profile,
   initialInvoices,
-}: { profile: any; initialInvoices: IncomingRow[] }) {
+}: { profile: { id: string }; initialInvoices: IncomingRow[] }) {
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -234,15 +181,19 @@ export default function IncomingManageClient({
     if (!focusId) return
     // Only act if the focused row actually exists in this list.
     if (!invoices.some(i => i.id === focusId)) return
-    setExpandedId(focusId)
-    setHighlightId(focusId)
+    // Expand + highlight on the next tick (never synchronously in the effect
+    // body — avoids a cascading re-render during the effects pass).
+    const applyTimer = setTimeout(() => {
+      setExpandedId(focusId)
+      setHighlightId(focusId)
+    }, 0)
     // Wait a tick for the row to render, then scroll to it.
     const scrollTimer = setTimeout(() => {
       rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
     // Fade the highlight after a few seconds — a cue, not a permanent state.
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
-    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+    return () => { clearTimeout(applyTimer); clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId])
 
