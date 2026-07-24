@@ -264,7 +264,11 @@ function rowToTransaction(row: string[], map: ColumnMap, currency: string): Bank
 
 /** Does this text look like a delimited CSV bank export (as opposed to MT940/CAMT)? */
 export function looksLikeBankCsv(content: string): boolean {
-  const firstLine = content.replace(/^﻿/, "").split(/\r?\n/, 1)[0] ?? "";
+  // First NON-EMPTY line — MATCHES parseBankCsv's header pick (lines.find(l => l.trim())), so the
+  // sniffer and the parser can never disagree. Reading only the LITERAL first line meant a bank CSV
+  // that begins with a leading blank line looked like "" here → not routed to bank → misfiled as an
+  // opaque document, even though parseBankCsv would have read its transactions fine.
+  const firstLine = content.replace(/^﻿/, "").split(/\r?\n/).find((l) => l.trim().length > 0) ?? "";
   if (!firstLine) return false;
   if (/^:\d{2}[A-Z]?:/.test(content.trimStart())) return false; // MT940
   if (/<\?xml|<Document|<BkToCstmrStmt/.test(content)) return false; // CAMT
