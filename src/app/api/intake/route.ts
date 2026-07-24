@@ -169,7 +169,12 @@ export async function POST(req: NextRequest) {
     const { data: dupDoc } = await supabase
       .from("documents").select("id, folder_id")
       .eq("user_id", user.id).eq("content_hash", hash).limit(1).maybeSingle()
-    if (dupDoc && !force) {
+    // The byte-hash gate is NEVER forceable (route contract): identical bytes are
+    // the same file, and an unreadable file carries no invoice to "add again", so
+    // `force` has nothing to override here. Short-circuiting regardless of force
+    // returns the honest duplicate message instead of letting the re-insert trip
+    // the (user_id, content_hash) unique index and surface a generic 500.
+    if (dupDoc) {
       const bc = await buildFolderBreadcrumb(supabase, user.id, dupDoc.folder_id)
       return NextResponse.json({
         duplicate: true, destination: "document",
