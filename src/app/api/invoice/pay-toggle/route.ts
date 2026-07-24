@@ -13,7 +13,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { clearPaymentLinks } from "@/lib/bank-tx-links";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 
@@ -112,25 +111,89 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // [BANK-UNLINK] If a bank transaction is matched to this invoice, DETACH it first so we never
-  // leave a paid-undone invoice beside a still-'matched' tx (which the pending-only matcher could
+  // [BANK-UNLINK] If a bank transaction is matched to this invoice, DETACH it so we never leave
+  // a paid-undone invoice beside a still-'matched' tx (which the pending-only matcher could
   // never resurface). Cover both the direct invoice_id link and any bank_tx_invoices join rows.
-  const linkedTxIds = new Set<string>();
+  //
+  // [UNDO-SCOPED] Two hardenings over the old blunt detach:
+  //  1. SCOPED to this invoice: a tx that also paid OTHER invoices (a batch booked via
+  //     book_bank_batch) keeps its status and the siblings' join rows — only OUR link goes.
+  //     The old clearPaymentLinks(tx) wiped the whole batch's reversal index and flipped a
+  //     still-partially-valid payment back to 'pending'.
+  //  2. ROLLBACK on a failed status write (mirrors /api/bank/unlink): the join rows are
+  //     snapshotted WITH amount_applied and restored, tx status/invoice_id restored, and
+  //     amount_paid recomputed — never "links destroyed but invoice still paid".
+
+  // Snapshot this invoice's join rows (amount_applied included — a rollback must restore it,
+  // it is what recompute_invoice_amount_paid sums).
+  const { data: myLinkRowsRaw } = await pipeline
+    .from("bank_tx_invoices")
+    .select("transaction_id, amount_applied")
+    .eq("user_id", user.id)
+    .eq("invoice_id", invoiceId);
+  const myLinks = (myLinkRowsRaw ?? []) as { transaction_id: string; amount_applied: number | null }[];
+
   const { data: directTx } = await pipeline
     .from("bank_transactions").select("id").eq("user_id", user.id).eq("invoice_id", invoiceId).eq("status", "matched");
-  for (const t of directTx ?? []) if (t.id) linkedTxIds.add(t.id);
-  const { data: joinRows } = await pipeline
-    .from("bank_tx_invoices").select("transaction_id").eq("user_id", user.id).eq("invoice_id", invoiceId);
-  for (const r of joinRows ?? []) if (r.transaction_id) linkedTxIds.add(r.transaction_id);
 
+  const linkedTxIds = new Set<string>();
+  for (const t of directTx ?? []) if (t.id) linkedTxIds.add(t.id);
+  for (const l of myLinks) if (l.transaction_id) linkedTxIds.add(l.transaction_id);
+
+  // Per-tx prior state + "does it also pay other invoices?" (batch detection).
+  const txPrev = new Map<string, { status: string | null; invoice_id: string | null; hasOthers: boolean }>();
   for (const txId of linkedTxIds) {
-    await pipeline.from("bank_transactions")
-      .update({ status: "pending", invoice_id: null })
-      .eq("id", txId).eq("user_id", user.id);
-    await clearPaymentLinks(pipeline, user.id, txId);
+    const [{ data: txRow }, { data: otherRows }] = await Promise.all([
+      pipeline.from("bank_transactions").select("status, invoice_id").eq("id", txId).eq("user_id", user.id).maybeSingle(),
+      pipeline.from("bank_tx_invoices").select("id").eq("user_id", user.id).eq("transaction_id", txId).neq("invoice_id", invoiceId).limit(1),
+    ]);
+    if (!txRow) continue;
+    txPrev.set(txId, {
+      status: (txRow as { status: string | null }).status,
+      invoice_id: (txRow as { invoice_id: string | null }).invoice_id,
+      hasOthers: (otherRows ?? []).length > 0,
+    });
   }
+
+  // Detach — scoped. Batch tx (hasOthers): keep it 'matched' for the siblings, only drop a
+  // direct pointer at US. Single-invoice tx: full detach back to 'pending'.
+  for (const [txId, prev] of txPrev) {
+    if (prev.hasOthers) {
+      if (prev.invoice_id === invoiceId) {
+        await pipeline.from("bank_transactions").update({ invoice_id: null }).eq("id", txId).eq("user_id", user.id);
+      }
+    } else {
+      await pipeline.from("bank_transactions")
+        .update({ status: "pending", invoice_id: null })
+        .eq("id", txId).eq("user_id", user.id);
+    }
+  }
+  // Remove ONLY this invoice's join rows (never the whole tx's set).
+  await pipeline.from("bank_tx_invoices").delete().eq("user_id", user.id).eq("invoice_id", invoiceId);
   // Reconcile amount_paid from surviving links (0 once all are cleared). Atomic + best-effort.
   try { await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId }); } catch { /* non-fatal */ }
+
+  // [UNDO-SCOPED] Restore the captured bank state — called when the invoice write below fails,
+  // so the detach never survives a failed undo. Best-effort (service role).
+  const rollbackBankState = async () => {
+    try {
+      if (myLinks.length > 0) {
+        await pipeline.from("bank_tx_invoices").upsert(
+          myLinks.map((l) => ({
+            user_id: user.id, transaction_id: l.transaction_id,
+            invoice_id: invoiceId, amount_applied: l.amount_applied,
+          })),
+          { onConflict: "transaction_id,invoice_id" }
+        );
+      }
+      for (const [txId, prev] of txPrev) {
+        await pipeline.from("bank_transactions")
+          .update({ status: prev.status, invoice_id: prev.invoice_id })
+          .eq("id", txId).eq("user_id", user.id);
+      }
+      await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: user.id, p_invoice_id: invoiceId });
+    } catch { /* best-effort */ }
+  };
 
   const restoredStatus = isIncoming ? "received" : "sent";
   const { data: undoData, error: undoErr } = await supabase
@@ -140,6 +203,7 @@ export async function POST(req: NextRequest) {
     .eq("status", "paid")
     .select("id");
   if (undoErr) {
+    await rollbackBankState();
     if (undoErr.message?.toLowerCase().includes("verwerkt")) {
       return NextResponse.json({ error: "verwerkt", invoiceNumber: inv.invoice_number }, { status: 409 });
     }
@@ -148,6 +212,7 @@ export async function POST(req: NextRequest) {
   // [PAY-GUARD] Honest zero-row report: if the row raced away from 'paid'
   // between the pre-check and this write, say so instead of claiming success.
   if (!undoData || undoData.length === 0) {
+    await rollbackBankState();
     return NextResponse.json({ error: "status_conflict", detail: "factuur is niet (meer) betaald" }, { status: 409 });
   }
 
