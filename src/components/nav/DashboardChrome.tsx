@@ -22,23 +22,16 @@
 import { usePathname } from "next/navigation";
 import SubPageHeader from "./SubPageHeader";
 
-// Exact route → page title. Only the currently-stranded pages (no header, no back).
+// Exact route → page title. Scoped tightly to the GENUINELY stranded pages: those
+// that today render NO top bar AND NO back affordance at all. Verified page-by-page —
+// every other /dashboard sub-page already ships either its own sticky top bar
+// (settings, messages, incoming) or at least an in-flow back link (kas, aangifte,
+// dagomzet, upload, quarterly, klaar, resultaat, artikelen, kluis), so adding this
+// bar there would double a header or a back control. Those pages are migrated to the
+// shared bar in a later step (replacing their bespoke chrome, not stacking on it).
 const SUBPAGE_TITLES = new Map<string, string>([
   ["/dashboard/vandaag", "Vandaag"],
-  ["/dashboard/kas", "Kas"],
-  ["/dashboard/settings", "Instellingen"],
-  ["/dashboard/aangifte", "Aangifte"],
-  ["/dashboard/dagomzet", "Dagomzet"],
-  ["/dashboard/upload", "Upload"],
-  ["/dashboard/incoming", "Inkomende facturen"],
-  ["/dashboard/quarterly", "Kwartaal"],
-  ["/dashboard/documents", "Documenten"],
-  ["/dashboard/messages", "Berichten"],
-  ["/dashboard/klaar", "Ben ik klaar?"],
   ["/dashboard/brug", "Brug"],
-  ["/dashboard/resultaat", "Resultaat"],
-  ["/dashboard/artikelen", "Artikelen"],
-  ["/dashboard/kluis", "Kluis"],
 ]);
 
 export default function DashboardChrome({ homeHref }: { homeHref: string }) {
