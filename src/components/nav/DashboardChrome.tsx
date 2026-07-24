@@ -47,6 +47,10 @@ const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/clients/invite", "Klant toevoegen"],
   ["/dashboard/clients/beheer", "Klanten beheren"],
   ["/dashboard/accountant/werkplek", "Mijn werkplek"],
+  // HAS-ACTIONS pages: the shared bar gives back + title; the page keeps its own
+  // search/filter/sort controls as a secondary sticky toolbar offset below it.
+  ["/dashboard/facturen", "Mijn facturen"],
+  ["/dashboard/klanten", "Mijn klanten"],
 ]);
 
 // Base label for a dynamic route TEMPLATE — shown until the page registers a
