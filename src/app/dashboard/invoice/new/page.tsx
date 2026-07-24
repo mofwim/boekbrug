@@ -10,7 +10,8 @@ import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 // [BOEK-031] Navigation Strategy — May 2026
-import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
+import { useParentPath } from '@/lib/navigation-hooks'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL } from '@/lib/format-nl'
@@ -389,7 +390,6 @@ function NewInvoicePageContent() {
   // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
   const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
   const parentHref = useParentPath(role)
-  const homeHref = useHomePath(role)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [loading, setLoading]         = useState(false)
   // [BOEK-031] linesLoading — wait for DB lines before allowing submit — May 2026
@@ -478,6 +478,24 @@ function NewInvoicePageContent() {
   const [convertingOfferte, setConvertingOfferte] = useState(false)
   // offerte_id if we're converting an existing offerte — read-only from URL
   const offerteId = offerteParam
+
+  // [SUBNAV] Dynamic title (factuur / offerte / creditnota) + the offerte
+  // "Omzetten naar factuur" action, pushed into the shared sub-page header.
+  // Called before the loading early-return so hook order stays stable.
+  useSubPageHeader(
+    {
+      title:
+        invoiceType === 'offerte' ? 'Nieuwe offerte' :
+        invoiceType === 'creditnota' ? 'Creditnota' : 'Nieuwe factuur',
+      actions: invoiceType === 'offerte' && offerteId ? (
+        <button onClick={() => setShowConvertDialog(true)}
+          style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
+          Omzetten naar factuur →
+        </button>
+      ) : undefined,
+    },
+    [invoiceType, offerteId]
+  )
 
   // ─── Load ──────────────────────────────────────────────────────────────────
 
@@ -968,54 +986,14 @@ function NewInvoicePageContent() {
   // ─── Derived ───────────────────────────────────────────────────────────────
 
   const cfg = TYPE_CONFIG[invoiceType]
-  const pageTitle =
-    invoiceType === 'offerte' ? 'Nieuwe offerte' :
-    invoiceType === 'creditnota'  ? 'Creditnota'     : 'Nieuwe factuur'
-
-  // [BOEK-031] Number already in correct format: 20260001 / CR-20260001 / PF-20260001
-  const displayNumber =
-    invoiceType === 'offerte' ? '—' :   // Pro forma: geen nummer in UI
-    invoiceNumber || 'Concept'
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', position: 'relative' }}>
-      {/* [DS] Top color band behind sticky header */}
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 64, backgroundColor: 'rgba(255,255,255,0.92)', zIndex: 9 }} />
-
-      {/* [DS] Sticky header — frosted glass Material You */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px' }}>
-        <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
-            <Link href={parentHref}
-              style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s', textDecoration: 'none' }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
-              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</Link>
-            {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}
-            <Link href={homeHref} style={{ textDecoration: 'none', marginRight: 4 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: '#1A73E8', letterSpacing: '-0.01em' }}>
-                BoekBrug
-              </span>
-            </Link>
-            <div>
-              {/* [DS] Title — 16px/700 */}
-              <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0, lineHeight: 1.2 }}>{pageTitle}</h1>
-              {invoiceType !== 'offerte' && (
-                <p style={{ fontSize: 11, color: '#9AA0A6', fontFamily: 'Roboto Mono, monospace', margin: '2px 0 0' }}>{displayNumber}</p>
-              )}
-            </div>
-          </div>
-          {invoiceType === 'offerte' && offerteId && (
-            <button onClick={() => setShowConvertDialog(true)}
-              style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
-              Omzetten naar factuur →
-            </button>
-          )}
-        </div>
-      </div>
+      {/* [SUBNAV] Back + title (Nieuwe factuur/offerte/Creditnota) + the offerte
+          "Omzetten naar factuur" action now come from the shared sub-page header
+          (registered via useSubPageHeader above). */}
 
       <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + env(safe-area-inset-bottom))' }}>
 

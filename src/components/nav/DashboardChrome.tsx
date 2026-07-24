@@ -53,6 +53,9 @@ const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/klanten", "Mijn klanten"],
   ["/dashboard/incoming/manage", "Inkoopfacturen"],
   ["/dashboard/incoming", "Inkomend"],
+  // Base label; the page overrides it via useSubPageHeader with the concrete
+  // type (Nieuwe factuur / Nieuwe offerte / Creditnota) once mounted.
+  ["/dashboard/invoice/new", "Nieuwe factuur"],
 ]);
 
 // Base label for a dynamic route TEMPLATE — shown until the page registers a
