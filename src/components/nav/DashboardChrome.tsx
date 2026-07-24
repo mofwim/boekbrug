@@ -56,6 +56,13 @@ const STATIC_TITLES = new Map<string, string>([
 const PATTERN_TITLES: ReadonlyArray<[RegExp, string]> = [
   // ZZP client detail — the page registers the client name via useSubPageHeader.
   [/^\/dashboard\/klanten\/[^/]+$/, "Klant"],
+  // Accountant client quarter — registers "Q{q} {year} — {client}" + sort action.
+  // Listed before the client-detail pattern below (more specific path first).
+  [/^\/dashboard\/clients\/[^/]+\/kwartaal$/, "Kwartaal"],
+  // Accountant client detail — registers client name + Ontkoppelen action.
+  // NB: /dashboard/clients/beheer and /clients/invite are in STATIC_TITLES, which
+  // is resolved BEFORE patterns, so this never overrides those fixed labels.
+  [/^\/dashboard\/clients\/[^/]+$/, "Klant"],
 ];
 
 function patternTitle(pathname: string): string | undefined {
