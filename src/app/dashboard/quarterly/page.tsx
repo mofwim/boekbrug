@@ -1,11 +1,9 @@
 // app/dashboard/quarterly/page.tsx
 // Quarterly overview page (BOEK-013)
 
-import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";
-import { getParentPath } from "@/lib/navigation";
 
 export const metadata = {
   title: "Kwartaaloverzicht — BoekBrug",
