@@ -1371,6 +1371,81 @@ export type Database = {
           },
         ]
       }
+      pay_bundle_invoices: {
+        Row: {
+          bundle_id: string
+          created_at: string | null
+          id: string
+          invoice_id: string
+          user_id: string
+        }
+        Insert: {
+          bundle_id: string
+          created_at?: string | null
+          id?: string
+          invoice_id: string
+          user_id: string
+        }
+        Update: {
+          bundle_id?: string
+          created_at?: string | null
+          id?: string
+          invoice_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pay_bundle_invoices_bundle_id_fkey"
+            columns: ["bundle_id"]
+            isOneToOne: false
+            referencedRelation: "pay_bundles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pay_bundle_invoices_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pay_bundle_invoices_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pay_bundles: {
+        Row: {
+          created_at: string | null
+          id: string
+          token: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          token?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          token?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pay_bundles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           address: string | null
