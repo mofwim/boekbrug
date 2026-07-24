@@ -280,6 +280,11 @@ export default function SettingsPage() {
 
     if (!res.ok) {
       setErrorInvite(data.error || 'Uitnodiging mislukt')
+    } else if (data.warning === 'email_failed') {
+      // [INVITE-HONEST] The invitation row was created but the e-mail did NOT go out (Resend
+      // rejected it / no API key). Don't claim "verstuurd" — tell the owner to share the link
+      // themselves so the invite isn't silently lost.
+      setErrorInvite('De uitnodiging is aangemaakt, maar de e-mail kon niet worden verzonden. Controleer het e-mailadres of deel de uitnodigingslink zelf met je boekhouder.')
     } else {
       setSuccessInvite(`Uitnodiging verstuurd naar ${accountantEmail}`)
       setAccountantEmail('')

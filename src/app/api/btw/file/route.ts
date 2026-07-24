@@ -13,6 +13,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResultForRange } from "@/lib/compute-result-range";
 import { computeFilingDivergence } from "@/lib/btw-filing";
+import { logAuditAction, getClientIP } from "@/lib/audit";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -88,13 +89,23 @@ export async function POST(req: NextRequest) {
   // Own filing only (no accountant dual-path here — filing is the owner's declaration).
   const pipeline = createPipelineClient();
 
-  // [FILING-GATE] Don't freeze a quarter as "ingediend" while incoming invoices dated in it are
-  // still unconfirmed ('processing') — their cost + voorbelasting are NOT yet in the figures, so the
-  // snapshot would be demonstrably incomplete. This is a WARNING, not a hard block: filing is the
-  // owner's own declaration, so the client re-POSTs with { acknowledge: true } after confirming.
-  // (Previously the client ignored the response entirely and froze silently.)
+  // The engine already surfaces every completeness signal we need — compute it once, up front, and
+  // reuse it both for the readiness gate and for the frozen snapshot below.
+  const range = await computeResultForRange({ pipeline, ownerId: user.id, start, end });
+  const { result, datelessVerifiedCount, undatedPaidCount } = range;
+
+  // [FILING-GATE] Don't freeze a quarter as "ingediend" while its figures are demonstrably
+  // incomplete. The old gate checked ONLY unconfirmed ('processing') incoming invoices — but the
+  // truth can be too low for several other reasons the readiness screen already blocks on. Gate on
+  // the SAME engine signals so filing and "klaar" can never disagree:
+  //   - processing incoming invoices in the window (cost/BTW not yet counted)
+  //   - cashOmzetZonderBtw > 0 (omzet booked in NO BTW rubriek — 5a silently too low)
+  //   - dateless verified invoices (dropped from the window entirely)
+  //   - undatedPaidCount (kasstelsel: paid money that can't be placed in a quarter)
+  // This is a WARNING, not a hard block: filing is the owner's own declaration, so the client
+  // re-POSTs with { acknowledge: true } after seeing the reason (which we then audit, below).
   if (body?.acknowledge !== true) {
-    const { count: processingCount } = await pipeline
+    const { count: processingCount, error: pcErr } = await pipeline
       .from("invoices")
       .select("id", { count: "exact", head: true })
       .eq("receiver_id", user.id)
@@ -102,20 +113,29 @@ export async function POST(req: NextRequest) {
       .eq("status", "processing")
       .gte("invoice_date", start)
       .lte("invoice_date", end);
-    if ((processingCount ?? 0) > 0) {
+
+    const blockers: string[] = [];
+    // [FAIL-CLOSED] A failed count must NOT read as "ready" — treat it as an open blocker so the
+    // gate never silently passes an unverified quarter on a transient DB error.
+    if (pcErr) blockers.push("kon niet controleren of alle inkoopfacturen bevestigd zijn — probeer het zo opnieuw");
+    else if ((processingCount ?? 0) > 0) blockers.push(`${processingCount} inkoopfactu(u)r(en) in dit kwartaal zijn nog niet gecontroleerd — hun bedrag en BTW staan nog niet in de cijfers`);
+    if (result.cashOmzetZonderBtw > 0) blockers.push(`er staat nog omzet zonder BTW-tarief (contant, bank of niet-gesplitste kassadag) — de verschuldigde BTW is daardoor mogelijk te laag`);
+    if (datelessVerifiedCount > 0) blockers.push(`${datelessVerifiedCount} bevestigde factu(u)r(en) hebben geen datum en tellen niet mee in dit kwartaal`);
+    if (undatedPaidCount > 0) blockers.push(`${undatedPaidCount} betaalde factu(u)r(en) missen een betaaldatum — onder kasstelsel kan de BTW niet in het juiste kwartaal worden geplaatst`);
+
+    if (blockers.length > 0) {
       return NextResponse.json(
         {
           error: "quarter_not_ready",
           notReady: true,
           processingCount: processingCount ?? 0,
-          reason: `${processingCount} inkoopfactu(u)r(en) in dit kwartaal zijn nog niet gecontroleerd — hun bedrag en BTW staan nog niet in de cijfers.`,
+          blockers,
+          reason: blockers.join(". "),
         },
         { status: 409 },
       );
     }
   }
-
-  const { result } = await computeResultForRange({ pipeline, ownerId: user.id, start, end });
 
   const snapshot = {
     user_id: user.id,
@@ -137,6 +157,22 @@ export async function POST(req: NextRequest) {
     .from("btw_filings")
     .upsert(snapshot, { onConflict: "user_id,year,quarter" });
   if (error) return NextResponse.json({ error: "kon indiening niet opslaan" }, { status: 500 });
+
+  // [FILING-AUDIT] Record that this quarter was filed, and — crucially — WHETHER it was filed while
+  // readiness blockers were still open (acknowledge:true). Previously the override left no trace, so
+  // a later dispute couldn't show the owner was warned. Best-effort: never fail the filing on audit.
+  await logAuditAction({
+    userId: user.id,
+    action: body?.acknowledge === true ? "btw.filed_despite_warnings" : "btw.filed",
+    entityType: "btw_filing",
+    entityId: `${year}-Q${quarter}`,
+    newValue: {
+      year, quarter, acknowledged: body?.acknowledge === true,
+      btwSaldo: result.btwSaldo, cashOmzetZonderBtw: result.cashOmzetZonderBtw,
+      datelessVerifiedCount, undatedPaidCount,
+    },
+    ipAddress: getClientIP(req),
+  }).catch(() => {});
 
   return NextResponse.json({ ok: true, filing: snapshot });
 }
