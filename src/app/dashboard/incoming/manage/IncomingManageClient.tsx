@@ -579,15 +579,28 @@ export default function IncomingManageClient({
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
-          {/* [BUNDEL-BETALING] Toggle multi-select — pick several open facturen
-              van één leverancier and prepare ONE transfer for the sum. */}
+        {/* [BUNDEL-BETALING] Left: the multi-select toggle — the entry point for
+            paying several facturen van één leverancier with one QR. Given a clear
+            affordance (blue tint + border in rest, solid blue when active) and put
+            on the LEFT so it reads first, not tucked in the corner. Right: the
+            Verificatie shortcut. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
           <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
-            style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>checklist</span>
-            {selectMode ? 'Klaar' : 'Selecteer'}
+            style={{
+              background: selectMode ? M3.primary : M3.primaryContainer,
+              border: `1px solid ${selectMode ? M3.primary : '#A8C7FA'}`,
+              borderRadius: R.full, padding: '8px 16px', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+              color: selectMode ? M3.onPrimary : M3.onPrimaryContainer,
+              display: 'flex', alignItems: 'center', gap: 6,
+              boxShadow: selectMode ? 'none' : EL1,
+            }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+              {selectMode ? 'close' : 'checklist'}
+            </span>
+            {selectMode ? 'Klaar' : 'Meerdere betalen'}
           </button>
-          <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+          <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
           </Link>
         </div>
