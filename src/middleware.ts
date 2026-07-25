@@ -4,6 +4,9 @@
 // modified by 028 Accou Portal v2
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+// [BILLING] Pure decision module — no Stripe SDK, no I/O. Importing billing.ts
+// here instead would pull the whole Stripe client into the Edge bundle.
+import { decideAccess, isBillingEnforced } from "@/lib/subscription";
 
 // Login-free public lead-gen tools — reachable by anyone, no session required:
 // /factuur-maken (invoice generator), /btw-berekenen (VAT calculator),
@@ -40,6 +43,12 @@ const PUBLIC_PATHS = [
   "/privacy",
   "/voorwaarden",
   "/cookies",
+  // [BILLING] The price page is a marketing page first: it has to be readable
+  // by a logged-out visitor (and by crawlers) exactly like /tools or /blog. It
+  // is ALSO where the paywall sends a logged-in account whose trial ran out, so
+  // it must never itself sit behind the guard — that would be a redirect loop.
+  // Safe against the startsWith() rule below: no other route begins "/prijzen".
+  "/prijzen",
 ];
 
 function isPublic(pathname: string): boolean {
@@ -85,20 +94,93 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Logged in, on dashboard → check onboarding
+  // Logged in, on dashboard → check onboarding, then billing
   if (
     user &&
     request.nextUrl.pathname.startsWith("/dashboard") &&
     !request.nextUrl.pathname.startsWith("/onboarding")
   ) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("onboarding_done")
-      .eq("id", user.id)
-      .single();
+    // [BILLING] One query serves both gates. The billing columns are added by
+    // supabase/migrations/billing_subscription.sql, which the owner applies by
+    // hand — so between deploying this code and applying that migration the
+    // extended select fails AS A WHOLE, and with it the onboarding redirect
+    // that has always lived here. That regression is not acceptable, so a
+    // failure falls back to the original narrow select: onboarding keeps
+    // working exactly as before, and billing simply stays dormant until the
+    // columns exist.
+    type GateProfile = {
+      onboarding_done?: boolean | null;
+      role?: string | null;
+      subscription_status?: string | null;
+      trial_ends_at?: string | null;
+      current_period_end?: string | null;
+    };
+
+    let profile: GateProfile | null = null;
+    let billingColumnsPresent = false;
+
+    try {
+      const extended = await supabase
+        .from("profiles")
+        .select("onboarding_done, role, subscription_status, trial_ends_at, current_period_end")
+        .eq("id", user.id)
+        .single();
+
+      if (extended.error) {
+        const basic = await supabase
+          .from("profiles")
+          .select("onboarding_done")
+          .eq("id", user.id)
+          .single();
+        profile = (basic.data as GateProfile | null) ?? null;
+      } else {
+        profile = (extended.data as GateProfile | null) ?? null;
+        billingColumnsPresent = true;
+      }
+    } catch (err) {
+      // A thrown read (network blip) must never 500 the whole app. Leaving
+      // profile null reproduces the pre-existing "no data → no redirect"
+      // behaviour, and billing stays dormant. Fail open, always.
+      console.error("[BILLING] middleware profile read threw:", err);
+    }
 
     if (profile && !profile.onboarding_done) {
       return NextResponse.redirect(new URL("/onboarding", request.url));
+    }
+
+    // [BILLING] The paywall. Inert unless BILLING_ENFORCED === "true".
+    //
+    // Every condition below is a reason NOT to turn someone away, and they are
+    // checked before the decision is even consulted:
+    //   · enforcement off (the default — the feature ships dark);
+    //   · the migration is not applied, so we have no state to judge on;
+    //   · the profile could not be read at all.
+    // decideAccess() then applies the same fail-open rule internally, and
+    // exempts accountants outright. See src/lib/subscription.ts.
+    if (
+      isBillingEnforced() &&
+      billingColumnsPresent &&
+      profile &&
+      // The billing screen itself is always reachable. It is where Stripe
+      // returns the customer after payment, and the webhook that flips them to
+      // 'active' can land a second or two later — without this exemption that
+      // race bounces a customer who has just paid back to the price page, which
+      // reads as "my payment failed" at the worst possible moment.
+      !request.nextUrl.pathname.startsWith("/dashboard/settings/facturering")
+    ) {
+      const decision = decideAccess({
+        role: profile.role ?? null,
+        subscriptionStatus: profile.subscription_status ?? null,
+        trialEndsAt: profile.trial_ends_at ?? null,
+        currentPeriodEnd: profile.current_period_end ?? null,
+        nowMs: Date.now(),
+      });
+
+      if (!decision.allowed) {
+        const url = new URL("/prijzen", request.url);
+        url.searchParams.set("reden", decision.reason);
+        return NextResponse.redirect(url);
+      }
     }
   }
 

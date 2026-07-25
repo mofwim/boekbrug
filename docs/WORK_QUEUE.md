@@ -8,6 +8,11 @@ These are written but NOT yet applied to the database. Features run safely witho
 but the new writes error until the tables/columns exist.
 1. `supabase/migrations/circle_integrity_and_indexes.sql` (content_hash / shared / needs_reauth / FK indexes)
 2. `supabase/migrations/ledger_daily.sql` (PIN/cash grootboek cross-check table — needed before a ledger upload can save)
+3. `supabase/migrations/billing_subscription.sql` (subscription state + the self-grant guard trigger).
+   Unlike the two above, the app is **fully safe without it**: every billing read is
+   defensive and the paywall ships dark, so nothing errors and nobody is gated —
+   billing simply stays dormant until it is applied. Full go-live checklist in
+   `docs/BILLING.md` §6.
 
 ## ✅ Done + verified + pushed this session (branch `claude/boekbrug-file-architecture-4b8s6o`)
 - **HIGH money fix — covered-day card-payout double-count** (3 adversarial review rounds → SHIP). Budget-bounded suppression (pin_amount), shared `toResultBankTx` mapper across the 4 money surfaces, SETTLE_LAG=5, cardBudgetBound. 76 tests.

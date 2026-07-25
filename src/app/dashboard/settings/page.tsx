@@ -2,6 +2,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
@@ -594,6 +595,25 @@ export default function SettingsPage() {
 
         {/* [PUSH] Meldingen (push notifications) — self-hides when unavailable */}
         <PushNotificationCard />
+
+        {/* [BILLING] Abonnement — ZZP'er only; a boekhouder is never billed.
+            Only a link: the state itself lives on /dashboard/settings/facturering,
+            which is the page Stripe returns to and the one page the paywall
+            always leaves reachable. */}
+        {profile.role === 'zzper' && (
+          <Link
+            href="/dashboard/settings/facturering"
+            className="block bg-white rounded-2xl p-5 shadow-sm hover:bg-gray-50 transition-colors"
+          >
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+              Abonnement
+            </p>
+            <p className="mt-2 text-sm text-gray-900 font-medium">Facturering en abonnement</p>
+            <p className="mt-1 text-sm text-gray-600">
+              Bekijk je abonnement, wijzig je betaalgegevens of download je btw-facturen.
+            </p>
+          </Link>
+        )}
 
         {/* [FACTUUR-B] Factuurnummering — ZZP'er only */}
         {profile.role === 'zzper' && (

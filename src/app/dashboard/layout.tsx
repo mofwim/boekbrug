@@ -7,6 +7,7 @@ import SentryUserProvider from '@/components/providers/SentryUserProvider'
 import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
+import TrialBanner from '@/components/billing/TrialBanner'
 
 export default async function DashboardLayout({
   children,
@@ -47,6 +48,9 @@ export default async function DashboardLayout({
           The bar is placed before {children} so its sticky bar sits at top. */}
       <SubPageHeaderProvider>
         {profile && <DashboardChrome role={subnavRole} />}
+        {/* [BILLING] Renders nothing unless a trial is genuinely running out.
+            Reads its own data defensively — see the component. */}
+        {profile && <TrialBanner />}
         {children}
       </SubPageHeaderProvider>
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
