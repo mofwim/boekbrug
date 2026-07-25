@@ -5,6 +5,8 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
+// [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
+import { SnelStartCard } from '@/components/settings/SnelStartCard'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 // [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
@@ -594,6 +596,9 @@ export default function SettingsPage() {
 
         {/* [PUSH] Meldingen (push notifications) — self-hides when unavailable */}
         <PushNotificationCard />
+
+        {/* [SNELSTART] Boekhoudkoppeling — self-hides when the server has no API key */}
+        <SnelStartCard />
 
         {/* [FACTUUR-B] Factuurnummering — ZZP'er only */}
         {profile.role === 'zzper' && (

@@ -74,6 +74,10 @@ export type AuditAction =
   | 'user.account_deletion_requested'
   | 'email.connection_created'
   | 'email.connection_revoked'
+  // Level 5 — Boekhoudkoppelingen
+  | 'snelstart.connected'             // ← [SNELSTART] maatwerksleutel gekoppeld (of vervangen)
+  | 'snelstart.disconnected'          // ← [SNELSTART] koppeling verbroken, sleutel uit Vault
+  | 'snelstart.pushed'                // ← [SNELSTART] facturen als boeking naar de administratie gestuurd
 
 export interface AuditParams {
   /** Profile ID للمستخدم الذي فعل الـ action */

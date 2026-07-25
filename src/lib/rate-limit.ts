@@ -48,6 +48,13 @@ export const RATE_LIMITS = {
   // rotating-instance attacker can't drive unbounded ANTHROPIC spend (the in-route in-memory gate
   // is per-instance only). Sits just above the honest client's 3/day.
   PUBLIC_SCAN:         { maxRequests: 10, windowMinutes: 1440 },  // 10 scans / day per IP
+  // [SNELSTART] Koppelen roept de SnelStart token-endpoint aan met een sleutel die de
+  // gebruiker intikt. Een lage limiet houdt zowel typefouten als het uitproberen van
+  // sleutels binnen de perken (SnelStart telt die pogingen aan hun kant ook mee).
+  SNELSTART_CONNECT:   { maxRequests: 10, windowMinutes: 60 },    // 10 koppelpogingen / uur
+  // Doorsturen is één HTTP-ronde per factuur. 20 batches/uur is ruim voor een kwartaal
+  // in delen en ver onder de rate limits van de B2B-API.
+  SNELSTART_PUSH:      { maxRequests: 20, windowMinutes: 60 },    // 20 push-batches / uur
 } as const
 
 // ── Main function ─────────────────────────────────────

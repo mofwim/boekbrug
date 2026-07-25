@@ -1615,6 +1615,119 @@ export type Database = {
           },
         ]
       }
+      snelstart_connections: {
+        Row: {
+          administration_label: string | null
+          client_key_secret_id: string | null
+          connected_at: string
+          id: string
+          inkoop_grootboek_id: string | null
+          key_stored_at: string | null
+          last_error: string | null
+          last_push_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          verkoop_grootboek_id: string | null
+        }
+        Insert: {
+          administration_label?: string | null
+          client_key_secret_id?: string | null
+          connected_at?: string
+          id?: string
+          inkoop_grootboek_id?: string | null
+          key_stored_at?: string | null
+          last_error?: string | null
+          last_push_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          verkoop_grootboek_id?: string | null
+        }
+        Update: {
+          administration_label?: string | null
+          client_key_secret_id?: string | null
+          connected_at?: string
+          id?: string
+          inkoop_grootboek_id?: string | null
+          key_stored_at?: string | null
+          last_error?: string | null
+          last_push_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          verkoop_grootboek_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "snelstart_connections_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      snelstart_exports: {
+        Row: {
+          amount: number | null
+          boeking_type: string
+          direction: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          invoice_id: string
+          pushed_at: string
+          snelstart_id: string | null
+          snelstart_relatie_id: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          amount?: number | null
+          boeking_type: string
+          direction: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          invoice_id: string
+          pushed_at?: string
+          snelstart_id?: string | null
+          snelstart_relatie_id?: string | null
+          status: string
+          user_id: string
+        }
+        Update: {
+          amount?: number | null
+          boeking_type?: string
+          direction?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          invoice_id?: string
+          pushed_at?: string
+          snelstart_id?: string | null
+          snelstart_relatie_id?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "snelstart_exports_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "snelstart_exports_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       suppliers: {
         Row: {
           btw_number: string | null
