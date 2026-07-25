@@ -89,6 +89,11 @@ export async function GET(req: NextRequest) {
         .not("trial_ends_at", "is", null)
         .lte("trial_ends_at", horizon)
         .gte("trial_ends_at", new Date(nowMs).toISOString())
+        // fetchAllRows pages with .range(), and that is only correct on a STABLE
+        // order. Without this the page boundary can shift between requests and
+        // an owner is skipped — their trial then ends with no warning at all,
+        // which is the exact failure this cron exists to prevent.
+        .order("id", { ascending: true })
         .range(from, to)
     );
   } catch (err) {

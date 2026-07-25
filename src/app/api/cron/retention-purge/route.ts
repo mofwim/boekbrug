@@ -109,7 +109,13 @@ export async function GET(req: NextRequest) {
         .is("purged_at", null)
         .not("deleted_at", "is", null)
         .lte("data_eligible_for_deletion_at", now.toISOString())
+        // Oldest-due first, then id as the tiebreaker. fetchAllRows requires a
+        // STABLE order: data_eligible_for_deletion_at is not unique, and two
+        // rows sharing a timestamp can otherwise swap places between pages and
+        // silently skip one — on this job, a skipped row is an erasure that
+        // never happens and a GDPR request that stays unfulfilled.
         .order("data_eligible_for_deletion_at", { ascending: true })
+        .order("id", { ascending: true })
         .range(from, to)
     );
   } catch (err) {
@@ -210,16 +216,29 @@ async function purgeOneUser(
   if (folderErr) throw new Error(`folders delete failed: ${folderErr.message}`);
 }
 
-/** Depth-first removal of everything under a Storage prefix. Returns the count. */
+/**
+ * Depth-first removal of everything under a Storage prefix. Returns the count.
+ *
+ * LIST THE WHOLE LEVEL FIRST, THEN DELETE. Do not "simplify" this back into a
+ * delete-as-you-page loop: `list()` pages by OFFSET, so deleting a page shifts
+ * every later entry forward by exactly the number just removed, and the next
+ * request at offset+100 then starts 100 entries past where the data now begins.
+ * With 250 files you would erase 100, skip 100, erase 50, and report success.
+ *
+ * Silent partial erasure is the worst possible outcome here: the row gets
+ * stamped purged_at, so nothing ever comes back for the survivors, and we would
+ * have told a person their data was deleted when it was not.
+ */
 async function removePrefixRecursive(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   pipeline: any,
   prefix: string
 ): Promise<number> {
-  let removed = 0;
-  let offset = 0;
+  const files: string[] = [];
+  const folders: string[] = [];
 
-  for (;;) {
+  // ── Phase 1: read the entire level, deleting nothing ───────────────
+  for (let offset = 0; ; offset += LIST_PAGE) {
     const { data: entries, error } = await pipeline.storage
       .from(BUCKET)
       .list(prefix.replace(/\/$/, ""), { limit: LIST_PAGE, offset });
@@ -227,24 +246,31 @@ async function removePrefixRecursive(
     if (error) throw new Error(`storage list failed at ${prefix}: ${error.message}`);
     if (!entries || entries.length === 0) break;
 
-    // Supabase marks a "folder" by a null id — those need recursing into, the
-    // rest are real objects.
-    const files = entries.filter((e: { id: string | null }) => e.id !== null);
-    const folders = entries.filter((e: { id: string | null }) => e.id === null);
-
-    if (files.length > 0) {
-      const paths = files.map((f: { name: string }) => `${prefix}${f.name}`);
-      const { error: rmErr } = await pipeline.storage.from(BUCKET).remove(paths);
-      if (rmErr) throw new Error(`storage remove failed at ${prefix}: ${rmErr.message}`);
-      removed += paths.length;
-    }
-
-    for (const folder of folders) {
-      removed += await removePrefixRecursive(pipeline, `${prefix}${folder.name}/`);
+    for (const entry of entries as Array<{ id: string | null; name: string }>) {
+      // Supabase marks a synthetic "folder" with a null id; everything else is
+      // a real object.
+      if (entry.id === null) folders.push(entry.name);
+      else files.push(`${prefix}${entry.name}`);
     }
 
     if (entries.length < LIST_PAGE) break;
-    offset += LIST_PAGE;
+    // Backstop against a pathological listing; a real account is nowhere near.
+    if (offset > 1_000_000) {
+      throw new Error(`storage listing at ${prefix} exceeded the safety bound`);
+    }
+  }
+
+  // ── Phase 2: now it is safe to delete ──────────────────────────────
+  let removed = 0;
+  for (let i = 0; i < files.length; i += LIST_PAGE) {
+    const batch = files.slice(i, i + LIST_PAGE);
+    const { error: rmErr } = await pipeline.storage.from(BUCKET).remove(batch);
+    if (rmErr) throw new Error(`storage remove failed at ${prefix}: ${rmErr.message}`);
+    removed += batch.length;
+  }
+
+  for (const folder of folders) {
+    removed += await removePrefixRecursive(pipeline, `${prefix}${folder}/`);
   }
 
   return removed;
