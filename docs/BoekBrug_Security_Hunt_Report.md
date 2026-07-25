@@ -37,7 +37,42 @@ spot-verified against the real code. Line numbers are indicative.
 ## 1. CRITICAL
 
 ### C1 — `xlsx@0.18.5` has known CVEs, reachable server-side on untrusted uploads
-- **Lane:** ADJACENT (parser shared by bank/turnover/intake) · **Status:** OPEN
+- **Lane:** ADJACENT (parser shared by bank/turnover/intake) · **Status:** ⚠️ **MITIGATED — upgrade still required** (July 2026)
+
+> **Update — July 2026.** Containment shipped in `src/lib/xlsx-adapter.ts`
+> (`withPrototypeGuard` + `assertWithinParseLimit`, 15 tests in
+> `xlsx-adapter.test.ts`). The adapter is the ONE module importing SheetJS and
+> every one of the six upload paths funnels through `sheetBytesToMatrix`, so the
+> guard covers the whole attack surface. All six callers already wrap the call
+> in `try/catch`, so a refused file degrades to a clean 422 / skip — never a 500.
+>
+> - **CVE-2023-30533 (prototype pollution) — impact contained.** Any property
+>   the parse leaves on `Object`/`Array`/`Function.prototype` is detected,
+>   deleted, and the upload rejected. The check runs in a `finally`, so it also
+>   fires when the parse *threw* — the realistic attack shape is "poison, then
+>   crash", where the caller's `try/catch` would otherwise swallow the crash and
+>   leave the process silently corrupted for every later request.
+> - **CVE-2024-22363 (ReDoS) — bounded, NOT fixed.** The CPU burn is inside a
+>   synchronous `XLSX.read` that nothing in-process can interrupt. A 20MB
+>   backstop ceiling (above the routes' own 10MB cap, so it never rejects a file
+>   they accepted) limits the work one upload can demand. **Only the upgrade
+>   actually fixes this.**
+>
+> **The upgrade is still outstanding and is one command**, to be run from an
+> environment that can reach `cdn.sheetjs.com` (it was blocked by egress policy
+> in the session that shipped the containment):
+>
+> ```bash
+> npm install https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+> npm audit            # expect: no xlsx advisories
+> npx tsc --noEmit && npx tsx --test src/lib/*.test.ts && npm run build
+> ```
+>
+> Then upload one real Z-report, one grootboek export and one bank `.xlsx` to
+> confirm parsing is unchanged. `package.json` was deliberately NOT pointed at
+> the CDN tarball without being able to install and test it — an unverifiable
+> dependency change would risk breaking every build. Keep the guards after the
+> upgrade: they are defence in depth and cost nothing.
 - **Location:** `package.json` (`"xlsx": "^0.18.5"`); `src/lib/xlsx-adapter.ts:13` (`XLSX.read`); reached from `src/app/api/turnover/import/route.ts` (10MB), `src/app/api/bank/upload` + `src/app/api/intake` bank branch via `src/lib/bank-ingest.ts:60` (`detectSheetKind(sheetBytesToMatrix(...))` for any ZIP/OLE2-magic upload).
 - **Repro:** upload a crafted `.xlsx`: (a) a `__proto__`-poisoning cell/defined-name → **CVE-2023-30533** prototype pollution corrupts `Object.prototype` for the whole Node process; (b) a ReDoS-triggering cell → **CVE-2024-22363** CPU exhaustion. The endpoint `try/catch` does not stop pollution side-effects or CPU burn.
 - **Impact:** server-wide logic corruption / DoS from a single authenticated upload.
@@ -55,7 +90,7 @@ spot-verified against the real code. Line numbers are indicative.
 - **Fix:** route every cell through a `csvCell`-style neutraliser — the model already exists at `src/app/api/kluis/export/route.ts:27` (`if (/^[=+\-@\t\r]/.test(s)) s = "'" + s`). `bank-csv.ts:389` also already does this — export.ts is the gap.
 
 ### H2 — SheetJS matrix densification → OOM from a tiny file
-- **Lane:** ADJACENT (parser) · **Status:** OPEN
+- **Lane:** ADJACENT (parser) · **Status:** ✅ **FIXED** — the report was stale. `src/lib/xlsx-adapter.ts` clamps the declared `!ref` range to 100 000 × 200 before `sheet_to_json`, so a `<dimension ref="A1:XFD1048576"/>` file can no longer force the densification. Verified in code July 2026 while shipping the C1 containment.
 - **Location:** `src/lib/xlsx-adapter.ts:17` `sheet_to_json(sheet, { header:1, defval:null, blankrows:false })`.
 - **Repro:** a ~10KB `.xlsx` declaring `<dimension ref="A1:XFD1048576"/>` (16384×1048576) with two real cells → `sheet_to_json` iterates the whole declared range, allocating per cell → multi-GB transient allocation → **server OOM** (not caught by `try/catch`; kills the process, crashing the shared upload path).
 - **Fix:** bound the `!ref` rows×cols (and/or a decompressed-size guard) before `sheet_to_json`; reject oversized ranges with a clear error.
@@ -297,7 +332,9 @@ Two non-catastrophic items:
 
 ## 9. Recommended fix order
 
-1. **C1** (xlsx upgrade) + **H2** (bound the sheet range) — a tiny authenticated upload crashes/corrupts the shared server today.
+1. ~~**C1** (xlsx upgrade) + **H2** (bound the sheet range) — a tiny authenticated upload crashes/corrupts the shared server today.~~
+   **H2 done; C1 contained** (July 2026 — prototype-pollution impact neutralised, ReDoS bounded).
+   **Still to do: the one-command SheetJS upgrade** (see C1) — it is the only thing that actually fixes CVE-2024-22363.
 2. **H1** (CSV `csvCell` in export.ts/account-export) — third-party Excel execution; trivial, reuses an existing helper.
 3. **MH1** (OAuth state nonce) — mailbox-connection CSRF.
 4. **H3/M4** (CAMT `isFinite` + date-shape guards) — one-line financial-integrity fixes.
