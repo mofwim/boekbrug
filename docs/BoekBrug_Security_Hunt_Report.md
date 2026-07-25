@@ -24,6 +24,48 @@ MH1, M2, M3, M4, M5) had in fact been fixed, some of them long ago. That is
 itself a health risk — a report that cries wolf buries the one item that is
 genuinely still outstanding, and sends attention to code that needs none.
 
+### 🔴 NEW — D1: Next.js 16.2.6 middleware bypass (FIXED, July 2026)
+
+Found by running a full `npm audit`, which this report had never covered — it
+scoped the *application*, never the *framework*. Next.js 16.2.6 carried **nine**
+advisories, all fixed in 16.2.11. The first outranks everything else in this
+document:
+
+> **"Middleware / Proxy bypass in App Router applications using Turbopack and
+> single locale"** — HIGH, `>=16.0.0 <16.2.11`
+
+BoekBrug builds with Turbopack, and `src/middleware.ts` is the **only**
+authentication gate in the app: every `/dashboard/*` page, the onboarding
+redirect and the billing paywall sit behind it. A bypass is unauthenticated
+access to other people's bookkeeping — and no amount of hardening *inside* the
+app matters if the gate can be walked around.
+
+Also fixed by the same upgrade: SSRF in Server Actions on custom servers · SSRF
+via attacker-controlled rewrite destinations · DoS in Server Actions · DoS in
+the Image Optimization API via SVG · cache confusion of response bodies (×2) ·
+unbounded Server Action payloads on Edge · unauthenticated disclosure of
+internal Server Function endpoints.
+
+**Fix:** `npm audit fix` → 16.2.12 (semver-compatible, lockfile only; NOT
+`--force`). Verified: tsc clean, 105/105 test files, production build, middleware
+still registers.
+
+**Residual, deliberately not forced:** `next/node_modules/postcss` and
+`next/node_modules/sharp@0.34.5` — Next's own nested copies, through which
+`next` is now flagged only transitively. The sharp CVEs are libvips issues
+reachable via Image Optimization; this app configures no `images.remotePatterns`
+and uses `next/image` in two places, both rendering our own
+`public/blog/*.png`. Our own sharp usage (`ai.ts`, downscaling invoice photos —
+the path that *does* take untrusted input) dynamically imports the top-level
+**sharp@0.35.3**, which is unaffected. postcss is build-time over our own CSS,
+and the eslint/minimatch/brace-expansion cluster is devDependencies.
+
+**Lesson worth keeping:** this report audited the code and never the supply
+chain. `npm audit` belongs in the routine — the framework is part of the attack
+surface.
+
+---
+
 Current true state:
 
 | | Finding | State |
