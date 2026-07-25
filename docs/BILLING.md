@@ -194,7 +194,7 @@ Nothing below is code. Do them in order.
 
 | Not built | Why not yet |
 |---|---|
-| Trial-ending / payment-failed emails | The in-app banner covers the nudge, and the first cohort is 10 people you onboard personally. Add when the cohort stops being hand-held. |
+| ~~Trial-ending / payment-failed emails~~ | **✅ Built (July 2026).** See §9. |
 | Annual plan, accountant plans, coupons | Answers to questions we have not earned. One price is also the cleanest experiment. |
 | Full dunning sequence | Stripe already retries; `past_due` keeps access. Build the sequence when there is revenue to protect. |
 | Mollie / native iDEAL | Stripe's iDEAL is enough, and one integration beats two. Revisit on fee volume. |
@@ -226,3 +226,72 @@ Building the machine is not the point. The point is the number it produces.
 ---
 
 *BoekBrug Billing — July 2026. Built dark, on purpose.*
+
+---
+
+## 9. Lifecycle e-mails
+
+Two mails, and deliberately only two. A trial that ends with no warning does not
+read as "my trial ended" — it reads as "the app took my bookkeeping away". A
+failed payment nobody mentions turns a dead card into a cancellation. Everything
+past those two (win-back, drip, upsell) is marketing, and marketing nobody asked
+for is how a small tool starts to feel like a big one.
+
+| Mail | Trigger | Where |
+|---|---|---|
+| **Proefperiode loopt af** | daily cron, 3 days or fewer left | `/api/cron/trial-reminder` → `sendTrialEndingEmail` |
+| **Betaling niet gelukt** | Stripe `invoice.payment_failed` | `/api/billing/webhook` → `sendPaymentFailedEmail` |
+
+**Why the trial mail is a cron and the payment mail is a webhook.** A failed
+charge is an event Stripe already tells us about the moment it happens, so
+asking for it again on a schedule would be both slower and duplicated. "Three
+days left", by contrast, is not an event at all — nothing happens on that day;
+it is simply true from then on, and only a scheduled scan can notice it.
+
+**Claim-then-send.** `profiles.trial_reminder_sent_at`
+(`billing_trial_reminder.sql`) is stamped **before** the mail goes out, in an
+update scoped `.is('trial_reminder_sent_at', null)`. If another run already
+claimed the owner the update touches nothing and we do not send. Two overlapping
+cron runs therefore cannot both mail the same person. The trade is deliberate: a
+send that fails after the claim is not retried, because a missed nudge is a
+nudge, while a duplicate nudge is an annoyance you cannot take back — and it
+lands right before you ask that person for money.
+
+**One decision, one truth.** The cron does not re-derive "is this trial ending?"
+It calls the same `decideAccess()` / `trialBanner()` pair the middleware and the
+on-screen banner use, so the e-mail can never claim something the app contradicts.
+
+**The payment mail says the customer keeps access, because they do.**
+`past_due` deliberately stays allowed (§4.1, rule 4). A customer locked out over
+an expired card cancels; a customer told "we'll retry, you're fine, here's the
+link" updates their card. The mail is written to match the behaviour exactly.
+
+**Safe by construction.** Both paths are best-effort: `deliverEmail(...,
+{critical: false})` logs and reports to Sentry but never breaks the cron run or
+the webhook. The webhook's mail step additionally never throws — if it did,
+Stripe would retry the whole event and re-send the same mail, turning our outage
+into the customer's spam. And with the migrations unapplied the cron's query
+errors into a clean no-op, so it cannot mail anyone before there is anyone to mail.
+
+---
+
+## 10. Cron inventory (what runs unattended)
+
+Billing and compliance added three scheduled jobs. All three share the same
+guard: `Authorization: Bearer $CRON_SECRET`, constant-time compare, fail closed.
+
+| Path | Schedule | What it may do | Dark switch |
+|---|---|---|---|
+| `/api/cron/trial-reminder` | daily 09:00 | send one mail per owner, stamp a send log | — (no-op with no trials) |
+| `/api/cron/retention-purge` | Mondays 03:00 | **irreversibly erase files** past the 7-year window | `RETENTION_PURGE_ENABLED` — unset ⇒ **dry run** |
+
+> ⚠️ `retention-purge` is the only code in BoekBrug that destroys data. It is
+> covered in `docs/BoekBrug_Security_Hunt_Report.md` → A1 and guarded four ways
+> (cron secret · dark switch · a purely-refusing decision function with 19 tests
+> · a UUID-bounded storage prefix). Nothing in this app can be due for erasure
+> before 2033. **If a dry run ever reports a candidate before then, a date was
+> stamped wrong — investigate, do not enable.**
+
+Vercel plan note: `vercel.json` now declares six crons. The Hobby plan allows
+two daily jobs; these schedules assume Pro. If a deploy rejects the cron block,
+that is the reason.

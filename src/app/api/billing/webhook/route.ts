@@ -37,6 +37,7 @@ import {
 } from "@/lib/billing";
 import { normalizeStripeStatus } from "@/lib/subscription";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { sendPaymentFailedEmail } from "@/lib/email";
 
 // Stripe's signature verification needs Node crypto and the raw body.
 export const runtime = "nodejs";
@@ -48,6 +49,10 @@ const HANDLED = new Set([
   "customer.subscription.created",
   "customer.subscription.updated",
   "customer.subscription.deleted",
+  // Not a state change — Stripe also sends subscription.updated for that. This
+  // is purely the trigger for telling the customer their card failed, which is
+  // the difference between a dead card and a cancellation.
+  "invoice.payment_failed",
 ]);
 
 export async function POST(req: NextRequest) {
@@ -92,6 +97,17 @@ export async function POST(req: NextRequest) {
 
 async function handleEvent(event: Stripe.Event): Promise<void> {
   const stripe = getStripe();
+
+  // ── A failed charge: notify, change nothing ────────────────────────
+  // Handled first and returned early because it is NOT a state change.
+  // Stripe moves the subscription to past_due itself and sends
+  // customer.subscription.updated for that; here we only tell the human. Note
+  // that past_due deliberately KEEPS access (see subscription.ts rule 4) — the
+  // mail says so, because a customer locked out over an expired card cancels.
+  if (event.type === "invoice.payment_failed") {
+    await notifyPaymentFailed(stripe, event.data.object as Stripe.Invoice);
+    return;
+  }
 
   // ── Resolve the subscription id this event is about ────────────────
   let subscriptionId: string | null = null;
@@ -164,6 +180,50 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
   }
 
   console.log(`[BILLING] ${event.type} → profile ${profileId} is ${status}/${plan}`);
+}
+
+/**
+ * Tell the customer their payment failed. Never throws: a mail problem must not
+ * make the webhook 500, because Stripe would then retry the whole event and the
+ * customer would get the same mail again — turning our outage into their spam.
+ */
+async function notifyPaymentFailed(stripe: Stripe, invoice: Stripe.Invoice): Promise<void> {
+  try {
+    const customerId =
+      typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id ?? null;
+    if (!customerId) return;
+
+    // Same two-way lookup as the state handler: a customer we cannot attribute
+    // is a customer we cannot warn, and a silent failed payment becomes a
+    // silent cancellation.
+    const profileId =
+      (await profileIdFromDatabase(customerId)) ??
+      (await profileIdFromCustomer(stripe, customerId));
+
+    if (!profileId) {
+      console.warn(`[BILLING] payment_failed for unknown customer ${customerId} — no mail sent`);
+      return;
+    }
+
+    const pipeline = createPipelineClient();
+    const { data } = await pipeline
+      .from("profiles")
+      .select("email, full_name, company_name")
+      .eq("id", profileId)
+      .single();
+
+    // Prefer the address Stripe billed, fall back to the account's own.
+    const to = invoice.customer_email ?? data?.email ?? null;
+    if (!to) return;
+
+    await sendPaymentFailedEmail({
+      toEmail: to,
+      name: data?.company_name || data?.full_name || "ondernemer",
+    });
+    console.log(`[BILLING] payment-failed mail sent to profile ${profileId}`);
+  } catch (err) {
+    console.error("[BILLING] payment-failed notification failed:", err);
+  }
 }
 
 /** Read profile_id off the Stripe customer's metadata (set at creation). */

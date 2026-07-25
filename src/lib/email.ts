@@ -485,3 +485,114 @@ export async function sendInvoiceReminder({
   // Best-effort: a reminder that fails to send must never break the cron run.
   await deliverEmail(__sendResult, { label: 'invoice-reminder', critical: false })
 }
+
+// ── [BILLING] Abonnement — proefperiode & betaling ────────────────────────────
+//
+// Two mails, and deliberately only two. A trial that ends without warning feels
+// like the app was taken away; a failed payment that nobody mentions turns a
+// dead card into a cancellation. Everything beyond those two (win-back, drip,
+// upsell) is marketing, and marketing that nobody asked for is how a small tool
+// starts to feel like a big one.
+//
+// Both are best-effort: a mail that fails must never break the cron run or the
+// webhook that triggered it.
+
+/**
+ * "Your trial ends in N days." Sent once, a couple of days out — early enough
+ * to act on, late enough to be relevant.
+ */
+export async function sendTrialEndingEmail({
+  toEmail,
+  name,
+  daysLeft,
+  priceLabel,
+}: {
+  toEmail: string
+  name: string
+  daysLeft: number
+  priceLabel: string
+}) {
+  const dayWord = daysLeft === 1 ? 'dag' : 'dagen'
+  const subject =
+    daysLeft <= 0
+      ? 'Je proefperiode loopt vandaag af'
+      : `Nog ${daysLeft} ${dayWord} in je BoekBrug-proefperiode`
+
+  const opening =
+    daysLeft <= 0
+      ? 'Je gratis proefperiode loopt <strong>vandaag</strong> af.'
+      : `Je gratis proefperiode loopt over <strong>${daysLeft} ${dayWord}</strong> af.`
+
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">Je proefperiode loopt af</h2>
+        <p style="color: #555;">Beste ${escapeHtml(name)},</p>
+        <p style="color: #555;">${opening}</p>
+        <p style="color: #555;">
+          Wil je verder met BoekBrug, neem dan een abonnement voor
+          <strong>${escapeHtml(priceLabel)} per maand</strong> — maandelijks opzegbaar.
+        </p>
+        <a href="https://boekbrug.nl/prijzen"
+           style="display:inline-block; margin:20px 0; padding:12px 24px; background:#1A73E8; color:#fff; border-radius:8px; text-decoration:none; font-weight:600;">
+          Bekijk het abonnement
+        </a>
+        <p style="color: #555;">
+          Doe je niets, dan stopt de toegang gewoon. <strong>Er wordt niets afgeschreven</strong> —
+          je hebt geen betaalgegevens achtergelaten. Je administratie blijft bewaard en staat er
+          weer precies zo bij zodra je terugkomt.
+        </p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+  })
+  await deliverEmail(__sendResult, { label: 'trial-ending', critical: false })
+}
+
+/**
+ * "We couldn't take the payment." Sent when Stripe reports a failed charge.
+ *
+ * Tone matters more here than anywhere else in the app: an expired card is not
+ * a moral failing, and the customer has NOT lost access — `past_due` keeps them
+ * in while Stripe retries. Saying that plainly is what stops a recoverable card
+ * problem from becoming a cancellation.
+ */
+export async function sendPaymentFailedEmail({
+  toEmail,
+  name,
+}: {
+  toEmail: string
+  name: string
+}) {
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject: 'Je betaling is niet gelukt',
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">De betaling is niet gelukt</h2>
+        <p style="color: #555;">Beste ${escapeHtml(name)},</p>
+        <p style="color: #555;">
+          We konden het abonnementsbedrag niet afschrijven. Meestal is de kaart verlopen
+          of het saldo net te laag — het is zo opgelost.
+        </p>
+        <p style="color: #555;">
+          <strong>Je houdt gewoon toegang tot BoekBrug.</strong> We proberen het de komende
+          dagen automatisch nog een paar keer.
+        </p>
+        <a href="https://boekbrug.nl/dashboard/settings/facturering"
+           style="display:inline-block; margin:20px 0; padding:12px 24px; background:#1A73E8; color:#fff; border-radius:8px; text-decoration:none; font-weight:600;">
+          Betaalgegevens bijwerken
+        </a>
+        <p style="color: #999; font-size: 13px;">
+          Heb je je gegevens net al aangepast? Dan kun je deze mail negeren.
+        </p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+  })
+  await deliverEmail(__sendResult, { label: 'payment-failed', critical: false })
+}
