@@ -170,8 +170,10 @@ export default function DailyTruth() {
       ) : (
         <>
           <div style={{ display: 'flex', gap: 10 }}>
+            {/* [NAV-FROM] ?from=home — this card sits on the dashboard, so Terug must come back
+                here and not to the verification list the owner skipped. */}
             <MoneyCard label="Te betalen" bucket={toPay} emptyText="Niets te betalen"
-              subject="inkoopfactuur" onClick={() => router.push('/dashboard/incoming/manage')} />
+              subject="inkoopfactuur" onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
             <MoneyCard label="Te ontvangen" bucket={toReceive} emptyText="Niets openstaand"
               subject="factuur" onClick={() => router.push('/dashboard/facturen')} />
           </div>
