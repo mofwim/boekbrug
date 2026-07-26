@@ -122,6 +122,12 @@ export interface ClosingPackageSummary {
   // invoice-evidence count; filesIncluded also folds in bank-statement + shared files and must
   // NEVER be read as an invoice-evidence signal (that inflated readiness to a false 100%).
   invoicesWithPdf: number;
+  // [EVIDENCE] WELKE facturen de PDF missen — de nummers, niet alleen het aantal. Werd
+  // hierboven al berekend en daarna weggegooid; een telling stuurt de score, maar alleen
+  // de lijst maakt er een handeling van ("Zonder PDF: F-2026-014, F-2026-021").
+  // Begrensd op 50 namen: daarboven is het geen zin meer maar een muur tekst, en de
+  // telling in invoicesWithPdf blijft hoe dan ook exact.
+  missingEvidence: string[];
   bankStatementIncluded: boolean;
   warnings: ClosingPackageWarning[];
   generatedAt: string;               // ISO
@@ -649,6 +655,10 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     incomingCount: incoming.length,
     filesIncluded,
     invoicesWithPdf: invoicePdfCount, // [READINESS-EVIDENCE] invoice-evidence count only
+    // [EVIDENCE] Deze variant telt de bestanden die de ZIP daadwerkelijk inpakte en houdt
+    // geen factuurnummers bij; leeg is hier de eerlijke waarde, niet een vergeten veld.
+    // De readiness-tekst valt dan terug op zijn algemene zin (readiness.ts:201-204).
+    missingEvidence: [],
     bankStatementIncluded: bankFiles.length > 0,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -1025,6 +1035,8 @@ export async function summarizeClosingPackage(args: {
     // + owner-shared docs for this quarter. (km is not a feature yet → 0.)
     filesIncluded: withPdf + bankFilePaths.length + shared.paths.length,
     invoicesWithPdf: withPdf, // [READINESS-EVIDENCE] invoice-evidence count only
+    // [EVIDENCE] Doorgeven in plaats van weggooien. Zie de toelichting bij het type.
+    missingEvidence: missingPdf.slice(0, 50),
     bankStatementIncluded,
     warnings,
     generatedAt: new Date().toISOString(),

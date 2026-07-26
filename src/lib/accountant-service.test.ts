@@ -1,3 +1,7 @@
+// [CI] Verplaatst uit src/modules/accountant/. Het project draait alleen `src/lib/*.test.ts`
+// (vlak), dus alles wat deze twee bestanden vastpinden werd NOOIT uitgevoerd — inclusief
+// de kwartaalregels waar het werkbord op leunt. Beide zijn puur; alleen de importpaden
+// zijn aangepast.
 // [AANGIFTE-AGENDA] Pure node test — run: npx tsx src/modules/accountant/accountant.service.test.ts
 // Pins the BTW filing-deadline logic (Belastingdienst = last day of the month
 // AFTER the quarter) and the previous-quarter wrap. These feed the agenda's
@@ -7,7 +11,7 @@ import {
   getAangifteDeadline,
   getPreviousQuarter,
   daysUntil,
-} from './accountant.service'
+} from "../modules/accountant/accountant.service"
 
 let passed = 0
 let failed = 0
@@ -37,6 +41,30 @@ check('tomorrow → 1', daysUntil(tomorrowIso) === 1)
 const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
 const yesterdayIso = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`
 check('yesterday → -1 (overdue)', daysUntil(yesterdayIso) === -1)
+
+console.log('\n— [KWARTAAL] bord en landingspagina moeten hetzelfde kwartaal bedoelen —')
+// De regressie die dit bestand had moeten tegenhouden en niet kon, omdat het buiten de
+// CI-glob stond. De boekhouders-landingspagina gebruikte getCurrentQuarter (het LOPENDE
+// kwartaal) terwijl de agenda getActiveAangifte gebruikt (het AANGIFTE-kwartaal). Op
+// 26 juli beschreef de landingspagina dus Q3 — 26 dagen oud en zo goed als leeg — terwijl
+// de deadline-hero aftelde naar de Q2-aangifte van 31 juli.
+
+check(
+  'op 26 juli (Q3) is het aan te geven kwartaal Q2',
+  JSON.stringify(getPreviousQuarter(2026, 3)) === JSON.stringify({ year: 2026, quarter: 2 })
+)
+check(
+  'en de deadline daarvan is 31 juli — waar de hero naar aftelt',
+  getAangifteDeadline(2026, 2) === '2026-07-31'
+)
+check(
+  'in januari is het aan te geven kwartaal Q4 van het VORIGE jaar',
+  JSON.stringify(getPreviousQuarter(2026, 1)) === JSON.stringify({ year: 2025, quarter: 4 })
+)
+check(
+  'en die deadline valt in het nieuwe jaar: 31 januari',
+  getAangifteDeadline(2025, 4) === '2026-01-31'
+)
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} ${passed} passed, ${failed} failed\n`)
 if (failed > 0) process.exit(1)

@@ -35,11 +35,15 @@ export default async function AccountantPage() {
   if (profile.role !== 'accountant') redirect('/dashboard')
 
   // All data fetched server-side via repository — no supabase.from() in the client
-  const [overview, clients, todos] = await Promise.all([
-    getAccountantOverview(profile.id),
+  // [FAN-OUT] De klantenlijst EERST, dan pas het overzicht dat erop rekent. Deze drie
+  // stonden in één Promise.all, en getAccountantOverview haalde de lijst intern nóg een
+  // keer op — met de vijf queries per klant eraan vast. Bij 30 klanten was dat 300 queries
+  // in plaats van 150 op het traagste scherm dat de boekhouder opent.
+  const [clients, todos] = await Promise.all([
     getAccountantClients(profile.id),
     getTodoFeed(profile.id),
   ])
+  const overview = await getAccountantOverview(profile.id, clients)
 
   // Notifications — fetched server-side, passed as initial state to client
   const { data: notifications } = await supabase

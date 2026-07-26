@@ -1,8 +1,12 @@
+// [CI] Verplaatst uit src/modules/accountant/. Het project draait alleen `src/lib/*.test.ts`
+// (vlak), dus alles wat deze twee bestanden vastpinden werd NOOIT uitgevoerd — inclusief
+// de kwartaalregels waar het werkbord op leunt. Beide zijn puur; alleen de importpaden
+// zijn aangepast.
 // [KLAAR-OVERZICHT] Pure node test — run: npx tsx src/modules/accountant/readiness-board.test.ts
 // Pins the board aggregation: every row lands in exactly one bucket, and the
 // "Actie nodig" filter never hides an unknown-status client.
 
-import { summarizeBoard, needsAction, type BoardRow } from './readiness-board'
+import { summarizeBoard, needsAction, type BoardRow } from "../modules/accountant/readiness-board"
 
 let passed = 0
 let failed = 0
