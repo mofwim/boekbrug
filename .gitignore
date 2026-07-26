@@ -80,3 +80,6 @@ node_modules/
 signingkeyinfo.txt
 signing-key-info*
 *signing*info*
+
+# [ANDROID] Generated Play Store marketing assets (regenerate via scripts/generate-store-assets.mjs)
+store-assets/
