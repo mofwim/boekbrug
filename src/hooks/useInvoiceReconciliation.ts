@@ -20,11 +20,15 @@ import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 
 export type ConfirmMatchResult = 'ok' | 'navigate' | 'error'
 
+// [MATCH-BUTTON] `applyMap` lets a caller that ALREADY holds a fresh map install it directly —
+// POST /api/reconcile/run returns the map from the same builder this hook fetches, so re-fetching
+// it would be a second round trip that can only disagree with what the run just reported.
 export function useInvoiceReconciliation(enabled: boolean = true): {
   byInvoice: Record<string, InvoiceRecon>
   loaded: boolean
   confirmMatch: (invoiceId: string) => Promise<ConfirmMatchResult>
   refetch: () => void
+  applyMap: (map: Record<string, InvoiceRecon>) => void
 } {
   const [byInvoice, setByInvoice] = useState<Record<string, InvoiceRecon>>({})
   const [loaded, setLoaded] = useState(false)
@@ -49,6 +53,13 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
   }, [enabled, reloadTick])
 
   const refetch = useCallback(() => setReloadTick((t) => t + 1), [])
+
+  // Replace the whole map (not a merge): the run's map is the complete post-engine truth, and a
+  // merge would keep stale "betaling gevonden" chips for matches the run just booked or invalidated.
+  const applyMap = useCallback((map: Record<string, InvoiceRecon>) => {
+    setByInvoice(map)
+    setLoaded(true)
+  }, [])
 
   const confirmMatch = useCallback(async (invoiceId: string): Promise<ConfirmMatchResult> => {
     const pending = byInvoice[invoiceId]?.pendingMatch
@@ -78,5 +89,5 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
     }
   }, [byInvoice])
 
-  return { byInvoice, loaded, confirmMatch, refetch }
+  return { byInvoice, loaded, confirmMatch, refetch, applyMap }
 }

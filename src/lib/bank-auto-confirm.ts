@@ -39,6 +39,10 @@ export interface AutoConfirmed {
   // or an exact multi-invoice batch tie) vs 'amount_only' (amount + counterpart name, single clear
   // winner — booked but flagged "controleer"). Drives the honesty of the notification body.
   tier: AutoConfirmTier;
+  // [MATCH-BUTTON] The settlement date written on the invoice — the BANK LINE's date, not "today".
+  // Returned so an on-demand caller can patch its list with the real payment date instead of
+  // showing a freshly-paid invoice with an empty date until the next server render.
+  paymentDate: string | null;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -203,7 +207,7 @@ export async function runBankAutoConfirm(args: {
     // is the tx.invoice_id + invoice.status above; this row is only the collision-free undo index.
     await recordPaymentLinks(pipeline, userId, txId, [invoiceId]);
 
-    confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0, tier });
+    confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0, tier, paymentDate: m.transaction.date || null });
     await logAuditAction({
       userId,
       action: "bank.auto_confirmed",
@@ -280,7 +284,7 @@ export async function runBankAutoConfirm(args: {
 
     for (const inv of planInvs) {
       // A batch tie is 'certain' by construction (every number resolves + the sum equals the debit).
-      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0, tier: "certain" });
+      confirmed.push({ transactionId: txId, invoiceId: inv.id, invoiceNumber: inv.invoice_number, amount: inv.total_inc_btw ?? 0, tier: "certain", paymentDate: tx.date || null });
       bookedInvoiceIds.add(inv.id);
     }
     bookedTxIds.add(txId);
