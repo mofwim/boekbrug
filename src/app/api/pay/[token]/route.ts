@@ -116,12 +116,15 @@ async function bundleView(pipeline: ReturnType<typeof createPipelineClient>, tok
   // [CREDITNOTA-NO-CHASE] Drop any invoice in the bundle the owner has since withdrawn, so the
   // combined amount never asks for money that is no longer owed. Fails CLOSED (the whole page
   // 404s) rather than risk over-asking. If nothing is left, the link is spent.
+  // Scoped to THIS bundle's invoices, so the read is small and — unlike an owner-wide select —
+  // cannot be silently truncated by PostgREST's ~1000-row cap. A truncated credited set would
+  // fail OPEN (a withdrawn invoice slipping back into the payable set and the combined amount
+  // over-asking), which is exactly the outcome the fail-closed design exists to prevent.
   const { data: creditRows, error: creditErr } = await pipeline
     .from('invoices')
     .select('original_invoice_id')
-    .eq('sender_id', bundle.user_id)
     .eq('invoice_type', 'creditnota')
-    .not('original_invoice_id', 'is', null)
+    .in('original_invoice_id', ids)
   if (creditErr) return notFound
   const credited = new Set(
     ((creditRows ?? []) as { original_invoice_id: string | null }[])

@@ -28,6 +28,9 @@ import { computeDrawerBalance } from "@/lib/cash";
 // busy account's bank_transactions easily exceed 1000 — lastBankDate and the
 // undocumented count were computed over an arbitrary subset. Page everything.
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [CREDITNOTA-NO-CHASE] the shared "is this still owed to me" rule — both sides of a credited
+// pair must leave the receivable list together (see src/lib/credited-invoices.ts)
+import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
 
 // Days-until-due window that counts as "needs attention now" (mirrors the Vandaag
 // page). Overdue (negative) always qualifies; so does anything due within 3 days.
@@ -110,28 +113,34 @@ export async function GET() {
     .range(from, to)
   ).catch(() => null);
 
-  // [CREDITNOTA-NO-CHASE] Drop invoices the owner WITHDREW with a creditnota. Such an invoice
-  // deliberately keeps its 'sent' status and its positive total (the +omzet must stay to be
-  // netted by the creditnota's −omzet), so it looks exactly like an ordinary open invoice here
-  // — and "Te ontvangen" would claim money that is no longer owed, with the credited invoice
-  // even counted among the overdue ones. Best-effort: a failed lookup leaves the totals as they
-  // were rather than dropping the whole tile.
+  // [CREDITNOTA-NO-CHASE] A credited invoice always comes as a PAIR in this query: the original
+  // (positive, still 'sent' because its +omzet must stay to be netted) AND the creditnota itself,
+  // which is also outgoing + 'sent' but NEGATIVE. Both must go, or neither — dropping only the
+  // original leaves the −X alone and drives "Te ontvangen" negative, which is worse than the
+  // inflated count we started with. filterOpenReceivables enforces that pairing; see
+  // src/lib/credited-invoices.ts and its tests.
+  // [PAGINATION] fetchAllRows like every other read here: an unpaginated select silently caps at
+  // ~1000 rows, and a truncated credited set would let a withdrawn invoice back into the total.
   const recvAll = (recvRows ?? []) as InvoiceRow[];
-  const creditedIds = new Set<string>();
-  if (recvAll.length > 0) {
-    // Keyed on the owner rather than on the candidate ids — an .in() over every open invoice
-    // would grow the URL without bound, and one owner's creditnotas are few.
-    const { data: creditRows } = await pipeline
-      .from("invoices")
-      .select("original_invoice_id")
-      .eq("sender_id", user.id)
-      .eq("invoice_type", "creditnota")
-      .not("original_invoice_id", "is", null);
-    for (const c of (creditRows ?? []) as { original_invoice_id: string | null }[]) {
-      if (c.original_invoice_id) creditedIds.add(c.original_invoice_id);
-    }
-  }
-  const recv = recvAll.filter((r) => !creditedIds.has(r.id));
+  const creditRows = recvAll.length > 0
+    ? await fetchAllRows<{ original_invoice_id: string | null }>((from, to) => pipeline
+        .from("invoices")
+        // Keyed on the owner rather than on the candidate ids — an .in() over every open invoice
+        // would grow the URL without bound, and one owner's creditnotas are few.
+        .select("original_invoice_id")
+        .eq("sender_id", user.id)
+        .eq("invoice_type", "creditnota")
+        .not("original_invoice_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+      ).catch(() => null)
+    : [];
+  // On a failed lookup, degrade to the OLD behaviour completely — both sides of the pair stay in
+  // the list, where they cancel each other out as they always did. Half-degrading (dropping the
+  // creditnota while still counting the original) would invent a number that was never shown.
+  const recv = creditRows == null
+    ? recvAll
+    : filterOpenReceivables(recvAll, creditedIdsFrom(creditRows));
   const toReceive = {
     count: recv.length,
     total: recv.reduce((s, r) => s + openstaandOf(r), 0),

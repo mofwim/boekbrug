@@ -35,6 +35,23 @@ export async function POST(
     .eq('id', user.id)
     .single()
 
+  // [CREDITNOTA-NO-CHASE] Refuse to mint a link for an invoice the owner already withdrew. The
+  // public page 404s a credited invoice, so without this the owner copies a link that is
+  // guaranteed to be dead — while this modal still shows them an IBAN, a QR and the full amount
+  // to quote by hand. Refusing here keeps the route and the pay page saying the same thing.
+  const { data: creditRows, error: creditErr } = await supabase
+    .from('invoices')
+    .select('id')
+    .eq('original_invoice_id', id)
+    .eq('invoice_type', 'creditnota')
+    .limit(1)
+  if (creditErr || (creditRows ?? []).length > 0) {
+    return NextResponse.json(
+      { error: 'Voor deze factuur is een creditnota gemaakt — er kan geen betaalverzoek meer voor worden gedeeld.' },
+      { status: 400 }
+    )
+  }
+
   const built = buildBetaalverzoek(invoice as BetaalverzoekInvoice, owner ?? { iban: null, company_name: null, full_name: null })
   if (!built.ok) return NextResponse.json({ error: built.error }, { status: 400 })
 
