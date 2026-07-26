@@ -253,6 +253,31 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       .then(({ data }) => setArchivedInvoices((data ?? []) as unknown as ArchivedRow[]))
   }, [profile?.id])
 
+  // [CREDITNOTA-NO-CHASE] Which invoices did the owner WITHDRAW with a creditnota? Such an
+  // invoice deliberately keeps its 'sent' status and its positive total (the +omzet must stay
+  // to be netted by the creditnota's −omzet), so the row is indistinguishable from an ordinary
+  // open one — while the reminder cron and "Te ontvangen" now correctly ignore it. Without
+  // this the two screens disagree: the tile stops counting the money and the list keeps
+  // showing it as owed, with no explanation for why nothing is being chased. Keyed on the
+  // owner (a creditnota per owner is rare), so it costs one small read and no pagination.
+  const [creditedIds, setCreditedIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!profile?.id) return
+    supabase
+      .from('invoices')
+      .select('original_invoice_id')
+      .eq('sender_id', profile.id)
+      .eq('invoice_type', 'creditnota')
+      .not('original_invoice_id', 'is', null)
+      .then(({ data }) => {
+        const ids = ((data ?? []) as unknown as { original_invoice_id: string | null }[])
+          .map(r => r.original_invoice_id)
+          .filter((id): id is string => !!id)
+        setCreditedIds(new Set(ids))
+      })
+  }, [profile?.id])
+
   // [SEARCH] Debounced server query over ALL the user's invoices (any status), so a
   // match that hasn't been scrolled into the infinite list is still found instantly.
   useEffect(() => {
@@ -764,11 +789,27 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         {fmtEur(inv.total_inc_btw)}
                       </p>
 
+                      {/* [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota. The invoice keeps
+                          its 'Verzonden' chip on purpose (the +omzet stays, netted by the
+                          creditnota), so without this the owner sees an invoice that is never
+                          chased and never counted in Te ontvangen, with nothing explaining why. */}
+                      {creditedIds.has(inv.id) && (
+                        <span
+                          title="Er is een creditnota voor deze factuur gemaakt — hij wordt niet meer aangemaand en telt niet mee als openstaand."
+                          style={{
+                            fontSize: 11, fontWeight: 600, color: '#5F6368', background: M3.surfaceVariant,
+                            border: '1px solid #DADCE0', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Gecrediteerd
+                        </span>
+                      )}
+
                       {/* [PARTIAL-PAY] Deelbetaling — part settled, rest still openstaand. The
                           headline amount stays the invoice total (same as the incoming side);
                           this chip carries what is actually still owed. Only for the genuine
                           in-between state — a fully open or completed invoice has clearer UI. */}
-                      {isPartiallyPaid(inv) && (
+                      {isPartiallyPaid(inv) && !creditedIds.has(inv.id) && (
                         <button
                           onClick={e => {
                             e.stopPropagation()

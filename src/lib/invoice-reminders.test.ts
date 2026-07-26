@@ -87,6 +87,22 @@ check("blank client e-mail → null",
   reminderTierDue(base({ clientEmail: "   " })) === null);
 check("reminders paused on invoice → null",
   reminderTierDue(base({ remindersPaused: true })) === null);
+// [CREDITNOTA-NO-CHASE] The worst FALSE SEND of all: the owner already withdrew the demand
+// with a creditnota, and the cron keeps mailing their customer "please pay". A credited
+// invoice deliberately keeps its 'sent' status, its positive total and its due date (the
+// +omzet must stay to be netted by the creditnota), so EVERY other guard passes it.
+check("invoice withdrawn with a creditnota → null",
+  reminderTierDue(base({ hasCreditnota: true })) === null);
+check("credited invoice is skipped even when a tier is squarely due",
+  reminderTierDue(base({ hasCreditnota: true, todayDayNumber: dueDay + 60 })) === null);
+check("credited invoice is skipped even when nothing was paid",
+  reminderTierDue(base({ hasCreditnota: true, amountPaid: 0 })) === null);
+check("credited invoice is skipped even when partly paid",
+  reminderTierDue(base({ hasCreditnota: true, amountPaid: 400 })) === null);
+check("hasCreditnota false leaves the invoice remindable",
+  reminderTierDue(base({ hasCreditnota: false })) !== null);
+check("hasCreditnota absent leaves the invoice remindable (unchanged default)",
+  reminderTierDue(base({})) !== null);
 check("no due date → null",
   reminderTierDue(base({ dueDate: null })) === null);
 check("malformed due date → null",
