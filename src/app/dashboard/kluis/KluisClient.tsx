@@ -13,23 +13,81 @@ import BewaarkluisCard from './BewaarkluisCard'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
-export default function KluisClient({ summaries, currentYear }: { summaries: YearSummary[]; currentYear: number }) {
+export default function KluisClient({
+  summaries,
+  currentYear,
+  purpose = 'boekhouden',
+  justPaid = false,
+}: {
+  summaries: YearSummary[]
+  currentYear: number
+  /** [KLUIS] Waarvoor het account is aangemaakt. Bepaalt uitsluitend de begroeting. */
+  purpose?: 'boekhouden' | 'archief'
+  justPaid?: boolean
+}) {
+  const isArchief = purpose === 'archief'
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '20px 16px 80px' }}>
         <header style={{ margin: '16px 0 8px' }}>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Compliance-kluis</h1>
+          <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>
+            {isArchief ? 'Je archief' : 'Compliance-kluis'}
+          </h1>
           <p style={{ fontSize: 14.5, color: M3.neutral, margin: 0, lineHeight: 1.5 }}>
             Je administratie, per jaar bij elkaar. De Belastingdienst vraagt je stukken <strong>7 jaar</strong> te
             bewaren — hier staan ze klaar, met één knop te exporteren voor je boekhouder.
           </p>
         </header>
 
-        {summaries.length === 0 ? (
-          <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14.5, padding: '48px 16px', background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, marginTop: 16 }}>
-            Nog geen stukken in de kluis. Zodra je facturen verstuurt of bankafschriften en bonnen uploadt,
-            verschijnen ze hier — netjes per jaar en kwartaal.
+        {justPaid && (
+          <div
+            role="status"
+            style={{ background: '#CEEAD6', border: '1px solid #137333', color: '#0d652d', borderRadius: 12, padding: '14px 16px', marginTop: 14, fontSize: 14.5, lineHeight: 1.55 }}
+          >
+            <strong>Bedankt — je Bewaarkluis is geregeld.</strong>
+            <br />
+            Je btw-factuur staat klaar in je e-mail. Je archief blijft staan voor de resterende
+            bewaarjaren, en exporteren blijft altijd werken.
           </div>
+        )}
+
+        {summaries.length === 0 ? (
+          isArchief ? (
+            // [KLUIS] Het eerste scherm van iemand die via /bewaarplicht binnenkwam. Hij heeft
+            // net een account gemaakt en verder nog niets gedaan; een kale zin "nog geen
+            // stukken" zou hem laten zoeken waar hij moet beginnen. Eén duidelijke volgende
+            // stap, en geen woord over facturen of btw — daar kwam hij niet voor.
+            <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 22, marginTop: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>
+                Welkom. Breng je administratie binnen.
+              </h2>
+              <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
+                Upload je bonnen, facturen en bankafschriften — los of in één keer. Wij zetten ze
+                per jaar en per kwartaal op hun plek, doorzoekbaar, en je kunt elk jaar met één
+                knop als ZIP exporteren.
+              </p>
+              <a
+                href="/dashboard/upload"
+                style={{
+                  display: 'inline-block', background: M3.vault, color: '#fff', borderRadius: 999,
+                  padding: '11px 20px', textDecoration: 'none', fontSize: 14, fontWeight: 600,
+                }}
+              >
+                Bestanden toevoegen →
+              </a>
+              <p style={{ fontSize: 13, color: M3.neutral, margin: '14px 0 0', lineHeight: 1.6 }}>
+                Alles wat je hier neerzet blijft van jou en is altijd te exporteren. Wij nemen je
+                bewaarplicht niet over — wij zijn je tweede exemplaar, nooit je enige. En de rest
+                van BoekBrug staat gewoon klaar voor als je hem ooit nodig hebt: er is niets
+                afgesloten en niets te ontgrendelen.
+              </p>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14.5, padding: '48px 16px', background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, marginTop: 16 }}>
+              Nog geen stukken in de kluis. Zodra je facturen verstuurt of bankafschriften en bonnen uploadt,
+              verschijnen ze hier — netjes per jaar en kwartaal.
+            </div>
+          )
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
             {summaries.map((s) => <YearCard key={s.year} s={s} currentYear={currentYear} />)}

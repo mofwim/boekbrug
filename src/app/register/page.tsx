@@ -7,10 +7,24 @@ import { Suspense, useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
+import {
+  PURPOSE_PARAM,
+  landingPath,
+  parsePurpose,
+  purposeCopy,
+  ARCHIEF_ROLE,
+} from '@/lib/account-purpose'
 
 function RegisterContent() {
-  const [step, setStep] = useState(1)
-  const [role, setRole] = useState('')
+  const searchParams = useSearchParams()
+
+  // [KLUIS] Een archiefaccount kent geen rolkeuze: het is een ondernemer met een eigen
+  // administratie, punt. Daarom begint dat pad meteen bij stap 2 en staat de rol vast.
+  // (De initialisatie leest de querystring rechtstreeks in plaats van via `purpose`, omdat
+  // useState hier draait vóór de regel die `purpose` berekent.)
+  const isArchief = searchParams.get(PURPOSE_PARAM) === 'archief'
+  const [step, setStep] = useState(isArchief ? 2 : 1)
+  const [role, setRole] = useState(isArchief ? ARCHIEF_ROLE : '')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
@@ -24,8 +38,14 @@ function RegisterContent() {
   const [emailTaken, setEmailTaken] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
   const router = useRouter()
-  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  // [KLUIS] Waarvoor deze bezoeker komt. /bewaarplicht stuurt hier naartoe met ?doel=archief:
+  // iemand wiens zaak gestopt is komt zijn administratie WEGZETTEN, niet boekhouden. Hij
+  // krijgt daarom andere teksten, geen rolkeuze (hij is gewoon een ondernemer) en na
+  // registratie zijn kluis in plaats van een wizard over facturen versturen.
+  const purpose = parsePurpose(searchParams.get(PURPOSE_PARAM))
+  const copy = purposeCopy(purpose)
 
   // Keep any ?redirect= when we link over to /login.
   const redirectParam = searchParams.get('redirect')
@@ -61,8 +81,21 @@ function RegisterContent() {
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
-    const redirectUrl = searchParams.get('redirect')
-    const state = encodeURIComponent(JSON.stringify({ role, redirect: redirectUrl || '/dashboard' }))
+    // [KLUIS] Via Google gaat de signUp-metadata niet mee — die weg loopt langs Supabase's
+    // OAuth-callback en niet langs onze signUp(). Het doel reist daarom mee in de
+    // bestemmings-URL, en /dashboard/kluis herstelt het profiel zelf zodra de gebruiker
+    // daar aankomt. Zonder dat zou iemand die zich via Google registreert vanaf
+    // /bewaarplicht alsnog als gewoon boekhoudaccount binnenkomen.
+    const redirectUrl =
+      searchParams.get('redirect') ??
+      (purpose === 'archief' ? `${landingPath(purpose)}?${PURPOSE_PARAM}=archief` : null)
+    // De bestemming reist mee als ?next= op de callback. Hier stond eerder een `state`-object
+    // met de rol erin dat NERGENS werd meegegeven aan signInWithOAuth — het werd berekend en
+    // weggegooid, dus de rolkeuze ging bij Google-registratie altijd verloren. De callback
+    // leest `next` al, mét bescherming tegen open redirects (alleen een pad op dezelfde
+    // origin), dus dit is de weg die er al lag.
+    const callback = new URL('/api/auth/callback', window.location.origin)
+    if (redirectUrl) callback.searchParams.set('next', redirectUrl)
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -70,7 +103,7 @@ function RegisterContent() {
         // Basic sign-in only — we no longer request Gmail inbox access here.
         // Gmail connecting is a separate, opt-in step during onboarding.
         scopes: 'email profile',
-        redirectTo: `${window.location.origin}/api/auth/callback`,
+        redirectTo: callback.toString(),
       },
     })
 
@@ -118,6 +151,10 @@ function RegisterContent() {
           // register already collected role + company, so skip the wizard's
           // welcome/role/company screens (step 4 = Gmail for ZZP, invite for accountant).
           onboarding_step: 4,
+          // [KLUIS] account_purpose_archief.sql leest dit: bij 'archief' wordt
+          // onboarding_done meteen true, want die wizard gaat over facturen versturen en
+          // een mailboxkoppeling — geen van beide waar deze bezoeker voor kwam.
+          account_purpose: purpose,
         },
       },
     })
@@ -179,13 +216,18 @@ function RegisterContent() {
         btw_number: btw,
         email,
         onboarding_step: 4,
+        // [KLUIS] Zie de toelichting hierboven: dit is het pad zonder e-mailbevestiging,
+        // waar wij zelf schrijven in plaats van de trigger.
+        account_purpose: purpose,
+        onboarding_done: purpose === 'archief',
       }, { onConflict: 'id' })
       .then(({ error }) => {
         if (error) console.error('[COHERENCE-REGISTER] post-session profile upsert failed (non-fatal):', error)
       })
 
     const redirectUrl = searchParams.get('redirect')
-    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/onboarding')
+    // [KLUIS] Een archiefaccount landt in zijn kluis, niet in een wizard over facturen.
+    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : landingPath(purpose))
   }
 
   // [BOEK-015] email confirmation screen
@@ -222,13 +264,13 @@ function RegisterContent() {
 
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-gray-900">BoekBrug</h1>
-          <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
-          <p className="text-gray-600 text-sm mt-3">Maak facturen, scan bonnen en houd je BTW bij. Gratis.</p>
-          <p className="text-gray-400 text-xs mt-1">Geen creditcard nodig · Privacy-vriendelijk</p>
+          <p className="text-gray-500 text-sm mt-1">{copy.subtitle}</p>
+          <p className="text-gray-600 text-sm mt-3">{copy.promise}</p>
+          <p className="text-gray-400 text-xs mt-1">{copy.reassurance}</p>
         </div>
 
         {/* Stap 1 — Rol kiezen */}
-        {step === 1 && (
+        {step === 1 && !isArchief && (
           <div className="space-y-4">
             <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
             <button
@@ -263,7 +305,7 @@ function RegisterContent() {
               ) : (
                 <GoogleIcon />
               )}
-              {googleLoading ? 'Bezig met verbinden...' : 'Registreren met Google'}
+              {googleLoading ? 'Bezig met verbinden...' : 'Doorgaan met Google'}
             </button>
 
             {/* Divider */}
@@ -347,7 +389,7 @@ function RegisterContent() {
 
             <button onClick={handleRegister} disabled={loading || googleLoading || !email || !password}
               className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50">
-              {loading ? 'Bezig...' : 'Account aanmaken'}
+              {loading ? 'Bezig...' : copy.cta}
             </button>
 
             {/* [AVG] Consent — a reachable link to the terms/privacy at sign-up. */}

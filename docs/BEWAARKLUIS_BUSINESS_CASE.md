@@ -206,10 +206,14 @@ publieke voordeur `/bewaarplicht`.
    *niet* mag aanraken. **Dit is de enige harde koppeling: zonder die tabel mag
    `RETENTION_PURGE_ENABLED` nooit op `true`.** De webhook moet die tabel vullen op
    `checkout.session.completed` met `metadata.product === 'bewaarkluis'`.
-3. Een onboarding waarin "ik kom alleen mijn archief brengen" een echte keuze is. De knop op
-   `/bewaarplicht` stuurt nu naar `/register?doel=archief`, maar die parameter doet nog
-   niets: de nieuwe gebruiker loopt de gewone onboarding in. Dat is de grootste wrijving in
-   de hele voordeur en het eerstvolgende wat aandacht verdient.
+3. ~~Een onboarding waarin "ik kom alleen mijn archief brengen" een echte keuze is.~~
+   **Gedaan.** `/register?doel=archief` slaat de rolkeuze over, toont teksten zonder één
+   woord over facturen of btw, schrijft `account_purpose = 'archief'` en laat de gebruiker
+   in zijn kluis landen in plaats van in een wizard over facturen versturen
+   (`account_purpose_archief.sql` + `src/lib/account-purpose.ts`). Het lege archief begroet
+   hem met één volgende stap. Wat er NIET is: een beperking — een archiefaccount kan alles
+   wat elk ander account kan, er hangt geen enkele policy aan die kolom, en dat moet zo
+   blijven.
 4. Een massale upload (een ZIP of een map ineens) voor wie zeven jaar in één keer binnenbrengt.
 5. De jaarlijkse leesbaarheidscontrole die `KLUIS_WEL` belooft.
 
