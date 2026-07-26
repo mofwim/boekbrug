@@ -94,21 +94,13 @@ export async function POST(req: NextRequest) {
       payAmount = Math.round(parsed * 100) / 100;
     }
 
-    // [MANUAL-PARTIAL-PAY] A PARTIAL payment may not be booked as cash. The kasboek holds
-    // exactly one settlement entry per invoice (cash_entries_one_settlement_per_invoice), so a
-    // second cash instalment collapses into that entry and re-dates it to the latest one —
-    // retroactively moving money out of an already-filed quarter and making the daily drawer
-    // balance wrong in between. Bank instalments carry no such limit. The UI disables the
-    // Contant button for a partial amount; this is the server-side twin, because the kasboek
-    // must not depend on the client behaving. Lift both once cash_entries can hold one row per
-    // instalment. NOTE: a partial payment is only detectable here when an amount was sent —
-    // an empty amount always settles the whole balance, which cash handles fine.
-    if (payAmount != null && paymentMethod === "kas") {
-      return NextResponse.json(
-        { error: "partial_cash_unsupported", detail: "Een deelbetaling kan alleen via bank worden genoteerd." },
-        { status: 400 }
-      );
-    }
+    // [CASH-INSTALMENT] A partial CASH payment used to be refused here. The reason was real: the
+    // kasboek held exactly one settlement entry per invoice, so a second cash instalment
+    // collapsed into that entry and re-dated it to the latest one — retroactively moving money
+    // out of an already-filed quarter and leaving the daily drawer balance wrong in between.
+    // cash_entries now carries settlement_id, one row per instalment with its own date and
+    // amount (cash_settlement_per_instalment.sql), so the refusal is gone: paying a supplier
+    // from the till in two handovers is recorded as the two movements it was.
     // Idempotency key: LEAST() clamps over-payment but does NOT deduplicate, so without
     // this a double tap or a retried POST would book the instalment twice.
     const rawKey = (body as { clientKey?: unknown }).clientKey;

@@ -483,6 +483,10 @@ export type Database = {
           document_id: string | null
           entry_date: string
           id: string
+          // [CASH-SETTLE] the invoice this movement settles (cash_settlement_invoice_link.sql)
+          invoice_id: string | null
+          // [CASH-INSTALMENT] the single instalment it is (cash_settlement_per_instalment.sql)
+          settlement_id: string | null
           user_id: string
         }
         Insert: {
@@ -495,6 +499,8 @@ export type Database = {
           document_id?: string | null
           entry_date?: string
           id?: string
+          invoice_id?: string | null
+          settlement_id?: string | null
           user_id: string
         }
         Update: {
@@ -507,6 +513,8 @@ export type Database = {
           document_id?: string | null
           entry_date?: string
           id?: string
+          invoice_id?: string | null
+          settlement_id?: string | null
           user_id?: string
         }
         Relationships: [

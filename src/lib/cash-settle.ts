@@ -18,7 +18,7 @@
 // (cash_entries.invoice_id); until it is applied the inserts no-op via the catch.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildCashSettlement, computeCashSettlementSync, type SettleableInvoice } from "@/lib/cash";
+import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment } from "@/lib/cash";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function reconcileCashSettlements(supabase: SupabaseClient<any>, userId: string): Promise<void> {
@@ -37,21 +37,24 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     //  2. The cash amount comes from those instalment rows (method='kas'), not from
     //     gross − amount_paid: amount_paid now includes cash too, so the old formula would
     //     compute €0 for a fully cash-paid invoice and the reconciler would DELETE its entry.
+    // [CASH-INSTALMENT] Read the instalments THEMSELVES, not just their sum: each one becomes its
+    // own drawer movement, on its own day. Summing them (the old model) made the kasboek claim
+    // the whole amount left the till on the date of the last payment.
     const { data: kasLinkRows } = await supabase
       .from("bank_tx_invoices")
-      .select("invoice_id, amount_applied, paid_on")
+      .select("id, invoice_id, amount_applied, paid_on")
       .eq("user_id", userId)
       .eq("method", "kas")
       .is("transaction_id", null);
     const cashByInvoice = new Map<string, number>();
-    const lastCashDate = new Map<string, string>();
-    for (const l of (kasLinkRows ?? []) as Array<{ invoice_id: string; amount_applied: number | null; paid_on: string | null }>) {
+    const instalmentsByInvoice = new Map<string, CashInstalment[]>();
+    for (const l of (kasLinkRows ?? []) as Array<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>) {
       if (!l.invoice_id) continue;
-      cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + Math.abs(Number(l.amount_applied) || 0));
-      // The drawer entry is dated by the LAST cash instalment — the day the till last moved.
-      if (l.paid_on && (!lastCashDate.get(l.invoice_id) || l.paid_on > lastCashDate.get(l.invoice_id)!)) {
-        lastCashDate.set(l.invoice_id, l.paid_on.slice(0, 10));
-      }
+      const amount = Math.abs(Number(l.amount_applied) || 0);
+      cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + amount);
+      const list = instalmentsByInvoice.get(l.invoice_id) ?? [];
+      list.push({ id: l.id, amount, paid_on: l.paid_on ? l.paid_on.slice(0, 10) : null });
+      instalmentsByInvoice.set(l.invoice_id, list);
     }
 
     const baseColumns = "id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
@@ -80,7 +83,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
     const { data: entryRows, error: entryErr } = await supabase
       .from("cash_entries")
-      .select("id, invoice_id, amount, entry_date, direction")
+      .select("id, invoice_id, settlement_id, amount, entry_date, direction")
       .eq("user_id", userId)
       .eq("category", "betaling")
       .not("invoice_id", "is", null);
@@ -93,48 +96,47 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         // [MANUAL-PARTIAL-PAY] Authoritative cash portion (undefined → settlementGross falls
         // back to the legacy gross − amount_paid inference for pre-instalment invoices).
         cash_paid: cashByInvoice.has(r.id) ? cashByInvoice.get(r.id) : undefined,
-        // Date the drawer entry by the last cash instalment when we have one; the invoice's
-        // payment_date can be the day a BANK instalment landed, which is a different day.
-        payment_date: lastCashDate.get(r.id) ?? r.payment_date ?? null,
+        // [CASH-INSTALMENT] …and the instalments behind it, each of which becomes its own drawer
+        // movement on its own day. The invoice's payment_date is only the fallback: it can be the
+        // day a BANK instalment landed, which is a different day from any cash handover.
+        cash_instalments: instalmentsByInvoice.get(r.id),
+        payment_date: r.payment_date ?? null,
       })) as SettleableInvoice[];
-    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
+    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; settlement_id?: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
     const { toCreate, toUpdate, toDeleteIds } = computeCashSettlementSync(paid, existing);
 
     // Create the missing settlements. Insert one at a time so a single bad row (or the unique
     // index catching a race) never aborts the rest.
-    for (const inv of toCreate) {
-      const s = buildCashSettlement(inv);
-      if (!s) continue;
+    for (const row of toCreate) {
       const { error } = await supabase.from("cash_entries").insert({
         user_id: userId,
-        direction: s.direction,
-        amount: s.amount,
-        category: s.category,
-        btw_rate: s.btw_rate,
-        description: s.description,
-        invoice_id: s.invoice_id,
-        ...(s.entry_date ? { entry_date: s.entry_date } : {}),
+        direction: row.direction,
+        amount: row.amount,
+        category: row.category,
+        btw_rate: row.btw_rate,
+        description: row.description,
+        invoice_id: row.invoice_id,
+        settlement_id: row.settlement_id,
+        ...(row.entry_date ? { entry_date: row.entry_date } : {}),
       });
       if (error) {
         // Unique-index conflict (a concurrent reconcile already created it) is benign.
         if (!/duplicate key|unique/i.test(error.message)) {
-          console.error("[CASH-SETTLE] settlement insert failed (non-fatal)", { invoice: inv.id, error: error.message });
+          console.error("[CASH-SETTLE] settlement insert failed (non-fatal)", { invoice: row.invoice_id, error: error.message });
         }
       }
     }
 
     // [CASH-SETTLE] Heal stale settlements: the invoice's gross or payment date changed after it
     // was cash-paid, so the linked entry must move too — else the kas balance drifts permanently.
-    for (const { id, inv } of toUpdate) {
-      const s = buildCashSettlement(inv);
-      if (!s) continue;
+    for (const { id, row } of toUpdate) {
       const { error } = await supabase
         .from("cash_entries")
         .update({
-          amount: s.amount,
-          direction: s.direction, // [CASH-SETTLE-BIDIR] heal the drawer direction too
-          description: s.description,
-          ...(s.entry_date ? { entry_date: s.entry_date } : {}),
+          amount: row.amount,
+          direction: row.direction, // [CASH-SETTLE-BIDIR] heal the drawer direction too
+          description: row.description,
+          ...(row.entry_date ? { entry_date: row.entry_date } : {}),
         })
         .eq("id", id)
         .eq("user_id", userId);

@@ -18,6 +18,8 @@ import { regimeFlagNote } from "@/lib/regime-flags";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt } from "@/lib/bad-debt-collect";
 import { badDebtNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
+// [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
+import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function shiftDays(iso: string, days: number): string {
@@ -70,9 +72,17 @@ export async function GET(req: NextRequest) {
     i.direction === "incoming" || i.direction === "outgoing"
       ? i.direction
       : i.receiver_id === ownerId ? "incoming" : "outgoing";
+  // [RUBRIEK-SPLIT] A sales invoice that mixes rates (21% materials next to 9% labour, food next
+  // to drinks) cannot say so in its header: the rate is derived as btw ÷ ex, so €1.000 @ 21% +
+  // €1.000 @ 9% blends to 15%, snaps to 21%, and the whole €2.000 is declared in rubriek 1a while
+  // half of it belongs in 1b. The invoice's own lines know the rates; this reads them, and uses
+  // them only when they add up to the header — so the split can move omzet BETWEEN rubrieken and
+  // never change a total. Same helper computeResultForRange uses, so screen and aangifte agree.
+  const rateSharesByInvoice = await fetchRateShares(pipeline, invRaw.filter((i) => effDir(i) === "outgoing"));
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
     direction: effDir(i),
     status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
+    rate_lines: i.id ? rateSharesByInvoice.get(i.id) ?? null : null,
   }));
 
   // Bank + cash (same de-dup inputs as /api/result).
@@ -125,7 +135,7 @@ export async function GET(req: NextRequest) {
   // stays factuur) and, under kas, gather the settlement inputs. Default factuur → accrual path
   // byte-identical. The concept aangifte then declares BTW on the PAID date, not the invoice date.
   const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end);
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, sr.opts);
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...sr.opts, rateSharesByInvoice });
 
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);

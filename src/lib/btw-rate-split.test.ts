@@ -1,0 +1,109 @@
+// [RUBRIEK-SPLIT] Pure node test — run: npx tsx src/lib/btw-rate-split.test.ts
+import { rateSharesFromLines, splitSliceByShares, type RateShare } from "./btw-rate-split";
+
+let passed = 0, failed = 0;
+function check(name: string, cond: boolean) {
+  if (cond) { passed++; console.log(`  ✓ ${name}`); }
+  else { failed++; console.log(`  ✗ ${name}`); }
+}
+const sum = (rs: RateShare[] | null, k: "ex" | "btw") =>
+  Math.round((rs ?? []).reduce((s, r) => s + r[k], 0) * 100) / 100;
+const at = (rs: RateShare[] | null, rate: number) => (rs ?? []).find((r) => r.rate === rate);
+
+console.log("\n— the case the header could not express —");
+{
+  // €1.000 @ 21% + €1.000 @ 9% → header 2.000/300 → 15% → snapped to 21%: the whole €2.000
+  // landed in rubriek 1a while half of it belongs in 1b.
+  const shares = rateSharesFromLines(
+    [{ btw_rate: 21, line_total: 1000 }, { btw_rate: 9, line_total: 1000 }],
+    2000, 300,
+  );
+  check("a mixed invoice splits into two rubrieken", shares?.length === 2);
+  check("21% carries its own thousand", at(shares, 21)?.ex === 1000 && at(shares, 21)?.btw === 210);
+  check("9% carries its own thousand", at(shares, 9)?.ex === 1000 && at(shares, 9)?.btw === 90);
+  check("the totals are untouched", sum(shares, "ex") === 2000 && sum(shares, "btw") === 300);
+}
+{
+  // The caterer: 9% food, 21% drinks, 0% a deposit line.
+  const shares = rateSharesFromLines(
+    [{ btw_rate: 9, line_total: 400 }, { btw_rate: 21, line_total: 250 }, { btw_rate: 0, line_total: 30 }],
+    680, 88.5,
+  );
+  check("three rates → three buckets", shares?.length === 3);
+  check("the 0% deposit stays 0% (rubriek 1c), never folded into a rate", at(shares, 0)?.btw === 0);
+  check("sums still equal the header exactly", sum(shares, "ex") === 680 && sum(shares, "btw") === 88.5);
+}
+
+console.log("\n— the header stays the money-truth: lines are only a finer description —");
+{
+  check("no lines → null (use the header rate, as before)", rateSharesFromLines([], 100, 21) === null);
+  check("null lines → null", rateSharesFromLines(null, 100, 21) === null);
+  check("one rate → null (the header derivation is already exact)",
+    rateSharesFromLines([{ btw_rate: 21, line_total: 60 }, { btw_rate: 21, line_total: 40 }], 100, 21) === null);
+  check("€0 lines are not buckets",
+    rateSharesFromLines([{ btw_rate: 21, line_total: 100 }, { btw_rate: 9, line_total: 0 }], 100, 21) === null);
+  // The safety rule: a line set that does not add up to its own header is a corrupt read.
+  check("lines that miss the header ex are refused",
+    rateSharesFromLines([{ btw_rate: 21, line_total: 500 }, { btw_rate: 9, line_total: 100 }], 2000, 300) === null);
+  check("lines that miss the header BTW are refused",
+    rateSharesFromLines([{ btw_rate: 21, line_total: 1000 }, { btw_rate: 9, line_total: 1000 }], 2000, 420) === null);
+  check("a two-cent drift is still accepted (ordinary rounding)",
+    rateSharesFromLines([{ btw_rate: 21, line_total: 1000 }, { btw_rate: 9, line_total: 1000 }], 2000.02, 300) !== null);
+}
+{
+  // …and when it IS accepted, the residue never changes the totals — only where they sit.
+  const shares = rateSharesFromLines(
+    [{ btw_rate: 21, line_total: 1000 }, { btw_rate: 9, line_total: 1000 }],
+    2000.02, 300.01,
+  );
+  check("the residue lands on a bucket, totals stay the header's",
+    sum(shares, "ex") === 2000.02 && sum(shares, "btw") === 300.01);
+}
+{
+  const odd = rateSharesFromLines([{ btw_rate: 20, line_total: 100 }, { btw_rate: 9, line_total: 100 }], 200, 30);
+  check("an illegal rate is snapped to a legal one (no invented rubriek)",
+    (odd ?? []).every((r) => [0, 9, 21].includes(r.rate)));
+}
+
+console.log("\n— a creditnota nets, it does not add —");
+{
+  const shares = rateSharesFromLines(
+    [{ btw_rate: 21, line_total: -1000 }, { btw_rate: 9, line_total: -1000 }],
+    -2000, -300,
+  );
+  check("negative lines give negative buckets", (shares ?? []).every((r) => r.ex < 0 && r.btw < 0));
+  check("…that still sum to the (negative) header", sum(shares, "ex") === -2000 && sum(shares, "btw") === -300);
+}
+
+console.log("\n— [KASSTELSEL] a payment settles a FRACTION of every rate on the invoice —");
+{
+  const mix: RateShare[] = [
+    { rate: 21, ex: 1000, btw: 210 },
+    { rate: 9, ex: 1000, btw: 90 },
+  ];
+  // A €1.150 instalment on a €2.300 invoice = half of it: half of each rate, not "21% money".
+  const half = splitSliceByShares(mix, 1000, 150);
+  check("half the invoice → half of each bucket",
+    at(half, 21)?.ex === 500 && at(half, 9)?.ex === 500);
+  check("the BTW halves with it", at(half, 21)?.btw === 75 && at(half, 9)?.btw === 75);
+  check("the slice is preserved exactly", sum(half, "ex") === 1000 && sum(half, "btw") === 150);
+
+  // An awkward fraction: the residue is absorbed, never dropped.
+  const third = splitSliceByShares(mix, 333.33, 50);
+  check("an awkward fraction still sums to the slice",
+    sum(third, "ex") === 333.33 && sum(third, "btw") === 50);
+
+  check("a single-rate invoice needs no slice split", splitSliceByShares([{ rate: 21, ex: 100, btw: 21 }], 50, 10.5) === null);
+  check("no mix → null", splitSliceByShares(null, 50, 10.5) === null);
+  check("a zero-ex mix → null (never divide by nothing)",
+    splitSliceByShares([{ rate: 21, ex: 0, btw: 0 }, { rate: 9, ex: 0, btw: 0 }], 50, 10) === null);
+}
+{
+  // A creditnota settlement: negative slice over a negative mix stays negative.
+  const mix: RateShare[] = [{ rate: 21, ex: -100, btw: -21 }, { rate: 9, ex: -100, btw: -9 }];
+  const s = splitSliceByShares(mix, -200, -30);
+  check("a refund splits negative too", sum(s, "ex") === -200 && sum(s, "btw") === -30);
+}
+
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed > 0) process.exit(1);
