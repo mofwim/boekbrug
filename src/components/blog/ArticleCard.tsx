@@ -5,7 +5,7 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { articlePath, type Locale, type Post } from '@/lib/blog'
+import { articlePath, LOCALE_META, type Locale, type Post } from '@/lib/blog'
 
 // Locale-aware, stable date formatting. Intl with an explicit locale keeps the
 // server-rendered output deterministic (no hydration mismatch).
@@ -13,7 +13,7 @@ function formatDate(iso: string, locale: Locale): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return new Intl.DateTimeFormat(locale === 'nl' ? 'nl-NL' : 'en-GB', {
+  return new Intl.DateTimeFormat(LOCALE_META[locale].intl, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',

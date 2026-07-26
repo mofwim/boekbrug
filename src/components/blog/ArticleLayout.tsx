@@ -14,7 +14,7 @@ import rehypeSlug from 'rehype-slug'
 import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
 import ToolCTA from '@/components/blog/ToolCTA'
-import { indexPath, articlePath, getClusterSiblings, type Locale, type Post } from '@/lib/blog'
+import { indexPath, articlePath, getClusterSiblings, LOCALE_META, type AlternateRef, type Locale, type Post } from '@/lib/blog'
 
 // react-markdown injects an internal `node` prop into every custom component;
 // strip it so it never leaks onto the DOM.
@@ -33,8 +33,8 @@ const components: Components = {
   h2: (p) => <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1c1c1e', margin: '34px 0 12px', scrollMarginTop: 76 }} {...omitNode(p)} />,
   h3: (p) => <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1c1c1e', margin: '24px 0 8px', scrollMarginTop: 76 }} {...omitNode(p)} />,
   p: (p) => <p style={{ ...bodyText, margin: '0 0 16px' }} {...omitNode(p)} />,
-  ul: (p) => <ul style={{ ...bodyText, margin: '0 0 16px', paddingLeft: 22 }} {...omitNode(p)} />,
-  ol: (p) => <ol style={{ ...bodyText, margin: '0 0 16px', paddingLeft: 22 }} {...omitNode(p)} />,
+  ul: (p) => <ul style={{ ...bodyText, margin: '0 0 16px', paddingInlineStart: 22 }} {...omitNode(p)} />,
+  ol: (p) => <ol style={{ ...bodyText, margin: '0 0 16px', paddingInlineStart: 22 }} {...omitNode(p)} />,
   li: (p) => <li style={{ margin: '5px 0' }} {...omitNode(p)} />,
   strong: (p) => <strong style={{ color: '#1c1c1e', fontWeight: 700 }} {...omitNode(p)} />,
   em: (p) => <em {...omitNode(p)} />,
@@ -55,20 +55,22 @@ const components: Components = {
     <td style={{ padding: '9px 12px', borderBottom: '1px solid #f0f0f4', color: '#3c3c43', verticalAlign: 'top' }} {...omitNode(p)} />
   ),
   blockquote: (p) => (
-    <blockquote style={{ borderLeft: '3px solid #d1d1d6', margin: '0 0 16px', padding: '4px 0 4px 16px', color: '#6b6b6e' }} {...omitNode(p)} />
+    <blockquote style={{ borderInlineStart: '3px solid #d1d1d6', margin: '0 0 16px', paddingInlineStart: 16, paddingBlock: 4, color: '#6b6b6e' }} {...omitNode(p)} />
   ),
 }
 
-const COPY: Record<Locale, { blog: string; by: string; readTime: string; back: string; switchTo: string; partOf: string; more: string }> = {
-  nl: { blog: 'Blog', by: 'door', readTime: 'min leestijd', back: '← Terug naar blog', switchTo: 'Read in English', partOf: 'Onderdeel van de gids', more: 'Lees ook in deze gids' },
-  en: { blog: 'Blog', by: 'by', readTime: 'min read', back: '← Back to blog', switchTo: 'Lees in het Nederlands', partOf: 'Part of the guide', more: 'More in this guide' },
+const COPY: Record<Locale, { blog: string; by: string; readTime: string; back: string; partOf: string; more: string }> = {
+  nl: { blog: 'Blog', by: 'door', readTime: 'min leestijd', back: '← Terug naar blog', partOf: 'Onderdeel van de gids', more: 'Lees ook in deze gids' },
+  en: { blog: 'Blog', by: 'by', readTime: 'min read', back: '← Back to blog', partOf: 'Part of the guide', more: 'More in this guide' },
+  ar: { blog: 'المدوّنة', by: 'بقلم', readTime: 'دقيقة قراءة', back: 'رجوع إلى المدوّنة →', partOf: 'جزء من الدليل', more: 'اقرأ أيضاً في هذا الدليل' },
+  tr: { blog: 'Blog', by: 'yazan', readTime: 'dk okuma', back: '← Blog’a dön', partOf: 'Rehberin parçası', more: 'Bu rehberde dahası' },
 }
 
 function formatDate(iso: string, locale: Locale): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return new Intl.DateTimeFormat(locale === 'nl' ? 'nl-NL' : 'en-GB', {
+  return new Intl.DateTimeFormat(LOCALE_META[locale].intl, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -78,11 +80,11 @@ function formatDate(iso: string, locale: Locale): string {
 export default function ArticleLayout({
   post,
   locale,
-  alternatePath,
+  alternates = [],
 }: {
   post: Post
   locale: Locale
-  alternatePath?: string | null
+  alternates?: AlternateRef[]
 }) {
   const { frontmatter, content, readingMinutes } = post
   const t = COPY[locale]
@@ -92,7 +94,7 @@ export default function ArticleLayout({
     <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
 
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 72px' }}>
+      <div dir={LOCALE_META[locale].dir} style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 72px' }}>
         {/* 1. Breadcrumb: Blog › [article title] */}
         <nav aria-label="Breadcrumb" style={{ fontSize: 13, color: '#8a8a8e', marginBottom: 20 }}>
           <Link href={indexPath(locale)} style={{ color: '#007aff', textDecoration: 'none' }}>{t.blog}</Link>
@@ -107,7 +109,7 @@ export default function ArticleLayout({
           </h1>
 
           {/* 3. Meta line: date · reading time · author */}
-          <div style={{ fontSize: 13, color: '#8a8a8e', marginBottom: alternatePath ? 12 : 24 }}>
+          <div style={{ fontSize: 13, color: '#8a8a8e', marginBottom: alternates.length > 0 ? 12 : 24 }}>
             {formatDate(frontmatter.publishedAt, locale)}
             {' · '}{readingMinutes} {t.readTime}
             {' · '}{t.by} {frontmatter.author}
@@ -125,17 +127,21 @@ export default function ArticleLayout({
             </div>
           )}
 
-          {/* Language switch (also emitted as hreflang in <head>) — a big, filled
-              button so readers can clearly see and reach the other language. */}
-          {alternatePath && (
-            <div style={{ marginBottom: 24 }}>
-              <Link
-                href={alternatePath}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '11px 24px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.30)' }}
-              >
-                <span aria-hidden="true" style={{ fontSize: 18 }}>🌐</span>
-                {t.switchTo} →
-              </Link>
+          {/* Language switches (also emitted as hreflang in <head>) — one filled
+              button per available language, each labelled in its own language. */}
+          {alternates.length > 0 && (
+            <div style={{ marginBottom: 24, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {alternates.map((alt) => (
+                <Link
+                  key={alt.locale}
+                  href={alt.path}
+                  hrefLang={LOCALE_META[alt.locale].hreflang}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 15, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '9px 18px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.28)' }}
+                >
+                  <span aria-hidden="true" style={{ fontSize: 16 }}>🌐</span>
+                  {LOCALE_META[alt.locale].label}
+                </Link>
+              ))}
             </div>
           )}
 

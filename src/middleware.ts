@@ -36,6 +36,8 @@ const PUBLIC_PATHS = [
   // auth guard redirects them to /login and the SEO blog never gets indexed.
   "/blog",
   "/en/blog",
+  "/ar/blog",
+  "/tr/blog",
   "/privacy",
   "/voorwaarden",
   "/cookies",

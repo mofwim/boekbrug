@@ -1,8 +1,6 @@
-// src/app/blog/[slug]/page.tsx
-// [BLOG] Dutch article page (default locale — no /nl/ prefix). Fully statically
-// generated (SSG) via generateStaticParams over the published NL slugs. All SEO
-// — title/description/OG/Twitter/canonical/hreflang + JSON-LD Article — comes
-// from the frontmatter through the shared blog-seo helpers.
+// src/app/tr/blog/[slug]/page.tsx
+// [BLOG] Turkish article page (/tr/blog/[slug]). SSG over published TR slugs.
+// Same SEO stack as the other locales.
 
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
@@ -10,7 +8,7 @@ import ArticleLayout from '@/components/blog/ArticleLayout'
 import { getPost, getPublishedSlugs, getAlternates } from '@/lib/blog'
 import { buildArticleMetadata, buildArticleJsonLd } from '@/lib/blog-seo'
 
-const LOCALE = 'nl' as const
+const LOCALE = 'tr' as const
 
 export function generateStaticParams() {
   return getPublishedSlugs(LOCALE).map((slug) => ({ slug }))
@@ -29,7 +27,7 @@ export async function generateMetadata({
   return buildArticleMetadata(post, LOCALE)
 }
 
-export default async function BlogArticlePageNL({
+export default async function BlogArticlePageTR({
   params,
 }: {
   params: Promise<{ slug: string }>
