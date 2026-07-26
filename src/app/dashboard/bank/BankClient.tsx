@@ -6,6 +6,7 @@
 // Philosophy: AI suggests, the human confirms. 'auto' = pre-filled (still one tap to confirm).
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
@@ -154,7 +155,16 @@ export default function BankClient() {
   // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
   // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
   // dropdown of every counterpart. Matches counterpart name, reference, or date.
-  const [filterText, setFilterText] = useState('')
+  // [SEARCH-DEEPLINK] Seeded from ?find= (set by the global Cmd+K search when the owner
+  // opens a bank hit) so the exact line surfaces here. Synced on param change — a ?find=
+  // push can arrive while already mounted; local typing never changes the param.
+  const searchParams = useSearchParams()
+  const findParam = searchParams.get('find') ?? ''
+  const [filterText, setFilterText] = useState(findParam)
+  useEffect(() => {
+    const t = setTimeout(() => setFilterText(findParam), 0)
+    return () => clearTimeout(t)
+  }, [findParam])
   const [toast, setToast] = useState<string | null>(null)
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a

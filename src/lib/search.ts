@@ -6,8 +6,8 @@
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type SearchResultType = "invoice" | "document" | "client";
-export type SearchTarget = "invoices" | "documents" | "clients" | "all";
+export type SearchResultType = "invoice" | "document" | "client" | "banktransaction" | "cashentry";
+export type SearchTarget = "invoices" | "documents" | "clients" | "bank" | "kas" | "all";
 
 export interface SearchResult {
   type: SearchResultType;
@@ -24,13 +24,22 @@ export interface SearchResultGroup {
   invoices: SearchResult[];
   documents: SearchResult[];
   clients: SearchResult[];
+  bankTransactions: SearchResult[];
+  cashEntries: SearchResult[];
 }
 
 // ─── [BOEK-012] Pure helpers — safe to import in any component ────────────────
 
-// Flatten grouped results to ordered flat list (used by SearchBar for keyboard nav)
+// Flatten grouped results to ordered flat list (used by SearchBar for keyboard nav).
+// Order MUST match the render order of the sections in SearchBar so keyboard nav aligns.
 export function flattenGroups(groups: SearchResultGroup): SearchResult[] {
-  return [...groups.invoices, ...groups.documents, ...groups.clients];
+  return [
+    ...groups.invoices,
+    ...groups.documents,
+    ...groups.clients,
+    ...groups.bankTransactions,
+    ...groups.cashEntries,
+  ];
 }
 
 // Empty group constant — avoids re-creating on every render
@@ -38,4 +47,6 @@ export const EMPTY_GROUP: SearchResultGroup = {
   invoices: [],
   documents: [],
   clients: [],
+  bankTransactions: [],
+  cashEntries: [],
 };
