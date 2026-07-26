@@ -2,6 +2,10 @@
 
 *Stand van tak `claude/snelstart-integration-opix9l`, 26 juli 2026.*
 
+> **Stap 1 t/m 9 zijn toegepast en gecontroleerd op 26 juli 2026.** Daarbij kwam één echte
+> fout boven die alleen door het draaien van de CONTROLE zichtbaar werd — zie de noot bij
+> stap 7. Stap **10 is nieuw en nog niet toegepast**.
+
 > **Alles hieronder is idempotent en verwijdert niets.** Twijfel je of iets al is toegepast:
 > gewoon opnieuw draaien. Een migratie die er al staat is een no-op.
 >
@@ -88,7 +92,17 @@ Het euro-plafond per dag op Anthropic-uitgaven, plus een wérkende anonieme rate
 Waarom die urgentie: de limiet op `/api/tools/scan-invoice` bucketde op `'scan-ip:<ip>'`
 tegen een `uuid`-kolom met foreign key naar `profiles`. Elke aanroep gaf een cast-fout en de
 limiter faalde open — de **login-vrije scanner die de betaalde API aanroept had in de
-praktijk nooit een plafond**. Zolang deze migratie niet is toegepast is dat nog steeds zo.
+praktijk nooit een plafond**.
+
+> ⚠️ **Deze migratie is één keer gecorrigeerd nadat hij was toegepast.** De eerste versie
+> gebruikte een kaal `ON CONFLICT (bucket_key, endpoint)` terwijl de unieke index PARTIEEL
+> is; Postgres leidt een partiële index daar niet uit af en gaf `42P10` bij elke aanroep.
+> Omdat `checkRateLimitByKey()` bewust DICHT faalt, betekende dat: de login-vrije scanner
+> zou ELK verzoek hebben geweigerd — een dichte deur op een marketingpagina.
+>
+> Gevonden door de CONTROLE tegen een echte database te draaien, niet door te lezen: `tsc`,
+> 183 tests en de productiebuild raken geen SQL aan. **Draai deze migratie opnieuw als je
+> hem vóór 26 juli 2026 had toegepast** — hij is idempotent en vervangt alleen de functie.
 
 *(Hij staat op 7 en niet op 1 omdat 1 en 2 bestaande functies blokkeren. Zit je in tijdnood:
 doe deze eerst en de rest morgen.)*
@@ -97,9 +111,9 @@ doe deze eerst en de rest morgen.)*
 
 `deletion_requests.purged_at` + de index, zodat AVG-verwijdering idempotent kan draaien.
 
-**Zet `RETENTION_PURGE_ENABLED` NIET op `true`.** Zonder die variabele draait de cron als dry
-run, en dat moet zo blijven tot er een `kluis_subscriptions`-tabel is — anders weet de purge
-niet wie hij *niet* mag aanraken. Niets in deze app kan vóór 2033 aan de beurt zijn; meldt
+**Zet `RETENTION_PURGE_ENABLED` NIET op `true`** vóór stap 10. Zonder die tabel weet de purge
+niet wie hij *niet* mag aanraken. Sinds stap 10 bestaat die koppeling wél, en faalt de cron
+bovendien DICHT als hij `kluis_subscriptions` niet kan lezen: dan wist hij niets. Niets in deze app kan vóór 2033 aan de beurt zijn; meldt
 een dry run nu al een kandidaat, dan is er een datum verkeerd gezet.
 
 ### 9. `snelstart_connection.sql` — *alleen als je de koppeling wilt*
@@ -107,6 +121,19 @@ een dry run nu al een kandidaat, dan is er een datum verkeerd gezet.
 Twee tabellen voor de SnelStart B2B-koppeling. De maatwerksleutel gaat in Supabase Vault,
 nooit in een gewone kolom. **Vereist ook `SNELSTART_SUBSCRIPTION_KEY` in de omgeving** — die
 heb je nog niet, dus deze mag gerust wachten.
+
+### 10. `kluis_subscriptions.sql` — ⚠️ **nieuw, vóór er één euro binnenkomt**
+
+Wie er een Bewaarkluis heeft gekocht en tot welk jaar.
+
+Dit moet er zijn **voordat** `STRIPE_PRICE_ID_KLUIS_YEAR` wordt ingevuld. De Bewaarkluis
+rekent af met `mode: "payment"` — een eenmalige betaling zonder abonnement — en de webhook
+zocht bij elk event een subscription id. Zonder deze tabel en de bijbehorende
+webhook-afhandeling betekende een Bewaarkluis-betaling letterlijk: *geld aangenomen,
+verplichting nergens vastgelegd.* Erger dan het product niet hebben.
+
+Het is ook het hek dat `RETENTION_PURGE_ENABLED` eindelijk aan mag laten: een account met
+een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken zijn.
 
 ---
 
@@ -123,6 +150,7 @@ heb je nog niet, dus deze mag gerust wachten.
 | 7 | `ai_spend_guard.sql` | **de enige harde bodem onder je Anthropic-rekening** |
 | 8 | `retention_purge.sql` | AVG-verwijdering; blijft dry run |
 | 9 | `snelstart_connection.sql` | pas nodig met een subscription key |
+| 10 | `kluis_subscriptions.sql` | **vóór de eerste Bewaarkluis-betaling** |
 
 Na afloop staat onderaan elk bestand een **CONTROLE**-blok. Draai dat — het is per migratie
 één query en het is het verschil tussen "toegepast" en "toegepast en gecontroleerd".

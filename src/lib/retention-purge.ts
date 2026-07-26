@@ -29,6 +29,18 @@ import { isEligibleForDeletion } from "./retention";
 export type DeletionRequestRow = {
   id: string;
   user_id: string | null;
+  /**
+   * [KLUIS] Het jaar t/m wanneer een gekochte Bewaarkluis loopt, of null.
+   *
+   * Dit is de reden dat RETENTION_PURGE_ENABLED tot nu toe uit moest blijven: zonder dit
+   * getal kan de purge niet weten wie hij NIET mag aanraken. Iemand die vooruit heeft
+   * betaald voor bewaring tot en met 2033 hoort niet gewist te worden omdat zijn eigen
+   * zeven jaar toevallig eerder aflopen — dat zou het verwijderen van iets zijn waar
+   * iemand voor betaald heeft.
+   *
+   * Wordt gevuld door de cron uit kluis_subscriptions (lopende rij, cancelled_at is null).
+   */
+  kluis_keep_through_year?: number | null;
   /** When the account was actually deactivated. NULL = never went through with it. */
   deleted_at: string | null;
   /** deleted_at + 7 years, stamped at deactivation time. */
@@ -47,6 +59,7 @@ export type PurgeRefusal =
   | "no_eligible_date" // the timer was never stamped → we cannot prove 7 years passed
   | "unparseable_date" // garbage in the column → refuse rather than guess
   | "retention_not_expired" // the seven years are not up
+  | "bewaarkluis_actief" // [KLUIS] paid for, and paid-for storage is not ours to erase
   | "already_purged"; // done before; re-running must be a no-op
 
 /**
@@ -86,6 +99,16 @@ export function decidePurge(row: DeletionRequestRow, now: Date): PurgeVerdict {
 
   if (!storedSaysReady || !recomputedSaysReady) {
     return { purge: false, reason: "retention_not_expired" };
+  }
+
+  // [KLUIS] Laatste hek, en het staat expres HELEMAAL onderaan: ook als alle andere
+  // controles "weg ermee" zeggen, wint een betaalde Bewaarkluis. Wie vooruit heeft betaald
+  // voor bewaring tot en met jaar X, houdt die bewaring tot en met jaar X — ook als zijn
+  // wettelijke termijn eerder afloopt. Iets wissen waarvoor iemand heeft betaald is niet
+  // een randgeval maar het ergste dat deze cron kan doen.
+  const kluis = row.kluis_keep_through_year;
+  if (typeof kluis === "number" && Number.isFinite(kluis) && now.getUTCFullYear() <= kluis) {
+    return { purge: false, reason: "bewaarkluis_actief" };
   }
 
   return { purge: true };

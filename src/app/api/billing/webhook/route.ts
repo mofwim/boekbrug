@@ -38,6 +38,7 @@ import {
 import { normalizeStripeStatus } from "@/lib/subscription";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { sendPaymentFailedEmail } from "@/lib/email";
+import { BEWAARPLICHT_YEARS } from "@/lib/bewaarkluis";
 
 // Stripe's signature verification needs Node crypto and the raw body.
 export const runtime = "nodejs";
@@ -107,6 +108,20 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
   if (event.type === "invoice.payment_failed") {
     await notifyPaymentFailed(stripe, event.data.object as Stripe.Invoice);
     return;
+  }
+
+  // ── [KLUIS] Een Bewaarkluis is een EENMALIGE betaling, geen abonnement ────
+  //
+  // Dit blok staat bewust vóór de subscription-resolutie hieronder, want die zoekt een
+  // subscription id en die is er bij `mode: "payment"` niet. Zonder dit blok liep een
+  // Bewaarkluis-betaling in de tak "carried no subscription id — ignored": geld aangenomen,
+  // verplichting nergens vastgelegd. Erger dan het product niet hebben.
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    if (session.metadata?.product === "bewaarkluis") {
+      await recordBewaarkluis(session);
+      return;
+    }
   }
 
   // ── Resolve the subscription id this event is about ────────────────
@@ -292,4 +307,55 @@ async function profileIdFromDatabase(customerId: string): Promise<string | null>
   } catch {
     return null;
   }
+}
+
+/**
+ * [KLUIS] Leg een gekochte Bewaarkluis vast.
+ *
+ * Wat hier ook misgaat, één ding mag NOOIT: stil eindigen. De klant heeft betaald voor
+ * zeven jaar bewaring; als wij dat niet kunnen opschrijven moet er iemand naar kijken. Elke
+ * onmogelijkheid gooit daarom, wat een 500 oplevert, wat Stripe drie dagen lang laat
+ * herproberen — en de retry is idempotent dankzij de unieke index op stripe_session_id.
+ */
+async function recordBewaarkluis(session: Stripe.Checkout.Session): Promise<void> {
+  const profileId = session.metadata?.profile_id ?? null;
+  const years = Number(session.metadata?.years ?? 0);
+
+  if (!profileId) {
+    // Luid: een echte betaling die wij niet aan een account kunnen koppelen.
+    throw new Error(`[KLUIS] UNATTRIBUTED bewaarkluis payment ${session.id} — no profile_id`);
+  }
+  if (!Number.isInteger(years) || years < 1 || years > BEWAARPLICHT_YEARS + 1) {
+    throw new Error(`[KLUIS] bewaarkluis ${session.id} has an implausible years value: ${String(session.metadata?.years)}`);
+  }
+
+  const pipeline = createPipelineClient();
+
+  // Het jaar t/m wanneer wij bewaren, gerekend vanaf NU. Bewust niet uit de metadata: die
+  // komt uit de browser-sessie van een half uur geleden, en dit getal is wat wij beloven.
+  const keepThroughYear = new Date().getUTCFullYear() + years - 1;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (pipeline as any).from("kluis_subscriptions").insert({
+    user_id: profileId,
+    keep_through_year: keepThroughYear,
+    years_purchased: years,
+    amount_cents: session.amount_total ?? 0,
+    stripe_session_id: session.id,
+  });
+
+  if (error) {
+    // 23505 = de unieke index op stripe_session_id. Dat is geen fout maar precies wat hij
+    // moet doen: Stripe levert een event bij twijfel opnieuw af, en die herhaling hoort
+    // niets te veranderen. Alles ánders gooit, zodat Stripe blijft proberen.
+    if (error.code === "23505") {
+      console.log(`[KLUIS] bewaarkluis ${session.id} was al vastgelegd — herhaling genegeerd`);
+      return;
+    }
+    throw new Error(`[KLUIS] kon bewaarkluis ${session.id} niet vastleggen: ${error.message}`);
+  }
+
+  console.log(
+    `[KLUIS] bewaarkluis vastgelegd voor ${profileId}: ${years} jaar, t/m ${keepThroughYear}`
+  );
 }

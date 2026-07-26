@@ -202,10 +202,10 @@ publieke voordeur `/bewaarplicht`.
 **Moet nog:**
 
 1. Een Stripe-prijs voor één bewaarjaar (`STRIPE_PRICE_ID_KLUIS_YEAR`).
-2. `kluis_subscriptions` — wie tot wanneer betaald heeft, zodat de purge weet wie hij
-   *niet* mag aanraken. **Dit is de enige harde koppeling: zonder die tabel mag
-   `RETENTION_PURGE_ENABLED` nooit op `true`.** De webhook moet die tabel vullen op
-   `checkout.session.completed` met `metadata.product === 'bewaarkluis'`.
+2. ~~`kluis_subscriptions`~~ **Gedaan.** De tabel bestaat, de webhook vult haar op
+   `checkout.session.completed` met `metadata.product === 'bewaarkluis'` (idempotent via een
+   unieke index op de Stripe-sessie), `decidePurge()` slaat een account met een lopende kluis
+   over, en de cron faalt DICHT als hij die tabel niet kan lezen. Toepassen: migratie 10.
 3. ~~Een onboarding waarin "ik kom alleen mijn archief brengen" een echte keuze is.~~
    **Gedaan.** `/register?doel=archief` slaat de rolkeuze over, toont teksten zonder één
    woord over facturen of btw, schrijft `account_purpose = 'archief'` en laat de gebruiker

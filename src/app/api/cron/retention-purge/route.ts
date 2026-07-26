@@ -125,6 +125,54 @@ export async function GET(req: NextRequest) {
 
   report.scanned = rows.length;
 
+  // ── [KLUIS] Wie heeft er een lopende Bewaarkluis? ──────────────────────────
+  //
+  // Dit is het hek dat RETENTION_PURGE_ENABLED eindelijk aan mág. Zonder deze verrijking
+  // weet decidePurge() niet wie er vooruit heeft betaald voor bewaring, en zou een
+  // afgelopen wettelijke termijn genoeg zijn om bestanden te wissen waar iemand geld voor
+  // heeft neergelegd.
+  //
+  // ⚠️ FAALT DICHT, en dat is het enige punt in dit hele bestand waar dat zo is. Lukt deze
+  // query niet, dan stoppen wij — want dan kunnen wij niet uitsluiten dat er een betaalde
+  // kluis tussen zit. Bij twijfel niets wissen; wissen is onomkeerbaar en de cron draait
+  // volgende week gewoon opnieuw.
+  if (rows.length > 0) {
+    const userIds = [...new Set(rows.map((r) => r.user_id).filter((x): x is string => !!x))];
+    if (userIds.length > 0) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: kluizen, error: kluisErr } = await (pipeline as any)
+          .from("kluis_subscriptions")
+          .select("user_id, keep_through_year")
+          .in("user_id", userIds)
+          .is("cancelled_at", null);
+        if (kluisErr) throw new Error(kluisErr.message);
+
+        // Per gebruiker het LAATSTE jaar dat is gekocht: wie twee keer heeft verlengd,
+        // houdt de langste belofte.
+        const langste = new Map<string, number>();
+        for (const k of (kluizen ?? []) as Array<{ user_id: string; keep_through_year: number }>) {
+          const huidig = langste.get(k.user_id) ?? 0;
+          if (k.keep_through_year > huidig) langste.set(k.user_id, k.keep_through_year);
+        }
+        for (const r of rows) {
+          if (r.user_id) r.kluis_keep_through_year = langste.get(r.user_id) ?? null;
+        }
+      } catch (err) {
+        console.error(
+          "[CRON-RETENTION] kluis_subscriptions niet leesbaar — NIETS gewist. " +
+            "Is kluis_subscriptions.sql toegepast?",
+          err
+        );
+        return NextResponse.json({
+          ok: true,
+          ...report,
+          note: "kluis_check_unavailable_nothing_purged",
+        });
+      }
+    }
+  }
+
   const { purge, skip } = partitionPurgeCandidates(rows, now);
   report.eligible = purge.length;
   for (const s of skip) {

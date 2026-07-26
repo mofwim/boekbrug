@@ -75,10 +75,53 @@ async function readSnapshot(
   };
 }
 
+/**
+ * De langstlopende, niet-geannuleerde Bewaarkluis van deze gebruiker — of null.
+ *
+ * Ontbreekt de tabel (migratie nog niet toegepast), dan is het antwoord null en gedraagt
+ * alles zich als voorheen. Dat is de veilige kant: hooguit krijgt iemand een aanbod te zien
+ * dat hij niet nodig heeft, en de POST hieronder weigert een tweede aankoop alsnog niet —
+ * maar Stripe's unieke sessie-index en de webhook maken een dubbele registratie onmogelijk.
+ */
+async function readKluis(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  userId: string,
+): Promise<{ keep_through_year: number } | null> {
+  try {
+    const { data, error } = await supabase
+      .from("kluis_subscriptions")
+      .select("keep_through_year")
+      .eq("user_id", userId)
+      .is("cancelled_at", null)
+      .order("keep_through_year", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as { keep_through_year: number };
+  } catch {
+    return null;
+  }
+}
+
 export async function GET() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+
+  // Heeft hij er al een? Dan tonen wij wat hij heeft, en verkopen wij hem niets. Iemand een
+  // aanbod blijven doen voor iets wat hij vorige week heeft betaald is de snelste manier om
+  // een goede indruk kwijt te raken.
+  const bestaand = await readKluis(supabase, user.id);
+  if (bestaand) {
+    return NextResponse.json({
+      leeg: false,
+      alGeregeld: true,
+      keepThroughYear: bestaand.keep_through_year,
+      years: 0,
+      gratisMaanden: KLUIS_GRACE_MONTHS,
+    });
+  }
 
   const snap = await readSnapshot(supabase, user.id);
   const currentYear = new Date().getUTCFullYear();
@@ -118,6 +161,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "De Bewaarkluis is nog niet te bestellen. Neem gerust contact op." },
       { status: 503 },
+    );
+  }
+
+  // Al een lopende kluis? Dan niets verkopen. De unieke index op stripe_session_id houdt een
+  // dubbele REGISTRATIE tegen, maar niet een tweede aankoop — dat moet hier gebeuren, vóór
+  // de klant afrekent, want geld terugbetalen is een slechtere ervaring dan het niet innen.
+  const bestaand = await readKluis(supabase, user.id);
+  if (bestaand) {
+    return NextResponse.json(
+      {
+        error: `Je hebt al een Bewaarkluis: wij bewaren je administratie tot en met ${bestaand.keep_through_year}. Je hoeft niets te doen.`,
+      },
+      { status: 409 },
     );
   }
 

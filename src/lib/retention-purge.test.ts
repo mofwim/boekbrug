@@ -182,5 +182,41 @@ check(
   storagePrefixForUser(`${USER}/`) === null
 );
 
+
+console.log("\n[KLUIS] a paid Bewaarkluis outranks an expired retention window");
+
+// Erasing something somebody PAID to keep is the worst thing this cron can do, so the
+// vault check sits at the very bottom of decidePurge: even when every other check says
+// "erase", the vault wins.
+check(
+  "an expired row with a vault running through 2033 is kept, with a reason",
+  JSON.stringify(decidePurge(base({ kluis_keep_through_year: 2033 }), NOW)) ===
+    JSON.stringify({ purge: false, reason: "bewaarkluis_actief" })
+);
+
+check(
+  "the final year still counts — 'through 2033' means all of 2033",
+  decidePurge(base({ kluis_keep_through_year: 2033 }), NOW).purge === false
+);
+
+check(
+  "a vault that ended last year holds nothing back",
+  decidePurge(base({ kluis_keep_through_year: 2032 }), NOW).purge === true
+);
+
+// null/undefined means "we looked and there is no vault" — that may purge. An UNKNOWN
+// state never reaches here: the cron route itself fails CLOSED when it cannot read
+// kluis_subscriptions, so "we could not check" stops the run instead of purging.
+check(
+  "no vault (null/undefined) still purges",
+  decidePurge(base({ kluis_keep_through_year: null }), NOW).purge === true &&
+    decidePurge(base({ kluis_keep_through_year: undefined }), NOW).purge === true
+);
+
+check(
+  "garbage in the vault year protects nothing, but never crashes",
+  decidePurge(base({ kluis_keep_through_year: NaN }), NOW).purge === true
+);
+
 console.log(`\n[A1] ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

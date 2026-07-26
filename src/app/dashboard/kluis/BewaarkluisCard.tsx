@@ -17,6 +17,8 @@ import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
 type Offerte = {
   leeg: boolean
+  /** [KLUIS] Al gekocht — dan tonen wij wat er staat en verkopen wij niets. */
+  alGeregeld?: boolean
   uitleg?: string
   gratisMaanden: number
   lastFiscalYear?: number
@@ -94,7 +96,13 @@ export default function BewaarkluisCard() {
         zonder je minstens 30 dagen vooraf te mailen.
       </p>
 
-      {offerte.leeg ? (
+      {offerte.alGeregeld ? (
+        <div style={{ background: '#CEEAD6', border: '1px solid #137333', color: '#0d652d', borderRadius: 12, padding: '14px 16px', fontSize: 14.5, lineHeight: 1.6 }}>
+          <strong>Je Bewaarkluis is geregeld.</strong> Wij bewaren je administratie tot en met{' '}
+          <strong>{offerte.keepThroughYear}</strong>. Je hoeft verder niets te doen — en
+          exporteren blijft die hele tijd gewoon werken.
+        </div>
+      ) : offerte.leeg ? (
         <p style={{ fontSize: 13.5, color: M3.neutral, margin: 0, lineHeight: 1.6 }}>
           {offerte.uitleg}
         </p>
