@@ -702,19 +702,21 @@ export default function IncomingManageClient({
             The one tap that turns the whole matching circle now instead of waiting
             for the hourly automatic run: bankafschrift ↔ facturen, kasboek ↔ the
             cash-paid invoices, plus categorization of the recognizable bank lines.
-            Full-width and solid primary because it is the primary ACTION on this
-            screen — everything else here is filtering or a per-row decision. */}
+            Sized EXACTLY like "Meerdere betalen" above it (same pill geometry, same
+            13px label) so the toolbar reads as one family, but kept solid primary
+            because it is the only ACTION here that moves the books forward —
+            everything else on this screen filters or decides one row. */}
         <button
           onClick={runReconciliation}
           disabled={matchBusy}
           title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
           style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            width: '100%', marginBottom: 12, padding: '11px 16px',
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginBottom: 12, padding: '8px 16px',
             borderRadius: R.full, border: 'none',
             background: matchBusy ? M3.surfaceVariant : M3.primary,
             color: matchBusy ? '#9AA0A6' : M3.onPrimary,
-            fontSize: 14, fontWeight: 600, fontFamily: FONT,
+            fontSize: 13, fontWeight: 600, fontFamily: FONT,
             cursor: matchBusy ? 'default' : 'pointer',
             boxShadow: matchBusy ? 'none' : EL1,
           }}
@@ -724,7 +726,7 @@ export default function IncomingManageClient({
               no shared allowlist change is needed and nothing can render as raw ligature text. */}
           <span
             className="material-symbols-outlined"
-            style={{ fontSize: 19, animation: matchBusy ? 'bbSpin 1s linear infinite' : undefined }}
+            style={{ fontSize: 18, animation: matchBusy ? 'bbSpin 1s linear infinite' : undefined }}
           >
             {matchBusy ? 'refresh' : 'link'}
           </span>
