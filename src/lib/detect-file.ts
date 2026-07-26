@@ -15,6 +15,42 @@ export function looksLikeSpreadsheetBinary(buffer: Uint8Array | Buffer): boolean
   return false;
 }
 
+/**
+ * Sniff the leading magic bytes for the file types the invoice reader (Claude) can read directly —
+ * PDF / JPEG / PNG / WebP / GIF — and return the canonical MIME, or null when the bytes are none of
+ * those. Used so a perfectly readable file that arrives with an EMPTY or generic MIME
+ * (file.type === "" or "application/octet-stream", common from an Android share-sheet or some mobile
+ * WebViews) still reaches the extractor instead of dead-ending as an opaque "unsupported" document —
+ * its voorbelasting would otherwise silently never be read. Byte-based, so a wrong/absent MIME or
+ * extension can't fool it. No I/O, fully testable.
+ */
+export function sniffReadableMime(buffer: Uint8Array | Buffer): string | null {
+  const b = buffer;
+  // %PDF
+  if (b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "application/pdf";
+  // JPEG SOI (FF D8 FF)
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  // PNG signature
+  if (
+    b.length >= 8 &&
+    b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 &&
+    b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a
+  ) return "image/png";
+  // WebP: "RIFF"????"WEBP"
+  if (
+    b.length >= 12 &&
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) return "image/webp";
+  // GIF: "GIF87a" / "GIF89a"
+  if (
+    b.length >= 6 &&
+    b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38 &&
+    (b[4] === 0x37 || b[4] === 0x39) && b[5] === 0x61
+  ) return "image/gif";
+  return null;
+}
+
 export type SheetKind = "turnover" | "ledger" | "unknown";
 
 const norm = (v: Cell): string => String(v ?? "").toLowerCase().replace(/\s+/g, " ").trim();

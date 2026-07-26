@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { summarizeClosingPackage } from "@/lib/closing-package";
 import { createNotification } from "@/lib/notifications";
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
   const yParam = Number(sp.get("year"));
   const qParam = Number(sp.get("quarter"));
   const period =
-    Number.isInteger(yParam) && qParam >= 1 && qParam <= 4
+    Number.isInteger(yParam) && Number.isInteger(qParam) && qParam >= 1 && qParam <= 4
       ? { year: yParam, quarter: qParam as 1 | 2 | 3 | 4 }
       : previousQuarter(new Date());
 
@@ -49,14 +50,33 @@ export async function GET(req: NextRequest) {
   // Every non-accountant profile is a potential owner. Once-per-quarter, so a full scan is fine.
   // `.neq("role","accountant")` alone drops NULL-role profiles (SQL: NULL <> 'accountant' → NULL,
   // not TRUE), silently excluding legacy/edge owners from the nudge. Include them explicitly.
-  const { data: profiles, error: profErr } = await pipeline
-    .from("profiles")
-    .select("id, role")
-    .or("role.is.null,role.neq.accountant");
-  if (profErr) {
+  // [PAGINATION] fetchAllRows — a plain .select() truncates at ~1000 rows SILENTLY, which would
+  // drop every owner past #1000 from the quarter-end handoff, every quarter. (This is the exact
+  // rule supabase-paginate.ts exists to enforce; the sibling reconcile cron already uses it.)
+  let profiles: { id: string | null; role: string | null }[];
+  try {
+    profiles = await fetchAllRows<{ id: string | null; role: string | null }>((from, to) =>
+      pipeline.from("profiles").select("id, role").or("role.is.null,role.neq.accountant")
+        .order("id", { ascending: true }).range(from, to));
+  } catch (e) {
+    Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "quarter-close", phase: "profiles" } });
     return NextResponse.json({ error: "kon profielen niet laden" }, { status: 500 });
   }
   const ownerIds = [...new Set((profiles ?? []).map((p) => p.id).filter((x): x is string => !!x))];
+
+  // [ALREADY-FILED] Skip owners who already froze this quarter's aangifte — nudging them to "review
+  // and file" a quarter they've filed is wrong, and this also makes a duplicate/manual re-run a
+  // near-noop for prompt filers (one btw_filings row per user/year/quarter). Best-effort: on a fetch
+  // error, fall through (don't block the whole handoff — worse to skip everyone than to re-nudge a few).
+  const filedOwners = new Set<string>();
+  try {
+    const filed = await fetchAllRows<{ user_id: string | null }>((from, to) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pipeline as any).from("btw_filings").select("user_id")
+        .eq("year", period.year).eq("quarter", period.quarter)
+        .order("user_id", { ascending: true }).range(from, to));
+    for (const r of filed) if (r.user_id) filedOwners.add(r.user_id);
+  } catch { /* fall through — re-nudging a filer is a lesser evil than skipping everyone */ }
 
   let notifiedOwners = 0, notifiedAccountants = 0, skippedEmpty = 0, failed = 0, truncated = 0;
   const startedAt = Date.now();
@@ -69,6 +89,7 @@ export async function GET(req: NextRequest) {
       break;
     }
     const ownerId = ownerIds[i];
+    if (filedOwners.has(ownerId)) { skippedEmpty += 1; continue; } // already filed → no review nudge
     try {
       const summary = await summarizeClosingPackage({ ownerId, year: period.year, quarter: period.quarter, supabase: pipeline });
       const notice = buildQuarterCloseNotice(summary.quarter, summary);
@@ -96,7 +117,7 @@ export async function GET(req: NextRequest) {
           title: notice.accountantTitle,
           body: notice.accountantBody,
           type: "status",
-          link: "/dashboard/clients",
+          link: "/dashboard/clients/beheer",
         });
         notifiedAccountants += 1;
       }

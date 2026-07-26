@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
-import { BackLink } from '@/components/ui/BackLink'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 
 // ─────────────────────────────────────────────────────────
 // Types & constants
@@ -160,7 +160,34 @@ export default function KwartaalPage() {
         .gte('invoice_date', dateStart)
         .lte('invoice_date', dateEnd)
 
-      const merged = [...(outgoing ?? []), ...(incoming ?? [])]
+      // [FIN-4-ROWS] NULL-direction rows this client owns are counted by the
+      // reconciled tiles (which infer direction from ownership) but were absent
+      // from the two typed queries above, so "tile total ≠ sum of visible rows".
+      // Fetch them by ownership, infer direction the same way, and keep only the
+      // (direction, status) combos the sections show — so the list matches the tiles.
+      const { data: nullDir } = await supabase
+        .from('invoices')
+        .select('*, invoice_lines(*), invoice_type, replaced_by_number')
+        .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
+        .is('direction', null)
+        .in('status', ['sent', 'received', 'paid'])
+        .gte('invoice_date', dateStart)
+        .lte('invoice_date', dateEnd)
+
+      const inferred = (nullDir ?? [])
+        .map((inv) => {
+          const dir = inv.receiver_id === clientId ? 'incoming'
+            : inv.sender_id === clientId ? 'outgoing' : null
+          return dir ? { ...inv, direction: dir } : null
+        })
+        .filter((inv): inv is NonNullable<typeof inv> => inv !== null)
+        .filter((inv) =>
+          inv.direction === 'outgoing'
+            ? inv.status === 'sent' || inv.status === 'paid'
+            : inv.status === 'received' || inv.status === 'paid'
+        )
+
+      const merged = [...(outgoing ?? []), ...(incoming ?? []), ...inferred]
       setInvoices(merged)
       setLoading(false)
 
@@ -284,6 +311,23 @@ export default function KwartaalPage() {
     setUpdatingId(null)
   }
 
+  // [SUBNAV] Quarter + client name as the shared header title, with the sort
+  // toggle relocated to the bar's actions slot. Called unconditionally (before
+  // the loading return) so hook order stays stable.
+  useSubPageHeader(
+    {
+      title: `Q${q} ${year}${client ? ` — ${client.company_name || client.full_name}` : ''}`,
+      actions: (
+        <button
+          onClick={() => setSortAsc(p => !p)}
+          style={{ fontSize: 13, fontWeight: 500, color: '#1A73E8', backgroundColor: '#E8F0FE', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          {sortAsc ? 'Oudste ↑' : 'Nieuwste ↓'}
+        </button>
+      ),
+    },
+    [q, year, client?.company_name, client?.full_name, sortAsc]
+  )
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center"
       style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -293,26 +337,6 @@ export default function KwartaalPage() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
-
-      {/* Sticky header */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '12px 24px' }}>
-        <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div className="flex items-center gap-3 min-w-0">
-            <BackLink style={{ fontWeight: 500, whiteSpace: 'nowrap' }} />
-            <div className="min-w-0">
-              <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                Q{q} {year} — {client?.company_name || client?.full_name}
-              </h1>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>{range.label}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => setSortAsc(p => !p)}
-            style={{ fontSize: 13, fontWeight: 500, color: '#1A73E8', backgroundColor: '#E8F0FE', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-            {sortAsc ? 'Oudste ↑' : 'Nieuwste ↓'}
-          </button>
-        </div>
-      </div>
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 

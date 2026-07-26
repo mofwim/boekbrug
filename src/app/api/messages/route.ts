@@ -18,6 +18,12 @@ export async function GET(request: NextRequest) {
     const otherId = searchParams.get('with')
     if (!otherId) return NextResponse.json({ error: 'Gesprekspartner ontbreekt' }, { status: 400 })
 
+    // [SEC-MESSAGE] otherId is interpolated into the PostgREST .or() filter below. Constrain it to a
+    // UUID so a crafted value can't inject extra filter syntax and widen the match beyond this pair.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(otherId)) {
+      return NextResponse.json({ error: 'Ongeldige gesprekspartner' }, { status: 400 })
+    }
+
     const { data: messages, error } = await supabase
       .from('messages')
       .select('id, sender_id, receiver_id, content, read, created_at')

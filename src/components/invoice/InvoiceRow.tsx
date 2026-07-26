@@ -8,6 +8,8 @@
 
 import React from 'react'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
+// [PARTIAL-PAY] shared openstaand vocabulary — same rule on every surface
+import { isPartiallyPaid, openAmount } from '@/lib/partial-payment'
 
 // ── Design System tokens ───────────────────────────────────────────────────────
 // ZZP → Material You | Accountant → Google Workspace
@@ -49,6 +51,8 @@ export interface InvoiceRow {
   accountant_status?: string | null
   direction?: string
   total_inc_btw: number
+  // [PARTIAL-PAY] Running total already settled — drives the "Deels · € X open" chip.
+  amount_paid?: number | null
   invoice_date: string
   due_date: string | null
   created_at: string
@@ -349,6 +353,22 @@ export function InvoiceRowItem({
         <span style={{ fontSize: 14, fontWeight: 700, color: '#202124', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap' }}>
           {new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.total_inc_btw ?? 0)}
         </span>
+
+        {/* [PARTIAL-PAY] Only part of this invoice is settled. The accountant needs this BEFORE
+            marking it 'verwerkt': that lock freezes amount_paid (invoice_accountant_write_guard),
+            so once it is on, nobody can book the remaining instalment. The owner sees the same
+            chip on Facturen and Crediteuren — one shared vocabulary. */}
+        {isPartiallyPaid(invoice) && (
+          <span
+            title={`Deelbetaling: ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.amount_paid ?? 0)} van ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(Math.abs(invoice.total_inc_btw ?? 0))} betaald`}
+            style={{
+              fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
+              border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+            }}
+          >
+            Deels · {new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(openAmount(invoice))} open
+          </span>
+        )}
 
         {/* [BANK-RECON-BADGE] Reconciliation vs the bank statement (owner-facing). */}
         {recon && (

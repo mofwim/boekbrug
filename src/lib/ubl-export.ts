@@ -115,9 +115,14 @@ function toUblDate(input: string | null): string | null {
   return `${y}-${mo}-${da}`;
 }
 
-/** UBL InvoiceTypeCode: 380 = commercial invoice, 381 = credit note. */
-function invoiceTypeCode(invoiceType: string | null): "380" | "381" {
-  return invoiceType === "creditnota" ? "381" : "380";
+/** UBL InvoiceTypeCode (UNCL 1001): 380 = commercial invoice, 381 = credit note,
+ *  325 = proforma. A pro_forma/offerte must never be emitted as 380 (that would label a non-legal
+ *  quote as a real invoice). The export route already blocks these (no invoice number), so this is
+ *  correct-by-construction defence in depth. */
+function invoiceTypeCode(invoiceType: string | null): "380" | "381" | "325" {
+  if (invoiceType === "creditnota") return "381";
+  if (invoiceType === "pro_forma" || invoiceType === "offerte") return "325";
+  return "380";
 }
 
 /**

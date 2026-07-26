@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSearch } from "@/hooks/useSearch";
-import { flattenGroups, type SearchResult, type SearchTarget } from "@/lib/search";
+import { flattenGroups, EMPTY_GROUP, type SearchResult, type SearchResultGroup, type SearchTarget } from "@/lib/search";
 import { M3, FONT } from "@/lib/design/tokens";
 import { BackLink } from "@/components/ui/BackLink";
 import type { Role } from "@/lib/navigation";
@@ -54,10 +54,23 @@ const IconClient = () => (
   </svg>
 );
 
+const IconBank = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <rect x="2" y="5" width="20" height="14" rx="2" strokeWidth="1.5" /><path d="M2 10h20" strokeWidth="1.5" />
+  </svg>
+);
+const IconCash = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <circle cx="12" cy="12" r="8" strokeWidth="1.5" /><path d="M14.5 9.5a3 3 0 00-5 2.5 3 3 0 005 2.5" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
 const TYPE_STYLE: Record<string, { bg: string; color: string }> = {
   invoice: { bg: "#e8f0fe", color: "#1967d2" },
   document: { bg: "#e6f4ea", color: "#137333" },
   client: { bg: "#F3EFFE", color: "#7b1fa2" },
+  banktransaction: { bg: "#E3F2FD", color: "#01579B" },
+  cashentry: { bg: "#FFF3E0", color: "#B26A00" },
 };
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
@@ -89,7 +102,7 @@ function TypeIcon({ type }: { type: string }) {
   const cfg = TYPE_STYLE[type] ?? TYPE_STYLE.invoice;
   return (
     <div style={{ width: 40, height: 40, borderRadius: 11, background: cfg.bg, color: cfg.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-      {type === "invoice" ? <IconInvoice /> : type === "document" ? <IconDoc /> : <IconClient />}
+      {type === "invoice" ? <IconInvoice /> : type === "document" ? <IconDoc /> : type === "banktransaction" ? <IconBank /> : type === "cashentry" ? <IconCash /> : <IconClient />}
     </div>
   );
 }
@@ -156,6 +169,8 @@ const CHIPS: Array<{ key: Exclude<SearchTarget, "all"> | "all"; label: string }>
   { key: "invoices", label: "Facturen" },
   { key: "documents", label: "Bestanden" },
   { key: "clients", label: "Klanten" },
+  { key: "bank", label: "Bank" },
+  { key: "kas", label: "Kas" },
 ];
 
 export default function ZoekenClient({ initialQuery, role }: { initialQuery: string; role: Role }) {
@@ -202,14 +217,18 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
     invoices: groups.invoices.length,
     documents: groups.documents.length,
     clients: groups.clients.length,
+    bank: groups.bankTransactions.length,
+    kas: groups.cashEntries.length,
   }), [groups, totalCount]);
 
   const trimmed = query.trim();
   const showResults = trimmed.length >= 2;
-  const shown =
-    tab === "invoices" ? { invoices: groups.invoices, documents: [], clients: [] }
-    : tab === "documents" ? { invoices: [], documents: groups.documents, clients: [] }
-    : tab === "clients" ? { invoices: [], documents: [], clients: groups.clients }
+  const shown: SearchResultGroup =
+    tab === "invoices" ? { ...EMPTY_GROUP, invoices: groups.invoices }
+    : tab === "documents" ? { ...EMPTY_GROUP, documents: groups.documents }
+    : tab === "clients" ? { ...EMPTY_GROUP, clients: groups.clients }
+    : tab === "bank" ? { ...EMPTY_GROUP, bankTransactions: groups.bankTransactions }
+    : tab === "kas" ? { ...EMPTY_GROUP, cashEntries: groups.cashEntries }
     : groups;
   const shownCount = flattenGroups(shown).length;
 
@@ -301,6 +320,8 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
               <Section label="Facturen" items={shown.invoices} query={trimmed} onOpen={open} />
               <Section label="Bestanden" items={shown.documents} query={trimmed} onOpen={open} />
               <Section label="Klanten" items={shown.clients} query={trimmed} onOpen={open} />
+              <Section label="Bankmutaties" items={shown.bankTransactions} query={trimmed} onOpen={open} />
+              <Section label="Kasboekingen" items={shown.cashEntries} query={trimmed} onOpen={open} />
             </>
           )}
         </div>

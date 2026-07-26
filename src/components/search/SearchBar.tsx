@@ -32,9 +32,11 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string }>
 };
 
 const TYPE_CONFIG: Record<string, { bg: string; color: string }> = {
-  invoice:  { bg: "#e8f0fe", color: "#1967d2" },
-  document: { bg: "#e6f4ea", color: "#137333" },
-  client:   { bg: "#F3EFFE", color: "#7b1fa2" },
+  invoice:        { bg: "#e8f0fe", color: "#1967d2" },
+  document:       { bg: "#e6f4ea", color: "#137333" },
+  client:         { bg: "#F3EFFE", color: "#7b1fa2" },
+  banktransaction:{ bg: "#E8EAF6", color: "#3949ab" },
+  cashentry:      { bg: "#FFF8E1", color: "#F57F17" },
 };
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
@@ -116,6 +118,20 @@ const IconClient = () => (
   </svg>
 );
 
+const IconBank = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <path d="M3 21h18M4 10h16M5 10l7-6 7 6M6 10v8m4-8v8m4-8v8m4-8v8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const IconCash = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+    <rect x="2" y="6" width="20" height="12" rx="2" strokeWidth="1.5" />
+    <circle cx="12" cy="12" r="2.5" strokeWidth="1.5" />
+    <path d="M6 9v6m12-6v6" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
 const IconX = ({ size = 16 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
     <path d="M18 6L6 18M6 6l12 12" strokeWidth="2" strokeLinecap="round" />
@@ -164,7 +180,11 @@ function TypeIcon({ type }: { type: string }) {
       display: "flex", alignItems: "center", justifyContent: "center",
       flexShrink: 0,
     }}>
-      {type === "invoice" ? <IconInvoice /> : type === "document" ? <IconDoc /> : <IconClient />}
+      {type === "invoice" ? <IconInvoice />
+        : type === "document" ? <IconDoc />
+        : type === "banktransaction" ? <IconBank />
+        : type === "cashentry" ? <IconCash />
+        : <IconClient />}
     </div>
   );
 }
@@ -421,6 +441,44 @@ function DropdownContent({
         <>
           <SectionLabel>Klanten ({groups.clients.length})</SectionLabel>
           {groups.clients.map((item) => {
+            const idx = flatResults.indexOf(item);
+            return (
+              <ResultRow
+                key={item.id} item={item} query={query}
+                selected={selectedIdx === idx}
+                optionId={`bb-opt-${idx}`}
+                onMouseEnter={() => onHoverIdx(idx)}
+                onClick={() => onSelectResult(item)}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* BANKMUTATIES */}
+      {showResults && groups.bankTransactions.length > 0 && (
+        <>
+          <SectionLabel>Bankmutaties ({groups.bankTransactions.length})</SectionLabel>
+          {groups.bankTransactions.map((item) => {
+            const idx = flatResults.indexOf(item);
+            return (
+              <ResultRow
+                key={item.id} item={item} query={query}
+                selected={selectedIdx === idx}
+                optionId={`bb-opt-${idx}`}
+                onMouseEnter={() => onHoverIdx(idx)}
+                onClick={() => onSelectResult(item)}
+              />
+            );
+          })}
+        </>
+      )}
+
+      {/* KASBOEKINGEN */}
+      {showResults && groups.cashEntries.length > 0 && (
+        <>
+          <SectionLabel>Kasboekingen ({groups.cashEntries.length})</SectionLabel>
+          {groups.cashEntries.map((item) => {
             const idx = flatResults.indexOf(item);
             return (
               <ResultRow

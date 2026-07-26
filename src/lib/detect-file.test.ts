@@ -1,5 +1,5 @@
 // [DETECT] Pure node test — run: npx tsx src/lib/detect-file.test.ts
-import { looksLikeSpreadsheetBinary, detectSheetKind, looksLikeEftReceipt, looksLikeBankStatementFile } from "./detect-file";
+import { looksLikeSpreadsheetBinary, detectSheetKind, looksLikeEftReceipt, looksLikeBankStatementFile, sniffReadableMime } from "./detect-file";
 import type { Cell } from "./turnover-import";
 
 let passed = 0, failed = 0;
@@ -73,6 +73,19 @@ console.log("\n— looksLikeBankStatementFile (email→bank surfacing) —");
   check("empty/undefined → null", looksLikeBankStatementFile("") === null && looksLikeBankStatementFile(undefined) === null);
   // A vendor whose name merely contains 'statement' as a substring of a PDF is still not matched (wrong ext).
   check("statement in a .pdf name NOT flagged (ext gate)", looksLikeBankStatementFile("statement-of-work.pdf") === null);
+}
+
+console.log("\n— sniffReadableMime (empty/mislabeled MIME rescue) —");
+{
+  check("%PDF → application/pdf", sniffReadableMime(Buffer.from("%PDF-1.7\n...")) === "application/pdf");
+  check("JPEG SOI → image/jpeg", sniffReadableMime(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])) === "image/jpeg");
+  check("PNG sig → image/png", sniffReadableMime(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) === "image/png");
+  check("WEBP (RIFF….WEBP) → image/webp", sniffReadableMime(new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])) === "image/webp");
+  check("GIF89a → image/gif", sniffReadableMime(Buffer.from("GIF89a")) === "image/gif");
+  // Not a reader-supported raster → null (falls back to the file's own type / document store).
+  check("HEIC-ish/xlsx ZIP → null", sniffReadableMime(new Uint8Array([0x50, 0x4b, 0x03, 0x04])) === null);
+  check("MT940 text → null", sniffReadableMime(Buffer.from(":20:STARTUMS")) === null);
+  check("empty buffer → null", sniffReadableMime(new Uint8Array([])) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

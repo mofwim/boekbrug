@@ -12,8 +12,13 @@ import { createClient } from "@/lib/supabase";
 
 const PAGE_SIZE = 20;
 
+// [PARTIAL-PAY] amount_paid rides along so the list can show a partly-settled invoice as such
+// (chip + open amount) and the bundle selection can total the OPEN amounts. Without it the
+// debtor list showed the full total on an invoice that was already half paid — the customer
+// had paid, the reminder and the pay-QR already asked only the remainder, and only this screen
+// still claimed the full sum.
 const SELECT =
-  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type, payment_date";
+  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type, payment_date";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +30,9 @@ export interface InvoiceRow {
   accountant_status?: string | null;
   direction: string;
   total_inc_btw: number;
+  // [PARTIAL-PAY] Running total already settled (magnitude). 0/absent = fully open.
+  // Openstaand = status 'paid' ? 0 : max(0, |total_inc_btw| − amount_paid).
+  amount_paid?: number | null;
   // [BOEK-031] add ex_btw and btw for pro_forma display — May 2026
   total_ex_btw?: number | null;
   btw_amount?: number | null;
@@ -87,7 +95,12 @@ export function useInfiniteInvoices(
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const cursorRef = useRef<string | null>(null);
+  // [CURSOR-KEYSET] Compound cursor (created_at, id) matching the (created_at
+  // DESC, id DESC) order. A created_at-only cursor with strict .lt() skipped
+  // every row sharing the page-boundary timestamp (bulk imports/migrations get
+  // statement-stable now() defaults, so >PAGE_SIZE rows can share one) — those
+  // invoices silently never appeared on any page.
+  const cursorRef = useRef<{ created_at: string; id: string } | null>(null);
   // [BOEK-009] track in-flight fetch to prevent race conditions — May 2026
   const fetchingRef = useRef(false);
   const supabase = createClient();
@@ -145,8 +158,14 @@ export function useInfiniteInvoices(
         }
 
         // [BOEK-009] cursor-based pagination — no OFFSET — May 2026
+        // [CURSOR-KEYSET] Strictly-after-the-cursor in (created_at, id) order:
+        // older timestamp OR same timestamp with a smaller id. Timestamps
+        // contain no commas/parens, so they are safe inside the .or() grammar.
         if (!replace && cursorRef.current) {
-          q = q.lt("created_at", cursorRef.current);
+          const c = cursorRef.current;
+          q = q.or(
+            `created_at.lt.${c.created_at},and(created_at.eq.${c.created_at},id.lt.${c.id})`
+          );
         }
 
         const { data, error: fetchError } = await q;
@@ -171,7 +190,8 @@ export function useInfiniteInvoices(
         if (replace) {
           // [BOEK-031] archived altijd aan het einde — May 2026
           setInvoices([...rows, ...archivedRows]);
-          cursorRef.current = rows.at(-1)?.created_at ?? null;
+          const last = rows.at(-1);
+          cursorRef.current = last ? { created_at: last.created_at, id: last.id } : null;
         } else {
           setInvoices((prev) => {
             const seen = new Set(prev.map((r) => r.id));
@@ -183,7 +203,8 @@ export function useInfiniteInvoices(
             return [...normal, ...newRows, ...archived];
           });
           if (rows.length > 0) {
-            cursorRef.current = rows.at(-1)!.created_at;
+            const last = rows.at(-1)!;
+            cursorRef.current = { created_at: last.created_at, id: last.id };
           }
         }
       } catch (e) {
@@ -200,13 +221,18 @@ export function useInfiniteInvoices(
   // ── Reset on filter change ───────────────────────────────────────────────────
 
   // [BOEK-009] reset list + cursor whenever any filter param changes — May 2026
+  // (state resets on the next tick — never synchronously in the effect body,
+  // which triggers cascading renders during the effects pass)
   useEffect(() => {
     cursorRef.current = null;
-    setInvoices([]);
-    setHasMore(true);
-    setError(null);
     fetchingRef.current = false;
-    fetchPage(true);
+    const t = setTimeout(() => {
+      setInvoices([]);
+      setHasMore(true);
+      setError(null);
+      fetchPage(true);
+    }, 0);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opts.userId, opts.status, opts.accountantStatus, clientIdsKey]);
 
@@ -230,6 +256,13 @@ export function useInfiniteInvoices(
           // [BOEK-009] guard: only rows relevant to current user / client list — May 2026
           if (!watchIds.includes(row.sender_id)) return;
           if (isAccountantMode && row.status !== "paid") return;
+          // [RT-OVERDUE] The old short-circuit let EVERY insert (a fresh draft,
+          // a paid import) prepend into the "Verlopen" tab. Overdue is computed,
+          // not stored: it must match the fetch filter (sent + due_date < today).
+          if (!isAccountantMode && opts.status === "overdue") {
+            const today = new Date().toISOString().split("T")[0];
+            if (!(row.status === "sent" && row.due_date && row.due_date < today)) return;
+          }
           if (
             !isAccountantMode &&
             opts.status &&
@@ -280,13 +313,16 @@ export function useInfiniteInvoices(
     []
   );
 
+  // Stable identity so consumers may safely list loadMore in effect deps.
+  const loadMore = useCallback(() => { fetchPage(false); }, [fetchPage]);
+
   return {
     invoices,
     loading,
     hasMore,
     error,
     refreshing,
-    loadMore: () => fetchPage(false),
+    loadMore,
     refresh,
     addOptimistic,
     removeOptimistic,

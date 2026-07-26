@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { computeCashBalance, isCashCategory } from "@/lib/cash";
+import { computeDrawerBalance, isCashCategory } from "@/lib/cash";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 
@@ -20,33 +20,39 @@ export async function GET() {
   // matter which pay path booked it. Self-healing + best-effort (never blocks the read).
   await reconcileCashSettlements(supabase, user.id);
 
-  const { data: rows } = await supabase
-    .from("cash_entries")
-    .select("id, entry_date, direction, amount, category, description, document_id, btw_rate")
-    .eq("user_id", user.id)
-    .order("entry_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  const entries = rows ?? [];
+  // [SEARCH-FULL-LEDGER] Return the WHOLE cash book, not the newest 500. The in-page zoekbalk filters
+  // this array client-side (op omschrijving / categorie / bedrag), so a 500-row slice made every entry
+  // older than the newest 500 UNFINDABLE — a silent "geen resultaten" that reads as "bestaat niet".
+  // Page past the ~1000-row PostgREST cap with a stable id order, then sort newest-first for display.
+  // This same full read also feeds the saldo below, so it replaces the separate movements fetch (one
+  // scan instead of two).
+  const allEntries = await fetchAllRows<{
+    id: string; entry_date: string; created_at: string | null; direction: string;
+    amount: number | null; category: string; description: string | null; document_id: string | null; btw_rate: number | null;
+  }>((from, to) =>
+    supabase
+      .from("cash_entries")
+      .select("id, entry_date, created_at, direction, amount, category, description, document_id, btw_rate")
+      .eq("user_id", user.id)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const entries = [...allEntries].sort((a, b) => {
+    if (a.entry_date !== b.entry_date) return a.entry_date < b.entry_date ? 1 : -1; // newest date first
+    const ac = a.created_at ?? "", bc = b.created_at ?? "";
+    return ac < bc ? 1 : ac > bc ? -1 : 0; // then newest created_at first
+  });
 
   // [KAS-SALDO] The headline "SALDO IN KASSA" must match the Kasboek panel's definition on the same
   // screen: the till's daily CASH takings (daily_turnover.cash_amount) are cash that entered the
   // drawer and are counted as ontvangsten in buildKasboek — but they live in daily_turnover, NOT in
   // cash_entries, so summing cash_entries alone understates the drawer (and shows a false negative
-  // "meer uitgaven dan ontvangsten" alarm for every till shop). Sum BOTH sources. And sum the FULL
-  // history, not the 500-row display slice — a truncated balance is itself a wrong number.
-  const allMoves = await fetchAllRows((from, to) =>
-    supabase.from("cash_entries").select("direction, amount").eq("user_id", user.id).order("id", { ascending: true }).range(from, to),
-  );
+  // "meer uitgaven dan ontvangsten" alarm for every till shop). Sum BOTH sources over the FULL
+  // history (allEntries above) — a truncated balance is itself a wrong number.
+  const allMoves = allEntries;
   const tillRows = await fetchAllRows((from, to) =>
     supabase.from("daily_turnover").select("cash_amount").eq("user_id", user.id).order("turnover_date", { ascending: true }).range(from, to),
   );
-  const entriesBalance = computeCashBalance(
-    (allMoves as { direction: string; amount: number | null }[]).map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
-  );
-  const tillCashIn = (tillRows as { cash_amount: number | null }[]).reduce((s, t) => s + (Number(t.cash_amount) || 0), 0);
-
   // [KAS-OPENING] Add the drawer's starting float (beginsaldo) so the saldo matches reality from
   // day one — a shop that began with cash in the till isn't understated by that amount.
   const { data: prof } = await supabase
@@ -56,7 +62,13 @@ export async function GET() {
     .maybeSingle();
   const opening = Number((prof as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
 
-  const balance = Math.round((opening + entriesBalance + tillCashIn) * 100) / 100;
+  // [KAS-SALDO] One shared definition (computeDrawerBalance) so this page and the home snapshot
+  // can never diverge: opening float + cash_entries net + till daily-cash takings.
+  const balance = computeDrawerBalance({
+    openingBalance: opening,
+    entries: (allMoves as { direction: string; amount: number | null }[]).map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
+    tillCashAmounts: (tillRows as { cash_amount: number | null }[]).map((t) => t.cash_amount),
+  });
 
   return NextResponse.json({ ok: true, entries, balance, openingBalance: opening, count: entries.length });
 }

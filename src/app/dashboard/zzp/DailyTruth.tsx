@@ -19,7 +19,6 @@ import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 
 const R = { lg: 16, full: 999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
-const LONG_OPEN_DAYS = 30
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -59,15 +58,17 @@ function daysUntilDue(dueIso: string): number {
 }
 function dueLabel(dueIso: string): string {
   const d = daysUntilDue(dueIso)
-  if (d <= -LONG_OPEN_DAYS) return 'Al lang open'
+  // [OWNER-DECISION] Every overdue invoice shows the real day count, red —
+  // matches Vandaag (no calm 30+-day tier anywhere).
   if (d < 0) return Math.abs(d) === 1 ? '1 dag te laat' : `${Math.abs(d)} dagen te laat`
   if (d === 0) return 'Vervalt vandaag'
   if (d === 1) return 'Vervalt morgen'
   return `Vervalt over ${d} dagen`
 }
 function dueAccent(dueIso: string): string {
-  const d = daysUntilDue(dueIso)
-  return d < 0 && d > -LONG_OPEN_DAYS ? M3.error : M3.warning
+  // Red for ANY overdue row, amber for soon-due — a 30+-days-late invoice must
+  // never look CALMER than a 10-days-late one.
+  return daysUntilDue(dueIso) < 0 ? M3.error : M3.warning
 }
 function formatDate(iso: string | null): string | null {
   if (!iso) return null
@@ -81,27 +82,45 @@ export default function DailyTruth() {
   const router = useRouter()
   const [data, setData] = useState<TruthData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
+  // All setState happens inside the async IIFE (never synchronously in the effect body), so a
+  // retry re-runs by bumping reloadKey. The retry button itself flips loading back on.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         const res = await fetch('/api/daily-truth')
         const json = await res.json()
-        if (!cancelled && res.ok) setData(json)
+        if (cancelled) return
+        if (res.ok && json?.ok) { setData(json); setFailed(false) }
+        else { setFailed(true); setData(null) }
       } catch {
-        /* silent — the panel just doesn't render rather than showing an error */
+        if (!cancelled) { setFailed(true); setData(null) }
       } finally {
         if (!cancelled) setLoading(false)
       }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [reloadKey])
+
+  const retry = () => { setLoading(true); setFailed(false); setReloadKey((k) => k + 1) }
 
   if (loading) {
     return <div style={{ height: 148, borderRadius: R.lg, background: '#F5F5F7', marginBottom: 16 }} />
   }
-  if (!data?.ok) return null
+  // [NO-FALSE-CLEAR] A failed load must NEVER render as "all clear" (or as nothing, which reads the
+  // same on a summary screen). Show an honest, retryable error instead of silently hiding the panel.
+  if (failed || !data?.ok) {
+    return (
+      <div style={{ marginBottom: 20, fontFamily: FONT, background: '#FFF4E5', borderRadius: R.lg, padding: '16px', boxShadow: EL1 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#7a4f00' }}>Kon je overzicht niet laden</div>
+        <div style={{ fontSize: 12.5, color: '#7a4f00', margin: '4px 0 10px' }}>Dit is géén &quot;alles is bij&quot; — we konden je cijfers even niet ophalen.</div>
+        <button onClick={retry} style={{ background: '#7a4f00', color: '#fff', border: 'none', borderRadius: 980, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Opnieuw proberen</button>
+      </div>
+    )
+  }
 
   const { toPay, toReceive, bank, attention, attentionCount } = data
   const lastDate = formatDate(bank.lastDate)

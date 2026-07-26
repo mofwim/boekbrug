@@ -31,7 +31,7 @@ import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 // [SHEET-INTAKE] Route an uploaded kassa Z-report / grootboek export into the EXISTING
 // turnover + ledger pipelines instead of filing it as an opaque document.
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
-import { looksLikeSpreadsheetBinary } from "@/lib/detect-file"
+import { looksLikeSpreadsheetBinary, sniffReadableMime } from "@/lib/detect-file"
 import { planSpreadsheetIngest, ledgerKindLabel } from "@/lib/spreadsheet-ingest"
 import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sales-report"
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
@@ -139,16 +139,24 @@ export async function POST(req: NextRequest) {
     const xmlText = buffer.toString("utf8")
     const { looksLikeUblInvoice } = await import("@/lib/ubl-invoice")
     if (looksLikeUblInvoice(xmlText)) {
-      const ublResp = await handleUblInvoice(xmlText, buffer, file, user.id, supabase, force)
+      const ublResp = await handleUblInvoice(xmlText, buffer, file, user.id, supabase, force, req)
       if (ublResp) return ublResp
       // null → couldn't extract anything usable; fall through to the safe document store.
     }
   }
 
+  // [MIME-SNIFF] A phone/webview upload can arrive with an EMPTY or generic MIME (file.type === ""
+  // or "application/octet-stream") even for a perfectly readable JPEG/PNG/PDF — Android share-sheets
+  // and some mobile WebViews do this. The extractor picks its branch by MIME, so without this an
+  // IMG_1234.jpg with no type dead-ends in the opaque document bin and its voorbelasting is never
+  // read (and the owner is told, dishonestly, that we "couldn't read this file type"). Sniff the
+  // leading magic bytes and use that as the effective type for BOTH the okForAi guard and the reader.
+  const effectiveType = sniffReadableMime(buffer) ?? file.type
+
   // ── Type guard for the AI path: only pdf/image go to the extractor ──────────
   const okForAi =
-    file.type === "application/pdf" ||
-    file.type.startsWith("image/") ||
+    effectiveType === "application/pdf" ||
+    effectiveType.startsWith("image/") ||
     file.name.toLowerCase().endsWith(".pdf")
 
   // [INTAKE-KEEP-ALL] Never hard-reject a plausible document. A file the extractor can't read —
@@ -161,7 +169,12 @@ export async function POST(req: NextRequest) {
     const { data: dupDoc } = await supabase
       .from("documents").select("id, folder_id")
       .eq("user_id", user.id).eq("content_hash", hash).limit(1).maybeSingle()
-    if (dupDoc && !force) {
+    // The byte-hash gate is NEVER forceable (route contract): identical bytes are
+    // the same file, and an unreadable file carries no invoice to "add again", so
+    // `force` has nothing to override here. Short-circuiting regardless of force
+    // returns the honest duplicate message instead of letting the re-insert trip
+    // the (user_id, content_hash) unique index and surface a generic 500.
+    if (dupDoc) {
       const bc = await buildFolderBreadcrumb(supabase, user.id, dupDoc.folder_id)
       return NextResponse.json({
         duplicate: true, destination: "document",
@@ -239,7 +252,7 @@ export async function POST(req: NextRequest) {
   //    invoice. Detect it by its text layer BEFORE the invoice extractor and book it into
   //    daily_turnover (idempotent with the monthly Excel path). A PDF that is NOT this report
   //    returns null and continues to the normal AI extractor below. ──
-  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+  if (effectiveType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     const dailyResp = await handleDailySalesPdf(buffer, file, user.id, supabase, req)
     if (dailyResp) return dailyResp
   }
@@ -252,13 +265,37 @@ export async function POST(req: NextRequest) {
 
   const { data: me } = await supabase
     .from("profiles")
-    .select("company_name, full_name")
+    .select("company_name, full_name, kvk_number, btw_number, iban")
     .eq("id", user.id)
     .maybeSingle()
   const receiverName = me?.company_name || me?.full_name || null
 
   const base64 = buffer.toString("base64")
-  const v = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName)
+  // [AI-CONFIG-SAFE] Opt into throwOnTransient so a CONFIG/AUTH/transient reader failure (missing or
+  // rotated ANTHROPIC_API_KEY, 401/403/5xx, network) is NOT swallowed into the confidence-0 FALLBACK.
+  // Without this, such a failure returns is_invoice:false and a REAL invoice the owner just uploaded
+  // gets filed as a plain 'document' — its cost + voorbelasting silently lost. A genuine "not an
+  // invoice" is still a normal parsed return (never an exception), so only true infra failures throw.
+  // Nothing is stored for the image/PDF path until AFTER this call, so returning here files nothing.
+  let v: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>
+  try {
+    // [RECEIVER-IDENTITY] Pass our own KVK/BTW/IBAN (as email-sync/upload/reimport do) so the
+    // extractor drops any vendor_kvk/btw/iban equal to the owner's own — otherwise a camera/file
+    // upload could store the OWNER'S OWN IBAN as vendor_iban on a self-referencing document, which
+    // later feeds the IBAN+amount bank auto-match tier.
+    v = await verifyInvoiceFromPdf(base64, effectiveType, file.name, receiverName, {
+      throwOnTransient: true,
+      receiverKvk: me?.kvk_number || null,
+      receiverBtw: me?.btw_number || null,
+      receiverIban: me?.iban || null,
+    })
+  } catch (aiErr) {
+    console.error("[AI-CONFIG-SAFE] intake AI read failed — filing nothing, asking for retry", aiErr)
+    return NextResponse.json(
+      { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
+      { status: 503 },
+    )
+  }
 
   const decision = decideFromAi({
     is_invoice: v.is_invoice,
@@ -461,10 +498,12 @@ export async function POST(req: NextRequest) {
             .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
             .eq("receiver_id", user.id)
             .eq("direction", "incoming")
-            // A cent-wide band, not exact float equality: a legacy row stored as 42.9999… must
-            // still be fetched for the cent-precise in-code compare (assessPossibleDuplicate).
-            .gte("total_inc_btw", total - 0.005)
-            .lte("total_inc_btw", total + 0.005)
+            // A full-cent band (±0.01), not exact float equality: two totals that ROUND to the same
+            // cent can differ by just under 0.01 (e.g. incoming 43.004 vs a legacy 42.997 — both
+            // "43,00"). A ±0.005 band could drop such a cent-equal row before the cent-precise
+            // in-code compare (assessPossibleDuplicate) ever sees it. ±0.01 guarantees it is fetched.
+            .gte("total_inc_btw", total - 0.01)
+            .lte("total_inc_btw", total + 0.01)
             .order("id", { ascending: false })
             .limit(200)
           return data ?? []
@@ -653,6 +692,8 @@ export async function POST(req: NextRequest) {
           // Raw gross only (no amount-fallback), and never auto-book a forced-through duplicate.
           totalIncBtw: v.total_inc_btw ?? null,
           forcedDuplicate: force === true,
+          // [BTW-GATE] a zero btw_amount only auto-books when the read is explicitly a 0% invoice.
+          btwRate: v.btw_rate ?? null,
           health: {
             total_ex_btw: v.total_ex_btw ?? 0,
             btw_amount: v.btw_amount ?? 0,
@@ -819,6 +860,7 @@ async function handleUblInvoice(
   userId: string,
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   force: boolean,
+  req: NextRequest,
 ): Promise<NextResponse | null> {
   const { parseUblInvoice } = await import("@/lib/ubl-invoice")
   const v = parseUblInvoice(xmlText)
@@ -828,10 +870,13 @@ async function handleUblInvoice(
 
   const hash = computeContentHash(buffer)
   // Byte-hash dedup (same file re-uploaded) — surface the existing one instead of a second row.
+  // [FORCE-INVARIANT] NEVER forceable: the exact same bytes can't be added twice, matching the
+  // camera path's byte-hash gate (route contract lines 92-96). "toch toevoegen" only overrides the
+  // SEMANTIC gate below — the old `&& !force` here let a re-upload of the identical XML double-book.
   const { data: dupDoc } = await supabase
     .from("documents").select("id, folder_id, invoice_id")
     .eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
-  if (dupDoc && !force) {
+  if (dupDoc) {
     return NextResponse.json({
       duplicate: true, destination: dupDoc.invoice_id ? "invoice" : "document",
       error: "Deze e-factuur is al geïmporteerd.",
@@ -839,32 +884,144 @@ async function handleUblInvoice(
     }, { status: 409 })
   }
 
-  const documentId = await storeRawIncoming(buffer, file, userId, supabase, "ubl_invoice")
-
   // For a creditnota the extracted totals are positive in UBL; store them NEGATIVE to match the
-  // app's one-sign convention ([BOEK-031] / camera path).
+  // app's one-sign convention ([BOEK-031] / camera path). Compute the SIGNED gross first so the
+  // dedup gate below matches against the same signed value the invoices table stores.
   const sign = v.isCreditNote ? -1 : 1
   const totalExBtw = v.totalExBtw != null ? sign * Math.abs(v.totalExBtw) : 0
   const btwAmount = v.btwAmount != null ? sign * Math.abs(v.btwAmount) : 0
-  const totalIncBtw = v.totalIncBtw != null ? sign * Math.abs(v.totalIncBtw) : 0
+  const totalIncBtw = v.totalIncBtw != null ? sign * Math.abs(v.totalIncBtw) : null
 
-  const fieldConfidence = {
+  // ── [SAFECORE Rule 2] Semantic duplicate gate — the SAME graded logic the camera/PDF path uses,
+  //    which the UBL path was missing entirely. Without it, a supplier's PDF + their Peppol XML for
+  //    ONE bill (different bytes, so byte-hash misses) both booked → voorbelasting counted twice,
+  //    unflagged. Runs BEFORE any storage/insert so a duplicate costs nothing. ──
+  let possibleDup: PossibleDuplicate | null = null
+  if (totalIncBtw != null) {
+    const dup = await findSemanticDuplicate(
+      { invoiceNumber: v.invoiceNumber, vendor: v.supplierName, totalIncBtw, invoiceDate: v.invoiceDate },
+      async (q) => {
+        let query = supabase
+          .from("invoices")
+          .select("id, invoice_number, client_name")
+          .eq("receiver_id", userId)
+          .eq("direction", "incoming")
+          .eq("total_inc_btw", q.total)
+        if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor))
+        if (q.dateIso) query = query.eq("invoice_date", q.dateIso)
+        const { data } = await query.order("id", { ascending: false }).limit(200)
+        const rows = data ?? []
+        const hit =
+          q.tier === "number" && q.invoiceNumber
+            ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
+            : rows[0]
+        return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null
+      },
+    )
+
+    if (dup.duplicate && dup.match && force) {
+      // Owner already saw "bestaat al" and chose to add anyway — record the deliberate override.
+      await logAuditAction({
+        userId, action: "invoice.dedup_override", entityType: "invoice", entityId: dup.match.id,
+        newValue: { reason: "user_forced_add", matched_on: dup.tier, invoice_number: v.invoiceNumber ?? null, total_inc_btw: totalIncBtw, vendor: v.supplierName ?? null, path: "intake_ubl" },
+        ipAddress: getClientIP(req),
+      }).catch(() => {})
+    } else if (dup.duplicate && dup.match) {
+      await logAuditAction({
+        userId, action: "invoice.duplicated", entityType: "invoice", entityId: dup.match.id,
+        newValue: { reason: "semantic_duplicate_blocked", matched_on: dup.tier, invoice_number: v.invoiceNumber ?? null, total_inc_btw: totalIncBtw, rejected_vendor: v.supplierName ?? null, path: "intake_ubl" },
+        ipAddress: getClientIP(req),
+      }).catch(() => {})
+      const nr = dup.match.invoice_number ? `factuur ${dup.match.invoice_number}` : "deze factuur"
+      return NextResponse.json({
+        error: `Deze factuur bestaat al — ${nr}${dup.match.client_name ? ` van ${dup.match.client_name}` : ""} is al toegevoegd.`,
+        duplicate: true, original_id: dup.match.id, canForce: true,
+      }, { status: 409 })
+    } else {
+      // Not a confident duplicate — is it a POSSIBLE one? (soft flag, never blocks; held from auto-confirm)
+      possibleDup = await collectPossibleDuplicate(
+        { invoiceNumber: v.invoiceNumber, vendor: v.supplierName, totalIncBtw, invoiceDate: v.invoiceDate },
+        async (total) => {
+          const { data } = await supabase
+            .from("invoices")
+            .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+            .eq("receiver_id", userId).eq("direction", "incoming")
+            .gte("total_inc_btw", total - 0.01).lte("total_inc_btw", total + 0.01)
+            .order("id", { ascending: false }).limit(200)
+          return data ?? []
+        },
+      )
+    }
+  }
+
+  // ── Store the XML — FATAL if it fails. The document row IS the evidence link for an e-invoice
+  //    (invoices.document_id → documents.file_url, the 7-year bewaarplicht source). The old path
+  //    used best-effort storeRawIncoming and booked the invoice even when the store returned null →
+  //    an invoice whose voorbelasting reached the aangifte while its XML was silently lost. We now
+  //    mirror the camera path: a failed store/row is fatal (roll back, surface an error), never a
+  //    phantom-evidence success. Because the byte-hash gate above already 409'd an existing file,
+  //    this is guaranteed a FRESH file — so we create our OWN row and only ever roll back that one
+  //    (the old code could destructively delete a pre-existing row on a forced re-upload). ──
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+  const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
+  const contentType = file.type || "application/xml"
+  const { error: upErr } = await supabase.storage
+    .from("documents").upload(storagePath, buffer, { contentType, upsert: false })
+  if (upErr) {
+    return NextResponse.json({ error: "E-factuur kon niet worden opgeslagen — probeer het opnieuw." }, { status: 502 })
+  }
+
+  const folderId = await resolveImportTarget(userId, v.invoiceDate ?? null, "facturen", "pipeline")
+  const pipeline = createPipelineClient()
+  const { data: doc, error: docErr } = await pipeline
+    .from("documents")
+    .insert({
+      user_id: userId, file_name: file.name, file_url: storagePath,
+      file_size: buffer.length, file_type: contentType,
+      doc_type: "factuur", folder_id: folderId,
+      year: v.invoiceDate ? new Date(v.invoiceDate).getFullYear() : null,
+      source: "upload", ai_processed: true, ai_doc_type: "ubl_invoice", content_hash: hash,
+    })
+    .select("id").single()
+  if (docErr || !doc) {
+    await supabase.storage.from("documents").remove([storagePath])
+    // [DEDUP-ATOMIC] A concurrent double-submit racing past the byte-hash SELECT trips the
+    // (user_id, content_hash) UNIQUE index (23505) — treat it as the duplicate it is, not a 500,
+    // so a second invoice is never created for the same file (the race the old path allowed).
+    if (docErr && (docErr as { code?: string }).code === "23505") {
+      const { data: dup } = await supabase
+        .from("documents").select("id, folder_id").eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
+      return NextResponse.json({
+        duplicate: true, error: "Deze e-factuur is al geïmporteerd.",
+        existing: dup ? { id: dup.id, folder_id: dup.folder_id ?? null } : undefined,
+      }, { status: 409 })
+    }
+    return NextResponse.json({ error: "Opslaan van de e-factuur is mislukt — probeer het opnieuw." }, { status: 500 })
+  }
+  const documentId = doc.id
+
+  const fieldConfidence: Record<string, unknown> = {
     // A structured e-invoice is high-confidence per field where present; flag any missing field so
     // the verify queue's health badge asks the human to complete it (never a silent wrong number).
     vendor: v.supplierName ? 0.95 : 0.2,
     invoice_number: v.invoiceNumber ? 0.98 : 0.2,
     invoice_date: v.invoiceDate ? 0.98 : 0.2,
     _source: "ubl_xml",
-  } as InvoiceFieldConfidence
+  }
+  // [DEDUP-SOFT] Merge a possible-duplicate signal into _safecore so classifyImportHealth reads it →
+  // needs-review → the e-invoice is held out of auto-confirm and the queue shows "mogelijk dubbel".
+  if (possibleDup) {
+    const merged = mergePossibleDuplicate(fieldConfidence, possibleDup) as Record<string, unknown>
+    fieldConfidence._safecore = merged._safecore
+  }
 
-  const pipeline = createPipelineClient()
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
       sender_id: null,
       receiver_id: userId,
       direction: "incoming",
-      status: "processing", // always human-verified — a new machine-read path stays gated
+      status: "processing", // always human-verified — a machine-read path stays gated (no auto-advance)
       source: "upload",
       client_name: v.supplierName || "Onbekende afzender",
       invoice_date: v.invoiceDate,
@@ -873,19 +1030,22 @@ async function handleUblInvoice(
       invoice_type: v.isCreditNote ? "creditnota" : "factuur",
       total_ex_btw: totalExBtw,
       btw_amount: btwAmount,
-      total_inc_btw: totalIncBtw,
+      total_inc_btw: totalIncBtw ?? 0,
+      pdf_url: storagePath,
       document_id: documentId,
       vendor_iban: v.vendorIban ?? null,
-      field_confidence: fieldConfidence,
+      field_confidence: fieldConfidence as InvoiceFieldConfidence,
     })
     .select("id")
     .single()
 
   if (dbError) {
-    if (documentId) await pipeline.from("documents").delete().eq("id", documentId)
+    // Roll back OUR document row + stored blob (never a pre-existing row — this file was fresh).
+    await pipeline.from("documents").delete().eq("id", documentId)
+    await supabase.storage.from("documents").remove([storagePath])
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
-  if (invoice?.id && documentId) {
+  if (invoice?.id) {
     await pipeline.from("documents").update({ invoice_id: invoice.id }).eq("id", documentId)
   }
 
@@ -894,7 +1054,12 @@ async function handleUblInvoice(
     destination: "invoice",
     invoice_id: invoice?.id ?? null,
     document_id: documentId,
-    message: "E-factuur (UBL) ingelezen — controleer de gegevens in de verificatierij.",
+    ...(possibleDup
+      ? { possibleDuplicate: { invoice_number: possibleDup.match.invoice_number, client_name: possibleDup.match.client_name, reason: possibleDup.reason } }
+      : {}),
+    message: possibleDup
+      ? `E-factuur (UBL) ingelezen — let op: mogelijk dubbel${possibleDup.match.invoice_number ? ` met ${possibleDup.match.invoice_number}` : ""} (${possibleDup.reason}). Controleer voor je bevestigt.`
+      : "E-factuur (UBL) ingelezen — controleer de gegevens in de verificatierij.",
   })
 }
 

@@ -5,6 +5,8 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import SentryUserProvider from '@/components/providers/SentryUserProvider'
 import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
+import DashboardChrome from '@/components/nav/DashboardChrome'
+import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 
 export default async function DashboardLayout({
   children,
@@ -25,6 +27,10 @@ export default async function DashboardLayout({
     profile = data
   }
 
+  // [SUBNAV] Viewer role for the shared sub-page header (resolves role-aware
+  // parent/home via src/lib/navigation.ts).
+  const subnavRole = profile?.role === 'accountant' ? 'accountant' : 'zzper'
+
   return (
     <>
       {profile && (
@@ -35,7 +41,14 @@ export default async function DashboardLayout({
           role={profile.role}
         />
       )}
-      {children}
+      {/* [SUBNAV] Shared sub-page header + the context a page uses to push a
+          dynamic title/actions into it. The provider wraps both the bar and
+          {children} so a page's useSubPageHeader() registration reaches the bar.
+          The bar is placed before {children} so its sticky bar sits at top. */}
+      <SubPageHeaderProvider>
+        {profile && <DashboardChrome role={subnavRole} />}
+        {children}
+      </SubPageHeaderProvider>
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}
       {profile && <GlobalSearchLauncher />}

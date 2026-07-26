@@ -41,11 +41,34 @@ export interface SettleableInvoice {
   payment_date?: string | null;
   invoice_number?: string | null;
   client_name?: string | null;
+  // [CASH-PARTIAL] The portion already settled through the BANK (instalments recorded in
+  // invoices.amount_paid by the bank confirm/unlink paths). The cash the owner physically handed
+  // over is the REMAINDER — settling the full gross would overstate the drawer movement by every
+  // bank instalment. Absent/0 for the common fully-cash case → identical to before.
+  //
+  // [MANUAL-PARTIAL-PAY] CAREFUL: amount_paid is no longer bank-only. Since a manual payment can
+  // be recorded as 'kas', amount_paid includes cash instalments too — so `gross − amount_paid`
+  // now yields 0 for a fully cash-paid invoice, which would make the reconciler DELETE the
+  // kasboek entry as stale and silently break the drawer balance. That is why cash_paid below
+  // exists and takes precedence: the cash portion is read from the instalments themselves.
+  amount_paid?: number | null;
+  // [MANUAL-PARTIAL-PAY] The CASH portion, summed from the invoice's instalments with
+  // method='kas' (bank_tx_invoices). Authoritative when present — it says what physically left
+  // or entered the drawer, instead of inferring it from what the bank did NOT pay. Absent for
+  // legacy invoices settled before manual instalments existed → the fallback below applies.
+  cash_paid?: number | null;
 }
 
-/** The GROSS the owner actually handed over for this invoice: total_inc_btw, or ex+btw when the
- *  gross wasn't stored. Returns null when neither yields a positive number (a €0 or a credit/refund
- *  — a creditnota — is never an 'out' cash settlement, so we don't auto-book one). Pure. */
+/** The CASH the owner actually handed over for this invoice. Pure.
+ *
+ *  Two regimes, in order:
+ *   1. [MANUAL-PARTIAL-PAY] cash_paid present → that IS the cash, exactly. Every cash instalment
+ *      is a recorded row (method='kas'), so no inference is needed or wanted.
+ *   2. LEGACY (no instalment rows: invoices settled before this existed) → the gross
+ *      (total_inc_btw, or ex+btw when the gross wasn't stored) MINUS what the bank settled.
+ *
+ *  Returns null when that yields no positive amount — a €0/credit/refund (creditnota) or a
+ *  fully-bank-settled invoice is never a cash settlement, so we don't auto-book one. */
 export function settlementGross(inv: SettleableInvoice): number | null {
   const raw =
     typeof inv.total_inc_btw === "number" && inv.total_inc_btw !== 0
@@ -53,7 +76,20 @@ export function settlementGross(inv: SettleableInvoice): number | null {
       : typeof inv.total_ex_btw === "number" && typeof inv.btw_amount === "number"
         ? inv.total_ex_btw + inv.btw_amount
         : NaN;
-  return Number.isFinite(raw) && raw > 0 ? raw : null;
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+
+  // 1) Recorded cash instalments are the truth when we have them.
+  if (inv.cash_paid != null) {
+    const cash = Math.round(Math.max(0, Number(inv.cash_paid)) * 100) / 100;
+    return cash > 0.005 ? cash : null;
+  }
+
+  // 2) [CASH-PARTIAL] Legacy inference: €500 invoice, €300 paid by bank instalment, remainder
+  // paid in cash → the drawer moved €200, not €500. Rounded to cents so float noise never
+  // produces a €0.004 entry.
+  const paidByBank = Math.max(0, Number(inv.amount_paid ?? 0));
+  const remainder = Math.round((raw - paidByBank) * 100) / 100;
+  return remainder > 0.005 ? remainder : null;
 }
 
 export interface CashSettlementRow {
@@ -112,19 +148,41 @@ export function computeCashSettlementSync(
   existing: ExistingSettlement[],
 ): { toCreate: SettleableInvoice[]; toUpdate: Array<{ id: string; inv: SettleableInvoice }>; toDeleteIds: string[] } {
   const paidIds = new Set(paidKasInvoices.map((i) => i.id));
-  const linkedByInvoice = new Map<string, ExistingSettlement>();
-  for (const e of existing) if (e.invoice_id) linkedByInvoice.set(e.invoice_id, e);
+  // [CASH-DUP-HEAL] Track EVERY linked entry per invoice, not "last wins". A duplicate 'betaling'
+  // row (a pre-index race, dirty legacy data) double-counts the drawer forever if the reconcile can
+  // only see one of them — the extras were invisible to heal AND excluded from delete. Now the
+  // first entry is the one we keep/heal; every extra is deleted (the self-healing contract).
+  const linkedByInvoice = new Map<string, ExistingSettlement[]>();
+  for (const e of existing) {
+    if (!e.invoice_id) continue;
+    const list = linkedByInvoice.get(e.invoice_id);
+    if (list) list.push(e);
+    else linkedByInvoice.set(e.invoice_id, [e]);
+  }
 
   const toCreate: SettleableInvoice[] = [];
   const toUpdate: Array<{ id: string; inv: SettleableInvoice }> = [];
+  const toDeleteIds: string[] = [];
   for (const inv of paidKasInvoices) {
     const s = buildCashSettlement(inv);
-    if (!s) continue; // no usable gross → can't settle (never a €0/garbage entry)
-    const existingEntry = linkedByInvoice.get(inv.id);
-    if (!existingEntry) {
+    const linked = linkedByInvoice.get(inv.id) ?? [];
+    if (!s) {
+      // [CASH-STALE-DELETE] No usable settlement amount (gross edited to €0/negative, or the bank
+      // has since settled the full amount). NEVER create one — but a previously-linked entry must
+      // not survive either: the old `continue` left it untouched (also excluded from the orphan
+      // delete below because the invoice IS still paid-kas), so the drawer stayed permanently
+      // wrong by the stale amount with no future reconcile ever fixing it. Delete it — that IS
+      // the self-healing contract.
+      for (const e of linked) toDeleteIds.push(e.id);
+      continue;
+    }
+    if (linked.length === 0) {
       toCreate.push(inv);
       continue;
     }
+    const existingEntry = linked[0];
+    // [CASH-DUP-HEAL] One settlement per invoice — every duplicate beyond the first is deleted.
+    for (const extra of linked.slice(1)) toDeleteIds.push(extra.id);
     // [CASH-SETTLE] Heal a stale entry: if the invoice's gross or payment date was corrected
     // after it was paid (the confirm route persists a re-reviewed amount on pay), the linked
     // 'betaling' entry must move too — otherwise the kas balance is permanently off by the delta.
@@ -137,7 +195,9 @@ export function computeCashSettlementSync(
     if (amountDrift || dateDrift || directionDrift) toUpdate.push({ id: existingEntry.id, inv });
   }
 
-  const toDeleteIds = existing.filter((e) => e.invoice_id && !paidIds.has(e.invoice_id)).map((e) => e.id);
+  for (const e of existing) {
+    if (e.invoice_id && !paidIds.has(e.invoice_id)) toDeleteIds.push(e.id);
+  }
   return { toCreate, toUpdate, toDeleteIds };
 }
 
@@ -157,4 +217,25 @@ export function computeCashBalance(entries: CashMovement[]): number {
     (sum, e) => sum + (e.direction === "in" ? e.amount ?? 0 : -(e.amount ?? 0)),
     0,
   );
+}
+
+/**
+ * The FULL drawer balance shown as "SALDO IN KASSA": the configured opening float (beginsaldo),
+ * PLUS the net of every cash_entries movement (computeCashBalance), PLUS the till's daily CASH
+ * takings (daily_turnover.cash_amount). Those takings are physical cash in the drawer but live in
+ * daily_turnover, NOT cash_entries — so summing cash_entries alone understates the drawer and can
+ * show a FALSE negative "meer uitgaven dan ontvangsten" alarm for every till shop.
+ *
+ * Every surface that displays the drawer balance — the Kas page AND the home snapshot — MUST use
+ * this one definition, or they diverge and one shows a wrong (often negative) saldo. Pure.
+ */
+export function computeDrawerBalance(input: {
+  openingBalance?: number | null;
+  entries: CashMovement[];
+  tillCashAmounts: Array<number | null>;
+}): number {
+  const opening = Number(input.openingBalance) || 0;
+  const entriesBalance = computeCashBalance(input.entries);
+  const tillCashIn = input.tillCashAmounts.reduce<number>((s, v) => s + (Number(v) || 0), 0);
+  return Math.round((opening + entriesBalance + tillCashIn) * 100) / 100;
 }

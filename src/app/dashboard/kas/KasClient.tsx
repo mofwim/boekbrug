@@ -6,8 +6,12 @@
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
 import { useEffect, useRef, useState } from 'react'
-import { BackLink } from '@/components/ui/BackLink'
+import { useSearchParams } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
+// [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
+// an "unsupported type" and be filed unreadable — the contant-betaald flow then never books. Convert
+// to a bounded JPEG before upload (a PDF/normal JPG/PNG passes through untouched).
+import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
@@ -65,7 +69,15 @@ function todayIso(): string {
 
 export default function KasClient() {
   const [entries, setEntries] = useState<Entry[]>([])
-  const [search, setSearch] = useState('')  // [SEARCH] in-page live ledger filter
+  // [SEARCH] in-page live ledger filter. Seeded from ?find= (set by the global Cmd+K search
+  // when the owner opens a kas hit) and synced on param change, so the exact boeking surfaces.
+  const searchParams = useSearchParams()
+  const findParam = searchParams.get('find') ?? ''
+  const [search, setSearch] = useState(findParam)
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(findParam), 0)
+    return () => clearTimeout(t)
+  }, [findParam])
   const [balance, setBalance] = useState(0)
   // [KAS-OPENING] the drawer's starting float (beginsaldo) — a config value the owner sets once.
   const [openingBalance, setOpeningBalance] = useState(0)
@@ -194,8 +206,10 @@ export default function KasClient() {
   async function uploadCashInvoice(file: File) {
     setCashUploading(true); setCashUploadMsg(null)
     try {
+      // [INTAKE-IMG-NORMALIZE] Make an unreadable/oversized photo readable before upload.
+      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES)
       const form = new FormData()
-      form.append('file', file)
+      form.append('file', uploadFile)
       form.append('paid_method', 'kas')
       form.append('paid_date', date) // the date chosen in the form above (defaults to today)
       const res = await fetch('/api/intake', { method: 'POST', body: form })
@@ -253,8 +267,6 @@ export default function KasClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <BackLink style={{ color: M3.primary }} />
-
         {/* [COHERENCE-ERRSTATE] A failed load must NOT show a reassuring €0,00 saldo that
             looks like an empty drawer. Show the number ONLY when the data actually loaded;
             on error surface an honest banner with a retry instead of a false money figure. */}

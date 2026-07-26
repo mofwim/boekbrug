@@ -17,15 +17,23 @@ import {
   quarterEndDate,
 } from "@/lib/quarterly";
 import type { InvoiceForQuarterly } from "@/lib/quarterly";
+// [PAGINATION] pages past PostgREST's silent ~1000-row cap (same fix class as
+// /api/result, /api/aangifte and the closing package).
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 // [BOEK-FOUNDATION-TYPES] Helper: safely calculate btw_rate from nullable fields
+// [CREDITNOTA-RATE] Guard on !== 0, not > 0: a creditnota stores NEGATIVE
+// amounts, and the old `exBtw > 0` bucketed it under "0%" with a non-zero
+// negative BTW — a nonsense row that made the accountant's on-screen
+// btwBreakdown disagree with the closing-package CSV (export.ts calcBtwRate,
+// which already handles negatives: -21/-100 → 21%). Same maths now.
 function calculateBtwRate(
   totalExBtw: number | null,
   btwAmount: number | null
 ): number {
   const exBtw = totalExBtw ?? 0;
   const btw = btwAmount ?? 0;
-  return exBtw > 0 ? Math.round((btw / exBtw) * 100) : 0;
+  return exBtw !== 0 ? Math.round((btw / exBtw) * 100) : 0;
 }
 
 export async function GET(req: NextRequest) {
@@ -80,15 +88,21 @@ export async function GET(req: NextRequest) {
     const start = quarterStartDate(year, quarter);
     const end = quarterEndDate(year, quarter);
 
-    const { data, error } = await supabase
+    // [PAGINATION] fetchAllRows pages past PostgREST's silent ~1000-row cap so
+    // a busy quarter's summary/list can never truncate; stable id tiebreak.
+    const data = await fetchAllRows((from, to) => supabase
       .from("invoices")
       .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, sender_id, receiver_id")
       .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
       .gte("invoice_date", start)
       .lte("invoice_date", end)
-      .order("invoice_date", { ascending: true });
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      .order("invoice_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+    ).catch((e: unknown) => new Error(e instanceof Error ? e.message : "quarterly_failed"));
+    if (data instanceof Error) {
+      return NextResponse.json({ error: data.message }, { status: 500 });
+    }
 
     // [BRIDGE-QUARTER-ACC] Verified only — exclude unconfirmed (processing) and
     // draft. Same boundary as the closing package: AI prepares, human confirms,
@@ -144,15 +158,21 @@ export async function GET(req: NextRequest) {
   //
   // Two axes preserved (Bridge model):
   //   outgoing → Inkomsten (totalIn)   incoming → Uitgaven (totalOut)
-  const { data, error } = await supabase
+  // [PAGINATION] Same silent-cap fix as the accountant branch above.
+  const data = await fetchAllRows((from, to) => supabase
     .from("invoices")
     .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, sender_id, receiver_id")
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
-    .not("status", "eq", "draft"); // never include draft/concept
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    .not("status", "eq", "draft") // never include draft/concept
+    .order("invoice_date", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch((e: unknown) => new Error(e instanceof Error ? e.message : "quarterly_failed"));
+  if (data instanceof Error) {
+    return NextResponse.json({ error: data.message }, { status: 500 });
+  }
 
   const invoices: InvoiceForQuarterly[] = (data ?? []).map((inv) => {
     // [BRIDGE-QUARTER] Direction safety: with incoming rows now in scope, a NULL

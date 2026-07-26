@@ -173,5 +173,19 @@ console.log("\n— asymmetric HT/TC columns (per-rate gross-vs-net) —");
   check("net + BTW reconstructs gross", near(d.base_9 + d.base_21 + d.btw_9 + d.btw_21, 230, 0.05));
 }
 
+console.log("\n— [TURNOVER-BLANK-GROSS] a day with takings but a blank 'Omzet incl.' must not vanish silently —");
+{
+  const H: Cell[] = ["Datum", "Omzet incl.", "BTW", "Netto Omzet", " Base TC 9 %", " Base TC 21 %", "Contant", "PIN"];
+  // A genuinely empty day (all blank) → silently skipped, no warning.
+  const EMPTY: Cell[] = ["2026-05-01", 0, 0, 0, 0, 0, 0, 0];
+  // A REAL sales day where only "Omzet incl." was left blank but PIN/cash are filled.
+  const BLANK_GROSS: Cell[] = ["2026-05-02", 0, 0, 0, 0, 0, 200, 500];
+  const { rows, warnings } = normalizeTurnoverSheet([H, EMPTY, BLANK_GROSS]);
+  check("neither zero-gross day is imported (no guessed BTW split)", rows.length === 0);
+  check("empty day raises NO warning", !warnings.some(w => w.code === "gross_missing_with_payments" && w.row === 1));
+  check("day with takings + blank gross raises the warning (not a silent drop)",
+    warnings.some(w => w.code === "gross_missing_with_payments"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

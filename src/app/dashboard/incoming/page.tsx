@@ -11,6 +11,8 @@ import {
   type ImportHealth,
   type FieldConfidence,
 } from "@/lib/import-health";
+// [QUEUE-COMPLETE] pages past PostgREST's silent ~1000-row cap.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export const dynamic = "force-dynamic";
 
@@ -87,7 +89,13 @@ export default async function IncomingPage() {
   // Sorted by invoice_date (newest first): created_at is the IMPORT moment,
   // which for backfilled email syncs has nothing to do with the invoice's real
   // date — sorting on it made the queue look shuffled.
-  const { data: pendingRaw } = await supabase
+  //
+  // [QUEUE-COMPLETE] fetchAllRows, no cap: this is the ONLY surface where a
+  // 'processing' invoice can be verified, while the badges elsewhere
+  // (ZzpDashboard, Vandaag's toVerifyCount) show the EXACT head-count. With
+  // the old .limit(100), a large mailbox backfill said "130 wachten" while
+  // the queue showed 100 and rows 101+ were unreachable.
+  const pendingRaw = await fetchAllRows((from, to) => supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
     .eq("receiver_id", user.id)
@@ -95,31 +103,68 @@ export default async function IncomingPage() {
     .eq("status", "processing")
     .order("invoice_date", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(100);
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   // [BOEK-011] Ignored invoices — status 'archived', can be restored
-  const { data: ignoredRaw } = await supabase
+  // [QUEUE-COMPLETE] Also uncapped (was 50): an archived invoice beyond the
+  // cap was invisible on the only surface that can restore it (Bewaarplicht —
+  // archive is the app's "delete", so recovery must always be reachable).
+  const ignoredRaw = await fetchAllRows((from, to) => supabase
     .from("invoices")
     .select(INVOICE_COLUMNS)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
     .eq("status", "archived")
     .order("created_at", { ascending: false })
-    .limit(50);
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   // [INCOMING-BEVESTIGD] Confirmed invoices — verified out of the queue ('received', te betalen)
   // or already settled ('paid'). Before this tab they vanished to /incoming/manage (Crediteuren),
   // which felt like the work was lost. Surfacing the recent ones here — in place, read-only with a
   // status badge — closes that gap. Newest first, bounded; the full ledger stays on Crediteuren.
-  const { data: confirmedRaw } = await supabase
+  //
+  // [INBOX-CROWD-OUT] Two queries, not one shared cap: in the old single query
+  // (received+paid, newest 50 by invoice_date) newer paid rows crowded older
+  // UNPAID rows out of the tab, so an open bill shown on Vandaag was nowhere to
+  // be found here. Unpaid ('received') rows are actionable → own query, higher
+  // bound; paid rows stay a bounded recent slice (full ledger on Crediteuren).
+  const { data: confirmedReceivedRaw } = await supabase
     .from("invoices")
     .select(`${INVOICE_COLUMNS}, status`)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .in("status", ["received", "paid"])
+    .eq("status", "received")
+    .order("invoice_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  const { data: confirmedPaidRaw } = await supabase
+    .from("invoices")
+    .select(`${INVOICE_COLUMNS}, status`)
+    .eq("receiver_id", user.id)
+    .eq("direction", "incoming")
+    .eq("status", "paid")
     .order("invoice_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(50);
+
+  // Merge back to one newest-first list (the client renders a single tab).
+  // ISO dates compare correctly as strings; nulls sort last, created_at breaks ties.
+  const confirmedRaw = [
+    ...(confirmedReceivedRaw ?? []),
+    ...(confirmedPaidRaw ?? []),
+  ].sort((a, b) => {
+    const ad = (a as { invoice_date: string | null }).invoice_date ?? "";
+    const bd = (b as { invoice_date: string | null }).invoice_date ?? "";
+    if (ad !== bd) return ad ? (bd ? bd.localeCompare(ad) : -1) : 1;
+    const ac = (a as { created_at: string }).created_at ?? "";
+    const bc = (b as { created_at: string }).created_at ?? "";
+    return bc.localeCompare(ac);
+  });
 
   // [BOEK-011] Base rows — cast through unknown (Supabase returns a wide union).
   // [IMPORT-MONITOR] Also omit `health` here: it is computed below, not selected.
@@ -148,16 +193,21 @@ export default async function IncomingPage() {
   const folderIdByDocId = new Map<string, string | null>();
 
   if (allDocIds.length > 0) {
-    const { data: docs } = await supabase
-      .from("documents")
-      .select("id, folder_id")
-      .in("id", allDocIds);
+    // [INBOX-CROWD-OUT] Chunked: the confirmed list can now hold hundreds of
+    // rows, and supabase-js sends .in() filters in the URL — one giant id list
+    // could exceed URL-length limits and silently drop every folder path.
+    for (let i = 0; i < allDocIds.length; i += 150) {
+      const { data: docs } = await supabase
+        .from("documents")
+        .select("id, folder_id")
+        .in("id", allDocIds.slice(i, i + 150));
 
-    for (const doc of (docs ?? []) as unknown as Array<{
-      id: string;
-      folder_id: string | null;
-    }>) {
-      folderIdByDocId.set(doc.id, doc.folder_id);
+      for (const doc of (docs ?? []) as unknown as Array<{
+        id: string;
+        folder_id: string | null;
+      }>) {
+        folderIdByDocId.set(doc.id, doc.folder_id);
+      }
     }
   }
 

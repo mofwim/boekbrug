@@ -99,7 +99,8 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
   }, [query, minLength, debounceMs, target, full]);
 
   const totalCount =
-    groups.invoices.length + groups.documents.length + groups.clients.length;
+    groups.invoices.length + groups.documents.length + groups.clients.length +
+    groups.bankTransactions.length + groups.cashEntries.length;
 
   return { query, setQuery, groups, totalCount, loading, error, clear };
 }

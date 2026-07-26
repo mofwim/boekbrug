@@ -25,13 +25,18 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
-import { useParentPath } from '@/lib/navigation-hooks'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
+// [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
+import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
+// [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
+import { openAmount, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
 import { rowMatchesQuery } from '@/lib/search'
+// [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
+import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const M3 = {
@@ -118,6 +123,11 @@ interface PayCtx {
   newStatus: 'paid' | 'received'
   paymentMethod?: 'bank' | 'kas'
   paymentDate?: string
+  // [MANUAL-PARTIAL-PAY] null/absent = settle the whole open balance; a number = instalment.
+  amount?: number | null
+  clientKey?: string
+  // What was still open when the dialog opened — the field's hint and cap.
+  openAmount?: number
 }
 
 type FilterTab = 'all' | 'received' | 'paid' | 'auto'
@@ -128,76 +138,19 @@ const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'auto',     label: 'Automatisch verwerkt'  },
 ]
 
-// ─── [SORT] Ordering the list — the same options the market (Moneybird, e-Boekhouden,
-// Exact) offers, so the owner can find an invoice by whatever date/number matters to them,
-// not only "date added". Default stays 'added_desc' (nieuwste import bovenaan) so the screen
-// looks unchanged until the owner picks another order.
-type SortKey =
-  | 'added_desc' | 'invdate_desc' | 'invdate_asc'
-  | 'due_asc' | 'paydate_desc' | 'amount_desc' | 'amount_asc' | 'vendor_asc'
-const SORTS: { id: SortKey; label: string }[] = [
-  { id: 'added_desc',   label: 'Toegevoegd (nieuwste eerst)'  },
-  { id: 'invdate_desc', label: 'Factuurdatum (nieuwste eerst)' },
-  { id: 'invdate_asc',  label: 'Factuurdatum (oudste eerst)'   },
-  { id: 'due_asc',      label: 'Vervaldatum (eerst verlopen)'  },
-  { id: 'paydate_desc', label: 'Betaaldatum (nieuwste eerst)'  },
-  { id: 'amount_desc',  label: 'Bedrag (hoog → laag)'          },
-  { id: 'amount_asc',   label: 'Bedrag (laag → hoog)'          },
-  { id: 'vendor_asc',   label: 'Leverancier (A–Z)'             },
-]
-
-// Comparators — a MISSING value always sorts LAST (a dateless/amountless invoice must never
-// jump to the top and hide a real one), regardless of asc/desc. Dates are ISO "YYYY-MM-DD"
-// so a plain string compare is chronological.
-function cmpDate(a: string | null, b: string | null, dir: 'asc' | 'desc'): number {
-  const aa = a ?? '', bb = b ?? ''
-  if (!aa && !bb) return 0
-  if (!aa) return 1
-  if (!bb) return -1
-  return dir === 'asc' ? aa.localeCompare(bb) : bb.localeCompare(aa)
-}
-function cmpNum(a: number | null, b: number | null, dir: 'asc' | 'desc'): number {
-  const aNull = a == null, bNull = b == null
-  if (aNull && bNull) return 0
-  if (aNull) return 1
-  if (bNull) return -1
-  return dir === 'asc' ? (a as number) - (b as number) : (b as number) - (a as number)
-}
-function cmpStr(a: string | null, b: string | null): number {
-  const aa = (a ?? '').trim(), bb = (b ?? '').trim()
-  if (!aa && !bb) return 0
-  if (!aa) return 1
-  if (!bb) return -1
-  return aa.localeCompare(bb, 'nl', { sensitivity: 'base' })
-}
-// Array.prototype.sort is stable, so equal keys keep the incoming order (created_at desc
-// from the server) — a deterministic tiebreak with no extra code.
-function sortRows(rows: IncomingRow[], key: SortKey): IncomingRow[] {
-  const s = [...rows]
-  switch (key) {
-    case 'invdate_desc': return s.sort((a, b) => cmpDate(a.invoice_date, b.invoice_date, 'desc'))
-    case 'invdate_asc':  return s.sort((a, b) => cmpDate(a.invoice_date, b.invoice_date, 'asc'))
-    case 'due_asc':      return s.sort((a, b) => cmpDate(a.due_date, b.due_date, 'asc'))
-    case 'paydate_desc': return s.sort((a, b) => cmpDate(a.payment_date, b.payment_date, 'desc'))
-    case 'amount_desc':  return s.sort((a, b) => cmpNum(a.total_inc_btw, b.total_inc_btw, 'desc'))
-    case 'amount_asc':   return s.sort((a, b) => cmpNum(a.total_inc_btw, b.total_inc_btw, 'asc'))
-    case 'vendor_asc':   return s.sort((a, b) => cmpStr(a.client_name, b.client_name))
-    case 'added_desc':
-    default:             return s.sort((a, b) => cmpDate(a.created_at, b.created_at, 'desc'))
-  }
-}
+// [SORT] Ordering moved to the shared module (@/lib/invoice-sort) — SORTS,
+// SortKey and sortRows are imported above. Default stays 'added_desc' (nieuwste
+// import bovenaan) so the screen looks unchanged until the owner picks another order.
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function IncomingManageClient({
   profile,
   initialInvoices,
-}: { profile: any; initialInvoices: IncomingRow[] }) {
+}: { profile: { id: string }; initialInvoices: IncomingRow[] }) {
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
   const { byInvoice: recon, confirmMatch } = useInvoiceReconciliation()
-  const parentHref = useParentPath(profile.role ?? 'zzper')
-
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
@@ -221,6 +174,90 @@ export default function IncomingManageClient({
   } | null>(null)
   const [checkingId, setCheckingId]     = useState<string | null>(null)
 
+  // ── [BUNDEL-BETALING] Multi-select → pay several open inkoopfacturen of the
+  // same leverancier in ONE transfer. Selection is a set of ids; the rows are
+  // derived from this page's own list (single client-owned array, no pagination).
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Record<string, true>>({})
+  // The sheet snapshot: the rows being paid + the pure-built QR/details.
+  const [bundleCtx, setBundleCtx] = useState<{ rows: IncomingRow[]; built: BundelBetalingResult } | null>(null)
+  // Bank/Contant + date dialog for the WHOLE set (one answer, N invoices).
+  const [bundlePayRows, setBundlePayRows] = useState<IncomingRow[] | null>(null)
+  const [bundleBusy, setBundleBusy] = useState(false)
+
+  const selectedRows = invoices.filter(i => selectedIds[i.id])
+  // Live validation — pure and cheap, so the action bar can explain itself
+  // (same-IBAN rule, missing IBAN, sum) on every tap.
+  const bundleBuilt = selectedRows.length >= 2 ? buildBundelBetaling(selectedRows) : null
+  const openSum = selectedRows.reduce((s, r) => {
+    const tot = Math.abs(r.total_inc_btw ?? 0)
+    return s + Math.max(0, tot - Math.max(0, r.amount_paid ?? 0))
+  }, 0)
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = { ...prev }
+      if (next[id]) delete next[id]
+      else next[id] = true
+      return next
+    })
+  }
+  function exitSelectMode() { setSelectMode(false); setSelectedIds({}) }
+
+  // ── [BUNDEL-BETALING] "Ja, ik heb betaald" for the whole set: one Bank/Contant
+  // + date answer, then N audited pay-toggle writes (the SAME server path as a
+  // single invoice — every mutation audited, nothing new invented). Failures
+  // (e.g. a verwerkt lock) leave that invoice open and are reported honestly.
+  async function executeBundlePay(rows: IncomingRow[], method: 'bank' | 'kas', paymentDate: string) {
+    setBundlePayRows(null)
+    setBundleBusy(true)
+    let okCount = 0
+    const failedNumbers: string[] = []
+    for (const row of rows) {
+      try {
+        const res = await fetch('/api/invoice/pay-toggle', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId: row.id, action: 'pay', paymentMethod: method, paymentDate }),
+        })
+        if (res.ok) {
+          okCount++
+          patchLocal(row.id, {
+            status: 'paid',
+            payment_method: method,
+            payment_date: paymentDate,
+            payment_prepared_at: null,
+          })
+        } else {
+          failedNumbers.push(row.invoice_number ?? '—')
+        }
+      } catch {
+        failedNumbers.push(row.invoice_number ?? '—')
+      }
+    }
+    if (okCount > 0) {
+      // One summary notification for the batch (service role via API; non-blocking).
+      try {
+        await fetch('/api/notifications/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Inkoopfacturen betaald',
+            body: `${okCount} inkoopfacturen zijn gemarkeerd als betaald.`,
+            type: 'payment',
+          }),
+        })
+      } catch { /* non-blocking — payments already succeeded */ }
+      // [CASH-SETTLE] keep the kasboek in sync once for the whole batch.
+      fetch('/api/cash/settle', { method: 'POST' }).catch(() => {})
+    }
+    showToast(
+      failedNumbers.length === 0
+        ? `${okCount} inkoopfacturen betaald ✓`
+        : `${okCount} betaald ✓ — niet gelukt: ${failedNumbers.join(', ')}`
+    )
+    setBundleBusy(false)
+    exitSelectMode()
+  }
+
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // Lands the user on the exact row: auto-expand, scroll into view, brief highlight.
   const searchParams = useSearchParams()
@@ -238,15 +275,19 @@ export default function IncomingManageClient({
     if (!focusId) return
     // Only act if the focused row actually exists in this list.
     if (!invoices.some(i => i.id === focusId)) return
-    setExpandedId(focusId)
-    setHighlightId(focusId)
+    // Expand + highlight on the next tick (never synchronously in the effect
+    // body — avoids a cascading re-render during the effects pass).
+    const applyTimer = setTimeout(() => {
+      setExpandedId(focusId)
+      setHighlightId(focusId)
+    }, 0)
     // Wait a tick for the row to render, then scroll to it.
     const scrollTimer = setTimeout(() => {
       rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
     // Fade the highlight after a few seconds — a cue, not a permanent state.
     const fadeTimer = setTimeout(() => setHighlightId(null), 3200)
-    return () => { clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
+    return () => { clearTimeout(applyTimer); clearTimeout(scrollTimer); clearTimeout(fadeTimer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId])
 
@@ -296,7 +337,9 @@ export default function IncomingManageClient({
   // check is a convenience, not a guard). 'received' → 'paid' only; an undo
   // (paid → received) skips the check entirely.
   async function requestPay(inv: IncomingRow) {
-    const ctx: PayCtx = { id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid' }
+    // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the full total on an untouched
+    // invoice, the remainder once instalments were recorded) — the amount field's hint and cap.
+    const ctx: PayCtx = { id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', openAmount: openAmount(inv) }
     setCheckingId(inv.id)
     try {
       const res = await fetch('/api/incoming/check-paid', {
@@ -413,7 +456,10 @@ export default function IncomingManageClient({
   // ── Mark paid / undo — session client, PAYMENT FIELDS ONLY ──
   async function executePay(ctx: PayCtx) {
     setPayCtx(null); setProcessingId(ctx.id)
-    patchLocal(ctx.id, { status: ctx.newStatus })
+    // [MANUAL-PARTIAL-PAY] A deelbetaling leaves the invoice on 'Te betalen' — only a full
+    // settlement flips the status, so don't claim otherwise before the server answers.
+    const isPartialIntent = ctx.newStatus === 'paid' && ctx.amount != null
+    if (!isPartialIntent) patchLocal(ctx.id, { status: ctx.newStatus })
 
     // [PAY-TOGGLE] Route through the server so the mutation is AUDITED and — crucially on undo —
     // any bank transaction matched to this invoice is DETACHED (never a paid-undone invoice beside
@@ -426,6 +472,8 @@ export default function IncomingManageClient({
         action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
         paymentMethod: ctx.paymentMethod ?? 'bank',
         paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        ...(ctx.amount != null ? { amount: ctx.amount } : {}),
+        ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
       }),
     })
     const json = await res.json().catch(() => ({} as { error?: string }))
@@ -434,7 +482,7 @@ export default function IncomingManageClient({
     if (error) {
       // rollback optimistic
       const prev = ctx.newStatus === 'paid' ? 'received' : 'paid'
-      patchLocal(ctx.id, { status: prev })
+      if (!isPartialIntent) patchLocal(ctx.id, { status: prev })
       // [BOEK-004] verwerkt conflict (trigger) → actionable dialog; else toast
       if (error.message && error.message.includes('verwerkt')) {
         setRequestSent(false)
@@ -447,8 +495,19 @@ export default function IncomingManageClient({
         payment_method: (ctx.paymentMethod ?? 'bank') as 'kas' | 'bank',
         payment_date: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
       }
+      // [MANUAL-PARTIAL-PAY] The server decides: the typed amount may have completed the
+      // invoice after all (the last instalment).
+      const partial = (json as { partial?: boolean }).partial === true
+      if (partial) {
+        patchLocal(ctx.id, {
+          amount_paid: (json as { amountPaid?: number }).amountPaid ?? null,
+          payment_date: patch.payment_date,
+        })
+        showToast(`${fmtEur((json as { applied?: number }).applied ?? 0)} genoteerd · nog ${fmtEur((json as { remaining?: number }).remaining ?? 0)} open`)
+      } else {
       // reflect the new payment fields locally
       patchLocal(ctx.id, {
+        status: 'paid',
         payment_method: patch.payment_method,
         payment_date: patch.payment_date,
         payment_prepared_at: null,
@@ -466,6 +525,7 @@ export default function IncomingManageClient({
         })
       } catch { /* non-blocking — payment already succeeded */ }
       showToast(`Inkoopfactuur ${ctx.number} betaald ✓`)
+      }
     } else {
       patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null })
       showToast(`Betaling ongedaan gemaakt`)
@@ -533,18 +593,36 @@ export default function IncomingManageClient({
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
 
-      {/* ── Top App Bar ── */}
+      {/* ── Controls toolbar ── [SUBNAV] back + "Inkoopfacturen" title come from the
+          shared sub-page header; this block keeps the Verificatie link + filter/sort,
+          sticking directly below the shared bar. */}
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px', position: 'sticky', top: 0, zIndex: 50,
+        padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Link href={parentHref} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT, textDecoration: 'none' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-          </Link>
-          <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center' }}>Inkoopfacturen</h1>
-          <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+        {/* [BUNDEL-BETALING] Left: the multi-select toggle — the entry point for
+            paying several facturen van één leverancier with one QR. Given a clear
+            affordance (blue tint + border in rest, solid blue when active) and put
+            on the LEFT so it reads first, not tucked in the corner. Right: the
+            Verificatie shortcut. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+          <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+            style={{
+              background: selectMode ? M3.primary : M3.primaryContainer,
+              border: `1px solid ${selectMode ? M3.primary : '#A8C7FA'}`,
+              borderRadius: R.full, padding: '8px 16px', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+              color: selectMode ? M3.onPrimary : M3.onPrimaryContainer,
+              display: 'flex', alignItems: 'center', gap: 6,
+              boxShadow: selectMode ? 'none' : EL1,
+            }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+              {selectMode ? 'close' : 'checklist'}
+            </span>
+            {selectMode ? 'Klaar' : 'Meerdere betalen'}
+          </button>
+          <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
           </Link>
         </div>
@@ -675,11 +753,20 @@ export default function IncomingManageClient({
                     transition: 'box-shadow 0.4s ease',
                   }}
                 >
-                  {/* Main row */}
+                  {/* Main row — in select mode a tap toggles the bundle selection
+                      (only for open 'received' rows); otherwise it expands. */}
                   <div
-                    onClick={() => setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'background 0.4s ease' }}
+                    onClick={() => selectMode
+                      ? (inv.status === 'received' && toggleSelect(inv.id))
+                      : setExpandedId(expanded ? null : inv.id)}
+                    style={{ background: selectedIds[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: selectMode && inv.status !== 'received' ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && inv.status !== 'received' ? 0.4 : 1 }}
                   >
+                    {/* [BUNDEL-BETALING] selection indicator */}
+                    {selectMode && inv.status === 'received' && (
+                      <span className="material-symbols-outlined" style={{ fontSize: 22, color: selectedIds[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
+                        {selectedIds[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
+                      </span>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         {/* [BRIDGE-POLISH 3a-1 parity] incoming direction marker */}
@@ -753,17 +840,26 @@ export default function IncomingManageClient({
                         const paid = Math.max(0, inv.amount_paid ?? 0)
                         const tot = Math.abs(inv.total_inc_btw ?? 0)
                         if (!(paid > 0.005 && paid < tot - 0.005)) return null
-                        const remaining = Math.max(0, tot - paid)
+                        const remaining = openAmount(inv)
                         return (
-                          <span
-                            title={`Deelbetaling: € ${paid.toFixed(2)} van € ${tot.toFixed(2)} betaald`}
+                          // [MANUAL-PARTIAL-PAY] The chip is now the way back in: tapping it
+                          // reopens the pay dialog offering the REMAINING balance, so recording
+                          // the next instalment starts where the owner reads the number.
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              if (processingId === inv.id || checkingId === inv.id) return
+                              requestPay(inv)
+                            }}
+                            title={`Deelbetaling: € ${paid.toFixed(2)} van € ${tot.toFixed(2)} betaald — tik om de rest te noteren`}
                             style={{
                               fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
                               border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                              cursor: 'pointer', fontFamily: FONT,
                             }}
                           >
                             Deels betaald · € {remaining.toFixed(2)} open
-                          </span>
+                          </button>
                         )
                       })()}
 
@@ -854,6 +950,79 @@ export default function IncomingManageClient({
         )}
       </main>
 
+      {/* ── [BUNDEL-BETALING] Selection action bar — one transfer for the set.
+          Enabled when the pure builder approves (≥2 open rows, same IBAN). ── */}
+      {selectMode && (
+        <div style={{
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + env(safe-area-inset-bottom))`,
+          maxWidth: 648, margin: '0 auto', zIndex: 60,
+          background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          padding: '12px 16px', fontFamily: FONT,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
+                {selectedRows.length} geselecteerd · {fmtEur(Math.round(openSum * 100) / 100)}
+              </p>
+              <p style={{ fontSize: 11.5, color: bundleBuilt && !bundleBuilt.ok ? M3.error : '#5F6368', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {selectedRows.length < 2
+                  ? 'Kies minimaal 2 open inkoopfacturen'
+                  : bundleBuilt && !bundleBuilt.ok
+                    ? bundleBuilt.error
+                    : `Eén betaling aan ${bundleBuilt?.beneficiaryName ?? 'deze leverancier'}`}
+              </p>
+            </div>
+            <button
+              onClick={() => { if (bundleBuilt?.ok) setBundleCtx({ rows: selectedRows, built: bundleBuilt }) }}
+              disabled={!bundleBuilt?.ok || bundleBusy}
+              style={{
+                flexShrink: 0, border: 'none', borderRadius: R.full, padding: '10px 18px',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
+                background: bundleBuilt?.ok && !bundleBusy ? M3.primary : M3.surfaceVariant,
+                color: bundleBuilt?.ok && !bundleBusy ? '#fff' : '#9AA0A6',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
+              {bundleBusy ? 'Bezig…' : 'Betalen'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── [BUNDEL-BETALING] Prepare sheet for the whole set — one QR, the
+          per-factuur lines, copyable details. Same discipline as the single
+          PreparePaymentSheet: pure preparation, closing changes nothing. ── */}
+      {bundleCtx && (
+        <BundelBetalenSheet
+          rows={bundleCtx.rows}
+          built={bundleCtx.built}
+          onClose={() => {
+            for (const row of bundleCtx.rows) markPrepared(row)
+            setBundleCtx(null)
+          }}
+          onConfirmPaid={() => {
+            const rows = bundleCtx.rows
+            for (const row of rows) markPrepared(row)
+            setBundleCtx(null)
+            setBundlePayRows(rows)
+          }}
+          onCopied={(what) => showToast(`${what} gekopieerd ✓`)}
+        />
+      )}
+
+      {/* ── [BUNDEL-BETALING] One Bank/Contant + date answer for the whole set ── */}
+      {bundlePayRows && (
+        <BottomSheet
+          title={`${bundlePayRows.length} inkoopfacturen markeren als betaald?`}
+          body={`De geselecteerde inkoopfacturen van ${bundlePayRows[0]?.client_name ?? 'deze leverancier'} worden allemaal als betaald gemarkeerd.`}
+          confirmLabel="Ja, markeer als betaald"
+          confirmBg={M3.success}
+          onConfirm={() => { /* paymentChoice handles it */ }}
+          onCancel={() => setBundlePayRows(null)}
+          paymentChoice={(method, paymentDate) => executeBundlePay(bundlePayRows, method, paymentDate)}
+        />
+      )}
+
       {/* ── Pay dialog (Bank/Contant + date on mark-paid; single confirm on undo) ── */}
       {payCtx && (
         <BottomSheet
@@ -869,9 +1038,15 @@ export default function IncomingManageClient({
           onCancel={() => setPayCtx(null)}
           paymentChoice={
             payCtx.newStatus === 'paid'
-              ? (method, paymentDate) => executePay({ ...payCtx, paymentMethod: method, paymentDate })
+              ? (method, paymentDate, amount) => executePay({
+                  ...payCtx, paymentMethod: method, paymentDate, amount,
+                  clientKey: payCtx.clientKey ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined),
+                })
               : undefined
           }
+          // [MANUAL-PARTIAL-PAY] Amount field only when marking as paid; an undo is
+          // all-or-nothing ("Deelbetalingen wissen" resets to zero paid).
+          openAmount={payCtx.newStatus === 'paid' ? payCtx.openAmount : undefined}
           // [PAY-NOT-YET] Third answer on mark-paid only: "no, I have not paid".
           // Clears the prepared marker (Voorbereid chip + nudge disappear); the
           // invoice stays open as te betalen. Undo-paid keeps its two buttons.
@@ -1010,21 +1185,30 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction }: {
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction, openAmount: openBalance }: {
   title: string
   body: string
   confirmLabel: string
   confirmBg: string
   onConfirm: () => void
   onCancel: () => void
-  paymentChoice?: (method: 'bank' | 'kas', paymentDate: string) => void
+  // [MANUAL-PARTIAL-PAY] the third argument is the typed amount (null = pay the whole rest)
+  paymentChoice?: (method: 'bank' | 'kas', paymentDate: string, amount: number | null) => void
   // [PAY-NOT-YET] Optional third answer between confirm and Annuleren — e.g.
   // "Nee, nog niet betaald" (clears the prepared marker; invoice stays open).
   // Distinct from Annuleren: this is an ANSWER (writes state), Annuleren is
   // "ask me later" (keeps everything). Absent → sheet renders exactly as before.
   secondaryAction?: { label: string; onClick: () => void }
+  // [MANUAL-PARTIAL-PAY] What is still open. Present → the "Betaald bedrag" field is offered.
+  // Absent → no field (a bundle payment stays all-or-nothing).
+  openAmount?: number
 }) {
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  // [MANUAL-PARTIAL-PAY] Empty means "all of it" — zero keystrokes for the ordinary case.
+  const [amountText, setAmountText] = useState('')
+  const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
+  // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
+  const canPayCash = !entry || (entry.valid && entry.settlesFully)
   return (
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
@@ -1041,12 +1225,59 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />
+            {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty pays the whole open
+                balance (unchanged behaviour); a number records an instalment and leaves the
+                invoice on "Te betalen" for the rest, with the pay-QR asking only that rest. */}
+            {entry && openBalance != null && (
+              <>
+                <label htmlFor="ink-betaald-bedrag" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
+                  Betaald bedrag
+                </label>
+                <input
+                  id="ink-betaald-bedrag"
+                  type="text"
+                  inputMode="decimal"
+                  value={amountText}
+                  placeholder={openBalance.toFixed(2).replace('.', ',')}
+                  onChange={e => setAmountText(e.target.value)}
+                  style={{
+                    width: '100%', padding: '12px 14px', borderRadius: 12,
+                    border: `1px solid ${entry.error ? M3.error : '#DADCE0'}`,
+                    fontSize: 15, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box',
+                  }}
+                />
+                <p style={{ fontSize: 12, color: entry.error ? M3.error : '#5F6368', margin: '6px 2px 16px', lineHeight: 1.45 }}>
+                  {entry.error
+                    ? entry.error
+                    : amountText.trim() === ''
+                      ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
+                      : entry.settlesFully
+                        ? 'Hiermee is de factuur volledig betaald.'
+                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} · een deelbetaling noteer je via Bank`}
+                </p>
+              </>
+            )}
+
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-              <button onClick={() => paymentChoice('bank', paymentDate)} style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <button
+                onClick={() => { if (!entry || entry.valid) paymentChoice('bank', paymentDate, entry?.amount ?? null) }}
+                disabled={!!entry && !entry.valid}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
-              <button onClick={() => paymentChoice('kas', paymentDate)} style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {/* [MANUAL-PARTIAL-PAY] Contant is disabled for a PARTIAL amount, on purpose.
+                  The kasboek can hold exactly one settlement entry per invoice
+                  (cash_entries_one_settlement_per_invoice), so two cash instalments would
+                  collapse into a single entry re-dated to the last one — silently moving money
+                  out of an already-filed quarter and making the daily drawer balance wrong in
+                  between. A partial payment via Bank has no such limit. Lift this once the
+                  kasboek can represent one entry per instalment. */}
+              <button
+                onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
+                disabled={!canPayCash}
+                title={!canPayCash && entry?.valid ? 'Een deelbetaling kan alleen via Bank worden genoteerd' : undefined}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant
               </button>
@@ -1105,7 +1336,17 @@ function PreparePaymentSheet({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [qrError, setQrError] = useState<string | null>(null)
 
-  const amount = inv.total_inc_btw ?? 0
+  // [PARTIAL-PAY] The QR must request the REMAINING openstaand, never the full
+  // total: a €1.000 invoice with a €400 bank-confirmed instalment would
+  // otherwise pre-fill €1.000 in the owner's bank app → €600 over-payment.
+  // Same remainder rule as the "Deels betaald · €X open" chip on the card;
+  // sign preserved (a negative creditnota stays negative → EPC refuses it).
+  const amount = (() => {
+    const total = inv.total_inc_btw ?? 0
+    const paid = Math.max(0, inv.amount_paid ?? 0)
+    if (paid <= 0.005) return total
+    return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid)
+  })()
   // Reference: betalingskenmerk when present, else the invoice number (the EPC
   // remittance field — what the owner quotes when paying).
   const reference = (inv.payment_reference ?? inv.invoice_number ?? '').trim()
@@ -1189,6 +1430,119 @@ function PreparePaymentSheet({
         {/* [PAY-SAFE-CONFIRM] Closing the QR ≠ paid. Ask directly — "Ja" routes
             to the Bank/Contant + date flow; "Nog niet" just closes (stays unpaid).
             Wording = "verstuurd" (sent), not "aangekomen" — SEPA takes time. */}
+        <p style={{ fontSize: 15, fontWeight: 700, color: '#202124', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
+          Heb je de betaling verstuurd?
+        </p>
+        <button onClick={onConfirmPaid} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
+          Ja, ik heb betaald
+        </button>
+        <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.surfaceVariant, color: '#5f6368', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, marginTop: 8 }}>
+          Nog niet
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── [BUNDEL-BETALING] Prepare sheet for SEVERAL invoices of one supplier ─────
+// Mirror of PreparePaymentSheet, fed by the pure buildBundelBetaling result:
+// one QR for the sum, the per-factuur lines, copyable IBAN/bedrag/kenmerk.
+// PURE preparation — no DB write, no money movement; the owner confirms the
+// transfer inside their OWN bank app.
+function BundelBetalenSheet({
+  rows,
+  built,
+  onClose,
+  onConfirmPaid,
+  onCopied,
+}: {
+  rows: IncomingRow[]
+  built: BundelBetalingResult
+  onClose: () => void
+  onConfirmPaid: () => void
+  onCopied: (what: string) => void
+}) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [qrError, setQrError] = useState<string | null>(null)
+
+  const amount = built.amount ?? 0
+  const reference = built.reference ?? ''
+  const ibanDisplay = (built.iban ?? '').replace(/(.{4})/g, '$1 ').trim()
+
+  useEffect(() => {
+    let cancelled = false
+    async function gen() {
+      if (!built.epcPayload) { setQrError(built.error ?? 'Geen QR mogelijk'); return }
+      try {
+        // Dynamic import keeps qrcode out of the main bundle until needed.
+        const QR = await import('qrcode')
+        const url = await QR.toDataURL(built.epcPayload, { margin: 1, width: 240 })
+        if (!cancelled) setQrDataUrl(url)
+      } catch {
+        if (!cancelled) setQrError('QR kon niet worden gegenereerd')
+      }
+    }
+    gen()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [built.epcPayload])
+
+  async function copy(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      onCopied(label)
+    } catch {
+      onCopied(label) // best-effort; clipboard may be blocked in some contexts
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 0 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: '28px 28px 0 0', padding: '24px 20px 32px', width: '100%', maxWidth: 480, boxShadow: '0 -8px 32px rgba(0,0,0,0.18)', fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ width: 32, height: 4, background: '#DADCE0', borderRadius: 2, margin: '0 auto 20px' }} />
+        <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 4, textAlign: 'center', letterSpacing: -0.3 }}>
+          {rows.length} facturen betalen
+        </p>
+        <p style={{ fontSize: 13, color: '#5F6368', textAlign: 'center', marginBottom: 16 }}>
+          Eén overboeking van {fmtEur(amount)} aan {built.beneficiaryName ?? '—'}.
+          Scan met je bankapp of kopieer de gegevens — je betaalt in je eigen bank.
+        </p>
+
+        {/* The invoices this ONE transfer settles */}
+        <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '4px 14px', marginBottom: 16 }}>
+          {(built.items ?? []).map((it, i) => (
+            <div key={it.invoiceId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderBottom: i === (built.items?.length ?? 0) - 1 ? 'none' : '1px solid #EEF0F1' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT_NUM }}>
+                {it.invoiceNumber ?? '—'}
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
+                {fmtEur(it.amount)}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* QR */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+          {qrDataUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={qrDataUrl} alt="Betaal-QR" width={220} height={220} style={{ borderRadius: 12, border: '1px solid #E0E0E0' }} />
+          ) : qrError ? (
+            <div style={{ fontSize: 13, color: M3.error, textAlign: 'center', padding: 20 }}>{qrError}</div>
+          ) : (
+            <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9AA0A6' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 32 }}>hourglass_empty</span>
+            </div>
+          )}
+        </div>
+
+        {/* Copy rows */}
+        <CopyRow label="IBAN" value={ibanDisplay} raw={built.iban ?? ''} onCopy={copy} />
+        <CopyRow label="Bedrag" value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
+        {reference && <CopyRow label="Kenmerk" value={reference} raw={reference} onCopy={copy} />}
+        <CopyRow label="Naam" value={built.beneficiaryName ?? '—'} raw={built.beneficiaryName ?? ''} onCopy={copy} />
+
+        {/* Same honest confirm as the single sheet: closing the QR ≠ paid. */}
         <p style={{ fontSize: 15, fontWeight: 700, color: '#202124', textAlign: 'center', margin: '4px 0 12px', fontFamily: FONT }}>
           Heb je de betaling verstuurd?
         </p>

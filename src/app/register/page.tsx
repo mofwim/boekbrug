@@ -224,7 +224,7 @@ function RegisterContent() {
           <h1 className="text-2xl font-bold text-gray-900">BoekBrug</h1>
           <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
           <p className="text-gray-600 text-sm mt-3">Maak facturen, scan bonnen en houd je BTW bij. Gratis.</p>
-          <p className="text-gray-400 text-xs mt-1">Geen creditcard nodig · AVG-proof</p>
+          <p className="text-gray-400 text-xs mt-1">Geen creditcard nodig · Privacy-vriendelijk</p>
         </div>
 
         {/* Stap 1 — Rol kiezen */}

@@ -10,7 +10,8 @@ import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 // [BOEK-031] Navigation Strategy — May 2026
-import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
+import { useParentPath } from '@/lib/navigation-hooks'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL } from '@/lib/format-nl'
@@ -389,7 +390,6 @@ function NewInvoicePageContent() {
   // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
   const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
   const parentHref = useParentPath(role)
-  const homeHref = useHomePath(role)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [loading, setLoading]         = useState(false)
   // [BOEK-031] linesLoading — wait for DB lines before allowing submit — May 2026
@@ -479,6 +479,24 @@ function NewInvoicePageContent() {
   // offerte_id if we're converting an existing offerte — read-only from URL
   const offerteId = offerteParam
 
+  // [SUBNAV] Dynamic title (factuur / offerte / creditnota) + the offerte
+  // "Omzetten naar factuur" action, pushed into the shared sub-page header.
+  // Called before the loading early-return so hook order stays stable.
+  useSubPageHeader(
+    {
+      title:
+        invoiceType === 'offerte' ? 'Nieuwe offerte' :
+        invoiceType === 'creditnota' ? 'Creditnota' : 'Nieuwe factuur',
+      actions: invoiceType === 'offerte' && offerteId ? (
+        <button onClick={() => setShowConvertDialog(true)}
+          style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
+          Omzetten naar factuur →
+        </button>
+      ) : undefined,
+    },
+    [invoiceType, offerteId]
+  )
+
   // ─── Load ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -526,16 +544,16 @@ function NewInvoicePageContent() {
     load()
   }, [router, supabase])
 
-  // [COHERENCE-CREDITNOTA] A creditnota must be created FROM its original invoice via
-  // /api/invoice/creditnota — the route copies the original's lines negatively and stores
-  // original_invoice_id so the credit↔original link holds and no second credit is possible.
-  // The standalone ?type=creditnota blank form here was dead: handleCredit was never
-  // invoked, the owner retyped everything, and handleSubmit wrote original_invoice_id=null
-  // (an orphan credit + unlimited duplicates). Redirect any such entry to the correct place:
-  // the original invoice's detail, which opens the proper creditnota dialog.
+  // [COHERENCE-CREDITNOTA] Crediting a SPECIFIC in-app invoice must go through the linked flow
+  // (/api/invoice/creditnota): it copies the original's lines negatively and stores
+  // original_invoice_id, so the credit↔original link holds and no SECOND credit of that invoice is
+  // possible. So when we arrive with ?original=X, hand off to that invoice's detail dialog.
+  // A STANDALONE creditnota (no ?original — e.g. crediting an invoice issued OUTSIDE BoekBrug, or a
+  // loose correction) legitimately has original_invoice_id=null and stays here on the form; the
+  // banner below steers anyone whose original IS in BoekBrug to the linked flow.
   useEffect(() => {
-    if (typeParam === 'creditnota') {
-      router.replace(originalParam ? `/dashboard/invoice/${originalParam}?action=credit` : '/dashboard/facturen')
+    if (typeParam === 'creditnota' && originalParam) {
+      router.replace(`/dashboard/invoice/${originalParam}?action=credit`)
     }
   }, [typeParam, originalParam, router])
 
@@ -797,10 +815,11 @@ function NewInvoicePageContent() {
     if (!invoiceDate) { errs.invoiceDate = true; hasAnyError = true }
     if (!dueDate) { errs.dueDate = true; hasAnyError = true }
 
-    // [FACTUUR-A] Art. 35a sub c — customer address is mandatory ON A FACTUUR
-    // (not on an offerte/pro forma). Enforced on both save modes for factuur
-    // so a draft can't grow into a sendable invoice missing its address.
-    if (invoiceType === 'factuur' && !clientAddress.trim()) {
+    // [FACTUUR-A] Art. 35a sub c — customer address is mandatory on a FACTUUR and a
+    // CREDITNOTA (both are legal invoices; the send route rejects issuance without it),
+    // not on an offerte/pro forma. Enforce it inline here so the owner sees a red field
+    // up-front instead of a late 400 from /api/invoice/send.
+    if ((invoiceType === 'factuur' || invoiceType === 'creditnota') && !clientAddress.trim()) {
       errs.clientAddress = true; hasAnyError = true
     }
     // [FACTUUR-A] Leverdatum required for factuur (Art. 35a sub f)
@@ -967,54 +986,14 @@ function NewInvoicePageContent() {
   // ─── Derived ───────────────────────────────────────────────────────────────
 
   const cfg = TYPE_CONFIG[invoiceType]
-  const pageTitle =
-    invoiceType === 'offerte' ? 'Nieuwe offerte' :
-    invoiceType === 'creditnota'  ? 'Creditnota'     : 'Nieuwe factuur'
-
-  // [BOEK-031] Number already in correct format: 20260001 / CR-20260001 / PF-20260001
-  const displayNumber =
-    invoiceType === 'offerte' ? '—' :   // Pro forma: geen nummer in UI
-    invoiceNumber || 'Concept'
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', position: 'relative' }}>
-      {/* [DS] Top color band behind sticky header */}
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 64, backgroundColor: 'rgba(255,255,255,0.92)', zIndex: 9 }} />
-
-      {/* [DS] Sticky header — frosted glass Material You */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px' }}>
-        <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [BOEK-031] Back — Link to parent /dashboard/facturen — Navigation Strategy — May 2026 */}
-            <Link href={parentHref}
-              style={{ width: 36, height: 36, borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s', textDecoration: 'none' }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f1f3f4')}
-              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</Link>
-            {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}
-            <Link href={homeHref} style={{ textDecoration: 'none', marginRight: 4 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: '#1A73E8', letterSpacing: '-0.01em' }}>
-                BoekBrug
-              </span>
-            </Link>
-            <div>
-              {/* [DS] Title — 16px/700 */}
-              <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0, lineHeight: 1.2 }}>{pageTitle}</h1>
-              {invoiceType !== 'offerte' && (
-                <p style={{ fontSize: 11, color: '#9AA0A6', fontFamily: 'Roboto Mono, monospace', margin: '2px 0 0' }}>{displayNumber}</p>
-              )}
-            </div>
-          </div>
-          {invoiceType === 'offerte' && offerteId && (
-            <button onClick={() => setShowConvertDialog(true)}
-              style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
-              Omzetten naar factuur →
-            </button>
-          )}
-        </div>
-      </div>
+      {/* [SUBNAV] Back + title (Nieuwe factuur/offerte/Creditnota) + the offerte
+          "Omzetten naar factuur" action now come from the shared sub-page header
+          (registered via useSubPageHeader above). */}
 
       <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + env(safe-area-inset-bottom))' }}>
 
@@ -1022,10 +1001,12 @@ function NewInvoicePageContent() {
         <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
           <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: '0 0 12px' }}>Type document</p>
           <div style={{ display: 'flex', borderRadius: 9999, border: '1px solid #E0E0E0', overflow: 'hidden', backgroundColor: '#F1F3F4' }}>
-            {/* [COHERENCE-CREDITNOTA] 'creditnota' is intentionally NOT a selectable type
-                here — a credit note can only be created from an existing invoice (see the
-                redirect above). Offering it standalone produced orphan credits. */}
-            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).filter(t => t !== 'creditnota').map((t, idx, arr) => {
+            {/* [COHERENCE-CREDITNOTA] 'Credit' is selectable again as a STANDALONE creditnota
+                (own CR- number, negative amounts, −omzet) — for crediting an invoice issued
+                OUTSIDE BoekBrug or a loose correction. Crediting an in-app invoice still goes
+                through that invoice's own linked flow (kept the link + blocks a double credit);
+                the banner below steers the owner there when the original is in BoekBrug. */}
+            {(Object.keys(TYPE_CONFIG) as InvoiceType[]).map((t, idx, arr) => {
               const c = TYPE_CONFIG[t]
               const active = invoiceType === t
               return (
@@ -1059,9 +1040,18 @@ function NewInvoicePageContent() {
         {invoiceType === 'creditnota' && (
           <div style={{ backgroundColor: '#F9DEDC', borderLeft: '4px solid #EA4335', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
             <span style={{ fontSize: 16, color: '#B3261E', flexShrink: 0 }}>↩</span>
-            <p style={{ fontSize: 13, color: '#B3261E', margin: 0, lineHeight: 1.5 }}>
-              <strong>Creditnota</strong> — bedragen worden automatisch negatief. Vul het formulier in zoals een gewone factuur.
-            </p>
+            <div style={{ margin: 0 }}>
+              <p style={{ fontSize: 13, color: '#B3261E', margin: 0, lineHeight: 1.5 }}>
+                <strong>Losse creditnota</strong> — bedragen worden automatisch negatief. Vul het formulier in zoals een gewone factuur. Gebruik dit voor een factuur die niet in BoekBrug staat.
+              </p>
+              {/* [COHERENCE-CREDITNOTA] Steer an in-app credit to the linked flow so the
+                  credit↔origineel koppeling behouden blijft en er geen tweede credit ontstaat. */}
+              <p style={{ fontSize: 12, color: '#B3261E', margin: '6px 0 0', lineHeight: 1.5, opacity: 0.9 }}>
+                Staat de originele factuur wél in BoekBrug? Crediteer die dan{' '}
+                <Link href="/dashboard/facturen" style={{ color: '#1967D2', textDecoration: 'underline', fontWeight: 600 }}>vanaf de factuur zelf</Link>
+                {' '}— dan blijft de koppeling behouden.
+              </p>
+            </div>
           </div>
         )}
 
@@ -1110,7 +1100,7 @@ function NewInvoicePageContent() {
                       sender's own data — a malformed BTW-id or missing KVK
                       silently lands on every legal invoice otherwise. Links to
                       settings; never blocks the form. */}
-                  {invoiceType === 'factuur' && (() => {
+                  {(invoiceType === 'factuur' || invoiceType === 'creditnota') && (() => {
                     const missing: string[] = []
                     if (!profile.address || !profile.kvk_number) missing.push('adres/KVK')
                     if (!profile.btw_number) missing.push('BTW-nummer')
@@ -1148,7 +1138,7 @@ function NewInvoicePageContent() {
                 )}
               </div>
               <OutlinedInput value={clientEmail} onChange={e => { setClientEmail(e.target.value); clearFieldError('clientEmail') }} placeholder="klant@bedrijf.nl" label="E-mailadres" type="email" required focusColor={cfg.focusColor} hasError={!!fieldErrors.clientEmail} />
-              <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} required={invoiceType === 'factuur'} hasError={!!fieldErrors.clientAddress} />
+              <OutlinedInput value={clientAddress} onChange={e => { setClientAddress(e.target.value); clearFieldError('clientAddress') }} placeholder="Straatnaam 1" label="Adres" focusColor={cfg.focusColor} required={invoiceType === 'factuur' || invoiceType === 'creditnota'} hasError={!!fieldErrors.clientAddress} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label="Postcode" focusColor={cfg.focusColor} />
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />

@@ -8,7 +8,6 @@
 // preview it returns and posts the confirmed rows back.
 
 import { useState, type ChangeEvent, type CSSProperties } from 'react'
-import { BackLink } from '@/components/ui/BackLink'
 import TurnoverInsights from './TurnoverInsights'
 
 const M3 = {
@@ -132,7 +131,6 @@ export default function DagomzetImportClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <BackLink style={{ color: M3.primary }} />
         <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 4px' }}>Dagomzet importeren</h1>
         <p style={{ fontSize: 14, color: M3.neutral, margin: '0 0 20px', lineHeight: 1.5 }}>
           Upload het Z-rapport van de kassa (.xls, .xlsx of .csv). Je ziet eerst precies wat er is gelezen —

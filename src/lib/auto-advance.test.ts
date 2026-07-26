@@ -58,6 +58,20 @@ console.log("\n— never auto-book an ambiguous read (needs-review) —");
   check("missing/placeholder number → blocked", shouldAutoAdvanceInvoice(clean({ health: { ...clean().health, invoice_number: "EMAIL-1717000000000" } })).advance === false);
 }
 
+console.log("\n— [BTW-GATE] a zero BTW auto-books ONLY when the read is explicitly 0% —");
+{
+  // 21% invoice misread as ex==incl, btw 0: arithmetic passes (100+0=100... here 121+0), but the
+  // voorbelasting is silently zeroed → must be held for a human, not auto-booked.
+  const zeroBtw = { total_ex_btw: 121, btw_amount: 0, total_inc_btw: 121, invoice_date: "2026-05-10", invoice_number: "2026-0042", invoice_type: "factuur", field_confidence: { vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96 } };
+  const missingRate = shouldAutoAdvanceInvoice(clean({ health: { ...zeroBtw }, btwRate: null }));
+  check("zero btw + no explicit rate → blocked", missingRate.advance === false && missingRate.reason === "zero_btw_not_explicit_zero_rate");
+  check("zero btw + rate 21 (inconsistent) → blocked", shouldAutoAdvanceInvoice(clean({ health: { ...zeroBtw }, btwRate: 21 })).advance === false);
+  // A genuine 0%/vrijgesteld invoice (explicit rate 0) still auto-advances.
+  check("zero btw + explicit rate 0 → advances", shouldAutoAdvanceInvoice(clean({ health: { ...zeroBtw }, btwRate: 0 })).advance === true);
+  // A normal invoice with real btw is unaffected (regardless of the rate field).
+  check("non-zero btw + null rate → advances (unaffected)", shouldAutoAdvanceInvoice(clean({ btwRate: null })).advance === true);
+}
+
 console.log("\n— confidence bar is HIGHER than the 0.7 review line —");
 {
   // 0.75 would pass import-health's 0.7 'clean' but must NOT auto-book (below HIGH_CONF 0.8).

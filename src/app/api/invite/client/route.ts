@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendClientInvite } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
@@ -98,7 +99,10 @@ export async function POST(request: NextRequest) {
       })
     } catch (sendErr) {
       console.error('[TRUST-INVITE] Client invite email failed — rolling back row', sendErr)
-      await supabase.from('invitations').delete().eq('id', invitation.id)
+      // [TRUST-INVITE] `invitations` has RLS with SELECT+INSERT policies but NO DELETE policy, so a
+      // delete on the authenticated session client silently affects 0 rows and the orphaned 'pending'
+      // row would then trip the duplicate guard forever. Roll back via service_role.
+      await createPipelineClient().from('invitations').delete().eq('id', invitation.id)
       return NextResponse.json(
         { error: 'Uitnodiging versturen mislukt — probeer het opnieuw.' },
         { status: 502 }

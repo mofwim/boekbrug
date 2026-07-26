@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/quarter-close",
       "schedule": "0 8 5 1,4,7,10 *"
+    },
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "0 7 * * *"
     }
   ]
 }

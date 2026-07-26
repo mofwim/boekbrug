@@ -42,6 +42,7 @@ import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 import * as Sentry from '@sentry/nextjs'
 
 // [FACTUUR-A] Storage bucket for generated invoice PDFs.
@@ -181,6 +182,18 @@ export async function POST(request: NextRequest) {
       if (!invoice.client_address || !String(invoice.client_address).trim()) {
         return NextResponse.json(
           { error: 'Klantadres ontbreekt — verplicht op een factuur (Art. 35a Wet OB 1968)' },
+          { status: 400 }
+        )
+      }
+
+      // [FACTUUR-A] Art. 35a sub e — the DATE OF ISSUE is a mandatory invoice element. Without this
+      // an undated factuur could be issued (number minted + e-mailed), which is legally invalid AND
+      // date-driven downstream (a dateless invoice is dropped from the quarter's date-range → invisible
+      // in /result and /aangifte). Enforce a real ISO date BEFORE minting the number so the check never
+      // burns a sequence number. (The UI already requires it; this is the server backstop.)
+      if (!invoice.invoice_date || !/^\d{4}-\d{2}-\d{2}/.test(String(invoice.invoice_date))) {
+        return NextResponse.json(
+          { error: 'Factuurdatum ontbreekt — verplicht op een factuur (Art. 35a Wet OB 1968)' },
           { status: 400 }
         )
       }
@@ -461,6 +474,24 @@ export async function POST(request: NextRequest) {
       } catch (notifErr) {
         console.error('[FACTUUR-A] Notification block error', { invoiceId, notifErr })
         // Low severity — don't bother Sentry
+      }
+    }
+
+    // ── 15b. Close the circle from the SEND side ──────────────
+    // [BANK-CIRCLE-SEND] A sales invoice that just became 'sent' may match a payment ALREADY sitting
+    // in the bank — the statement was imported before this invoice existed, so it lingered as an
+    // "ontvangen betaling zonder factuur" that only the incoming-bank flow (not invoice creation) ever
+    // re-checked. Re-run the SAME safe auto-confirm now so the payment gets linked at issuance time.
+    // Books only isSafeAutoConfirm matches, idempotent, one-tap reversible. Best-effort — a failure
+    // here must never break a legally-sent invoice, and the cron/import paths remain the backstop.
+    // First issuance only: a resend re-delivers an already-'sent' invoice (this pass already ran on
+    // its original send, and a later-arriving payment is caught by the incoming-bank flow + cron), so
+    // skip the full user-wide scan on the latency-sensitive resend path.
+    if (!resend) {
+      try {
+        await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+      } catch (autoErr) {
+        console.error('[BANK-CIRCLE-SEND] post-send auto-confirm failed (non-fatal)', { invoiceId, autoErr })
       }
     }
 

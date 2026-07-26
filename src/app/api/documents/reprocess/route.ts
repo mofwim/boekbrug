@@ -45,11 +45,15 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   // The owner's stored documents, oldest first (so a partial cap keeps the earliest history).
+  // [NO-RESURRECT] Exclude trashed documents — a kassa/grootboek file the owner moved to the
+  // prullenbak must NOT be re-booked into daily_turnover/ledger_daily, which would silently
+  // resurrect a turnover day the owner deliberately deleted.
   const docs = (await fetchAllRows((from, to) =>
     supabase
       .from("documents")
       .select("id, file_name, file_url")
       .eq("user_id", user.id)
+      .eq("trashed", false)
       .order("id", { ascending: true })
       .range(from, to),
   )) as Array<{ id: string; file_name: string | null; file_url: string }>;

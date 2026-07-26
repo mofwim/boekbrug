@@ -15,10 +15,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
-import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
 import { rowMatchesQuery } from "@/lib/search";
+// [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
+// "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
+// before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
+import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from "@/lib/image-normalize-client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -181,7 +184,6 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
 
     const MAX_ROUNDS = 12; // 12 × 25 = 300 invoices per tap — plenty
     let totalSaved = 0;
-    let totalFound = 0;
     let round = 0;
     // [BOEK-TRUST] Accumulate the balance buckets across all rounds so the final
     // message can reassure honestly: everything fetched this session landed in a
@@ -215,7 +217,6 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         }
 
         totalSaved += data.saved ?? 0;
-        totalFound += data.verified ?? 0;
         // [BOEK-TRUST] Roll up the reconciliation buckets.
         if (data.balance) {
           totalSkipped += data.balance.skipped ?? 0;
@@ -900,7 +901,7 @@ function ConfirmPaidModal({
               {numberFlag && (
                 <div style={{ fontSize: 12, color: "#EA8600", lineHeight: 1.4, marginBottom: 12, display: "flex", gap: 6 }}>
                   <span>⚠️</span>
-                  <span>"{invoiceNumber}" lijkt een paginanummer — controleer het factuurnummer.</span>
+                  <span>&ldquo;{invoiceNumber}&rdquo; lijkt een paginanummer — controleer het factuurnummer.</span>
                 </div>
               )}
 
@@ -1697,8 +1698,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // structured outcome (never throws) — the modal renders the destination.
   const uploadOne = async (file: File): Promise<IntakeResult> => {
     try {
+      // [INTAKE-IMG-NORMALIZE] Convert an unreadable/oversized image to a bounded JPEG first; a
+      // PDF/normal JPG/PNG is returned untouched. Never throws (worst case the original goes).
+      const uploadFile = await normalizeImageForUpload(file, MAX_INTAKE_UPLOAD_BYTES);
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", uploadFile);
       const res = await fetch("/api/intake", { method: "POST", body: formData });
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
 
@@ -1852,14 +1856,14 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   };
 
   const openInBestanden = (link: { folderId: string | null; focusId: string }) => {
-    window.location.href = `/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`;
+    window.location.assign(`/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`);
   };
 
   // [INTAKE-FOCUS] "Naar controle →" — same full-navigation pattern as
   // openInBestanden/closeResults (this page reloads anyway to refresh the
   // queue); ?focus= makes the main component expand + scroll + ring the card.
   const goToInvoice = (invoiceId: string) => {
-    window.location.href = `/dashboard/incoming?focus=${invoiceId}`;
+    window.location.assign(`/dashboard/incoming?focus=${invoiceId}`);
   };
 
   const addedCount = results.filter((r) => r.status === "invoice" || r.status === "document" || r.status === "bank").length;
@@ -2125,13 +2129,10 @@ export default function IncomingInvoicesClient({
   ignoredInvoices,
   confirmedInvoices,
   connectionStatus,
-  userRole,
 }: Props) {
   // [BOEK-011] Navigation paths — resolved through the central navigation helper
-  // homeHref   = role-based home (Logo target — Rule 1 of Navigation Strategy v1.0)
-  // parentHref = canonical parent of the current page (Terug target — Rule 2)
-  const homeHref = useHomePath(userRole);
-  const parentHref = useParentPath(userRole);
+  // [SUBNAV] Logo (home) + Terug (canonical parent) now come from the shared
+  // sub-page header (DashboardChrome), so this page no longer computes them.
 
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
@@ -2154,12 +2155,15 @@ export default function IncomingInvoicesClient({
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("focus");
     if (!id) return;
-    setFocusId(id);
-    setExpandedId(id);
+    // Expand + ring on the next tick (never synchronously in the effect body —
+    // avoids a cascading re-render during the effects pass).
+    const applyTimer = setTimeout(() => {
+      setFocusId(id);
+      setExpandedId(id);
+    }, 0);
     window.history.replaceState({}, "", window.location.pathname);
     const t = setTimeout(() => setFocusId(null), 2600);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { clearTimeout(applyTimer); clearTimeout(t); };
   }, []);
   useEffect(() => {
     if (!focusId) return;
@@ -2177,24 +2181,25 @@ export default function IncomingInvoicesClient({
   const [editFor, setEditFor] = useState<IncomingInvoice | null>(null);
   const [ignoreFor, setIgnoreFor] = useState<IncomingInvoice | null>(null);
 
-  // OAuth result toast
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const connected = params.get("connected");
-    const error = params.get("error");
-    if (connected) {
-      showToast(`${connected === "gmail" ? "Gmail" : "Outlook"} succesvol verbonden!`);
-      window.history.replaceState({}, "", window.location.pathname);
-    } else if (error) {
-      showToast("Verbinding mislukt — probeer opnieuw");
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, []);
-
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
+
+  // OAuth result toast — shown on the next tick (never synchronously in the
+  // effect body — avoids a cascading re-render during the effects pass).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const error = params.get("error");
+    if (!connected && !error) return;
+    const msg = connected
+      ? `${connected === "gmail" ? "Gmail" : "Outlook"} succesvol verbonden!`
+      : "Verbinding mislukt — probeer opnieuw";
+    const t = setTimeout(() => showToast(msg), 0);
+    window.history.replaceState({}, "", window.location.pathname);
+    return () => clearTimeout(t);
+  }, []);
 
   // ── [BRIDGE-B] Verify — processing → received (shared Crediteur, unpaid) ──
   const handleVerify = useCallback(
@@ -2539,54 +2544,6 @@ export default function IncomingInvoicesClient({
           - Logo + Terug are separate concerns: Logo = escape hatch from anywhere,
             Terug = explicit parent (/dashboard for /dashboard/incoming) */}
       <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
-        {/* Logo row */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <Link
-            href={homeHref}
-            style={{
-              fontSize: 22,
-              fontWeight: 700,
-              color: "#1a73e8",
-              textDecoration: "none",
-              letterSpacing: -0.3,
-            }}
-          >
-            BoekBrug
-          </Link>
-        </div>
-
-        {/* [BOEK-011] Terug — canonical parent via useParentPath.
-            For /dashboard/incoming the parent is /dashboard (zzp home),
-            but the rule lives in src/lib/navigation.ts now — not here. */}
-        <Link
-          href={parentHref}
-          style={{
-            color: "#1a73e8",
-            textDecoration: "none",
-            fontSize: 17,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            marginBottom: 8,
-          }}
-        >
-          ‹ Terug
-        </Link>
-        <h1
-          style={{
-            fontSize: 28, fontWeight: 700, color: "#202124",
-            margin: 0, letterSpacing: -0.5,
-          }}
-        >
-          Inkomend
-        </h1>
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}
         {pending.length === 0 ? (
@@ -2775,7 +2732,7 @@ export default function IncomingInvoicesClient({
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#8e8e93" }}>
             <div style={{ fontSize: 44, marginBottom: 14 }}>🔍</div>
             <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#1c1c1e" }}>Geen facturen gevonden</div>
-            <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : "genegeerd"}.</div>
+            <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : tab === "confirmed" ? "bevestigd" : "genegeerd"}.</div>
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>

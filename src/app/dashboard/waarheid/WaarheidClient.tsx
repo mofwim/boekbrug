@@ -117,11 +117,6 @@ export default function WaarheidClient() {
 
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 14px 96px", fontFamily: FONT, color: M.onSurface }}>
-      <Link href="/dashboard" style={{ display: "inline-flex", alignItems: "center", gap: 4, color: M.primary, fontSize: 14, fontWeight: 600, textDecoration: "none", marginBottom: 10 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-        Terug
-      </Link>
-
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <span className="material-symbols-outlined" style={{ fontSize: 26, color: M.primary }}>monitoring</span>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Je financiële waarheid</h1>

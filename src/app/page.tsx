@@ -80,7 +80,7 @@ export default async function Home() {
           <Link href="/register" style={btnPrimary}>Gratis account maken</Link>
           <Link href="/factuur-maken" style={btnGhost}>Direct een factuur maken</Link>
         </div>
-        <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 16 }}>Geen creditcard nodig · AVG-proof · Nederlandse facturen</div>
+        <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 16 }}>Geen creditcard nodig · Privacy-vriendelijk · Nederlandse facturen</div>
       </section>
 
       {/* Features */}

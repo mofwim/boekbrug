@@ -821,9 +821,15 @@ async function fetchMessageAttachments(
   const msg = await res.json()
   const headers: Array<{ name: string; value: string }> = msg.payload?.headers || []
 
-  const subject = headers.find(h => h.name === 'Subject')?.value || ''
-  const from = headers.find(h => h.name === 'From')?.value || ''
-  const date = headers.find(h => h.name === 'Date')?.value || ''
+  // [NAN-DATE-GUARD] Case-INsensitive header lookup: RFC 5322 header names are
+  // case-insensitive and real senders do emit `date:`/`from:` in lowercase. The
+  // old exact match returned '' for those, which fed a NaN timestamp into the
+  // watermark walk (hang) and lost the sender fallback.
+  const headerVal = (name: string) =>
+    headers.find(h => h.name.toLowerCase() === name)?.value || ''
+  const subject = headerVal('subject')
+  const from = headerVal('from')
+  const date = headerVal('date')
 
   // [BOEK-011] Intermediate shape — explicit flag, no guessing by string length
   interface PendingAttachment {
@@ -2370,8 +2376,42 @@ export async function syncUserEmails(
         .limit(1)
 
       if (existingByMessage && existingByMessage.length > 0) {
-        duplicate++
-        completedKeys.add(wmKey) // [watermark] duplicate = already complete
+        // [SAMENAME-VISIBLE] Reaching here means: same messageId:filename as an
+        // already-imported invoice, YET the byte-hash gate (Check 0) just passed
+        // — i.e. DIFFERENT bytes. That is a SECOND, DISTINCT invoice sharing a
+        // filename with the first in one email (e.g. two attachments both named
+        // "factuur.pdf"). The old code counted it as a duplicate and dropped it
+        // with no trace: no skip row, no audit, invisible to the owner. The
+        // (receiver_id, source_message_id) uniqueness means it cannot be inserted
+        // under this key here, but it must NOT vanish — surface it in the skip
+        // registry with an actionable reason so the owner can add it by hand.
+        try {
+          const skipPipeline = createPipelineClient()
+          await skipPipeline
+            .from('email_skipped_attachments')
+            .upsert(
+              {
+                user_id: userId,
+                // Distinct key so this row can't collide with a genuine
+                // not-an-invoice skip of the SAME attachment name.
+                source_message_id: `${dedupKey}:samename:${contentHash.slice(0, 16)}`,
+                filename: attachment.filename,
+                reason: 'tweede bijlage met dezelfde bestandsnaam in deze e-mail — niet automatisch geïmporteerd; open de e-mail om deze factuur handmatig toe te voegen',
+              },
+              { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+            )
+          await logAuditAction({
+            userId,
+            action: 'document.duplicate_blocked',
+            entityType: 'document',
+            entityId: existingByMessage[0].id,
+            newValue: { file_name: attachment.filename, reason: 'same_filename_distinct_bytes', path: 'email' },
+          })
+        } catch (e) {
+          console.error('[SAMENAME-VISIBLE] could not register same-name attachment', e)
+        }
+        skipped++
+        completedKeys.add(wmKey) // [watermark] handled (registered) = complete
         continue
       }
 
@@ -2842,6 +2882,10 @@ export async function syncUserEmails(
             // Raw gross only — never auto-book a total derived from the 'amount' fallback (that
             // path also bypasses the dedup gate, which keys on totalIncBtw).
             totalIncBtw: typeof classification.totalIncBtw === 'number' ? classification.totalIncBtw : null,
+            // [BTW-GATE] Pass the explicit rate so a genuine 0%-BTW email invoice can auto-book
+            // (the gate holds a zero-BTW invoice UNLESS btwRate === 0). Without it the email path
+            // sent undefined → every zero-BTW invoice was held for manual review, unlike intake.
+            btwRate: classification.btwRate ?? null,
             health: {
               total_ex_btw: classification.totalExBtw ?? 0,
               btw_amount: classification.btwAmount ?? 0,
@@ -3114,23 +3158,48 @@ export async function syncUserEmails(
       return true
     }
 
-    const sortedMsgs = [...messageIndex].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    // [NAN-DATE-GUARD] A message whose date didn't parse (missing/malformed
+    // Date header) can NEVER enter the walk: its timestamp is NaN, and since
+    // NaN === NaN is false the group loop below would not advance → the sync
+    // would spin forever (observed as a 300s timeout on every sync, and a hung
+    // cron run starving every mailbox after this one). Rule, conservative:
+    //  · every dateless message complete → they don't constrain the timeline;
+    //    walk the dated messages normally.
+    //  · any dateless message incomplete → HOLD the watermark entirely (the
+    //    same all-or-nothing rule an incomplete timestamp group gets), so its
+    //    attachments are retried next sync and nothing is lost.
+    const datelessMsgs = messageIndex.filter(
+      (m) => !Number.isFinite(new Date(m.date).getTime())
     )
+    const datelessIncomplete = datelessMsgs.some(
+      (m) => !messageComplete(m.messageId)
+    )
+    if (datelessMsgs.length > 0) {
+      console.log('[NAN-DATE-GUARD] Messages with unparseable dates in window', {
+        count: datelessMsgs.length,
+        incomplete: datelessIncomplete,
+      })
+    }
+
+    const sortedMsgs = messageIndex
+      .filter((m) => Number.isFinite(new Date(m.date).getTime()))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
     let candidateIso: string | null = null
-    let i = 0
-    while (i < sortedMsgs.length) {
-      const t = new Date(sortedMsgs[i].date).getTime()
-      let j = i
-      let groupComplete = true
-      while (j < sortedMsgs.length && new Date(sortedMsgs[j].date).getTime() === t) {
-        if (!messageComplete(sortedMsgs[j].messageId)) groupComplete = false
-        j++
+    if (!datelessIncomplete) {
+      let i = 0
+      while (i < sortedMsgs.length) {
+        const t = new Date(sortedMsgs[i].date).getTime()
+        let j = i
+        let groupComplete = true
+        while (j < sortedMsgs.length && new Date(sortedMsgs[j].date).getTime() === t) {
+          if (!messageComplete(sortedMsgs[j].messageId)) groupComplete = false
+          j++
+        }
+        if (!groupComplete) break
+        if (Number.isFinite(t)) candidateIso = new Date(t).toISOString()
+        i = j
       }
-      if (!groupComplete) break
-      if (Number.isFinite(t)) candidateIso = new Date(t).toISOString()
-      i = j
     }
 
     if (candidateIso) {

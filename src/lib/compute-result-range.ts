@@ -120,13 +120,18 @@ export async function computeResultForRange(args: {
   // window settles into it, and its pos_income line must be suppressed (covered set) without its
   // revenue being re-added (revenue rows are the in-window ones only). Closes the cross-boundary
   // double-count.
+  // [CROSS-QUARTER] Symmetric ±5-day settlement-lag buffer. −5 covers a sale just before the window
+  // whose payout settles into it (omzet suppression, below). +5 lets a boundary takings day at the
+  // END of the window ANCHOR a DAT-less card payout that posts a few days into the NEXT quarter, so
+  // the acquirer commission is booked in the quarter that owns the sale (see the triangle call).
   const startBuffer = isoShiftDays(start, -5);
+  const endBuffer = isoShiftDays(end, 5);
   const { data: turnoverRows } = await pipeline
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
     .eq("user_id", ownerId)
     .gte("turnover_date", startBuffer)
-    .lte("turnover_date", end);
+    .lte("turnover_date", endBuffer);
 
   const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
@@ -135,12 +140,14 @@ export async function computeResultForRange(args: {
     total_incl: t.total_incl, pin_amount: t.pin_amount, cash_amount: t.cash_amount, other_amount: t.other_amount,
   }));
 
-  // Revenue rows: strictly in-window. Covered set: the widened window, revenue rows only
-  // (a zero/empty turnover row must not suppress a real settlement).
-  const turnover = allTurnover.filter((t) => t.turnover_date >= start);
+  // Revenue rows: strictly in-window [start, end]. The +5 buffer days exist ONLY to anchor the
+  // triangle's cross-boundary re-attribution — they must NEVER enter omzet (that would book a
+  // next-quarter sale here). Covered set: revenue rows in [start−5, end] (a payout settling into the
+  // window from a pre-window sale is suppressed; a +5 next-quarter day must NOT suppress anything).
+  const turnover = allTurnover.filter((t) => t.turnover_date >= start && t.turnover_date <= end);
   const coveredDates = new Set(
     allTurnover
-      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      .filter((t) => t.turnover_date <= end && (turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0))
       .map((t) => t.turnover_date),
   );
 
@@ -150,8 +157,10 @@ export async function computeResultForRange(args: {
     .from("eft_settlements")
     .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
     .eq("user_id", ownerId)
-    .gte("settlement_date", start)
-    .lte("settlement_date", end);
+    // [CROSS-QUARTER] ±5 buffer so a boundary takings day's EFT gross is present as an anchor when
+    // its DAT-less payout re-attributes across the quarter edge (see the triangle call + windowStart/End).
+    .gte("settlement_date", startBuffer)
+    .lte("settlement_date", endBuffer);
   const eftSettlements: EftSettlement[] = (eftRows ?? []).map((e) => ({
     terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
     periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,
@@ -159,9 +168,11 @@ export async function computeResultForRange(args: {
     byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
   }));
 
-  // Bank NET card settlement per takings day, with a ±5-day settlement-lag buffer; keep ONLY days
-  // whose takings date is IN the window.
-  const endBuffer = isoShiftDays(end, 5);
+  // Bank NET card settlement per takings day, with a ±5-day settlement-lag buffer. We DO NOT pre-drop
+  // out-of-window keys any more: a DAT-less payout keyed to a booking date just past the window edge
+  // must survive so the triangle can re-attribute it back to its in-window takings day. The triangle's
+  // windowStart/windowEnd predicate then decides which days actually book commission — so a payout is
+  // counted in exactly the one quarter that owns its takings day, never dropped and never doubled.
   const posBufRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
     .select("description, amount, date")
@@ -171,7 +182,6 @@ export async function computeResultForRange(args: {
     .lte("date", endBuffer)
     .order("id", { ascending: true }).range(from, to));
   const netByDay = bankNetByDay(posBufRows.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
-  for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
 
   // [LEDGER · Leg-A witness] The bookkeeper's PIN grootboek — an independent GROSS cross-check of
   // the till's PIN takings; fed to the triangle ONLY as pinLedgerByDay (never a revenue source).
@@ -186,7 +196,17 @@ export async function computeResultForRange(args: {
   const pinLedgerByDay = new Map<string, number>();
   for (const r of pinLedgerRows) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
 
-  const triangle = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
+  // [CROSS-QUARTER] Feed the BUFFERED turnover (allTurnover, [start−5, end+5]) as anchors so a
+  // boundary takings day can catch its cross-edge payout; windowStart/windowEnd then restrict which
+  // days actually book commission to [start, end], so the fee lands in exactly the owning quarter.
+  const triangle = reconcileTriangle({
+    turnover: allTurnover,
+    eftSettlements,
+    bankNetByDay: netByDay,
+    pinLedgerByDay,
+    windowStart: start,
+    windowEnd: end,
+  });
 
   // Acquirer-fee invoices already booked as kosten — subtract so the commission delta isn't
   // double-counted. Gated to the SAME statuses computeResult books as kosten (paid/received).
@@ -202,7 +222,9 @@ export async function computeResultForRange(args: {
   // [CARD-BUDGET] Per covered day, the max bank revenue it may suppress as till card takings.
   const coveredBudget = new Map(
     allTurnover
-      .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
+      // [CROSS-QUARTER] Same [start−5, end] bound as coveredDates — the +5 anchor days must not add
+      // a next-quarter suppression budget (they exist only to anchor the triangle).
+      .filter((t) => t.turnover_date <= end && (turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0))
       .map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
   );
 

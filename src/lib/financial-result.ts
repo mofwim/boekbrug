@@ -15,7 +15,7 @@
 // a rate are surfaced separately (cashOmzetZonderBtw) rather than silently guessed.
 
 import { pnlRole } from "./bank-categories";
-import { turnoverNetOmzet, turnoverBtw, parsePosSettlement, type DailyTurnover } from "./turnover";
+import { turnoverNetOmzet, turnoverBtw, parsePosSettlement, SETTLE_LAG_DAYS, type DailyTurnover } from "./turnover";
 import { nearestLegalRate } from "./btw-rate";
 import { isPosPayoutDescription } from "./bank-identity";
 import { computeSettlementSlices, type SettlementEvent, type PriorSettled } from "./kas-payment-events";
@@ -133,16 +133,12 @@ export interface FinancialResult {
 
 export interface SalesRateBucket { rate: number; omzet: number; btw: number }
 
-// The maximum settlement lag (days) we look BACKWARD when a settlement line's takings
-// date wasn't printed and we only have the booking date. Card settlements post to the
-// bank the same day or a few days after the sale — never before — so looking back a few
-// days (and never forward) reconciles a T+1/T+2 payout to its Z-report day without ever
-// hiding revenue on a day that carries its own exact takings date. Kept EQUAL to the
-// −5-day covered buffer the callers fetch (result/readiness/closing): a DAT-less payout
-// over a long weekend + holiday can post 4–5 days after the sale and cross a quarter
-// boundary, so a shorter window here would miss its covered takings day and let the till's
-// already-counted revenue be booked a SECOND time in the next quarter.
-const SETTLE_LAG_DAYS = 5;
+// The maximum settlement lag (days) we look BACKWARD when a settlement line's takings date wasn't
+// printed and we only have the booking date. Card settlements post the same day or a few days after
+// the sale — never before — so looking back (never forward) reconciles a T+1..T+5 payout to its
+// Z-report day without ever hiding revenue on a day that carries its own exact takings date. This is
+// now the SHARED SETTLE_LAG_DAYS (turnover.ts): triangle's commission re-attribution uses the SAME
+// window, so a payout's omzet (suppressed here) and its fee (booked there) always land on one day.
 
 // Excess below this many euro is a per-line rounding artifact, not real off-till revenue —
 // treated as a witness so a €0.01 gap can't fabricate a phantom omzet-zonder-tarief nudge.

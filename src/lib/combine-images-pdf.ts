@@ -15,60 +15,15 @@
 // undecodable file so the caller can fall back to uploading the images individually.
 
 import { PDFDocument, type PDFImage } from "pdf-lib";
+// [INTAKE-IMG-NORMALIZE] jpg/png sniff + canvas → JPEG re-encode live in one shared client
+// module, so the single-file upload path and this multi-page combine agree byte-for-byte on
+// which images are embedded losslessly vs re-encoded. Never duplicated.
+import { isJpg, isPng, toJpegBytes } from "./image-normalize-client";
 
 // A4 in PDF points, matching image-to-pdf.ts so single- and multi-page invoices look identical.
 const A4_W = 595.28;
 const A4_H = 841.89;
 const MARGIN = 20;
-
-function isJpg(b: Uint8Array): boolean {
-  return b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
-}
-function isPng(b: Uint8Array): boolean {
-  return (
-    b.length >= 8 &&
-    b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 &&
-    b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a
-  );
-}
-
-// A full-resolution phone photo (12–48 MP) drawn onto a canvas can EXCEED the mobile canvas
-// area limit (iOS Safari ≈ 16.7 MP); over that, the browser does not always throw — it can
-// yield an all-WHITE canvas, so toBlob returns a valid-but-blank JPEG and the page embeds
-// silently unreadable. Bounding the long edge keeps the canvas well under the limit so the
-// draw is real, and it keeps the AI read sane. A4 at 300dpi ≈ 2480×3508, so 2500 loses nothing.
-const MAX_EDGE = 2500;
-
-// Decode any browser-displayable image (WebP/HEIC/GIF/…) and re-encode as JPEG so pdf-lib can
-// embed it. Only used when the bytes are NOT already a JPG/PNG (those embed losslessly above).
-async function toJpegBytes(file: File): Promise<Uint8Array> {
-  const bitmap = await createImageBitmap(file);
-  try {
-    let w = bitmap.width;
-    let h = bitmap.height;
-    const longEdge = Math.max(w, h);
-    if (longEdge > MAX_EDGE) {
-      const k = MAX_EDGE / longEdge;
-      w = Math.max(1, Math.round(w * k));
-      h = Math.max(1, Math.round(h * k));
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("canvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0, w, h); // scaled draw into the bounded canvas
-    const blob: Blob = await new Promise((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas toBlob failed"))), "image/jpeg", 0.92),
-    );
-    // A byte-trivial blob means the encode produced nothing real — refuse it rather than embed
-    // an empty page (belt-and-braces on top of the size bound above).
-    if (blob.size < 256) throw new Error("canvas produced an empty image");
-    return new Uint8Array(await blob.arrayBuffer());
-  } finally {
-    bitmap.close();
-  }
-}
 
 async function embedOnePage(doc: PDFDocument, file: File): Promise<void> {
   const raw = new Uint8Array(await file.arrayBuffer());

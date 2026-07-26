@@ -185,14 +185,33 @@ export async function POST(
     updatePatch.status = "received";
   }
 
-  const { error } = await supabase
+  // [CONFIRM-GUARD] Only a QUEUE row ('processing') can be confirmed here. Without
+  // this precondition a stale tab / double-submit could act on an already-handled
+  // invoice: 'verify' on a PAID row rewrote status back to 'received' while its
+  // payment fields stayed populated (inconsistent state), and 'pay' could re-pay.
+  // Race-proof: the WHERE re-checks at write time; zero rows → honest conflict.
+  if (invoice.status !== "processing") {
+    return NextResponse.json(
+      { error: "Deze factuur is al bevestigd — ververs de pagina." },
+      { status: 409 }
+    );
+  }
+  const { data: confirmData, error } = await supabase
     .from("invoices")
     .update(updatePatch)
     .eq("id", id)
-    .eq("receiver_id", user.id);
+    .eq("receiver_id", user.id)
+    .eq("status", "processing")
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!confirmData || confirmData.length === 0) {
+    return NextResponse.json(
+      { error: "Deze factuur is al bevestigd — ververs de pagina." },
+      { status: 409 }
+    );
   }
 
   // [BRIDGE-B] Audit the state change (legal trail: who confirmed what, when).
@@ -343,7 +362,10 @@ export async function DELETE(
   }
 
   // [BOEK-011] Archive — never hard-delete. Recoverable via PATCH.
-  const { error } = await supabase
+  // [CONFIRM-GUARD] Only from 'processing' (skip from the verify queue) or
+  // 'received' (the manage page's archive-a-duplicate flow). Never from 'paid':
+  // archiving a paid invoice would hide booked money from every ledger surface.
+  const { data: archData, error } = await supabase
     .from("invoices")
     .update({
       status: "archived",
@@ -351,10 +373,18 @@ export async function DELETE(
     })
     .eq("id", id)
     .eq("receiver_id", user.id)
-    .eq("direction", "incoming");
+    .eq("direction", "incoming")
+    .in("status", ["processing", "received"])
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!archData || archData.length === 0) {
+    return NextResponse.json(
+      { error: "Deze factuur kan niet worden verwijderd (al betaald of al verwerkt) — ververs de pagina." },
+      { status: 409 }
+    );
   }
 
   return NextResponse.json({ ok: true });

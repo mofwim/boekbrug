@@ -1253,42 +1253,55 @@ export async function buildClosingPackageZip(args: {
   if (turnover.length > 0) {
     // pos_income lines over the quarter ± a settlement-lag buffer; the DAT date (parsed
     // inside buildTurnoverClosing) keys each settlement to its takings day.
-    const [posRes, cashRes, eftRes] = await Promise.all([
-      supabase
-        .from("bank_transactions")
-        .select("description, amount, date")
-        .eq("user_id", ownerId)
-        .eq("category", "pos_income")
-        .gte("date", shiftDays(start, -5))
-        .lte("date", shiftDays(end, 5)),
-      supabase
-        .from("cash_entries")
-        .select("entry_date, amount")
-        .eq("user_id", ownerId)
-        .eq("category", "omzet")
-        .gte("entry_date", start)
-        .lte("entry_date", end),
-      supabase
-        .from("eft_settlements")
-        .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
-        .eq("user_id", ownerId)
-        .gte("settlement_date", start)
-        .lte("settlement_date", end),
+    // [PAGINATION] All three MUST page past PostgREST's ~1000-row cap: a busy shop's quarter of
+    // pos_income lines (several schemes/day + refunds) exceeds it, and a truncated fetch silently
+    // understates pinSettled → fabricated pin breaks in the accountant-facing reconciliation
+    // (and understated evidence). Same trap the cash_entries fetch below already avoids.
+    const [posData, cashData, eftData] = await Promise.all([
+      fetchAllRows((from, to) =>
+        supabase
+          .from("bank_transactions")
+          .select("description, amount, date")
+          .eq("user_id", ownerId)
+          .eq("category", "pos_income")
+          .gte("date", shiftDays(start, -5))
+          .lte("date", shiftDays(end, 5))
+          .order("id", { ascending: true })
+          .range(from, to)).catch(() => []),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("cash_entries")
+          .select("entry_date, amount")
+          .eq("user_id", ownerId)
+          .eq("category", "omzet")
+          .gte("entry_date", start)
+          .lte("entry_date", end)
+          .order("id", { ascending: true })
+          .range(from, to)).catch(() => []),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("eft_settlements")
+          .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
+          .eq("user_id", ownerId)
+          .gte("settlement_date", start)
+          .lte("settlement_date", end)
+          .order("id", { ascending: true })
+          .range(from, to)).catch(() => []),
     ]);
-    const posLines = (posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount }));
-    const cashOmzet = (cashRes.data ?? []).map((c) => ({ date: c.entry_date, amount: c.amount }));
+    const posLines = posData.map((p) => ({ description: p.description, amount: p.amount }));
+    const cashOmzet = cashData.map((c) => ({ date: c.entry_date, amount: c.amount }));
     turnoverClosing = buildTurnoverClosing(turnover, posLines, cashOmzet);
 
     // [TRIANGLE] Card reconciliation (kassa ↔ terminal ↔ bank). Only meaningful when the
     // store uploaded terminal afrekeningen; otherwise the days are 'incomplete' and it is
     // still an honest evidence sheet (what ties out, what doesn't).
-    const eftSettlements: EftSettlement[] = (eftRes.data ?? []).map((e) => ({
+    const eftSettlements: EftSettlement[] = eftData.map((e) => ({
       terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
       periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,
       settlementDate: e.settlement_date, grossTotal: e.gross_total ?? 0, txCount: e.tx_count ?? 0,
       byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
     }));
-    const netByDay = bankNetByDay((posRes.data ?? []).map((p) => ({ description: p.description, amount: p.amount, date: p.date })));
+    const netByDay = bankNetByDay(posData.map((p) => ({ description: p.description, amount: p.amount, date: p.date })));
     // Keep only in-quarter takings days: the ±5-day fetch buffer exists to COMPLETE an
     // end-of-quarter day whose payout lands after quarter-end (DAT still in-quarter), not to
     // add prev/next-quarter rows to an accountant-facing sheet. Matches /api/result exactly.

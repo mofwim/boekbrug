@@ -9,6 +9,13 @@
 
 import { useEffect, useState } from 'react'
 
+interface PayItem {
+  invoiceNumber: string | null
+  amount: number
+  alreadyPaid: boolean
+  dueDate: string | null
+}
+
 interface PayView {
   invoiceNumber: string | null
   clientName: string | null
@@ -20,6 +27,9 @@ interface PayView {
   dueDate: string | null
   epcPayload: string
   alreadyPaid: boolean
+  // [BUNDEL-BETAALVERZOEK] present when the link covers several invoices —
+  // one line per factuur, one sum, one QR.
+  items?: PayItem[]
 }
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -82,7 +92,9 @@ export default function PayClient({ token }: { token: string }) {
           <>
             {view.alreadyPaid && (
               <div style={{ background: '#e6f4ea', border: '1px solid #b7e0c3', color: '#137333', borderRadius: 14, padding: '12px 16px', marginBottom: 14, fontSize: 14.5, fontWeight: 600, textAlign: 'center' }}>
-                ✓ Deze factuur is al als betaald gemarkeerd.
+                {view.items && view.items.length > 1
+                  ? '✓ Deze facturen zijn al als betaald gemarkeerd.'
+                  : '✓ Deze factuur is al als betaald gemarkeerd.'}
               </div>
             )}
 
@@ -91,9 +103,28 @@ export default function PayClient({ token }: { token: string }) {
                 <div style={{ fontSize: 13, color: '#5f6368' }}>Te betalen aan</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '2px 0 10px' }}>{view.beneficiaryName}</div>
                 <div style={{ fontSize: 34, fontWeight: 800, color: '#202124', letterSpacing: -1 }}>{eur.format(view.amount)}</div>
-                {view.invoiceNumber && <div style={{ fontSize: 13.5, color: '#5f6368', marginTop: 4 }}>Factuur {view.invoiceNumber}{view.clientName ? ` · ${view.clientName}` : ''}</div>}
+                {view.items && view.items.length > 1
+                  ? <div style={{ fontSize: 13.5, color: '#5f6368', marginTop: 4 }}>{view.items.length} facturen{view.clientName ? ` · ${view.clientName}` : ''}</div>
+                  : view.invoiceNumber && <div style={{ fontSize: 13.5, color: '#5f6368', marginTop: 4 }}>Factuur {view.invoiceNumber}{view.clientName ? ` · ${view.clientName}` : ''}</div>}
                 {dateNL(view.dueDate) && <div style={{ fontSize: 13, color: '#5f6368', marginTop: 2 }}>Vervaldatum {dateNL(view.dueDate)}</div>}
               </div>
+
+              {/* [BUNDEL-BETAALVERZOEK] The invoices this one payment settles. A line
+                  that was paid in the meantime shows settled and is NOT in the sum. */}
+              {view.items && view.items.length > 1 && (
+                <div style={{ margin: '14px 0 4px', borderTop: '1px solid #f1f3f4' }}>
+                  {view.items.map((it, i) => (
+                    <div key={`${it.invoiceNumber ?? 'f'}-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 2px', borderBottom: '1px solid #f8f9fa' }}>
+                      <div style={{ fontSize: 13.5, color: it.alreadyPaid ? '#9aa0a6' : '#202124', fontWeight: 600, textDecoration: it.alreadyPaid ? 'line-through' : 'none' }}>
+                        Factuur {it.invoiceNumber ?? '—'}
+                      </div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, color: it.alreadyPaid ? '#137333' : '#202124', whiteSpace: 'nowrap' }}>
+                        {it.alreadyPaid ? '✓ betaald' : eur.format(it.amount)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {qr && !view.alreadyPaid && (
                 <div style={{ textAlign: 'center', margin: '18px 0 6px' }}>
@@ -113,7 +144,7 @@ export default function PayClient({ token }: { token: string }) {
             </Card>
 
             <p style={{ fontSize: 12, color: '#5f6368', textAlign: 'center', lineHeight: 1.6, marginTop: 18, padding: '0 8px' }}>
-              Vermeld het kenmerk bij je betaling, dan herkent de ontvanger de betaling meteen bij deze factuur.
+              Vermeld het kenmerk bij je betaling, dan herkent de ontvanger de betaling meteen bij {view.items && view.items.length > 1 ? 'deze facturen' : 'deze factuur'}.
               BoekBrug verwerkt de betaling niet — je betaalt rechtstreeks vanuit je eigen bank.
             </p>
           </>

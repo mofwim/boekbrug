@@ -6,16 +6,15 @@
 //
 // [TODAY-UX-CLARITY] Clarity pass — the card now answers the two questions the
 // owner actually has ("why is this in front of me?" / "what do I do?"):
-//   1. Calmer urgency: a long-overdue invoice reads "Al lang open" (calm amber),
-//      NOT a scary red "59 dagen te laat" — a routine supplier bill is not a
-//      catastrophe, and it is often already paid-but-unrecorded.
+//   1. Urgency: every overdue invoice shows the real day count ("36 dagen te
+//      laat" — owner decision; the earlier calm "Al lang open" label hid the
+//      number), rendered red, in ONE flat list sorted by the chosen order.
 //   2. "Al betaald?" context action — jumps to the manage surface to confirm
 //      (Vandaag stays READ-ONLY; the write happens where the logic already lives).
 //   3. One clear primary verb per direction ("Betalen" / "Herinnering") instead
 //      of the ambiguous "Bekijk / betaal".
 //   4. "Negeren" reads as "verbergen voor vandaag" (hide), not "delete".
 //   5. Section header shows a count ("1 factuur") for a sense of control.
-//   6. Long-overdue items are grouped separately from soon-due ones.
 //
 // Payment state is `status` ONLY (never payment_date/marked_paid_at). Direction-
 // aware navigation: incoming → IncomingManageClient (?focus=), outgoing → invoice
@@ -29,6 +28,10 @@ import { useRouter } from "next/navigation";
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
 import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
 import { rowMatchesQuery } from "@/lib/search";
+// [SORT] Same ordering module as Inkoopfacturen (IncomingManageClient) — one
+// implementation, no drifting copies. Vandaag offers the subset of keys whose
+// columns it actually selects (no created_at / payment_date here).
+import { sortRows, SORTS, type SortKey } from "@/lib/invoice-sort";
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -36,15 +39,16 @@ const M3 = {
   primary: "#1A73E8",
   onSurface: "#202124",
   onSurfaceVariant: "#5F6368",
-  warning: "#E37400", // soon-due / long-open (calm amber)
+  warning: "#E37400", // soon-due (calm amber)
   error: "#B3261E", // recently overdue (real attention)
   hairline: "#E0E0E0",
   hover: "#F1F3F4",
 };
 
-// Long-overdue threshold (days). Past this, we drop the alarming day-counter in
-// favour of a calm "al lang open" — see clarity rationale above.
-const LONG_OPEN_DAYS = 30;
+// [OWNER-DECISION] The old 30-day "Al langer open" tier (separate calm-amber
+// group rendered BELOW the active items) is gone: with real day counts on the
+// cards it read as a sorting bug — "36 dagen te laat" listed after "10 dagen
+// te laat". One flat list in the chosen order, and every overdue row is red.
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -97,24 +101,17 @@ function daysUntilDue(dueIso: string): number {
   return dayNumberFromIso(dueIso) - todayDayNumber();
 }
 
-function isLongOpen(dueIso: string): boolean {
-  return daysUntilDue(dueIso) <= -LONG_OPEN_DAYS;
-}
-
 // Urgency tier drives BOTH the label and the colour, so they can never disagree.
-type Urgency = "long-open" | "overdue" | "soon";
+type Urgency = "overdue" | "soon";
 
 function urgencyOf(dueIso: string): Urgency {
-  const d = daysUntilDue(dueIso);
-  if (d <= -LONG_OPEN_DAYS) return "long-open";
-  if (d < 0) return "overdue";
-  return "soon";
+  return daysUntilDue(dueIso) < 0 ? "overdue" : "soon";
 }
 
-// Human Dutch due-date status. Long-overdue is deliberately calm (no big number).
+// Human Dutch due-date status. [OWNER-DECISION] Every overdue invoice shows the
+// real day count ("36 dagen te laat") — no calm tier, no grouping.
 function dueLabel(dueIso: string): string {
   const d = daysUntilDue(dueIso);
-  if (d <= -LONG_OPEN_DAYS) return "Al lang open";
   if (d < 0) {
     const late = Math.abs(d);
     return late === 1 ? "1 dag te laat" : `${late} dagen te laat`;
@@ -124,11 +121,21 @@ function dueLabel(dueIso: string): string {
   return `Vervalt over ${d} dagen`;
 }
 
-// Calm amber for soon-due AND long-open; saved red only for the recently overdue
-// window (1–29 days) where a nudge is genuinely useful, not alarming.
+// Red for ANY overdue invoice, amber for soon-due. (The old scheme colored a
+// 30+-days-late row CALMER than a 10-days-late one — indefensible once both
+// sit in one flat list showing real day counts.)
 function accentOf(dueIso: string): string {
   return urgencyOf(dueIso) === "overdue" ? M3.error : M3.warning;
 }
+
+// [SORT] Keys Vandaag can honour: the page's SELECT has no created_at and its
+// rows are unpaid (payment_date is meaningless), so 'added_desc'/'paydate_desc'
+// are excluded. Default 'due_asc' = the page's historical order (oldest due
+// first), so nothing changes until the owner picks another order.
+const VANDAAG_SORT_KEYS: SortKey[] = [
+  "due_asc", "invdate_desc", "invdate_asc", "amount_desc", "amount_asc", "vendor_asc",
+];
+const VANDAAG_SORTS = SORTS.filter((s) => VANDAAG_SORT_KEYS.includes(s.id));
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -167,13 +174,17 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   const confirmPaid = (id: string) =>
     router.push(`/dashboard/incoming/manage?focus=${id}&action=pay`);
 
+  // [SORT] Owner-chosen order, applied inside each list.
+  const [sortBy, setSortBy] = useState<SortKey>("due_asc");
+  const [showSortMenu, setShowSortMenu] = useState(false);
+
   const visiblePayable = useMemo(
-    () => filterWindow(payable, dismissed),
-    [payable, dismissed]
+    () => filterWindow(payable, dismissed, sortBy),
+    [payable, dismissed, sortBy]
   );
   const visibleRemind = useMemo(
-    () => filterWindow(remind, dismissed),
-    [remind, dismissed]
+    () => filterWindow(remind, dismissed, sortBy),
+    [remind, dismissed, sortBy]
   );
 
   const nothingToDo =
@@ -190,8 +201,9 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
     rowMatchesQuery(rawV, [inv.client_name, inv.invoice_number], [inv.total_inc_btw]);
   const searching = rawV.length > 0;
   const canSearch = payable.length > 0 || remind.length > 0;
-  const displayPayable = searching ? payable.filter((i) => !dismissed.has(i.id) && matchV(i)) : visiblePayable;
-  const displayRemind = searching ? remind.filter((i) => !dismissed.has(i.id) && matchV(i)) : visibleRemind;
+  // [SORT] Search results honour the chosen order too.
+  const displayPayable = searching ? sortRows(payable.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visiblePayable;
+  const displayRemind = searching ? sortRows(remind.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visibleRemind;
   const noneShown = displayPayable.length === 0 && displayRemind.length === 0;
 
   return (
@@ -291,6 +303,44 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         </div>
       )}
 
+      {/* [SORT] Sorteren op — same options/module as Inkoopfacturen. Inline SVG
+          icon (never the icon font, which renders as raw text when it fails to
+          load). Default 'due_asc' keeps the page's historical order. */}
+      {!loadFailed && canSearch && (
+        <div style={{ position: "relative", marginBottom: 16 }}>
+          <button
+            onClick={() => setShowSortMenu((p) => !p)}
+            title="Sorteren"
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, width: "100%", padding: "10px 14px", background: "#F1F3F4", borderRadius: 12, border: "none", cursor: "pointer", fontFamily: "inherit" }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#49454F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M7 4v13M7 17l-3-3M7 17l3-3" /><path d="M17 20V7M17 7l-3 3M17 7l3 3" />
+              </svg>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#49454F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {VANDAAG_SORTS.find((s) => s.id === sortBy)?.label ?? "Sorteren"}
+              </span>
+            </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#49454F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: showSortMenu ? "rotate(180deg)" : "none" }}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          {showSortMenu && (
+            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100, background: "#fff", borderRadius: 12, marginTop: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+              {VANDAAG_SORTS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => { setSortBy(s.id); setShowSortMenu(false); }}
+                  style={{ display: "block", width: "100%", padding: "12px 16px", textAlign: "left", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? "#D3E3FD" : "#fff", color: sortBy === s.id ? "#041E49" : M3.onSurface, borderBottom: "0.5px solid #F1F3F4" }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {loadFailed ? (
         <LoadError onRetry={() => router.refresh()} />
       ) : searching ? (
@@ -333,24 +383,23 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
 }
 
 // Keep only invoices due within 3 days (or overdue) and not session-dismissed,
-// oldest-due first. Defensive null-guard on due_date (page.tsx excludes nulls).
+// in the owner-chosen order (default: oldest-due first — the page's historical
+// behaviour). Defensive null-guard on due_date (page.tsx excludes nulls).
 function filterWindow(
   invoices: VandaagInvoice[],
-  dismissed: Set<string>
+  dismissed: Set<string>,
+  sortBy: SortKey
 ): VandaagInvoice[] {
-  return invoices
-    .filter((inv) => inv.due_date && !dismissed.has(inv.id))
-    .filter((inv) => daysUntilDue(inv.due_date as string) <= 3)
-    .sort(
-      (a, b) =>
-        dayNumberFromIso(a.due_date as string) -
-        dayNumberFromIso(b.due_date as string)
-    );
+  return sortRows(
+    invoices
+      .filter((inv) => inv.due_date && !dismissed.has(inv.id))
+      .filter((inv) => daysUntilDue(inv.due_date as string) <= 3),
+    sortBy
+  );
 }
 
 // ─── List section ─────────────────────────────────────────────────────────────
-// [TODAY-UX-CLARITY] header shows a count; long-open items are grouped under a
-// calm sub-heading, separated from the soon/recently-due items.
+// [TODAY-UX-CLARITY] header shows a count; one flat list in the chosen order.
 
 function ListSection({
   title,
@@ -370,9 +419,8 @@ function ListSection({
 }) {
   if (invoices.length === 0) return null;
 
-  // Split: active (soon + recently overdue) vs long-open (calm, grouped below).
-  const active = invoices.filter((inv) => !isLongOpen(inv.due_date as string));
-  const longOpen = invoices.filter((inv) => isLongOpen(inv.due_date as string));
+  // One flat list in the chosen sort order — no "Al langer open" split (it made
+  // a 36-days-late invoice render BELOW a 10-days-late one: looked like a bug).
 
   const countLabel =
     invoices.length === 1 ? "1 factuur" : `${invoices.length} facturen`;
@@ -417,7 +465,7 @@ function ListSection({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {active.map((inv) => (
+        {invoices.map((inv) => (
           <InvoiceCard
             key={inv.id}
             invoice={inv}
@@ -427,34 +475,6 @@ function ListSection({
           />
         ))}
       </div>
-
-      {longOpen.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: M3.onSurfaceVariant,
-              textTransform: "uppercase",
-              letterSpacing: "0.5px",
-              margin: "0 0 8px",
-            }}
-          >
-            Al langer open
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {longOpen.map((inv) => (
-              <InvoiceCard
-                key={inv.id}
-                invoice={inv}
-                onOpen={onOpen}
-                onConfirmPaid={onConfirmPaid}
-                onDismiss={onDismiss}
-              />
-            ))}
-          </div>
-        </div>
-      )}
     </section>
   );
 }
@@ -484,10 +504,12 @@ function InvoiceCard({
   // betaald?" — only "Bekijken". (This is the same rule the home snapshot uses.)
   const isCredit = isIncoming && (invoice.total_inc_btw ?? 0) < 0;
 
-  // One clear verb per direction (clarity #3). Outgoing says "Bekijken" — NOT
-  // "Herinnering sturen" — because the button currently routes to the invoice
-  // page; there is no reminder-send logic yet, so the label must not promise an
-  // action we don't perform. When a real reminder flow is built, change this.
+  // One clear verb per direction (clarity #3). Outgoing says "Bekijken" — the
+  // button routes to the invoice page. Automatic payment reminders now run on
+  // their own (opt-in in Instellingen → the /api/cron/reminders schedule); this
+  // list stays a calm overview and deliberately does NOT expose an ad-hoc one-tap
+  // send (the schedule is tier-based; per-invoice pause/history lives on the
+  // invoice page).
   const primaryLabel = isCredit ? "Bekijken" : isIncoming ? "Betalen" : "Bekijken";
 
   return (

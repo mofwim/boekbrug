@@ -203,6 +203,28 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             the client-by-client workflow). Route/page untouched — reachable via
             werkplek. werkplek now full-width. */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+          {/* [WERKBOARD] Daily driver first — the unified BTW-deadline + klaar-status
+              board. Same card shape as werkplek; a coloured accent marks it as the
+              primary daily destination. */}
+          <button
+            onClick={() => router.push('/dashboard/accountant/agenda')}
+            style={{
+              backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
+              borderLeft: '4px solid #1A73E8',
+              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+              cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
+              minHeight: 56,
+            }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#FFFFFF')}
+          >
+            <span style={{ fontSize: 20 }}>🗓️</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Aangifte &amp; status</p>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>BTW-deadline, klaar-status en herinneren</p>
+            </div>
+            <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
+          </button>
           <button
             onClick={() => router.push('/dashboard/accountant/werkplek')}
             style={{

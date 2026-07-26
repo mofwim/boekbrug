@@ -14,11 +14,12 @@ import { resolveSupplierForImport } from "@/lib/supplier-registry";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
-import { findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
+import { deriveDueDate, findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
 import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { escapeLikeValue } from "@/lib/sanitize";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -138,11 +139,26 @@ export async function POST(req: NextRequest) {
 
   // [BOEK-011] Claude verifies the actual file
   // [RECEIVER-IDENTITY] pass our own KVK/BTW/IBAN so the extractor never returns us as the vendor.
-  const verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName, {
-    receiverKvk: me?.kvk_number || null,
-    receiverBtw: me?.btw_number || null,
-    receiverIban: me?.iban || null,
-  });
+  // [AI-CONFIG-SAFE] throwOnTransient: a config/auth/5xx/network failure must NOT be
+  // swallowed into the confidence-0 fallback (is_invoice:false) — that answered a
+  // confident "Dit lijkt geen factuur te zijn" during an AI outage. A true infra
+  // failure now returns an honest 503 retry message; nothing has been stored yet.
+  // (Same fix /api/intake already carries.)
+  let verification: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>;
+  try {
+    verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName, {
+      receiverKvk: me?.kvk_number || null,
+      receiverBtw: me?.btw_number || null,
+      receiverIban: me?.iban || null,
+      throwOnTransient: true,
+    });
+  } catch (aiErr) {
+    console.error("[AI-CONFIG-SAFE] upload AI read failed — filing nothing, asking for retry", aiErr);
+    return NextResponse.json(
+      { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
+      { status: 503 }
+    );
+  }
 
   if (!verification.is_invoice) {
     return NextResponse.json(
@@ -176,7 +192,7 @@ export async function POST(req: NextRequest) {
         .eq("receiver_id", user.id)
         .eq("direction", "incoming")
         .eq("total_inc_btw", q.total);
-      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", q.vendor);
+      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor));
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
       // [DEDUP-NUMBER-NORM] Compare the number whitespace-normalized in code (an exact .eq
       // missed "26 / 3958" vs "26/3958"); the candidate set is already pinned by total(+date).
@@ -349,6 +365,11 @@ export async function POST(req: NextRequest) {
       supplier_id: uploadedSupplier?.id ?? null,
       client_name: uploadedSupplier?.name || verification.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
+      // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null (honest).
+      // This endpoint never set due_date at all, so invoices ingested here had no
+      // payment term even when printed on the invoice — absent from Vandaag's
+      // date-sorted "Te betalen" list. Same derivation as intake + email-sync.
+      due_date: deriveDueDate(invoiceDate, verification.due_date ?? null, verification.payment_term_days ?? null),
       invoice_number: verification.invoice_number || `UPLOAD-${Date.now()}`,
       total_ex_btw: verification.total_ex_btw ?? 0,
       btw_amount: verification.btw_amount ?? 0,

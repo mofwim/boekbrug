@@ -26,13 +26,55 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     // Invoices settled in cash, BOTH directions: an incoming (purchase) paid in cash (drawer ↓)
     // AND an outgoing (sales) invoice paid in cash (drawer ↑). Owner-scoped via the RLS .or so a
     // cash sale finally reaches the drawer instead of being invisible. Both stay P&L-neutral.
+    // [CASH-PARTIAL] amount_paid = the portion already settled (instalments). For LEGACY rows
+    // without instalment records that still means "paid by bank", and the cash settlement books
+    // the REMAINDER — see settlementGross.
+    //
+    // [MANUAL-PARTIAL-PAY] Two changes here, both required by manual cash instalments:
+    //  1. An invoice can hold cash while still OPEN (paid €200 of €500 from the till). It is not
+    //     status 'paid', yet the drawer really moved — so the eligible set is "settled in cash"
+    //     (status paid + method kas) UNION "has a kas instalment", not status alone.
+    //  2. The cash amount comes from those instalment rows (method='kas'), not from
+    //     gross − amount_paid: amount_paid now includes cash too, so the old formula would
+    //     compute €0 for a fully cash-paid invoice and the reconciler would DELETE its entry.
+    const { data: kasLinkRows } = await supabase
+      .from("bank_tx_invoices")
+      .select("invoice_id, amount_applied, paid_on")
+      .eq("user_id", userId)
+      .eq("method", "kas")
+      .is("transaction_id", null);
+    const cashByInvoice = new Map<string, number>();
+    const lastCashDate = new Map<string, string>();
+    for (const l of (kasLinkRows ?? []) as Array<{ invoice_id: string; amount_applied: number | null; paid_on: string | null }>) {
+      if (!l.invoice_id) continue;
+      cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + Math.abs(Number(l.amount_applied) || 0));
+      // The drawer entry is dated by the LAST cash instalment — the day the till last moved.
+      if (l.paid_on && (!lastCashDate.get(l.invoice_id) || l.paid_on > lastCashDate.get(l.invoice_id)!)) {
+        lastCashDate.set(l.invoice_id, l.paid_on.slice(0, 10));
+      }
+    }
+
+    const baseColumns = "id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
     const { data: invRows, error: invErr } = await supabase
       .from("invoices")
-      .select("id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name")
+      .select(baseColumns)
       .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
       .eq("status", "paid")
       .eq("payment_method", "kas");
     if (invErr) return;
+
+    // Invoices that hold cash but are not (yet) fully paid — invisible to the query above.
+    const knownIds = new Set((invRows ?? []).map((r) => (r as { id: string }).id));
+    const openCashIds = [...cashByInvoice.keys()].filter((id) => !knownIds.has(id));
+    let openCashRows: unknown[] = [];
+    if (openCashIds.length > 0) {
+      const { data } = await supabase
+        .from("invoices")
+        .select(baseColumns)
+        .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
+        .in("id", openCashIds);
+      openCashRows = data ?? [];
+    }
 
     // Existing invoice-linked settlement entries (the ones this reconcile owns). We read amount +
     // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
@@ -44,10 +86,17 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
       .not("invoice_id", "is", null);
     if (entryErr) return;
 
-    const paid = (invRows ?? []).map((r) => ({
-      ...r,
-      direction: r.direction === "outgoing" ? "outgoing" : "incoming",
-    })) as SettleableInvoice[];
+    const paid = ([...(invRows ?? []), ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
+      .map((r) => ({
+        ...r,
+        direction: r.direction === "outgoing" ? "outgoing" : "incoming",
+        // [MANUAL-PARTIAL-PAY] Authoritative cash portion (undefined → settlementGross falls
+        // back to the legacy gross − amount_paid inference for pre-instalment invoices).
+        cash_paid: cashByInvoice.has(r.id) ? cashByInvoice.get(r.id) : undefined,
+        // Date the drawer entry by the last cash instalment when we have one; the invoice's
+        // payment_date can be the day a BANK instalment landed, which is a different day.
+        payment_date: lastCashDate.get(r.id) ?? r.payment_date ?? null,
+      })) as SettleableInvoice[];
     const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
     const { toCreate, toUpdate, toDeleteIds } = computeCashSettlementSync(paid, existing);
 

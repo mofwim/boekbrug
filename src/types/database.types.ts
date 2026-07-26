@@ -210,26 +210,35 @@ export type Database = {
       bank_tx_invoices: {
         Row: {
           amount_applied: number | null
+          client_key: string | null
           created_at: string | null
           id: string
           invoice_id: string
-          transaction_id: string
+          method: string | null
+          paid_on: string | null
+          transaction_id: string | null
           user_id: string
         }
         Insert: {
           amount_applied?: number | null
+          client_key?: string | null
           created_at?: string | null
           id?: string
           invoice_id: string
-          transaction_id: string
+          method?: string | null
+          paid_on?: string | null
+          transaction_id?: string | null
           user_id: string
         }
         Update: {
           amount_applied?: number | null
+          client_key?: string | null
           created_at?: string | null
           id?: string
           invoice_id?: string
-          transaction_id?: string
+          method?: string | null
+          paid_on?: string | null
+          transaction_id?: string | null
           user_id?: string
         }
         Relationships: []
@@ -1092,6 +1101,7 @@ export type Database = {
           payment_reference: string | null
           pdf_url: string | null
           receiver_id: string | null
+          reminders_paused: boolean
           replaced_by_number: string | null
           search_vector: unknown
           sender_id: string | null
@@ -1137,6 +1147,7 @@ export type Database = {
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
+          reminders_paused?: boolean
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
@@ -1182,6 +1193,7 @@ export type Database = {
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
+          reminders_paused?: boolean
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
@@ -1234,6 +1246,51 @@ export type Database = {
           {
             foreignKeyName: "invoices_sender_id_fkey"
             columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoice_reminders: {
+        Row: {
+          day_offset: number
+          email_to: string | null
+          id: string
+          invoice_id: string
+          sent_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          day_offset: number
+          email_to?: string | null
+          id?: string
+          invoice_id: string
+          sent_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          day_offset?: number
+          email_to?: string | null
+          id?: string
+          invoice_id?: string
+          sent_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_reminders_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_reminders_user_id_fkey"
+            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1323,6 +1380,81 @@ export type Database = {
           },
         ]
       }
+      pay_bundle_invoices: {
+        Row: {
+          bundle_id: string
+          created_at: string | null
+          id: string
+          invoice_id: string
+          user_id: string
+        }
+        Insert: {
+          bundle_id: string
+          created_at?: string | null
+          id?: string
+          invoice_id: string
+          user_id: string
+        }
+        Update: {
+          bundle_id?: string
+          created_at?: string | null
+          id?: string
+          invoice_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pay_bundle_invoices_bundle_id_fkey"
+            columns: ["bundle_id"]
+            isOneToOne: false
+            referencedRelation: "pay_bundles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pay_bundle_invoices_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pay_bundle_invoices_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pay_bundles: {
+        Row: {
+          created_at: string | null
+          id: string
+          token: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          token?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          token?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pay_bundles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           address: string | null
@@ -1347,6 +1479,8 @@ export type Database = {
           postal_code: string | null
           preferred_language: string | null
           referral_accountant_id: string | null
+          reminder_offsets: number[]
+          reminders_enabled: boolean
           role: string | null
           subscription_plan: string | null
           subscription_stripe_id: string | null
@@ -1374,6 +1508,8 @@ export type Database = {
           postal_code?: string | null
           preferred_language?: string | null
           referral_accountant_id?: string | null
+          reminder_offsets?: number[]
+          reminders_enabled?: boolean
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
@@ -1401,6 +1537,8 @@ export type Database = {
           postal_code?: string | null
           preferred_language?: string | null
           referral_accountant_id?: string | null
+          reminder_offsets?: number[]
+          reminders_enabled?: boolean
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
@@ -1548,6 +1686,26 @@ export type Database = {
           amount_paid: number
           total: number
           is_paid: boolean
+        }[]
+      }
+      apply_manual_payment: {
+        Args: {
+          p_user_id: string
+          p_invoice_id: string
+          /** null = settle the whole remaining balance (the empty "Betaald bedrag" field) */
+          p_amount: number | null
+          p_pay_date: string
+          p_method: string
+          p_payable_statuses: string[]
+          p_client_key: string | null
+        }
+        Returns: {
+          applied: number
+          amount_paid: number
+          total: number
+          is_paid: boolean
+          /** true = this client_key was already booked; nothing was written */
+          duplicate: boolean
         }[]
       }
       book_bank_batch: {

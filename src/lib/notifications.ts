@@ -7,6 +7,7 @@
 // createServerSupabaseClient(). Server-only — never import in a client component.
 
 import { createPipelineClient } from './supabase-pipeline'
+import { sendPushToUser } from './push'
 
 type NotifType = 'invoice' | 'payment' | 'message' | 'invite' | 'status'
 
@@ -35,4 +36,10 @@ export async function createNotification({
     read: false,
     link: link ?? null,
   })
+
+  // [PUSH] Also deliver to the user's devices as a system notification. Strictly
+  // best-effort: sendPushToUser never throws and no-ops when push is unconfigured
+  // or the user has no subscribed device — the in-app row above is the source of
+  // truth and must never be held hostage by a push delivery.
+  await sendPushToUser(userId, { title, body, type, link })
 }

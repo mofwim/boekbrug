@@ -48,6 +48,10 @@ export interface AutoAdvanceSignals {
   // [AUTO-ADVANCE] The owner overrode a duplicate warning ("toch toevoegen"). Adding-anyway is
   // consent to ADD, never to skip verification — such a row must never auto-book.
   forcedDuplicate?: boolean;
+  // [BTW-GATE] The read BTW rate (0 | 9 | 21 | null). Auto-booking a materially-priced invoice whose
+  // btw_amount is 0 silently zeroes the voorbelasting; we only allow a zero BTW to auto-book when the
+  // read EXPLICITLY says 0% (a genuine vrijgesteld / 0-rate invoice), never on a null/absent rate.
+  btwRate?: number | null;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -80,6 +84,17 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // (that path bypasses the total_inc_btw-keyed dedup gate).
   if (!(typeof s.totalIncBtw === "number" && Number.isFinite(s.totalIncBtw) && Math.abs(s.totalIncBtw) >= 0.005)) {
     return { advance: false, reason: "no_reliable_total" };
+  }
+
+  // [BTW-GATE] Never auto-book a materially-priced invoice with ZERO btw unless it is EXPLICITLY a
+  // 0%-rate invoice. A 9%/21% invoice misread as ex==incl (btw 0) passes the arithmetic gate
+  // (ex + 0 = incl) and the health "clean" check — and would auto-book with its voorbelasting
+  // silently zeroed, the one number this app exists to protect, behind an "automatisch geverifieerd"
+  // tag that reduces scrutiny. Fail-closed to human review; a genuine 0%/vrijgesteld invoice
+  // (btwRate === 0) still auto-advances. Strictly stricter — this can only HOLD, never wrongly book.
+  const btw = s.health?.btw_amount;
+  if (typeof btw === "number" && Math.abs(btw) < 0.005 && s.btwRate !== 0) {
+    return { advance: false, reason: "zero_btw_not_explicit_zero_rate" };
   }
 
   // Overall confidence — FAIL-CLOSED: must be present AND clear the floor.

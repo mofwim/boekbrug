@@ -68,12 +68,45 @@ function amountConditions(q: string): string[] {
   ];
 }
 
+// Amount matching for an arbitrary signed numeric column (bank_transactions.amount is
+// SIGNED — a debit is stored negative — and cash_entries.amount is positive). Same
+// money-shaped gate as amountConditions, but emits both the positive and the negative
+// variants so "45" finds a "-45.50" bank debit as well as a "45.50" credit. Prefix/exact
+// (never a leading %) so "45" never spuriously matches "450".
+function amountConditionsCol(col: string, q: string): string[] {
+  const trimmed = q.trim().replace(/[\s€]/g, "");
+  if (!/\d/.test(trimmed) || !/^[\d.,]+$/.test(trimmed)) return [];
+  const n = parseAmountNL(trimmed);
+  if (!(n > 0) || n >= 1e15) return [];
+  const intPart = Math.trunc(n).toString();
+  return [
+    `${col}::text.ilike.${intPart}`,     // "45", "45.50"
+    `${col}::text.ilike.${intPart}.%`,
+    `${col}::text.ilike.-${intPart}`,    // "-45", "-45.50" (bank debit)
+    `${col}::text.ilike.-${intPart}.%`,
+  ];
+}
+
 // Builds Supabase .or() string: fields × terms cartesian product (terms pre-sanitised)
 function buildOr(fields: string[], terms: string[]): string {
   return fields
     .flatMap((f) => terms.map((t) => `${f}.ilike.%${t}%`))
     .join(",");
 }
+
+// Loose structural shape shared by all search-hit rows (invoices, documents,
+// profiles, clients) — fields vary per source; absent keys read undefined.
+type Hit = { id: string; created_at?: string | null } & Partial<
+  Record<
+    | "invoice_number" | "client_name" | "client_email" | "status" | "direction"
+    | "file_name" | "ai_doc_type" | "doc_type" | "notes" | "period" | "folder_id"
+    | "full_name" | "company_name" | "email" | "kvk_number" | "name" | "city"
+    // bank_transactions / cash_entries
+    | "counterpart_name" | "counterpart_iban" | "reference" | "description"
+    | "category" | "date" | "entry_date",
+    string | null
+  >
+> & { total_inc_btw?: number | null; year?: number | null; amount?: number | null };
 
 function dedup(arr: SearchResult[]): SearchResult[] {
   const seen = new Set<string>();
@@ -160,10 +193,10 @@ export async function GET(req: NextRequest) {
   // rows per group than the header dropdown's compact preview (8/4/5).
   const full = req.nextUrl.searchParams.get("full") === "1";
   const CAP = full
-    ? { invoices: 30, documents: 20, clients: 20 }
-    : { invoices: 8, documents: 4, clients: 5 };
+    ? { invoices: 30, documents: 20, clients: 20, bank: 20, cash: 20 }
+    : { invoices: 8, documents: 4, clients: 5, bank: 6, cash: 6 };
 
-  const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [] };
+  const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [], bankTransactions: [], cashEntries: [] };
 
   if (q.length < 2) return NextResponse.json(EMPTY);
 
@@ -219,7 +252,7 @@ export async function GET(req: NextRequest) {
   const idList = senderIds.join(",");
 
   // Parallel queries across all sources
-  const [invoicesRes, docsRes, clientsRes] = await Promise.all([
+  const [invoicesRes, docsRes, clientsRes, bankRes, cashRes] = await Promise.all([
 
     // Source 1: invoices — sender OR receiver (received/incoming invoices included)
     target === "all" || target === "invoices"
@@ -241,7 +274,7 @@ export async function GET(req: NextRequest) {
           )
           .order("created_at", { ascending: false })
           .limit(CAP.invoices)
-      : Promise.resolve({ data: [] as any[] }),
+      : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 2: documents — own, non-trashed
     target === "all" || target === "documents"
@@ -253,7 +286,7 @@ export async function GET(req: NextRequest) {
           .or(buildOr(["file_name", "doc_type", "ai_doc_type", "notes"], terms))
           .order("created_at", { ascending: false })
           .limit(CAP.documents)
-      : Promise.resolve({ data: [] as any[] }),
+      : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 3: clients — accountant: linked profiles; zzp'er: own clients registry
     target === "all" || target === "clients"
@@ -265,14 +298,52 @@ export async function GET(req: NextRequest) {
               .in("id", senderIds.filter((id) => id !== user.id))
               .or(buildOr(["full_name", "company_name", "email", "kvk_number"], terms))
               .limit(CAP.clients)
-          : Promise.resolve({ data: [] as any[] })
+          : Promise.resolve({ data: [] as Hit[] })
         : supabase
             .from("clients")
             .select("id, name, email, kvk_number, city, created_at")
             .eq("user_id", user.id)
             .or(buildOr(["name", "email", "kvk_number", "city"], terms))
             .limit(CAP.clients)
-      : Promise.resolve({ data: [] as any[] }),
+      : Promise.resolve({ data: [] as Hit[] }),
+
+    // Source 4: bank transactions — own rows. Amount is SIGNED (debit negative), so the
+    // amount conditions emit both signs. RLS also scopes to the owner (defence in depth).
+    target === "all" || target === "bank"
+      ? supabase
+          .from("bank_transactions")
+          .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, status, created_at")
+          .eq("user_id", user.id)
+          .or(
+            [
+              buildOr(["counterpart_name", "description", "counterpart_iban", "reference"], terms),
+              ...amountConditionsCol("amount", q),
+            ]
+              .filter(Boolean)
+              .join(",")
+          )
+          .order("date", { ascending: false })
+          .limit(CAP.bank)
+      : Promise.resolve({ data: [] as Hit[] }),
+
+    // Source 5: cash entries (kasboek) — own rows. category is a key (omzet/kosten/…) so a
+    // "omzet" query still matches; description is the free-text line.
+    target === "all" || target === "kas"
+      ? supabase
+          .from("cash_entries")
+          .select("id, entry_date, amount, category, description, direction, created_at")
+          .eq("user_id", user.id)
+          .or(
+            [
+              buildOr(["description", "category"], terms),
+              ...amountConditionsCol("amount", q),
+            ]
+              .filter(Boolean)
+              .join(",")
+          )
+          .order("entry_date", { ascending: false })
+          .limit(CAP.cash)
+      : Promise.resolve({ data: [] as Hit[] }),
   ]);
 
   // ── [SEARCH] Fuzzy augmentation (typo tolerance) when results are sparse ──────
@@ -283,11 +354,11 @@ export async function GET(req: NextRequest) {
   type RpcCaller = {
     rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
   };
-  const safeRpc = async (fn: string, args: Record<string, unknown>): Promise<any[]> => {
+  const safeRpc = async (fn: string, args: Record<string, unknown>): Promise<Hit[]> => {
     try {
       const { data, error } = await (supabase as unknown as RpcCaller).rpc(fn, args);
       if (error) return [];
-      return (data ?? []) as any[];
+      return (data ?? []) as Hit[];
     } catch {
       return [];
     }
@@ -299,53 +370,62 @@ export async function GET(req: NextRequest) {
   // non-existent number would surface an unrelated invoice. Requires a letter.
   const nameLike = /\p{L}/u.test(q);
 
-  let invoiceRows: any[] = invoicesRes.data ?? [];
+  let invoiceRows: Hit[] = (invoicesRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "invoices") && invoiceRows.length < 3) {
     // RLS scopes the fuzzy rows to what this user may already see.
     invoiceRows = [...invoiceRows, ...(await safeRpc("search_invoices_fuzzy", { q }))];
   }
 
-  let clientRows: any[] = clientsRes.data ?? [];
+  let clientRows: Hit[] = (clientsRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "clients") && role !== "accountant" && clientRows.length < 3) {
     clientRows = [...clientRows, ...(await safeRpc("search_clients_fuzzy", { q }))];
   }
 
-  let docRows: any[] = docsRes.data ?? [];
+  let docRows: Hit[] = (docsRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "documents") && docRows.length < 3) {
     docRows = [...docRows, ...(await safeRpc("search_documents_fuzzy", { q }))];
   }
 
   const invoices: SearchResult[] = dedup(
     rankRows(invoiceRows, q, (inv) => [inv.invoice_number, inv.client_name, inv.client_email])
-      .map((inv: any) => ({
+      .map((inv) => ({
         type: "invoice" as const,
         id: inv.id,
         title: inv.invoice_number ?? "—",
         subtitle: inv.client_name ?? "",
         meta: inv.total_inc_btw != null ? fmt(inv.total_inc_btw) : undefined,
-        status: inv.status,
-        // Received (incoming) invoices live on /dashboard/incoming, not /facturen
-        // (which lists only the user's own sent invoices). Both consume ?focus=.
+        status: inv.status ?? undefined,
+        // [SEARCH-LANDING] Route each hit to a surface that can actually SHOW it:
+        //  · incoming received/paid → /incoming/manage?focus= (it fetches the
+        //    focused row by id when outside its window — always lands). The old
+        //    /incoming?focus= target opened the verify tab, which neither
+        //    contains confirmed rows nor switches tabs → the hit was invisible.
+        //  · other incoming (processing/archived/…) → /incoming?focus= (queue).
+        //  · outgoing → the invoice DETAIL page — renders any id, unlike
+        //    /facturen?focus= which only expands rows in its loaded pages
+        //    (a hit older than ~20 rows silently showed nothing).
         href: inv.direction === "incoming"
-          ? `/dashboard/incoming?focus=${inv.id}`
-          : `/dashboard/facturen?focus=${inv.id}`,
-        createdAt: inv.created_at,
+          ? (inv.status === "received" || inv.status === "paid"
+              ? `/dashboard/incoming/manage?focus=${inv.id}`
+              : `/dashboard/incoming?focus=${inv.id}`)
+          : `/dashboard/invoice/${inv.id}`,
+        createdAt: inv.created_at ?? "",
       }))
   ).slice(0, CAP.invoices);
 
   const documents: SearchResult[] = dedup(
     rankRows(docRows, q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
-      .map((doc: any) => ({
+      .map((doc) => ({
         type: "document" as const,
         id: doc.id,
-        title: doc.file_name,
+        title: doc.file_name ?? "—",
         subtitle: doc.ai_doc_type ?? doc.doc_type ?? "document",
         meta: [doc.period, doc.year].filter(Boolean).join(" · ") || undefined,
         // Bestanden reads ?folder=&focus= (root docs carry no folder → focus only)
         href: doc.folder_id
           ? `/dashboard/bestanden?folder=${doc.folder_id}&focus=${doc.id}`
           : `/dashboard/bestanden?focus=${doc.id}`,
-        createdAt: doc.created_at,
+        createdAt: doc.created_at ?? "",
       }))
   ).slice(0, CAP.documents);
 
@@ -354,7 +434,7 @@ export async function GET(req: NextRequest) {
       role === "accountant"
         ? [row.full_name, row.company_name, row.email, row.kvk_number]
         : [row.name, row.email, row.kvk_number, row.city]
-    ).map((row: any) =>
+    ).map((row) =>
       role === "accountant"
         ? {
             type: "client" as const,
@@ -365,7 +445,7 @@ export async function GET(req: NextRequest) {
             // Accountant clients are linked zzp'er PROFILES → the accountant views
             // them at /dashboard/clients/{id}, NOT the owner's own /dashboard/klanten.
             href: `/dashboard/clients/${row.id}`,
-            createdAt: row.created_at,
+            createdAt: row.created_at ?? "",
           }
         : {
             type: "client" as const,
@@ -374,10 +454,54 @@ export async function GET(req: NextRequest) {
             subtitle: row.email ?? row.city ?? "",
             meta: row.kvk_number ? `KVK ${row.kvk_number}` : undefined,
             href: `/dashboard/klanten?focus=${row.id}`,
-            createdAt: row.created_at,
+            createdAt: row.created_at ?? "",
           }
     )
   ).slice(0, CAP.clients);
 
-  return NextResponse.json({ invoices, documents, clients });
+  // ── Bankmutaties ──────────────────────────────────────────────────────────────
+  // Deep-link: seed the bank page's own zoekbalk (?find=) with the most identifying
+  // token so the exact line surfaces there (it filters on counterpart/description/
+  // IBAN/reference/amount). Fall back to the whole-euro amount when a line has no text.
+  const bankRows: Hit[] = (bankRes.data ?? []) as unknown as Hit[];
+  const bankTransactions: SearchResult[] = dedup(
+    rankRows(bankRows, q, (r) => [r.counterpart_name, r.description, r.reference, r.counterpart_iban])
+      .map((r) => {
+        const term =
+          (r.counterpart_name || r.description || r.reference || "").trim() ||
+          (r.amount != null ? String(Math.trunc(Math.abs(r.amount))) : "");
+        return {
+          type: "banktransaction" as const,
+          id: r.id,
+          title: r.counterpart_name || r.description || "Bankmutatie",
+          subtitle:
+            r.counterpart_name && r.description ? r.description : (r.reference ?? r.date ?? ""),
+          meta: r.amount != null ? fmt(r.amount) : undefined,
+          href: `/dashboard/bank${term ? `?find=${encodeURIComponent(term)}` : ""}`,
+          createdAt: r.created_at ?? r.date ?? "",
+        };
+      })
+  ).slice(0, CAP.bank);
+
+  // ── Kasboekingen ──────────────────────────────────────────────────────────────
+  const cashRows: Hit[] = (cashRes.data ?? []) as unknown as Hit[];
+  const cashEntries: SearchResult[] = dedup(
+    rankRows(cashRows, q, (r) => [r.description, r.category])
+      .map((r) => {
+        const term =
+          (r.description || "").trim() ||
+          (r.amount != null ? String(Math.trunc(Math.abs(r.amount))) : "");
+        return {
+          type: "cashentry" as const,
+          id: r.id,
+          title: r.description || r.category || "Kasboeking",
+          subtitle: r.description && r.category ? r.category : (r.entry_date ?? ""),
+          meta: r.amount != null ? fmt(r.amount) : undefined,
+          href: `/dashboard/kas${term ? `?find=${encodeURIComponent(term)}` : ""}`,
+          createdAt: r.created_at ?? r.entry_date ?? "",
+        };
+      })
+  ).slice(0, CAP.cash);
+
+  return NextResponse.json({ invoices, documents, clients, bankTransactions, cashEntries });
 }

@@ -6,6 +6,7 @@
 // Philosophy: AI suggests, the human confirms. 'auto' = pre-filled (still one tap to confirm).
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
@@ -75,6 +76,11 @@ interface Candidate {
   confidence: number
   signals: string[]
   reason: string
+  // [PARTIAL-PAY] Already settled by earlier instalments, and what is therefore still open.
+  // The confirm warning compares the payment against `remaining`, not the full total.
+  // Absent on candidates the batch-reconcile path builds → callers fall back to `amount`.
+  amountPaid?: number
+  remaining?: number
 }
 interface Suggestion {
   transactionId: string
@@ -82,6 +88,8 @@ interface Suggestion {
   amount: number
   description: string
   counterpart: string | null
+  // [SEARCH] tegenrekening IBAN — so the zoekbalk can match a line by IBAN as well.
+  iban?: string | null
   reference: string | null
   outcome: Outcome
   best: Candidate | null
@@ -153,7 +161,16 @@ export default function BankClient() {
   // [BANK-FILTER] Free-text filter for the "Geen factuur" list. With 170+ rows,
   // typing part of a name ("Lidl", "ASM") is faster than scrolling or a long
   // dropdown of every counterpart. Matches counterpart name, reference, or date.
-  const [filterText, setFilterText] = useState('')
+  // [SEARCH-DEEPLINK] Seeded from ?find= (set by the global Cmd+K search when the owner
+  // opens a bank hit) so the exact line surfaces here. Synced on param change — a ?find=
+  // push can arrive while already mounted; local typing never changes the param.
+  const searchParams = useSearchParams()
+  const findParam = searchParams.get('find') ?? ''
+  const [filterText, setFilterText] = useState(findParam)
+  useEffect(() => {
+    const t = setTimeout(() => setFilterText(findParam), 0)
+    return () => clearTimeout(t)
+  }, [findParam])
   const [toast, setToast] = useState<string | null>(null)
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
@@ -448,17 +465,30 @@ export default function BankClient() {
           delete next[txId]
           return next
         })
+        // [PARTIAL-PAY] /api/bank/confirm returns {partial, applied, remaining} when the payment
+        // only settled PART of the invoice. Reporting "gemarkeerd als betaald ✓" then is simply
+        // untrue — the invoice is still open for the rest. Say what actually happened.
+        const isPartial = json?.partial === true
+        const remainingOpen = typeof json?.remaining === 'number' ? json.remaining : null
         showToast(
           json?.warning === 'transaction_link_failed'
             ? 'Factuur betaald (koppeling volgt later).'
-            : allCovered
-              ? 'Bevestigd en gemarkeerd als betaald ✓'
-              : 'Factuur betaald ✓ · nog een factuur open'
+            : isPartial
+              ? (remainingOpen != null
+                  ? `Deelbetaling geboekt · nog ${eur.format(remainingOpen)} open`
+                  : 'Deelbetaling geboekt · factuur blijft openstaan')
+              : allCovered
+                ? 'Bevestigd en gemarkeerd als betaald ✓'
+                : 'Factuur betaald ✓ · nog een factuur open'
         )
         // [BANK-MULTI-CONFIRM] Re-run matching so the just-paid invoice drops out of
         // the candidate list and any remaining open number is re-evaluated. Without
         // this the paid invoice would linger as a still-selectable candidate.
-        if (!allCovered) await runMatch()
+        // [PARTIAL-PAY] Also after a DEELBETALING: the invoice stays in the pool but its
+        // remaining balance just shrank, and scorePair targets that remaining. Without a
+        // re-match, another pending line for the same invoice would still be scored (and
+        // warned about) against the old, larger balance.
+        if (!allCovered || isPartial) await runMatch()
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
       } else if (res.status === 409 && (json?.error === 'invoice_already_paid' || json?.error === 'transaction_already_processed')) {
@@ -878,30 +908,46 @@ export default function BankClient() {
     : bankTab === 'ignored' ? ignoredInQ
     : confirmedList
 
-  // [SEARCH] In-page live filter — works on EVERY bank tab now (not only "Geen factuur"):
-  // searches counterpart / reference / date / amount, accent-folded.
+  // searches counterpart / omschrijving / IBAN / reference / date / amount, accent-folded.
   // [SMART-FILTER] tekst + bedrag via de gedeelde, decimaal-bewuste matcher
-  // (src/lib/search.ts); de datum blijft een losse ISO-substring-match.
-  const rawB = filterText.trim()
+  // (src/lib/search.ts) — lost de hele-euro-bug op ("670,0" bij € 670,09); de datum
+  // blijft een losse ISO-substring. Uitgelicht zodat dezelfde predicate de tab kan
+  // kiezen waar een ?find=-hit in zit.
+  const matchesFilter = (s: Suggestion, raw: string): boolean =>
+    rowMatchesQuery(raw, [s.counterpart, s.description, s.iban, s.reference], [s.amount]) ||
+    (s.date ?? '').toLowerCase().includes(raw.toLowerCase())
   const activeList =
-    rawB
-      ? activeListRaw.filter((s) =>
-          rowMatchesQuery(rawB, [s.counterpart, s.reference], [s.amount]) ||
-          (s.date ?? '').toLowerCase().includes(rawB.toLowerCase())
-        )
+    filterText.trim()
+      ? activeListRaw.filter((s) => matchesFilter(s, filterText.trim()))
       : activeListRaw
+
+  // [SEARCH-DEEPLINK] A ?find= hit (from the global Cmd+K search) can live in ANY tab, but
+  // the page opens on 'confirm'. Without this, seeding the filter would filter the DEFAULT
+  // tab — showing an empty list when the line is actually a matched/ignored/none one. Once,
+  // after the suggestions load, jump to the first tab that actually contains the hit. One-shot
+  // (findJumpedRef) so it never fights the owner's later manual tab clicks or typing.
+  const findJumpedRef = useRef(false)
+  useEffect(() => {
+    if (findJumpedRef.current) return
+    const raw = findParam.trim()
+    if (!raw || !data) return
+    const order: Array<['confirm' | 'none' | 'pin' | 'ignored' | 'done', Suggestion[]]> = [
+      ['confirm', toConfirm], ['none', noMatch], ['pin', posList], ['done', confirmedList], ['ignored', ignoredInQ],
+    ]
+    const here = order.find(([k]) => k === bankTab)
+    if (here && here[1].some((s) => matchesFilter(s, raw))) { findJumpedRef.current = true; return }
+    const target = order.find(([, list]) => list.some((s) => matchesFilter(s, raw)))
+    if (!target) return
+    // Defer the tab switch out of the effect body (setState-in-effect) — same setTimeout(0)
+    // pattern the ?find= seed effects use. One-shot: mark jumped so it never re-fires.
+    findJumpedRef.current = true
+    const t = setTimeout(() => setBankTab(target[0]), 0)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findParam, data, bankTab, toConfirm, noMatch, posList, confirmedList, ignoredInQ])
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
-      {/* Back to parent (/dashboard) — navigation strategy: <Link>, never router.back() */}
-      <Link
-        href="/dashboard"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: M3.primary, fontSize: 14, fontWeight: 600, textDecoration: 'none', marginBottom: 10 }}
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-        Terug
-      </Link>
-
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
         <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }}>account_balance</span>
@@ -1220,7 +1266,7 @@ export default function BankClient() {
                 type="text"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
-                placeholder="Zoek op naam, bedrag of datum"
+                placeholder="Zoek op naam, omschrijving, IBAN, bedrag of datum"
                 style={{
                   width: '100%', boxSizing: 'border-box', padding: '10px 36px 10px 38px',
                   borderRadius: R.full, border: `1px solid ${M3.surfaceVariant}`, background: '#fff',
@@ -2040,22 +2086,49 @@ function TxCard({
         </div>
       )}
 
-      {/* [BANK-PARTIAL] Underpayment / instalment warning — there is no partial-paid state,
-          so a one-tap confirm marks the WHOLE invoice paid. Never silently: if the paid
-          amount is below (or above) the selected invoice total, say so before the tap. */}
+      {/* [BANK-PARTIAL] What this confirm will ACTUALLY do, stated before the tap.
+          [PARTIAL-PAY] A partial-paid state now exists (invoices.amount_paid), and
+          /api/bank/confirm books a single-invoice payment through apply_bank_payment, which
+          applies LEAST(payment, remaining) and flips to 'paid' only when fully covered. So the
+          comparison is against the REMAINING balance, never the full total — otherwise the very
+          instalment that COMPLETES a half-paid invoice got warned about as a "deelbetaling".
+          Three honest outcomes: pays part of what's left, pays exactly what's left (no warning,
+          just context when something was already paid), or exceeds it (the excess is NOT booked). */}
       {!wasMulti && s.outcome !== 'none' && selectedCand && selectedCand.amount != null && (() => {
         const txAbs = Math.abs(s.amount)
         const invAbs = Math.abs(selectedCand.amount ?? 0)
-        const under = invAbs - txAbs > 0.01
-        const over = txAbs - invAbs > 0.01
-        if (!under && !over) return null
+        // Fall back to the full total for candidates built outside matchTransactions
+        // (batch reconcile omits these fields) — same behaviour as before for those.
+        const paidAlready = Math.max(0, selectedCand.amountPaid ?? 0)
+        const remaining = selectedCand.remaining ?? invAbs
+        const hasPartial = paidAlready > 0.005
+        const under = remaining - txAbs > 0.01
+        const over = txAbs - remaining > 0.01
+        // Exactly settles a fully-open invoice → nothing to say.
+        if (!under && !over && !hasPartial) return null
+        // Neutral (blue) context when the payment fits what's left; amber only for a real surprise.
+        const neutral = !over
         return (
-          <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: R.md, background: '#FEEFC3', color: '#7A4F00', fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>warning</span>
+          <div style={{
+            marginTop: 12, padding: '10px 12px', borderRadius: R.md,
+            background: neutral ? M3.primaryContainer : '#FEEFC3',
+            color: neutral ? M3.onPrimaryContainer : '#7A4F00',
+            fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>
+              {neutral ? 'info' : 'warning'}
+            </span>
             <span>
-              {under
-                ? <>Deelbetaling? Er is <strong>{eur.format(txAbs)}</strong> betaald, maar het factuurbedrag is <strong>{eur.format(invAbs)}</strong>. Bevestigen markeert de <strong>hele</strong> factuur als betaald.</>
-                : <>Er is <strong>{eur.format(txAbs)}</strong> betaald — méér dan het factuurbedrag <strong>{eur.format(invAbs)}</strong>. Controleer of dit de juiste factuur is.</>}
+              {over ? (
+                <>Er wordt maximaal <strong>{eur.format(remaining)}</strong> op deze factuur geboekt.{' '}
+                  <strong>{eur.format(txAbs - remaining)}</strong> blijft over en wordt niet geboekt — controleer of dit de juiste factuur is.</>
+              ) : under ? (
+                <>Deelbetaling: <strong>{eur.format(txAbs)}</strong> wordt geboekt.{' '}
+                  {hasPartial && <>Er was al {eur.format(paidAlready)} betaald. </>}
+                  Daarna staat nog <strong>{eur.format(remaining - txAbs)}</strong> open.</>
+              ) : (
+                <><strong>{eur.format(paidAlready)}</strong> al betaald · <strong>{eur.format(remaining)}</strong> restant — hiermee is de factuur volledig betaald.</>
+              )}
             </span>
           </div>
         )
