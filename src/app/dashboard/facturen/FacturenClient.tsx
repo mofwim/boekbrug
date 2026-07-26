@@ -23,6 +23,8 @@ import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
+import { openAmount, isPartiallyPaid } from '@/lib/partial-payment'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -147,6 +149,8 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     status: string
     invoice_type?: string | null
     total_inc_btw?: number | null
+    // [PARTIAL-PAY] already settled by earlier instalments
+    amount_paid?: number | null
   }
 
   // Only an issued, unpaid verkoopfactuur can join a bundle (same rule as the lib).
@@ -162,7 +166,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         id: inv.id,
         number: inv.invoice_number ?? '',
         client: inv.client_name ?? '',
-        amount: inv.total_inc_btw ?? 0,
+        // [PARTIAL-PAY] The OPEN amount, not the full total — this is what the bundle's
+        // QR asks the customer (buildBundelBetaalverzoek sums the open amounts). Showing
+        // the full total here made the owner read one number and the customer pay another.
+        amount: openAmount(inv),
       }
       return next
     })
@@ -258,7 +265,9 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     const t = setTimeout(async () => {
       const { data } = await supabase
         .from('invoices')
-        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
+        // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
+        // chip (and feed the same bundle open-amount) as a row from the infinite list.
+        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
         .eq('sender_id', profile.id)
         .neq('status', 'archived')
         .or(`invoice_number.ilike.%${esc}%,client_name.ilike.%${esc}%`)
@@ -730,6 +739,22 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>
+
+                      {/* [PARTIAL-PAY] Deelbetaling — part settled, rest still openstaand. The
+                          headline amount stays the invoice total (same as the incoming side);
+                          this chip carries what is actually still owed. Only for the genuine
+                          in-between state — a fully open or completed invoice has clearer UI. */}
+                      {isPartiallyPaid(inv) && (
+                        <span
+                          title={`Deelbetaling: ${fmtEur(inv.amount_paid ?? 0)} van ${fmtEur(Math.abs(inv.total_inc_btw ?? 0))} betaald`}
+                          style={{
+                            fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
+                            border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Deels betaald · {fmtEur(openAmount(inv))} open
+                        </span>
+                      )}
 
                       {/* [BOEK-029] Fix 1: correct button per type+status */}
 

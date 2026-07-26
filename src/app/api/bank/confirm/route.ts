@@ -175,6 +175,15 @@ export async function POST(req: NextRequest) {
     }
     const isPaid = row.is_paid === true;
     const remaining = Math.max(0, (row.total ?? 0) - (row.amount_paid ?? 0));
+    // [PARTIAL-PAY-RESIDUE] apply_bank_payment clamps with LEAST(payment, remaining), so a
+    // payment BIGGER than the balance books only the balance — and the excess used to vanish
+    // without a trace while the transaction was still marked fully consumed ('matched'). The
+    // money is real: usually the line belongs to another invoice too, or to the wrong invoice
+    // entirely. We do not invent a credit balance (a new concept with no screen); we make the
+    // leftover VISIBLE so the owner can check it. The pre-tap warning in BankClient says the
+    // same thing before the click; this is the record after it.
+    const residue = Math.round((payAmount - (row.applied ?? 0)) * 100) / 100;
+    const hasResidue = residue > 0.01;
     // [BANK-TX-INVOICES] The RPC already wrote the join row (with amount_applied) inside its
     // transaction — no recordPaymentLinks needed here.
     try {
@@ -186,8 +195,32 @@ export async function POST(req: NextRequest) {
           : `Deelbetaling van € ${row.applied.toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
         type: "payment",
       });
+      if (hasResidue) {
+        await pipeline.from("notifications").insert({
+          user_id: user.id,
+          title: "Er bleef een bedrag over",
+          body: `Van de betaling van € ${payAmount.toFixed(2)} is € ${(row.applied ?? 0).toFixed(2)} op factuur ${inv.invoice_number ?? ""} geboekt. € ${residue.toFixed(2)} bleef over — controleer of deze betaling ook een andere factuur betreft.`,
+          type: "payment",
+          link: "/dashboard/bank",
+        });
+      }
     } catch {
       /* non-blocking */
+    }
+    if (hasResidue) {
+      await logAuditAction({
+        userId: user.id,
+        action: "bank.overpayment_residue",
+        entityType: "invoice",
+        entityId: invoiceId,
+        newValue: {
+          transaction_id: transactionId,
+          invoice_number: inv.invoice_number,
+          payment_amount: payAmount,
+          applied: row.applied,
+          residue,
+        },
+      });
     }
     await logAuditAction({
       userId: user.id,
@@ -206,7 +239,8 @@ export async function POST(req: NextRequest) {
     });
     // allCovered = the TRANSACTION is done (fully consumed by this invoice); `partial` tells the UI
     // the INVOICE still has a balance so it can show "€X van €Y · €Z openstaand".
-    return NextResponse.json({ ok: true, allCovered: true, partial: !isPaid, applied: row.applied, remaining });
+    // `residue` = what the clamp did NOT book (0 in the normal case).
+    return NextResponse.json({ ok: true, allCovered: true, partial: !isPaid, applied: row.applied, remaining, residue });
   }
 
   // 4. Write (a): invoice → paid. SESSION client so the verwerkt trigger fires (auth.uid() set).

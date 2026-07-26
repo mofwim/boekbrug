@@ -119,16 +119,23 @@ export async function fetchSettlementEvents(
     const dated = bankLinks
       .map((l) => ({ date: txDate.get(l.transaction_id) ?? null, mag: Math.abs(Number(l.amount_applied) || 0) }))
       .filter((l) => l.mag > 0);
-    if (dated.length > 0) {
-      for (const d of dated) raw.push({ invoiceId: i.id, payDate: d.date, magnitude: d.mag, estimated: false });
-      continue;
-    }
-    // No bank link → cash/manual: payment_date (exact) → marked_paid_at (estimate) → undated.
     const paidMag = headers.get(i.id)!.amountPaidMagnitude; // amount_paid, or full total for a legacy 'paid'
-    if (paidMag <= 0) continue;
-    if (i.payment_date) raw.push({ invoiceId: i.id, payDate: i.payment_date.slice(0, 10), magnitude: paidMag, estimated: false });
-    else if (i.marked_paid_at) raw.push({ invoiceId: i.id, payDate: i.marked_paid_at.slice(0, 10), magnitude: paidMag, estimated: true });
-    else raw.push({ invoiceId: i.id, payDate: null, magnitude: paidMag, estimated: true });
+    for (const d of dated) raw.push({ invoiceId: i.id, payDate: d.date, magnitude: d.mag, estimated: false });
+
+    // [PARTIAL-PAY] The links do NOT always account for everything that was settled. A batch
+    // booking historically left amount_paid untouched, and a cash/manual instalment has no bank
+    // link at all — so an invoice can be settled for more than its links describe. The old code
+    // `continue`d as soon as ONE dated link existed, and that difference silently vanished from
+    // the kasstelsel BTW-aangifte: an under-declaration with no warning, because the undated
+    // check nets to zero when a dated link is present. Book the REMAINDER through the same
+    // exact → estimate → undated ladder, so money can never be settled yet uncounted.
+    // Structurally the remainder is 0 once every path maintains amount_paid; this is the net.
+    const datedMag = dated.reduce((s, d) => s + d.mag, 0);
+    const remainderMag = Math.round((paidMag - datedMag) * 100) / 100;
+    if (remainderMag <= 0.005) continue;
+    if (i.payment_date) raw.push({ invoiceId: i.id, payDate: i.payment_date.slice(0, 10), magnitude: remainderMag, estimated: false });
+    else if (i.marked_paid_at) raw.push({ invoiceId: i.id, payDate: i.marked_paid_at.slice(0, 10), magnitude: remainderMag, estimated: true });
+    else raw.push({ invoiceId: i.id, payDate: null, magnitude: remainderMag, estimated: true });
   }
 
   return buildQuarterSettlements(headers, raw, start, end);

@@ -74,6 +74,11 @@ interface Candidate {
   confidence: number
   signals: string[]
   reason: string
+  // [PARTIAL-PAY] Already settled by earlier instalments, and what is therefore still open.
+  // The confirm warning compares the payment against `remaining`, not the full total.
+  // Absent on candidates the batch-reconcile path builds → callers fall back to `amount`.
+  amountPaid?: number
+  remaining?: number
 }
 interface Suggestion {
   transactionId: string
@@ -447,17 +452,30 @@ export default function BankClient() {
           delete next[txId]
           return next
         })
+        // [PARTIAL-PAY] /api/bank/confirm returns {partial, applied, remaining} when the payment
+        // only settled PART of the invoice. Reporting "gemarkeerd als betaald ✓" then is simply
+        // untrue — the invoice is still open for the rest. Say what actually happened.
+        const isPartial = json?.partial === true
+        const remainingOpen = typeof json?.remaining === 'number' ? json.remaining : null
         showToast(
           json?.warning === 'transaction_link_failed'
             ? 'Factuur betaald (koppeling volgt later).'
-            : allCovered
-              ? 'Bevestigd en gemarkeerd als betaald ✓'
-              : 'Factuur betaald ✓ · nog een factuur open'
+            : isPartial
+              ? (remainingOpen != null
+                  ? `Deelbetaling geboekt · nog ${eur.format(remainingOpen)} open`
+                  : 'Deelbetaling geboekt · factuur blijft openstaan')
+              : allCovered
+                ? 'Bevestigd en gemarkeerd als betaald ✓'
+                : 'Factuur betaald ✓ · nog een factuur open'
         )
         // [BANK-MULTI-CONFIRM] Re-run matching so the just-paid invoice drops out of
         // the candidate list and any remaining open number is re-evaluated. Without
         // this the paid invoice would linger as a still-selectable candidate.
-        if (!allCovered) await runMatch()
+        // [PARTIAL-PAY] Also after a DEELBETALING: the invoice stays in the pool but its
+        // remaining balance just shrank, and scorePair targets that remaining. Without a
+        // re-match, another pending line for the same invoice would still be scored (and
+        // warned about) against the old, larger balance.
+        if (!allCovered || isPartial) await runMatch()
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
       } else if (res.status === 409 && (json?.error === 'invoice_already_paid' || json?.error === 'transaction_already_processed')) {
@@ -2050,22 +2068,49 @@ function TxCard({
         </div>
       )}
 
-      {/* [BANK-PARTIAL] Underpayment / instalment warning — there is no partial-paid state,
-          so a one-tap confirm marks the WHOLE invoice paid. Never silently: if the paid
-          amount is below (or above) the selected invoice total, say so before the tap. */}
+      {/* [BANK-PARTIAL] What this confirm will ACTUALLY do, stated before the tap.
+          [PARTIAL-PAY] A partial-paid state now exists (invoices.amount_paid), and
+          /api/bank/confirm books a single-invoice payment through apply_bank_payment, which
+          applies LEAST(payment, remaining) and flips to 'paid' only when fully covered. So the
+          comparison is against the REMAINING balance, never the full total — otherwise the very
+          instalment that COMPLETES a half-paid invoice got warned about as a "deelbetaling".
+          Three honest outcomes: pays part of what's left, pays exactly what's left (no warning,
+          just context when something was already paid), or exceeds it (the excess is NOT booked). */}
       {!wasMulti && s.outcome !== 'none' && selectedCand && selectedCand.amount != null && (() => {
         const txAbs = Math.abs(s.amount)
         const invAbs = Math.abs(selectedCand.amount ?? 0)
-        const under = invAbs - txAbs > 0.01
-        const over = txAbs - invAbs > 0.01
-        if (!under && !over) return null
+        // Fall back to the full total for candidates built outside matchTransactions
+        // (batch reconcile omits these fields) — same behaviour as before for those.
+        const paidAlready = Math.max(0, selectedCand.amountPaid ?? 0)
+        const remaining = selectedCand.remaining ?? invAbs
+        const hasPartial = paidAlready > 0.005
+        const under = remaining - txAbs > 0.01
+        const over = txAbs - remaining > 0.01
+        // Exactly settles a fully-open invoice → nothing to say.
+        if (!under && !over && !hasPartial) return null
+        // Neutral (blue) context when the payment fits what's left; amber only for a real surprise.
+        const neutral = !over
         return (
-          <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: R.md, background: '#FEEFC3', color: '#7A4F00', fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>warning</span>
+          <div style={{
+            marginTop: 12, padding: '10px 12px', borderRadius: R.md,
+            background: neutral ? M3.primaryContainer : '#FEEFC3',
+            color: neutral ? M3.onPrimaryContainer : '#7A4F00',
+            fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>
+              {neutral ? 'info' : 'warning'}
+            </span>
             <span>
-              {under
-                ? <>Deelbetaling? Er is <strong>{eur.format(txAbs)}</strong> betaald, maar het factuurbedrag is <strong>{eur.format(invAbs)}</strong>. Bevestigen markeert de <strong>hele</strong> factuur als betaald.</>
-                : <>Er is <strong>{eur.format(txAbs)}</strong> betaald — méér dan het factuurbedrag <strong>{eur.format(invAbs)}</strong>. Controleer of dit de juiste factuur is.</>}
+              {over ? (
+                <>Er wordt maximaal <strong>{eur.format(remaining)}</strong> op deze factuur geboekt.{' '}
+                  <strong>{eur.format(txAbs - remaining)}</strong> blijft over en wordt niet geboekt — controleer of dit de juiste factuur is.</>
+              ) : under ? (
+                <>Deelbetaling: <strong>{eur.format(txAbs)}</strong> wordt geboekt.{' '}
+                  {hasPartial && <>Er was al {eur.format(paidAlready)} betaald. </>}
+                  Daarna staat nog <strong>{eur.format(remaining - txAbs)}</strong> open.</>
+              ) : (
+                <><strong>{eur.format(paidAlready)}</strong> al betaald · <strong>{eur.format(remaining)}</strong> restant — hiermee is de factuur volledig betaald.</>
+              )}
             </span>
           </div>
         )
