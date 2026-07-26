@@ -159,8 +159,19 @@ export function evaluateFairUse(usage: UsageCounts, plan: "free" | "plus" = "fre
     const used = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
     const ceiling = plan === "plus" ? limit.plus : limit.free;
 
-    if (used > ceiling) exceeded.push(limit.key);
-    else if (used >= ceiling * NEAR_LIMIT_RATIO) nearLimit.push(limit.key);
+    if (used > ceiling) {
+      exceeded.push(limit.key);
+      continue;
+    }
+
+    // "Bijna vol" bestaat alleen bij een grens waar je bíjna aan kunt zitten. Bij een grens
+    // van 1 — één mailbox, één onderneming — is er geen tussentoestand: je zit op 0 of je
+    // zit erop, en op 1 van 1 zitten is de normale, bedoelde toestand van elke gratis
+    // gebruiker. Zonder deze uitzondering kreeg iedereen die zijn mailbox koppelt een
+    // waarschuwing die nooit meer weggaat, en een waarschuwing die altijd aan staat is een
+    // waarschuwing die niemand meer leest — precies het tegenovergestelde van regel 4
+    // ("waarschuwen vóórdat het gebeurt, niet erna").
+    if (ceiling > 1 && used >= ceiling * NEAR_LIMIT_RATIO) nearLimit.push(limit.key);
   }
 
   return { withinLimits: exceeded.length === 0, exceeded, nearLimit };

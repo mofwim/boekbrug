@@ -19,6 +19,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { parseEftSettlement, type EftSettlement } from "@/lib/eft-parser";
 import { transcribeEftReceipt } from "@/lib/ai";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { gateFairUse } from "@/lib/fair-use-gate";
 import type { Json } from "@/types/database.types";
 
 const MAX_BYTES = 10 * 1024 * 1024; // a receipt photo is small; generous.
@@ -95,11 +96,19 @@ export async function POST(req: NextRequest) {
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/eft/import", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
 
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
+  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
+  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
+
   let text: string;
   try {
     const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
     text = await transcribeEftReceipt(base64, file.type || "image/jpeg", file.name || "afrekening");
   } catch {
+    // [FAIR-USE] Niet gelezen, dus niet geteld.
+    await gate.release();
     return NextResponse.json({ error: "kon de afrekening niet lezen" }, { status: 502 });
   }
 

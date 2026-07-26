@@ -103,3 +103,20 @@ test("de gepubliceerde tabel komt uit dezelfde bron als de controle", () => {
   // Zo veel rijen als grenzen, plus kop- en scheidingsregel.
   assert.equal(md.split("\n").length, FAIR_USE_LIMITS.length + 2);
 });
+
+test("een grens van 1 kent geen 'bijna vol'", () => {
+  // Elke gratis gebruiker koppelt één mailbox en zit daarmee permanent op 1 van 1. Zou dat
+  // als "bijna vol" gelden, dan staat er vanaf dag één een waarschuwing die nooit meer
+  // weggaat — en een waarschuwing die altijd aan staat leest niemand nog. Bij een grens van
+  // 1 is er geen tussentoestand: je zit op 0, of je zit erop, en erop zitten is normaal.
+  const status = evaluateFairUse({ mailboxes: 1, administrations: 1 });
+  assert.equal(status.withinLimits, true);
+  assert.deepEqual(status.nearLimit, []);
+  assert.deepEqual(status.exceeded, []);
+
+  // Erboven is nog steeds een overschrijding — de uitzondering geldt alleen voor de
+  // waarschuwing, niet voor de grens zelf.
+  assert.deepEqual(evaluateFairUse({ mailboxes: 2 }).exceeded, ["mailboxes"]);
+  // En bij Plus (grens 3) doet de waarschuwing gewoon weer zijn werk.
+  assert.ok(evaluateFairUse({ mailboxes: 3 }, "plus").nearLimit.includes("mailboxes"));
+});

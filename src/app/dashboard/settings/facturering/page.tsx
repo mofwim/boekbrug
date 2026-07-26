@@ -19,7 +19,9 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { decidePlan, type PlanDecision } from '@/lib/subscription'
 import { PLUS } from '@/lib/plan'
-import { FAIR_USE_LIMITS, formatLimit } from '@/lib/fair-use'
+import { FAIR_USE_LIMITS, NEAR_LIMIT_RATIO, evaluateFairUse, formatLimit } from '@/lib/fair-use'
+import { measureUsage } from '@/lib/fair-use-usage'
+import { limitsPlanFor } from '@/lib/subscription'
 import ManageSubscriptionButton from './ManageSubscriptionButton'
 
 export const dynamic = 'force-dynamic'
@@ -80,7 +82,14 @@ export default async function FactureringPage({
   })
 
   const hasCustomer = Boolean(profile?.stripe_customer_id)
-  const aiLimit = FAIR_USE_LIMITS.find((l) => l.key === 'aiDocuments')!
+
+  // [FAIR-USE] De werkelijke stand. Dit is regel 4 uit fair-use.ts — "waarschuwen vóórdat
+  // het gebeurt, niet erna" — en die regel kan alleen waar zijn als de gebruiker zijn eigen
+  // stand kan zien zonder ernaar te hoeven vragen. Boekhouders kennen geen grenzen, dus
+  // voor hen wordt er niets gemeten en niets getoond.
+  const usage = decision.plan === 'boekhouder' ? {} : await measureUsage(supabase, user.id)
+  const limitsPlan = limitsPlanFor(decision.plan)
+  const status = evaluateFairUse(usage, limitsPlan)
 
   return (
     <main style={{ maxWidth: 680, margin: '0 auto', padding: '24px 16px 64px', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
@@ -103,13 +112,6 @@ export default async function FactureringPage({
 
       <section style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: 22 }}>
         <Row label="Plan" value={planLabel(decision, profile)} />
-
-        {decision.plan === 'free' && (
-          <Row
-            label="Eerlijk gebruik"
-            value={`${formatLimit(aiLimit, 'free')} documenten door de AI gelezen`}
-          />
-        )}
 
         {profile?.current_period_end && decision.plan === 'plus' && (
           <Row
@@ -159,8 +161,70 @@ export default async function FactureringPage({
           </p>
         )}
       </section>
+
+      {decision.plan !== 'boekhouder' && (
+        <section style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 14, padding: 22, marginTop: 16 }}>
+          <h2 style={{ fontSize: 17, fontWeight: 700, color: '#202124', margin: '0 0 4px' }}>
+            Je gebruik deze maand
+          </h2>
+          <p style={{ fontSize: 13.5, color: '#5f6368', margin: '0 0 16px', lineHeight: 1.6 }}>
+            De maandtellers beginnen op de 1e weer bij nul. Opslag en mailboxen worden gemeten
+            zoals ze nu zijn, niet opgeteld over de maand.
+          </p>
+
+          <div style={{ display: 'grid', gap: 14 }}>
+            {FAIR_USE_LIMITS.map((limit) => {
+              const raw = usage[limit.key]
+              // Niets gemeten (migratie nog niet toegepast, of een functie die niet bestaat)
+              // is niet hetzelfde als nul: dan tonen wij een streepje in plaats van te
+              // suggereren dat wij iets weten wat wij niet weten.
+              const known = typeof raw === 'number' && Number.isFinite(raw)
+              const used = known ? Math.max(0, raw) : 0
+              const ceiling = limitsPlan === 'plus' ? limit.plus : limit.free
+              const pct = ceiling > 0 ? Math.min(100, Math.round((used / ceiling) * 100)) : 0
+              const over = status.exceeded.includes(limit.key)
+              const near = status.nearLimit.includes(limit.key)
+              const kleur = over ? '#B3261E' : near ? '#7C5800' : '#137333'
+
+              return (
+                <div key={limit.key}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 14, marginBottom: 6 }}>
+                    <span style={{ color: '#3c4043', lineHeight: 1.4 }}>{limit.label}</span>
+                    <span style={{ color: kleur, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      {known
+                        ? `${limit.unit === 'MB' ? formatMb(used) : used} / ${formatLimit(limit, limitsPlan)}`
+                        : `— / ${formatLimit(limit, limitsPlan)}`}
+                    </span>
+                  </div>
+                  <div style={{ height: 6, background: '#f1f3f4', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${known ? pct : 0}%`, background: kleur, borderRadius: 3 }} />
+                  </div>
+                  {(over || near) && (
+                    <p style={{ fontSize: 13, color: kleur, margin: '6px 0 0', lineHeight: 1.5 }}>
+                      {over
+                        ? limit.onExceed
+                        : `Je zit op ${pct}% van deze grens. Er gebeurt nu nog niets — dit is alleen zodat je het weet.`}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <p style={{ fontSize: 13, color: '#5f6368', margin: '16px 0 0', lineHeight: 1.6 }}>
+            Wij waarschuwen vanaf {Math.round(NEAR_LIMIT_RATIO * 100)}% van een grens, en wat
+            er dan gebeurt staat er per regel bij.{' '}
+            <Link href="/eerlijk-gebruik" style={{ color: '#1A73E8' }}>Het volledige beleid</Link>.
+          </p>
+        </section>
+      )}
     </main>
   )
+}
+
+/** Opslag leest prettiger in GB zodra het er zijn. */
+function formatMb(mb: number): string {
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1).replace('.', ',')} GB` : `${mb} MB`
 }
 
 /**

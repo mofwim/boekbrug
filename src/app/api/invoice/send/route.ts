@@ -41,6 +41,7 @@ import { sendInvoiceToClient } from '@/lib/email'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { gateFairUse, type FairUseGate } from '@/lib/fair-use-gate'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 import * as Sentry from '@sentry/nextjs'
@@ -55,6 +56,9 @@ const PDF_BUCKET = 'documents'
 const RESENDABLE_STATUSES = ['sent', 'paid', 'overdue'] as const
 
 export async function POST(request: NextRequest) {
+  // [FAIR-USE] Buiten de try, zodat de catch onderaan de reservering kan teruggeven. Blijft
+  // null wanneer het misging vóór het hek — dan valt er ook niets terug te geven.
+  let gate: FairUseGate | null = null
   try {
     // ── 1. Auth ────────────────────────────────────────────────
     const supabase = await createServerSupabaseClient()
@@ -70,6 +74,13 @@ export async function POST(request: NextRequest) {
       ...RATE_LIMITS.INVOICE_SEND,
     })
     if (!limit.allowed) return rateLimitResponse(limit)
+
+    // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens op verstuurde facturen. Het
+    // hek hierboven gaat over snelheid (100/uur), dit over hoeveel er gratis in een maand
+    // past. Faalt open. Een weigering pauzeert ALLEEN het versturen — opstellen, opslaan en
+    // als PDF downloaden blijven werken, precies zoals de onExceed-zin in fair-use.ts zegt.
+    gate = await gateFairUse({ client: supabase, userId: user.id, metric: "invoicesSent" })
+    if (!gate.allowed) return gate.response!
 
     // ── 3. Parse body ──────────────────────────────────────────
     const body = await request.json()
@@ -514,6 +525,11 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (err) {
+    // [FAIR-USE] Klapte het versturen alsnog, dan is er niets verstuurd en telt het niet.
+    // `gate` kan hier nog ongedefinieerd zijn als het misging vóór het hek; vandaar de
+    // voorzichtige aanroep.
+    try { await gate?.release() } catch { /* teruggeven mag nooit de foutafhandeling breken */ }
+
     // Catch-all: any uncaught exception → Sentry + 500 (no crash)
     console.error('[FACTUUR-A] /api/invoice/send fatal error', err)
     Sentry.captureException(err, {
