@@ -23,6 +23,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 // [BOEK-031] BOEK-SECURITY-2 — audit logs via service_role helper — May 2026
 import { logAuditAction, getClientIP } from '@/lib/audit'
 // [FACTUUR-A] unified numbering + legal delivery — June 2026
@@ -73,12 +75,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
     }
 
-    // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen
-    // Draft facturen worden verwijderd — niet gecrediteerd
-    const CREDITABLE_STATUSES: string[] = ['sent', 'paid', 'overdue', 'received', 'processing', 'processed']
+    // [BOEK-031] Creditnota alleen mogelijk op verzonden facturen. Draft facturen verwijder je.
+    // [LC2] This route only credits an invoice the owner SENT (outgoing — see the sender_id guard
+    // above), and the creditnota counts as −omzet (status 'sent'). So the original MUST be a status
+    // that actually counted as +omzet — outgoing = {sent, paid, overdue} in computeResult. Crediting
+    // an outgoing invoice that never counted (a stray 'processing'/'received'/'processed') would
+    // book phantom NEGATIVE omzet with nothing to offset it. Those statuses aren't reachable for a
+    // normal outgoing invoice anyway, so restricting to the counting set is safe and closes the gap.
+    const CREDITABLE_STATUSES: string[] = ['sent', 'paid', 'overdue']
     if (!original.status || !CREDITABLE_STATUSES.includes(original.status)) {
       return NextResponse.json(
-        { error: 'Alleen verzonden facturen kunnen worden gecrediteerd. Concept-facturen verwijder je gewoon.' },
+        { error: 'Alleen een verzonden of betaalde factuur kan worden gecrediteerd. Een concept of nog niet-geboekte factuur verwijder of bewerk je gewoon.' },
+        { status: 400 }
+      )
+    }
+
+    // [COHERENCE-CREDITNOTA] Never credit a creditnota (a creditnota has status 'sent', so
+    // it passes the status check above). Crediting a credit would mint a positive "credit
+    // of a credit" that fabricates +omzet with nothing behind it. Only a real factuur is
+    // creditable. Not reachable through the UI, but the route is the authority.
+    if (original.invoice_type === 'creditnota') {
+      return NextResponse.json(
+        { error: 'Een creditnota kan niet zelf worden gecrediteerd.' },
         { status: 400 }
       )
     }
@@ -116,7 +134,7 @@ export async function POST(request: NextRequest) {
     // source:'created' restored (was swallowed by an inline comment).
     const { data: creditnota, error: insertError } = await supabase
       .from('invoices')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       .insert({
         sender_id: user.id,
         invoice_number: creditnotaNumber,
@@ -132,6 +150,11 @@ export async function POST(request: NextRequest) {
         // [BRIDGE-A] sent_to_accountant removed — sharing is GENERATED from status
         source: 'created',
         client_name: original.client_name,
+        // Carry the robust invoice→klant link onto the creditnota too, so the
+        // customer's history stays linked even if the name is later edited or
+        // the client row is renamed. Falls back to null (name path) for legacy
+        // originals that predate client_id.
+        client_id: original.client_id ?? null,
         client_email: original.client_email,
         client_address: original.client_address,
         client_postal_code: original.client_postal_code,
@@ -143,11 +166,24 @@ export async function POST(request: NextRequest) {
         // date. NOTE: requires the FACTUUR-A delivery_date migration + type
         // regen (CMD) before deploy.
         delivery_date: original.delivery_date ?? original.invoice_date ?? null,
-      } as any)
+      })
       .select()
       .single()
 
     if (insertError || !creditnota) {
+      // [IN1] The DB partial-unique index (invoices_one_creditnota_per_original) is the real
+      // guard against the SELECT-then-INSERT race above: a concurrent second creditnota for
+      // the same invoice fails with SQLSTATE 23505. Surface that as the same clean 409 the
+      // pre-check returns, not a generic 500 — a double credit is a legal filing error.
+      const isDuplicate =
+        (insertError as { code?: string } | null)?.code === '23505' ||
+        (typeof insertError?.message === 'string' && /duplicate key value|unique constraint/i.test(insertError.message))
+      if (isDuplicate) {
+        return NextResponse.json(
+          { error: 'Er bestaat al een creditnota voor deze factuur' },
+          { status: 409 }
+        )
+      }
       console.error('[FACTUUR-A] Creditnota insert failed', { original_invoice_id, insertError })
       return NextResponse.json({ error: 'Creditnota aanmaken mislukt' }, { status: 500 })
     }
@@ -280,6 +316,16 @@ export async function POST(request: NextRequest) {
           })
         }
       }
+    }
+
+    // [BANK-CIRCLE-SEND] A creditnota is issued 'sent' and is immediately matchable to a refund line
+    // that may already sit in the bank (the money moved before the credit document existed). Re-run
+    // the same safe auto-confirm so that refund gets linked at issuance. Best-effort, idempotent,
+    // one-tap reversible — never breaks the (already-committed) creditnota.
+    try {
+      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+    } catch (autoErr) {
+      console.error('[BANK-CIRCLE-SEND] post-creditnota auto-confirm failed (non-fatal)', { creditnota_id: creditnota.id, autoErr })
     }
 
     return NextResponse.json({

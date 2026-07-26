@@ -8,17 +8,21 @@ import { useRouter } from 'next/navigation'
 
 const M3 = {
   primary:  '#1A73E8', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface:  '#FFFBFE', onSurface: '#1C1B1F',
+  surface:  '#ffffff', onSurface: '#202124',
   success:  '#34A853', warning: '#E37400', tertiary: '#7B1FA2',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const R    = { md: 12, lg: 16, xl: 24 }
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 
 const ITEMS = [
   { icon: 'receipt_long', label: 'Mijn facturen',  sub: 'Verstuur en beheer',      href: '/dashboard/facturen', bg: M3.primary,   color: '#fff' },
   { icon: 'folder_open',  label: 'Mijn bestanden', sub: 'Bonnen en documenten',     href: '/dashboard/bestanden', bg: M3.warning,   color: '#fff' },
+  // [COHERENCE-ORPHAN] De Brug — the app's namesake invoice↔document tree — had no ZZP
+  // entry point (only accountant surfaces linked to it), so the owner could never open it.
+  { icon: 'account_tree', label: 'De Brug',        sub: 'Zie hoe je facturen en documenten verbonden zijn', href: '/dashboard/brug', bg: '#1967D2', color: '#fff' },
   { icon: 'people',       label: 'Mijn klanten',   sub: 'Klantgegevens en history', href: '/dashboard/klanten',  bg: M3.success,   color: '#fff' },
+  { icon: 'shield',       label: 'Compliance-kluis', sub: '7 jaar bewaren, klaar voor je boekhouder', href: '/dashboard/kluis', bg: '#455A64', color: '#fff' },
   { icon: 'settings',     label: 'Mijn gegevens',  sub: 'Bedrijf en account',       href: '/dashboard/settings', bg: M3.tertiary,  color: '#fff' },
 ]
 
@@ -27,24 +31,6 @@ export default function WerkplekClient() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
-
-      {/* Sticky header — Material You top app bar */}
-      <div style={{
-        background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
-        position: 'sticky', top: 0, zIndex: 50,
-      }}>
-        {/* [CONTROL] deterministic parent (/dashboard) via replace — the old
-            router.back() was history-dependent and could loop (nav contract). */}
-        <button onClick={() => router.replace('/dashboard')} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, color: M3.primary, fontWeight: 600, fontSize: 14, padding: 0, fontFamily: FONT }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
-          Terug
-        </button>
-        <h1 style={{ fontSize: 18, fontWeight: 600, color: M3.onSurface, flex: 1, textAlign: 'center', marginRight: 64 }}>
-          Mijn werkplek
-        </h1>
-      </div>
 
       <main style={{ maxWidth: 480, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -74,7 +60,7 @@ export default function WerkplekClient() {
                 <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{item.label}</p>
                 <p style={{ fontSize: 13, color: '#5F6368' }}>{item.sub}</p>
               </div>
-              <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
             </button>
           ))}
         </div>
@@ -93,7 +79,7 @@ export default function WerkplekClient() {
           border: 'none', cursor: 'pointer',
           boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
           display: 'flex', alignItems: 'center', gap: 8,
-          fontFamily: "'Google Sans', 'Roboto', sans-serif", zIndex: 50,
+          fontFamily: "'Roboto', sans-serif", zIndex: 50,
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
         onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}

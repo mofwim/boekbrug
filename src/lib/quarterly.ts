@@ -15,6 +15,9 @@ export interface InvoiceForQuarterly {
   total_ex_btw: number | null;
   btw_amount: number | null;
   total_inc_btw: number | null;
+  // [PARTIAL-PAY] running total already settled (0 when fully open / unset). Used ONLY to split the
+  // cash view (paid vs outstanding), never the accrual totals (those always count the full invoice).
+  amount_paid?: number | null;
   btw_rate: number;
   invoice_date: string | null;
   due_date?: string;
@@ -154,12 +157,23 @@ export function buildQuarterlySummary(
     totalBtw += btw;
     totalIncl += incBtw;
 
+    // [PARTIAL-PAY] Split the CASH view by the settled portion: the paid part of a deelbetaling
+    // counts as paid, only the remainder is outstanding/overdue. A fully-paid invoice is entirely
+    // paid; a fully-open one (amount_paid 0) is entirely outstanding — both unchanged. This never
+    // touches the accrual totals above (totalExcl/Btw/Incl always count the full invoice).
     if (inv.status === 'paid') {
       paid += incBtw;
-    } else if (inv.due_date && new Date(inv.due_date) < now) {
-      overdue += incBtw;
     } else {
-      outstanding += incBtw;
+      const settled = Math.max(0, Math.min(Math.abs(incBtw), inv.amount_paid ?? 0));
+      const remaining = incBtw - Math.sign(incBtw || 1) * settled;
+      if (settled > 0.005) paid += Math.sign(incBtw || 1) * settled;
+      if (Math.abs(remaining) > 0.005) {
+        if (inv.due_date && new Date(inv.due_date) < now) {
+          overdue += remaining;
+        } else {
+          outstanding += remaining;
+        }
+      }
     }
 
     const existing = btwMap.get(inv.btw_rate) ?? { excl: 0, btw: 0 };

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendClientInvite } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
@@ -11,6 +12,20 @@ export async function POST(request: NextRequest) {
     // تحقق من المستخدم
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    // [COHERENCE-INVITE] Only an accountant may create an accountant→client invitation.
+    // Without this, a shop owner (role 'zzper') could POST here (RLS only requires
+    // auth.uid()=zzper_id, which passes for any role) and turn themselves into an
+    // 'accountant' inviting clients — a role-confusion / data-integrity path. The page
+    // is now role-guarded too; this is the authoritative server-side check.
+    const { data: callerProfile } = await supabase
+      .from('profiles')
+      .select('role, full_name, company_name')
+      .eq('id', user.id)
+      .single()
+    if (callerProfile?.role !== 'accountant') {
+      return NextResponse.json({ error: 'Alleen een boekhouder kan een klant uitnodigen.' }, { status: 403 })
+    }
 
     const limit = await checkRateLimit({
       userId: user.id,
@@ -48,14 +63,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Er is al een uitnodiging verstuurd naar dit adres.' }, { status: 400 })
     }
 
-    // جلب بيانات المحاسب
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name, company_name')
-      .eq('id', user.id)
-      .single()
-
-    const accountantName = profile?.company_name || profile?.full_name || 'Boekhouder'
+    // Naam van de boekhouder — al opgehaald bij de rolcontrole hierboven.
+    const accountantName = callerProfile?.company_name || callerProfile?.full_name || 'Boekhouder'
 
     // حفظ الدعوة — نحفظ accountant_id = المحاسب الحالي
     const { data: invitation, error: invError } = await supabase
@@ -71,14 +80,34 @@ export async function POST(request: NextRequest) {
 
     if (invError) return NextResponse.json({ error: 'Uitnodiging opslaan mislukt' }, { status: 500 })
 
-    const acceptUrl = `${process.env.NEXT_PUBLIC_APP_URL}/invite/accept?token=${invitation.token}`
+    // [TRUST-INVITE] Fall back to the request origin when NEXT_PUBLIC_APP_URL is
+    // unset — otherwise the client is mailed "undefined/invite/accept?..." (a dead
+    // link) while the route still reports success. Mirrors the accountant route.
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/+$/, '')
+    const acceptUrl = `${baseUrl}/invite/accept?token=${invitation.token}`
 
-    await sendClientInvite({
-      toEmail: clientEmail,
-      clientName: clientEmail,
-      accountantName,
-      acceptUrl
-    })
+    // [TRUST-INVITE] The email is the WHOLE point of an invite. If the send fails we
+    // must NOT leave a 'pending' row behind — otherwise the retry hits the duplicate
+    // guard ("al verstuurd") and the client is permanently unreachable while nothing
+    // ever arrived. Roll the row back and return an honest, retryable error.
+    try {
+      await sendClientInvite({
+        toEmail: clientEmail,
+        clientName: clientEmail,
+        accountantName,
+        acceptUrl,
+      })
+    } catch (sendErr) {
+      console.error('[TRUST-INVITE] Client invite email failed — rolling back row', sendErr)
+      // [TRUST-INVITE] `invitations` has RLS with SELECT+INSERT policies but NO DELETE policy, so a
+      // delete on the authenticated session client silently affects 0 rows and the orphaned 'pending'
+      // row would then trip the duplicate guard forever. Roll back via service_role.
+      await createPipelineClient().from('invitations').delete().eq('id', invitation.id)
+      return NextResponse.json(
+        { error: 'Uitnodiging versturen mislukt — probeer het opnieuw.' },
+        { status: 502 }
+      )
+    }
 
     return NextResponse.json({ success: true })
 

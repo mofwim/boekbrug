@@ -7,10 +7,24 @@ import { Suspense, useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
+import {
+  PURPOSE_PARAM,
+  landingPath,
+  parsePurpose,
+  purposeCopy,
+  ARCHIEF_ROLE,
+} from '@/lib/account-purpose'
 
 function RegisterContent() {
-  const [step, setStep] = useState(1)
-  const [role, setRole] = useState('')
+  const searchParams = useSearchParams()
+
+  // [KLUIS] Een archiefaccount kent geen rolkeuze: het is een ondernemer met een eigen
+  // administratie, punt. Daarom begint dat pad meteen bij stap 2 en staat de rol vast.
+  // (De initialisatie leest de querystring rechtstreeks in plaats van via `purpose`, omdat
+  // useState hier draait vóór de regel die `purpose` berekent.)
+  const isArchief = searchParams.get(PURPOSE_PARAM) === 'archief'
+  const [step, setStep] = useState(isArchief ? 2 : 1)
+  const [role, setRole] = useState(isArchief ? ARCHIEF_ROLE : '')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
@@ -24,8 +38,14 @@ function RegisterContent() {
   const [emailTaken, setEmailTaken] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
   const router = useRouter()
-  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  // [KLUIS] Waarvoor deze bezoeker komt. /bewaarplicht stuurt hier naartoe met ?doel=archief:
+  // iemand wiens zaak gestopt is komt zijn administratie WEGZETTEN, niet boekhouden. Hij
+  // krijgt daarom andere teksten, geen rolkeuze (hij is gewoon een ondernemer) en na
+  // registratie zijn kluis in plaats van een wizard over facturen versturen.
+  const purpose = parsePurpose(searchParams.get(PURPOSE_PARAM))
+  const copy = purposeCopy(purpose)
 
   // Keep any ?redirect= when we link over to /login.
   const redirectParam = searchParams.get('redirect')
@@ -61,8 +81,21 @@ function RegisterContent() {
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
-    const redirectUrl = searchParams.get('redirect')
-    const state = encodeURIComponent(JSON.stringify({ role, redirect: redirectUrl || '/dashboard' }))
+    // [KLUIS] Via Google gaat de signUp-metadata niet mee — die weg loopt langs Supabase's
+    // OAuth-callback en niet langs onze signUp(). Het doel reist daarom mee in de
+    // bestemmings-URL, en /dashboard/kluis herstelt het profiel zelf zodra de gebruiker
+    // daar aankomt. Zonder dat zou iemand die zich via Google registreert vanaf
+    // /bewaarplicht alsnog als gewoon boekhoudaccount binnenkomen.
+    const redirectUrl =
+      searchParams.get('redirect') ??
+      (purpose === 'archief' ? `${landingPath(purpose)}?${PURPOSE_PARAM}=archief` : null)
+    // De bestemming reist mee als ?next= op de callback. Hier stond eerder een `state`-object
+    // met de rol erin dat NERGENS werd meegegeven aan signInWithOAuth — het werd berekend en
+    // weggegooid, dus de rolkeuze ging bij Google-registratie altijd verloren. De callback
+    // leest `next` al, mét bescherming tegen open redirects (alleen een pad op dezelfde
+    // origin), dus dit is de weg die er al lag.
+    const callback = new URL('/api/auth/callback', window.location.origin)
+    if (redirectUrl) callback.searchParams.set('next', redirectUrl)
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -70,7 +103,7 @@ function RegisterContent() {
         // Basic sign-in only — we no longer request Gmail inbox access here.
         // Gmail connecting is a separate, opt-in step during onboarding.
         scopes: 'email profile',
-        redirectTo: `${window.location.origin}/api/auth/callback`,
+        redirectTo: callback.toString(),
       },
     })
 
@@ -100,7 +133,31 @@ function RegisterContent() {
     setLoading(true)
     setError('')
 
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password })
+    // [COHERENCE-REGISTER] Pass the registration fields as signUp metadata so the
+    // SECURITY DEFINER handle_new_user trigger writes them into the profile server-side.
+    // Previously the browser did a profiles.upsert right after signUp, but with email
+    // confirmation ON there is no session yet, so the anon client hit RLS and the flow
+    // dead-ended before the "check your e-mail" screen. The trigger has no such problem.
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+          role, // 'zzper' | 'accountant'
+          company_name: companyName,
+          kvk_number: kvk,
+          btw_number: btw,
+          // register already collected role + company, so skip the wizard's
+          // welcome/role/company screens (step 4 = Gmail for ZZP, invite for accountant).
+          onboarding_step: 4,
+          // [KLUIS] account_purpose_archief.sql leest dit: bij 'archief' wordt
+          // onboarding_done meteen true, want die wizard gaat over facturen versturen en
+          // een mailboxkoppeling — geen van beide waar deze bezoeker voor kwam.
+          account_purpose: purpose,
+        },
+      },
+    })
 
     if (signUpError) {
       if (signUpError.status === 422 || signUpError.message?.toLowerCase().includes('already')) {
@@ -127,33 +184,9 @@ function RegisterContent() {
       return
     }
 
-    // [BOEK-015] fix: the on_auth_user_created trigger already inserted a profile
-    // row (with default role='zzper'). Using UPSERT instead of INSERT so we
-    // UPDATE that trigger-created row with the real registration data instead
-    // of hitting a 23505 duplicate-key error → "Registratie mislukt".
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .upsert({
-        id: data.user.id,
-        role,
-        full_name: fullName,
-        company_name: companyName,
-        kvk_number: kvk,
-        btw_number: btw,
-        email,
-        // [BOEK-015] P2: register already collected role + company + KVK + BTW.
-        // ZZP: skip to step 4 (Gmail) — no need to ask company data again.
-        // Accountant: step 4 is "invite client". Both land correctly.
-        // page.tsx roleWasSet reads step>=2 → true → Welcome+Role skipped.
-        onboarding_step: 4,
-      }, { onConflict: 'id' })
-
-    if (profileError) {
-      console.error('[BOEK-015] register profile upsert failed:', profileError)
-      setError('Profiel aanmaken mislukt — probeer opnieuw')
-      setLoading(false)
-      return
-    }
+    // [COHERENCE-REGISTER] The profile is now written by the handle_new_user trigger
+    // from the signUp metadata above (SECURITY DEFINER, so it works whether or not a
+    // session exists). No client-side profiles write here — that was the RLS dead end.
 
     // [BOEK-015] fix: if email confirmation is enabled, signUp returns a user
     // but NO active session. Check and guide the user instead of a silent
@@ -165,8 +198,36 @@ function RegisterContent() {
       return
     }
 
+    // [COHERENCE-REGISTER] Defensive self-heal for the confirmation-OFF path: a session
+    // exists, so this authenticated upsert passes RLS and writes the exact registration
+    // data. It is redundant when the handle_new_user metadata trigger is applied (same
+    // values), but it guarantees the accountant role + company/kvk/btw are stored even if
+    // that migration hasn't been applied yet — closing the silent-wrong-data window. The
+    // no-session (confirmation-ON) path above can't do this (anon RLS) and relies on the
+    // trigger. Best-effort: a failure here never blocks the redirect.
+    await supabase
+      .from('profiles')
+      .upsert({
+        id: data.user.id,
+        role,
+        full_name: fullName,
+        company_name: companyName,
+        kvk_number: kvk,
+        btw_number: btw,
+        email,
+        onboarding_step: 4,
+        // [KLUIS] Zie de toelichting hierboven: dit is het pad zonder e-mailbevestiging,
+        // waar wij zelf schrijven in plaats van de trigger.
+        account_purpose: purpose,
+        onboarding_done: purpose === 'archief',
+      }, { onConflict: 'id' })
+      .then(({ error }) => {
+        if (error) console.error('[COHERENCE-REGISTER] post-session profile upsert failed (non-fatal):', error)
+      })
+
     const redirectUrl = searchParams.get('redirect')
-    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : '/onboarding')
+    // [KLUIS] Een archiefaccount landt in zijn kluis, niet in een wizard over facturen.
+    router.push(redirectUrl ? decodeURIComponent(redirectUrl) : landingPath(purpose))
   }
 
   // [BOEK-015] email confirmation screen
@@ -175,10 +236,10 @@ function RegisterContent() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
         <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
           <div aria-hidden="true" style={{ fontSize: "48px", marginBottom: "16px" }}>📧</div>
-          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#1c1c1e", margin: "0 0 8px" }}>
+          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#202124", margin: "0 0 8px" }}>
             Controleer je e-mail
           </h1>
-          <p style={{ fontSize: "15px", color: "#6b6b6e", margin: "0 0 24px" }}>
+          <p style={{ fontSize: "15px", color: "#5f6368", margin: "0 0 24px" }}>
             We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
             Klik op de link om je account te activeren.
           </p>
@@ -203,20 +264,20 @@ function RegisterContent() {
 
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-gray-900">BoekBrug</h1>
-          <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
-          <p className="text-gray-600 text-sm mt-3">Maak facturen, scan bonnen en houd je BTW bij. Gratis.</p>
-          <p className="text-gray-400 text-xs mt-1">Geen creditcard nodig · AVG-proof</p>
+          <p className="text-gray-500 text-sm mt-1">{copy.subtitle}</p>
+          <p className="text-gray-600 text-sm mt-3">{copy.promise}</p>
+          <p className="text-gray-400 text-xs mt-1">{copy.reassurance}</p>
         </div>
 
         {/* Stap 1 — Rol kiezen */}
-        {step === 1 && (
+        {step === 1 && !isArchief && (
           <div className="space-y-4">
             <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
             <button
               onClick={() => { setRole('zzper'); setStep(2) }}
               className="w-full border-2 border-gray-200 rounded-xl p-4 text-left hover:border-blue-500 active:scale-[0.98] transition-all"
             >
-              <p className="font-medium text-gray-900">ZZP'er</p>
+              <p className="font-medium text-gray-900">ZZP&rsquo;er</p>
               <p className="text-sm text-gray-500">Ik stuur en ontvang facturen</p>
             </button>
             <button
@@ -244,7 +305,7 @@ function RegisterContent() {
               ) : (
                 <GoogleIcon />
               )}
-              {googleLoading ? 'Bezig met verbinden...' : 'Registreren met Google'}
+              {googleLoading ? 'Bezig met verbinden...' : 'Doorgaan met Google'}
             </button>
 
             {/* Divider */}
@@ -328,7 +389,7 @@ function RegisterContent() {
 
             <button onClick={handleRegister} disabled={loading || googleLoading || !email || !password}
               className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50">
-              {loading ? 'Bezig...' : 'Account aanmaken'}
+              {loading ? 'Bezig...' : copy.cta}
             </button>
 
             {/* [AVG] Consent — a reachable link to the terms/privacy at sign-up. */}
@@ -362,7 +423,7 @@ function GoogleIcon() {
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/>
       <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/>
-      <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" fill="#FBBC05"/>
+      <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" fill="#fbbc04"/>
       <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z" fill="#EA4335"/>
     </svg>
   )

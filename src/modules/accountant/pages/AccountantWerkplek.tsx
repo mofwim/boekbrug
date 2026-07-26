@@ -3,15 +3,22 @@
 // src/modules/accountant/pages/AccountantWerkplek.tsx
 // [BOEK-028] Accountant werkplek — 4 tools — Google Workspace design — May 2026
 
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useParentPath } from '@/lib/navigation-hooks'
 
 // ─────────────────────────────────────────────────────────
 // Data
 // ─────────────────────────────────────────────────────────
 
 const TOOLS = [
+  {
+    // [WERKBOARD] Daily driver — the BTW deadline, every client's klaar-status and
+    // score, and a one-tap reminder, on one board. First: the morning screen.
+    icon: '🗓️',
+    label: 'Aangifte & status',
+    sub: 'BTW-deadline, klaar-status en herinneren per klant',
+    href: '/dashboard/accountant/agenda',
+    isNew: true,
+  },
   {
     icon: '👥',
     label: 'Klanten beheren',
@@ -72,34 +79,9 @@ const TOOLS = [
 
 export default function AccountantWerkplek() {
   const router = useRouter()
-  const parentHref = useParentPath('accountant')
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
-
-      {/* Header */}
-      <div style={{
-        backgroundColor: '#FFFFFF',
-        borderBottom: '1px solid #E0E0E0',
-        padding: '0 24px',
-        height: 64,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 16,
-        position: 'sticky',
-        top: 0,
-        zIndex: 40,
-      }}>
-        <Link
-          href={parentHref}
-          style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500 }}
-        >
-          ← Terug
-        </Link>
-        <h1 style={{ fontSize: 18, fontWeight: 600, color: '#202124', margin: 0 }}>
-          Mijn werkplek
-        </h1>
-      </div>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Tool list */}
       <main style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px' }}>

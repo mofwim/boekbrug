@@ -25,9 +25,22 @@
 // Rule: AI prepares + presents. Human confirms. System executes.
 // ─────────────────────────────────────────────────────────
 
+// [COST-GUARD] The global daily spend fuse. Every path to Anthropic goes through
+// one of the three transports below, and each of them reserves budget first —
+// so there is no way to reach the paid API that skips the ceiling. See
+// src/lib/ai-budget.ts for why a GLOBAL ceiling and not a better per-user quota.
+import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
+
 // [BOEK-018] constants — May 2026
-//const CLAUDE_MODEL = 'claude-sonnet-4-5-20251001';  // [BOEK-018] fix: correct model name
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+// [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
+// hard-coded switch to 'claude-sonnet-4-5-20251001' returned HTTP 404 (that exact id is not
+// available on this account), which silently broke EVERY invoice classification — no invoice could
+// be read or imported. The lesson: never hard-code an unverified model id. The default below is the
+// Haiku model this app has always run on successfully; to try a smarter model (e.g. a valid Sonnet),
+// set CLAUDE_MODEL in the environment — and if that id is unavailable, just clear the env var to
+// fall straight back to the working Haiku default, with NO code change or deploy needed.
+const DEFAULT_CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+const CLAUDE_MODEL = (process.env.CLAUDE_MODEL || '').trim() || DEFAULT_CLAUDE_MODEL;
 // [BOEK-011 double-check m.1] Output token budget for Claude responses.
 // The invoice JSON has 18 fields + nested field_confidence + a Dutch `reason`.
 // At 1000 a complex invoice (long vendor name, full breakdown, detailed reason)
@@ -36,6 +49,235 @@ const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 // the extra output tokens are a few cents and only billed when actually used.
 const MAX_TOKENS = 2000;
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+
+// [STATEMENT-GUARD] An unmistakable statement-of-account filename — an OVERVIEW of MULTIPLE
+// invoices (with a summed total), never a single bookable invoice. Booking such a document
+// as one invoice double-counts the invoices it summarises. Narrow on purpose: it excludes
+// "aanmaning"/"herinnering", which can be a single-invoice reminder that IS bookable.
+export function isStatementFilename(filename: string): boolean {
+  return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
+}
+
+// [REMINDER] A filename that unmistakably marks a payment REMINDER (not a fresh invoice). Used
+// as a deterministic backstop over the model's own is_reminder read, so a reminder whose PDF
+// the model booked as a plain invoice is still flagged for the human. Deliberately excludes
+// bare "factuur"/"invoice". A reminder is a real (single) invoice, so we do NOT reject it — we
+// only ensure it is FLAGGED so the human checks it isn't already booked (avoids double-count).
+export function isReminderFilename(filename: string): boolean {
+  return /betalings?[-_ ]?herinnering|(^|[^a-z])herinnering|aanmaning|(^|[^a-z])reminder([^a-z]|$)|payment[-_ ]?reminder/i.test(
+    filename || "",
+  );
+}
+
+// [STATEMENT-TEXT-GUARD] A CONTENT backstop over the model's own is_statement read. The reported
+// bug is an "openstaande facturen" overview (e.g. from no-reply@exact.com) that the small model
+// rejects (is_invoice=false) but WITHOUT setting the optional is_statement boolean, and whose
+// filename is generic — so neither the is_statement guard nor isStatementFilename fires, and the
+// vendor+amount rescue below then resurrects it as one bookable invoice (double-count). This reads
+// the extracted PDF TEXT and recognises the overview SHAPE deterministically. Deliberately narrow:
+// it requires PLURAL/overview vocabulary ("openstaande facturen/posten", "rekeningoverzicht",
+// "saldo-overzicht") AND a confirming signal (a summed open balance OR multiple invoice rows), so
+// a single-invoice "betalingsherinnering" — which the policy KEEPS (imported, flagged) — is never
+// caught here. Pure + testable. Empty/scanned text → false (the model's read stands).
+export function looksLikeStatementText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  const overviewTitle =
+    /(rekening|saldo)[-\s]?overzicht/.test(t) ||
+    /openstaande\s+(facturen|posten)/.test(t) ||
+    /overzicht\s+(van\s+)?openstaande/.test(t) ||
+    /overzicht\s+(van\s+)?(je|uw|de)\s+facturen/.test(t);
+  if (!overviewTitle) return false;
+  const openBalance =
+    /totaal\s+openstaand/.test(t) ||
+    /nog\s+openstaand/.test(t) ||
+    /reeds\s+betaald/.test(t) ||
+    /te\s+betalen\s+saldo/.test(t) ||
+    /\bvervallen\b/.test(t) ||
+    /\bsaldo\b/.test(t);
+  const multipleInvoiceRefs =
+    (t.match(/factuurnummer|factuurnr\.?|factuur\s+nr|factuurdatum/g) || []).length >= 2;
+  return openBalance || multipleInvoiceRefs;
+}
+
+// [STATEMENT-HARDEN] The model's REJECTION REASON, in prose, often says exactly what it decided —
+// "rekeningoverzicht — samenvatting van bestaande facturen". When it did, we trust that rejection
+// and do NOT let the vendor+amount rescue override it. Overview-specific vocabulary only, so a
+// generic "geen factuur" reason on a mis-judged verzamelfactuur still gets the benefit of the
+// rescue (it enters the verify queue, never lost).
+export function looksLikeStatementReason(reason: string | null | undefined): boolean {
+  if (!reason) return false;
+  const r = reason.toLowerCase();
+  return (
+    /(rekening|saldo)[-\s]?overzicht/.test(r) ||
+    /openstaande\s+(facturen|posten)/.test(r) ||
+    /samenvatting\s+van\s+\S*\s*factur/.test(r) ||
+    /overzicht\s+van\s+(meerdere|bestaande)\s+factur/.test(r) ||
+    /meerdere\s+facturen/.test(r)
+  );
+}
+
+// [TRUST-CONFIDENT-FALSE] The classifier (a small model) can be CONFIDENTLY wrong that a
+// document is "not an invoice" — the classic case is a collective invoice (verzamelfactuur:
+// many delivery-note lines with their own numbers/dates/amounts) read as a "rekeningoverzicht".
+// Silently discarding such a verdict loses a real, bookable invoice with NO trace the owner can
+// see. So: when a NOT-an-invoice verdict still carries a STRONG invoice signal — a vendor AND an
+// amount — and the filename is not an unmistakable statement, we do NOT trust the rejection. The
+// document is routed to the human verify queue flagged 'uncertain' instead of dropped. This is
+// money-safe: email/intake invoices enter as 'processing', excluded from BTW/omzet/kosten until
+// the human confirms or dismisses — a genuine non-invoice (newsletter, real statement) is simply
+// dismissed there, but a real invoice is never again lost unseen. Pure + testable.
+export function shouldRescueNonInvoice(
+  p: {
+    vendor?: string | null;
+    total_inc_btw?: number | null;
+    total_ex_btw?: number | null;
+    amount?: number | null;
+    // [STATEMENT] Set by the model when the document is an overview of MULTIPLE invoices. Such a
+    // document has a vendor + a (balance) amount, so WITHOUT this guard the rescue below would
+    // wrongly resurrect it as one bookable invoice and double-count the invoices it summarises.
+    is_statement?: boolean | null;
+    // [STATEMENT-HARDEN] The model's own rejection reason. When it explicitly reasoned "this is a
+    // rekeningoverzicht / overzicht van meerdere facturen", we trust that over the blunt
+    // vendor+amount signal — the fix for the Exact "openstaande facturen" overview that was
+    // rejected-with-reason but had is_statement unset and a generic filename, so it got rescued
+    // and booked as a phantom cost.
+    reason?: string | null;
+  },
+  filename: string,
+): boolean {
+  if (p.is_statement === true) return false; // a statement of account is never a bookable invoice
+  if (isStatementFilename(filename)) return false; // an unmistakable statement stays rejected
+  if (looksLikeStatementReason(p.reason)) return false; // the model itself reasoned it's an overview
+  const hasVendor = !!(p.vendor && String(p.vendor).trim());
+  const hasAmount =
+    p.total_inc_btw != null || p.total_ex_btw != null || p.amount != null;
+  return hasVendor && hasAmount;
+}
+
+// [CREDIT-BACKSTOP] A document whose printed TOTAL is negative is a credit / correction, even
+// when the model did not tag it (e.g. an "expondo Factuurcorrectie — Full return" that never
+// writes the word "Creditnota"). Returns true when the row must be treated as a creditnota so
+// the negative amount is KEPT instead of being dropped to undefined (which turns a real
+// -1.123,14 credit into an empty €0 record). A normal invoice's totals are positive, so this
+// never mis-fires on a genuine purchase invoice.
+export function shouldTreatAsCreditNote(
+  taggedCredit: boolean | undefined,
+  rawIncl: unknown,
+  rawEx: unknown,
+): boolean {
+  if (taggedCredit === true) return true;
+  const neg = (v: unknown) => typeof v === "number" && isFinite(v) && v < 0;
+  const pos = (v: unknown) => typeof v === "number" && isFinite(v) && v > 0;
+  // [HUNT-F2] A POSITIVE printed total is never a creditnota. A negative ex under a positive
+  // total is an extraction error (e.g. a discount/korting line mis-read into the base), not a
+  // credit — leave it for SAFECORE to flag rather than mis-classify it as a creditnota.
+  if (pos(rawIncl)) return false;
+  return neg(rawIncl) || neg(rawEx);
+}
+
+// [EX-INCL-FIX] Some suppliers mislabel the GROSS total as "Subtotaal", so extraction ends up
+// with total_ex_btw == total_inc_btw while a real BTW is printed — an impossible combination
+// (equal ex and incl implies zero BTW). The incl / paid total and the BTW are the reliable
+// anchors (they match what left the bank), so recover the true base: ex = incl − btw. It fires
+// ONLY on that exact contradiction (ex ≈ incl with |btw| > 0), so it can never mask a genuine
+// mismatch. Sign-safe: on a creditnota (all negative) it yields the correct negative base.
+export function fixExInclConfusion(
+  ex: number | undefined,
+  btw: number | undefined,
+  incl: number | undefined,
+): number | undefined {
+  if (ex === undefined || btw === undefined || incl === undefined) return ex;
+  if (Math.abs(btw) > 0.02 && Math.abs(ex - incl) < 0.02) {
+    const newEx = incl - btw;
+    // [HUNT-F1] Only accept the recomputation when the recovered base implies a PLAUSIBLE NL
+    // BTW rate. A reverse-charge / "BTW verlegd" memo captured into btw_amount (ex=1000,
+    // btw=210, incl=1000) would otherwise be silently "reconciled" into a fabricated €210
+    // deductible BTW + a wrong ex, AND make SAFECORE's sum check pass. Rejecting an out-of-band
+    // implied rate leaves ex untouched so SAFECORE holds the invoice for human review.
+    const impliedRate = Math.abs(newEx) > 0.005 ? Math.round(Math.abs(btw / newEx) * 100) : 0;
+    if (impliedRate >= 0 && impliedRate <= 21) return newEx;
+  }
+  return ex;
+}
+
+// [BTW-SUM-FIX] On a MIXED-RATE invoice the BTW total is the one figure that is NOT printed as a
+// single number. The summary block prints one ROW PER RATE — each with its own grondslag on the
+// left and its own BTW on the right:
+//     € 2.591,71   BTW 9% excl.    €  233,20
+// so the reader must pick the right column and add it up itself. That is where it slips. The Enka
+// Horeca case read btw = 995,90 over a printed excl of 3.413,92 and a printed total of 3.819,82:
+// a 29% rate (impossible in NL) and excl + BTW ≠ totaal, so SAFECORE held it with a reason the
+// owner could do nothing with. The two numbers it did NOT have to compute are both printed verbatim
+// ("Totaal exclusief BTW" and "Totaal te voldoen"), and their difference is exactly the true BTW:
+// 3.819,82 − 3.413,92 = 405,90, a legal 12% blend of 9% and 21%.
+//
+// So when the STATED BTW is PROVABLY impossible (implied rate outside 0–21%, which no NL rate or
+// blend of them can reach) while the difference between the two printed anchors IS a legal rate,
+// the mis-summed figure is the one to replace. Deliberately narrow: it never fires when the stated
+// BTW is merely inconsistent but plausible, because then we cannot tell WHICH of the three numbers
+// is wrong and SAFECORE must keep holding it for the human.
+//
+// `derived` is reported back so the caller can mark the invoice: the repaired BTW makes the sum
+// add up, but it is OUR arithmetic rather than the invoice's, and BTW is deductible money in the
+// aangifte. A derived BTW therefore stays in the verify queue and never auto-books.
+export function fixMisSummedBtw(
+  ex: number | undefined,
+  btw: number | undefined,
+  incl: number | undefined,
+): { btw: number | undefined; derived: boolean } {
+  const keep = { btw, derived: false };
+  if (ex === undefined || btw === undefined || incl === undefined) return keep;
+  if (!isFinite(ex) || !isFinite(btw) || !isFinite(incl)) return keep;
+  // Without a base there is no rate to reason about — and no way to tell right from wrong.
+  if (Math.abs(ex) < 0.005) return keep;
+  // Only a genuine contradiction is repairable; a consistent invoice is never touched.
+  if (Math.abs(ex + btw - incl) <= 0.02) return keep;
+
+  const rateOver = (v: number) => Math.round(Math.abs(v / ex) * 100);
+  // The stated BTW must be provably wrong — not merely surprising.
+  if (rateOver(btw) <= 21) return keep;
+
+  const derivedBtw = Math.round((incl - ex) * 100) / 100;
+  // ...and the replacement must be provably plausible: a legal blended rate, charged in the same
+  // direction as the base it sits on (a sign flip means a different document, not a bad sum).
+  if (rateOver(derivedBtw) > 21) return keep;
+  if (derivedBtw !== 0 && Math.sign(derivedBtw) !== Math.sign(ex)) return keep;
+
+  return { btw: derivedBtw, derived: true };
+}
+
+// [VISUAL-REREAD] Decide whether a cheap TEXT read is weak enough to justify one re-read of the
+// same PDF on the same Haiku model but via the raw VISUAL layout (which preserves the table
+// columns the flattened text loses). Only fires on something the model already called an invoice
+// AND for which it found a total (a truly-empty read is handled by the existing raw-PDF fallback,
+// not here) — so the re-read is spent recovering the fields most often lost on complex layouts:
+// the invoice number, the ex/BTW split, or an amount the reader itself scored low. No model-cost
+// increase (same Haiku), just a second pass that sees the page. Pure + testable.
+export function needsVisualReread(
+  p:
+    | {
+        is_invoice?: boolean;
+        invoice_number?: string | null;
+        total_inc_btw?: number | null;
+        total_ex_btw?: number | null;
+        btw_amount?: number | null;
+        amount?: number | null;
+        field_confidence?: { amount?: number } | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!p || p.is_invoice !== true) return false;
+  const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
+  const total = isNum(p.total_inc_btw) ? p.total_inc_btw : isNum(p.amount) ? p.amount : undefined;
+  if (total === undefined) return false;
+  const missingNumber = !p.invoice_number || !String(p.invoice_number).trim();
+  const missingBreakdown = !(isNum(p.total_ex_btw) && isNum(p.btw_amount));
+  const amountScore = p.field_confidence?.amount;
+  const lowAmountConfidence = isNum(amountScore) && amountScore < 0.7;
+  return missingNumber || missingBreakdown || lowAmountConfidence;
+}
 
 // Base system prompt — shared by all functions
 const SYSTEM_BASE = `You are an AI assistant for BoekBrug, a financial workflow platform in the Netherlands.
@@ -60,10 +302,31 @@ export interface ClassifyDocumentResult {
   isDuplicate?: boolean;
 }
 
+// [TRUST-UNCERTAIN] Decide what to do with a read given its overall confidence and
+// whether it carries any invoice signal (a vendor or an amount). The old code hard-
+// dropped everything below 0.6 as "not an invoice" — silently losing real but hard-
+// to-read invoices. This never drops a signal-bearing read in the uncertain band;
+// it routes it to human review instead. Pure + exported so it is unit-tested.
+//   >= 0.60                         → 'accept'  (normal flow)
+//   [0.35, 0.60) with signal        → 'review'  (flow to verify queue, FLAGGED)
+//   < 0.35, or no invoice signal    → 'skip'    (spam / newsletter / unreadable)
+export type ConfidenceBand = 'accept' | 'review' | 'skip';
+export function decideConfidenceBand(confidence: number, hasInvoiceSignal: boolean): ConfidenceBand {
+  if (!(confidence >= 0)) return 'skip'; // NaN/negative → skip
+  if (confidence >= 0.6) return 'accept';
+  if (confidence >= 0.35 && hasInvoiceSignal) return 'review';
+  return 'skip';
+}
+
 // [BOEK-011] Result of reading an actual PDF — May 2026
 export interface VerifyInvoiceResult {
   is_invoice: boolean;       // true only if this is a real commercial invoice
   confidence: number;        // 0–1
+  // [TRUST-UNCERTAIN] The reader saw likely-invoice content but was NOT confident
+  // it read it correctly (blurry photo, odd/foreign layout). Such an item is routed
+  // to the human verify queue FLAGGED — never silently dropped. Distinct from
+  // is_invoice:false (confidently NOT an invoice → quietly skipped).
+  uncertain?: boolean;
   vendor?: string;           // who sent the invoice
   amount?: number;           // total amount including BTW (numeric) — alias of total_inc_btw
   invoice_number?: string;   // invoice number if found
@@ -82,6 +345,11 @@ export interface VerifyInvoiceResult {
   // BoekBrug never processes money — these only prepare it. Null when absent.
   vendor_iban?: string;      // the vendor's IBAN (party to be paid), normalized
   payment_reference?: string; // betalingskenmerk / structured payment reference
+  // [SUPPLIER-IDENTITY] The vendor's LEGAL identity — the strongest keys for recognising the same
+  // supplier across differently-spelled names (two "Jansen" firms have different KVK). Extracted
+  // here so the supplier registry can match/store them. Null when the invoice doesn't print them.
+  vendor_kvk?: string;       // vendor KVK number, digits only (8 digits, Dutch Chamber of Commerce)
+  vendor_btw?: string;       // vendor BTW/VAT number, e.g. NL123456789B01 (no spaces, uppercase)
   // [SMART-INTAKE] What KIND of document this is, so the intake router can send
   // it to the right destination. A "receipt"/kassabon is a PAID proof; an
   // "invoice" is a payment request (usually unpaid). "other" → not a financial
@@ -91,6 +359,13 @@ export interface VerifyInvoiceResult {
   // kassabon / pin-receipt (paid at the counter). The router uses this to
   // pre-suggest "paid" in the verify queue — the human still confirms (Pillar ⑤).
   is_paid?: boolean;
+  // [PEN-MARK] When the owner has WRITTEN on the paper (pen) or a shop STAMPED it — "betaald",
+  // "voldaan", "contant/kas", "bank", "pin", often with a date — read that annotation. These let
+  // the verify queue pre-suggest paid + how + when, so a snapped-and-thrown invoice needs one
+  // confirming tap instead of manual data entry. Null when there is no such mark. NEVER
+  // auto-books payment — it only pre-fills a suggestion the human confirms.
+  paid_method?: "bank" | "kas" | "pin" | null; // 'kas' = contant/cash
+  paid_date?: string | null;                    // the written/stamped payment date, "YYYY-MM-DD"
   // [BRIDGE-CREDITNOTA-SIGN] Is this a CREDITNOTA (credit note)? True only on
   // explicit evidence: a "Creditnota"/"Credit note" title, a CR-prefixed
   // number, or amounts printed negative. Routing is unaffected (a creditnota
@@ -99,6 +374,24 @@ export interface VerifyInvoiceResult {
   // sign-inverted SAFECORE gate. Amounts on a creditnota are kept NEGATIVE as
   // printed — matching the outgoing creditnota route [BOEK-031].
   is_credit_note?: boolean;
+  // [STATEMENT] Is this a STATEMENT OF ACCOUNT — a "rekeningoverzicht" / "openstaande facturen"
+  // that LISTS MULTIPLE separate invoices with a summed balance? It is NOT a bookable invoice:
+  // booking its total double-counts the individual invoices (which arrive on their own). True
+  // ONLY for a genuine overview of TWO OR MORE invoices; a single collective invoice
+  // (verzamelfactuur) is NOT a statement. When true we force is_invoice=false and never rescue it.
+  is_statement?: boolean;
+  // [REMINDER] Is this a payment REMINDER (betalingsherinnering / aanmaning) for an invoice
+  // that was already sent earlier — not a fresh invoice? A reminder restates an existing debt
+  // (often with added herinneringskosten), so booking it as a NEW invoice double-counts the
+  // cost. True on explicit evidence: a "herinnering"/"aanmaning"/"betalingsherinnering"/
+  // "reminder" title or a "2e/laatste herinnering" heading over a single restated invoice.
+  // We never discard it (it might be the first time we see that invoice), but we FLAG it so it
+  // lands in the verify queue marked "controleer of de factuur al geboekt is" — never booked
+  // silently as a second cost.
+  is_reminder?: boolean;
+  // [REMINDER] The ORIGINAL invoice number this is a reminder OF (when known), so the verify
+  // queue and dedup can point the owner at the invoice that may already be booked.
+  reminder_of_invoice_number?: string | null;
   reason?: string;           // why it was rejected (if is_invoice = false)
   // [BOEK-011] detailed BTW breakdown — extracted in the same call, zero extra cost
   total_ex_btw?: number;     // amount excluding BTW
@@ -111,6 +404,15 @@ export interface VerifyInvoiceResult {
     vendor?: number;
     invoice_number?: number;
     invoice_date?: number;
+    // [TRUST-AMOUNTS] The reader's own certainty about the AMOUNTS it read — the
+    // money-truth. Only set when the model actually reports it; absent means "no
+    // signal", NOT "certain" (import-health only flags a low score that is present).
+    amount?: number;
+    // [BTW-SUM-FIX] Set ONLY when the printed BTW total could not be read from a mixed-rate
+    // summary block and had to be derived from the two printed anchors (excl + the paid total).
+    // Carries both figures so the owner sees exactly what changed; its presence keeps the
+    // invoice in the verify queue (a derived BTW is never auto-booked).
+    _btw_derived?: { read: number | null; used: number | null };
   };
 }
 
@@ -248,8 +550,18 @@ function cacheableSystem(systemPrompt: string): Array<{
 
 async function callClaude(
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  model: string = CLAUDE_MODEL
 ): Promise<string> {
+  // [COST-GUARD] Reserve before spending. A refusal throws, which every caller
+  // already handles as "AI unavailable" and degrades to manual entry.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.shortText + Math.ceil((prompt.length + systemPrompt.length) / 4),
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaude',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
+
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -258,7 +570,7 @@ async function callClaude(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       system: cacheableSystem(systemPrompt),
       messages: [{ role: 'user', content: prompt }],
@@ -387,10 +699,19 @@ async function extractPdfTextIfTextLayer(pdfBase64: string): Promise<string | nu
 async function callClaudeWithPdf(
   pdfBase64: string,
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  model: string = CLAUDE_MODEL
 ): Promise<string> {
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(pdfBase64)
+
+  // [COST-GUARD] A raw PDF is the most expensive shape we send.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.rawPdfDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaudeWithPdf',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -401,7 +722,7 @@ async function callClaudeWithPdf(
       'anthropic-beta': 'pdfs-2024-09-25', // required for PDF support
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       system: cacheableSystem(systemPrompt),
       messages: [
@@ -537,7 +858,8 @@ async function callClaudeWithImage(
   imageBase64: string,
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  model: string = CLAUDE_MODEL
 ): Promise<string> {
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(imageBase64)
@@ -550,6 +872,16 @@ async function callClaudeWithImage(
     mimeType
   )
 
+  // [COST-GUARD] Reserved AFTER the downscale, so the fuse is charged the real
+  // (reduced) size rather than the raw photo — the cost lever above is worth
+  // ~13× on image tokens and the ceiling should reflect that, not punish it.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.imageDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaudeWithImage',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
+
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -558,7 +890,7 @@ async function callClaudeWithImage(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       system: cacheableSystem(systemPrompt),
       messages: [
@@ -701,6 +1033,31 @@ Return JSON only.`;
 // Returns is_invoice: false → file is discarded, never saved to DB
 // Returns is_invoice: true  → file is saved with extracted data
 // ─────────────────────────────────────────────────────────
+// [TRANSIENT-RETRY] Distinguish a TRANSIENT infra failure (Claude 429/5xx, network) from a
+// genuine "can't read this file" verdict. On transient errors the email-sync path must NOT record
+// a permanent 'could_not_read' skip and advance the watermark past a real invoice — it must retry
+// next sync. Detected from the error the callClaude* helpers throw (`... API error <status>`) and
+// node/undici network failures. Pure.
+export function isTransientAiError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  if (/\bAPI error\s+(429|5\d\d)\b/i.test(msg)) return true;          // Claude 429 / 5xx
+  if (/request failed/i.test(msg)) return true;                       // fetchWithRetry fallback
+  if (/fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|und_err|network|timeout/i.test(msg)) return true;
+  const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
+  const code = typeof cause?.code === 'string' ? cause.code : '';
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(code)) return true;
+  return false;
+}
+
+// [REREAD-STRONG] Any Claude HTTP API error (the callClaude* helpers throw `Claude … API error
+// <status>`), including a NON-transient 404 (model not enabled) / 400 / 403. Distinct from a
+// genuine "not an invoice" verdict, which is a normal return — never an exception. Used so an
+// infra/config failure surfaces honestly (retry / 502) rather than as a false document verdict.
+export function isAiApiError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  return /\bapi error\b/i.test(msg);
+}
+
 export async function verifyInvoiceFromPdf(
   fileBase64: string,
   mimeType: string,
@@ -709,7 +1066,22 @@ export async function verifyInvoiceFromPdf(
   // provided, the AI must never return this name as the vendor (it's the client,
   // not the sender). Fixes the W.Ketels/Kiwi confusion. Optional → callers that
   // don't pass it keep the old behaviour.
-  receiverName?: string | null
+  receiverName?: string | null,
+  // [TRANSIENT-RETRY] Opt-in: when true, re-throw a transient infra error instead of returning the
+  // confidence-0 FALLBACK, so the email-sync/reimport path can retry rather than permanently skip.
+  // Default false → every existing caller (upload / intake / bank-attach) keeps the FALLBACK behaviour.
+  // [REREAD-STRONG] `model` overrides the reader model (default Haiku); `preferRawPdf` skips the
+  // cheap flattened-text path and reads the ACTUAL PDF layout directly. Used by the manual
+  // "Opnieuw inlezen" so a stuck complex invoice (statiegeld/retour, net-negative creditnota) is
+  // re-read by a stronger model on the real page — the automatic sync keeps the Haiku/text path.
+  // [RECEIVER-IDENTITY] Our own legal identity (KVK/BTW/IBAN), so the AI can tell OUR numbers
+  // from the vendor's and never return ours as the vendor. Also used as a programmatic backstop
+  // below (any vendor field equal to ours is dropped). Optional → callers that don't pass it keep
+  // the name-only behaviour.
+  opts?: {
+    throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean
+    receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
+  }
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
     is_invoice: false,
@@ -717,14 +1089,38 @@ export async function verifyInvoiceFromPdf(
     reason: 'AI verificatie mislukt — bestand overgeslagen',
   };
 
+  // [RECEIVER-IDENTITY] Canonicalize our own identity the SAME way the vendor fields are
+  // normalized below, so the equality backstop compares like-for-like.
+  const myKvk = (() => {
+    const d = String(opts?.receiverKvk ?? '').replace(/\D/g, '')
+    return d.length === 8 ? d : null
+  })();
+  const myBtw = (() => {
+    const b = String(opts?.receiverBtw ?? '').replace(/\s+/g, '').toUpperCase()
+    return /^NL\d{9}B\d{2}$/.test(b) ? b : null
+  })();
+  const myIban = (() => {
+    const s = String(opts?.receiverIban ?? '').replace(/\s+/g, '').toUpperCase()
+    return s.length >= 15 && /^[A-Z0-9]+$/.test(s) ? s : null
+  })();
+
   // [BRIDGE-EXTRACT] Inject the receiver identity into the prompt when known.
+  const receiverIdLines = [
+    myKvk ? `- Our own KVK is "${myKvk}" — this is the RECEIVER's KVK. NEVER return it as "vendor_kvk".` : '',
+    myBtw ? `- Our own BTW number is "${myBtw}" — the RECEIVER's. NEVER return it as "vendor_btw".` : '',
+    myIban ? `- Our own IBAN is "${myIban}" — the RECEIVER's account. NEVER return it as "vendor_iban".` : '',
+  ].filter(Boolean).join('\n');
   const receiverHint = receiverName
     ? `\n\nIMPORTANT — who the RECEIVER is:
 - The recipient of this invoice is "${receiverName}" (this is OUR company, the client).
 - "${receiverName}" is the RECEIVER, never the vendor/sender. Even if this name appears
   prominently (e.g. under "Factuur aan", "T.a.v.", or at the top), do NOT return it as "vendor".
-- The vendor is the OTHER party — the company that issued and sent the invoice to us.`
-    : '';
+- The vendor is the OTHER party — the company that issued and sent the invoice to us.${receiverIdLines ? '\n' + receiverIdLines + '\n- The vendor\'s KVK/BTW/IBAN are DIFFERENT numbers than ours above.' : ''}`
+    : (receiverIdLines
+      ? `\n\nIMPORTANT — our own legal identity (the RECEIVER, never the vendor):
+${receiverIdLines}
+- The vendor's KVK/BTW/IBAN are DIFFERENT numbers than ours above; never return ours as the vendor's.`
+      : '');
 
   const systemPrompt = `${SYSTEM_BASE}
 
@@ -739,10 +1135,17 @@ Return only a JSON object with these exact keys:
   "due_date": "YYYY-MM-DD" or null,
   "payment_term_days": number or null,
   "vendor_iban": string or null,
+  "vendor_kvk": string or null,
+  "vendor_btw": string or null,
   "payment_reference": string or null,
   "document_kind": "invoice" | "receipt" | "other",
   "is_paid": boolean,
+  "paid_method": "bank" | "kas" | "pin" | null,
+  "paid_date": "YYYY-MM-DD" or null,
   "is_credit_note": boolean,
+  "is_statement": boolean,
+  "is_reminder": boolean,
+  "reminder_of_invoice_number": string or null,
   "total_ex_btw": number or null,
   "btw_amount": number or null,
   "total_inc_btw": number or null,
@@ -750,7 +1153,8 @@ Return only a JSON object with these exact keys:
   "field_confidence": {
     "vendor": number between 0 and 1,
     "invoice_number": number between 0 and 1,
-    "invoice_date": number between 0 and 1
+    "invoice_date": number between 0 and 1,
+    "amount": number between 0 and 1
   },
   "reason": string or null
 }
@@ -798,6 +1202,18 @@ Vendor IBAN + payment reference extraction rules:
 - If MULTIPLE IBANs appear, prefer the one tied to the vendor / "to be paid".
   If you cannot tell which IBAN belongs to the vendor, set vendor_iban to null
   — never guess an IBAN, and never return our own (receiver) IBAN.
+
+Vendor legal-identity extraction rules (the SENDER's KVK + BTW — never ours):
+- "vendor_kvk" = the VENDOR's Chamber-of-Commerce number, labelled "KVK", "K.v.K.",
+  "KvK-nummer", "Chamber of Commerce", "CoC". Digits only, drop spaces/dots
+  (e.g. "KVK: 12 34 56 78" → "12345678"). It is the SENDER's, usually in the header
+  or footer near their address — NOT the receiver's (T.a.v./Factuur aan) number.
+- "vendor_btw" = the VENDOR's BTW/VAT number, labelled "BTW", "BTW-nr", "BTW-nummer",
+  "VAT", "Btw-id". Dutch format NL + 9 digits + B + 2 digits; remove spaces, uppercase
+  (e.g. "BTW: NL 123456789 B01" → "NL123456789B01"). The receiver's own BTW number is
+  often printed too ("Uw BTW-nummer") — return the SENDER's, never the receiver's.
+- If a number clearly belongs to the receiver/client, or you cannot tell, set it to null —
+  never guess, never return the receiver's KVK/BTW.
 - "payment_reference" = the betalingskenmerk / structured payment reference the
   invoice asks you to quote when paying (labels: "Betalingskenmerk",
   "Kenmerk", "Referentie", "Mededeling", "Payment reference"). This is often
@@ -811,6 +1227,34 @@ Rules for is_invoice = false:
 - Shipping notifications
 - Anything that is not a financial document
 - Set reason to a short Dutch explanation why it was rejected
+
+CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=false AND is_statement=true):
+- A "Rekeningoverzicht", "Openstaande posten", "Openstaande facturen", "Saldo-overzicht",
+  "Overzicht openstaande facturen", "Aanmaning" or "Betalingsherinnering" that LISTS MULTIPLE
+  invoices is an OVERVIEW, not a single invoice. Tell-tale signs, any of which is decisive:
+  · a title containing "overzicht", "openstaand", "openstaande facturen", "aanmaning" or "herinnering";
+  · a TABLE whose columns are things like "Nummer / Datum / Bedrag / Betaald / Rest / V.Dagen"
+    or "Factuurnummer / Factuurbedrag / Reeds betaald / Nog openstaand / Vervallen / Factuurdatum";
+  · TWO OR MORE different invoice/document numbers, each with its OWN amount and date
+    (including credit lines like a CR-number with a negative amount);
+  · a "Totaal openstaand bedrag", "Balans" or "Saldo" line that is the SUM of the listed lines.
+- Booking such a document as one invoice is a SERIOUS error: its total DOUBLE-COUNTS the
+  individual invoices it summarises (which arrive separately), and it has no single valid
+  BTW breakdown (excl + BTW will never equal the total). So: is_invoice=false, is_statement=true,
+  document_kind="other", and reason e.g. "Rekeningoverzicht — overzicht van meerdere
+  facturen, geen boekbare factuur".
+- Set is_statement=false for a normal single invoice, a single collective invoice
+  (verzamelfactuur: ONE invoice number covering multiple delivery lines), and a receipt.
+- Exception: a reminder that repeats ONE single invoice (one number, one amount, one date)
+  IS that invoice — set is_invoice=true and extract it normally. BUT also set is_reminder=true
+  and put the ORIGINAL invoice number in reminder_of_invoice_number, because the original was
+  very likely already received earlier — booking the reminder as a second invoice would
+  double-count. Signs of a single-invoice reminder: a "Betalingsherinnering", "Herinnering",
+  "Aanmaning", "2e/laatste herinnering" or "Reminder" heading above what is otherwise ONE
+  invoice's details (one number, one amount). Extract the ORIGINAL invoice's amount, NOT any
+  added herinneringskosten line, as the total. (The rule ABOVE — is_invoice=false — is ONLY
+  for an overview of TWO OR MORE invoices.)
+- For anything that is NOT a reminder, set is_reminder=false and reminder_of_invoice_number=null.
 
 Document kind + paid status (ALWAYS set these):
 - "document_kind" tells what this is:
@@ -827,14 +1271,29 @@ Document kind + paid status (ALWAYS set these):
   normal unpaid invoice (a request to pay), set is_paid=false. When unsure,
   set is_paid=false — it is safer to ask the human to confirm payment than to
   mark something paid that is not.
+- HANDWRITTEN / STAMPED PAYMENT MARKS: a business owner often processes a PAPER invoice by
+  WRITING on it with pen or applying a shop STAMP — e.g. "betaald", "voldaan", "contant",
+  "kas", "bank", "pin", a bank/giro note, and/or a DATE. Read these marks even though they are
+  handwritten or stamped (they may be in a corner, diagonal, or over the print). When such a
+  mark clearly indicates the invoice was PAID, set is_paid=true and fill:
+    · "paid_method": "bank" (giro/overschrijving/"bank"), "kas" (contant/cash/"kas"),
+      "pin" (pin/card), or null if the method isn't written.
+    · "paid_date": the written/stamped payment date as "YYYY-MM-DD", or null if no date is written.
+  If there is NO such mark, set is_paid=false, paid_method=null, paid_date=null. Do NOT infer
+  payment from an unmarked invoice. A printed "te betalen"/due date is NOT a payment mark.
 - A receipt is still a real financial document: keep is_invoice=true for both
   "invoice" and "receipt" (both enter the pipeline); only "other" is false.
 
 Creditnota detection (ALWAYS set is_credit_note):
 - "is_credit_note" = true ONLY on explicit evidence this is a CREDIT NOTE:
   a title like "Creditnota", "Credit note", "Creditfactuur", "Credit invoice";
+  an INVOICE CORRECTION — "Factuurcorrectie", "Factuurcorrectienummer",
+  "Gecorrigeerd factuurdocument", "Correctiereden", "Credit memo", a "CM-…"
+  number prefix, a return/refund ("Full return", "Retour", "Terugbetaling");
   an invoice number with a credit prefix (e.g. "CR-…"); or the amounts printed
   as NEGATIVE / explicitly marked as credit ("te ontvangen", "credit").
+  A document that CORRECTS or REVERSES an earlier invoice (it names the original
+  invoice it corrects) with negative amounts IS a creditnota — set it true.
 - A creditnota is still a real financial document: is_invoice=true and
   document_kind="invoice" (it enters the same verify queue).
 - On a creditnota, return the amounts EXACTLY as printed — NEGATIVE when the
@@ -852,28 +1311,73 @@ Statement / reminder detection (NOT an invoice — prevents double counting):
   TWICE and could make the owner pay twice. → is_invoice=false,
   document_kind="other", and set reason to a short Dutch explanation, e.g.
   "rekeningoverzicht — samenvatting van bestaande facturen, geen factuur".
-- Strong signals (require at least TWO before classifying as a statement):
+- Strong signals — ANY ONE of these is enough to classify it as a statement
+  (set is_invoice=false AND is_statement=true):
+  · a title/heading with "overzicht", "openstaande facturen", "openstaande
+    posten", "rekeningoverzicht" or "saldo-overzicht"
   · a table listing MULTIPLE different factuurnummers in one document
   · columns like "Reeds betaald" / "Nog openstaand" / "Vervallen"
-  · a total labelled "openstaand" ("Totaal openstaand bedrag") instead of
-    "Totaal incl. BTW"
-  · no BTW breakdown anywhere on the document
+  · a total labelled "openstaand" ("Totaal openstaand bedrag", "Saldo",
+    "Balans") instead of a single "Totaal incl. BTW"
 - EXCEPTION: a reminder that contains exactly ONE invoice WITH a full BTW
   breakdown (excl + BTW + incl) is that invoice re-sent → treat it as a normal
-  invoice (the duplicate check catches the copy of the original).
-- When genuinely unsure whether it is a statement or an invoice →
-  is_invoice=true (the human verify queue is the safety gate; a silently
-  skipped real invoice costs money, a held statement only costs a review).
+  invoice (is_invoice=true, is_reminder=true; the duplicate check catches the
+  copy of the original).
+- Tie-break: for an OVERVIEW of two or more invoices, prefer is_invoice=false,
+  is_statement=true — booking its summed total double-counts real invoices and
+  can make the owner PAY TWICE. A wrongly-held overview only costs one glance in
+  the skipped list; a wrongly-booked one costs money. Only when it is clearly a
+  SINGLE invoice (one number, one BTW breakdown) do you default to is_invoice=true.
 
 Amount extraction rules:
 - All amounts are numeric only — no currency symbols, no thousand separators — e.g. 121.00
-- total_ex_btw: the subtotal before BTW (excl. BTW / netto)
-- btw_amount: the BTW/VAT amount shown on the invoice
-- total_inc_btw: the final total to pay (incl. BTW / bruto)
-- btw_rate: the percentage — usually 21, sometimes 9 or 0
+- total_ex_btw: the FULL amount before BTW — the sum of ALL line bases across every rate,
+  INCLUDING any 0%-BTW lines. It must be chosen so that total_ex_btw + btw_amount =
+  total_inc_btw (the identity always holds). See STATIEGELD below.
+- btw_amount: the total BTW/VAT amount shown on the invoice (the sum across all rates).
+- total_inc_btw: the final total the invoice asks you to pay — the "Totaal", "Te voldoen",
+  "Totaalbedrag" or "Totaal te betalen" line. Return THIS printed final total even when it
+  does not equal a simple product subtotal (statiegeld, emballage and shipping are added on
+  top) and even when it is NEGATIVE (a return/creditnota where credited items exceed goods).
+- btw_rate: the percentage — usually 21, sometimes 9 or 0. On a MIXED invoice (e.g. 9% goods
+  plus 0% statiegeld) the effective blended rate is lower; that is normal, not an error.
 - If only the total is shown and BTW rate is known, calculate the breakdown
 - If a value genuinely cannot be found, set it to null — never guess
 - confidence: how certain you are (0 = no idea, 1 = absolutely certain)
+
+STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees this daily):
+- Many wholesale invoices add STATIEGELD (a returnable-packaging deposit), EMBALLAGE, or a
+  container/"Bijgel. container"/"Retour container" charge, usually at 0% BTW, ON TOP of the
+  goods. There may be a whole "Statiegeld" column, or a summary line, or a "Geen BTW" grondslag.
+- These deposit amounts ARE part of what is paid. Fold them into total_ex_btw as 0%-BTW base
+  so that total_ex_btw + btw_amount = total_inc_btw stays exact. Do NOT drop them, and do NOT
+  let them make excl + BTW disagree with the printed total.
+- Returned deposits are NEGATIVE (e.g. "Retour container -408,00"): include them with their
+  sign. If the net printed total ("Te voldoen") is therefore negative, return it negative.
+
+- EX/INCL identity: total_ex_btw + btw_amount MUST equal total_inc_btw. Some suppliers
+  mislabel the GROSS total as "Subtotaal", so you may see the same number on both the
+  "Subtotaal" and "Totaal incl. btw" lines while a real BTW is printed — that is impossible
+  (equal excl and incl means zero BTW). Trust the "Totaal incl."/"Reeds betaald"/paid total
+  and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
+  total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
+
+MIXED-RATE BTW SUMMARY BLOCK (the most common mis-read on wholesale/horeca invoices):
+- Dutch invoices often close with a summary printing ONE ROW PER RATE, for example:
+    €  2.591,71    BTW 9% excl.     €   233,20
+    €    822,21    BTW 21% excl.    €   172,70
+  The number on the LEFT of such a row is the GRONDSLAG (the base taxed at that rate); the
+  number on the RIGHT is the BTW charged over it. Those are two DIFFERENT columns — never add
+  a grondslag and a BTW amount together, and never take one row's figure as the whole BTW.
+- btw_amount = the sum of the BTW column ONLY (233,20 + 172,70 = 405,90 in the example).
+- total_ex_btw = the printed "Totaal exclusief BTW" / "Ex. BTW" line, which equals the sum of
+  the grondslag column (2.591,71 + 822,21 = 3.413,92).
+- CHECK YOURSELF before answering: btw_amount MUST equal total_inc_btw − total_ex_btw
+  (3.819,82 − 3.413,92 = 405,90 ✓). If your sum does not match that difference, you added the
+  wrong column or missed a rate row — recount the BTW column. Never return a btw_amount that
+  makes total_ex_btw + btw_amount differ from the printed "Totaal te voldoen".
+- A blended rate between the rates present (e.g. 12% across 9% and 21% lines) is NORMAL. A
+  computed rate ABOVE 21% is impossible in the Netherlands and always means a mis-read.
 
 Per-field confidence rules:
 - field_confidence.vendor: how certain you are the vendor (sender) is correct.
@@ -882,6 +1386,11 @@ Per-field confidence rules:
   like a page number, customer number, or date rather than a clear invoice number.
 - field_confidence.invoice_date: LOW if multiple dates were present (invoice / due / delivery)
   and it was unclear which is the invoice date.
+- field_confidence.amount: how certain you are the AMOUNTS (total_ex_btw / btw_amount /
+  total_inc_btw) are correct. This is the most important score — it is the money. LOW
+  (< 0.7) if any digit was blurry/cut off, the currency or decimal separator was unclear,
+  totals were handwritten, or you had to infer a total from partial figures. A confidently
+  WRONG amount is the worst outcome — when unsure, score LOW so the user is asked to check.
 - due_date: the EXPLICIT due/expiry date if the invoice prints one ("Vervaldatum",
   "Te betalen voor", "Uiterste betaaldatum", "Betalen voor"). Return it as
   "YYYY-MM-DD". If no explicit due date is printed, set due_date to null — do NOT
@@ -903,8 +1412,17 @@ Read the full content and answer:
 
 Return JSON only.`;
 
+  // [REREAD-STRONG] Reader model + read strategy. Default: undefined model (→ callClaude* use
+  // Haiku) and the cheap text path. The manual re-read passes a stronger model and preferRawPdf.
+  const model = opts?.model;
+  const preferRawPdf = opts?.preferRawPdf === true;
+
   try {
     let result: string;
+    // [STATEMENT-TEXT-GUARD] Kept in the outer scope so the content backstop below can read the
+    // same text we (optionally) extracted for the cheap text path — an overview reliably announces
+    // itself in its text even when the small model forgets to set is_statement.
+    let statementText: string | null = null;
 
     if (mimeType === 'application/pdf') {
       // [BOEK-011] Validate PDF before sending — catch corrupt files early
@@ -920,6 +1438,13 @@ Return JSON only.`;
           reason: 'Ongeldig PDF-bestand — overgeslagen',
         };
       }
+      if (preferRawPdf) {
+        // [REREAD-STRONG] Read the ACTUAL page layout directly on the (stronger) model — the
+        // flattened-text path is exactly what loses the statiegeld/retour columns and the net-
+        // negative total that a hard invoice like this needs. No text backstop here: the model
+        // sees the whole document and its own is_statement guard still applies downstream.
+        result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
+      } else {
       // [PDF-OPTIMIZE] Try the cheap text path first. For a TEXT PDF (the
       // majority of supplier invoices) we extract the text ourselves and send
       // TEXT ONLY (~840 vs ~2425 tokens, ~65% saved). SAFECORE-verified on real
@@ -927,10 +1452,12 @@ Return JSON only.`;
       // scanned/weak PDFs or on ANY error → we fall through to the UNCHANGED raw
       // path below, so scanned invoices behave exactly as before (zero loss).
       const extractedText = await extractPdfTextIfTextLayer(fileBase64);
+      statementText = extractedText;
       if (extractedText) {
         result = await callClaude(
           `${prompt}\n\n--- FACTUUR TEKST (uit PDF) ---\n${extractedText}`,
-          systemPrompt
+          systemPrompt,
+          model
         );
 
         // [PDF-OPTIMIZE] SAFECORE secondary fail-safe. On real Kiwi data, a
@@ -964,28 +1491,64 @@ Return JSON only.`;
           (hasNum(probe.total_inc_btw) ||
             (hasNum(probe.total_ex_btw) && hasNum(probe.btw_amount)));
 
+        // Re-read via the RAW PDF (same Haiku model) when the flat text either wasn't conclusive
+        // (existing SAFECORE fallback) OR produced an invoice whose number / BTW-split / amount
+        // came back weak. Reading the actual page LAYOUT recovers the table columns the flattened
+        // text loses — the fix for the frequent EMAIL-<ts> placeholder numbers and "—" ex/BTW
+        // splits — with no model-cost change (still Haiku).
         if (!textPathTrusted) {
           console.log(
             '[PDF-OPTIMIZE] Text path not conclusive — re-reading via raw PDF (SAFECORE fallback)'
           );
-          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+          result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
+        } else if (needsVisualReread(probe)) {
+          console.log(
+            '[VISUAL-REREAD] Text path read an invoice with weak number/split/amount — re-reading via the raw PDF layout'
+          );
+          const reread = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
+          const rp = safeParseJSON<VerifyInvoiceResult>(reread);
+          // Adopt the visual re-read (to gain the recovered invoice number / BTW split) ONLY when
+          // its total AGREES with the total the trusted text path already read. The re-read fires
+          // mostly for a missing NUMBER, so its total must confirm — not silently replace — the
+          // money. If the two totals DISAGREE, keep the text read (already flagged needs-review for
+          // the weak field, so the human reviews it) rather than swap in a differently-read total.
+          const probeTotal = hasNum(probe.total_inc_btw)
+            ? (probe.total_inc_btw as number)
+            : hasNum(probe.total_ex_btw) && hasNum(probe.btw_amount)
+              ? (probe.total_ex_btw as number) + (probe.btw_amount as number)
+              : null;
+          const rpTotal =
+            rp != null && rp.is_invoice === true
+              ? hasNum(rp.total_inc_btw)
+                ? (rp.total_inc_btw as number)
+                : hasNum(rp.total_ex_btw) && hasNum(rp.btw_amount)
+                  ? (rp.total_ex_btw as number) + (rp.btw_amount as number)
+                  : null
+              : null;
+          if (rpTotal != null && probeTotal != null && Math.abs(rpTotal - probeTotal) <= 0.02) {
+            result = reread;
+          }
         }
       } else {
-        // Raw PDF path — Claude reads the actual PDF (text + scanned). UNCHANGED.
-        result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+        // Raw PDF path — Claude reads the actual PDF (text + scanned). Already the visual layout,
+        // so a VISUAL-REREAD would be an identical second pass — nothing to gain.
+        result = await callClaudeWithPdf(fileBase64, prompt, systemPrompt, model);
       }
+      } // [REREAD-STRONG] close the non-preferRawPdf (text-path) branch
     } else if (
       mimeType === 'image/jpeg' ||
       mimeType === 'image/png' ||
       mimeType === 'image/webp' ||
       mimeType === 'image/gif'
     ) {
-      // Claude reads the image directly
+      // Claude reads the image directly (already the visual layout). The re-read model override is
+      // honoured so the manual re-read of a photographed invoice also uses the stronger model.
       result = await callClaudeWithImage(
         fileBase64,
         mimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
         prompt,
-        systemPrompt
+        systemPrompt,
+        model
       );
     } else {
       // Unsupported type — skip safely
@@ -999,6 +1562,45 @@ Return JSON only.`;
     const parsed = safeParseJSON<VerifyInvoiceResult>(result);
     if (!parsed) return FALLBACK;
 
+    // [STATEMENT-TEXT-GUARD] Content backstop: if the extracted PDF text has the unmistakable
+    // shape of an OPENSTAANDE-FACTUREN / rekeningoverzicht (plural overview vocab + a summed open
+    // balance or multiple invoice rows), force is_statement=true so the early-return below rejects
+    // it — regardless of what the small model put in is_invoice/is_statement. This is the
+    // deterministic fix for the reported "overzicht wordt geïmporteerd" case (Exact statements are
+    // text PDFs). A single-invoice reminder never matches (narrow, plural-only vocabulary).
+    if (looksLikeStatementText(statementText)) {
+      parsed.is_statement = true;
+    }
+
+    // [STATEMENT-GUARD] Deterministic backstop against booking a STATEMENT OF ACCOUNT as an
+    // invoice. A "Rekeningoverzicht" / "Openstaande posten" / "Saldo-overzicht" lists MANY
+    // invoices and a summed total — booking it as one invoice double-counts the invoices it
+    // summarises and carries no valid single BTW split. The prompt already teaches this, but
+    // an unmistakable filename forces the correct verdict even if the model wavers. Narrow on
+    // purpose: NOT "aanmaning/herinnering", which can be a single-invoice reminder.
+    if (parsed.is_invoice && isStatementFilename(filename)) {
+      return {
+        is_invoice: false,
+        confidence: 0.9, // confident it is NOT a bookable invoice → registered with the reason
+        reason: 'Rekeningoverzicht — overzicht van meerdere facturen, geen boekbare factuur',
+      };
+    }
+
+    // [STATEMENT] The model flagged this as a statement of account (an overview of MULTIPLE
+    // invoices with a summed balance — e.g. "OPENSTAANDE FACTUREN" with Betaald/Rest/Balans).
+    // Booking its total double-counts the individual invoices, so force the verdict here and
+    // return EARLY — before the confidence banding or the [TRUST-CONFIDENT-FALSE] rescue can
+    // resurrect it as one bookable invoice (it has a vendor + a balance amount that would
+    // otherwise pass the rescue). Registered in the skip list, so it stays visible, not booked.
+    if (parsed.is_statement === true) {
+      return {
+        is_invoice: false,
+        is_statement: true,
+        confidence: Math.max(parsed.confidence ?? 0, 0.8),
+        reason: parsed.reason || 'Rekeningoverzicht — overzicht van meerdere facturen, geen boekbare factuur',
+      };
+    }
+
     // Clamp confidence
     parsed.confidence = Math.min(1, Math.max(0, parsed.confidence ?? 0));
 
@@ -1010,6 +1612,13 @@ Return JSON only.`;
       vendor: clamp01(parsed.field_confidence?.vendor),
       invoice_number: clamp01(parsed.field_confidence?.invoice_number),
       invoice_date: clamp01(parsed.field_confidence?.invoice_date),
+      // [TRUST-AMOUNTS] Only carry the amount score when the model actually gave one.
+      // Unlike the fields above, we do NOT default a missing amount score to 1 —
+      // "no signal" must not read as "certain" on the money-truth. import-health
+      // flags it only when it is present and low, so absence fabricates no doubt.
+      ...(typeof parsed.field_confidence?.amount === 'number'
+        ? { amount: Math.min(1, Math.max(0, parsed.field_confidence.amount)) }
+        : {}),
     };
 
     // [BRIDGE-EXTRACT] Defensive guard: if the AI returned OUR name as the vendor
@@ -1052,6 +1661,32 @@ Return JSON only.`;
     } else {
       parsed.vendor_iban = undefined;
     }
+    // [SUPPLIER-IDENTITY] KVK: digits only, exactly 8 (a real Dutch KVK) — else drop as junk.
+    if (typeof parsed.vendor_kvk === 'string') {
+      const kvk = parsed.vendor_kvk.replace(/\D/g, '');
+      parsed.vendor_kvk = kvk.length === 8 ? kvk : undefined;
+    } else {
+      parsed.vendor_kvk = undefined;
+    }
+    // [SUPPLIER-IDENTITY] BTW: strip spaces, uppercase; keep only a well-formed NL BTW id
+    // (NL + 9 digits + B + 2 digits). A foreign/short/garbled value → undefined (not a key).
+    if (typeof parsed.vendor_btw === 'string') {
+      const btw = parsed.vendor_btw.replace(/\s+/g, '').toUpperCase();
+      parsed.vendor_btw = /^NL\d{9}B\d{2}$/.test(btw) ? btw : undefined;
+    } else {
+      parsed.vendor_btw = undefined;
+    }
+
+    // [RECEIVER-IDENTITY] Programmatic backstop: never let OUR own identity leak through as the
+    // vendor's. If the model — despite the prompt — returned the receiver's (our) KVK/BTW/IBAN as
+    // the vendor's, drop it. Both sides are already canonicalized identically, so this is an exact
+    // match. This is the code-level guarantee behind the prompt rules, and it also fixes the case
+    // where the vendor NAME was suppressed but its identity numbers survived (self-supplier
+    // pollution: a supplier row keyed on our own company).
+    if (myKvk && parsed.vendor_kvk === myKvk) parsed.vendor_kvk = undefined;
+    if (myBtw && parsed.vendor_btw === myBtw) parsed.vendor_btw = undefined;
+    if (myIban && parsed.vendor_iban === myIban) parsed.vendor_iban = undefined;
+
     // payment_reference: trim; empty → undefined (the system falls back to the
     // invoice number when preparing a payment, so a missing reference is fine).
     if (typeof parsed.payment_reference === 'string') {
@@ -1091,18 +1726,72 @@ Return JSON only.`;
         ? parsed.document_kind
         : "invoice";
     parsed.is_paid = parsed.is_paid === true;
+    // [PEN-MARK] Normalize the pen/stamp payment hints. Only keep them when the doc is actually
+    // marked paid — a method/date without is_paid is noise. paid_method must be one of the three
+    // known values; paid_date is tolerated in either ISO or DD-MM-YYYY and normalized (null-safe).
+    if (parsed.is_paid) {
+      parsed.paid_method =
+        parsed.paid_method === "bank" || parsed.paid_method === "kas" || parsed.paid_method === "pin"
+          ? parsed.paid_method
+          : null;
+      parsed.paid_date =
+        typeof parsed.paid_date === "string" && /^\d{4}-\d{2}-\d{2}/.test(parsed.paid_date)
+          ? parsed.paid_date.slice(0, 10)
+          : null;
+    } else {
+      parsed.paid_method = null;
+      parsed.paid_date = null;
+    }
     // [BRIDGE-CREDITNOTA-SIGN] Strict boolean; unknown → false (safe side:
     // a normal invoice with a stray negative stays blocked by num() below +
     // the SAFECORE gate — never silently treated as a creditnota).
     parsed.is_credit_note = parsed.is_credit_note === true;
+    // [REMINDER] Strict boolean, OR-ed with a deterministic filename backstop so a reminder
+    // the model booked as a plain invoice is still flagged. Not a rejection — a reminder is a
+    // real (single) invoice; the flag only routes it to the human to check it isn't a duplicate.
+    parsed.is_reminder = parsed.is_reminder === true || isReminderFilename(filename);
 
-    // Enforce minimum confidence threshold
-    // Below 0.6 → treat as not an invoice to avoid false positives
-    if (parsed.confidence < 0.6) {
+    // [TRUST-UNCERTAIN] Confidence banding — never silently drop a real-but-hard
+    // invoice. Below the hard floor (or with no invoice signal at all) it's spam /
+    // a newsletter → skip. In the uncertain band [0.35, 0.6) WITH a vendor or an
+    // amount, we route it to the human verify queue FLAGGED instead of discarding
+    // it: is_invoice becomes true, `uncertain` is set, and we cap the amount
+    // confidence so the health surface shows "onzeker gelezen — controleer". The
+    // human then confirms or dismisses; the invoice is never lost without a trace.
+    const hasInvoiceSignal =
+      !!parsed.vendor ||
+      parsed.total_inc_btw != null ||
+      parsed.total_ex_btw != null ||
+      parsed.amount != null;
+    const band = decideConfidenceBand(parsed.confidence, hasInvoiceSignal);
+    if (band === 'skip') {
       return {
         is_invoice: false,
         confidence: parsed.confidence,
         reason: parsed.reason || 'Te lage zekerheid — bestand overgeslagen',
+      };
+    }
+    if (band === 'review') {
+      parsed.is_invoice = true;
+      parsed.uncertain = true;
+      parsed.field_confidence = {
+        ...(parsed.field_confidence ?? {}),
+        amount: Math.min(parsed.field_confidence?.amount ?? 0.4, 0.4),
+      };
+    }
+
+    // [TRUST-CONFIDENT-FALSE] A CONFIDENT "not an invoice" (accept band, so it skipped the
+    // 'review' rescue above) that still carries a strong invoice signal (vendor + amount) and
+    // is not a statement filename is most likely a mis-judged real invoice — a verzamelfactuur
+    // read as a statement. Rescue it to the verify queue flagged 'uncertain' instead of letting
+    // the caller discard it unseen. Held as 'processing' downstream ⇒ never booked as a cost
+    // until the human confirms. (The low-confidence 'skip' band already returned above.)
+    if (parsed.is_invoice === false && shouldRescueNonInvoice(parsed, filename)) {
+      parsed.is_invoice = true;
+      parsed.uncertain = true;
+      parsed.field_confidence = {
+        ...(parsed.field_confidence ?? {}),
+        amount: Math.min(parsed.field_confidence?.amount ?? 0.4, 0.4),
       };
     }
 
@@ -1117,6 +1806,15 @@ Return JSON only.`;
     // filtered (conditional, never permissive).
     const numSigned = (v: unknown): number | undefined =>
       typeof v === 'number' && isFinite(v) ? v : undefined;
+    // [CREDIT-BACKSTOP] Without this, num() below rejects a negative amount as a "stray
+    // negative" and drops it to undefined — turning a real -1.123,14 credit into an empty €0
+    // record flagged "totaalbedrag ontbreekt". A negative printed total means credit, so flip
+    // it before choosing the number normaliser (see shouldTreatAsCreditNote).
+    parsed.is_credit_note = shouldTreatAsCreditNote(
+      parsed.is_credit_note,
+      parsed.total_inc_btw,
+      parsed.total_ex_btw,
+    );
     const pickNum = parsed.is_credit_note === true ? numSigned : num;
 
     parsed.total_ex_btw = pickNum(parsed.total_ex_btw);
@@ -1131,17 +1829,52 @@ Return JSON only.`;
       parsed.btw_rate = r !== undefined && [0, 9, 21].includes(r) ? r : undefined;
     }
 
+    // A derived money value is rounded to the cent — an unrounded ex+btw (e.g. 42.99999999999999)
+    // is stored verbatim into a numeric column and then never matches a clean re-read of 43.00 on
+    // an exact-equality dedup query, silently defeating duplicate detection (a double-book).
+    const round2 = (n: number) => Math.round(n * 100) / 100;
     // Reconcile: if total is missing but ex + btw exist → compute it
     if (parsed.total_inc_btw === undefined &&
         parsed.total_ex_btw !== undefined &&
         parsed.btw_amount !== undefined) {
-      parsed.total_inc_btw = parsed.total_ex_btw + parsed.btw_amount;
+      parsed.total_inc_btw = round2(parsed.total_ex_btw + parsed.btw_amount);
     }
     // Reconcile: if ex is missing but total + btw exist → compute it
     if (parsed.total_ex_btw === undefined &&
         parsed.total_inc_btw !== undefined &&
         parsed.btw_amount !== undefined) {
-      parsed.total_ex_btw = parsed.total_inc_btw - parsed.btw_amount;
+      parsed.total_ex_btw = round2(parsed.total_inc_btw - parsed.btw_amount);
+    }
+    // [EX-INCL-FIX] Recover a base that a mislabelled "Subtotaal" set equal to the incl total
+    // while a real BTW is printed (impossible). Trusts incl + btw → ex = incl − btw.
+    parsed.total_ex_btw = fixExInclConfusion(
+      parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw,
+    );
+
+    // [BTW-SUM-FIX] Recover a BTW total mis-summed from a MIXED-RATE summary block, using the two
+    // figures the reader did NOT have to compute (printed excl + printed paid total). Runs AFTER
+    // fixExInclConfusion by design: that one repairs the base from incl + BTW and only fires when
+    // ex ≈ incl, which leaves the identity exact — so the two can never fight over the same row.
+    {
+      const fixed = fixMisSummedBtw(parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw);
+      if (fixed.derived) {
+        // Mark it: the amounts now add up, so no other signal would flag this invoice — but the
+        // BTW is our arithmetic, not the invoice's, and it is deductible money. The owner confirms.
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _btw_derived: { read: parsed.btw_amount ?? null, used: fixed.btw ?? null },
+        };
+        parsed.btw_amount = fixed.btw;
+        // A blend has no single rate. Drop a stated btw_rate that no longer matches what the
+        // repaired BTW actually implies, rather than persisting a rate the amounts contradict.
+        const ex = parsed.total_ex_btw ?? 0;
+        const impliedRate = Math.abs(ex) > 0.005
+          ? Math.round(Math.abs((fixed.btw ?? 0) / ex) * 100)
+          : undefined;
+        if (parsed.btw_rate !== undefined && parsed.btw_rate !== impliedRate) {
+          parsed.btw_rate = undefined;
+        }
+      }
     }
 
     // amount = total incl. BTW (kept for backward compatibility)
@@ -1150,6 +1883,14 @@ Return JSON only.`;
     return parsed;
   } catch (error) {
     console.error('[BOEK-011] verifyInvoiceFromPdf failed:', error);
+    // [TRANSIENT-RETRY] An INFRA/read failure is NOT a verdict that the file is unreadable — a
+    // genuine "not an invoice" is a normal parsed return, never an exception. So when the caller
+    // opted in (email-sync / reimport), re-throw ANY Claude HTTP API error (429/5xx transient, but
+    // also a 404 model-unavailable / 400 / 403 config error) and network failure. The email-sync
+    // then retries next sync (never a permanent 'could_not_read' skip); the manual re-read 502s
+    // honestly ("probeer later opnieuw") instead of the swallowed FALLBACK being reported as
+    // "geen boekbare factuur — negeer" (a config error must never masquerade as a document verdict).
+    if (opts?.throwOnTransient && (isTransientAiError(error) || isAiApiError(error))) throw error;
     return FALLBACK;
   }
 }
@@ -1582,4 +2323,33 @@ Return JSON only. If unsure between sender and receiver, choose the one at the T
     console.error('[BOEK-015] extractCompanyDetails failed:', error);
     return FALLBACK;
   }
+}
+// [TRIANGLE] Transcribe a payment-terminal settlement receipt (Equens CTAP "TOTALEN
+// RAPPORT") to VERBATIM plain text, so the proven pure parser (eft-parser.ts) — not the
+// model — does the structured extraction and applies its reconciliation cross-checks. The
+// model only reads the pixels; the arithmetic is deterministic and testable downstream.
+export async function transcribeEftReceipt(
+  fileBase64: string,
+  mimeType: string,
+  filename: string,
+): Promise<string> {
+  const systemPrompt =
+    'Je transcribeert kassabon-achtige betaalterminal-afrekeningen exact zoals gedrukt. ' +
+    'Verzin niets, corrigeer geen getallen, laat niets weg.';
+  const prompt =
+    'Dit is een afrekening/dagafsluiting van een betaalterminal (bijv. Equens CTAP, "TOTALEN RAPPORT"). ' +
+    'Transcribeer ELKE regel exact zoals gedrukt — alle labels (TMS TERM-ID, PERIODE NR, PERIODE START/EINDE, ' +
+    'DATUM EERSTE/LAATSTE TRX, EFT TOTALEN, BETALING, TOTAAL, en de kaartsoorten zoals V Pay, Maestro, ' +
+    'Debit Mastercard, Visa Debit, MasterCard) met hun #TRX-aantallen en EUR-bedragen. ' +
+    'Geef ALLEEN de tekst terug, geen uitleg.';
+
+  const isPdf = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+  if (isPdf) return callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+
+  const mt: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' =
+    mimeType === 'image/png' ? 'image/png'
+    : mimeType === 'image/webp' ? 'image/webp'
+    : mimeType === 'image/gif' ? 'image/gif'
+    : 'image/jpeg';
+  return callClaudeWithImage(fileBase64, mt, prompt, systemPrompt);
 }

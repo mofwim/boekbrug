@@ -13,9 +13,12 @@ export async function GET(_req: NextRequest) {
   // Ensure "Gedeeld met boekhouder" exists
   await ensureSharedFolder(user.id);
 
+  // [Fo#6] Include is_system + folder_type so the client can distinguish system
+  // folders (for the sidebar ordering) and MoveModal can exclude them + descendants
+  // as move targets (they were previously offered because these fields were absent).
   const { data, error } = await supabase
     .from("folders")
-    .select("id, user_id, name, parent_id, color, created_at")
+    .select("id, user_id, name, parent_id, color, created_at, is_system, folder_type")
     .eq("user_id", user.id)
     .order("name", { ascending: true });
 

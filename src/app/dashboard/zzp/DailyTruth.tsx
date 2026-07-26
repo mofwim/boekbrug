@@ -15,26 +15,10 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-const M3 = {
-  primary:            '#1A73E8',
-  onPrimaryContainer: '#041E49',
-  primaryContainer:   '#D3E3FD',
-  surface:            '#FFFFFF',
-  onSurface:          '#1C1B1F',
-  success:            '#137333',
-  successContainer:   '#CEEAD6',
-  warning:            '#7C5800',
-  warningContainer:   '#FEE8C4',
-  error:              '#B3261E',
-  neutral:            '#5F6368',
-  outlineVariant:     '#E0E0E0',
-  hairline:           '#ECEFF1',
-}
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
-const FONT_NUM = "'Google Sans', 'Roboto Mono', monospace"
+import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+
 const R = { lg: 16, full: 999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
-const LONG_OPEN_DAYS = 30
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -74,15 +58,17 @@ function daysUntilDue(dueIso: string): number {
 }
 function dueLabel(dueIso: string): string {
   const d = daysUntilDue(dueIso)
-  if (d <= -LONG_OPEN_DAYS) return 'Al lang open'
+  // [OWNER-DECISION] Every overdue invoice shows the real day count, red —
+  // matches Vandaag (no calm 30+-day tier anywhere).
   if (d < 0) return Math.abs(d) === 1 ? '1 dag te laat' : `${Math.abs(d)} dagen te laat`
   if (d === 0) return 'Vervalt vandaag'
   if (d === 1) return 'Vervalt morgen'
   return `Vervalt over ${d} dagen`
 }
 function dueAccent(dueIso: string): string {
-  const d = daysUntilDue(dueIso)
-  return d < 0 && d > -LONG_OPEN_DAYS ? M3.error : M3.warning
+  // Red for ANY overdue row, amber for soon-due — a 30+-days-late invoice must
+  // never look CALMER than a 10-days-late one.
+  return daysUntilDue(dueIso) < 0 ? M3.error : M3.warning
 }
 function formatDate(iso: string | null): string | null {
   if (!iso) return null
@@ -96,31 +82,57 @@ export default function DailyTruth() {
   const router = useRouter()
   const [data, setData] = useState<TruthData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
+  // All setState happens inside the async IIFE (never synchronously in the effect body), so a
+  // retry re-runs by bumping reloadKey. The retry button itself flips loading back on.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         const res = await fetch('/api/daily-truth')
         const json = await res.json()
-        if (!cancelled && res.ok) setData(json)
+        if (cancelled) return
+        if (res.ok && json?.ok) { setData(json); setFailed(false) }
+        else { setFailed(true); setData(null) }
       } catch {
-        /* silent — the panel just doesn't render rather than showing an error */
+        if (!cancelled) { setFailed(true); setData(null) }
       } finally {
         if (!cancelled) setLoading(false)
       }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [reloadKey])
+
+  const retry = () => { setLoading(true); setFailed(false); setReloadKey((k) => k + 1) }
 
   if (loading) {
     return <div style={{ height: 148, borderRadius: R.lg, background: '#F5F5F7', marginBottom: 16 }} />
   }
-  if (!data?.ok) return null
+  // [NO-FALSE-CLEAR] A failed load must NEVER render as "all clear" (or as nothing, which reads the
+  // same on a summary screen). Show an honest, retryable error instead of silently hiding the panel.
+  if (failed || !data?.ok) {
+    return (
+      <div style={{ marginBottom: 20, fontFamily: FONT, background: '#FFF4E5', borderRadius: R.lg, padding: '16px', boxShadow: EL1 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#7a4f00' }}>Kon je overzicht niet laden</div>
+        <div style={{ fontSize: 12.5, color: '#7a4f00', margin: '4px 0 10px' }}>Dit is géén &quot;alles is bij&quot; — we konden je cijfers even niet ophalen.</div>
+        <button onClick={retry} style={{ background: '#7a4f00', color: '#fff', border: 'none', borderRadius: 980, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Opnieuw proberen</button>
+      </div>
+    )
+  }
 
   const { toPay, toReceive, bank, attention, attentionCount } = data
   const lastDate = formatDate(bank.lastDate)
-  const allClear = toPay.count === 0 && toReceive.count === 0 && bank.undocumented === 0
+  // [NO-CODEER] Uncoded bank debits are NOT tasks the owner owes — the per-line categorize flow was
+  // deliberately removed, so a bank-only retail user permanently carries hundreds of un-invoiced
+  // debits. So "Alles is bij" reflects only real open MONEY (nothing to pay, nothing to receive) and
+  // must NOT be gated on those debits, or the box would never appear (perpetual false nag).
+  // [ALLES-IS-BIJ TRUTH] The honesty bug was the SUBTITLE claiming "niets te documenteren" — a
+  // per-line completeness the app deliberately doesn't track. That false claim is removed (the
+  // subtitle is now money-only); the genuine missing-inkoopfactuur (voorbelasting) gap stays surfaced
+  // where it is actually actionable — the bank screen's "Geen factuur" tab, not this summary box.
+  const allClear = toPay.count === 0 && toReceive.count === 0
 
   // incoming → the manage surface (pay / mark paid); outgoing → the invoice detail.
   const openItem = (it: AttentionItem) =>
@@ -151,49 +163,30 @@ export default function DailyTruth() {
           <div>
             <div style={{ fontSize: 15, fontWeight: 600, color: '#0B5345' }}>Alles is bij</div>
             <div style={{ fontSize: 13, color: '#0B5345', marginTop: 2 }}>
-              Niets openstaand en niets te documenteren.
+              Niets openstaand — geen facturen te betalen of te ontvangen.
             </div>
           </div>
         </div>
       ) : (
         <>
           <div style={{ display: 'flex', gap: 10 }}>
+            {/* [NAV-FROM] ?from=home — this card sits on the dashboard, so Terug must come back
+                here and not to the verification list the owner skipped. */}
             <MoneyCard label="Te betalen" bucket={toPay} emptyText="Niets te betalen"
-              subject="inkoopfactuur" onClick={() => router.push('/dashboard/incoming/manage')} />
+              subject="inkoopfactuur" onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
             <MoneyCard label="Te ontvangen" bucket={toReceive} emptyText="Niets openstaand"
               subject="factuur" onClick={() => router.push('/dashboard/facturen')} />
           </div>
         </>
       )}
 
-      {/* [BANK-IDENTITY] Durable categorize entry — rendered ALWAYS (outside allClear),
-          so uncategorized transactions (incl. income that would otherwise understate
-          omzet) are reachable even when nothing is "undocumented". */}
-      <button
-        onClick={() => router.push('/dashboard/bank/categoriseren')}
-        style={{
-          width: '100%', textAlign: 'left', cursor: 'pointer', fontFamily: FONT,
-          marginTop: 10, borderRadius: R.lg, padding: '14px 16px',
-          background: bank.undocumented > 0 ? M3.warningContainer : M3.surface,
-          boxShadow: EL1,
-          border: `1px solid ${bank.undocumented > 0 ? 'transparent' : M3.outlineVariant}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: bank.undocumented > 0 ? M3.warning : M3.onSurface }}>
-            Nog te documenteren
-          </div>
-          <div style={{ fontSize: 12.5, color: bank.undocumented > 0 ? M3.warning : M3.neutral, marginTop: 2 }}>
-            {bank.undocumented > 0
-              ? `${bank.undocumented} ${bank.undocumented === 1 ? 'transactie zonder bon' : 'transacties categoriseren'}`
-              : 'Transacties bekijken en categoriseren'}
-          </div>
-        </div>
-        <span style={{ fontFamily: FONT_NUM, fontSize: 20, fontWeight: 700, color: bank.undocumented > 0 ? M3.warning : M3.neutral }}>
-          {bank.undocumented > 0 ? bank.undocumented : '›'}
-        </span>
-      </button>
+      {/* [NO-CODEER] The per-line bank-categorize entry was removed on purpose. For a
+          retail administration costs come in on the INCOMING invoice (which carries the
+          BTW to reclaim) and revenue from the Z-report/dagomzet — hand-coding a bare bank
+          debit gives no voorbelasting and can double-count an invoice already booked, so
+          the "give every transaction a category" flow was more busywork than truth. The
+          page + API still exist (reachable by URL) if we ever re-enable it; the readiness
+          screen still flags genuinely unexplained INCOME (money in with no invoice). */}
 
       {/* [CASH-LEDGER] Kas line — only when the owner actually uses cash. */}
       {data.kas?.used && (

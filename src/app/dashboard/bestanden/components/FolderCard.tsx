@@ -84,7 +84,7 @@ export function FolderCard({
           position: "absolute", top: 8, left: 8,
           width: 20, height: 20, borderRadius: T.full,
           background: selected ? T.primary : "rgba(255,255,255,0.9)",
-          border: `2px solid ${selected ? T.primary : "#BDBDBD"}`,
+          border: `2px solid ${selected ? T.primary : "#dadce0"}`,
           display: "flex", alignItems: "center", justifyContent: "center",
           opacity: selected || hovered ? 1 : 0,
           transition: "all 0.15s", cursor: "pointer", zIndex: 1,
@@ -101,6 +101,7 @@ export function FolderCard({
       {hovered && !selected && (
         <button
           onClick={e => { e.stopPropagation(); onContextMenu(e, folder); }}
+          aria-label="Meer opties"
           style={{
             position: "absolute", top: 6, right: 6,
             width: 26, height: 26, border: "none",

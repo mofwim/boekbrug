@@ -11,9 +11,17 @@ import React from 'react'
 import Link from 'next/link'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
-import { InvoiceRowItem, STATUS_LABEL } from '@/components/invoice/InvoiceRow'
+import { InvoiceRowItem, STATUS_LABEL, type InvoiceRow as InvoiceListRow } from '@/components/invoice/InvoiceRow'
+import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { SearchBar } from '@/components/search/SearchBar'
+import { M3, FONT, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
+import type { ProfileRow, NotificationRow } from '@/types/rows'
+
+// De header toont alleen naam, bedrijf, e-mail en rol. Door dát te vragen in plaats van een
+// volledige ProfileRow mogen aanroepers een gerichte select doen zonder te liegen over wat
+// ze hebben opgehaald.
+type HeaderProfile = Pick<ProfileRow, 'id' | 'full_name' | 'company_name' | 'email' | 'role'>
 
 // ── NavButton ─────────────────────────────────────────────────────────────────
 
@@ -33,7 +41,7 @@ export function NavButton({ onClick, label }: { onClick: () => void; label: stri
 
 export interface ZzpInvoiceTableProps {
   mode: 'zzp'
-  invoices: any[]
+  invoices: InvoiceListRow[]
   loading: boolean
   hasMore: boolean
   refreshing: boolean
@@ -56,7 +64,7 @@ export interface ZzpInvoiceTableProps {
 
 export interface AccountantInvoiceTableProps {
   mode: 'accountant'
-  invoices: any[]
+  invoices: InvoiceListRow[]
   loading: boolean
   hasMore: boolean
   refreshing: boolean
@@ -83,6 +91,11 @@ export function InvoiceTable(props: InvoiceTableProps) {
 
   const isAccountant = props.mode === 'accountant'
 
+  // [BANK-RECON-BADGE] Owner-facing reconciliation badges (never in accountant mode).
+  // Self-wired here so every consumer of the shared table gets them without prop threading.
+  const router = useRouter()
+  const { byInvoice: reconByInvoice, confirmMatch } = useInvoiceReconciliation(!isAccountant)
+
   const emptyLabel = isAccountant
     ? statusFilter === 'all'
       ? 'Geen betaalde facturen'
@@ -108,7 +121,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
             style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)' }}
             className="hover:text-gray-500 transition-colors disabled:opacity-40"
           >
-            <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
+            <span className={`material-symbols-outlined ${refreshing ? 'animate-spin' : ''}`} style={{ fontSize: 20 }} aria-hidden>refresh</span>
           </button>
 
           {!isAccountant &&
@@ -116,7 +129,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
             (props as ZzpInvoiceTableProps).onNewInvoice && (
               <button
                 onClick={(props as ZzpInvoiceTableProps).onNewInvoice}
-                className="bg-[#007aff] text-white text-sm px-4 py-2 rounded-xl hover:opacity-90 transition-opacity font-semibold"
+                className="bg-[#1a73e8] text-white text-sm px-4 py-2 rounded-xl hover:opacity-90 transition-opacity font-semibold"
               >
                 + Nieuwe factuur
               </button>
@@ -191,6 +204,15 @@ export function InvoiceTable(props: InvoiceTableProps) {
                     ? ((props as ZzpInvoiceTableProps).resendingId ?? null)
                     : null
                 }
+                recon={!isAccountant ? reconByInvoice[invoice.id] : undefined}
+                onReconConfirm={!isAccountant ? async (id) => {
+                  // [BANK-RECON-CONFIRM] Book a safe (reference-backed) match in one tap; the badge
+                  // flips to "In bankafschrift" via the hook. An amount-only match ('navigate') opens
+                  // the bank page to review; router.refresh() picks up the new paid status.
+                  const r = await confirmMatch(id)
+                  if (r === 'ok') router.refresh()
+                  else if (r !== 'error') router.push('/dashboard/bank')
+                } : undefined}
               />
             ))}
           </InfiniteList>
@@ -204,7 +226,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
 // [BOEK-028] Profile dropdown — May 2026
 // [INTEGRATION] Instellingen → /dashboard/settings — May 2026
 
-function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void }) {
+function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: () => void }) {
   const [open, setOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
   const router = useRouter()
@@ -225,6 +247,7 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
     <div ref={ref} style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(p => !p)}
+        aria-label="Profielmenu"
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
           background: 'none', border: 'none', cursor: 'pointer',
@@ -280,7 +303,7 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
             style={{
               width: '100%', padding: '10px 16px', textAlign: 'left',
               background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 14, color: '#EA4335', fontWeight: 500,
+              fontSize: 14, color: M3.error, fontWeight: 500,
               transition: 'background 0.1s ease',
             }}
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#FFF0EE')}
@@ -300,7 +323,7 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
 function NotificationsBell({
   notifications, unreadCount, showNotifications, onToggle, onMarkAllRead,
 }: {
-  notifications: any[]
+  notifications: NotificationRow[]
   unreadCount: number
   showNotifications: boolean
   onToggle: () => void
@@ -334,6 +357,7 @@ function NotificationsBell({
     <div ref={bellRef} style={{ position: 'relative', flexShrink: 0 }}>
       <button
         onClick={onToggle}
+        aria-label="Meldingen"
         style={{
           position: 'relative', background: 'none', border: 'none',
           cursor: 'pointer', padding: 8, borderRadius: 8,
@@ -349,7 +373,7 @@ function NotificationsBell({
           return effectiveUnread > 0 ? (
             <span style={{
               position: 'absolute', top: 4, right: 4,
-              backgroundColor: '#EA4335', color: '#fff',
+              backgroundColor: M3.error, color: '#fff',
               fontSize: 9, fontWeight: 700, borderRadius: 9999,
               minWidth: 16, height: 16, padding: '0 3px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -418,7 +442,7 @@ function NotificationsBell({
                   <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0 }}>{n.title}</p>
                   {n.body && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{n.body}</p>}
                   <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0' }}>
-                    {new Date(n.created_at).toLocaleDateString('nl-NL')}
+                    {n.created_at ? new Date(n.created_at).toLocaleDateString('nl-NL') : ''}
                   </p>
                 </div>
               ))}
@@ -523,8 +547,8 @@ function ZzpNavLinks() {
 // [INTEGRATION] role-based nav + Logo Universal (next/link, role-aware) — May 2026
 
 interface DashboardHeaderProps {
-  profile: any
-  notifications: any[]
+  profile: HeaderProfile
+  notifications: NotificationRow[]
   showNotifications: boolean
   unreadNotifCount: number
   unreadMessages: number
@@ -550,19 +574,22 @@ export function DashboardHeader({
   const isAccountant = profile?.role === 'accountant'
   const logoHref = isAccountant ? '/dashboard/accountant' : '/dashboard'
 
+  // [HEADER-SYSTEM] Home top bar. Height + surface/border/font come from the
+  // shared tokens so it stays in lockstep with the sub-page bar (SubPageHeader);
+  // see docs/header-system.md.
   return (
     <header style={{
       position: 'sticky',
       top: 0,
       zIndex: 50,
-      backgroundColor: '#fff',
-      borderBottom: '1px solid #E0E0E0',
-      height: 60,
+      backgroundColor: M3.surface,
+      borderBottom: `1px solid ${M3.outlineVariant}`,
+      height: PAGE_HEADER_HEIGHT,
       display: 'flex',
       alignItems: 'center',
       padding: '0 16px',
       gap: 8,
-      fontFamily: "'Google Sans', 'Roboto', sans-serif",
+      fontFamily: FONT,
     }}>
 
       {/* Logo — [INTEGRATION] next/link + role-aware href — May 2026 */}
@@ -572,7 +599,7 @@ export function DashboardHeader({
           fontWeight: 700, fontSize: 17, color: '#1A73E8',
           flexShrink: 0, letterSpacing: '-0.3px', lineHeight: 1,
           textDecoration: 'none', cursor: 'pointer',
-          fontFamily: "'Google Sans', 'Roboto', sans-serif",
+          fontFamily: "'Roboto', sans-serif",
           transition: 'opacity 0.15s',
         }}
         onMouseEnter={e => ((e.currentTarget as HTMLAnchorElement).style.opacity = '0.75')}
@@ -599,6 +626,7 @@ export function DashboardHeader({
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             onClick={onMessagesClick}
+            aria-label="Berichten"
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
               padding: 8, borderRadius: 8,

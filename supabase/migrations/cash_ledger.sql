@@ -21,12 +21,16 @@ CREATE TABLE IF NOT EXISTS public.cash_entries (
 
 ALTER TABLE public.cash_entries ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS cash_entries_select_own ON public.cash_entries;
 CREATE POLICY cash_entries_select_own ON public.cash_entries
   FOR SELECT TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS cash_entries_insert_own ON public.cash_entries;
 CREATE POLICY cash_entries_insert_own ON public.cash_entries
   FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS cash_entries_update_own ON public.cash_entries;
 CREATE POLICY cash_entries_update_own ON public.cash_entries
   FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS cash_entries_delete_own ON public.cash_entries;
 CREATE POLICY cash_entries_delete_own ON public.cash_entries
   FOR DELETE TO authenticated USING (user_id = auth.uid());
 

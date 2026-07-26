@@ -144,6 +144,7 @@ export type Database = {
           category: string | null
           category_confirmed: boolean
           category_source: string | null
+          counterpart_iban: string | null
           counterpart_name: string | null
           created_at: string | null
           date: string | null
@@ -152,6 +153,7 @@ export type Database = {
           invoice_id: string | null
           reference: string | null
           status: string | null
+          statement_document_id: string | null
           user_id: string | null
         }
         Insert: {
@@ -159,6 +161,7 @@ export type Database = {
           category?: string | null
           category_confirmed?: boolean
           category_source?: string | null
+          counterpart_iban?: string | null
           counterpart_name?: string | null
           created_at?: string | null
           date?: string | null
@@ -167,6 +170,7 @@ export type Database = {
           invoice_id?: string | null
           reference?: string | null
           status?: string | null
+          statement_document_id?: string | null
           user_id?: string | null
         }
         Update: {
@@ -174,6 +178,7 @@ export type Database = {
           category?: string | null
           category_confirmed?: boolean
           category_source?: string | null
+          counterpart_iban?: string | null
           counterpart_name?: string | null
           created_at?: string | null
           date?: string | null
@@ -182,6 +187,7 @@ export type Database = {
           invoice_id?: string | null
           reference?: string | null
           status?: string | null
+          statement_document_id?: string | null
           user_id?: string | null
         }
         Relationships: [
@@ -200,6 +206,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      bank_tx_invoices: {
+        Row: {
+          amount_applied: number | null
+          client_key: string | null
+          created_at: string | null
+          id: string
+          invoice_id: string
+          method: string | null
+          paid_on: string | null
+          transaction_id: string | null
+          user_id: string
+        }
+        Insert: {
+          amount_applied?: number | null
+          client_key?: string | null
+          created_at?: string | null
+          id?: string
+          invoice_id: string
+          method?: string | null
+          paid_on?: string | null
+          transaction_id?: string | null
+          user_id: string
+        }
+        Update: {
+          amount_applied?: number | null
+          client_key?: string | null
+          created_at?: string | null
+          id?: string
+          invoice_id?: string
+          method?: string | null
+          paid_on?: string | null
+          transaction_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       counterpart_memory: {
         Row: {
@@ -232,6 +274,197 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "counterpart_memory_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_turnover: {
+        Row: {
+          base_0: number
+          base_21: number
+          base_9: number
+          btw_21: number
+          btw_9: number
+          cash_amount: number | null
+          created_at: string | null
+          document_id: string | null
+          id: string
+          other_amount: number | null
+          pin_amount: number | null
+          source: string
+          total_incl: number | null
+          turnover_date: string
+          user_id: string
+        }
+        Insert: {
+          base_0?: number
+          base_21?: number
+          base_9?: number
+          btw_21?: number
+          btw_9?: number
+          cash_amount?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          other_amount?: number | null
+          pin_amount?: number | null
+          source?: string
+          total_incl?: number | null
+          turnover_date: string
+          user_id: string
+        }
+        Update: {
+          base_0?: number
+          base_21?: number
+          base_9?: number
+          btw_21?: number
+          btw_9?: number
+          cash_amount?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          other_amount?: number | null
+          pin_amount?: number | null
+          source?: string
+          total_incl?: number | null
+          turnover_date?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_turnover_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_turnover_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      articles: {
+        Row: {
+          active: boolean
+          btw_rate: number
+          code: string | null
+          created_at: string | null
+          description: string
+          id: string
+          unit: string | null
+          unit_price: number
+          updated_at: string | null
+          usage_count: number
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          btw_rate?: number
+          code?: string | null
+          created_at?: string | null
+          description: string
+          id?: string
+          unit?: string | null
+          unit_price?: number
+          updated_at?: string | null
+          usage_count?: number
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          btw_rate?: number
+          code?: string | null
+          created_at?: string | null
+          description?: string
+          id?: string
+          unit?: string | null
+          unit_price?: number
+          updated_at?: string | null
+          usage_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "articles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      eft_settlements: {
+        Row: {
+          by_scheme: Json | null
+          created_at: string | null
+          document_id: string | null
+          first_trx: string | null
+          gross_total: number
+          id: string
+          last_trx: string | null
+          period_end: string | null
+          period_nr: string | null
+          period_start: string | null
+          settlement_date: string
+          shift_nr: string | null
+          source: string
+          terminal_id: string | null
+          tx_count: number
+          user_id: string
+        }
+        Insert: {
+          by_scheme?: Json | null
+          created_at?: string | null
+          document_id?: string | null
+          first_trx?: string | null
+          gross_total: number
+          id?: string
+          last_trx?: string | null
+          period_end?: string | null
+          period_nr?: string | null
+          period_start?: string | null
+          settlement_date: string
+          shift_nr?: string | null
+          source?: string
+          terminal_id?: string | null
+          tx_count?: number
+          user_id: string
+        }
+        Update: {
+          by_scheme?: Json | null
+          created_at?: string | null
+          document_id?: string | null
+          first_trx?: string | null
+          gross_total?: number
+          id?: string
+          last_trx?: string | null
+          period_end?: string | null
+          period_nr?: string | null
+          period_start?: string | null
+          settlement_date?: string
+          shift_nr?: string | null
+          source?: string
+          terminal_id?: string | null
+          tx_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eft_settlements_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eft_settlements_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -293,6 +526,63 @@ export type Database = {
           },
         ]
       }
+      ledger_daily: {
+        Row: {
+          account_nr: string | null
+          created_at: string | null
+          document_id: string | null
+          id: string
+          kind: string
+          ledger_date: string
+          received: number
+          source: string
+          spent: number
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          account_nr?: string | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          kind: string
+          ledger_date: string
+          received?: number
+          source?: string
+          spent?: number
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          account_nr?: string | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          kind?: string
+          ledger_date?: string
+          received?: number
+          source?: string
+          spent?: number
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledger_daily_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_daily_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           address: string | null
@@ -304,6 +594,7 @@ export type Database = {
           id: string
           kvk_number: string | null
           name: string
+          notes: string | null
           postal_code: string | null
           user_id: string | null
         }
@@ -317,6 +608,7 @@ export type Database = {
           id?: string
           kvk_number?: string | null
           name: string
+          notes?: string | null
           postal_code?: string | null
           user_id?: string | null
         }
@@ -330,6 +622,7 @@ export type Database = {
           id?: string
           kvk_number?: string | null
           name?: string
+          notes?: string | null
           postal_code?: string | null
           user_id?: string | null
         }
@@ -521,6 +814,8 @@ export type Database = {
           connected_at: string | null
           email: string | null
           id: string
+          last_synced_email_at: string | null
+          needs_reauth: boolean
           provider: string
           refresh_token_secret_id: string | null
           tokens_encrypted_at: string | null
@@ -531,6 +826,8 @@ export type Database = {
           connected_at?: string | null
           email?: string | null
           id?: string
+          last_synced_email_at?: string | null
+          needs_reauth?: boolean
           provider: string
           refresh_token_secret_id?: string | null
           tokens_encrypted_at?: string | null
@@ -541,6 +838,8 @@ export type Database = {
           connected_at?: string | null
           email?: string | null
           id?: string
+          last_synced_email_at?: string | null
+          needs_reauth?: boolean
           provider?: string
           refresh_token_secret_id?: string | null
           tokens_encrypted_at?: string | null
@@ -579,6 +878,36 @@ export type Database = {
           id?: string
           reason?: string
           source_message_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      email_failed_attempts: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          id: string
+          last_error: string | null
+          source_message_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          source_message_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          source_message_id?: string
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -743,11 +1072,13 @@ export type Database = {
         Row: {
           accountant_note: string | null
           accountant_status: string | null
+          amount_paid: number
           btw_amount: number | null
           client_address: string | null
           client_btw_number: string | null
           client_city: string | null
           client_email: string | null
+          client_id: string | null
           client_name: string | null
           client_postal_code: string | null
           created_at: string | null
@@ -766,9 +1097,11 @@ export type Database = {
           payment_date: string | null
           payment_method: string | null
           payment_prepared_at: string | null
+          pay_token: string | null
           payment_reference: string | null
           pdf_url: string | null
           receiver_id: string | null
+          reminders_paused: boolean
           replaced_by_number: string | null
           search_vector: unknown
           sender_id: string | null
@@ -776,6 +1109,7 @@ export type Database = {
           source: string | null
           source_message_id: string | null
           status: string | null
+          supplier_id: string | null
           total_ex_btw: number | null
           total_inc_btw: number | null
           updated_at: string | null
@@ -784,11 +1118,13 @@ export type Database = {
         Insert: {
           accountant_note?: string | null
           accountant_status?: string | null
+          amount_paid?: number
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
           client_city?: string | null
           client_email?: string | null
+          client_id?: string | null
           client_name?: string | null
           client_postal_code?: string | null
           created_at?: string | null
@@ -807,9 +1143,11 @@ export type Database = {
           payment_date?: string | null
           payment_method?: string | null
           payment_prepared_at?: string | null
+          pay_token?: string | null
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
+          reminders_paused?: boolean
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
@@ -817,6 +1155,7 @@ export type Database = {
           source?: string | null
           source_message_id?: string | null
           status?: string | null
+          supplier_id?: string | null
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
@@ -825,11 +1164,13 @@ export type Database = {
         Update: {
           accountant_note?: string | null
           accountant_status?: string | null
+          amount_paid?: number
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
           client_city?: string | null
           client_email?: string | null
+          client_id?: string | null
           client_name?: string | null
           client_postal_code?: string | null
           created_at?: string | null
@@ -848,9 +1189,11 @@ export type Database = {
           payment_date?: string | null
           payment_method?: string | null
           payment_prepared_at?: string | null
+          pay_token?: string | null
           payment_reference?: string | null
           pdf_url?: string | null
           receiver_id?: string | null
+          reminders_paused?: boolean
           replaced_by_number?: string | null
           search_vector?: unknown
           sender_id?: string | null
@@ -858,12 +1201,20 @@ export type Database = {
           source?: string | null
           source_message_id?: string | null
           status?: string | null
+          supplier_id?: string | null
           total_ex_btw?: number | null
           total_inc_btw?: number | null
           updated_at?: string | null
           vendor_iban?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "invoices_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "invoices_document_id_fkey"
             columns: ["document_id"]
@@ -895,6 +1246,51 @@ export type Database = {
           {
             foreignKeyName: "invoices_sender_id_fkey"
             columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoice_reminders: {
+        Row: {
+          day_offset: number
+          email_to: string | null
+          id: string
+          invoice_id: string
+          sent_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          day_offset: number
+          email_to?: string | null
+          id?: string
+          invoice_id: string
+          sent_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          day_offset?: number
+          email_to?: string | null
+          id?: string
+          invoice_id?: string
+          sent_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_reminders_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_reminders_user_id_fkey"
+            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -984,6 +1380,81 @@ export type Database = {
           },
         ]
       }
+      pay_bundle_invoices: {
+        Row: {
+          bundle_id: string
+          created_at: string | null
+          id: string
+          invoice_id: string
+          user_id: string
+        }
+        Insert: {
+          bundle_id: string
+          created_at?: string | null
+          id?: string
+          invoice_id: string
+          user_id: string
+        }
+        Update: {
+          bundle_id?: string
+          created_at?: string | null
+          id?: string
+          invoice_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pay_bundle_invoices_bundle_id_fkey"
+            columns: ["bundle_id"]
+            isOneToOne: false
+            referencedRelation: "pay_bundles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pay_bundle_invoices_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pay_bundle_invoices_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pay_bundles: {
+        Row: {
+          created_at: string | null
+          id: string
+          token: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          token?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          token?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pay_bundles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           address: string | null
@@ -996,6 +1467,10 @@ export type Database = {
           iban: string | null
           id: string
           invoice_number_padding: number
+          kas_opening_balance: number
+          kor_active: boolean
+          vat_scheme: string
+          vat_scheme_since: string | null
           invoice_number_template: string | null
           kvk_number: string | null
           onboarding_done: boolean
@@ -1004,6 +1479,8 @@ export type Database = {
           postal_code: string | null
           preferred_language: string | null
           referral_accountant_id: string | null
+          reminder_offsets: number[]
+          reminders_enabled: boolean
           role: string | null
           subscription_plan: string | null
           subscription_stripe_id: string | null
@@ -1019,6 +1496,10 @@ export type Database = {
           iban?: string | null
           id: string
           invoice_number_padding?: number
+          kas_opening_balance?: number
+          kor_active?: boolean
+          vat_scheme?: string
+          vat_scheme_since?: string | null
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean
@@ -1027,6 +1508,8 @@ export type Database = {
           postal_code?: string | null
           preferred_language?: string | null
           referral_accountant_id?: string | null
+          reminder_offsets?: number[]
+          reminders_enabled?: boolean
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
@@ -1042,6 +1525,10 @@ export type Database = {
           iban?: string | null
           id?: string
           invoice_number_padding?: number
+          kas_opening_balance?: number
+          kor_active?: boolean
+          vat_scheme?: string
+          vat_scheme_since?: string | null
           invoice_number_template?: string | null
           kvk_number?: string | null
           onboarding_done?: boolean
@@ -1050,6 +1537,8 @@ export type Database = {
           postal_code?: string | null
           preferred_language?: string | null
           referral_accountant_id?: string | null
+          reminder_offsets?: number[]
+          reminders_enabled?: boolean
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
@@ -1135,11 +1624,214 @@ export type Database = {
           },
         ]
       }
+      snelstart_connections: {
+        Row: {
+          administration_label: string | null
+          client_key_secret_id: string | null
+          connected_at: string
+          id: string
+          inkoop_grootboek_id: string | null
+          key_stored_at: string | null
+          last_error: string | null
+          last_push_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          verkoop_grootboek_id: string | null
+        }
+        Insert: {
+          administration_label?: string | null
+          client_key_secret_id?: string | null
+          connected_at?: string
+          id?: string
+          inkoop_grootboek_id?: string | null
+          key_stored_at?: string | null
+          last_error?: string | null
+          last_push_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          verkoop_grootboek_id?: string | null
+        }
+        Update: {
+          administration_label?: string | null
+          client_key_secret_id?: string | null
+          connected_at?: string
+          id?: string
+          inkoop_grootboek_id?: string | null
+          key_stored_at?: string | null
+          last_error?: string | null
+          last_push_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          verkoop_grootboek_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "snelstart_connections_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      snelstart_exports: {
+        Row: {
+          amount: number | null
+          boeking_type: string
+          direction: string
+          error_code: string | null
+          error_message: string | null
+          id: string
+          invoice_id: string
+          pushed_at: string
+          snelstart_id: string | null
+          snelstart_relatie_id: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          amount?: number | null
+          boeking_type: string
+          direction: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          invoice_id: string
+          pushed_at?: string
+          snelstart_id?: string | null
+          snelstart_relatie_id?: string | null
+          status: string
+          user_id: string
+        }
+        Update: {
+          amount?: number | null
+          boeking_type?: string
+          direction?: string
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          invoice_id?: string
+          pushed_at?: string
+          snelstart_id?: string | null
+          snelstart_relatie_id?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "snelstart_exports_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "snelstart_exports_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      suppliers: {
+        Row: {
+          btw_number: string | null
+          created_at: string
+          iban: string | null
+          id: string
+          kvk_number: string | null
+          name: string
+          name_key: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          btw_number?: string | null
+          created_at?: string
+          iban?: string | null
+          id?: string
+          kvk_number?: string | null
+          name: string
+          name_key?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          btw_number?: string | null
+          created_at?: string
+          iban?: string | null
+          id?: string
+          kvk_number?: string | null
+          name?: string
+          name_key?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suppliers_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      apply_bank_payment: {
+        Args: {
+          p_user_id: string
+          p_tx_id: string
+          p_invoice_id: string
+          p_amount: number
+          p_pay_date: string | null
+        }
+        Returns: {
+          applied: number
+          amount_paid: number
+          total: number
+          is_paid: boolean
+        }[]
+      }
+      apply_manual_payment: {
+        Args: {
+          p_user_id: string
+          p_invoice_id: string
+          /** null = settle the whole remaining balance (the empty "Betaald bedrag" field) */
+          p_amount: number | null
+          p_pay_date: string
+          p_method: string
+          p_payable_statuses: string[]
+          p_client_key: string | null
+        }
+        Returns: {
+          applied: number
+          amount_paid: number
+          total: number
+          is_paid: boolean
+          /** true = this client_key was already booked; nothing was written */
+          duplicate: boolean
+        }[]
+      }
+      book_bank_batch: {
+        Args: {
+          p_user_id: string
+          p_tx_id: string
+          p_invoice_ids: string[]
+          p_pay_date: string | null
+        }
+        Returns: {
+          invoice_id: string
+        }[]
+      }
       check_rate_limit: {
         Args: {
           p_endpoint: string
@@ -1161,6 +1853,10 @@ export type Database = {
       is_my_accountant_client: { Args: { client: string }; Returns: boolean }
       next_invoice_seq: {
         Args: { p_type: string; p_user_id: string; p_year: number }
+        Returns: number
+      }
+      recompute_invoice_amount_paid: {
+        Args: { p_user_id: string; p_invoice_id: string }
         Returns: number
       }
       vault_delete_secret: { Args: { p_secret_id: string }; Returns: boolean }

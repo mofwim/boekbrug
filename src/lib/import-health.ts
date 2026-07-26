@@ -28,12 +28,19 @@
 // which the page already knows. Keeping them separate is what lets a clean
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
-import { evaluateArithmetic } from '@/lib/safecore'
+import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
 
 // Confidence below this → ask the owner to confirm the field (BRIDGE-EXTRACT's
 // modal uses the same 0.7 threshold; kept identical so the surface and the modal
 // agree on what "uncertain" means).
 const LOW_CONFIDENCE = 0.7
+
+/** Dutch money formatting for an owner-facing reason. Local so this module stays dependency-free. */
+function formatEuro(v: number): string {
+  const [whole, cents] = Math.abs(v).toFixed(2).split('.')
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${v < 0 ? '− ' : ''}€ ${grouped},${cents}`
+}
 
 export type HealthLevel = 'clean' | 'needs-review'
 
@@ -47,6 +54,8 @@ export interface ImportHealth {
     vendor: boolean // AI unsure about the supplier
     invoiceNumber: boolean // AI unsure about the invoice number
     invoiceDate: boolean // AI unsure about the date
+    reminder: boolean // [REMINDER] a payment reminder — check the original isn't already booked
+    possibleDuplicate: boolean // [DEDUP-SOFT] a look-alike of an invoice already imported — human glance
   }
 }
 
@@ -56,6 +65,12 @@ export interface HealthInput {
   btw_amount: number | null
   total_inc_btw: number | null
   invoice_date: string | null
+  // [TRUST-NUMBER] The STORED invoice number. The email path stores a fabricated
+  // placeholder (EMAIL-<ts>) when the reader returned none, and the AI's per-field
+  // confidence score defaults to 1 for a missing field — so a fabricated number reads
+  // "clean" with no trace. Passing the value lets health flag a missing/placeholder
+  // number. Optional so existing call sites keep compiling (undefined → not checked).
+  invoice_number?: string | null
   // [BRIDGE-CREDITNOTA-SIGN] 'creditnota' → the recompute below takes the
   // sign-inverted gate (amounts must be NEGATIVE + consistent). Optional so
   // existing call sites keep compiling; absent/other → the standard gate.
@@ -72,6 +87,18 @@ export interface FieldConfidence {
   vendor?: number
   invoice_number?: number
   invoice_date?: number
+  // [TRUST-AMOUNTS] The money-truth's OWN confidence channel. The AI may emit any
+  // of these for the amounts it read; we take the lowest present. Before this, the
+  // amounts — the one set of facts that IS the money — carried no confidence at all,
+  // so a confidently-wrong read (€121 → €109, internally consistent) passed clean.
+  amount?: number
+  total?: number
+  total_inc_btw?: number
+  // [BTW-SUM-FIX] Present when the printed BTW total could not be read from a mixed-rate summary
+  // block and was derived from excl + the paid total (see fixMisSummedBtw in @/lib/ai). The
+  // amounts add up again, so every other axis goes quiet — which is exactly why this needs its
+  // own reason: the figure is OUR arithmetic, and BTW is deductible money in the aangifte.
+  _btw_derived?: { read?: number | null; used?: number | null }
   _safecore?: {
     arithmetic_ok?: boolean
     reason?: string
@@ -79,6 +106,16 @@ export interface FieldConfidence {
     held_at?: string
     dedup?: string
     dedup_reason?: string
+    // [REMINDER] This invoice was read as a payment reminder — the original may already be
+    // booked, so it needs a human check (never bulk-confirmed as a second cost).
+    reminder?: boolean
+    reminder_of?: string
+    // [DEDUP-SOFT] This invoice looked like a POSSIBLE (not confident) duplicate at import — same
+    // amount + date, or same amount + vendor a few days apart. It was NOT blocked (too uncertain to
+    // reject), but the human should check it isn't a double booking. `_of` names the look-alike.
+    possible_duplicate?: boolean
+    possible_duplicate_of?: string
+    possible_duplicate_reason?: string
   }
 }
 
@@ -95,6 +132,8 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     vendor: false,
     invoiceNumber: false,
     invoiceDate: false,
+    reminder: false,
+    possibleDuplicate: false,
   }
 
   const fc = inv.field_confidence
@@ -104,13 +143,40 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // recompute over the stored amounts (upload path never ran the gate). Either
   // way the source of truth is the same evaluateArithmetic logic.
   const storedSafecore = fc?._safecore
+  // ── Reminder axis ────────────────────────────────────────────────────────
+  // [REMINDER] A payment reminder is a real single invoice, but the original was very likely
+  // already received — so this needs a human check before it's confirmed, to avoid booking the
+  // same debt twice. Flag it (→ needs-review, excluded from bulk-confirm) with a clear reason.
+  if (storedSafecore?.reminder === true) {
+    flags.reminder = true
+    reasons.push(
+      storedSafecore.reminder_of
+        ? `dit lijkt een herinnering voor factuur ${storedSafecore.reminder_of} — controleer of die al geboekt is`
+        : 'dit lijkt een betalingsherinnering — controleer of de originele factuur al geboekt is'
+    )
+  }
+  // [DEDUP-SOFT] A POSSIBLE (not confident) duplicate — same amount + date, or same amount +
+  // vendor a few days apart. It was allowed in (too uncertain to block), but must never be
+  // bulk-confirmed as a second cost without a human glance. → needs-review with a clear "mogelijk
+  // dubbel met X" reason.
+  if (storedSafecore?.possible_duplicate === true) {
+    flags.possibleDuplicate = true
+    const of = storedSafecore.possible_duplicate_of
+    const why = storedSafecore.possible_duplicate_reason
+    reasons.push(
+      `mogelijk dubbel${of ? ` met factuur ${of}` : ''}${why ? ` (${why})` : ''} — controleer of dit geen dubbele boeking is`
+    )
+  }
   if (storedSafecore && storedSafecore.arithmetic_ok === false) {
     flags.arithmetic = true
     // The stored reason is already owner-facing Dutch (e.g. "excl + BTW ≠ totaal").
     if (storedSafecore.reason) reasons.push(storedSafecore.reason)
     else reasons.push('mogelijke rekenfout in de bedragen')
-  } else if (!storedSafecore) {
-    // No stored verdict → recompute (covers the upload path + any legacy row).
+  } else if (!storedSafecore || storedSafecore.arithmetic_ok === undefined) {
+    // No stored arithmetic verdict → recompute. Covers the upload path, legacy rows, AND a
+    // _safecore that carries ONLY a non-arithmetic flag (e.g. the intake path writes
+    // possible_duplicate without ever running the arithmetic gate) — without this, an invoice
+    // that is BOTH a possible-duplicate and arithmetically inconsistent would hide the math error.
     // [BRIDGE-CREDITNOTA-SIGN] Same gate, same branch selection as write time:
     // a creditnota row (invoice_type) takes the sign-inverted gate, so a clean
     // negative creditnota reads "ready" here instead of a false "Aandacht nodig".
@@ -132,6 +198,71 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // (If storedSafecore exists AND arithmetic_ok !== false, the email path held
   //  it for a dedup note only, not a math problem — not a health warning here.)
 
+  // [BTW-SUM-FIX] The reader could not sum the mixed-rate BTW block, so the BTW was derived from
+  // the two printed anchors (excl + the paid total). The identity holds again — which means the
+  // arithmetic gate above is now SILENT and nothing else would ever mention it. Say it out loud:
+  // the total is still the invoice's, but this BTW is ours, and it is the voorbelasting the owner
+  // will deduct. Always a human check, so a derived figure can never auto-book.
+  if (fc?._btw_derived) {
+    flags.arithmetic = true
+    const used = fc._btw_derived.used
+    reasons.push(
+      typeof used === 'number'
+        ? `de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal (${formatEuro(used)}); controleer dit bedrag`
+        : 'de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal; controleer dit bedrag'
+    )
+  }
+
+  // ── Money-truth axis (the amounts themselves) ────────────────────────────
+  // [TRUST-AMOUNTS] The arithmetic gate above only runs its consistency checks
+  // when incl > 0, so a MISSING or €0 total slips through as "clean" — a real
+  // invoice the reader couldn't price would book as a €0 record with no warning.
+  // The total is the money-truth; if it's absent or zero, that is never "clean" —
+  // ask the human. (Legitimate €0 invoices effectively don't exist; a check costs
+  // the owner one glance and prevents a silent €0 booking.)
+  const incl = inv.total_inc_btw
+  if (incl == null || Math.abs(incl) < 0.005) {
+    flags.arithmetic = true
+    reasons.push('het totaalbedrag ontbreekt of is € 0 — controleer de bedragen')
+  }
+
+  // [TRUST-AMOUNTS] The amounts' own confidence, when the reader provided it. A
+  // low score means the reader itself was unsure about the money — surface that
+  // loudly instead of presenting a confident-looking total. We under-claim: only
+  // flag when a score is actually present and low (never fabricate doubt).
+  if (fc) {
+    const amountScores = [fc.amount, fc.total, fc.total_inc_btw].filter(
+      (n): n is number => typeof n === 'number'
+    )
+    if (amountScores.length > 0 && Math.min(...amountScores) < LOW_CONFIDENCE) {
+      flags.arithmetic = true
+      reasons.push('het bedrag is onzeker gelezen — controleer de bedragen')
+    }
+  }
+
+  // ── Date axis ────────────────────────────────────────────────────────────
+  // [TRUST-DATE] A MISSING invoice date is not "clean": the server confirm route
+  // hard-blocks a dateless invoice (the DATE-GATE), so a green "klaar" pill would
+  // lie — the owner taps confirm and it fails. Flag it here so the pill and the
+  // server agree, and the owner is told to add the date up front.
+  if (!inv.invoice_date || !String(inv.invoice_date).trim()) {
+    flags.invoiceDate = true
+    reasons.push('de factuurdatum ontbreekt — vul hem aan om te kunnen bevestigen')
+  }
+
+  // ── Invoice-number axis (the value, not just the AI's confidence) ────────
+  // [TRUST-NUMBER] A missing/placeholder number is never "clean": the stored
+  // EMAIL-<ts> placeholder is a fabricated identifier (defeats duplicate detection
+  // and is not a real Art. 35 number). Only evaluate when the caller supplied the
+  // field, so legacy call sites that don't pass it keep their old behaviour.
+  if (inv.invoice_number !== undefined) {
+    const num = inv.invoice_number
+    if (!num || !String(num).trim() || isPlaceholderInvoiceNumber(num)) {
+      flags.invoiceNumber = true
+      reasons.push('het factuurnummer ontbreekt of kon niet worden gelezen — controleer het')
+    }
+  }
+
   // ── Confidence axis ──────────────────────────────────────────────────────
   // The AI told us which fields it was unsure about. Mirror the modal's logic:
   // a missing score defaults to confident (1) so we never false-flag clean rows.
@@ -151,7 +282,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
 
   const level: HealthLevel =
-    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate
+    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate
       ? 'needs-review'
       : 'clean'
 

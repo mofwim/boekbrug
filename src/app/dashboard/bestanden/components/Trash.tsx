@@ -49,22 +49,36 @@ export function Trash({ onBack }: TrashProps) {
 
   const permanentDelete = async (ids: string[]) => {
     if (!confirm(`${ids.length} bestand(en) permanent verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
-    await Promise.all(ids.map(id =>
-      fetch(`/api/files/${id}`, { method: "DELETE" })
-    ));
-    setItems(p => p.filter(d => !ids.includes(d.id)));
+    // [COHERENCE-TRASH] Call the REAL purge endpoint and only remove rows that actually
+    // deleted. The old code hit the deprecated DELETE /api/files/[id] (410 Gone) and
+    // filtered items unconditionally, so files silently stayed trashed and reappeared on
+    // reload while the app claimed success. Now we check res.ok per file and report failures.
+    const results = await Promise.all(ids.map(async id => {
+      try {
+        const res = await fetch(`/api/bestanden/trash?id=${id}`, { method: "DELETE" });
+        return { id, ok: res.ok };
+      } catch {
+        return { id, ok: false };
+      }
+    }));
+    const deletedIds = results.filter(r => r.ok).map(r => r.id);
+    const failed = results.length - deletedIds.length;
+    if (deletedIds.length > 0) setItems(p => p.filter(d => !deletedIds.includes(d.id)));
     setSelected(new Set());
+    if (failed > 0) {
+      alert(`${failed} bestand(en) konden niet worden verwijderd. Ze staan nog in de prullenbak — probeer het opnieuw.`);
+    }
   };
 
   const emptyTrash = () => permanentDelete(items.map(i => i.id));
 
   return (
-    <div style={{ fontFamily: "'Google Sans','Roboto',sans-serif" }}>
+    <div style={{ fontFamily: "'Roboto',sans-serif" }}>
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={onBack} style={{
+          <button onClick={onBack} aria-label="Terug" style={{
             width: 36, height: 36, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer",
@@ -130,7 +144,7 @@ export function Trash({ onBack }: TrashProps) {
           }}>
             <Icon name="delete_forever" size={16} color="white" /> Verwijderen
           </button>
-          <button onClick={() => setSelected(new Set())} style={{
+          <button onClick={() => setSelected(new Set())} aria-label="Selectie wissen" style={{
             width: 28, height: 28, border: "none", background: "none",
             cursor: "pointer", borderRadius: T.full,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -185,7 +199,7 @@ export function Trash({ onBack }: TrashProps) {
                 <div style={{
                   width: 20, height: 20, borderRadius: T.full, flexShrink: 0,
                   background: isSelected ? T.primary : "transparent",
-                  border: `2px solid ${isSelected ? T.primary : "#BDBDBD"}`,
+                  border: `2px solid ${isSelected ? T.primary : "#dadce0"}`,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   transition: "all 0.15s",
                 }}>

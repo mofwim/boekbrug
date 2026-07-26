@@ -1,0 +1,24 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/email-sync",
+      "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/quarter-close",
+      "schedule": "0 8 5 1,4,7,10 *"
+    },
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/retention-purge",
+      "schedule": "0 3 * * 1"
+    }
+  ]
+}

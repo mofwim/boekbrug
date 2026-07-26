@@ -7,6 +7,8 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import type { ProfileRow } from '@/types/rows'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
@@ -16,7 +18,7 @@ export default function ClientDetailPage() {
   const clientId = params?.id as string
   const supabase = createClient()
 
-  const [client, setClient] = useState<any>(null)
+  const [client, setClient] = useState<ProfileRow | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
@@ -59,6 +61,23 @@ export default function ClientDetailPage() {
     }
   }
 
+  // [SUBNAV] Push the client name + Ontkoppelen action into the shared header.
+  // Called unconditionally (before the loading return) so hook order is stable;
+  // title is undefined until the client loads (bar shows the "Klant" base label).
+  useSubPageHeader(
+    {
+      title: client?.company_name || client?.full_name || undefined,
+      actions: (
+        <button
+          onClick={removeClient}
+          style={{ fontSize: 13, fontWeight: 500, color: '#EA4335', background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          Ontkoppelen
+        </button>
+      ),
+    },
+    [client?.company_name, client?.full_name]
+  )
+
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8F9FA' }}>
       <p style={{ fontSize: 14, color: '#5F6368' }}>Laden...</p>
@@ -66,36 +85,7 @@ export default function ClientDetailPage() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
-
-      {/* [BOEK-028] Workspace header — sticky */}
-      <div style={{
-        position: 'sticky', top: 0, zIndex: 20,
-        backgroundColor: '#FFFFFF',
-        borderBottom: '1px solid #E0E0E0',
-        padding: '12px 24px',
-      }}>
-        <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
-            <button
-              onClick={() => router.push('/dashboard')}
-              style={{ fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              ← Terug
-            </button>
-            <div style={{ minWidth: 0 }}>
-              <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {client?.company_name || client?.full_name}
-              </h1>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>{client?.email}</p>
-            </div>
-          </div>
-          <button
-            onClick={removeClient}
-            style={{ fontSize: 13, fontWeight: 500, color: '#EA4335', background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-            Ontkoppelen
-          </button>
-        </div>
-      </div>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 

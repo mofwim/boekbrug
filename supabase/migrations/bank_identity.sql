@@ -29,12 +29,16 @@ CREATE TABLE IF NOT EXISTS public.counterpart_memory (
 
 ALTER TABLE public.counterpart_memory ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS counterpart_memory_select_own ON public.counterpart_memory;
 CREATE POLICY counterpart_memory_select_own ON public.counterpart_memory
   FOR SELECT TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS counterpart_memory_insert_own ON public.counterpart_memory;
 CREATE POLICY counterpart_memory_insert_own ON public.counterpart_memory
   FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS counterpart_memory_update_own ON public.counterpart_memory;
 CREATE POLICY counterpart_memory_update_own ON public.counterpart_memory
   FOR UPDATE TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS counterpart_memory_delete_own ON public.counterpart_memory;
 CREATE POLICY counterpart_memory_delete_own ON public.counterpart_memory
   FOR DELETE TO authenticated USING (user_id = auth.uid());
 

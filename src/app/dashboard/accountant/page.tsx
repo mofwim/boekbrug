@@ -62,6 +62,9 @@ export default async function AccountantPage() {
           full_name: profile.full_name,
           company_name: profile.company_name,
           email: profile.email,
+          // Zonder role viel de header terug op de ZZP-variant: het logo linkte vanaf de
+          // boekhouderspagina naar /dashboard in plaats van /dashboard/accountant.
+          role: profile.role,
         }}
         overview={overview}
         clients={clients}

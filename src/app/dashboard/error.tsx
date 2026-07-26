@@ -20,7 +20,7 @@ export default function DashboardError({
   }, [error])
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center px-6">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center px-6">
       <div className="text-center space-y-4 max-w-sm">
 
         <p className="text-5xl font-bold text-gray-200">!</p>

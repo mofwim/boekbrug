@@ -1,11 +1,14 @@
 // src/app/api/result/route.ts
-// [RESULT] The true quarterly result across all channels. Fetches the period's
-// invoices + bank lines + cash entries, then computeResult() de-duplicates and
-// aggregates. Read-only, user-scoped (RLS server client).
+// [RESULT] The true quarterly result across all channels — a thin wrapper over the shared
+// computeResultForRange pipeline (also used by /api/truth's living-truth lens) so a quarter and
+// any other window can never disagree. Read-only, user-scoped (accountant dual-path via owner).
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { computeResult, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
+import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { resolveQuarterOwner } from "@/lib/accountant-access";
+import { quarterFromParams } from "@/lib/quarter";
+import { computeResultForRange } from "@/lib/compute-result-range";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -14,59 +17,30 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const now = new Date();
   const sp = req.nextUrl.searchParams;
-  const year = Number(sp.get("year")) || now.getUTCFullYear();
-  const quarter = ([1, 2, 3, 4].includes(Number(sp.get("quarter")))
-    ? Number(sp.get("quarter"))
-    : Math.floor(now.getUTCMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+  // [QUARTER] Honour ?year&quarter (bounded 2000–2100), else default to the LAST COMPLETED
+  // quarter — the app-wide default (quarter.ts).
+  const { year, quarter } = quarterFromParams((k) => sp.get(k));
 
   const startMonth = (quarter - 1) * 3;
   const start = `${year}-${pad(startMonth + 1)}-01`;
   const endD = new Date(Date.UTC(year, startMonth + 3, 0));
   const end = `${endD.getUTCFullYear()}-${pad(endD.getUTCMonth() + 1)}-${pad(endD.getUTCDate())}`;
 
-  // Invoices for this user (outgoing = sender, incoming = receiver) in the quarter.
-  const { data: invRows } = await supabase
-    .from("invoices")
-    .select("direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id")
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-    .gte("invoice_date", start)
-    .lte("invoice_date", end);
+  // [ACCOUNTANT-TRUTH] Dual-path: own result, OR a linked client's result for an accountant
+  // (same authorization as /api/closing-package). Reads use the service-role pipeline scoped to
+  // ownerId — an accountant cannot read a client's rows through RLS.
+  const owner = await resolveQuarterOwner(supabase, user.id, sp.get("clientId"));
+  if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
+  const pipeline = createPipelineClient();
 
-  const invoices: ResultInvoice[] = (invRows ?? []).map((i) => ({
-    direction: i.direction as "outgoing" | "incoming" | null,
-    status: i.status,
-    total_ex_btw: i.total_ex_btw,
-    btw_amount: i.btw_amount,
-  }));
-
-  // Bank lines in the quarter (computeResult excludes invoice payments + uncategorized).
-  const { data: bankRows } = await supabase
-    .from("bank_transactions")
-    .select("amount, category, invoice_id, date")
-    .eq("user_id", user.id)
-    .gte("date", start)
-    .lte("date", end);
-
-  const bankTx: ResultBankTx[] = (bankRows ?? []).map((b) => ({
-    amount: b.amount, category: b.category, invoice_id: b.invoice_id,
-  }));
-
-  // Cash entries in the quarter.
-  const { data: cashRows } = await supabase
-    .from("cash_entries")
-    .select("direction, amount, category, btw_rate, entry_date")
-    .eq("user_id", user.id)
-    .gte("entry_date", start)
-    .lte("entry_date", end);
-
-  const cashEntries: ResultCashEntry[] = (cashRows ?? []).map((c) => ({
-    direction: c.direction === "in" ? "in" : "out",
-    amount: c.amount, category: c.category, btw_rate: c.btw_rate,
-  }));
-
-  const result = computeResult(invoices, bankTx, cashEntries);
+  const { result, datelessVerifiedCount, reconciliation, scheme, undatedPaidCount, estimatedPortionCount } =
+    await computeResultForRange({
+      pipeline,
+      ownerId: owner.ownerId,
+      start,
+      end,
+    });
 
   return NextResponse.json({
     ok: true,
@@ -74,5 +48,12 @@ export async function GET(req: NextRequest) {
     quarter,
     label: `Q${quarter} ${year}`,
     result,
+    datelessVerifiedCount, // [DATELESS] verified invoices excluded for want of a date (warn upstream)
+    reconciliation,
+    // [KASSTELSEL] Under cash basis the figures are BTW-on-paid-date. undatedPaidCount > 0 means
+    // paid money couldn't be placed in a quarter → the figures are incomplete (surface, don't hide).
+    scheme,
+    undatedPaidCount,
+    estimatedPortionCount,
   });
 }

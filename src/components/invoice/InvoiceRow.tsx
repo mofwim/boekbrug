@@ -7,6 +7,9 @@
 'use client'
 
 import React from 'react'
+import type { InvoiceRecon } from '@/lib/bank-reconciliation'
+// [PARTIAL-PAY] shared openstaand vocabulary — same rule on every surface
+import { isPartiallyPaid, openAmount } from '@/lib/partial-payment'
 
 // ── Design System tokens ───────────────────────────────────────────────────────
 // ZZP → Material You | Accountant → Google Workspace
@@ -20,7 +23,7 @@ const DS = {
     received:{ bg: '#FEF7E0', color: '#B26A00' }, // [BRIDGE-A] incoming unpaid (Crediteuren)
     processing:{ bg: '#FEF7E0', color: '#EA8600' }, // [BRIDGE-B] incoming awaiting human verification
     overdue: { bg: '#F9DEDC', color: '#B3261E' },
-    draft:   { bg: '#E7E0EC', color: '#49454F' },
+    draft:   { bg: '#f1f3f4', color: '#5f6368' },
     credit:  { bg: '#FCE8E6', color: '#C5221F' },
   },
   // Accountant action chips — Workspace palette
@@ -48,6 +51,8 @@ export interface InvoiceRow {
   accountant_status?: string | null
   direction?: string
   total_inc_btw: number
+  // [PARTIAL-PAY] Running total already settled — drives the "Deels · € X open" chip.
+  amount_paid?: number | null
   invoice_date: string
   due_date: string | null
   created_at: string
@@ -65,6 +70,11 @@ export interface InvoiceRowProps {
   onEdit?: (id: string) => void
   resendingId?: string | null
   onAccountantAction?: (id: string, action: 'verwerkt' | 'in_behandeling' | 'vraag' | null) => void
+  // [BANK-RECON-BADGE] Reconciliation status vs the bank statement for THIS invoice.
+  // linked → "in bankafschrift"; pendingMatch → a confident unconfirmed payment the owner
+  // can confirm in one tap (onReconConfirm routes to the bank page). Undefined → no badge.
+  recon?: InvoiceRecon
+  onReconConfirm?: (invoiceId: string) => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -111,6 +121,61 @@ function StatusChip({ status, mode }: { status: string; mode: 'zzp' | 'accountan
   )
 }
 
+// [BANK-RECON-BADGE] A small chip showing this invoice's relationship to the bank
+// statement. "In bankafschrift" (green) when a bank line is already linked; "Betaling
+// gevonden" (blue, tappable) when the engine confidently matches an unconfirmed payment.
+// The pending chip stops row-click propagation and routes to the bank page to confirm —
+// it never marks the invoice paid by itself.
+export function ReconBadge({
+  recon, mode, invoiceId, onReconConfirm,
+}: {
+  recon: InvoiceRecon
+  mode: 'zzp' | 'accountant'
+  invoiceId: string
+  onReconConfirm?: (invoiceId: string) => void
+}) {
+  const radius = mode === 'zzp' ? 9999 : 4
+  if (recon.linked) {
+    return (
+      <span title="Deze betaling staat in je bankafschrift" style={{
+        display: 'inline-flex', alignItems: 'center', gap: 3,
+        backgroundColor: '#E6F4EA', color: '#137333',
+        borderRadius: radius, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
+      }}>
+        <span aria-hidden>🔗</span> In bankafschrift
+      </span>
+    )
+  }
+  if (recon.pendingMatch) {
+    const clickable = !!onReconConfirm
+    // [BANK-RECON-CONFIRM] A SAFE match (reference-backed) is one tap to book — blue "Betaling
+    // gevonden". An amount-only match is only a POSSIBILITY (a same-amount invoice could be the
+    // real one), so it reads amber "Mogelijke betaling — controleer" and opens the bank page for
+    // review rather than claiming certainty. Never overstate what the engine actually knows.
+    const safe = recon.pendingMatch.safe === true
+    return (
+      <span
+        role={clickable ? 'button' : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onClick={clickable ? (e) => { e.stopPropagation(); onReconConfirm!(invoiceId) } : undefined}
+        onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onReconConfirm!(invoiceId) } } : undefined}
+        title={safe
+          ? 'Deze betaling staat in je bankafschrift en hoort bij deze factuur — tik om te bevestigen'
+          : 'Er staat een betaling in je bankafschrift die hierbij zou kunnen horen — controleer het op de Bank-pagina'}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          backgroundColor: safe ? '#E8F0FE' : '#FEF7E0', color: safe ? '#1967D2' : '#B26A00',
+          borderRadius: radius, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
+          cursor: clickable ? 'pointer' : 'default',
+        }}
+      >
+        <span aria-hidden>🏦</span> {safe ? 'Betaling gevonden' : 'Mogelijke betaling'}
+      </span>
+    )
+  }
+  return null
+}
+
 // [DS] Accountant action chip — Workspace rectangle style
 function ActionChip({
   actionKey, label, isActive, onClick,
@@ -154,7 +219,7 @@ function ZzpButton({
 }) {
   // [DS] Material You — tonal buttons, pill shape
   const styles: Record<string, React.CSSProperties> = {
-    default:  { backgroundColor: '#E7E0EC', color: '#49454F' },
+    default:  { backgroundColor: '#f1f3f4', color: '#5f6368' },
     danger:   { backgroundColor: '#F9DEDC', color: '#B3261E' },
     success:  { backgroundColor: '#CEEAD6', color: '#137333' },
     primary:  { backgroundColor: '#D3E3FD', color: '#1967D2' },
@@ -192,6 +257,8 @@ export function InvoiceRowItem({
   onEdit,
   resendingId = null,
   onAccountantAction,
+  recon,
+  onReconConfirm,
 }: InvoiceRowProps) {
   const displayStatus    = getDisplayStatus(invoice)
   const isAccountantMode = !!onAccountantAction
@@ -216,6 +283,9 @@ export function InvoiceRowItem({
           opacity: 0.4,
           borderBottom: '1px solid #E0E0E0',
           backgroundColor: '#F8F9FA',
+          // [PERF] native list virtualization: skip rendering off-screen rows.
+          contentVisibility: 'auto',
+          containIntrinsicSize: 'auto 56px',
         }}
       >
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -254,6 +324,9 @@ export function InvoiceRowItem({
         backgroundColor: 'white',
         borderLeft: `3px solid ${accountantBorderColor}`,
         transition: isAccountantMode ? 'background 0.1s ease' : 'all 0.15s ease',
+        // [PERF] native list virtualization: skip rendering off-screen rows.
+        contentVisibility: 'auto',
+        containIntrinsicSize: 'auto 56px',
       }}
       onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = '#F8F9FA' }}
       onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'white' }}
@@ -280,6 +353,27 @@ export function InvoiceRowItem({
         <span style={{ fontSize: 14, fontWeight: 700, color: '#202124', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap' }}>
           {new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.total_inc_btw ?? 0)}
         </span>
+
+        {/* [PARTIAL-PAY] Only part of this invoice is settled. The accountant needs this BEFORE
+            marking it 'verwerkt': that lock freezes amount_paid (invoice_accountant_write_guard),
+            so once it is on, nobody can book the remaining instalment. The owner sees the same
+            chip on Facturen and Crediteuren — one shared vocabulary. */}
+        {isPartiallyPaid(invoice) && (
+          <span
+            title={`Deelbetaling: ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(invoice.amount_paid ?? 0)} van ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(Math.abs(invoice.total_inc_btw ?? 0))} betaald`}
+            style={{
+              fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
+              border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+            }}
+          >
+            Deels · {new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(openAmount(invoice))} open
+          </span>
+        )}
+
+        {/* [BANK-RECON-BADGE] Reconciliation vs the bank statement (owner-facing). */}
+        {recon && (
+          <ReconBadge recon={recon} mode={isAccountantMode ? 'accountant' : 'zzp'} invoiceId={invoice.id} onReconConfirm={onReconConfirm} />
+        )}
 
         {/* ════ ACCOUNTANT MODE — Workspace chips ════ */}
         {isAccountantMode && (

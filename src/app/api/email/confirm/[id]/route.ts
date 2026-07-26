@@ -9,6 +9,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+// [CASH-SETTLE] keep the kasboek in sync when an invoice is paid/undone in cash
+import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 // [BRIDGE-B] legal trail for verify/pay state changes
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import type { Database } from "@/types/database.types";
@@ -43,7 +46,7 @@ export async function POST(
   // Verify ownership + load current amounts (TRAIL needs unchanged fields too)
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date")
+    .select("id, receiver_id, direction, status, total_ex_btw, btw_amount, total_inc_btw, invoice_number, client_name, invoice_date, invoice_type")
     .eq("id", id)
     .single();
 
@@ -86,8 +89,15 @@ export async function POST(
     return NextResponse.json({ error: "Onbekende actie" }, { status: 400 });
   }
 
+  // [BRIDGE-CREDITNOTA-SIGN] A normal invoice's amounts are ≥ 0. A creditnota follows the safecore
+  // rule (evaluateCreditnotaArithmetic): only the NET total is negative — the ex/BTW signs are NOT
+  // constrained (real Altena case: ex −123, BTW +13,42, totaal −109,58). So validNum only enforces
+  // ≥ 0 for a normal invoice; for a creditnota it accepts any finite value, so a correctly-read
+  // negative excl / positive BTW persists instead of being dropped back to the stored amount. The
+  // old blanket `v >= 0` (with the client's Math.max(0)) turned every edited creditnota positive.
+  const isCredit = invoice.invoice_type === "creditnota";
   const validNum = (v: unknown): v is number =>
-    typeof v === "number" && isFinite(v) && v >= 0;
+    typeof v === "number" && isFinite(v) && (isCredit ? true : v >= 0);
 
   // Effective amounts = reviewed values where valid, else what's already stored
   const exBtw  = validNum(body.total_ex_btw)  ? body.total_ex_btw  : (invoice.total_ex_btw  ?? 0);
@@ -99,11 +109,13 @@ export async function POST(
   const warnings: string[] = [];
   // TRAIL 2 — arithmetic: excl + btw must equal incl (catches Excl/Incl mix-ups)
   if (Math.abs(exBtw + btw - incBtw) > 0.02) warnings.push("trail2_amounts");
-  // TRAIL 3 — legal BTW rate: must round to 0 / 9 / 21 (catches e.g. 37%;
-  // a legitimate multi-rate invoice is flagged for the human, not rejected)
-  if (exBtw > 0) {
-    const rate = Math.round((btw / exBtw) * 100);
-    if (rate !== 0 && rate !== 9 && rate !== 21) warnings.push("trail3_btw_rate");
+  // TRAIL 3 — legal BTW rate. Uses the magnitude ratio |BTW / excl| (mirrors safecore and the
+  // client), so a blended 0–21% rate is accepted and only an impossible >21% is flagged. The abs
+  // also lets a creditnota (negative base, possibly positive goods-BTW) be checked correctly
+  // instead of being skipped by the old `exBtw > 0` guard or false-flagged by a signed ratio.
+  if (Math.abs(exBtw) > 0.005) {
+    const rate = Math.round(Math.abs(btw / exBtw) * 100);
+    if (rate > 21) warnings.push("trail3_btw_rate");
   }
 
   // ── Status patch per action ──
@@ -155,29 +167,51 @@ export async function POST(
     updatePatch.status = "paid";
     updatePatch.payment_method = body.payment_method;
     updatePatch.marked_paid_at = new Date().toISOString();
-    // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Accept a valid
-    // YYYY-MM-DD; otherwise fall back to today's date (in-system confirmation
-    // day) so a paid invoice never lacks a payment_date. marked_paid_at remains
-    // the precise confirmation timestamp; payment_date is the accounting day.
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Prefer an explicit YYYY-MM-DD; else the
+    // invoice's OWN date (a receipt uploaded weeks later is a far better accounting-day proxy than
+    // "today", which would misattribute a cross-quarter payment to the wrong quarter); "today" is
+    // only the last resort so a paid invoice never lacks a payment_date. marked_paid_at stays the
+    // precise confirmation timestamp; payment_date is the accounting day. (Accrual BTW is on the
+    // invoice date regardless, so this only fixes the settlement-quarter display.)
+    const isoRe = /^\d{4}-\d{2}-\d{2}$/;
+    const reviewedDate = typeof body.invoice_date === "string" && isoRe.test(body.invoice_date) ? body.invoice_date : null;
+    const invDate = typeof invoice.invoice_date === "string" && isoRe.test(invoice.invoice_date) ? invoice.invoice_date : null;
     updatePatch.payment_date =
-      typeof body.payment_date === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(body.payment_date)
+      typeof body.payment_date === "string" && isoRe.test(body.payment_date)
         ? body.payment_date
-        : todayIso;
+        : reviewedDate ?? invDate ?? new Date().toISOString().slice(0, 10);
   } else {
     // verify → enters the accountant's world as a Crediteur (unpaid, shared)
     updatePatch.status = "received";
   }
 
-  const { error } = await supabase
+  // [CONFIRM-GUARD] Only a QUEUE row ('processing') can be confirmed here. Without
+  // this precondition a stale tab / double-submit could act on an already-handled
+  // invoice: 'verify' on a PAID row rewrote status back to 'received' while its
+  // payment fields stayed populated (inconsistent state), and 'pay' could re-pay.
+  // Race-proof: the WHERE re-checks at write time; zero rows → honest conflict.
+  if (invoice.status !== "processing") {
+    return NextResponse.json(
+      { error: "Deze factuur is al bevestigd — ververs de pagina." },
+      { status: 409 }
+    );
+  }
+  const { data: confirmData, error } = await supabase
     .from("invoices")
     .update(updatePatch)
     .eq("id", id)
-    .eq("receiver_id", user.id);
+    .eq("receiver_id", user.id)
+    .eq("status", "processing")
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!confirmData || confirmData.length === 0) {
+    return NextResponse.json(
+      { error: "Deze factuur is al bevestigd — ververs de pagina." },
+      { status: 409 }
+    );
   }
 
   // [BRIDGE-B] Audit the state change (legal trail: who confirmed what, when).
@@ -202,6 +236,23 @@ export async function POST(
     },
     ipAddress: getClientIP(req),
   });
+
+  // [CASH-SETTLE] If this pay was in cash (or an earlier cash payment was just undone),
+  // keep the kasboek in sync immediately — create the linked 'betaling' entry (balance-only,
+  // never a cost) or remove an orphan. Self-healing + best-effort; the kasboek load also
+  // reconciles, so this only makes it instant.
+  if (action === "pay" || action === "verify") {
+    await reconcileCashSettlements(supabase, user.id);
+    // [BANK-LINK] A just-verified invoice may already have its payment sitting in an imported bank
+    // statement — including as part of a multi-invoice batch. Run the SAME safe engine the cron runs
+    // (only books provably-exact reference+amount / iban+amount / exact-batch matches), inline, so
+    // the invoice flips to 'betaald · gekoppeld' IMMEDIATELY instead of waiting up to a day for the
+    // daily cron. This is exactly the gap where an already-paid invoice showed "24 dagen te laat".
+    // Best-effort: a failure just defers the link to the cron / the /bank page, never blocks verify.
+    try {
+      await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id });
+    } catch { /* non-fatal — cron / bank page still catches it */ }
+  }
 
   // ── Notify (service_role — notifications has no authenticated INSERT policy) ──
   const { data: link } = await supabase
@@ -311,7 +362,10 @@ export async function DELETE(
   }
 
   // [BOEK-011] Archive — never hard-delete. Recoverable via PATCH.
-  const { error } = await supabase
+  // [CONFIRM-GUARD] Only from 'processing' (skip from the verify queue) or
+  // 'received' (the manage page's archive-a-duplicate flow). Never from 'paid':
+  // archiving a paid invoice would hide booked money from every ledger surface.
+  const { data: archData, error } = await supabase
     .from("invoices")
     .update({
       status: "archived",
@@ -319,10 +373,18 @@ export async function DELETE(
     })
     .eq("id", id)
     .eq("receiver_id", user.id)
-    .eq("direction", "incoming");
+    .eq("direction", "incoming")
+    .in("status", ["processing", "received"])
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!archData || archData.length === 0) {
+    return NextResponse.json(
+      { error: "Deze factuur kan niet worden verwijderd (al betaald of al verwerkt) — ververs de pagina." },
+      { status: 409 }
+    );
   }
 
   return NextResponse.json({ ok: true });

@@ -22,6 +22,15 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { needsDocument } from "@/lib/bank-identity";
+import { computeDrawerBalance } from "@/lib/cash";
+// [PAGINATION] PostgREST silently caps a single .select() at ~1000 rows. The
+// home totals promise EXACT stored sums ("a wrong number breaks trust"), and a
+// busy account's bank_transactions easily exceed 1000 — lastBankDate and the
+// undocumented count were computed over an arbitrary subset. Page everything.
+import { fetchAllRows } from "@/lib/supabase-paginate";
+// [CREDITNOTA-NO-CHASE] the shared "is this still owed to me" rule — both sides of a credited
+// pair must leave the receivable list together (see src/lib/credited-invoices.ts)
+import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
 
 // Days-until-due window that counts as "needs attention now" (mirrors the Vandaag
 // page). Overdue (negative) always qualifies; so does anything due within 3 days.
@@ -40,6 +49,7 @@ interface InvoiceRow {
   invoice_number: string | null;
   invoice_date: string | null;
   total_inc_btw: number | null;
+  amount_paid?: number | null;
   due_date: string | null;
   status: string | null;
 }
@@ -57,37 +67,83 @@ export async function GET() {
   const todayIso = new Date().toISOString().split("T")[0];
   const todayNum = dayNumberFromIso(todayIso);
 
-  const SELECT = "id, client_name, invoice_number, invoice_date, total_inc_btw, due_date, status";
+  const SELECT = "id, client_name, invoice_number, invoice_date, total_inc_btw, amount_paid, due_date, status";
+
+  // [PARTIAL-PAY] The openstaand (still-owed) amount: a fully-paid invoice is 0 (it also drops out
+  // of these lists), a deelbetaling shows only the REMAINING balance, a fully-open invoice its total.
+  // Sign preserved (a creditnota total is negative; amount_paid is a magnitude). This is the same
+  // reconciled truth the bank matcher books — Te betalen / Te ontvangen must never overstate by a
+  // settled instalment.
+  const openstaandOf = (r: { total_inc_btw: number | null; amount_paid?: number | null; status?: string | null }) => {
+    const total = r.total_inc_btw ?? 0;
+    if (r.status === "paid") return 0;
+    const paid = Math.max(0, r.amount_paid ?? 0);
+    if (paid <= 0.005) return total;
+    return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid);
+  };
 
   // 1. Te betalen — confirmed incoming invoices, not yet paid. 'processing'/'draft'
   //    are not yet confirmed by the owner, so excluded. Sum of stored totals = exact.
-  const { data: payRows } = await pipeline
+  const payRows = await fetchAllRows((from, to) => pipeline
     .from("invoices")
     .select(SELECT)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .in("status", ["received", "sent", "overdue"]);
+    .in("status", ["received", "sent", "overdue"])
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   const pay = (payRows ?? []) as InvoiceRow[];
   const toPay = {
     count: pay.length,
-    total: pay.reduce((s, r) => s + (r.total_inc_btw ?? 0), 0),
+    total: pay.reduce((s, r) => s + openstaandOf(r), 0),
     overdue: pay.filter((r) => r.due_date && r.due_date < todayIso).length,
   };
 
   // 2. Te ontvangen — your OWN sent invoices still unpaid (money owed TO you).
   //    Sum of stored totals = exact. A POS-only shop simply has none of these.
-  const { data: recvRows } = await pipeline
+  const recvRows = await fetchAllRows((from, to) => pipeline
     .from("invoices")
     .select(SELECT)
     .eq("sender_id", user.id)
     .eq("direction", "outgoing")
-    .in("status", ["sent", "overdue"]);
+    .in("status", ["sent", "overdue"])
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
-  const recv = (recvRows ?? []) as InvoiceRow[];
+  // [CREDITNOTA-NO-CHASE] A credited invoice always comes as a PAIR in this query: the original
+  // (positive, still 'sent' because its +omzet must stay to be netted) AND the creditnota itself,
+  // which is also outgoing + 'sent' but NEGATIVE. Both must go, or neither — dropping only the
+  // original leaves the −X alone and drives "Te ontvangen" negative, which is worse than the
+  // inflated count we started with. filterOpenReceivables enforces that pairing; see
+  // src/lib/credited-invoices.ts and its tests.
+  // [PAGINATION] fetchAllRows like every other read here: an unpaginated select silently caps at
+  // ~1000 rows, and a truncated credited set would let a withdrawn invoice back into the total.
+  const recvAll = (recvRows ?? []) as InvoiceRow[];
+  const creditRows = recvAll.length > 0
+    ? await fetchAllRows<{ original_invoice_id: string | null }>((from, to) => pipeline
+        .from("invoices")
+        // Keyed on the owner rather than on the candidate ids — an .in() over every open invoice
+        // would grow the URL without bound, and one owner's creditnotas are few.
+        .select("original_invoice_id")
+        .eq("sender_id", user.id)
+        .eq("invoice_type", "creditnota")
+        .not("original_invoice_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to)
+      ).catch(() => null)
+    : [];
+  // On a failed lookup, degrade to the OLD behaviour completely — both sides of the pair stay in
+  // the list, where they cancel each other out as they always did. Half-degrading (dropping the
+  // creditnota while still counting the original) would invent a number that was never shown.
+  const recv = creditRows == null
+    ? recvAll
+    : filterOpenReceivables(recvAll, creditedIdsFrom(creditRows));
   const toReceive = {
     count: recv.length,
-    total: recv.reduce((s, r) => s + (r.total_inc_btw ?? 0), 0),
+    total: recv.reduce((s, r) => s + openstaandOf(r), 0),
     overdue: recv.filter((r) => r.due_date && r.due_date < todayIso).length,
   };
 
@@ -99,10 +155,13 @@ export async function GET() {
   //    COUNT of open tasks, never a money figure. (It also fixes the old heuristic,
   //    which wrongly treated a "betaalautomaat" card PURCHASE as takings and skipped
   //    it — a purchase does need a receipt.)
-  const { data: txRows } = await pipeline
+  const txRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
     .select("date, amount, status, invoice_id, counterpart_name, description, category")
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .order("id", { ascending: true })
+    .range(from, to)
+  ).catch(() => null);
 
   const txs = txRows ?? [];
 
@@ -133,7 +192,7 @@ export async function GET() {
     party: r.client_name,
     invoiceNumber: r.invoice_number,
     dueDate: r.due_date,
-    total: r.total_inc_btw ?? 0,
+    total: openstaandOf(r), // [PARTIAL-PAY] the remaining balance, not the full invoice
     direction,
   });
 
@@ -144,25 +203,44 @@ export async function GET() {
     .filter((it) => it.dueDate && dayNumberFromIso(it.dueDate) - todayNum <= ATTENTION_WINDOW_DAYS)
     .sort((a, b) => dayNumberFromIso(a.dueDate as string) - dayNumberFromIso(b.dueDate as string));
 
-  // [CASH-LEDGER] Kas — opt-in by use. Only surfaced when the owner records cash, so a
-  // bank-only owner never sees it. Balance = money in − money out (transfers included:
-  // they change the drawer, just not the P&L).
-  const { data: cashRows } = await pipeline
-    .from("cash_entries")
-    .select("direction, amount")
-    .eq("user_id", user.id);
+  // [CASH-LEDGER] Kas — opt-in by use. Only surfaced when the owner handles cash. The drawer balance
+  // MUST be the SAME figure the Kas page shows (computeDrawerBalance): opening float + cash_entries
+  // net + the till's daily CASH takings. The old version summed cash_entries ONLY — so a till shop's
+  // home showed a wrong, often NEGATIVE saldo (a false "meer uitgaven dan ontvangsten" alarm) that
+  // disagreed with the Kas page by exactly the till-cash + opening amount.
+  // [PAGINATION] cash_entries / daily_turnover also page past the ~1000-row cap
+  // (a cash-heavy shop exceeds it) — a truncated sum here showed a wrong drawer
+  // saldo that disagreed with the Kas page.
+  const [cashRows, tillRows, { data: kasProf }] = await Promise.all([
+    fetchAllRows((from, to) => pipeline
+      .from("cash_entries").select("direction, amount").eq("user_id", user.id)
+      .order("id", { ascending: true }).range(from, to)
+    ).catch(() => null),
+    fetchAllRows((from, to) => pipeline
+      .from("daily_turnover").select("cash_amount").eq("user_id", user.id)
+      .order("id", { ascending: true }).range(from, to)
+    ).catch(() => null),
+    pipeline.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle(),
+  ]);
   const cash = cashRows ?? [];
-  const kasBalance = cash.reduce(
-    (s, e) => s + (e.direction === "in" ? e.amount ?? 0 : -(e.amount ?? 0)),
-    0,
-  );
+  const till = (tillRows ?? []) as { cash_amount: number | null }[];
+  const kasOpening = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+  const tillCashTotal = till.reduce((s, t) => s + (Number(t.cash_amount) || 0), 0);
+  const kasBalance = computeDrawerBalance({
+    openingBalance: kasOpening,
+    entries: cash.map((e) => ({ direction: e.direction === "in" ? "in" : "out", amount: e.amount })),
+    tillCashAmounts: till.map((t) => t.cash_amount),
+  });
+  // A shop with till-cash takings (or an opening float) handles cash even without manual entries, so
+  // the home surfaces the drawer whenever ANY of the three sources is present — matching the Kas page.
+  const kasUsed = cash.length > 0 || tillCashTotal !== 0 || kasOpening !== 0;
 
   return NextResponse.json({
     ok: true,
     toPay,
     toReceive,
     bank: { lastDate: lastBankDate, undocumented },
-    kas: { used: cash.length > 0, balance: kasBalance },
+    kas: { used: kasUsed, balance: kasBalance },
     attention: attentionAll.slice(0, 3),
     attentionCount: attentionAll.length,
   });

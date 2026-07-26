@@ -1,6 +1,6 @@
 // src/components/blog/ArticleCard.tsx
 // [BLOG] One item in the blog index list. Reuses the white rounded-card look of
-// the tools hub (#fff, 1px #ececf1 border, 18px radius, soft shadow). Shows an
+// the tools hub (#fff, 1px #e0e0e0 border, 18px radius, soft shadow). Shows an
 // optional cover image, title, description and the published date.
 
 import Link from 'next/link'
@@ -28,7 +28,7 @@ export default function ArticleCard({ post, locale }: { post: Post; locale: Loca
       style={{
         display: 'block',
         background: '#fff',
-        border: '1px solid #ececf1',
+        border: '1px solid #e0e0e0',
         borderRadius: 18,
         overflow: 'hidden',
         textDecoration: 'none',
@@ -36,7 +36,7 @@ export default function ArticleCard({ post, locale }: { post: Post; locale: Loca
       }}
     >
       {frontmatter.coverImage && (
-        <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#f2f2f7' }}>
+        <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#f8f9fa' }}>
           <Image
             src={frontmatter.coverImage}
             alt=""
@@ -47,13 +47,13 @@ export default function ArticleCard({ post, locale }: { post: Post; locale: Loca
         </div>
       )}
       <div style={{ padding: 22 }}>
-        <div style={{ fontSize: 12, color: '#8a8a8e', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: '#9aa0a6', marginBottom: 8 }}>
           {formatDate(frontmatter.publishedAt, locale)}
         </div>
-        <div style={{ fontSize: 19, fontWeight: 700, color: '#1c1c1e', marginBottom: 8, lineHeight: 1.3 }}>
+        <div style={{ fontSize: 19, fontWeight: 700, color: '#202124', marginBottom: 8, lineHeight: 1.3 }}>
           {frontmatter.title}
         </div>
-        <div style={{ fontSize: 15, lineHeight: 1.55, color: '#6b6b6e' }}>
+        <div style={{ fontSize: 15, lineHeight: 1.55, color: '#5f6368' }}>
           {frontmatter.description}
         </div>
       </div>

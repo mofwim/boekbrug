@@ -230,14 +230,27 @@ export async function ensureYearStructure(
   const sharedExists = existing.some(f => f.folder_type === "shared" && f.parent_id === null);
   const importedExists = existing.some(f => f.folder_type === "imported" && f.parent_id === null);
 
-  // Quick completeness check: if the year folder exists AND it has 4 quarters
-  // AND the two root folders exist, assume the structure is complete.
+  // [M5] Completeness check on the FULL leaf count, not just quarters. A prior run
+  // could have been interrupted after creating the 4 quarter rows but before a
+  // quarter's Bank/months/Facturen/Kosten — "4 quarters" would then short-circuit
+  // forever and leave that subtree permanently missing. Verify every tier; if any
+  // leaf is absent we fall through to the idempotent build path, which re-creates
+  // only what's missing (INSERT + catch 23505) and self-heals.
   if (yearFolderId && sharedExists && importedExists) {
-    const quarterCount = existing.filter(
-      f => f.parent_id === yearFolderId && f.folder_type === "quarter"
+    const quarterIds = new Set(
+      existing.filter(f => f.parent_id === yearFolderId && f.folder_type === "quarter").map(f => f.id)
+    );
+    const bankCount = existing.filter(
+      f => f.folder_type === "bank" && f.parent_id && quarterIds.has(f.parent_id)
     ).length;
-    // 4 quarters present → deep structure was built in a prior call. Done.
-    if (quarterCount === 4) return;
+    const monthIdSet = new Set(
+      existing.filter(f => f.folder_type === "month" && f.parent_id && quarterIds.has(f.parent_id)).map(f => f.id)
+    );
+    const typeCount = existing.filter(
+      f => (f.folder_type === "facturen" || f.folder_type === "kosten") && f.parent_id && monthIdSet.has(f.parent_id)
+    ).length;
+    // Complete year subtree = 4 quarters + 4 bank + 12 months + 24 (facturen/kosten).
+    if (quarterIds.size === 4 && bankCount === 4 && monthIdSet.size === 12 && typeCount === 24) return;
   }
 
   // ── [BOEK-033] BUILD PATH ─────────────────────────────────────────────────
@@ -417,11 +430,22 @@ export async function createFolder(
   ctx: BestandenContext = "user"
 ): Promise<FolderRow> {
   const supabase = await resolveClient(ctx);
+  const trimmed = name.trim();
+  // [L7] A folder must have a non-empty name.
+  if (!trimmed) throw new Error("Mapnaam mag niet leeg zijn");
+  // [Fo#2] Reserve the system-folder names. The client shows the "Gedeeld"/protected
+  // UI based on the folder NAME, while the server auto-shares on folder_type='shared'.
+  // A custom folder named "Gedeeld met boekhouder" would therefore look shared (badge,
+  // no delete) but never actually share — a silent trust bug. Block the impersonation.
+  const reserved = [SHARED_FOLDER_NAME, IMPORTED_FOLDER_NAME].map((s) => s.toLowerCase());
+  if (reserved.includes(trimmed.toLowerCase())) {
+    throw new Error("Deze mapnaam is gereserveerd");
+  }
   const { data, error } = await supabase
     .from("folders")
     .insert({
       user_id: userId,
-      name: name.trim(),
+      name: trimmed,
       parent_id: parentId ?? null,
       is_system: false,
       folder_type: "custom",
@@ -443,13 +467,17 @@ export async function renameFolder(
 ): Promise<void> {
   const supabase = await resolveClient(ctx);
 
+  // [L7] A folder must keep a non-empty name — reject blank/whitespace renames.
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("Mapnaam mag niet leeg zijn");
+
   // Guard: never rename system folders
   const { data: folder } = await supabase
     .from("folders").select("is_system").eq("id", folderId).eq("user_id", userId).single();
   if (folder?.is_system) throw new Error("Systeemmappen kunnen niet worden hernoemd");
 
   const { error } = await supabase
-    .from("folders").update({ name: newName.trim() })
+    .from("folders").update({ name: trimmed })
     .eq("id", folderId).eq("user_id", userId);
   if (error) throw new Error(error.message);
 }
@@ -470,15 +498,22 @@ export async function deleteFolder(
   if (!folder) throw new Error("Map niet gevonden");
   if (folder.is_system) throw new Error("Systeemmappen kunnen niet worden verwijderd");
 
-  // Move documents to root
-  await supabase.from("documents").update({ folder_id: null })
+  // Move documents to root — [Fo#3] abort on error; never proceed to the delete
+  // with children still attached.
+  const { error: docErr } = await supabase.from("documents").update({ folder_id: null })
     .eq("folder_id", folderId).eq("user_id", userId);
+  if (docErr) throw new Error(docErr.message);
 
-  // Move sub-folders to root
-  await supabase.from("folders").update({ parent_id: null })
+  // Reparent sub-folders to root BEFORE deleting. The folders parent_id FK is
+  // ON DELETE CASCADE, so if this step were skipped or failed and we still deleted,
+  // the cascade would silently wipe the entire descendant subtree. Abort on error.
+  const { error: subErr } = await supabase.from("folders").update({ parent_id: null })
     .eq("parent_id", folderId).eq("user_id", userId);
+  if (subErr) throw new Error(subErr.message);
 
-  await supabase.from("folders").delete().eq("id", folderId).eq("user_id", userId);
+  const { error: delErr } = await supabase.from("folders").delete()
+    .eq("id", folderId).eq("user_id", userId);
+  if (delErr) throw new Error(delErr.message);
 }
 
 // ─── Move Document ────────────────────────────────────────────────────────────────
@@ -506,6 +541,34 @@ export async function moveFolder(
 ): Promise<void> {
   const supabase = await resolveClient(ctx);
   if (folderId === newParentId) throw new Error("Kan map niet in zichzelf verplaatsen");
+
+  // [Fo#5] System folders can't be moved (mirrors rename/delete). RLS already blocks
+  // the UPDATE, but a 0-row update is NOT an error — without this guard the PATCH
+  // route would report { ok: true } for a move that silently did nothing.
+  const { data: self } = await supabase
+    .from("folders").select("is_system").eq("id", folderId).eq("user_id", userId).maybeSingle();
+  if (!self) throw new Error("Map niet gevonden");
+  if (self.is_system) throw new Error("Systeemmappen kunnen niet worden verplaatst");
+
+  // [Fo#1] Reject moving a folder INTO ITS OWN DESCENDANT. Such a move builds a
+  // parent_id cycle: the whole ring detaches from the root-anchored tree (buildTree
+  // only descends from parent_id=null → the subtree becomes invisible/unreachable),
+  // and the breadcrumb's upward parent-walk recurses forever → page crash. Walk up
+  // from the target's chain; if we reach folderId, the target is a descendant.
+  // The lookup also validates ownership (Fo#5): an unknown/foreign parent is rejected.
+  if (newParentId) {
+    let cursor: string | null = newParentId;
+    let guard = 0;
+    while (cursor && guard < 100) {
+      if (cursor === folderId) throw new Error("Kan een map niet naar een submap van zichzelf verplaatsen");
+      const { data: parent } = await supabase
+        .from("folders").select("parent_id").eq("id", cursor).eq("user_id", userId).maybeSingle();
+      if (!parent) throw new Error("Doelmap niet gevonden");
+      cursor = parent.parent_id as string | null;
+      guard++;
+    }
+  }
+
   const { error } = await supabase
     .from("folders").update({ parent_id: newParentId })
     .eq("id", folderId).eq("user_id", userId);
@@ -529,26 +592,62 @@ export async function renameDocument(
 
 // ─── Search ───────────────────────────────────────────────────────────────────────
 
+// [SEARCH] Neutralise PostgREST .or()/ILIKE metacharacters. A comma or paren in the
+// query broke the .or() grammar; %/_ act as wildcards. Replace them with spaces so a
+// query like "factuur, mei (2026)" no longer errors or mis-matches.
+function sanitizeLike(q: string): string {
+  return q.replace(/[,()%_*\\":]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// [SEARCH] The fuzzy RPCs (search_smart.sql) aren't in the generated Supabase types.
+// Narrow cast that keeps `this` bound; returns [] on any error so search never breaks.
+type RpcCaller = { rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }> };
+async function fuzzyRpc(client: unknown, fn: string, query: string): Promise<unknown[]> {
+  try {
+    const { data, error } = await (client as RpcCaller).rpc(fn, { q: query.trim() });
+    if (error) return [];
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function searchBestanden(
   userId: string,
   query: string,
   ctx: BestandenContext = "user"
 ): Promise<SearchResult[]> {
   const supabase = await resolveClient(ctx);
-  const q = query.trim();
+  const q = sanitizeLike(query);
   if (!q) return [];
+
+  // [M3] Neutralise the user term before it is interpolated into the PostgREST
+  // `.or()` filter string. Commas and parentheses are STRUCTURAL there (an unescaped
+  // ")" or "," breaks out of the ilike list → malformed filter / injected predicates);
+  // "%", "_" and "\" are LIKE wildcards/escape that would silently over-match. Strip
+  // them so the term is matched literally. (user_id is ANDed outside the OR group, so
+  // this was never a cross-tenant leak — but it is query-breakage/DoS hardening.)
+  const safe = q.replace(/[,()%_\\]/g, " ").trim();
+  if (!safe) return [];
 
   const { data, error } = await supabase
     .from("documents")
     .select("id, file_name, file_url, file_size, file_type, doc_type, period, year, notes, invoice_id, created_at, folder_id, ai_processed, ai_doc_type, ai_suggested_folder, source, starred, trashed, shared")
     .eq("user_id", userId)
     .eq("trashed", false)
-    .or(`file_name.ilike.%${q}%,notes.ilike.%${q}%,ai_doc_type.ilike.%${q}%,doc_type.ilike.%${q}%`)
+    .or(`file_name.ilike.%${safe}%,notes.ilike.%${safe}%,ai_doc_type.ilike.%${safe}%,doc_type.ilike.%${safe}%`)
     .order("created_at", { ascending: false })
     .limit(50);
 
   if (error) throw new Error(error.message);
-  const docs = (data ?? []) as BestandRow[];
+  let docs = (data ?? []) as BestandRow[];
+
+  // [SEARCH] Typo-tolerant fallback when exact/substring found nothing — only for
+  // NAME-like queries (a numeric query is exact-match territory; trigram-fuzzy on
+  // numbers yields garbage).
+  if (docs.length === 0 && /\p{L}/u.test(query)) {
+    docs = (await fuzzyRpc(supabase, "search_documents_fuzzy", query)) as BestandRow[];
+  }
 
   const folderIds = [...new Set(docs.map(d => d.folder_id).filter(Boolean))] as string[];
   let folderMap: Record<string, string> = {};
@@ -559,6 +658,42 @@ export async function searchBestanden(
   }
 
   return docs.map(d => ({ ...d, folder_name: d.folder_id ? (folderMap[d.folder_id] ?? null) : null }));
+}
+
+// [SEARCH] Folders are findable by name too (previously only documents were).
+export interface FolderSearchResult {
+  id: string;
+  name: string;
+  parent_id: string | null;
+}
+
+export async function searchFolders(
+  userId: string,
+  query: string,
+  ctx: BestandenContext = "user"
+): Promise<FolderSearchResult[]> {
+  const supabase = await resolveClient(ctx);
+  const q = sanitizeLike(query);
+  if (!q) return [];
+
+  const { data, error } = await supabase
+    .from("folders")
+    .select("id, name, parent_id")
+    .eq("user_id", userId)
+    .ilike("name", `%${q}%`)
+    .order("name", { ascending: true })
+    .limit(20);
+
+  if (error) throw new Error(error.message);
+  let folders = (data ?? []) as FolderSearchResult[];
+
+  // [SEARCH] Typo-tolerant fallback when the exact/substring name match found nothing —
+  // name-like queries only (no trigram-fuzzy on numeric queries).
+  if (folders.length === 0 && /\p{L}/u.test(query)) {
+    folders = (await fuzzyRpc(supabase, "search_folders_fuzzy", query)) as FolderSearchResult[];
+  }
+
+  return folders;
 }
 
 // ─── Find folder by path ──────────────────────────────────────────────────────────

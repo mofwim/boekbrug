@@ -7,7 +7,8 @@
 // live accountant home).
 
 import { ZzpDashboard } from './zzp/ZzpDashboard'
+import type { ProfileRow } from '@/types/rows'
 
-export default function DashboardClient({ profile }: { profile: any }) {
+export default function DashboardClient({ profile }: { profile: ProfileRow }) {
   return <ZzpDashboard profile={profile} />
 }

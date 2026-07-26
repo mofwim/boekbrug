@@ -5,14 +5,18 @@
 // [BOEK-031] add creditnota button for sent invoices — May 2026
 // [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
+import { InvoiceReminders } from '@/components/invoice/InvoiceReminders'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
-import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
+import { InvoiceTypeBadge, type InvoiceType } from '@/components/invoice/InvoiceTypeBadge'
+import { crossQuarterPayment } from '@/lib/quarter'
+import type { InvoiceRow, InvoiceLineRow, ProfileRow } from '@/types/rows'
 
 const PDFDownloadLink = dynamic(
   () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
@@ -21,7 +25,7 @@ const PDFDownloadLink = dynamic(
 
 // [DS] Design System v1.0 — Status chip colors (ZZP = pill, same values)
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  draft:      { label: 'Concept',        bg: '#E7E0EC', color: '#49454F' },
+  draft:      { label: 'Concept',        bg: '#f1f3f4', color: '#5f6368' },
   sent:       { label: 'Verzonden',      bg: '#D3E3FD', color: '#1967D2' },
   paid:       { label: 'Betaald',        bg: '#CEEAD6', color: '#137333' },
   overdue:    { label: 'Verlopen',       bg: '#F9DEDC', color: '#B3261E' },
@@ -44,13 +48,13 @@ export default function InvoiceDetailPage() {
   const invoiceId = params.id as string
   const supabase = createClient()
 
-  const [invoice, setInvoice] = useState<any>(null)
-  const [lines, setLines] = useState<any[]>([])
-  const [profile, setProfile] = useState<any>(null)
+  const [invoice, setInvoice] = useState<InvoiceRow | null>(null)
+  const [lines, setLines] = useState<InvoiceLineRow[]>([])
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
   // [ACC-INVOICE-VIEW] viewer's own profile — reliable "self" side for the
   // Van/Aan cards. On an incoming invoice the sender_id points at an external
   // party with no profiles row, so we cannot derive the ZZP'er from it.
-  const [viewerProfile, setViewerProfile] = useState<any>(null)
+  const [viewerProfile, setViewerProfile] = useState<ProfileRow | null>(null)
   // [ACC-INVOICE-VIEW] original-PDF fetch state — documents bucket is private,
   // so we fetch a fresh signed URL from the existing Wave 3 file route rather
   // than linking the raw (relative, expiring) pdf_url.
@@ -59,7 +63,22 @@ export default function InvoiceDetailPage() {
   const [notFoundState, setNotFoundState] = useState(false)
 
   // [BOEK-031] linked creditnota — toon als er al een bestaat
-  const [linkedCreditnota, setLinkedCreditnota] = useState<any>(null)
+  // Alleen de kolommen die de lookup ophaalt — geen volledige factuurrij beloven.
+  const [linkedCreditnota, setLinkedCreditnota] =
+    useState<Pick<InvoiceRow, 'id' | 'invoice_number' | 'status' | 'created_at'> | null>(null)
+
+  // [COHERENCE-CREDITNOTA] The dedicated creditnota action. It POSTs to
+  // /api/invoice/creditnota — the ONE route that copies the original's lines
+  // negatively, stores original_invoice_id (so "Gecrediteerd via …" shows and no
+  // second creditnota can be made), mints a CR- number, and delivers the PDF.
+  // The old banner navigated to a BLANK /invoice/new form where handleCredit was
+  // never invoked: the owner retyped everything and handleSubmit wrote a
+  // creditnota with original_invoice_id=null — an orphan that severed the link and
+  // allowed unlimited duplicate legal credits. This dialog calls the route directly.
+  const [showCreditDialog, setShowCreditDialog] = useState(false)
+  const [creditReason, setCreditReason] = useState('')
+  const [creatingCredit, setCreatingCredit] = useState(false)
+  const [creditError, setCreditError] = useState<string | null>(null)
 
   // [BOEK-031] Send flow state — May 2026
   const [showSendModal, setShowSendModal] = useState(false)
@@ -69,29 +88,47 @@ export default function InvoiceDetailPage() {
   // [FACTUUR-A] Delivery recovery banner — read ?delivery= once on mount — June 2026
   const searchParams = useSearchParams()
   const pathname = usePathname()
-  const [deliveryWarning, setDeliveryWarning] = useState<'pdf_failed' | 'email_failed' | null>(null)
+  // [REACT] Afgeleid van de URL — geen effect nodig. Een effect zou een tweede renderronde
+  // kosten en de waarschuwing één frame later tonen dan de pagina eronder.
+  const deliveryParam = searchParams.get('delivery')
+  const deliveryFromUrl: 'pdf_failed' | 'email_failed' | null =
+    deliveryParam === 'pdf_failed' || deliveryParam === 'email_failed' ? deliveryParam : null
+  const [dismissedDelivery, setDismissedDelivery] = useState(false)
+  const deliveryWarning = dismissedDelivery ? null : deliveryFromUrl
   const [resending, setResending] = useState(false)
   const [resendSuccess, setResendSuccess] = useState(false)
 
-  useEffect(() => {
-    const d = searchParams.get('delivery')
-    if (d === 'pdf_failed' || d === 'email_failed') setDeliveryWarning(d)
-  }, [searchParams])
 
-  // [BOEK-031] Context-aware back navigation — May 2026
-  // If accountant opened invoice from a client's kwartaal page, return there.
-  // Otherwise (ZZP default), go to /dashboard/facturen.
-  const fromParam     = searchParams.get('from')
-  const clientIdParam = searchParams.get('clientId')
-  const qParam        = searchParams.get('q')
-  const yearParam     = searchParams.get('year')
-  const terugHref =
-    fromParam === 'client' && clientIdParam
-      ? `/dashboard/clients/${clientIdParam}/kwartaal${qParam || yearParam ? `?${new URLSearchParams({
-          ...(qParam ? { q: qParam } : {}),
-          ...(yearParam ? { year: yearParam } : {}),
-        }).toString()}` : ''}`
-      : '/dashboard/facturen'
+
+  // [COHERENCE-CREDITNOTA] ?action=credit (from the Facturen list's "credit a paid
+  // invoice" flow) auto-opens the creditnota dialog once the invoice has loaded. Fires at
+  // most ONCE (creditAutoOpenedRef) so it can't reopen after the user dismisses it or when
+  // the invoice re-renders, and strips the query param afterwards. Guarded synchronously on
+  // the invoice's own type/status so it never opens on a creditnota or a non-creditable
+  // status; the server route remains the authority for the actual write.
+  const creditAutoOpenedRef = useRef(false)
+  useEffect(() => {
+    if (
+      invoice &&
+      !creditAutoOpenedRef.current &&
+      searchParams.get('action') === 'credit' &&
+      invoice.invoice_type !== 'creditnota' &&
+      invoice.direction !== 'incoming' &&
+      !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status)
+    ) {
+      creditAutoOpenedRef.current = true
+      setCreditReason('')
+      setCreditError(null)
+      setShowCreditDialog(true)
+      // Drop the param so a later re-render / setInvoice can't reopen the dialog.
+      window.history.replaceState(null, '', pathname)
+    }
+  }, [invoice, searchParams, pathname])
+
+  // [NAVIGATION] Back is now provided by the shared sub-page header, which
+  // resolves the canonical parent via getParentPath with the page's search params
+  // — so the "opened from a client's kwartaal" context (?from=client&clientId=…)
+  // is preserved there, not here.
 
   // [FACTUUR-A] Resend handler — calls /api/invoice/send with resend:true — June 2026
   // Re-delivers PDF+email; does NOT touch invoice_number or status.
@@ -134,7 +171,7 @@ export default function InvoiceDetailPage() {
     }
 
     // Success — hide banner + clean ?delivery= from URL
-    setDeliveryWarning(null)
+    setDismissedDelivery(true)
     setResendSuccess(true)
     setResending(false)
     router.replace(pathname) // strips query params
@@ -178,13 +215,16 @@ export default function InvoiceDetailPage() {
       if (linesData) setLines(linesData)
       if (ownProfile) setViewerProfile(ownProfile) // [ACC-INVOICE-VIEW]
 
-      // [BOEK-031] Controleer of er al een creditnota bestaat voor deze factuur
-      // receiver_id wordt gebruikt als link naar de originele factuur
+      // [BOEK-031] Is deze factuur al gecrediteerd? The creditnota stores its link to the
+      // original in `original_invoice_id` (the real FK the creditnota route writes + guards
+      // on). The old lookup used `receiver_id` — a USER-id FK, not the invoice link — so it
+      // was ALWAYS null: the "Gecrediteerd via …" banner never appeared and the "Creditnota"
+      // button stayed on an already-credited invoice, dead-ending on the server's 409.
       if (CREDITABLE_STATUSES.includes(invoiceData.status) && invoiceData.invoice_type === 'factuur') {
         const { data: creditnota } = await supabase
           .from('invoices')
           .select('id, invoice_number, status, created_at')
-          .eq('receiver_id', invoiceId)
+          .eq('original_invoice_id', invoiceId)
           .eq('invoice_type', 'creditnota')
           .maybeSingle()
 
@@ -219,20 +259,58 @@ export default function InvoiceDetailPage() {
     // Use API response data directly — avoids Supabase read-after-write lag
     // The API already committed the new number + status + type to DB
     const responseData = await res.json().catch(() => ({}))
-    setInvoice((prev: any) => ({
+    setInvoice((prev) => (prev === null ? prev : {
       ...prev,
       status: 'sent',
       invoice_number: responseData.invoice_number ?? prev.invoice_number,
       invoice_type: responseData.invoice_type ?? prev.invoice_type,
     }))
 
+    // [SEND-PDF-HONEST] pdf_failed = the number was issued but the PDF/email did NOT go out. Don't
+    // silently close as if delivered — keep the modal open with an honest resend prompt.
+    if (responseData.warning === 'pdf_failed' || responseData.delivered === false) {
+      setSendError('De factuur kreeg een nummer, maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur opnieuw.')
+      setSending(false)
+      return
+    }
+
     setShowSendModal(false)
     setSending(false)
   }
 
+  // [COHERENCE-CREDITNOTA] Create the creditnota via the dedicated route. No blank
+  // form, no re-entry: the server copies the original invoice's lines negatively and
+  // preserves the original_invoice_id link. On success we land on the new creditnota;
+  // the original's detail then shows "Gecrediteerd via …" and the create-banner is
+  // gone (canCreateCreditnota turns off), so a second credit is impossible.
+  async function createCreditnota() {
+    setCreatingCredit(true)
+    setCreditError(null)
+    try {
+      const res = await fetch('/api/invoice/creditnota', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ original_invoice_id: invoiceId, reason: creditReason.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setCreditError(data.error || 'Creditnota aanmaken mislukt — probeer opnieuw')
+        setCreatingCredit(false)
+        return
+      }
+      // Navigate to the freshly-created, correctly-linked creditnota.
+      router.replace(
+        data.creditnota_id ? `/dashboard/invoice/${data.creditnota_id}` : '/dashboard/facturen'
+      )
+    } catch {
+      setCreditError('Onbekende fout — probeer opnieuw')
+      setCreatingCredit(false)
+    }
+  }
+
   // [DS] STATUS_CONFIG — Material You chip tokens
   const statusCfg = invoice
-    ? STATUS_CONFIG[invoice.status] || { label: invoice.status, bg: '#F1F3F4', color: '#5F6368' }
+    ? STATUS_CONFIG[invoice.status ?? ''] ?? { label: invoice.status ?? 'Onbekend', bg: '#F1F3F4', color: '#5F6368' }
     : null
 
   // [ACC-INVOICE-DETAIL] Owner = the logged-in viewer whose id equals the
@@ -246,7 +324,7 @@ export default function InvoiceDetailPage() {
     isOwner && // [ACC-INVOICE-DETAIL] creditnota is an owner-only action, never the accountant
     invoice.invoice_type !== 'creditnota' &&
     invoice.direction !== 'incoming' && // [ACC-INVOICE-VIEW] creditnota only on own outgoing invoices
-    CREDITABLE_STATUSES.includes(invoice.status) &&
+    !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status) &&
     !linkedCreditnota
 
   // [ACC-INVOICE-VIEW] Direction is the single source of truth. Only an explicit
@@ -285,9 +363,12 @@ export default function InvoiceDetailPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA' }}>
 
-      {/* [DS] Header — Material You sticky, frosted glass */}
+      {/* [DS] Context toolbar — [SUBNAV] back + generic "Factuur" title come from
+          the shared sub-page header; this bar keeps the invoice-specific context
+          (number + type badge + status chip + actions + PDF) and sticks directly
+          below the shared bar. */}
       <div style={{
-        position: 'sticky', top: 0, zIndex: 10,
+        position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 10,
         backgroundColor: 'rgba(255,255,255,0.9)',
         backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
@@ -295,32 +376,15 @@ export default function InvoiceDetailPage() {
       }}>
         <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* [DS] Back button — Material You circular tonal */}
-            <button
-              onClick={() => router.push(terugHref)} // [BOEK-031] context-aware: client→kwartaal | ZZP→facturen
-              style={{
-                width: 36, height: 36,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                borderRadius: 9999,
-                border: 'none',
-                backgroundColor: 'transparent',
-                color: '#5F6368',
-                cursor: 'pointer',
-                fontSize: 18,
-                transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#E7E0EC')}
-              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            >←</button>
             {loading ? (
-              <div style={{ height: 16, width: 144, backgroundColor: '#E7E0EC', borderRadius: 9999 }} />
+              <div style={{ height: 16, width: 144, backgroundColor: '#f1f3f4', borderRadius: 9999 }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>
-                  {invoice.invoice_number || 'Concept'}
+                  {invoice?.invoice_number || 'Concept'}
                 </h1>
-                {invoice.invoice_type && invoice.invoice_type !== 'factuur' && (
-                  <InvoiceTypeBadge type={invoice.invoice_type} size="xs" />
+                {invoice?.invoice_type && invoice?.invoice_type !== 'factuur' && (
+                  <InvoiceTypeBadge type={invoice.invoice_type as InvoiceType} size="xs" />
                 )}
               </div>
             )}
@@ -342,9 +406,10 @@ export default function InvoiceDetailPage() {
                 </span>
                 <InvoiceActions
                   invoiceId={invoiceId}
-                  invoiceNumber={invoice.invoice_number}
-                  status={invoice.status}
-                  direction={invoice.direction} /*[BOEK-020]*/
+                  invoiceNumber={invoice?.invoice_number ?? ''}
+                  status={invoice?.status ?? ''}
+                  direction={invoice?.direction ?? undefined} /*[BOEK-020]*/
+                  invoiceType={invoice?.invoice_type} /*[BETAALVERZOEK]*/
                 />
                 {/* [ACC-INVOICE-VIEW] Outgoing: generate the invoice PDF.
                     Incoming: InvoicePDF assumes outgoing (Van=profile/Aan=client)
@@ -439,8 +504,16 @@ export default function InvoiceDetailPage() {
             </div>
           )}
 
+          {/* [REMINDERS] Per-invoice reminder history + pause (outgoing sent/overdue only) */}
+          <InvoiceReminders
+            invoiceId={invoiceId}
+            direction={invoice?.direction}
+            status={invoice?.status}
+            remindersPaused={invoice?.reminders_paused}
+          />
+
           {/* [BOEK-031] Send banner — only for draft invoices — May 2026 */}
-          {invoice.status === 'draft' && (
+          {invoice?.status === 'draft' && (
             <div style={{ backgroundColor: '#D3E3FD', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ color: '#1967D2' }}>↗</span>
@@ -492,7 +565,7 @@ export default function InvoiceDetailPage() {
                 </p>
               </div>
               <button
-                onClick={() => router.push(`/dashboard/invoice/new?type=creditnota&original=${invoiceId}`)}
+                onClick={() => { setCreditReason(''); setCreditError(null); setShowCreditDialog(true) }}
                 style={{ flexShrink: 0, marginLeft: 12, backgroundColor: '#EA4335', color: 'white', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)' }}
               >↩ Creditnota</button>
             </div>
@@ -513,9 +586,12 @@ export default function InvoiceDetailPage() {
                 {
                   title: 'Details',
                   lines: [
-                    `Nummer: ${invoice.invoice_number || '—'}`,
-                    `Datum: ${invoice.invoice_date ? NL_DATE.format(new Date(invoice.invoice_date)) : '—'}`,
-                    `Vervaldatum: ${invoice.due_date ? NL_DATE.format(new Date(invoice.due_date)) : '—'}`,
+                    `Nummer: ${invoice?.invoice_number || '—'}`,
+                    `Datum: ${invoice?.invoice_date ? NL_DATE.format(new Date(invoice?.invoice_date)) : '—'}`,
+                    `Vervaldatum: ${invoice?.due_date ? NL_DATE.format(new Date(invoice?.due_date)) : '—'}`,
+                    // [CROSS-QUARTER] Show the real settlement date when we recorded one, so
+                    // "when did this get paid" is answered on the invoice itself.
+                    invoice?.payment_date ? `Betaald op: ${NL_DATE.format(new Date(invoice?.payment_date))}` : '',
                   ]
                 },
               ].map(section => (
@@ -527,6 +603,21 @@ export default function InvoiceDetailPage() {
                 </div>
               ))}
             </div>
+            {/* [CROSS-QUARTER] When the money moved in a different quarter than the invoice
+                date, say so plainly — and make explicit that the btw quarter did NOT move,
+                so the owner is never confused into thinking their aangifte shifted. */}
+            {invoice?.status === 'paid' && (() => {
+              const xq = crossQuarterPayment(invoice?.invoice_date, invoice?.payment_date)
+              if (!xq) return null
+              return (
+                <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#FFF3E0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', marginTop: 1 }}>event_available</span>
+                  <div style={{ fontSize: 12.5, color: '#7A4B00', lineHeight: 1.5 }}>
+                    <strong>Betaald in {xq.paidQuarterLabel}.</strong> Voor de btw telt deze factuur mee in {xq.bookedQuarterLabel} — de kwartaal­aangifte volgt de factuurdatum, niet de betaaldatum. Dit verandert daar niets aan; het laat alleen zien wanneer het geld binnenkwam.
+                  </div>
+                </div>
+              )
+            })()}
           </div>
 
           {/* [DS] Factuurregels — Material You card */}
@@ -544,9 +635,9 @@ export default function InvoiceDetailPage() {
               <div key={index} style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '12px 20px', borderTop: '1px solid #F1F3F4' }}>
                 <p style={{ fontSize: 14, color: '#202124', margin: 0 }}>{line.description}</p>
                 <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.quantity}</p>
-                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.unit_price)}</p>
+                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.unit_price ?? 0)}</p>
                 <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.btw_rate}%</p>
-                <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total)}</p>
+                <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total ?? 0)}</p>
               </div>
             ))}
           </div>
@@ -556,15 +647,15 @@ export default function InvoiceDetailPage() {
             <div style={{ maxWidth: 280, marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                 <span>Subtotaal excl. BTW</span>
-                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.total_ex_btw)}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.total_ex_btw ?? 0)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                 <span>BTW</span>
-                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.btw_amount)}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.btw_amount ?? 0)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: invoice.invoice_type === 'creditnota' ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: invoice?.invoice_type === 'creditnota' ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
                 <span>Totaal incl. BTW</span>
-                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.total_inc_btw)}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.total_inc_btw ?? 0)}</span>
               </div>
             </div>
           </div>
@@ -572,13 +663,13 @@ export default function InvoiceDetailPage() {
           {/* [DS] Betalingsinformatie — [ACC-INVOICE-VIEW] outgoing only;
               on incoming the IBAN belongs to the supplier (in the original PDF),
               not the ZZP'er's own profile. */}
-          {!isIncoming && profile?.iban && invoice.invoice_type !== 'creditnota' && (
+          {!isIncoming && profile?.iban && invoice?.invoice_type !== 'creditnota' && (
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
               <p style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Betalingsinformatie</p>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
                 Gelieve te betalen op{' '}
                 <strong style={{ color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{profile.iban}</strong>{' '}
-                o.v.v. <strong style={{ color: '#202124' }}>{invoice.invoice_number}</strong>
+                o.v.v. <strong style={{ color: '#202124' }}>{invoice?.invoice_number}</strong>
               </p>
             </div>
           )}
@@ -623,6 +714,62 @@ export default function InvoiceDetailPage() {
                 disabled={sending}
                 style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#1A73E8', color: 'white', fontSize: 14, fontWeight: 600, cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.6 : 1 }}>
                 {sending ? 'Verzenden...' : 'Versturen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* [COHERENCE-CREDITNOTA] Creditnota confirmation — replaces the dead blank-form
+          navigation. Confirming calls /api/invoice/creditnota, which copies this
+          invoice's lines negatively and preserves the link. No re-entry, no orphans. */}
+      {showCreditDialog && invoice && (
+        <div onClick={() => !creatingCredit && setShowCreditDialog(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: 'white', borderRadius: 16, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 4px 24px rgba(0,0,0,0.16)' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#202124' }}>
+              Creditnota maken voor {invoice.invoice_number || 'deze factuur'}?
+            </h3>
+            <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
+              We maken automatisch een creditnota met dezelfde regels als negatieve bedragen.
+              De originele factuur blijft staan en wordt gemarkeerd als gecrediteerd. Je hoeft
+              niets over te typen.
+            </p>
+            <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Klant:</dt>
+              <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{invoice.client_name}</dd>
+              <dt style={{ color: '#5F6368', margin: 0 }}>Te crediteren:</dt>
+              <dd style={{ color: '#B3261E', fontWeight: 600, margin: 0 }}>
+                −{NL_NUMBER.format(Math.abs(invoice.total_inc_btw ?? 0))}
+              </dd>
+            </dl>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#5F6368', marginBottom: 6 }}>
+              Reden (optioneel)
+            </label>
+            <input
+              type="text"
+              value={creditReason}
+              onChange={e => setCreditReason(e.target.value)}
+              placeholder="bijv. verkeerd bedrag, geannuleerde opdracht"
+              disabled={creatingCredit}
+              style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, color: '#202124', boxSizing: 'border-box', marginBottom: 16, fontFamily: 'inherit' }}
+            />
+            {creditError && (
+              <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
+                {creditError}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowCreditDialog(false)}
+                disabled={creatingCredit}
+                style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: creatingCredit ? 'default' : 'pointer' }}>
+                Annuleren
+              </button>
+              <button onClick={createCreditnota}
+                disabled={creatingCredit}
+                style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#EA4335', color: 'white', fontSize: 14, fontWeight: 600, cursor: creatingCredit ? 'default' : 'pointer', opacity: creatingCredit ? 0.6 : 1 }}>
+                {creatingCredit ? 'Bezig…' : '↩ Creditnota maken'}
               </button>
             </div>
           </div>

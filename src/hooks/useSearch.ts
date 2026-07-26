@@ -22,12 +22,17 @@ interface UseSearchOptions {
   minLength?: number;
   debounceMs?: number;
   target?: SearchTarget;
+  // [SEARCH] full=true → the dedicated results page (/dashboard/zoeken): the API
+  // returns more rows per group than the header dropdown's compact preview.
+  full?: boolean;
+  // Seed the query (e.g. from a ?q= URL param on the results page).
+  initialQuery?: string;
 }
 
 export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
-  const { minLength = 2, debounceMs = 200, target = "all" } = opts;
+  const { minLength = 2, debounceMs = 200, target = "all", full = false, initialQuery = "" } = opts;
 
-  const [query, setQueryState] = useState("");
+  const [query, setQueryState] = useState(initialQuery);
   const [groups, setGroups] = useState<SearchResultGroup>(EMPTY_GROUP);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,42 +55,54 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
     if (timerRef.current) clearTimeout(timerRef.current);
 
     if (query.length < minLength) {
-      setGroups(EMPTY_GROUP);
-      setError(null);
-      setLoading(false);
+      void (async () => {
+        setGroups(EMPTY_GROUP);
+        setError(null);
+        setLoading(false);
+      })();
       return;
     }
 
-    setLoading(true);
+    void (async () => { setLoading(true); })();
+
+    // [SEARCH] Per-run guard: a superseded/unmounted run must neither overwrite newer
+    // state nor flip the spinner off while a newer request is still in flight.
+    let cancelled = false;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     timerRef.current = setTimeout(async () => {
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
-
       try {
         const params = new URLSearchParams({ q: query, target });
+        if (full) params.set("full", "1");
         // [BOEK-012] fetch API only — never import supabase-server directly
-        const res = await fetch(`/api/search?${params}`, {
-          signal: abortRef.current.signal,
-        });
+        const res = await fetch(`/api/search?${params}`, { signal: controller.signal });
         if (!res.ok) throw new Error("Zoekopdracht mislukt");
         const data: SearchResultGroup = await res.json();
+        if (cancelled) return;
         setGroups(data);
         setError(null);
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if (cancelled || (e as Error).name === "AbortError") return;
         setError((e as Error).message);
         setGroups(EMPTY_GROUP);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }, debounceMs);
 
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [query, minLength, debounceMs, target]);
+    // Cleanup on deps-change AND unmount: cancel state writes, abort the fetch, clear timer.
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [query, minLength, debounceMs, target, full]);
 
   const totalCount =
-    groups.invoices.length + groups.documents.length + groups.clients.length;
+    groups.invoices.length + groups.documents.length + groups.clients.length +
+    groups.bankTransactions.length + groups.cashEntries.length;
 
   return { query, setQuery, groups, totalCount, loading, error, clear };
 }

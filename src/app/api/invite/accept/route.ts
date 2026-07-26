@@ -13,8 +13,14 @@ export async function POST(request: NextRequest) {
 
     const { token } = await request.json()
 
-    // جلب الدعوة
-    const { data: invitation } = await supabase
+    // جلب الدعوة — read via service_role. The invitations SELECT RLS policy is now
+    // scoped to the two parties (inviter OR invitee e-mail), so a session-client read
+    // by a user logged into the WRONG account would return 0 rows and collapse the
+    // precise "wrong e-mail" message below into a generic "Ongeldig". Reading by token
+    // with service_role lets us always find the row and then enforce the invitee check
+    // ourselves (below), preserving both the guard AND the helpful message.
+    const invitePipeline = createPipelineClient()
+    const { data: invitation } = await invitePipeline
       .from('invitations')
       .select('*')
       .eq('token', token)
@@ -34,14 +40,15 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
       )
     }
 
-    // [SEC-INVITE] Verify the accepting user IS the invitee. Possessing the token
-    // is NOT enough: invitation rows (incl. token + e-mail) are world-readable via
-    // RLS, so without this check any logged-in user holding a token could accept
-    // and — in the zzper→accountant direction — become another ZZP'er's accountant,
-    // gaining RLS read-access to their invoices (horizontal privilege escalation).
-    // `accountant_email` holds the invitee's e-mail in BOTH directions (the
-    // accountant for zzper→accountant, the client for accountant→client), so one
-    // case-insensitive match is correct for both.
+    // [SEC-INVITE] Verify the accepting user IS the invitee. Possessing the token is
+    // NOT enough — this route reads the invitation via service_role (to keep the precise
+    // wrong-account message), so it must enforce the invitee match itself: without it any
+    // logged-in user holding a token could accept and — in the zzper→accountant direction —
+    // become another ZZP'er's accountant, gaining RLS read-access to their invoices
+    // (horizontal privilege escalation). The DB SELECT policy is scoped as defence-in-depth.
+    // `accountant_email` holds the invitee's e-mail in BOTH directions (the accountant for
+    // zzper→accountant, the client for accountant→client), so one case-insensitive match
+    // is correct for both.
     const inviteeEmail = (invitation.accountant_email ?? '').trim().toLowerCase()
     const userEmail = (user.email ?? '').trim().toLowerCase()
     if (!userEmail || userEmail !== inviteeEmail) {
@@ -94,13 +101,11 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
     }
 
     // ربط ZZP'er بالمحاسب
-    // [SEC-INVITE] Insert via service_role. The accountant_clients INSERT policy
-    // is WITH CHECK (accountant_id = auth.uid()); in the accountant→client
-    // direction the ACCEPTING user is the client (auth.uid() = zzperId, not
-    // accountantId), so a session-client insert is rejected by RLS and the link
-    // could never complete. By this point the user is authenticated, verified as
-    // the invitee (e-mail match above), and the invitation is valid + unexpired,
-    // so a service_role insert is authorized. Reversible: swap back to `supabase`.
+    // [SEC-INVITE] Insert via service_role. accountant_clients has NO authenticated INSERT policy
+    // (deliberately dropped — see database.sql [SEC-LINK]); linking is service-role-only so no user
+    // can self-link outside an accepted invite. By this point the user is authenticated, verified as
+    // the invitee (e-mail match above), and the invitation is valid + unexpired, so this
+    // service_role insert of the (accountant, client) pair is the authorized link path.
     const linkPipeline = createPipelineClient()
     const { error: linkError } = await linkPipeline
       .from('accountant_clients')

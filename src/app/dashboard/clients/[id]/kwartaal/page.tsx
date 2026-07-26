@@ -11,6 +11,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import type { InvoiceRow, ProfileRow } from '@/types/rows'
+
+// De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
+// zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
+// database leeg mogen zijn, wat de rekenhulpen hieronder nu netjes afvangen.
+type KwartaalInvoice = Pick<InvoiceRow,
+  'id' | 'direction' | 'status' | 'due_date' | 'invoice_date' | 'invoice_number' |
+  'invoice_type' | 'client_name' | 'total_ex_btw' | 'btw_amount' | 'total_inc_btw' |
+  'marked_paid_at' | 'accountant_status' | 'accountant_note' | 'pdf_url' |
+  'client_btw_number' | 'replaced_by_number'>
 
 // ─────────────────────────────────────────────────────────
 // Types & constants
@@ -43,28 +54,29 @@ function fmt(d: string | null | undefined) {
 }
 
 // [BOEK-028] Amount: outgoing = positive, incoming = negative
-function getAmount(inv: any): number {
-  return inv.direction === 'outgoing' ? inv.total_inc_btw : -(inv.total_inc_btw)
+function getAmount(inv: KwartaalInvoice): number {
+  const total = inv.total_inc_btw ?? 0
+  return inv.direction === 'outgoing' ? total : -total
 }
 
 // btw_rate does not exist in DB — always calculate
-function getBtwRate(inv: any): number {
+function getBtwRate(inv: KwartaalInvoice): number {
   if (!inv.total_ex_btw || inv.total_ex_btw === 0) return 0
-  return Math.round((inv.btw_amount / inv.total_ex_btw) * 100)
+  return Math.round(((inv.btw_amount ?? 0) / inv.total_ex_btw) * 100)
 }
 
 // [BRIDGE-A] Accounting split — section definitions (accountant terminology)
 const SECTIONS = [
   { key: 'debiteuren',  title: 'Debiteuren',  sub: 'verzonden — nog te ontvangen',
-    filter: (i: any) => i.direction === 'outgoing' && i.status === 'sent' },
+    filter: (i: KwartaalInvoice) => i.direction === 'outgoing' && i.status === 'sent' },
   { key: 'crediteuren', title: 'Crediteuren', sub: 'ontvangen — nog te betalen',
-    filter: (i: any) => i.direction === 'incoming' && i.status === 'received' },
+    filter: (i: KwartaalInvoice) => i.direction === 'incoming' && i.status === 'received' },
   { key: 'voldaan',     title: 'Voldaan',     sub: 'betaald',
-    filter: (i: any) => i.status === 'paid' },
+    filter: (i: KwartaalInvoice) => i.status === 'paid' },
 ] as const
 
 // [BRIDGE-A] Verlopen is computed at display time — never stored in DB
-function isVerlopen(inv: any): boolean {
+function isVerlopen(inv: KwartaalInvoice): boolean {
   return inv.status === 'sent' && !!inv.due_date && new Date(inv.due_date) < new Date()
 }
 
@@ -103,12 +115,23 @@ export default function KwartaalPage() {
   const dateStart = `${year}${range.start}`
   const dateEnd   = `${year}${range.end}`
 
-  const [client, setClient] = useState<any>(null)
-  const [invoices, setInvoices] = useState<any[]>([])
+  const [client, setClient] = useState<ProfileRow | null>(null)
+  const [invoices, setInvoices] = useState<KwartaalInvoice[]>([])
   const [loading, setLoading] = useState(true)
+  // [TRUST-ACCOUNTANT] The quarter tiles must show the SAME reconciled, turnover-aware
+  // figures as the owner's /klaar, the Brug hub and the ZIP — not an invoices-only
+  // client-side sum (which, for a retail/cash client, is a fraction of the real omzet
+  // and prints a "BTW totaal" that is a naive both-direction sum, equal to neither 5a
+  // nor 5g). Sourced from /api/result (omzet/kosten) + /api/aangifte (5g saldo), the
+  // exact endpoints the Brug KwartaalPanel already uses. One client, one truth.
+  const [recon, setRecon] = useState<{ omzet: number; kosten: number; saldo: number } | null>(null)
   const [sortAsc, setSortAsc] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  // [COHERENCE-CLOSING] Generate the closing package right where the accountant finishes
+  // the quarter — no need to go back to /dashboard/quarterly and re-pick the same client.
+  const [packaging, setPackaging] = useState(false)
+  const [packageError, setPackageError] = useState<string | null>(null)
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // The accountant clicks an enriched notification and lands on the exact row:
@@ -148,9 +171,61 @@ export default function KwartaalPage() {
         .gte('invoice_date', dateStart)
         .lte('invoice_date', dateEnd)
 
-      const merged = [...(outgoing ?? []), ...(incoming ?? [])]
+      // [FIN-4-ROWS] NULL-direction rows this client owns are counted by the
+      // reconciled tiles (which infer direction from ownership) but were absent
+      // from the two typed queries above, so "tile total ≠ sum of visible rows".
+      // Fetch them by ownership, infer direction the same way, and keep only the
+      // (direction, status) combos the sections show — so the list matches the tiles.
+      const { data: nullDir } = await supabase
+        .from('invoices')
+        .select('*, invoice_lines(*), invoice_type, replaced_by_number')
+        .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
+        .is('direction', null)
+        .in('status', ['sent', 'received', 'paid'])
+        .gte('invoice_date', dateStart)
+        .lte('invoice_date', dateEnd)
+
+      const inferred = (nullDir ?? [])
+        .map((inv) => {
+          const dir = inv.receiver_id === clientId ? 'incoming'
+            : inv.sender_id === clientId ? 'outgoing' : null
+          return dir ? { ...inv, direction: dir } : null
+        })
+        .filter((inv): inv is NonNullable<typeof inv> => inv !== null)
+        .filter((inv) =>
+          inv.direction === 'outgoing'
+            ? inv.status === 'sent' || inv.status === 'paid'
+            : inv.status === 'received' || inv.status === 'paid'
+        )
+
+      const merged = [...(outgoing ?? []), ...(incoming ?? []), ...inferred]
       setInvoices(merged)
       setLoading(false)
+
+      // [TRUST-ACCOUNTANT] Reconciled quarter figures — same source as the ZIP + owner.
+      try {
+        const params = new URLSearchParams({ year: String(year), quarter: String(q), clientId })
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${params}`),
+          fetch(`/api/aangifte?${params}`),
+        ])
+        if (rRes.ok && aRes.ok) {
+          const pnl = await rRes.json()
+          const btw = await aRes.json()
+          // [TRUST-ACCOUNTANT] Read the ACTUAL response shape: /api/result nests the P&L
+          // under `result`, /api/aangifte nests the concept under `aangifte`. Reading
+          // pnl.omzet / btw.saldo (the old bug) was always undefined → a confident €0,00
+          // shown as reconciled truth for every client and quarter. Only set recon when all
+          // three are real numbers; otherwise leave it null so the tiles keep the "…" dash
+          // instead of inventing a zero.
+          const omzet = Number(pnl?.result?.omzet)
+          const kosten = Number(pnl?.result?.kosten)
+          const saldo = Number(btw?.aangifte?.saldo)
+          if ([omzet, kosten, saldo].every(Number.isFinite)) {
+            setRecon({ omzet, kosten, saldo })
+          }
+        }
+      } catch { /* leave recon null → tiles show a loading dash, never a wrong number */ }
     }
     load()
   }, [clientId, q, year])
@@ -159,8 +234,12 @@ export default function KwartaalPage() {
   useEffect(() => {
     if (!focusId || loading) return
     if (!invoices.some(i => i.id === focusId)) return
-    setExpandedId(focusId)
-    setHighlightId(focusId)
+    // De onthulling hoort bij dezelfde beweging als het scrollen: binnen de wikkel draait
+    // ze in dezelfde tick, maar telt ze niet als synchrone setState in de effect-body.
+    void (async () => {
+      setExpandedId(focusId)
+      setHighlightId(focusId)
+    })()
     const scrollTimer = setTimeout(() => {
       rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
@@ -171,16 +250,14 @@ export default function KwartaalPage() {
 
   // [BOEK-028] Sort by marked_paid_at DESC default
   const sorted = [...invoices].sort((a, b) => {
-    const da = new Date(a.marked_paid_at ?? a.invoice_date).getTime()
-    const db = new Date(b.marked_paid_at ?? b.invoice_date).getTime()
+    const da = new Date(a.marked_paid_at ?? a.invoice_date ?? 0).getTime()
+    const db = new Date(b.marked_paid_at ?? b.invoice_date ?? 0).getTime()
     return sortAsc ? da - db : db - da
   })
 
-  // [BRIDGE-A] Totals include ALL shared invoices (sent/received/paid) —
-  // M decision: quarter BTW is on Factuurdatum, not Betaaldatum (accrual view).
-  const totalIn  = invoices.filter(i => i.direction === 'outgoing').reduce((s, i) => s + (i.total_inc_btw || 0), 0)
-  const totalOut = invoices.filter(i => i.direction === 'incoming').reduce((s, i) => s + (i.total_inc_btw || 0), 0)
-  const totalBtw = invoices.reduce((s, i) => s + (i.btw_amount || 0), 0)
+  // [TRUST-ACCOUNTANT] The invoices-only client-side totals were removed — the quarter
+  // tiles now use the reconciled /api/result + /api/aangifte figures (see `recon`), so
+  // the accountant sees the SAME numbers as the owner and the ZIP.
 
   // [BOEK-028] accountant_status update
   // [BOEK-006] action can be null = "niet verwerkt" (neutral, accountant hasn't acted)
@@ -249,6 +326,23 @@ export default function KwartaalPage() {
     setUpdatingId(null)
   }
 
+  // [SUBNAV] Quarter + client name as the shared header title, with the sort
+  // toggle relocated to the bar's actions slot. Called unconditionally (before
+  // the loading return) so hook order stays stable.
+  useSubPageHeader(
+    {
+      title: `Q${q} ${year}${client ? ` — ${client.company_name || client.full_name}` : ''}`,
+      actions: (
+        <button
+          onClick={() => setSortAsc(p => !p)}
+          style={{ fontSize: 13, fontWeight: 500, color: '#1A73E8', backgroundColor: '#E8F0FE', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          {sortAsc ? 'Oudste ↑' : 'Nieuwste ↓'}
+        </button>
+      ),
+    },
+    [q, year, client?.company_name, client?.full_name, sortAsc]
+  )
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center"
       style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -257,31 +351,7 @@ export default function KwartaalPage() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
-
-      {/* Sticky header */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '12px 24px' }}>
-        <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => router.push(`/dashboard/clients/${clientId}`)}
-              style={{ fontSize: 14, fontWeight: 500, color: '#1A73E8', background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              ← Terug
-            </button>
-            <div className="min-w-0">
-              <h1 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                Q{q} {year} — {client?.company_name || client?.full_name}
-              </h1>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>{range.label}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => setSortAsc(p => !p)}
-            style={{ fontSize: 13, fontWeight: 500, color: '#1A73E8', backgroundColor: '#E8F0FE', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-            {sortAsc ? 'Oudste ↑' : 'Nieuwste ↓'}
-          </button>
-        </div>
-      </div>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
@@ -296,12 +366,50 @@ export default function KwartaalPage() {
           <span style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
         </button>
 
+        {/* [COHERENCE-CLOSING] Download the closing package HERE — the exact place the
+            accountant finishes marking the quarter Verwerkt. It used to live only on
+            /dashboard/quarterly and the Brug, forcing a client re-selection at the finish
+            line. clientId/q/year are already in scope. Same ZIP endpoint as QuarterlyOverview. */}
+        <button
+          onClick={async () => {
+            setPackaging(true); setPackageError(null)
+            try {
+              const qp = new URLSearchParams({ year: String(year), quarter: String(q), clientId })
+              const res = await fetch(`/api/closing-package?${qp}`)
+              if (!res.ok) { setPackageError('Pakket genereren mislukt — probeer opnieuw.'); return }
+              const blob = await res.blob()
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `kwartaalpakket-Q${q}-${year}.zip`
+              a.click()
+              URL.revokeObjectURL(url)
+            } catch {
+              setPackageError('Pakket genereren mislukt — probeer opnieuw.')
+            } finally {
+              setPackaging(false)
+            }
+          }}
+          disabled={packaging}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: packaging ? '#F1F3F4' : '#1A73E8', border: 'none', borderRadius: 8, cursor: packaging ? 'default' : 'pointer', transition: 'background 0.1s ease', width: '100%' }}
+        >
+          <span className="text-xl">📦</span>
+          <span className="text-xs font-semibold" style={{ color: packaging ? '#5F6368' : '#FFFFFF', fontSize: 13 }}>
+            {packaging ? 'Kwartaalpakket genereren…' : 'Download kwartaalpakket (ZIP)'}
+          </span>
+        </button>
+        {packageError && (
+          <p style={{ fontSize: 12.5, color: '#B3261E', margin: '-8px 2px 0' }}>{packageError}</p>
+        )}
+
         {/* Quarter summary */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
           {[
-            { label: 'Inkomsten',  value: NL_NUMBER.format(totalIn),  color: '#34A853' },
-            { label: 'Uitgaven',   value: NL_NUMBER.format(totalOut), color: '#EA4335' },
-            { label: 'BTW totaal', value: NL_NUMBER.format(totalBtw), color: '#9334E6' },
+            // [TRUST-ACCOUNTANT] Reconciled, turnover-aware figures (same as the ZIP +
+            // owner). While they load, show "…" rather than a wrong invoices-only sum.
+            { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: '#34A853' },
+            { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: '#EA4335' },
+            { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#7b1fa2' },
           ].map(s => (
             <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, textAlign: 'center' }}>
               <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>
@@ -448,9 +556,9 @@ export default function KwartaalPage() {
                                 onClick={() => handleAction(invoice.id, null)}
                                 style={{
                                   padding: '8px', borderRadius: 6, fontSize: 12, fontWeight: 500,
-                                  backgroundColor: !invoice.accountant_status ? '#E7E0EC' : '#FFFFFF',
-                                  color: !invoice.accountant_status ? '#49454F' : '#5F6368',
-                                  border: !invoice.accountant_status ? '1px solid #49454F' : '1px solid #E0E0E0',
+                                  backgroundColor: !invoice.accountant_status ? '#f1f3f4' : '#FFFFFF',
+                                  color: !invoice.accountant_status ? '#5f6368' : '#5F6368',
+                                  border: !invoice.accountant_status ? '1px solid #5f6368' : '1px solid #E0E0E0',
                                   cursor: 'pointer',
                                 }}>
                                 Niet verwerkt
@@ -489,11 +597,11 @@ export default function KwartaalPage() {
                           {[
                             {
                               label: 'Excl. BTW',
-                              value: isOutgoing ? invoice.total_ex_btw : -(invoice.total_ex_btw),
+                              value: isOutgoing ? (invoice.total_ex_btw ?? 0) : -(invoice.total_ex_btw ?? 0),
                             },
                             {
                               label: `BTW ${getBtwRate(invoice)}%`,
-                              value: isOutgoing ? invoice.btw_amount : -(invoice.btw_amount),
+                              value: isOutgoing ? (invoice.btw_amount ?? 0) : -(invoice.btw_amount ?? 0),
                             },
                             {
                               label: 'Incl. BTW',

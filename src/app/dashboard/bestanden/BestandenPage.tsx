@@ -30,6 +30,35 @@ import { RenameModal } from "./components/modals/RenameModal";
 import { MoveModal } from "./components/modals/MoveModal";
 import { AiSuggestionModal } from "./components/modals/AiSuggestionModal";
 
+// [BESTANDEN-SMART] Virtual, cross-folder listings — the Drive/OneDrive left-nav.
+// These replace the folder view with a flat file list filtered by a virtual axis.
+type SmartView = "recent" | "starred" | "shared";
+
+// [BESTANDEN-SMART] Metadata for each smart view: sidebar label, icon, and the
+// empty-state copy. Kept in one place so the sidebar and the content header agree.
+const SMART_VIEWS: Record<SmartView, { label: string; icon: string; empty: string }> = {
+  recent:  { label: "Recent",     icon: "schedule",     empty: "Recent geopende of toegevoegde bestanden verschijnen hier" },
+  starred: { label: "Favorieten", icon: "star",         empty: "Markeer bestanden met een ster om ze hier terug te vinden" },
+  shared:  { label: "Gedeeld",    icon: "group",        empty: "Bestanden die je met je boekhouder deelt verschijnen hier" },
+};
+
+// [BESTANDEN-SORT] Client-side sort axes for file listings.
+type SortField = "name" | "date" | "size";
+const SORT_LABELS: Record<SortField, string> = { name: "Naam", date: "Datum", size: "Grootte" };
+
+// [BESTANDEN-SORT] Pure sorter — never mutates the input. Folders and smart views
+// both run their document arrays through this before rendering.
+function sortDocs(docs: BestandRow[], field: SortField, dir: "asc" | "desc"): BestandRow[] {
+  const factor = dir === "asc" ? 1 : -1;
+  return [...docs].sort((a, b) => {
+    let cmp = 0;
+    if (field === "name")      cmp = a.file_name.localeCompare(b.file_name, "nl");
+    else if (field === "size") cmp = (a.file_size ?? 0) - (b.file_size ?? 0);
+    else                       cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    return cmp * factor;
+  });
+}
+
 // ─── Breadcrumb ────────────────────────────────────────────────────────────────
 
 function Breadcrumb({ folders, currentFolderId, onNavigate }: {
@@ -107,6 +136,7 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         }}
       >
         <button onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
+          aria-label="Uitklappen"
           style={{ width: 20, height: 20, border: "none", background: "none", cursor: node.children.length ? "pointer" : "default", opacity: node.children.length ? 0.6 : 0, display: "flex", alignItems: "center", justifyContent: "center", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
           <Icon name="expand_more" size={16} />
         </button>
@@ -133,10 +163,12 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
         {!isSystem && hovered && (
           <div style={{ display: "flex", gap: 1, flexShrink: 0 }}>
             <button onClick={e => { e.stopPropagation(); onRename(node.id, node.name); }}
+              aria-label="Naam wijzigen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="edit" size={13} color={T.outline} />
             </button>
             <button onClick={e => { e.stopPropagation(); onDelete(node.id); }}
+              aria-label="Verwijderen"
               style={{ width: 22, height: 22, border: "none", background: "none", cursor: "pointer", borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="delete" size={13} color={T.error} />
             </button>
@@ -160,6 +192,14 @@ function SidebarDraggableFolder({ node, depth, activeFolderId, onSelect, onRenam
 interface BestandenPageProps {
   role?: "zzper" | "accountant" | "client" | null;
 }
+
+// [REFS] Gedeelde stijl van de items in het "Nieuw"-menu — buiten de component zodat er per
+// render niets opnieuw wordt opgebouwd.
+const newMenuItemStyle: React.CSSProperties = {
+  width: "100%", display: "flex", alignItems: "center", gap: 12,
+  padding: "10px 16px", background: "none", border: "none",
+  fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
+};
 
 export function BestandenPage({ role }: BestandenPageProps = {}) {
   // [BOEK-033] Normalise to navigation.ts Role union — only 'accountant' is special;
@@ -199,9 +239,33 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // ── UI state ──
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [showTrash, setShowTrash] = useState(false);
+  // [BESTANDEN-SMART] Drive/OneDrive smart views (Recent / Favorieten / Gedeeld).
+  // Null = normal folder browsing. When set, a flat cross-folder list replaces the
+  // folder view (same content slot as the trash view). Mutually exclusive with trash.
+  const [smartView, setSmartView] = useState<SmartView | null>(null);
+  const [smartDocs, setSmartDocs] = useState<BestandRow[]>([]);
+  const [smartLoading, setSmartLoading] = useState(false);
+  // [BESTANDEN-SMART] Bumped after a mutation (star/share/move/delete) so the
+  // active smart view re-fetches and never shows a stale row. No-op when browsing
+  // a normal folder (the load effect returns early unless a smart view is active).
+  const [smartRefreshKey, setSmartRefreshKey] = useState(0);
+  // [BESTANDEN-SMART] Storage usage for the sidebar meter (total bytes + file count).
+  const [storage, setStorage] = useState<{ count: number; bytes: number } | null>(null);
+  // [BESTANDEN-SORT] Sort axis applied to the current listing (folder + smart views).
+  const [sortField, setSortField] = useState<SortField>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+  // [REFS] De positie van het uitklapmenu wordt vastgelegd op het moment van KLIKKEN, niet
+  // tijdens de render. Een ref uitlezen tijdens render is niet gegarandeerd correct (bij
+  // concurrent rendering kan hij nog leeg of verouderd zijn) — dan sprong het menu naar de
+  // rechterbovenhoek. Bij de klik staat het element er gegarandeerd.
+  const [sortMenuPos, setSortMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  // [SEARCH] Matching folders (by name) shown above file results.
+  const [folderResults, setFolderResults] = useState<{ id: string; name: string; parent_id: string | null }[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
   // ── Modals ──
@@ -222,7 +286,21 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [newFolderName, setNewFolderName] = useState("");
   const newFolderRef = useRef<HTMLInputElement>(null);
   const newMenuRef = useRef<HTMLDivElement>(null);
+  // [REFS] Zie sortMenuPos: positie vastleggen bij de klik, niet tijdens de render.
+  const [newMenuPos, setNewMenuPos] = useState<{ top: number; right: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // [REFS] Handlers die een ref aanraken staan bewust in een useCallback en niet als losse
+  // arrow in een array die tijdens de render wordt opgebouwd: de React-compiler kan van zo'n
+  // arrow niet zien dat hij alleen bij een klik draait, en behandelt de ref-toegang dan als
+  // render-toegang.
+  const openFilePicker = useCallback(() => {
+    setShowNewMenu(false);
+    fileInputRef.current?.click();
+  }, []);
+  const startNewFolder = useCallback(() => {
+    setShowNewMenu(false);
+    setNewFolderInline(true);
+  }, []);
 
   // ── Selection ──
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -238,23 +316,37 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   // [BOEK-033] Internal navigation history — back button between folders/views
-  type NavState = { folderId: string | null; showTrash: boolean };
+  // [BESTANDEN-SMART] NavState carries smartView too, so Back restores a smart
+  // view (Recent/Favorieten/Gedeeld) exactly as it restores a folder or the trash.
+  type NavState = { folderId: string | null; showTrash: boolean; smartView: SmartView | null };
   const navHistoryRef = useRef<NavState[]>([]);
 
   const navigateTo = useCallback((folderId: string | null, opts?: { trash?: boolean }) => {
     // Push current state to history
-    navHistoryRef.current.push({ folderId: currentFolderId, showTrash });
+    navHistoryRef.current.push({ folderId: currentFolderId, showTrash, smartView });
     setCurrentFolderId(folderId);
     setShowTrash(opts?.trash ?? false);
+    setSmartView(null); // [BESTANDEN-SMART] leaving a smart view for a real folder
     setSelectedIds(new Set());
     setSearch("");
-  }, [currentFolderId, showTrash]); // eslint-disable-line
+  }, [currentFolderId, showTrash, smartView]);
+
+  // [BESTANDEN-SMART] Enter a smart view. Parallels navigateTo: pushes history,
+  // clears folder/trash/selection so the flat cross-folder list takes over.
+  const navigateToSmart = useCallback((view: SmartView) => {
+    navHistoryRef.current.push({ folderId: currentFolderId, showTrash, smartView });
+    setSmartView(view);
+    setShowTrash(false);
+    setSelectedIds(new Set());
+    setSearch("");
+  }, [currentFolderId, showTrash, smartView]);
 
   const navigateBack = useCallback(() => {
     const prev = navHistoryRef.current.pop();
     if (!prev) return;
     setCurrentFolderId(prev.folderId);
     setShowTrash(prev.showTrash);
+    setSmartView(prev.smartView);
     setSelectedIds(new Set());
     setSearch("");
   }, []);
@@ -277,11 +369,17 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     const folder = searchParams.get("folder");
     const focus = searchParams.get("focus");
     if (folder === null && focus === null) return;
-    if (folder !== null) setCurrentFolderId(folder);
-    if (focus !== null) setFocusId(focus);
-    setShowTrash(false);
-    setSearch("");
-    setSearchResults(null);
+    // Alle standen van een diep-link in één wikkel: zelfde tick als voorheen, maar zonder
+    // synchrone setState in de effect-body (cascaderende renders).
+    void (async () => {
+      if (folder !== null) setCurrentFolderId(folder);
+      if (focus !== null) setFocusId(focus);
+      setShowTrash(false);
+      setSmartView(null); // [BESTANDEN-SMART] a deep-link targets a real folder, leave any smart view
+      setSearch("");
+      setSearchResults(null);
+      setFolderResults([]);
+    })();
     // Clean the URL so refresh/back don't re-trigger the deep-link.
     window.history.replaceState({}, "", "/dashboard/bestanden");
   }, [searchParams]);
@@ -296,19 +394,28 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   }, []);
 
   // ── Load data ──
+  // [race] Sequence guard: quickly navigating A→B fires two loadContents; without
+  // this, if A resolves last it overwrites B's contents while the breadcrumb/URL say
+  // B. Only the most recent call may write state (and clear `loading`).
+  const loadSeqRef = useRef(0);
   const loadContents = useCallback(async (folderId: string | null) => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
-    const res = await fetch(`/api/bestanden?folder_id=${folderId ?? "root"}`);
-    const json = await res.json() as { folders?: FolderRow[]; documents?: BestandRow[] };
-    // [BOEK-033] Gedeeld met boekhouder always first
-    const folders = (json.folders ?? []).sort((a, b) => {
-      if (a.name === "Gedeeld met boekhouder") return -1;
-      if (b.name === "Gedeeld met boekhouder") return 1;
-      return a.name.localeCompare(b.name, "nl");
-    });
-    setSubFolders(folders);
-    setDocs(json.documents ?? []);
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/bestanden?folder_id=${folderId ?? "root"}`);
+      const json = await res.json() as { folders?: FolderRow[]; documents?: BestandRow[] };
+      if (seq !== loadSeqRef.current) return; // a newer load started — drop this stale result
+      // [BOEK-033] Gedeeld met boekhouder always first
+      const folders = (json.folders ?? []).sort((a, b) => {
+        if (a.name === "Gedeeld met boekhouder") return -1;
+        if (b.name === "Gedeeld met boekhouder") return 1;
+        return a.name.localeCompare(b.name, "nl");
+      });
+      setSubFolders(folders);
+      setDocs(json.documents ?? []);
+    } finally {
+      if (seq === loadSeqRef.current) setLoading(false);
+    }
   }, []);
 
   const loadAllFolders = useCallback(async () => {
@@ -325,10 +432,48 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setFolderTree(buildTree(sorted, null));
   }, []);
 
+  // [BESTANDEN-SMART] Storage meter — cheap count+bytes aggregate over own files.
+  const refreshStorage = useCallback(async () => {
+    const res = await fetch("/api/bestanden?stats=true").catch(() => null);
+    if (!res?.ok) return;
+    const data = await res.json() as { count: number; bytes: number };
+    setStorage(data);
+  }, []);
+
   useEffect(() => {
-    loadContents(currentFolderId);
-    loadAllFolders();
+    void (async () => {
+      await loadContents(currentFolderId);
+      await loadAllFolders();
+      await refreshStorage(); // [BESTANDEN-SMART] keep the sidebar meter fresh on load/nav
+    })();
   }, [currentFolderId]); // eslint-disable-line
+
+  // [BESTANDEN-SMART] Re-fetch the active smart view after a mutation. Cheap: only
+  // fires the network call while a smart view is open (guarded in the effect).
+  const bumpSmart = useCallback(() => setSmartRefreshKey(k => k + 1), []);
+
+  // [BESTANDEN-SMART] Load the flat list for the active smart view. Re-fetches on
+  // entry AND on smartRefreshKey so Recent/Favorieten/Gedeeld stay fresh (e.g.
+  // after starring or un-sharing a file from within the view itself).
+  useEffect(() => {
+    if (!smartView) return;
+    let cancelled = false;
+    void (async () => { setSmartLoading(true); })();
+    fetch(`/api/bestanden?view=${smartView}`)
+      .then(r => r.json())
+      .then((j: { documents?: BestandRow[] }) => { if (!cancelled) setSmartDocs(j.documents ?? []); })
+      .catch(() => { if (!cancelled) setSmartDocs([]); })
+      .finally(() => { if (!cancelled) setSmartLoading(false); });
+    return () => { cancelled = true; };
+  }, [smartView, smartRefreshKey]);
+
+  // [BESTANDEN-SORT] Close the sort menu on outside click (same pattern as + Nieuw).
+  useEffect(() => {
+    if (!showSortMenu) return;
+    const fn = (e: MouseEvent) => { if (!sortMenuRef.current?.contains(e.target as Node)) setShowSortMenu(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [showSortMenu]);
 
   // [BESTANDEN-FOCUS] Once the docs of the target folder are loaded, scroll to
   // and highlight the focused file, then clear the highlight after a moment.
@@ -342,7 +487,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       const t = setTimeout(() => { setHighlightId(null); setFocusId(null); }, 2600);
       return () => clearTimeout(t);
     }
-  }, [docs, focusId]); // eslint-disable-line
+  }, [docs, focusId]);
 
   // [BOEK-011 — removed by BOEK-011, file owned by BOEK-033]
   // The previous useEffect that read ?folder={id} from the URL was removed
@@ -351,17 +496,25 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // otherwise. The URL is now read inline in useState above — single source
   // of truth, no ordering issues.
 
-  // ── Search ──
+  // ── Search ── (documents + folders)
   useEffect(() => {
-    if (!search.trim()) { setSearchResults(null); return; }
+    if (!search.trim()) {
+      void (async () => { setSearchResults(null); setFolderResults([]); })();
+      return;
+    }
+    // [SEARCH] `active` guards against out-of-order responses: a superseded query's
+    // in-flight fetch must not overwrite the newer query's results.
+    let active = true;
     const t = setTimeout(async () => {
       setSearchLoading(true);
       const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
-      const json = await res.json() as { results?: SearchResult[] };
+      const json = await res.json() as { results?: SearchResult[]; folders?: { id: string; name: string; parent_id: string | null }[] };
+      if (!active) return;
       setSearchResults(json.results ?? []);
+      setFolderResults(json.folders ?? []);
       setSearchLoading(false);
     }, 300);
-    return () => clearTimeout(t);
+    return () => { active = false; clearTimeout(t); };
   }, [search]);
 
   useEffect(() => { if (newFolderInline) setTimeout(() => newFolderRef.current?.focus(), 50); }, [newFolderInline]);
@@ -377,9 +530,14 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       const fileIds = [...selectedIds].filter(k => k.startsWith("d:")).map(k => k.slice(2));
       const allIds  = [...selectedIds].map(k => k.slice(2));
 
+      // [BESTANDEN-SMART] Keyboard ops must target the VISIBLE list. In a smart view
+      // that is smartDocs (flat, no folders); in a normal folder it is docs + subFolders.
+      const viewDocs = smartView ? smartDocs : docs;
+      const viewFolders = smartView ? [] : subFolders;
+
       if ((e.ctrlKey || e.metaKey) && e.key === "a") {
         e.preventDefault();
-        setSelectedIds(new Set([...subFolders.map(f => `f:${f.id}`), ...docs.map(d => `d:${d.id}`)]));
+        setSelectedIds(new Set([...viewFolders.map(f => `f:${f.id}`), ...viewDocs.map(d => `d:${d.id}`)]));
         return;
       }
       if (selectedIds.size === 0) return;
@@ -419,16 +577,22 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           })
         )).then(() => {
           setDocs(p => p.filter(d => !fileIds.includes(d.id)));
+          setSmartDocs(p => p.filter(d => !fileIds.includes(d.id))); // [BESTANDEN-SMART] keep smart view in sync
           setSelectedIds(new Set());
+          refreshStorage(); // [BESTANDEN-SMART] meter reflects the trashed files
         });
       }
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
-  }, [selectedIds, currentFolderId, subFolders, docs]); // eslint-disable-line
+  }, [selectedIds, currentFolderId, subFolders, docs, smartView, smartDocs, refreshStorage]); // eslint-disable-line
 
   // ── Selection helpers ──
-  const allItems = [...subFolders.map(f => `f:${f.id}`), ...docs.map(d => `d:${d.id}`)];
+  // [BESTANDEN-SORT/SMART] Sorted copy of the ACTIVE list (smart view or folder),
+  // used for BOTH rendering and range-selection order — so Shift-click ranges follow
+  // exactly what the user sees in whichever view is active (folder, Recent, …).
+  const displayDocs = sortDocs(smartView ? smartDocs : docs, sortField, sortDir);
+  const allItems = [...(smartView ? [] : subFolders).map(f => `f:${f.id}`), ...displayDocs.map(d => `d:${d.id}`)];
 
   const handleSelect = (e: React.MouseEvent, itemKey: string) => {
     const id = itemKey.slice(2);
@@ -452,36 +616,63 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     lastClickedRef.current = itemKey;
   };
 
+  // [mutation-safety] Shared helpers so a failed write never leaves the UI asserting
+  // success. flashToast shows a transient message; reloadTruth re-syncs the view with
+  // the server (used when an optimistic-ish action fails, so nothing silently lies).
+  const flashToast = (msg: string, ms = 2600) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), ms);
+  };
+  const reloadTruth = () => {
+    loadContents(currentFolderId);
+    loadAllFolders();
+    bumpSmart();
+    refreshStorage();
+  };
+  const creatingFolderRef = useRef(false); // [double-fire] Enter + onBlur guard
+  const bulkBusyRef = useRef(false);       // [double-submit] one batch at a time
+  const fabUploadingRef = useRef(false);   // [double-submit] serialize FAB uploads
+
   // ── Folder CRUD ──
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) { setNewFolderInline(false); return; }
-    const res = await fetch("/api/bestanden/folders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newFolderName.trim(), parent_id: currentFolderId }),
-    });
-    const json = await res.json() as FolderRow;
-    if (json.id) { setSubFolders(p => [...p, json]); setAllFolders(p => [...p, json]); }
-    setNewFolderName(""); setNewFolderInline(false);
+    if (creatingFolderRef.current) return; // [double-fire] Enter then onBlur → one folder
+    creatingFolderRef.current = true;
+    const name = newFolderName.trim();
+    setNewFolderName(""); setNewFolderInline(false); // clear now so a second fire no-ops
+    try {
+      const res = await fetch("/api/bestanden/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, parent_id: currentFolderId }),
+      });
+      if (!res.ok) { flashToast("Map aanmaken mislukt"); return; }
+      const json = await res.json() as FolderRow;
+      if (json.id) { setSubFolders(p => [...p, json]); setAllFolders(p => [...p, json]); }
+    } finally {
+      creatingFolderRef.current = false;
+    }
   };
 
   const handleRenameConfirm = async (newName: string) => {
     if (!renameTarget) return;
-    if (renameTarget.type === "folder") {
-      await fetch(`/api/bestanden/folders?id=${renameTarget.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName }),
-      });
-      setSubFolders(p => p.map(f => f.id === renameTarget.id ? { ...f, name: newName } : f));
-      setAllFolders(p => p.map(f => f.id === renameTarget.id ? { ...f, name: newName } : f));
-    } else {
-      await fetch(`/api/bestanden?id=${renameTarget.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_name: newName }),
-      });
-      setDocs(p => p.map(d => d.id === renameTarget.id ? { ...d, file_name: newName } : d));
-    }
+    const target = renameTarget;
     setRenameTarget(null);
+    const url = target.type === "folder"
+      ? `/api/bestanden/folders?id=${target.id}`
+      : `/api/bestanden?id=${target.id}`;
+    const body = target.type === "folder" ? { name: newName } : { file_name: newName };
+    const res = await fetch(url, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) { flashToast("Hernoemen mislukt"); return; } // don't show a name that didn't save
+    if (target.type === "folder") {
+      setSubFolders(p => p.map(f => f.id === target.id ? { ...f, name: newName } : f));
+      setAllFolders(p => p.map(f => f.id === target.id ? { ...f, name: newName } : f));
+    } else {
+      setDocs(p => p.map(d => d.id === target.id ? { ...d, file_name: newName } : d));
+    }
   };
 
   const handleDeleteFolder = async (id: string) => {
@@ -489,54 +680,61 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     const folder = subFolders.find(f => f.id === id) ?? allFolders.find(f => f.id === id);
     if (folder?.is_system) return;
     if (!confirm("Map verwijderen? Bestanden worden naar hoofdmap verplaatst.")) return;
-    // Optimistic update
+    const res = await fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" });
+    if (!res.ok) { flashToast("Map verwijderen mislukt"); return; } // no optimistic removal on failure
     setSubFolders(p => p.filter(f => f.id !== id));
     setAllFolders(p => p.filter(f => f.id !== id));
     setFolderTree(p => p.filter(n => n.id !== id));
     setDocs(p => p.map(d => d.folder_id === id ? { ...d, folder_id: null } : d));
-    await fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" });
+    refreshStorage();
   };
 
   // ── File actions ──
   const handleDelete = async (id: string) => {
     // Soft delete — move to trash
-    await fetch(`/api/bestanden?id=${id}`, {
+    const res = await fetch(`/api/bestanden?id=${id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ trashed: true }),
     });
+    if (!res.ok) { flashToast("Verwijderen mislukt"); return; }
     setDocs(p => p.filter(d => d.id !== id));
+    setSmartDocs(p => p.filter(d => d.id !== id)); // [BESTANDEN-SMART] drop from smart view
+    refreshStorage();
   };
 
   const handleMove = async (id: string, type: "file" | "folder", folderId: string | null) => {
+    const url = type === "folder" ? `/api/bestanden/folders?id=${id}` : `/api/bestanden?id=${id}`;
+    const body = type === "folder" ? { parent_id: folderId } : { folder_id: folderId };
+    const res = await fetch(url, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setMoveTarget(null);
+    if (!res.ok) { flashToast("Verplaatsen mislukt"); return; } // don't remove a row that didn't move
     if (type === "folder") {
-      await fetch(`/api/bestanden/folders?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_id: folderId }),
-      });
       setSubFolders(p => p.filter(f => f.id !== id));
       loadAllFolders();
     } else {
-      await fetch(`/api/bestanden?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folder_id: folderId }),
-      });
       setDocs(p => p.filter(d => d.id !== id));
     }
-    setMoveTarget(null);
+    bumpSmart(); // [BESTANDEN-SMART] a move may change what Gedeeld/Recent shows
   };
 
   const handleStar = async (id: string, type: "file" | "folder", current: boolean) => {
+    const url = type === "file" ? `/api/bestanden?id=${id}` : `/api/bestanden/folders?id=${id}`;
+    const res = await fetch(url, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ starred: !current }),
+    });
+    if (!res.ok) { flashToast("Actie mislukt"); return; }
     if (type === "file") {
-      await fetch(`/api/bestanden?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ starred: !current }),
-      });
       setDocs(p => p.map(d => d.id === id ? { ...d, starred: !current } : d));
+      setSmartDocs(p =>
+        smartView === "starred"
+          ? p.filter(d => d.id !== id)                                   // un/re-star leaves Favorieten
+          : p.map(d => d.id === id ? { ...d, starred: !current } : d),  // reflect elsewhere
+      );
     } else {
-      await fetch(`/api/bestanden/folders?id=${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ starred: !current }),
-      });
       setSubFolders(p => p.map(f => f.id === id ? { ...f, starred: !current } : f));
     }
   };
@@ -557,21 +755,33 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // Sharing also stamps the current quarter server-side so the file lands in the ZIP.
   const handleToggleShare = async (docId: string, currentlyShared: boolean) => {
     const next = !currentlyShared;
-    await fetch(`/api/bestanden?id=${docId}`, {
+    const res = await fetch(`/api/bestanden?id=${docId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ shared: next }),
     });
+    // [share-truth] If the write failed we must NOT flip the badge or claim success —
+    // otherwise the owner believes the accountant can see a doc that never got shared.
+    if (!res.ok) {
+      flashToast(next ? "Delen mislukt — probeer opnieuw" : "Stoppen met delen mislukt");
+      return;
+    }
     setDocs(p => p.map(d => d.id === docId ? { ...d, shared: next } : d));
-    setToast(next ? "Gedeeld met je boekhouder" : "Delen gestopt");
-    window.setTimeout(() => setToast(null), 2600);
+    // [BESTANDEN-SMART] In Gedeeld, un-sharing removes the row; elsewhere reflect it.
+    setSmartDocs(p =>
+      smartView === "shared" && !next
+        ? p.filter(d => d.id !== docId)
+        : p.map(d => d.id === docId ? { ...d, shared: next } : d),
+    );
+    flashToast(next ? "Gedeeld met je boekhouder" : "Delen gestopt");
   };
 
   // [BOEK-033] Upload complete — just add to list, AI + placement already done in UploadArea
   const handleUploaded = useCallback((doc: BestandRow) => {
     setDocs(p => [doc, ...p]);
+    refreshStorage(); // [BESTANDEN-SMART] keep the sidebar meter accurate
     // No share popup — sharing is manual via right-click → "Delen"
     // No AI suggestion popup — AI places silently in UploadArea
-  }, []);
+  }, [refreshStorage]);
 
   // ── Download ──
   const downloadFile = async (docId: string, fileName: string) => {
@@ -588,24 +798,41 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
   const handleBulkDelete = async () => {
     if (!confirm(`${selectedIds.size} item(s) verwijderen?`)) return;
-    await Promise.all([
-      ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) })),
-      ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" })),
-    ]);
-    setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
-    setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
-    setSelectedIds(new Set());
+    if (bulkBusyRef.current) return; // [double-submit] one batch at a time
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all([
+        ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) })),
+        ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "DELETE" })),
+      ]);
+      setSelectedIds(new Set());
+      if (results.some(r => !r.ok)) { flashToast("Sommige items niet verwijderd — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
+      setSmartDocs(p => p.filter(d => !selectedFileIds.includes(d.id))); // [BESTANDEN-SMART]
+      setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
+      refreshStorage();
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   const handleBulkMove = async (folderId: string | null) => {
-    await Promise.all([
-      ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder_id: folderId }) })),
-      ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parent_id: folderId }) })),
-    ]);
-    setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
-    setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
-    setSelectedIds(new Set()); setBulkMoveOpen(false);
-    loadAllFolders();
+    if (bulkBusyRef.current) return;
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all([
+        ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder_id: folderId }) })),
+        ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parent_id: folderId }) })),
+      ]);
+      setSelectedIds(new Set()); setBulkMoveOpen(false);
+      if (results.some(r => !r.ok)) { flashToast("Sommige items niet verplaatst — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.filter(d => !selectedFileIds.includes(d.id)));
+      setSubFolders(p => p.filter(f => !selectedFolderIds.includes(f.id)));
+      loadAllFolders();
+      bumpSmart(); // [BESTANDEN-SMART] moved files may enter/leave Gedeeld
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   // [BRUG-FILES-SHARED] Bulk share has no quarter picker, so it defaults to the
@@ -617,22 +844,41 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   // without moving them; the route stamps the current quarter. Files stay where they
   // are and simply become visible to the accountant.
   const handleBulkShare = async () => {
-    await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shared: true }),
-    })));
-    setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d));
-    setSelectedIds(new Set());
+    if (bulkBusyRef.current) return;
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all(selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shared: true }),
+      })));
+      setSelectedIds(new Set());
+      // [share-truth] Never claim a bulk share succeeded if any write failed.
+      if (results.some(r => !r.ok)) { flashToast("Sommige bestanden niet gedeeld — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d));
+      setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, shared: true } : d)); // [BESTANDEN-SMART]
+      bumpSmart();
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   const handleBulkStar = async () => {
-    await Promise.all([
-      ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
-      ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
-    ]);
-    setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d));
-    setSubFolders(p => p.map(f => selectedFolderIds.includes(f.id) ? { ...f, starred: true } : f));
-    setSelectedIds(new Set());
+    if (bulkBusyRef.current) return;
+    bulkBusyRef.current = true;
+    try {
+      const results = await Promise.all([
+        ...selectedFileIds.map(id => fetch(`/api/bestanden?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
+        ...selectedFolderIds.map(id => fetch(`/api/bestanden/folders?id=${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ starred: true }) })),
+      ]);
+      setSelectedIds(new Set());
+      if (results.some(r => !r.ok)) { flashToast("Sommige items niet aangepast — opnieuw geladen"); reloadTruth(); return; }
+      setDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d));
+      setSmartDocs(p => p.map(d => selectedFileIds.includes(d.id) ? { ...d, starred: true } : d)); // [BESTANDEN-SMART]
+      setSubFolders(p => p.map(f => selectedFolderIds.includes(f.id) ? { ...f, starred: true } : f));
+      bumpSmart();
+    } finally {
+      bulkBusyRef.current = false;
+    }
   };
 
   // ── Context menus ──
@@ -726,7 +972,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     <div style={{
       height: "100dvh", background: "#F8F9FA",
       display: "flex", flexDirection: "column",
-      fontFamily: "'Google Sans','Roboto',-apple-system,sans-serif",
+      fontFamily: "'Roboto',-apple-system,sans-serif",
       overflow: "hidden", // [BOEK-033] nothing escapes
     }}>
 
@@ -740,7 +986,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           zIndex: 500, background: "#323232", color: "#fff",
           padding: "12px 20px", borderRadius: 24, fontSize: 14, fontWeight: 500,
           boxShadow: "0 4px 16px rgba(0,0,0,0.28)", display: "flex", alignItems: "center", gap: 8,
-          fontFamily: "'Google Sans','Roboto',sans-serif", whiteSpace: "nowrap",
+          fontFamily: "'Roboto',sans-serif", whiteSpace: "nowrap",
           pointerEvents: "none",
         }}>
           <Icon name="share" size={16} color="#fff" />
@@ -784,6 +1030,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           <Icon name={clipboardDisplay.op === "cut" ? "content_cut" : "content_copy"} size={16} color="white" />
           {clipboardDisplay.count} item{clipboardDisplay.count > 1 ? "s" : ""} {clipboardDisplay.op === "cut" ? "geknipt" : "gekopieerd"} — Ctrl+V om te plakken
           <button onClick={() => { clipboardRef.current = null; setClipboardDisplay(null); }}
+            aria-label="Sluiten"
             style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 0 }}>
             <Icon name="close" size={14} color="rgba(255,255,255,0.7)" />
           </button>
@@ -814,11 +1061,13 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           width: "100%", boxSizing: "border-box",
           maxWidth: "100%", overflow: "hidden",
         }}>
-          {/* Back — internal if history exists, external otherwise */}
+          {/* Back — internal folder history if it exists, else the page's
+              canonical parent (role home). Never router.back() — that could
+              loop back onto a dead entry. */}
           <button
             onClick={() => {
               if (navHistoryRef.current.length > 0) navigateBack();
-              else router.back();
+              else router.push(logoHref);
             }}
             style={{
               display: "flex", alignItems: "center", gap: 4,
@@ -836,6 +1085,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
           {/* Sidebar toggle mobile */}
           <button onClick={() => setSidebarOpen(v => !v)} className="flex lg:hidden"
+            aria-label="Mappen tonen"
             style={{ width: 36, height: 36, border: "none", background: "none", alignItems: "center", justifyContent: "center", cursor: "pointer", borderRadius: T.full, flexShrink: 0 }}>
             <Icon name="folder_open" size={22} color={T.warning} />
           </button>
@@ -855,7 +1105,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               onBlur={e => (e.currentTarget.style.boxShadow = "none")}
             />
             {search && (
-              <button onClick={() => setSearch("")} style={{
+              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen" style={{
                 position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
                 width: 18, height: 18, border: "none", background: T.outline,
                 borderRadius: T.full, display: "flex", alignItems: "center",
@@ -866,10 +1116,75 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             )}
           </div>
 
+          {/* [BESTANDEN-SORT] Sort control — Naam / Datum / Grootte + direction. */}
+          <div ref={sortMenuRef} style={{ position: "relative", flexShrink: 0 }}>
+            <button
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setSortMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                setShowSortMenu(v => !v);
+              }}
+              title="Sorteren"
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                height: 38, padding: "0 10px", background: "#F1F3F4",
+                border: "none", borderRadius: T.md, cursor: "pointer",
+                color: T.onSurface,
+              }}
+            >
+              <Icon name="sort" size={18} color={T.outline} />
+              <span className="hidden sm:inline" style={{ fontSize: 13 }}>{SORT_LABELS[sortField]}</span>
+              <Icon name={sortDir === "asc" ? "arrow_upward" : "arrow_downward"} size={14} color={T.outline} />
+            </button>
+            {showSortMenu && (
+                <div style={{
+                  position: "fixed",
+                  top: sortMenuPos ? sortMenuPos.top : 62,
+                  right: sortMenuPos ? sortMenuPos.right : 12,
+                  background: "white", borderRadius: 12,
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.15)", border: "1px solid #E0E0E0",
+                  minWidth: 180, zIndex: 9999, padding: "4px 0",
+                }}>
+                  {(Object.keys(SORT_LABELS) as SortField[]).map(field => (
+                    <button key={field}
+                      onClick={() => { setSortField(field); setShowSortMenu(false); }}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: 12,
+                        padding: "10px 16px", background: "none", border: "none",
+                        fontSize: 14, color: sortField === field ? T.primary : T.onSurface,
+                        fontWeight: sortField === field ? 600 : 400, cursor: "pointer", textAlign: "left",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                      onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                    >
+                      {sortField === field
+                        ? <Icon name="check" size={16} color={T.primary} />
+                        : <span style={{ width: 16, display: "inline-block", flexShrink: 0 }} />}
+                      {SORT_LABELS[field]}
+                    </button>
+                  ))}
+                  <div style={{ height: 1, background: T.surfaceVariant, margin: "4px 0" }} />
+                  <button
+                    onClick={() => setSortDir(d => (d === "asc" ? "desc" : "asc"))}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: 12,
+                      padding: "10px 16px", background: "none", border: "none",
+                      fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                  >
+                    <Icon name={sortDir === "asc" ? "arrow_upward" : "arrow_downward"} size={16} color={T.outline} />
+                    {sortDir === "asc" ? "Oplopend" : "Aflopend"}
+                  </button>
+                </div>
+                )}
+          </div>
+
           {/* View toggle */}
           <div style={{ display: "flex", background: "#F1F3F4", borderRadius: T.md, padding: 3, flexShrink: 0 }}>
             {(["grid", "list"] as ViewMode[]).map(mode => (
-              <button key={mode} onClick={() => setViewMode(mode)} style={{
+              <button key={mode} onClick={() => setViewMode(mode)} aria-label={mode === "grid" ? "Rasterweergave" : "Lijstweergave"} style={{
                 width: 32, height: 32, border: "none", cursor: "pointer",
                 borderRadius: T.sm, display: "flex", alignItems: "center", justifyContent: "center",
                 background: viewMode === mode ? "white" : "transparent",
@@ -890,6 +1205,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                 // The FAB input now supports multiple files
                 const files = e.target.files;
                 if (!files?.length) return;
+                // [double-submit] Serialize FAB uploads — a second tap mid-upload would
+                // otherwise run a concurrent loop racing on handleUploaded / classify.
+                if (fabUploadingRef.current) { e.target.value = ""; return; }
+                fabUploadingRef.current = true;
+                try {
                 for (const file of Array.from(files)) {
                   const now = new Date(); const fd = new FormData();
                   fd.append("file", file);
@@ -949,13 +1269,20 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     });
                   }
                 }
+                } finally {
+                  fabUploadingRef.current = false;
+                }
                 e.target.value = "";
               }}
               multiple
               accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.tiff,.doc,.docx,.xls,.xlsx,.csv,.xml,.zip,.eml"
             />
             <button
-              onClick={() => setShowNewMenu(v => !v)}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setNewMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                setShowNewMenu(v => !v);
+              }}
               style={{
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "8px 14px", background: T.primary, color: T.onPrimary,
@@ -970,37 +1297,35 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             </button>
 
             {/* [BOEK-033] FINAL FIX — position:fixed bypasses ALL overflow:hidden parents */}
-            {showNewMenu && (() => {
-              const rect = newMenuRef.current?.getBoundingClientRect();
-              return (
+            {showNewMenu && (
                 <div style={{
                   position: "fixed",
-                  top: rect ? rect.bottom + 6 : 62,
-                  right: rect ? window.innerWidth - rect.right : 12,
+                  top: newMenuPos ? newMenuPos.top : 62,
+                  right: newMenuPos ? newMenuPos.right : 12,
                   background: "white",
                   borderRadius: 12,
                   boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
                   border: "1px solid #E0E0E0",
                   minWidth: 188, zIndex: 9999, padding: "4px 0",
                 }}>
-                  {[
-                    { label: "Nieuwe map", icon: "create_new_folder", onClick: () => { setShowNewMenu(false); setNewFolderInline(true); } },
-                    { label: "Bestand uploaden", icon: "upload", onClick: () => { setShowNewMenu(false); fileInputRef.current?.click(); } },
-                  ].map(item => (
-                    <button key={item.label} onClick={item.onClick} style={{
-                      width: "100%", display: "flex", alignItems: "center", gap: 12,
-                      padding: "10px 16px", background: "none", border: "none",
-                      fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
-                    }}
-                      onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
-                      onMouseLeave={e => (e.currentTarget.style.background = "none")}
-                    >
-                      <Icon name={item.icon} size={18} color={T.outline} /> {item.label}
-                    </button>
-                  ))}
+                  {/* [REFS] Twee losse knoppen in plaats van een .map over een array met
+                      handlers erin: zodra een handler die een ref aanraakt via een tijdens de
+                      render opgebouwd object wordt doorgegeven, kan de compiler niet meer zien
+                      dat hij pas bij een klik draait. */}
+                  <button onClick={startNewFolder} style={newMenuItemStyle}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                  >
+                    <Icon name="create_new_folder" size={18} color={T.outline} /> Nieuwe map
+                  </button>
+                  <button onClick={openFilePicker} style={newMenuItemStyle}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                  >
+                    <Icon name="upload" size={18} color={T.outline} /> Bestand uploaden
+                  </button>
                 </div>
-              );
-            })()}
+                )}
           </div>
         </div>
       </div>
@@ -1053,25 +1378,57 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               <span style={{
                 fontSize: 22, fontWeight: 700, color: T.primary,
                 letterSpacing: "-0.02em", cursor: "pointer",
-                fontFamily: "'Google Sans','Roboto',sans-serif",
+                fontFamily: "'Roboto',sans-serif",
               }}>
                 BoekBrug
               </span>
             </Link>
 
             {/* Root */}
-            <button onClick={() => navigateTo(null)} style={{
-              width: "100%", display: "flex", alignItems: "center", gap: 10,
-              padding: "8px 12px", border: "none", cursor: "pointer",
-              borderRadius: T.md, textAlign: "left", fontSize: 14,
-              background: currentFolderId === null && !showTrash ? T.primaryContainer : "transparent",
-              color: currentFolderId === null && !showTrash ? T.primary : T.onSurface,
-              fontWeight: currentFolderId === null && !showTrash ? 600 : 400,
-              transition: "background 0.1s",
-            }}>
-              <Icon name="home" size={18} color={currentFolderId === null && !showTrash ? T.primary : T.outline} />
-              Mijn bestanden
-            </button>
+            {(() => {
+              const rootActive = currentFolderId === null && !showTrash && !smartView;
+              return (
+                <button onClick={() => navigateTo(null)} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 10,
+                  padding: "8px 12px", border: "none", cursor: "pointer",
+                  borderRadius: T.md, textAlign: "left", fontSize: 14,
+                  background: rootActive ? T.primaryContainer : "transparent",
+                  color: rootActive ? T.primary : T.onSurface,
+                  fontWeight: rootActive ? 600 : 400,
+                  transition: "background 0.1s",
+                }}>
+                  <Icon name="home" size={18} color={rootActive ? T.primary : T.outline} />
+                  Mijn bestanden
+                </button>
+              );
+            })()}
+
+            {/* [BESTANDEN-SMART] Smart views — the Drive/OneDrive left-nav. Recent,
+                Favorieten, Gedeeld: flat cross-folder lists, one tap away. */}
+            {(Object.keys(SMART_VIEWS) as SmartView[]).map(view => {
+              const meta = SMART_VIEWS[view];
+              const active = smartView === view;
+              return (
+                <button key={view} onClick={() => navigateToSmart(view)} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 10,
+                  padding: "8px 12px", border: "none", cursor: "pointer",
+                  borderRadius: T.md, textAlign: "left", fontSize: 14,
+                  background: active ? T.primaryContainer : "transparent",
+                  color: active ? T.primary : T.onSurface,
+                  fontWeight: active ? 600 : 400,
+                  transition: "background 0.1s",
+                }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = T.surfaceVariant; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <Icon name={meta.icon} size={18} color={active ? T.primary : T.outline} />
+                  {meta.label}
+                </button>
+              );
+            })}
+
+            {/* [BESTANDEN-SMART] Divider before the real folder tree. */}
+            <div style={{ height: 1, background: T.surfaceVariant, margin: "8px 4px" }} />
 
             {/* Folder tree — with drag-drop on each item */}
             {folderTree.map(node => (
@@ -1125,7 +1482,9 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     })
                   ));
                   setDocs(p => p.filter(d => !idsToTrash.includes(d.id)));
+                  setSmartDocs(p => p.filter(d => !idsToTrash.includes(d.id))); // [BESTANDEN-SMART]
                   setSelectedIds(new Set());
+                  refreshStorage(); // [BESTANDEN-SMART] meter reflects the trashed files
                 }}
               >
                 <button onClick={() => navigateTo(null, { trash: true })} style={{
@@ -1140,6 +1499,22 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                   <Icon name="delete" size={18} color={showTrash || dragOverFolder === "__trash__" ? T.error : T.outline} />
                   Prullenbak
                 </button>
+              </div>
+            </div>
+
+            {/* [BESTANDEN-SMART] Storage meter — Drive/OneDrive-style usage footer.
+                Honest usage (no invented quota): total size + file count. */}
+            <div style={{ marginTop: 12, borderTop: `1px solid ${T.surfaceVariant}`, paddingTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px" }}>
+                <Icon name="cloud" size={18} color={T.outline} style={{ flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ fontSize: 13, fontWeight: 500, color: T.onSurface, margin: 0 }}>
+                    {storage ? formatSize(storage.bytes) : "—"} gebruikt
+                  </p>
+                  <p style={{ fontSize: 11, color: T.outline, margin: "1px 0 0" }}>
+                    {storage ? `${storage.count} bestand${storage.count === 1 ? "" : "en"}` : "Berekenen…"}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -1197,21 +1572,110 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           }}>
 
             {showTrash ? (
-              <Trash onBack={() => setShowTrash(false)} />
+              <Trash onBack={() => { setShowTrash(false); refreshStorage(); }} />
+            ) : smartView ? (
+              /* ── Smart view: Recent / Favorieten / Gedeeld ── */
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+                  <Icon name={SMART_VIEWS[smartView].icon} size={22} color={T.primary} />
+                  <h2 style={{ fontSize: 18, fontWeight: 600, color: T.onSurface, margin: 0 }}>
+                    {SMART_VIEWS[smartView].label}
+                  </h2>
+                  {!smartLoading && smartDocs.length > 0 && (
+                    <span style={{ fontSize: 13, color: T.outline }}>
+                      {smartDocs.length} bestand{smartDocs.length === 1 ? "" : "en"}
+                    </span>
+                  )}
+                </div>
+
+                {smartLoading ? (
+                  <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner size={32} /></div>
+                ) : smartDocs.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "48px 24px" }}>
+                    <div style={{ width: 80, height: 80, borderRadius: T.xl, background: T.primaryContainer, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                      <Icon name={SMART_VIEWS[smartView].icon} size={40} color={T.primary} />
+                    </div>
+                    <p style={{ fontSize: 16, fontWeight: 600, color: T.onSurface, margin: "0 0 6px" }}>Nog niets hier</p>
+                    <p style={{ fontSize: 14, color: T.outline, margin: 0 }}>{SMART_VIEWS[smartView].empty}</p>
+                  </div>
+                ) : viewMode === "grid" ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
+                    {displayDocs.map(doc => (
+                      <div key={doc.id} style={{ borderRadius: T.lg }}>
+                        <DocCard
+                          doc={doc}
+                          selected={selectedIds.has(`d:${doc.id}`)}
+                          onPreview={() => setPreview(doc)}
+                          onSelect={e => handleSelect(e, `d:${doc.id}`)}
+                          onContextMenu={e => openFileContextMenu(e, doc)}
+                          onDragStart={e => handleDocDragStart(e, doc.id)}
+                          cardRef={() => {}}
+                          onToggleShare={handleToggleShare}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
+                    {displayDocs.map((doc, i) => {
+                      const folderName = doc.folder_id
+                        ? (allFolders.find(f => f.id === doc.folder_id)?.name ?? null)
+                        : null;
+                      return (
+                        <div key={doc.id} style={{ borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none" }}>
+                          <DocRow
+                            doc={doc}
+                            selected={selectedIds.has(`d:${doc.id}`)}
+                            onPreview={() => setPreview(doc)}
+                            onSelect={e => handleSelect(e, `d:${doc.id}`)}
+                            onContextMenu={e => openFileContextMenu(e, doc)}
+                            onDragStart={e => handleDocDragStart(e, doc.id)}
+                            onToggleShare={handleToggleShare}
+                            folderLabel={folderName ?? "Mijn bestanden"}
+                            onOpenLocation={() => navigateTo(doc.folder_id ?? null)}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             ) : search.trim() ? (
               /* ── Search results ── */
               <div>
                 <p style={{ fontSize: 12, fontWeight: 600, color: T.outline, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 16px" }}>
-                  {searchLoading ? "Zoeken..." : `${searchResults?.length ?? 0} resultaten voor "${search}"`}
+                  {searchLoading ? "Zoeken..." : `${(searchResults?.length ?? 0) + folderResults.length} resultaten voor "${search}"`}
                 </p>
                 {searchLoading ? (
                   <div style={{ display: "flex", justifyContent: "center", padding: 48 }}><Spinner size={32} /></div>
-                ) : !(searchResults?.length) ? (
+                ) : !(searchResults?.length) && folderResults.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "48px 24px" }}>
                     <Icon name="search_off" size={48} color={T.outline} style={{ display: "block", margin: "0 auto 12px" }} />
-                    <p style={{ fontSize: 14, color: T.outline }}>Geen bestanden gevonden</p>
+                    <p style={{ fontSize: 14, color: T.outline }}>Niets gevonden</p>
                   </div>
                 ) : (
+                  <>
+                  {/* [SEARCH] Matching folders — click to open. */}
+                  {folderResults.length > 0 && (
+                    <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden", marginBottom: 16 }}>
+                      {folderResults.map((f, i) => (
+                        <button
+                          key={f.id}
+                          onClick={() => { setSearch(""); setSearchResults(null); setFolderResults([]); navigateTo(f.id); }}
+                          style={{
+                            width: "100%", display: "flex", alignItems: "center", gap: 12,
+                            padding: "12px 16px", textAlign: "left", cursor: "pointer",
+                            background: "transparent", border: "none",
+                            borderTop: i > 0 ? `1px solid ${T.surfaceVariant}` : "none",
+                          }}
+                        >
+                          <Icon name="folder" size={22} color={T.primary} />
+                          <span style={{ fontSize: 14, color: T.onSurface, fontWeight: 500 }}>{f.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {searchResults && searchResults.length > 0 && (
                   <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
                     {searchResults!.map((doc, i) => (
                       <div
@@ -1241,6 +1705,8 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                       </div>
                     ))}
                   </div>
+                  )}
+                  </>
                 )}
               </div>
             ) : (
@@ -1332,7 +1798,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                         </p>
                         {viewMode === "grid" ? (
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(136px,100%), 1fr))", gap: 12 }}>
-                            {docs.map(doc => (
+                            {displayDocs.map(doc => (
                               <div
                                 key={doc.id}
                                 style={{
@@ -1357,7 +1823,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                           </div>
                         ) : (
                           <div style={{ background: "white", borderRadius: T.lg, boxShadow: T.elev1, overflow: "hidden" }}>
-                            {docs.map((doc, i) => (
+                            {displayDocs.map((doc, i) => (
                               <div
                                 key={doc.id}
                                 data-doc-row

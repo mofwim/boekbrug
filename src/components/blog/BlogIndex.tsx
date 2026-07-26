@@ -40,15 +40,15 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
   const t = COPY[locale]
   const others = LOCALES.filter((l) => l !== locale)
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f2f2f7', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
 
       <div dir={LOCALE_META[locale].dir} style={{ maxWidth: 820, margin: '0 auto', padding: '0 16px' }}>
         <div style={{ paddingTop: 48, textAlign: 'center' }}>
-          <h1 style={{ fontSize: 34, fontWeight: 800, color: '#1c1c1e', margin: '0 0 10px', letterSpacing: -0.5 }}>
+          <h1 style={{ fontSize: 34, fontWeight: 800, color: '#202124', margin: '0 0 10px', letterSpacing: -0.5 }}>
             {t.heading}
           </h1>
-          <p style={{ fontSize: 17, color: '#6b6b6e', margin: '0 auto 18px', maxWidth: 560 }}>{t.intro}</p>
+          <p style={{ fontSize: 17, color: '#5f6368', margin: '0 auto 18px', maxWidth: 560 }}>{t.intro}</p>
           {/* Language switches — every other language's blog, each in its own name. */}
           <div style={{ marginBottom: 32, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
             {others.map((loc) => (
@@ -56,7 +56,7 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
                 key={loc}
                 href={indexPath(loc)}
                 hrefLang={LOCALE_META[loc].hreflang}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 15, fontWeight: 700, color: '#fff', background: '#007aff', borderRadius: 9999, padding: '10px 20px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(0,122,255,0.28)' }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 15, fontWeight: 700, color: '#fff', background: '#1a73e8', borderRadius: 9999, padding: '10px 20px', textDecoration: 'none', boxShadow: '0 4px 14px rgba(26,115,232,0.28)' }}
               >
                 <span aria-hidden="true" style={{ fontSize: 17 }}>🌐</span>
                 {LOCALE_META[loc].label}
@@ -67,7 +67,7 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
 
         <div style={{ paddingBottom: 48 }}>
           {posts.length === 0 ? (
-            <p style={{ textAlign: 'center', color: '#8a8a8e', fontSize: 15 }}>{t.empty}</p>
+            <p style={{ textAlign: 'center', color: '#9aa0a6', fontSize: 15 }}>{t.empty}</p>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>
               {posts.map((post) => (
@@ -77,7 +77,7 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
           )}
 
           <p style={{ textAlign: 'center', marginTop: 40 }}>
-            <Link href="/tools" style={{ fontSize: 15, fontWeight: 600, color: '#007aff', textDecoration: 'none' }}>
+            <Link href="/tools" style={{ fontSize: 15, fontWeight: 600, color: '#1a73e8', textDecoration: 'none' }}>
               {t.tools}
             </Link>
           </p>

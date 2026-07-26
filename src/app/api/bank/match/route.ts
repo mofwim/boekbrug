@@ -16,10 +16,13 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import {
   matchTransactions,
   isFullyCovered,
+  coveredReferenceNumbers,
+  parseReferenceNumbers,
   normalizeRef,
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -39,14 +42,24 @@ export async function GET() {
   //    partially-linked multi-invoice tx (status still 'pending', but already
   //    carries the last invoice paid against it). Without this the UI loses the
   //    "partially done" state on reload and the tx wrongly falls into "Geen factuur".
-  const { data: txRows, error: txErr } = await pipeline
-    .from("bank_transactions")
-    .select("id, date, amount, description, counterpart_name, reference, invoice_id, status")
-    .eq("user_id", user.id)
-    .eq("status", "pending");
-  if (txErr) {
+  //    [SEARCH-FULL-COVERAGE] Page past PostgREST's silent ~1000-row cap. A plain .select() dropped
+  //    pending rows 1001+ — they vanished from BOTH the match engine AND the in-page zoekbalk (which
+  //    filters this loaded set), so a real unmatched line could be unfindable. Stable id order; the
+  //    matcher is order-independent and the UI re-sorts for display.
+  let txRows: BankTransactionDbRow[];
+  try {
+    txRows = await fetchAllRows<BankTransactionDbRow>((from, to) =>
+      pipeline
+        .from("bank_transactions")
+        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
+        .eq("user_id", user.id)
+        .eq("status", "pending")
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
     return NextResponse.json(
-      { error: "transactions_lookup_failed", detail: txErr.message },
+      { error: "transactions_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
       { status: 500 }
     );
   }
@@ -69,7 +82,9 @@ export async function GET() {
   const { data: invRows, error: invErr } = await pipeline
     .from("invoices")
     .select(
-      "id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status"
+      // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
+      // instalment matches on amount.
+      "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban"
     )
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .neq("status", "paid");
@@ -98,6 +113,26 @@ export async function GET() {
     (r) => (r as BankTransactionDbRow).invoice_id != null
   );
   const partialLink = new Map<string, boolean>(); // txId → allCovered
+  // [BANK-SLOT-PERSIST] Per-tx list of reference numbers already paid — so the UI marks
+  // those slots "Betaald" on reload instead of showing an already-paid invoice as open.
+  const coveredByTx = new Map<string, string[]>();
+  // [BANK-ONE-PAYMENT-MANY-INVOICES] How much of each still-pending bank line is already
+  // booked on invoices. A line stays pending precisely because money of it is unassigned, and
+  // the owner cannot act on "still here" without knowing how much is left. Read from the join
+  // table's amount_applied — the same figure every booking path now writes.
+  const appliedByTx = new Map<string, number>();
+
+  if (linkedTxRows.length > 0) {
+    const { data: appliedRows } = await pipeline
+      .from("bank_tx_invoices")
+      .select("transaction_id, amount_applied")
+      .eq("user_id", user.id)
+      .in("transaction_id", linkedTxRows.map((r) => (r as BankTransactionDbRow).id));
+    for (const r of (appliedRows ?? []) as { transaction_id: string; amount_applied: number | null }[]) {
+      if (r.amount_applied == null) continue; // pre-[PARTIAL-PAY] link: amount unknown, don't guess
+      appliedByTx.set(r.transaction_id, (appliedByTx.get(r.transaction_id) ?? 0) + Math.max(0, Number(r.amount_applied)));
+    }
+  }
 
   if (linkedTxRows.length > 0) {
     // Paid invoice numbers for this user, both directions (cheap, single read).
@@ -119,6 +154,36 @@ export async function GET() {
     for (const r of linkedTxRows) {
       const row = r as BankTransactionDbRow;
       partialLink.set(row.id, isFullyCovered(row.reference, paidSet));
+      coveredByTx.set(row.id, coveredReferenceNumbers(row.reference, paidSet));
+    }
+  }
+
+  // [BANK-PAID-EXPLAINED] A purchase debit that settles an invoice already marked paid by hand in
+  // Crediteuren must NOT be flagged as a "missende inkoopfactuur — voorbelasting niet geclaimd": the
+  // invoice exists, is paid, and its BTW is already in the aangifte (accrual). The matcher above
+  // excludes paid invoices (.neq status paid), so such a debit falls to outcome 'none' and the UI
+  // raises a FALSE missing-invoice alarm the owner can never clear. Re-run the scorer against PAID
+  // invoices (as explain-only candidates: status forced 'received' so isEligible admits them, and
+  // amount_paid zeroed so the remaining-aware amount targets the full total). A strong hit
+  // (reference/iban + amount) means the debit is explained. Display-only — nothing is re-paid.
+  const paidInvRows = await fetchAllRows((from, to) =>
+    pipeline
+      .from("invoices")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban")
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .eq("status", "paid")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const paidExplained = new Set<string>();
+  if ((paidInvRows ?? []).length > 0) {
+    const paidAsCandidates = (paidInvRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0 }));
+    const explainResult = matchTransactions(transactions, paidAsCandidates);
+    for (const m of explainResult.matches) {
+      const id = m.transaction.transactionId;
+      if (!id || !m.best) continue;
+      const sig = m.best.signals;
+      if ((sig.includes("reference") || sig.includes("iban")) && sig.includes("amount")) paidExplained.add(id);
     }
   }
 
@@ -132,6 +197,8 @@ export async function GET() {
       amount: m.transaction.amount,
       description: m.transaction.description,
       counterpart: m.transaction.counterpartName,
+      // [SEARCH] The tegenrekening IBAN — carried so the in-page zoekbalk can find a line by IBAN.
+      iban: m.transaction.counterpartIban ?? null,
       // [BANK-REF-DISPLAY] The cleaned invoice number(s) the parser extracted from
       // REMI/Ustrd (e.g. "26702781, 26703066"). The UI shows this instead of the
       // raw description so the owner sees the real reference, not "USTD//...".
@@ -145,6 +212,120 @@ export async function GET() {
       // in "Te bevestigen" regardless of `outcome` (it may have no candidates left).
       partiallyLinked: isLinked,
       allCovered: isLinked ? partialLink.get(txId!) === true : false,
+      // [BANK-SLOT-PERSIST] Normalized reference numbers already paid against this tx, so
+      // the multi-invoice UI marks those slots "Betaald" after a reload (session state gone).
+      coveredNumbers: isLinked ? (coveredByTx.get(txId!) ?? []) : [],
+      // [BANK-ONE-PAYMENT-MANY-INVOICES] Euros of this bank line already booked on invoices
+      // (null when nothing is linked or the links predate amount_applied — then the UI says
+      // nothing rather than something wrong).
+      appliedAmount: isLinked ? (appliedByTx.get(txId!) ?? null) : null,
+      // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
+      explainedByPaid: txId != null && paidExplained.has(txId),
+    };
+  });
+
+  // [BANK-R1] Already-MATCHED transactions (incl. the app's own auto-bookings). This route used to
+  // return pending txs only, so an auto-confirmed payment simply vanished from the UI on reload —
+  // the owner saw "4 facturen automatisch" once and then nothing, with no way to see WHICH invoices
+  // were booked or to undo one. We now return the matched lines too, shaped as "done" suggestions
+  // (allCovered = true), so they populate the "Gekoppeld" tab with a working one-tap Ontkoppelen.
+  // Paginated + newest-first: an account can hold >1000 matched lines over several quarters, and
+  // the ~1000-row PostgREST cap would otherwise silently drop some — so a booked payment could
+  // vanish from "Gekoppeld" and become unreachable to undo. fetchAllRows pages past the cap; the
+  // date order means any residual cap drops OLDEST rows, never the current quarter's.
+  const matchedRows = await fetchAllRows((from, to) =>
+    pipeline
+      .from("bank_transactions")
+      .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
+      .eq("user_id", user.id)
+      .eq("status", "matched")
+      .order("date", { ascending: false })
+      .range(from, to),
+  );
+  const matchedTx = (matchedRows ?? []) as BankTransactionDbRow[];
+
+  // Which invoice(s) each matched line paid — the AUTHORITATIVE id-based set (join table), so a
+  // batch shows every invoice it settled, not just the representative. One grouped read of the
+  // join table + a fallback to the single invoice_id (covers pre-migration lines with no join
+  // rows). Best-effort, display only — wrapped so a missing table degrades to the invoice_id path.
+  const idsByTx = new Map<string, Set<string>>();
+  for (const r of matchedTx) idsByTx.set(r.id, new Set(r.invoice_id ? [r.invoice_id as string] : []));
+  if (matchedTx.length > 0) {
+    try {
+      const { data: linkRows } = await pipeline
+        .from("bank_tx_invoices")
+        .select("transaction_id, invoice_id")
+        .eq("user_id", user.id)
+        .in("transaction_id", matchedTx.map((r) => r.id));
+      for (const lr of (linkRows ?? []) as { transaction_id: string; invoice_id: string }[]) {
+        (idsByTx.get(lr.transaction_id) ?? idsByTx.set(lr.transaction_id, new Set()).get(lr.transaction_id)!).add(lr.invoice_id);
+      }
+    } catch {
+      /* pre-migration: keep the invoice_id fallback already seeded above */
+    }
+  }
+  const allWantIds = new Set<string>();
+  for (const s of idsByTx.values()) for (const id of s) allWantIds.add(id);
+  const numById = new Map<string, string>();
+  if (allWantIds.size > 0) {
+    const { data: linkedInvs } = await pipeline
+      .from("invoices")
+      .select("id, invoice_number")
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .in("id", [...allWantIds]);
+    for (const i of linkedInvs ?? []) numById.set(i.id, normalizeRef(i.invoice_number ?? ""));
+  }
+  const linkedNumbersByTx = new Map<string, string[]>();
+  for (const [txId, ids] of idsByTx) {
+    linkedNumbersByTx.set(txId, [...ids].map((id) => numById.get(id) ?? "").filter((n) => n.length > 0));
+  }
+
+  // [BANK-AMOUNT-ONLY] Which matched lines were auto-booked on amount+counterpart only (no printed
+  // number / IBAN) — those the owner asked to see flagged "controleer". Best-effort + wrapped: a
+  // not-yet-applied migration (no auto_match_reason column) just yields no flags, never an error.
+  const reasonByTx = new Map<string, string>();
+  if (matchedTx.length > 0) {
+    try {
+      const { data: reasonRows } = await pipeline
+        .from("bank_transactions")
+        .select("id, auto_match_reason")
+        .eq("user_id", user.id)
+        .in("id", matchedTx.map((r) => r.id));
+      // auto_match_reason is added by bank_auto_match_reason.sql — not yet in the generated types.
+      for (const rr of (reasonRows ?? []) as unknown as { id: string; auto_match_reason: string | null }[]) {
+        if (rr.auto_match_reason) reasonByTx.set(rr.id, rr.auto_match_reason);
+      }
+    } catch {
+      /* pre-migration: no column → no flags (correct — nothing was booked under this tier yet) */
+    }
+  }
+
+  const linkedSuggestions = matchedTx.map((row) => {
+    const t = rowToTransaction(row);
+    // The AUTHORITATIVE paid numbers are the actually-linked invoices (join table / invoice_id).
+    // Prefer them alone — a bank reference can contain unrelated numeric tokens (order/customer
+    // numbers) that parseReferenceNumbers would otherwise show as false "Betaald" slots. Only when
+    // NO invoice number is known (a legacy line with no link) do we fall back to the parsed
+    // reference so the card still shows something.
+    const linkedNums = linkedNumbersByTx.get(row.id) ?? [];
+    const covered = linkedNums.length > 0 ? [...new Set(linkedNums)] : parseReferenceNumbers(row.reference);
+    return {
+      transactionId: row.id,
+      date: t.date,
+      amount: t.amount,
+      description: t.description,
+      counterpart: t.counterpartName,
+      // [SEARCH] IBAN of the tegenrekening — so a matched line is findable by IBAN too.
+      iban: t.counterpartIban ?? null,
+      reference: t.reference,
+      outcome: "auto" as const, // nominal — it is already done (allCovered), never shown as pending
+      best: null,
+      candidates: [],
+      partiallyLinked: false,
+      allCovered: true,
+      coveredNumbers: covered,
+      // [BANK-AMOUNT-ONLY] 'amount_only' → the Gekoppeld card shows a "controleer" flag.
+      matchReason: reasonByTx.get(row.id) ?? null,
     };
   });
 
@@ -156,6 +337,6 @@ export async function GET() {
       choice: result.choiceCount,
       none: result.noneCount,
     },
-    suggestions,
+    suggestions: [...suggestions, ...linkedSuggestions],
   });
 }

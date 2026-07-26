@@ -13,7 +13,7 @@
 //   - Draft Queue floating panel (writes to draft_queue table — client-side, intentional)
 //   - DashboardHeader
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '@/app/dashboard/_shared'
@@ -24,6 +24,7 @@ import { composeDraftEmail } from '@/lib/ai'
 // <DraftQueue /> mount at the bottom of this file.
 // import DraftQueue from '@/components/draft-queue/DraftQueue'
 import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.types'
+import type { NotificationRow } from '@/types/rows'
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -41,6 +42,11 @@ const TODO_ICON: Record<string, string> = {
   client_question:     '❓',
 }
 
+// [ROLE-PARITY] Shape/elevation tokens mirrored from the ZZP home (ZzpDashboard)
+// so the two role dashboards share one visual system.
+const R = { sm: 8, md: 12, lg: 16 }
+const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
+
 // ─────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────
@@ -51,11 +57,12 @@ interface Props {
     full_name: string | null
     company_name: string | null
     email: string | null
+    role: string | null
   }
   overview: AccountantOverview
   clients: ClientSummary[]
   todos: TodoItem[]
-  notifications: any[]
+  notifications: NotificationRow[]
   unreadMessages: number
 }
 
@@ -107,17 +114,21 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
 
   // ── Init ──
   useEffect(() => {
-    // Time-based greeting — set after mount to keep server/client HTML identical
-    setSalutation(timeSalutation())
+    // Beide standen komen uit de browser (klok + localStorage) en bestaan op de server niet.
+    // In één wikkel: zelfde tick, geen synchrone setState in de effect-body.
+    void (async () => {
+      // Time-based greeting — set after mount to keep server/client HTML identical
+      setSalutation(timeSalutation())
 
-    // Resolve last_client_id from localStorage
-    const storedId = localStorage.getItem(LAST_CLIENT_KEY)
-    if (storedId) {
-      setLastClientId(storedId)
-      const found = clients.find(c => c.id === storedId)
-      if (found) setLastClientName(found.company_name || found.full_name)
-      else localStorage.removeItem(LAST_CLIENT_KEY) // stale
-    }
+      // Resolve last_client_id from localStorage
+      const storedId = localStorage.getItem(LAST_CLIENT_KEY)
+      if (storedId) {
+        setLastClientId(storedId)
+        const found = clients.find(c => c.id === storedId)
+        if (found) setLastClientName(found.company_name || found.full_name)
+        else localStorage.removeItem(LAST_CLIENT_KEY) // stale
+      }
+    })()
   }, [])
 
   // ─────────────────────────────────────────────────────────
@@ -172,7 +183,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
   const unreadNotifCount = notifications.filter(n => !n.read).length
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       {/* Header — unchanged */}
       <DashboardHeader
@@ -189,55 +200,60 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
         onLogout={handleLogout}
       />
 
-      <main style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 120 }}>
+      {/* [ROLE-PARITY] Same design system as the ZZP home (ZzpDashboard): a
+          greeting, a snapshot, a gradient hero for the daily driver, and grouped
+          sections — applied to the ACCOUNTANT's own content (portfolio of clients,
+          cross-client to-dos, office tools). Not a literal clone: the two roles
+          share the system, the content is tailored per role. See docs (multi-role
+          portals lead with what matters to that role). */}
+      <main style={{ maxWidth: 480, margin: '0 auto', padding: '32px 16px 100px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* ── 1. Greeting ── */}
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#202124', margin: 0 }}>
-          {salutation
-            ? `${salutation}${profile.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}`
-            : `Hallo${profile.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}`} 👋
-        </h1>
-
-        {/* ── Quick navigation ── */}
-        {/* [BRIDGE-NOTIF] 'Alle bestanden' card removed (flat file-pile contradicts
-            the client-by-client workflow). Route/page untouched — reachable via
-            werkplek. werkplek now full-width. */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
-          <button
-            onClick={() => router.push('/dashboard/accountant/werkplek')}
-            style={{
-              backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
-              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
-              cursor: 'pointer', textAlign: 'left', transition: 'background 0.1s',
-              minHeight: 56,
-            }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#FFFFFF')}
-          >
-            <span style={{ fontSize: 20 }}>🛠️</span>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Mijn werkplek</p>
-              <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>Alle tools</p>
-            </div>
-            <span style={{ color: '#1A73E8', fontSize: 14, fontWeight: 600 }}>→</span>
-          </button>
+        {/* ── Greeting (eyebrow + first name — same shape as the ZZP home) ── */}
+        <div>
+          <p style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, fontWeight: 500, letterSpacing: 0.2, textTransform: 'uppercase' }}>
+            {salutation ?? 'Hallo'}
+          </p>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: '#202124', margin: 0, letterSpacing: -0.5 }}>
+            {profile.full_name ? profile.full_name.split(' ')[0] : 'daar'} 👋
+          </h1>
         </div>
 
-        {/* [READINESS-P4] Honest overview — provable counts only, NO "ready"
-            verdict. Backed by ClientReadiness (both invoice directions, real
-            bank_transactions signal). */}
+        {/* ── Daily-driver hero — the accountant's "lead with what matters":
+            the Aangifte & status board (deadline + client readiness + reminders).
+            Same gradient hero treatment as the ZZP "Ben ik klaar?". ── */}
+        <button
+          onClick={() => router.push('/dashboard/accountant/agenda')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
+            padding: '18px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
+            border: 'none', background: 'linear-gradient(135deg, #1A73E8, #1557B0)', boxShadow: EL1,
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>checklist</span>
+          <span style={{ flex: 1 }}>
+            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Aangifte &amp; status</span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>BTW-deadline, klaar-status en herinneren per klant</span>
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+        </button>
+
+        {/* ── Overzicht — honest counts (the accountant's "where do I stand").
+            Same 3-tile snapshot pattern as the ZZP home. ── */}
         {clients.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-            {[
-              { n: overview.total_clients, label: 'Klanten', color: '#202124' },
-              { n: overview.clients_with_open_questions, label: 'Open vraag', color: overview.clients_with_open_questions > 0 ? '#C5221F' : '#5F6368' },
-              { n: overview.clients_missing_bank, label: 'Zonder bank', color: overview.clients_missing_bank > 0 ? '#EA8600' : '#5F6368' },
-            ].map(s => (
-              <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: '12px 8px', textAlign: 'center' }}>
-                <p style={{ fontSize: 22, fontWeight: 700, color: s.color, margin: 0 }}>{s.n}</p>
-                <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{s.label}</p>
-              </div>
-            ))}
+          <div>
+            <SectionLabel>Overzicht</SectionLabel>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              {[
+                { n: overview.total_clients, label: 'Klanten', color: '#202124' },
+                { n: overview.clients_with_open_questions, label: 'Open vraag', color: overview.clients_with_open_questions > 0 ? '#C5221F' : '#5F6368' },
+                { n: overview.clients_missing_bank, label: 'Zonder bank', color: overview.clients_missing_bank > 0 ? '#EA8600' : '#5F6368' },
+              ].map(s => (
+                <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: '12px 8px', textAlign: 'center' }}>
+                  <p style={{ fontSize: 22, fontWeight: 700, color: s.color, margin: 0 }}>{s.n}</p>
+                  <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{s.label}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -335,6 +351,21 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           )}
         </div>
 
+        {/* ── Werkplek — office tools as a compact tile grid (same pattern as the
+            ZZP home's "Mijn administratie"). Surfaces the tools directly instead of
+            routing through a separate werkplek menu. ── */}
+        <div>
+          <SectionLabel>Werkplek</SectionLabel>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <ToolTile icon="people" tint="#34A853" label="Beheren" onClick={() => router.push('/dashboard/clients/beheer')} />
+            <ToolTile icon="bar_chart" tint="#E37400" label="Kwartaal" onClick={() => router.push('/dashboard/quarterly')} />
+            <ToolTile icon="account_tree" tint="#1967D2" label="Brug" onClick={() => router.push('/dashboard/brug')} />
+            <ToolTile icon="description" tint="#00897B" label="Facturen" onClick={() => router.push('/dashboard/facturen')} />
+            <ToolTile icon="folder_open" tint="#5F6368" label="Bestanden" onClick={() => router.push('/dashboard/bestanden')} />
+            <ToolTile icon="settings" tint="#7B1FA2" label="Instellingen" onClick={() => router.push('/dashboard/settings')} />
+          </div>
+        </div>
+
         {/* ── Last client shortcut (preserved) ── */}
         {lastClientId && lastClientName && (
           <button
@@ -384,7 +415,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
               onChange={e => setAiPrompt(e.target.value)}
               rows={3}
               placeholder="bijv. bereid BTW aangifte voor klant Jansen BV..."
-              style={{ width: '100%', fontSize: 14, padding: '8px 12px', border: '1px solid #BDBDBD', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124', resize: 'none', boxSizing: 'border-box' }}
+              style={{ width: '100%', fontSize: 14, padding: '8px 12px', border: '1px solid #dadce0', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124', resize: 'none', boxSizing: 'border-box' }}
             />
             <button
               onClick={handleAiPrompt}
@@ -403,7 +434,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                     Kopiëren
                   </button>
                   <button onClick={() => { setAiResult(null); setAiPrompt('') }}
-                    style={{ backgroundColor: '#F8F9FA', color: '#202124', border: '1px solid #BDBDBD', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+                    style={{ backgroundColor: '#F8F9FA', color: '#202124', border: '1px solid #dadce0', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
                     Opnieuw
                   </button>
                 </div>
@@ -421,5 +452,49 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           <DraftQueue clients={clients} /> */}
 
     </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────
+// [ROLE-PARITY] Shared home patterns, mirrored from the ZZP home so both role
+// dashboards read as one product. SectionLabel = the uppercase group header;
+// ToolTile = the compact 3-per-row tile used for the office-tools grid (the
+// accountant equivalent of the ZZP "Mijn administratie" grid).
+// ─────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p style={{
+      fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase',
+      color: '#8a929c', margin: '0 2px 10px',
+    }}>
+      {children}
+    </p>
+  )
+}
+
+function ToolTile({ icon, tint, label, onClick }: {
+  icon: string; tint: string; label: string; onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+        background: '#fff', borderRadius: R.lg, padding: '14px 6px 12px',
+        border: 'none', boxShadow: EL1, cursor: 'pointer',
+        transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
+      }}
+      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.96)')}
+      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+    >
+      <div style={{
+        width: 46, height: 46, borderRadius: R.md,
+        background: tint, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 24 }}>{icon}</span>
+      </div>
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: '#202124', textAlign: 'center' }}>{label}</span>
+    </button>
   )
 }

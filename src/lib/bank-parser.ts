@@ -1,7 +1,13 @@
 // lib/bank-parser.ts
-// Bank statement parsers: MT940 + CAMT.053 (BOEK-014 — read only)
+// Bank statement parsers: MT940 + CAMT.053 (BOEK-014 — read only) + CSV (BANK-CSV).
 // Parsed transactions are returned as BankTransaction[] — not saved to DB yet.
 // Saving + matching happens in BOEK-016 (Bank Matching Engine).
+
+// [BANK-CSV] CSV parsing lives in its own module (bank-csv.ts) to keep this file
+// focused on the SWIFT/XML formats. The import is type-safe and cycle-safe: both
+// modules only reference each other's hoisted `export function`s at call time,
+// never at module-init time.
+import { parseBankCsv, looksLikeBankCsv } from "./bank-csv";
 
 // ─── Canonical transaction type ───────────────────────────────────────────────
 
@@ -22,14 +28,44 @@ export interface BankTransaction {
   rawLine: string;        // original line(s) for debugging
 }
 
+/**
+ * [BANK-BALANCE] The statement's own opening + closing balance, when the format carries it
+ * (MT940 :60F:/:62F:, CAMT.053 OPBD/CLBD). Signed euros: a debit (overdrawn) balance is
+ * negative. Either side may be null when a format/file omits it (e.g. CSV, or a partial
+ * statement) — reconciliation is then simply "not checkable", never a fabricated pass.
+ */
+export interface StatementBalance {
+  opening: number | null;
+  closing: number | null;
+  currency: string;
+}
+
 /** Result of parsing a bank file */
 export interface ParseResult {
-  format: "MT940" | "CAMT053";
+  format: "MT940" | "CAMT053" | "CSV";
   accountIban: string | null;
   accountName: string | null;
   currency: string;
   transactions: BankTransaction[];
   parseErrors: string[];  // non-fatal warnings
+  // [BANK-BALANCE] The statement's declared opening/closing balance for the completeness
+  // check (opening + Σtx must equal closing). null when the format carries no balance.
+  statementBalance?: StatementBalance | null;
+}
+
+/**
+ * [BANK-BALANCE] Parse one MT940 balance field value (:60F:/:62F:/:60M:/:62M:).
+ * Format: `C|D` + `YYMMDD` + `CCC`(currency) + amount (comma decimal, no thousands sep).
+ * Returns signed euros (D = debit balance = negative) + currency, or null when unreadable.
+ */
+export function parseMT940Balance(value: string): { amount: number; currency: string } | null {
+  const m = value.trim().match(/^([CD])\d{6}([A-Z]{3})([\d.,]+)$/);
+  if (!m) return null;
+  const [, sign, currency, rawAmount] = m;
+  // MT940 uses comma as the decimal separator and no thousands separator.
+  const magnitude = parseFloat(rawAmount.replace(/\./g, "").replace(",", "."));
+  if (!Number.isFinite(magnitude)) return null;
+  return { amount: sign === "D" ? -magnitude : magnitude, currency };
 }
 
 // ─── MT940 Parser ─────────────────────────────────────────────────────────────
@@ -146,7 +182,9 @@ export function parseMT940(content: string): ParseResult {
   const transactions: BankTransaction[] = [];
 
   let accountIban: string | null = null;
-  let accountName: string | null = null;
+  // MT940 kent geen veld met de tenaamstelling (:25: bevat alleen het rekeningnummer),
+  // dus dit blijft bewust null in plaats van dat we een naam uit de tekst raden.
+  const accountName: string | null = null;
   let currency = "EUR";
 
   // Normalize line endings
@@ -181,6 +219,18 @@ export function parseMT940(content: string): ParseResult {
     if (currMatch) currency = currMatch[1];
   }
 
+  // [BANK-BALANCE] Opening = the FIRST 60F/60M (statement start); closing = the LAST 62F/62M
+  // (statement end). A multi-page file's intermediate M-balances cancel out, so first-open →
+  // last-close spans every :61: line — the reconciliation then proves no line is missing.
+  const openingTag = tags.find((t) => t.tag === "60F" || t.tag === "60M");
+  const closingTag = [...tags].reverse().find((t) => t.tag === "62F" || t.tag === "62M");
+  const openingBal = openingTag ? parseMT940Balance(openingTag.value) : null;
+  const closingBal = closingTag ? parseMT940Balance(closingTag.value) : null;
+  const statementBalance: StatementBalance | null =
+    openingBal || closingBal
+      ? { opening: openingBal?.amount ?? null, closing: closingBal?.amount ?? null, currency }
+      : null;
+
   // Process :61: + :86: pairs
   for (let i = 0; i < tags.length; i++) {
     if (tags[i].tag !== "61") continue;
@@ -199,6 +249,7 @@ export function parseMT940(content: string): ParseResult {
     currency,
     transactions,
     parseErrors: errors,
+    statementBalance,
   };
 }
 
@@ -229,8 +280,16 @@ function parseMT940Transaction(
 
   // Parse amount — MT940 uses comma as decimal separator
   const amount = parseFloat(amountStr.replace(",", "."));
+  // [BANK-BALANCE] SWIFT sign convention, incl. reversals:
+  //   C  = credit                → +   |   D  = debit                 → −
+  //   RD = Reversal of a Debit   → +   |   RC = Reversal of a Credit  → −
+  // A reversal UNDOES the original, so RC (undo a credit) nets to a DEBIT and RD (undo a
+  // debit) nets to a CREDIT. The earlier code grouped RC with credits and RD with debits —
+  // inverted — so every reversal booked with the WRONG sign (wrong omzet/kosten), and it
+  // also made a complete statement fail the new begin/eindsaldo reconciliation. The :62F:
+  // closing balance already reflects the true effect, so this is the sign that ties out.
   const signed =
-    creditDebit === "C" || creditDebit === "RC" ? amount : -amount;
+    creditDebit === "C" || creditDebit === "RD" ? amount : -amount;
 
   // Parse :86: description field
   // ING/ABN AMRO use structured sub-fields: /BENM//NAME/...
@@ -468,13 +527,57 @@ function decodeXmlEntities(s: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
 }
 
+/**
+ * [BANK-BALANCE] Extract the opening (OPBD) + closing (CLBD) booked balances from CAMT.053
+ * <Bal> blocks. Signed euros (DBIT = negative). Takes the FIRST OPBD and the LAST CLBD so a
+ * multi-statement file reconciles start-to-end. Ignores available-balance types (OPAV/CLAV/
+ * FWAV) — only the BOOKED balance ties to the booked entries. Returns null when neither exists.
+ */
+export function parseCamtStatementBalance(content: string, currency: string): StatementBalance | null {
+  const balPattern = /<Bal>([\s\S]*?)<\/Bal>/g;
+  let opening: number | null = null;
+  let closing: number | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = balPattern.exec(content)) !== null) {
+    const block = m[1];
+    const code = block.match(/<Cd>\s*(OPBD|CLBD)\s*<\/Cd>/)?.[1];
+    if (!code) continue;
+    const amtMatch = block.match(/<Amt[^>]*>([^<]+)<\/Amt>/);
+    if (!amtMatch) continue;
+    const mag = parseFloat(amtMatch[1]);
+    if (!Number.isFinite(mag)) continue;
+    const isDebit = (block.match(/<CdtDbtInd>\s*([^<]+?)\s*<\/CdtDbtInd>/)?.[1] ?? "CRDT") === "DBIT";
+    const signed = isDebit ? -mag : mag;
+    if (code === "OPBD" && opening === null) opening = signed; // first OPBD
+    if (code === "CLBD") closing = signed;                     // last CLBD wins
+  }
+  return opening !== null || closing !== null ? { opening, closing, currency } : null;
+}
+
+/**
+ * [BANK-CURRENCY] De valuta van het afschrift, gelezen uit het bestand zelf.
+ *
+ * Stond hier eerder hard op "EUR". Voor een rekening in een andere valuta labelde de
+ * import dan stilzwijgend het verkeerde teken op de begin- en eindstand — een fout die
+ * nergens opvalt omdat de bedragen zelf wél klopten. We lezen hem daarom uit het
+ * <Bal>-blok (de gezaghebbende plek), met de eerste transactie als terugval en EUR als
+ * laatste redmiddel; MT940 doet hetzelfde met :60F:.
+ */
+export function detectCamtCurrency(content: string): string {
+  const balCcy = content.match(/<Bal>[\s\S]*?<Amt[^>]*\bCcy="([A-Z]{3})"/)?.[1];
+  if (balCcy) return balCcy;
+  const entryCcy = content.match(/<Ntry>[\s\S]*?<Amt[^>]*\bCcy="([A-Z]{3})"/)?.[1];
+  if (entryCcy) return entryCcy;
+  return "EUR";
+}
+
 export function parseCAMT053(content: string): ParseResult {
   const errors: string[] = [];
   const transactions: BankTransaction[] = [];
 
   let accountIban: string | null = null;
   let accountName: string | null = null;
-  let currency = "EUR";
+  const currency = detectCamtCurrency(content);
 
   // Simple regex-based XML extraction — no DOM dependency needed server-side
   // For a full implementation, use fast-xml-parser (BOEK-016)
@@ -487,11 +590,21 @@ export function parseCAMT053(content: string): ParseResult {
   const nameMatch = content.match(/<Nm>([^<]+)<\/Nm>/);
   if (nameMatch) accountName = nameMatch[1].trim();
 
-  // Extract all <Ntry> blocks
+  // Extract all <Ntry> blocks. [M5] Bound the entry count: a crafted file within the upload
+  // size cap can pack a huge number of tiny entries, and per-entry regex work then burns the
+  // request's CPU for seconds-to-minutes. A real quarterly statement is well under this cap;
+  // once reached we stop and report rather than parse an abusive file to completion.
+  const MAX_CAMT_ENTRIES = 50000;
   const ntryPattern = /<Ntry>([\s\S]*?)<\/Ntry>/g;
   let ntryMatch: RegExpExecArray | null;
+  let scanned = 0; // count every <Ntry> scanned, not just the ones that parsed to a tx
 
   while ((ntryMatch = ntryPattern.exec(content)) !== null) {
+    if (scanned >= MAX_CAMT_ENTRIES) {
+      errors.push(`CAMT.053 bevat meer dan ${MAX_CAMT_ENTRIES} transacties — verwerking gestopt; splits het bestand.`);
+      break;
+    }
+    scanned++;
     const block = ntryMatch[1];
     const tx = parseCAMT053Entry(block, currency, errors);
     if (tx) transactions.push(tx);
@@ -504,7 +617,19 @@ export function parseCAMT053(content: string): ParseResult {
     currency,
     transactions,
     parseErrors: errors,
+    statementBalance: parseCamtStatementBalance(content, currency),
   };
+}
+
+// [M4] YYYY-MM-DD that is also a real calendar date (rejects 9999-99-99, 2026-13-40, a
+// datetime, or trailing junk). Kept local so the CAMT date guard cannot drift.
+function isValidIsoDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
 function parseCAMT053Entry(
@@ -520,6 +645,14 @@ function parseCAMT053Entry(
   }
   const currency = amtMatch[1] ?? defaultCurrency;
   const rawAmount = parseFloat(amtMatch[2]);
+  // [H3] A non-finite amount (NaN from "abc", Infinity from "1e309") must NEVER reach the
+  // database — it poisons every downstream sum (reconciliation, quarter totals). Drop the
+  // single entry with a clear error rather than write a corrupt figure. MT940/CSV/EFT guard
+  // the same way.
+  if (!Number.isFinite(rawAmount)) {
+    errors.push(`Ongeldig transactiebedrag in CAMT.053 entry: "${amtMatch[2]}"`);
+    return null;
+  }
 
   // Credit or debit
   const cdMatch = block.match(/<CdtDbtInd>([^<]+)<\/CdtDbtInd>/);
@@ -534,6 +667,14 @@ function parseCAMT053Entry(
 
   if (!date) {
     errors.push("Transactiedatum ontbreekt in CAMT.053 entry");
+    return null;
+  }
+  // [M4] Validate the date SHAPE before it flows to a Postgres `date` column. A single
+  // malformed value ("9999-99-99", a datetime, garbage) would fail the whole batch INSERT,
+  // which the ingest swallows → every transaction silently dropped while the file still
+  // reads "verwerkt". Drop just this entry and warn instead of losing the batch.
+  if (!isValidIsoDate(date)) {
+    errors.push(`Ongeldige transactiedatum in CAMT.053 entry: "${date}"`);
     return null;
   }
 
@@ -653,6 +794,15 @@ export function parseBankFile(content: string, filename: string): ParseResult {
     content.includes("<BkToCstmrStmt")
   ) {
     return parseCAMT053(content);
+  }
+
+  // [BANK-CSV] CSV bank export (ING, Rabobank, bunq, SNS, ASN, Triodos, Knab, …).
+  // Route .csv by extension, or any file whose content looks like a delimited
+  // statement with date+amount headers. Kept out of the MT940 fallback below so a
+  // CSV upload no longer silently parses to zero transactions. Imported lazily to
+  // keep this module's dependency graph unchanged for the MT940/CAMT paths.
+  if (lower.endsWith(".csv") || looksLikeBankCsv(content)) {
+    return parseBankCsv(content);
   }
 
   // MT940: .mt940, .sta, .txt, or starts with :20:

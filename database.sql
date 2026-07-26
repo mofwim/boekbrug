@@ -59,12 +59,18 @@
 --       SECTION 5 below is DROPPED in prod (COUNT(*)+1, race-prone) — do NOT use.
 --     • B.4 'verwerkt' guard trigger on invoices (fires on
 --       accountant_status='verwerkt'; bypassed when auth.uid() IS NULL).
+--       [AUDIT-2026-07] Now reproducible from the repo: SECTION 5 defines
+--       prevent_verwerkt_invoice_changes() + invoices_verwerkt_guard, and
+--       supabase/migrations/invoice_accountant_write_guard.sql applies the
+--       same to an already-provisioned DB (prod's own copy, if named
+--       differently, coexists harmlessly).
 --
 --   RLS:
---     • The invitations "public can read ... USING (true)" policy shown below is
---       replaced by supabase/migrations/invitations_rls_scoped_read.sql
---       (scoped to inviter OR invitee). Anyone auditing invitation exposure must
---       read that migration, not this snapshot.
+--     • The invitations SELECT policy below is scoped to the inviter (zzper_id)
+--       OR the invitee (accountant_email == auth.email()) — never "public USING
+--       (true)". supabase/migrations/invitations_rls_scoped_read.sql applies the
+--       same change to an already-provisioned DB; this snapshot and that migration
+--       now agree, so a fresh provision is secure by default.
 --
 -- TODO: regenerate this file from a fresh production introspection.
 -- =====================================================
@@ -338,6 +344,8 @@ CREATE TABLE public.invoices (
   vendor_iban text,
   payment_reference text,
   payment_prepared_at timestamp with time zone,
+  -- [SUPPLIER-REGISTRY] canonical supplier link for incoming invoices (see supplier_registry.sql).
+  supplier_id uuid,
   CONSTRAINT invoices_pkey PRIMARY KEY (id),
   CONSTRAINT invoices_sender_id_fkey
     FOREIGN KEY (sender_id) REFERENCES public.profiles(id),
@@ -348,7 +356,27 @@ CREATE TABLE public.invoices (
   CONSTRAINT invoices_offerte_converted_to_fkey
     FOREIGN KEY (offerte_converted_to) REFERENCES public.invoices(id),
   CONSTRAINT invoices_document_id_fkey
-    FOREIGN KEY (document_id) REFERENCES public.documents(id)
+    FOREIGN KEY (document_id) REFERENCES public.documents(id),
+  CONSTRAINT invoices_supplier_id_fkey
+    FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL
+);
+
+-- [SUPPLIER-REGISTRY] Canonical supplier (leverancier) registry for incoming invoices.
+-- Keyed on IBAN (strong) then normalized name (fallback) so the same company stops appearing
+-- under many spellings. Full definition + RLS in supabase/migrations/supplier_registry.sql.
+CREATE TABLE public.suppliers (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name text NOT NULL,
+  name_key text,
+  iban text,
+  kvk_number text,
+  btw_number text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT suppliers_pkey PRIMARY KEY (id),
+  CONSTRAINT suppliers_user_id_fkey
+    FOREIGN KEY (user_id) REFERENCES public.profiles(id) ON DELETE CASCADE
 );
 
 CREATE TABLE public.messages (
@@ -403,9 +431,11 @@ CREATE TABLE public.profiles (
   preferred_language text DEFAULT 'nl'::text
     CHECK (preferred_language = ANY (ARRAY['nl'::text, 'en'::text, 'ar'::text, 'tr'::text])),
   referral_accountant_id uuid,
+  -- [FAIR-USE] free = ondernemer binnen eerlijk gebruik · plus = € 12,99/mnd daarboven ·
+  -- boekhouder = altijd gratis. Zie supabase/migrations/subscription_plans_fair_use.sql.
   subscription_plan text DEFAULT 'free'::text
     CHECK (subscription_plan = ANY (ARRAY[
-      'free'::text, 'pro'::text, 'boekhouder'::text, 'boekhouder_pro'::text
+      'free'::text, 'plus'::text, 'boekhouder'::text
     ])),
   subscription_stripe_id text,
   CONSTRAINT profiles_pkey PRIMARY KEY (id),
@@ -488,6 +518,40 @@ CREATE INDEX idx_invoices_message_id
 CREATE INDEX invoices_search_idx
   ON public.invoices USING gin (search_vector);
 
+-- [SEARCH] Trigram indexes so the global-search API's ILIKE '%term%' (leading
+-- wildcard) predicates are index-backed instead of sequential scans. Mirrored in
+-- supabase/migrations/search_engine.sql. Self-enables pg_trgm so a fresh provision
+-- of this file never fails on gin_trgm_ops even if the Dashboard step was skipped.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS invoices_invoice_number_trgm
+  ON public.invoices USING gin (invoice_number gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_name_trgm
+  ON public.invoices USING gin (client_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoices_client_email_trgm
+  ON public.invoices USING gin (client_email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_description_trgm
+  ON public.invoice_lines USING gin (description gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS invoice_lines_invoice_id_idx
+  ON public.invoice_lines USING btree (invoice_id);
+CREATE INDEX IF NOT EXISTS documents_file_name_trgm
+  ON public.documents USING gin (file_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_doc_type_trgm
+  ON public.documents USING gin (doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_ai_doc_type_trgm
+  ON public.documents USING gin (ai_doc_type gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS documents_notes_trgm
+  ON public.documents USING gin (notes gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_full_name_trgm
+  ON public.profiles USING gin (full_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_company_name_trgm
+  ON public.profiles USING gin (company_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS profiles_email_trgm
+  ON public.profiles USING gin (email gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_name_trgm
+  ON public.clients USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS clients_email_trgm
+  ON public.clients USING gin (email gin_trgm_ops);
+
 -- rate_limits
 CREATE INDEX idx_rate_limits_cleanup
   ON public.rate_limits USING btree (window_start);
@@ -527,9 +591,17 @@ CREATE POLICY accountant_clients_select ON public.accountant_clients
   FOR SELECT TO authenticated
   USING ((accountant_id = auth.uid()) OR (zzper_id = auth.uid()));
 
-CREATE POLICY accountant_clients_insert ON public.accountant_clients
-  FOR INSERT TO authenticated
-  WITH CHECK (accountant_id = auth.uid());
+-- ⚠️ [SEC-LINK] There is DELIBERATELY no authenticated INSERT policy on accountant_clients.
+--    An earlier baseline shipped `WITH CHECK (accountant_id = auth.uid())` — an open self-link:
+--    any authenticated user could insert {accountant_id: ME, zzper_id: VICTIM} via the anon key
+--    that ships in the browser (the victim UUID leaks via invoice sender/receiver, messages, …),
+--    linking themselves as any client's accountant and reading that client's shared invoices +
+--    documents. That policy was dropped in supabase/migrations/accountant_clients_insert_consent.sql;
+--    the baseline now omits it entirely so a FRESH deploy from this file is safe even before the
+--    migration runs. Linking happens ONLY through the email-verified accept route, which inserts
+--    via service_role (createPipelineClient, bypasses RLS) — see src/app/api/invite/accept/route.ts.
+--    If authenticated linking is ever reintroduced it MUST be gated on an accepted invitation for
+--    THIS (accountant, client) pair (see the migration for the exact WITH CHECK).
 
 CREATE POLICY accountant_clients_update ON public.accountant_clients
   FOR UPDATE TO authenticated
@@ -591,6 +663,17 @@ CREATE POLICY documents_update_own ON public.documents
 CREATE POLICY documents_delete_own ON public.documents
   FOR DELETE TO authenticated USING (user_id = auth.uid());
 
+-- [SEC-DOCS-RLS] Accountant read of a linked client's SHARED, non-trashed docs.
+-- Captured/versioned in supabase/migrations/documents_accountant_read_policy.sql
+-- (was prod-only). Mirrors invoices_accountant_read; additive to documents_select_own.
+CREATE POLICY documents_accountant_read ON public.documents
+  FOR SELECT TO authenticated
+  USING (
+    shared = true
+    AND trashed IS NOT TRUE
+    AND is_my_accountant_client(user_id)
+  );
+
 -- ── draft_queue (4) ─────────────────────────────────────
 CREATE POLICY draft_queue_select_own ON public.draft_queue
   FOR SELECT TO authenticated USING (accountant_id = auth.uid());
@@ -637,8 +720,18 @@ CREATE POLICY folders_delete_own ON public.folders
   USING ((user_id = auth.uid()) AND (is_system = false));
 
 -- ── invitations (2) ─────────────────────────────────────
-CREATE POLICY "public can read invitations" ON public.invitations
-  FOR SELECT TO public USING (true);
+-- [SEC-INVITE] Read is scoped to the two parties of the invitation: the inviter
+-- (zzper_id) or the invitee (accountant_email == auth.email()). The old
+-- "public USING (true)" let ANY caller — including anonymous — enumerate every
+-- accept-token and invited e-mail (invitation-hijack + info disclosure). Server
+-- paths that must read across users (/api/invite/info) use service_role and
+-- bypass RLS. Mirrors supabase/migrations/invitations_rls_scoped_read.sql.
+CREATE POLICY "invitee or inviter can read invitations" ON public.invitations
+  FOR SELECT TO authenticated
+  USING (
+    auth.uid() = zzper_id
+    OR lower(accountant_email) = lower(auth.email())
+  );
 
 CREATE POLICY "zzper can insert invitations" ON public.invitations
   FOR INSERT TO public WITH CHECK (auth.uid() = zzper_id);
@@ -879,6 +972,122 @@ BEGIN
 END;
 $$;
 
+-- [SEARCH] Fuzzy (typo-tolerant) search via pg_trgm. SECURITY INVOKER → the caller's
+-- RLS applies, so only rows the user may already see are returned. Used by /api/search
+-- to augment sparse exact/substring results. Mirrored in supabase/migrations/search_smart.sql.
+-- Three signals for typo recall: similarity() (whole-string trigram, 0.2),
+-- word_similarity() (best-word trigram, 0.4), and a subsequence-LIKE ('fmz' → '%f%m%z%',
+-- ≥3 chars) that catches DROPPED letters/abbreviations where trigrams fail — "fmz" matches
+-- "FAMZFOOD" but not "Doyum Food"/"Vars Foods". Uses FUNCTIONS (not % / <% operators) with
+-- explicit thresholds because Supabase forbids setting pg_trgm.*_threshold in a function SET.
+-- q is stripped to [a-z0-9] for the LIKE branch → no wildcard/regex injection. Seq scan, but
+-- only when results are sparse, over RLS-bounded rows, with LIMIT. See search_smart.sql.
+CREATE OR REPLACE FUNCTION public.search_invoices_fuzzy(q text)
+RETURNS SETOF public.invoices
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT i.*
+  FROM public.invoices i,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND (
+      similarity(coalesce(i.client_name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.client_name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(i.client_name, '')) LIKE p.pat)
+      OR similarity(coalesce(i.invoice_number, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(i.invoice_number, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(i.invoice_number, '')) LIKE p.pat)
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(i.client_name, ''), q),
+      word_similarity(q, coalesce(i.client_name, '')),
+      similarity(coalesce(i.invoice_number, ''), q),
+      word_similarity(q, coalesce(i.invoice_number, ''))
+    ) DESC
+  LIMIT 8;
+$$;
+
+CREATE OR REPLACE FUNCTION public.search_clients_fuzzy(q text)
+RETURNS SETOF public.clients
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT c.*
+  FROM public.clients c,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND (
+      similarity(coalesce(c.name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(c.name, '')) LIKE p.pat)
+      OR similarity(coalesce(c.email, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(c.email, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(c.email, '')) LIKE p.pat)
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(c.name, ''), q),
+      word_similarity(q, coalesce(c.name, '')),
+      similarity(coalesce(c.email, ''), q),
+      word_similarity(q, coalesce(c.email, ''))
+    ) DESC
+  LIMIT 5;
+$$;
+
+-- Fuzzy document-match (own, non-trashed) on file_name/type; same 3-signal approach.
+CREATE OR REPLACE FUNCTION public.search_documents_fuzzy(q text)
+RETURNS SETOF public.documents
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT d.*
+  FROM public.documents d,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND d.trashed = false
+    AND (
+      similarity(coalesce(d.file_name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(d.file_name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(d.file_name, '')) LIKE p.pat)
+      OR word_similarity(q, coalesce(d.ai_doc_type, '')) >= 0.4
+      OR word_similarity(q, coalesce(d.doc_type, '')) >= 0.4
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(d.file_name, ''), q),
+      word_similarity(q, coalesce(d.file_name, '')),
+      word_similarity(q, coalesce(d.ai_doc_type, '')),
+      word_similarity(q, coalesce(d.doc_type, ''))
+    ) DESC
+  LIMIT 6;
+$$;
+
+-- Fuzzy folder-match on folder name.
+CREATE OR REPLACE FUNCTION public.search_folders_fuzzy(q text)
+RETURNS SETOF public.folders
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
+AS $$
+  SELECT f.*
+  FROM public.folders f,
+       LATERAL (SELECT regexp_replace(lower(q), '[^a-z0-9]', '', 'g') AS qs) n,
+       LATERAL (SELECT '%' || regexp_replace(n.qs, '(.)', '\1%', 'g') AS pat, length(n.qs) AS qlen) p
+  WHERE length(btrim(q)) >= 2
+    AND (
+      similarity(coalesce(f.name, ''), q) >= 0.2
+      OR word_similarity(q, coalesce(f.name, '')) >= 0.4
+      OR (p.qlen >= 3 AND lower(coalesce(f.name, '')) LIKE p.pat)
+    )
+  ORDER BY GREATEST(
+      similarity(coalesce(f.name, ''), q),
+      word_similarity(q, coalesce(f.name, ''))
+    ) DESC
+  LIMIT 10;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.search_invoices_fuzzy(text)  TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_clients_fuzzy(text)   TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_documents_fuzzy(text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_folders_fuzzy(text)   TO authenticated;
+
 -- ── Invoice Numbering ───────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.generate_invoice_number(user_id uuid)
@@ -919,20 +1128,49 @@ $$;
 
 -- ── New User Trigger ────────────────────────────────────
 
+-- [COHERENCE-REGISTER] Populate the profile from signup metadata (role/company/kvk/
+-- btw/onboarding_step) so email/password registration works with email confirmation
+-- ENABLED — the browser can no longer write the profile (anon RLS), so this SECURITY
+-- DEFINER trigger is the single writer. See migrations/register_profile_from_metadata.sql.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path TO 'public'
 AS $$
+DECLARE
+  meta jsonb := COALESCE(new.raw_user_meta_data, '{}'::jsonb);
+  v_role text;
+  v_step int;
 BEGIN
+  v_role := CASE
+    WHEN meta->>'role' IN ('zzper', 'accountant') THEN meta->>'role'
+    ELSE 'zzper'
+  END;
+
+  BEGIN
+    v_step := COALESCE(NULLIF(meta->>'onboarding_step', ''), '1')::int;
+  EXCEPTION WHEN others THEN
+    v_step := 1;
+  END;
+  IF v_step IS NULL OR v_step < 1 THEN
+    v_step := 1;
+  END IF;
+
   INSERT INTO public.profiles (
     id, email, full_name,
+    company_name, kvk_number, btw_number,
     onboarding_step, onboarding_done, role
   ) VALUES (
     new.id,
     new.email,
-    new.raw_user_meta_data->>'full_name',
-    1, false, 'zzper'
+    NULLIF(meta->>'full_name', ''),
+    NULLIF(meta->>'company_name', ''),
+    NULLIF(meta->>'kvk_number', ''),
+    NULLIF(meta->>'btw_number', ''),
+    v_step,
+    false,
+    v_role
   )
   ON CONFLICT (id) DO NOTHING;
   RETURN new;
@@ -979,17 +1217,69 @@ BEGIN
   IF OLD.receiver_id = auth.uid() AND OLD.direction = 'incoming' THEN
     RETURN NEW;
   END IF;
-  -- Everyone else (accountant) — protected columns
-  IF (NEW.total_ex_btw  IS DISTINCT FROM OLD.total_ex_btw)  OR
-     (NEW.btw_amount    IS DISTINCT FROM OLD.btw_amount)    OR
-     (NEW.total_inc_btw IS DISTINCT FROM OLD.total_inc_btw) OR
-     (NEW.invoice_date  IS DISTINCT FROM OLD.invoice_date)  OR
-     (NEW.due_date      IS DISTINCT FROM OLD.due_date)      OR
-     (NEW.sender_id     IS DISTINCT FROM OLD.sender_id)
+  -- Everyone else (accountant) — protected columns.
+  -- [AUDIT-2026-07] Extended (invoice_accountant_write_guard.sql): the
+  -- accountant UPDATE policy is not column-restricted, so direction/status/
+  -- receiver_id/payment fields were still writable outside every guarded app
+  -- path. The accountant's only legitimate invoice write is accountant_status.
+  IF (NEW.total_ex_btw        IS DISTINCT FROM OLD.total_ex_btw)        OR
+     (NEW.btw_amount          IS DISTINCT FROM OLD.btw_amount)          OR
+     (NEW.total_inc_btw       IS DISTINCT FROM OLD.total_inc_btw)       OR
+     (NEW.invoice_date        IS DISTINCT FROM OLD.invoice_date)        OR
+     (NEW.due_date            IS DISTINCT FROM OLD.due_date)            OR
+     (NEW.sender_id           IS DISTINCT FROM OLD.sender_id)           OR
+     (NEW.receiver_id         IS DISTINCT FROM OLD.receiver_id)         OR
+     (NEW.direction           IS DISTINCT FROM OLD.direction)           OR
+     (NEW.status              IS DISTINCT FROM OLD.status)              OR
+     (NEW.amount_paid         IS DISTINCT FROM OLD.amount_paid)         OR
+     (NEW.payment_method      IS DISTINCT FROM OLD.payment_method)      OR
+     (NEW.payment_date        IS DISTINCT FROM OLD.payment_date)        OR
+     (NEW.marked_paid_at      IS DISTINCT FROM OLD.marked_paid_at)      OR
+     (NEW.payment_prepared_at IS DISTINCT FROM OLD.payment_prepared_at) OR
+     (NEW.pay_token           IS DISTINCT FROM OLD.pay_token)           OR
+     (NEW.invoice_number      IS DISTINCT FROM OLD.invoice_number)      OR
+     (NEW.invoice_type        IS DISTINCT FROM OLD.invoice_type)
   THEN
     RAISE EXCEPTION
-      'Permission denied: only invoice owner can modify amounts or dates (invoice_id: %)',
+      'Permission denied: only the invoice owner can modify amounts, dates, status or payment fields (invoice_id: %)',
       OLD.id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- ── [AUDIT-2026-07] B.4 'verwerkt' guard — now reproducible from the repo ────
+-- (invoice_accountant_write_guard.sql). Once the accountant marks an invoice
+-- 'verwerkt', its financial fields are frozen for every SESSION write (owner
+-- included); changing accountant_status itself stays allowed (the undo flow).
+-- The error message deliberately contains 'verwerkt' — pay-toggle and the
+-- confirm route detect the conflict by that substring.
+CREATE OR REPLACE FUNCTION public.prevent_verwerkt_invoice_changes()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.accountant_status IS DISTINCT FROM 'verwerkt' THEN
+    RETURN NEW;
+  END IF;
+  IF (NEW.total_ex_btw   IS DISTINCT FROM OLD.total_ex_btw)   OR
+     (NEW.btw_amount     IS DISTINCT FROM OLD.btw_amount)     OR
+     (NEW.total_inc_btw  IS DISTINCT FROM OLD.total_inc_btw)  OR
+     (NEW.invoice_date   IS DISTINCT FROM OLD.invoice_date)   OR
+     (NEW.due_date       IS DISTINCT FROM OLD.due_date)       OR
+     (NEW.invoice_number IS DISTINCT FROM OLD.invoice_number) OR
+     (NEW.status         IS DISTINCT FROM OLD.status)         OR
+     (NEW.amount_paid    IS DISTINCT FROM OLD.amount_paid)    OR
+     (NEW.payment_method IS DISTINCT FROM OLD.payment_method) OR
+     (NEW.payment_date   IS DISTINCT FROM OLD.payment_date)   OR
+     (NEW.marked_paid_at IS DISTINCT FROM OLD.marked_paid_at)
+  THEN
+    RAISE EXCEPTION
+      'Factuur % is verwerkt door de boekhouder — vraag eerst om de verwerking ongedaan te maken',
+      COALESCE(OLD.invoice_number, OLD.id::text);
   END IF;
   RETURN NEW;
 END;
@@ -1098,6 +1388,11 @@ CREATE TRIGGER prevent_accountant_amount_changes
   BEFORE UPDATE ON public.invoices
   FOR EACH ROW EXECUTE FUNCTION public.prevent_accountant_amount_changes();
 
+-- [AUDIT-2026-07] B.4 verwerkt guard (see prevent_verwerkt_invoice_changes above)
+CREATE TRIGGER invoices_verwerkt_guard
+  BEFORE UPDATE ON public.invoices
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_verwerkt_invoice_changes();
+
 
 -- =====================================================
 -- SECTION 8 — STORAGE
@@ -1139,6 +1434,7 @@ CREATE TRIGGER prevent_accountant_amount_changes
 --     - pgsodium      (for vault encryption)
 --     - supabase_vault (for encrypted secrets)
 --     - pg_cron       (for cleanup_old_rate_limits scheduling)
+--     - pg_trgm       (for ILIKE '%..%' search trigram indexes — see SECTION 3 / search_engine.sql)
 --
 -- pg_cron job for rate_limits cleanup (in production: daily):
 --   SELECT cron.schedule(

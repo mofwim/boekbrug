@@ -4,6 +4,8 @@ import { Suspense } from 'react'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
+import type { InvitationRow } from '@/types/rows'
+import type { User } from '@supabase/supabase-js'
 
 // المكون الداخلي الذي يستخدم useSearchParams
 function AcceptInviteContent() {
@@ -13,9 +15,11 @@ function AcceptInviteContent() {
   const supabase = createClient()
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'accepted' | 'error'>('loading')
-  const [invitation, setInvitation] = useState<any>(null)
+  // Deze pagina bewaart alleen het token; de rest van de uitnodiging wordt server-side
+  // gecontroleerd. Een volledige InvitationRow beloven zou onwaar zijn.
+  const [invitation, setInvitation] = useState<Pick<InvitationRow, 'token'> | null>(null)
   const [zzperName, setZzperName] = useState('')
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -58,13 +62,13 @@ function AcceptInviteContent() {
   }
 
   if (status === 'loading') return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <p className="text-gray-400 text-sm">Laden...</p>
     </div>
   )
 
   if (status === 'error') return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <div className="bg-white rounded-2xl p-8 shadow-sm text-center max-w-sm">
         <p className="text-2xl mb-3">❌</p>
         <p className="font-semibold text-gray-900">Uitnodiging ongeldig</p>
@@ -78,7 +82,7 @@ function AcceptInviteContent() {
   )
 
   if (status === 'accepted') return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <div className="bg-white rounded-2xl p-8 shadow-sm text-center max-w-sm">
         <p className="text-2xl mb-3">✅</p>
         <p className="font-semibold text-gray-900">Uitnodiging geaccepteerd!</p>
@@ -88,7 +92,7 @@ function AcceptInviteContent() {
   )
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <div className="bg-white rounded-2xl p-8 shadow-sm text-center max-w-sm w-full">
         <p className="text-3xl mb-4">🤝</p>
         <h1 className="text-lg font-bold text-gray-900 mb-1">Je bent uitgenodigd</h1>
@@ -134,7 +138,7 @@ function AcceptInviteContent() {
 export default function AcceptInvitePage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+      <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
         <p className="text-gray-400 text-sm">Laden...</p>
       </div>
     }>

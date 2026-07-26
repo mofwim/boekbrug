@@ -51,6 +51,15 @@ export function isValidIban(raw: string | null | undefined): boolean {
 
 // ─── EPC QR payload ───────────────────────────────────────────────────────────
 
+/**
+ * EPC069-12 line 11 (unstructured remittance) is capped at 140 characters, and the payload
+ * builder below TRUNCATES to fit. That truncation is invisible to the payer and to us, so a
+ * caller that packs several invoice numbers into one reference must check the length ITSELF
+ * before minting a request — a dropped number is a payment that can never be reconciled to the
+ * invoice it settled. See buildBundelBetaalverzoek / buildBundelBetaling.
+ */
+export const EPC_REMITTANCE_MAX = 140
+
 export interface EpcQrInput {
   iban: string // vendor IBAN (the party to be paid)
   name: string // vendor / beneficiary name
@@ -88,7 +97,12 @@ export function buildEpcQrPayload(input: EpcQrInput): EpcQrResult {
     return { ok: false, error: 'IBAN ontbreekt of is ongeldig — geen QR mogelijk' }
   }
 
-  const name = (input.name ?? '').trim().slice(0, 70)
+  // [M3] Strip CR/LF from the beneficiary name BEFORE it goes on line 6 of the newline-
+  // delimited EPC payload. Without this, a name like "Legit BV\nNL91...ATTACKER" would
+  // shift the following lines and place an attacker IBAN on the IBAN line of the QR the
+  // owner scans, while the on-screen IBAN still shows the real one. The remittance line
+  // below already strips the same way.
+  const name = (input.name ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 70)
   if (!name) {
     return { ok: false, error: 'Naam van de leverancier ontbreekt' }
   }
@@ -99,11 +113,11 @@ export function buildEpcQrPayload(input: EpcQrInput): EpcQrResult {
   }
   const amountStr = `EUR${amount.toFixed(2)}`
 
-  // Unstructured remittance — strip CR/LF (line-delimited format) and cap at 140.
+  // Unstructured remittance — strip CR/LF (line-delimited format) and cap at the spec limit.
   const remittance = (input.reference ?? '')
     .replace(/[\r\n]+/g, ' ')
     .trim()
-    .slice(0, 140)
+    .slice(0, EPC_REMITTANCE_MAX)
 
   const lines = [
     'BCD', // 1 service tag

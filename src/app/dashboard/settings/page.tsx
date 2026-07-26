@@ -4,6 +4,9 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
+// [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
+import { SnelStartCard } from '@/components/settings/SnelStartCard'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 // [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
@@ -11,13 +14,14 @@ import {
   validateKvk, validateBtw, validateIban,
   normalizeBtw, normalizeIban,
 } from '@/lib/validation'
+import type { ProfileRow } from '@/types/rows'
 
 export default function SettingsPage() {
   const router = useRouter()
   const supabase = createClient()
-  const [accountant, setAccountant] = useState<any>(null)
+  const [accountant, setAccountant] = useState<ProfileRow | null>(null)
   // حالة الملف الشخصي
-  const [profile, setProfile] = useState<any>(null)
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
 
   // حقول تعديل الملف الشخصي
   const [fullName, setFullName] = useState('')
@@ -28,6 +32,18 @@ export default function SettingsPage() {
   const [address, setAddress] = useState('')
   const [postalCode, setPostalCode] = useState('')
   const [city, setCity] = useState('')
+  // [REGIME-FLAGS] KOR (kleineondernemersregeling) opt-in. Saved with the profile; drives the
+  // accountant-handoff flag ("KOR is actief — bereken geen BTW"), never a figure by itself.
+  const [korActive, setKorActive] = useState(false)
+  // [KASSTELSEL] BTW basis: factuurstelsel (accrual) vs kasstelsel (cash basis — BTW on the pay
+  // date). vat_scheme_since is the effective date; set when switching TO kas so a past quarter is
+  // never retroactively rewritten.
+  const [vatScheme, setVatScheme] = useState<'factuur' | 'kas'>('factuur')
+  const [vatSchemeSince, setVatSchemeSince] = useState<string | null>(null)
+  // [REMINDERS] Automatic payment reminders — opt-in + cadence, saved with the profile.
+  // Default OFF: nothing is ever e-mailed to a client until the owner turns this on.
+  const [remindersEnabled, setRemindersEnabled] = useState(false)
+  const [reminderOffsetsText, setReminderOffsetsText] = useState('14, 30')
 
   // حالة دعوة المحاسب
   const [accountantEmail, setAccountantEmail] = useState('')
@@ -97,6 +113,16 @@ export default function SettingsPage() {
         setAddress(data.address || '')
         setPostalCode(data.postal_code || '')
         setCity(data.city || '')
+        setKorActive(!!data.kor_active)
+        setVatScheme(data.vat_scheme === 'kas' ? 'kas' : 'factuur')
+        setVatSchemeSince(data.vat_scheme_since ?? null)
+        setRemindersEnabled(!!data.reminders_enabled)
+        setReminderOffsetsText(
+          (Array.isArray(data.reminder_offsets) && data.reminder_offsets.length > 0
+            ? data.reminder_offsets
+            : [14, 30]
+          ).join(', ')
+        )
       }
       // جلب محاسب الـ ZZP'er إذا كان مرتبطاً — via API (service role bypasses RLS)
       if (data?.role === 'zzper') {
@@ -146,6 +172,25 @@ export default function SettingsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // [KASSTELSEL] When switching TO kas, anchor the effective date to the CURRENT quarter's
+    // start (a clean boundary — no mid-quarter straddle): the current + future quarters compute
+    // kas, past quarters stay factuur and are never retroactively rewritten. Keep the existing
+    // since-date if already on kas. (A different agreed start-date is an accountant matter.)
+    const now = new Date()
+    const qStart = `${now.getFullYear()}-${String(Math.floor(now.getMonth() / 3) * 3 + 1).padStart(2, '0')}-01`
+    let since = vatSchemeSince
+    if (vatScheme === 'kas' && (profile?.vat_scheme !== 'kas' || !since)) since = qStart
+
+    // [REMINDERS] Parse the cadence text into positive ints (unique, ascending).
+    // Empty/garbage falls back to the default {14,30} so the schedule is never blank.
+    const parsedOffsets = Array.from(new Set(
+      reminderOffsetsText
+        .split(',')
+        .map(s => parseInt(s.trim(), 10))
+        .filter(n => Number.isInteger(n) && n > 0)
+    )).sort((a, b) => a - b)
+    const finalOffsets = parsedOffsets.length > 0 ? parsedOffsets : [14, 30]
+
     // [BRIDGE-POLISH 3a-3] Store the CANONICAL form (normalized), never the raw
     // input — so what we persist always matches what was validated. KVK keeps
     // its trimmed digits; BTW/IBAN are upper-cased + whitespace-stripped.
@@ -159,17 +204,38 @@ export default function SettingsPage() {
         iban: normalizeIban(iban) || null,
         address: address,
         postal_code: postalCode,
-        city: city
+        city: city,
+        kor_active: korActive,
+        vat_scheme: vatScheme,
+        vat_scheme_since: since,
       })
       .eq('id', user.id)
 
     if (error) {
       setErrorProfile('Opslaan mislukt — probeer opnieuw')
     } else {
+      // [REMINDERS] Persist the reminder preferences in a SEPARATE, best-effort
+      // update — never bundled with the core save above. Reason: if this deploys
+      // before the invoice_reminders migration is applied, those two columns don't
+      // exist yet; bundling them would make the WHOLE profile save fail ("column
+      // does not exist") and brick Instellingen for every user. Split out, a
+      // pre-migration miss is a silent no-op here while name/KVK/BTW still save.
+      // Post-migration it simply succeeds. Order of deploy vs. migration no longer
+      // matters.
+      const { error: remErr } = await supabase
+        .from('profiles')
+        .update({ reminders_enabled: remindersEnabled, reminder_offsets: finalOffsets })
+        .eq('id', user.id)
+      if (remErr) {
+        console.warn('[REMINDERS] reminder-preferences save skipped (migration applied?)', remErr.message)
+      }
+
       // Reflect the normalized values back into the form fields
       setBtw(normalizeBtw(btw))
       setIban(normalizeIban(iban))
       setKvk(kvk.trim())
+      setVatSchemeSince(since) // [KASSTELSEL] keep local since in sync with what we persisted
+      setReminderOffsetsText(finalOffsets.join(', ')) // [REMINDERS] reflect the normalized cadence
       setSuccessProfile('Profiel opgeslagen ✓')
     }
 
@@ -217,6 +283,11 @@ export default function SettingsPage() {
 
     if (!res.ok) {
       setErrorInvite(data.error || 'Uitnodiging mislukt')
+    } else if (data.warning === 'email_failed') {
+      // [INVITE-HONEST] The invitation row was created but the e-mail did NOT go out (Resend
+      // rejected it / no API key). Don't claim "verstuurd" — tell the owner to share the link
+      // themselves so the invite isn't silently lost.
+      setErrorInvite('De uitnodiging is aangemaakt, maar de e-mail kon niet worden verzonden. Controleer het e-mailadres of deel de uitnodigingslink zelf met je boekhouder.')
     } else {
       setSuccessInvite(`Uitnodiging verstuurd naar ${accountantEmail}`)
       setAccountantEmail('')
@@ -296,26 +367,13 @@ export default function SettingsPage() {
 
   // انتظار تحميل البيانات
   if (!profile) return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <p className="text-gray-400 text-sm">Laden...</p>
     </div>
   )
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
-
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto flex items-center gap-3">
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="text-gray-400 hover:text-gray-600 text-sm"
-          >
-            ← Terug
-          </button>
-          <h1 className="text-lg font-bold text-gray-900">Instellingen</h1>
-        </div>
-      </div>
+    <div className="min-h-screen bg-[#f8f9fa]">
 
       <div className="max-w-2xl mx-auto px-6 py-6 space-y-4">
 
@@ -429,6 +487,104 @@ export default function SettingsPage() {
           {successProfile && <p className="text-sm text-green-600">{successProfile}</p>}
           {errorProfile && <p className="text-sm text-red-500">{errorProfile}</p>}
 
+          {/* [REGIME-FLAGS] KOR — kleineondernemersregeling opt-in. Saved with the profile. */}
+          <div className="border-t border-gray-100 pt-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={korActive}
+                onChange={e => setKorActive(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">
+                  Ik gebruik de kleineondernemersregeling (KOR)
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Onder de KOR breng je geen BTW in rekening. Je concept-aangifte krijgt dan een
+                  duidelijke notitie voor je boekhouder — de omzet blijft kloppen, alleen de
+                  BTW-afdracht vervalt.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {/* [KASSTELSEL] BTW-methode: factuurstelsel (accrual) vs kasstelsel (cash basis). */}
+          <div className="border-t border-gray-100 pt-4 space-y-2">
+            <span className="block text-sm font-medium text-gray-800">BTW-methode</span>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="vat_scheme"
+                checked={vatScheme === 'factuur'}
+                onChange={() => setVatScheme('factuur')}
+                className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm text-gray-800">Factuurstelsel (standaard)</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  BTW telt op de factuurdatum. De meeste ondernemers gebruiken dit.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="vat_scheme"
+                checked={vatScheme === 'kas'}
+                onChange={() => setVatScheme('kas')}
+                className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm text-gray-800">Kasstelsel</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  BTW telt op de betaaldatum — voor veel winkels/horeca verplicht. Ingaat vanaf het
+                  huidige kwartaal; eerdere kwartalen blijven ongewijzigd. Een betaalde factuur
+                  zonder betaaldatum blokkeert &ldquo;klaar&rdquo; tot je de betaling koppelt.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {/* [REMINDERS] Automatische betalingsherinneringen — opt-in + cadence. */}
+          <div className="border-t border-gray-100 pt-4 space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={remindersEnabled}
+                onChange={e => setRemindersEnabled(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">
+                  Stuur automatisch betalingsherinneringen
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Staat een verstuurde factuur na de vervaldatum nog open, dan mailt BoekBrug je klant
+                  automatisch een vriendelijke herinnering met het openstaande bedrag. Een betaalde
+                  factuur wordt nooit herinnerd — jij hoeft niets te doen.
+                </span>
+              </span>
+            </label>
+            {remindersEnabled && (
+              <div className="pl-7">
+                <label className="block text-xs font-medium text-gray-500 mb-1">
+                  Herinner na (dagen na vervaldatum)
+                </label>
+                <input
+                  type="text"
+                  value={reminderOffsetsText}
+                  onChange={e => setReminderOffsetsText(e.target.value)}
+                  className="w-40 border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder="14, 30"
+                />
+                <span className="block text-xs text-gray-400 mt-1">
+                  Bijv. &ldquo;14, 30&rdquo;: een vriendelijke herinnering na 14 dagen, een steviger na 30.
+                </span>
+              </div>
+            )}
+          </div>
+
           {/* زر الحفظ */}
           <button
             onClick={saveProfile}
@@ -438,6 +594,12 @@ export default function SettingsPage() {
             {loadingProfile ? 'Opslaan...' : 'Opslaan'}
           </button>
         </div>
+
+        {/* [PUSH] Meldingen (push notifications) — self-hides when unavailable */}
+        <PushNotificationCard />
+
+        {/* [SNELSTART] Boekhoudkoppeling — self-hides when the server has no API key */}
+        <SnelStartCard />
 
         {/* [FACTUUR-B] Factuurnummering — ZZP'er only */}
         {profile.role === 'zzper' && (

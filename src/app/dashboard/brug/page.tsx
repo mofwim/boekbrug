@@ -9,6 +9,7 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { fetchAllRows } from '@/lib/supabase-paginate'
 import {
   buildBridgeTree,
   type BridgeInvoice,
@@ -49,10 +50,26 @@ export default async function BrugServerPage() {
   //  - Accountant: invoices_accountant_read (shared=true, linked clients);
   //                documents_accountant_read (shared docs of linked clients).
   // So we simply select; the policies scope the rows correctly per role.
-  const [invoicesRes, documentsRes, foldersRes] = await Promise.all([
-    supabase.from('invoices').select(INVOICE_COLS),
-    supabase.from('documents').select(DOCUMENT_COLS).eq('trashed', false),
-    supabase.from('folders').select(FOLDER_COLS),
+  //
+  // [PAGINATION] fetchAllRows pages past PostgREST's silent ~1000-row cap. The
+  // tree's own contract is "a row must never vanish" (unknown statuses route to
+  // Overig), yet an unbounded unordered select dropped ARBITRARY rows for any
+  // archive beyond 1000 invoices/documents — and the per-client summaries
+  // computed from these arrays silently undercounted. Fail-soft: a failed
+  // page-walk yields [] exactly like the old `data ?? []`.
+  const [invoicesRaw, documentsRaw, foldersRaw] = await Promise.all([
+    fetchAllRows((from, to) => supabase
+      .from('invoices').select(INVOICE_COLS)
+      .order('id', { ascending: true }).range(from, to)
+    ).catch(() => []),
+    fetchAllRows((from, to) => supabase
+      .from('documents').select(DOCUMENT_COLS).eq('trashed', false)
+      .order('id', { ascending: true }).range(from, to)
+    ).catch(() => []),
+    fetchAllRows((from, to) => supabase
+      .from('folders').select(FOLDER_COLS)
+      .order('id', { ascending: true }).range(from, to)
+    ).catch(() => []),
   ])
 
   // NOTE: cast via `unknown` because database.types.ts may predate the B.1
@@ -60,9 +77,9 @@ export default async function BrugServerPage() {
   // BridgeInvoice/BridgeDocument are the source of truth for shape here.
   // Best fix: regenerate types →
   //   npx supabase gen types typescript --project-id <ref> > src/types/database.types.ts
-  const invoices = ((invoicesRes.data ?? []) as unknown) as BridgeInvoice[]
-  const documents = ((documentsRes.data ?? []) as unknown) as BridgeDocument[]
-  const folders = ((foldersRes.data ?? []) as unknown) as BridgeFolder[]
+  const invoices = (invoicesRaw as unknown) as BridgeInvoice[]
+  const documents = (documentsRaw as unknown) as BridgeDocument[]
+  const folders = (foldersRaw as unknown) as BridgeFolder[]
 
   // [BOEK-005] Accountant view: resolve client UUIDs → display labels
   // ("Naam — Bedrijf") so the Klanten folders show names, not raw ids.
@@ -75,7 +92,9 @@ export default async function BrugServerPage() {
 
     clientNames = new Map<string, string>()
     for (const link of links ?? []) {
-      const p = (link as any).profiles
+      const p = (link as unknown as {
+        profiles?: { id?: string; full_name?: string | null; company_name?: string | null } | null
+      }).profiles
       if (!p?.id) continue
       const name = (p.full_name ?? '').trim()
       const company = (p.company_name ?? '').trim()

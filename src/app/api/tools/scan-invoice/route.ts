@@ -20,6 +20,8 @@
 // while the small output-token ceiling caps the worst case per request.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { reserveAiBudget, TOKEN_ESTIMATE, BUDGET_EXHAUSTED_MESSAGE } from '@/lib/ai-budget'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -195,6 +197,42 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Het bestand is te groot (max 8 MB).' }, { status: 413 })
   }
   const base64 = buf.toString('base64')
+
+  // [SEC-COST] Durable cost gate — placed right before the PAID Claude call, after the cheap
+  // validation above, so only requests that would actually spend money consume a scan slot.
+  // The in-memory limiter is per serverless INSTANCE; this DB-backed, atomic limiter holds the
+  // ceiling ACROSS instances (an attacker hitting cold/rotating instances can't bypass it).
+  // Caveat: it is keyed on the client IP (clientIp reads x-forwarded-for), which a determined
+  // attacker can rotate — so this bounds naive/single-source abuse, not a spoofing botnet; the
+  // bounded max_tokens + Haiku model cap the worst case per surviving call. Fail-open only if the
+  // limiter STORE itself errors (availability over a hard block).
+  //
+  // [COST-GUARD] This block used to be a no-op. It called checkRateLimit() with
+  // `scan-ip:<ip>`, but that helper's RPC takes `p_user_id uuid` and writes into
+  // a uuid column with a FOREIGN KEY to profiles — so the cast failed on EVERY
+  // request, checkRateLimit failed open, and the "durable ceiling across
+  // instances" described above never executed once. The only real guard was the
+  // per-instance in-memory window, which this file already admits is bypassable.
+  // Now keyed by text and FAIL-CLOSED: on an unauthenticated path that spends
+  // money per request, "allow when unsure" is the absence of a limit.
+  const durable = await checkRateLimitByKey({
+    bucketKey: `scan-ip:${ip}`,
+    endpoint: '/api/tools/scan-invoice',
+    ...RATE_LIMITS.PUBLIC_SCAN,
+  })
+  if (!durable.allowed) return rateLimitResponse(durable)
+
+  // [COST-GUARD] Second, independent ceiling: the GLOBAL daily euro budget. The
+  // per-IP limit above bounds one visitor; this bounds the whole endpoint, which
+  // is what a front-page moment or a rotating-proxy attacker actually needs.
+  const budget = await reserveAiBudget({
+    inputTokens: mime === 'application/pdf' ? TOKEN_ESTIMATE.rawPdfDocument : TOKEN_ESTIMATE.imageDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'public-scan',
+  })
+  if (!budget.allowed) {
+    return NextResponse.json({ error: BUDGET_EXHAUSTED_MESSAGE }, { status: 503 })
+  }
 
   let text: string
   try {

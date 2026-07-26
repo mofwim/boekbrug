@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { translateToNL } from '@/lib/ai';
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit';
 
 export async function POST(req: NextRequest) {
   // [BOEK-018] fix: parse body once before try/catch — req.json() can only be called once — May 2026
@@ -25,6 +26,10 @@ export async function POST(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // [COST] Per-user ceiling on AI translation (Claude calls).
+    const rl = await checkRateLimit({ userId: user.id, endpoint: '/api/ai/translate', ...RATE_LIMITS.AI_TRANSLATE });
+    if (!rl.allowed) return rateLimitResponse(rl);
 
     const { text, sourceLanguage } = body;
 

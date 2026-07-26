@@ -7,9 +7,10 @@
 // that all lives server-side in bridge-tree.ts.
 
 import { useMemo, useState, useEffect } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
+import { lastCompletedQuarter } from '@/lib/quarter'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -39,15 +40,15 @@ const M3 = {
   primary:          '#1A73E8',
   onPrimary:        '#FFFFFF',
   primaryContainer: '#D3E3FD',
-  surface:          '#FFFBFE',
-  onSurface:        '#1C1B1F',
-  surfaceVariant:   '#E7E0EC',
-  outline:          '#79747E',
+  surface:          '#ffffff',
+  onSurface:        '#202124',
+  surfaceVariant:   '#f1f3f4',
+  outline:          '#80868b',
   success:          '#34A853',
   error:            '#B3261E',
   warning:          '#E37400',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
@@ -62,7 +63,7 @@ const TONE: Record<NodeBadge['tone'], { bg: string; color: string }> = {
   warning: { bg: '#FEE8C4', color: '#7C5800' },
   error:   { bg: '#F9DEDC', color: '#B3261E' },
   info:    { bg: '#D3E3FD', color: '#1967D2' },
-  neutral: { bg: '#E7E0EC', color: '#49454F' },
+  neutral: { bg: '#f1f3f4', color: '#5f6368' },
 }
 
 // [BRIDGE-POLISH 3a-1] Direction marker — reuses existing TONE swatches so no
@@ -130,19 +131,14 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
     () => clientSummaries?.find(c => c.id === selectedClientId) ?? null,
     [clientSummaries, selectedClientId]
   )
-  const now = new Date()
-  const curYear = now.getFullYear()
-  const curQuarter = Math.floor(now.getMonth() / 3) + 1
+  const curYear = new Date().getFullYear()
 
-  // [BRIDGE-QUARTER-PICKER] The accountant works per quarter/year and can switch
-  // both (Q1–Q4 buttons + year arrows). Default lands on the LAST COMPLETED
-  // quarter — the one whose BTW is actually due to be closed — not the current
-  // (still-open) quarter. So on 1 Jan 2027 the accountant opens straight onto
-  // Q4 2026, exactly the quarter they need, with no extra click. Crossing the
-  // year boundary is handled: in Q1, last completed is Q4 of the previous year.
-  const lastCompleted = curQuarter === 1
-    ? { year: curYear - 1, quarter: 4 }
-    : { year: curYear, quarter: curQuarter - 1 }
+  // [BRIDGE-QUARTER-PICKER] The accountant works per quarter/year and can switch both
+  // (Q1–Q4 buttons + year arrows). The default lands on the LAST COMPLETED quarter — the
+  // one whose BTW is due — via the SHARED quarter.ts helper (UTC), so the accountant hub
+  // opens on the SAME quarter the owner's klaar/resultaat/aangifte default to (previously
+  // this was a duplicated local-time computation that could drift a day at a boundary).
+  const lastCompleted = lastCompletedQuarter()
   const [selectedYear, setSelectedYear] = useState<number>(lastCompleted.year)
   const [selectedQuarter, setSelectedQuarter] = useState<number>(lastCompleted.quarter)
 
@@ -167,50 +163,50 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
 
   const level = useMemo(() => computeLevel(nodes, cwd, showHidden), [nodes, cwd, showHidden])
   const showToggle = useMemo(() => hasHidden(nodes), [nodes])
-  const homeHref = role === 'accountant' ? '/dashboard/accountant' : '/dashboard'
 
   const isEmpty = level.folders.length === 0 && level.files.length === 0
+
+  // [HEADER-SYSTEM] Title "Brug" + back live in the shared sub-page bar
+  // (DashboardChrome/STATIC_TITLES). The old in-body header duplicated the title
+  // and offered a "Home" link instead of back; it is removed and only the explicit
+  // refresh action is pushed into the shared bar's actions slot.
+  useSubPageHeader(
+    {
+      actions: (
+        <button
+          onClick={() => router.refresh()}
+          title="Vernieuwen"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
+          Vernieuwen
+        </button>
+      ),
+    },
+    [],
+  )
 
   // [BRIDGE-HUB] When the accountant picks a client and opens the Documenten
   // tab, scope the tree to that client by seeding cwd to ['Klanten', label].
   // Selecting a different client resets the dive.
-  useEffect(() => {
-    if (isAccountant && selectedClient && hubTab === 'documenten') {
-      setCwd(prev => {
-        const root = ['Klanten', selectedClient.label]
-        // already inside this client → keep the deeper position
-        if (prev[0] === 'Klanten' && prev[1] === selectedClient.label) return prev
-        return root
-      })
+  // [REACT] State bijstellen tijdens de render in plaats van via een effect: dit is afgeleide
+  // state (welke klantmap hoort bij de huidige keuze), geen synchronisatie met de buitenwereld.
+  // Het effect deed een tweede renderronde en liet de gebruiker één frame de oude map zien.
+  const clientRoot =
+    isAccountant && selectedClient && hubTab === 'documenten' ? selectedClient.label : null
+  const [prevClientRoot, setPrevClientRoot] = useState<string | null>(clientRoot)
+  if (prevClientRoot !== clientRoot) {
+    setPrevClientRoot(clientRoot)
+    if (clientRoot) {
+      // Zit de gebruiker al ín deze klant, dan blijft de diepere positie staan.
+      setCwd(prev =>
+        prev[0] === 'Klanten' && prev[1] === clientRoot ? prev : ['Klanten', clientRoot],
+      )
     }
-  }, [isAccountant, selectedClient, hubTab])
+  }
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: 0, letterSpacing: -0.3 }}>
-          Brug
-        </h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* [BRIDGE-REFRESH] expliciete vernieuw-knop — naast de automatische focus-refresh */}
-          <button
-            onClick={() => router.refresh()}
-            title="Vernieuwen"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
-            Vernieuwen
-          </button>
-          <Link
-            href={homeHref}
-            style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>home</span>
-            Home
-          </Link>
-        </div>
-      </div>
 
       {/* [BRIDGE-HUB] Layer 2 — accountant control center: client dropdown +
           persistent Pakket action + tabs. ZZP keeps the classic tree below. */}
@@ -269,7 +265,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
                 })}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 8 }}>
                   <button
-                    onClick={() => setSelectedYear(y => y - 1)}
+                    onClick={() => setSelectedYear(y => Math.max(2000, y - 1))}
                     title="Vorig jaar"
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}
                   >
@@ -564,31 +560,52 @@ function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: bool
 
   return row
 }
-// ─── [BRIDGE-HUB] Layer 2 — Overzicht panel (readiness, honest status) ────────
-interface PackageSummary {
-  quarter: string
-  outgoingCount: number
-  incomingCount: number
-  filesIncluded: number
-  bankStatementIncluded: boolean
-  warnings: { code: string; message: string }[]
-  generatedAt: string
+// ─── [BRIDGE-HUB] Layer 2 — Overzicht panel (the per-client readiness verdict) ────
+// [ACCOUNTANT-TRUTH] Uses the SAME strict readiness engine the owner sees
+// (/api/readiness?clientId): a weighted score, what's still missing, and the
+// reconciliation differences to eyeball — not the old binary warnings view. The
+// accountant now opens on the exact verdict the store owner reads.
+type ReadinessStatus = 'ready' | 'almost' | 'attention'
+interface ReadinessReport {
+  quarterLabel: string
+  score: number
+  status: ReadinessStatus
+  missing: { title: string; detail?: string }[]
+  risks: { title: string; detail?: string }[]
+}
+interface ReadinessResponse {
+  report: ReadinessReport
+  concept: { verschuldigd: number; voorbelasting: number; saldo: number }
+}
+const READINESS_STATUS: Record<ReadinessStatus, { emoji: string; title: string; bg: string; fg: string }> = {
+  ready:     { emoji: '🟢', title: 'Klaar voor verwerking', bg: '#CEEAD6', fg: '#137333' },
+  almost:    { emoji: '🟡', title: 'Bijna klaar',            bg: '#FEE8C4', fg: '#7C5800' },
+  attention: { emoji: '🔴', title: 'Nog niet klaar',         bg: '#F9DEDC', fg: '#B3261E' },
 }
 
 function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
-  const [data, setData] = useState<PackageSummary | null>(null)
+  const [data, setData] = useState<ReadinessResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setError(false); setData(null)
-    const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
-    fetch(`/api/closing-package/summary?${params}`)
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(j => { if (!cancelled) setData(j) })
-      .catch(() => { if (!cancelled) setError(true) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    ;(async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body (cascaderende renders).
+      setLoading(true); setError(false); setData(null)
+      const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
+      try {
+        const r = await fetch(`/api/readiness?${params}`)
+        if (!r.ok) throw new Error('readiness')
+        const j = await r.json()
+        if (!cancelled) { if (j?.report) setData(j); else setError(true) }
+      } catch {
+        if (!cancelled) setError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
   }, [clientId, year, quarter])
 
@@ -603,119 +620,102 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
     )
   }
 
-  const totalInvoices = data.outgoingCount + data.incomingCount
-  // Honest readiness: complete when there are verified invoices and no warnings.
-  const isComplete = data.warnings.length === 0 && totalInvoices > 0
+  const rep = data.report
+  const meta = READINESS_STATUS[rep.status]
+  const teBetalen = data.concept.saldo >= 0
+
+  const itemList = (title: string, color: string, items: { title: string; detail?: string }[]) => (
+    <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {items.map((it, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>error_outline</span>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface }}>{it.title}</div>
+              {it.detail && <div style={{ fontSize: 12, color: M3.outline, marginTop: 2, lineHeight: 1.5 }}>{it.detail}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ fontFamily: FONT }}>
-      {/* [BRUG-HONEST] Status banner — only when NOT complete; no premature Compleet claim */}
-      {!isComplete && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderRadius: R.lg, marginBottom: 14, background: '#FEE8C4' }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7C5800' }}>
-            warning
-          </span>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#7C5800' }}>
-              Nog niet compleet
-            </div>
-            <div style={{ fontSize: 12.5, color: '#7C5800', opacity: 0.85 }}>
-              {data.quarter} · {data.warnings.length} {data.warnings.length === 1 ? 'aandachtspunt' : 'aandachtspunten'}
-            </div>
-          </div>
+      {/* Verdict — the strict, turnover-aware readiness (same as the owner sees) */}
+      <div style={{ background: meta.bg, borderRadius: R.lg, padding: '16px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 26, lineHeight: 1 }}>{meta.emoji}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: meta.fg }}>{meta.title}</div>
+          <div style={{ fontSize: 12.5, color: meta.fg, opacity: 0.85 }}>{rep.quarterLabel}</div>
         </div>
-      )}
-
-      {/* What's inside — real counts only */}
-      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 14 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: M3.outline, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 12 }}>
-          Wat zit erin
-        </div>
-        <SummaryRow icon="receipt_long" label="Uitgaande facturen" value={String(data.outgoingCount)} />
-        <SummaryRow icon="receipt" label="Inkomende facturen" value={String(data.incomingCount)} />
-        <SummaryRow icon="picture_as_pdf" label="Facturen met PDF" value={String(data.filesIncluded)} />
-        <SummaryRow
-          icon="account_balance"
-          label="Bankafschrift"
-          value={data.bankStatementIncluded ? 'Aanwezig' : 'Ontbreekt'}
-          valueColor={data.bankStatementIncluded ? '#137333' : M3.error}
-          last
-        />
+        <div style={{ fontSize: 24, fontWeight: 800, color: meta.fg }}>{rep.score}%</div>
       </div>
 
-      {/* Honest missing list — specific, never a fake score */}
-      {data.warnings.length > 0 && (
-        <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', border: `1px solid #FEE8C4` }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#7C5800', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
-            Aandachtspunten
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {data.warnings.map((w, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13.5, color: M3.onSurface }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.warning, flexShrink: 0 }}>error_outline</span>
-                <span>{w.message}</span>
-              </div>
-            ))}
-          </div>
+      {rep.missing.length > 0 && itemList('Wat moet er nog gebeuren', '#7C5800', rep.missing)}
+      {rep.risks.length > 0 && itemList('Even controleren', M3.error, rep.risks)}
+      {rep.missing.length === 0 && rep.risks.length === 0 && (
+        <div style={{ background: '#CEEAD6', color: '#137333', borderRadius: R.lg, padding: '12px 16px', marginBottom: 12, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
+          Niets openstaand — alles sluit aan.
         </div>
       )}
+
+      {/* Concept BTW saldo — the number to file */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface }}>
+          {teBetalen ? 'Concept BTW te betalen' : 'Concept BTW terug te ontvangen'}
+        </span>
+        <span style={{ fontSize: 18, fontWeight: 700, color: teBetalen ? M3.onSurface : '#137333' }}>{fmtEur(Math.abs(data.concept.saldo))}</span>
+      </div>
     </div>
   )
 }
 
-function SummaryRow({ icon, label, value, valueColor, last }: { icon: string; label: string; value: string; valueColor?: string; last?: boolean }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: last ? 'none' : `1px solid #F1F1F1` }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.outline }}>{icon}</span>
-      <span style={{ flex: 1, fontSize: 14, color: M3.onSurface }}>{label}</span>
-      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor ?? M3.onSurface }}>{value}</span>
-    </div>
-  )
-}
-
-// ─── [BRIDGE-HUB] Layer 2 — Kwartaal panel (lazy-loads quarter numbers) ────────
-interface ZzpSummary {
-  totalIn: number
-  totalOut: number
-  totalBtwIn: number
-  totalBtwOut: number
-}
+// ─── [BRIDGE-HUB] Layer 2 — Kwartaal panel: the TURNOVER-AWARE result ──────────
+// [ACCOUNTANT-TRUTH] Was invoice-only (/api/quarterly) — for a retail client that
+// OMITTED almost all revenue (till turnover isn't an invoice), so the accountant saw a
+// near-zero income while the ZIP beside it held the correct figure. Now it uses the same
+// cross-channel engine the owner sees (/api/result?clientId): omzet/kosten/resultaat +
+// concept BTW (5a/5b/5g) from invoices + bank + kas + dagomzet, de-duplicated. The number
+// the accountant reads now matches the ZIP and the owner's readiness screen.
+interface QuarterResult { omzet: number; kosten: number; resultaat: number; cashOmzetZonderBtw: number }
+interface ConceptBtw { verschuldigd: number; voorbelasting: number; saldo: number }
 
 function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: number; quarter: number }) {
-  const [data, setData] = useState<ZzpSummary | null>(null)
+  const [pnl, setPnl] = useState<QuarterResult | null>(null)
+  const [concept, setConcept] = useState<ConceptBtw | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setError(false); setData(null)
-    const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
-    fetch(`/api/quarterly?${params}`)
-      .then(r => r.json())
-      .then(j => {
+    ;(async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body (cascaderende renders).
+      setLoading(true); setError(false); setPnl(null); setConcept(null)
+      const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
+      // P&L (omzet/kosten/resultaat, cents-accurate) from /api/result; the concept BTW
+      // (5a/5b/5g, WHOLE-EURO per the Belastingdienst form) from /api/aangifte — so the
+      // Kwartaal tab's "5g" equals the Overzicht verdict, the owner's screens and the ZIP,
+      // instead of the raw cents scalar it used to (wrongly) label "5a/5b/5g".
+      try {
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${params}`),
+          fetch(`/api/aangifte?${params}`),
+        ])
+        if (!rRes.ok || !aRes.ok) throw new Error('kwartaal')
+        const [rj, aj] = await Promise.all([rRes.json(), aRes.json()])
         if (cancelled) return
-        // Accountant path returns a full QuarterlySummary; derive in/out from it.
-        // ZZP path returns totalIn/totalOut directly. Support both shapes.
-        if (j && typeof j === 'object') {
-          if ('totalIn' in j) {
-            setData({ totalIn: j.totalIn, totalOut: j.totalOut, totalBtwIn: j.totalBtwIn, totalBtwOut: j.totalBtwOut })
-          } else if ('totalIncl' in j) {
-            // QuarterlySummary: split incoming/outgoing from invoices array
-            const invs = Array.isArray(j.invoices) ? j.invoices : []
-            let tIn = 0, tOut = 0, bIn = 0, bOut = 0
-            for (const inv of invs) {
-              const inc = inv.total_inc_btw ?? 0, btw = inv.btw_amount ?? 0
-              if (inv.direction === 'incoming') { tOut += inc; bOut += btw }
-              else { tIn += inc; bIn += btw }
-            }
-            setData({ totalIn: tIn, totalOut: tOut, totalBtwIn: bIn, totalBtwOut: bOut })
-          } else {
-            setError(true)
-          }
-        } else setError(true)
-      })
-      .catch(() => { if (!cancelled) setError(true) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+        if (rj?.result && aj?.aangifte) { setPnl(rj.result); setConcept(aj.aangifte) }
+        else setError(true)
+      } catch {
+        if (!cancelled) setError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
   }, [clientId, year, quarter])
 
@@ -726,7 +726,7 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
       </div>
     )
   }
-  if (error || !data) {
+  if (error || !pnl || !concept) {
     return (
       <div style={{ textAlign: 'center', padding: '32px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, fontFamily: FONT }}>
         <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>Cijfers konden niet geladen worden</p>
@@ -734,43 +734,43 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
     )
   }
 
+  const teBetalen = concept.saldo >= 0
+  const line = (label: string, value: string, opts: { color?: string; strong?: boolean; top?: boolean } = {}) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderTop: opts.top ? '1px solid #f1f3f4' : 'none', marginTop: opts.top ? 4 : 0 }}>
+      <span style={{ fontSize: opts.strong ? 14.5 : 13.5, fontWeight: opts.strong ? 700 : 500, color: opts.color ?? M3.onSurface }}>{label}</span>
+      <span style={{ fontSize: opts.strong ? 18 : 15, fontWeight: opts.strong ? 700 : 600, color: opts.color ?? M3.onSurface }}>{value}</span>
+    </div>
+  )
+
   return (
     <div style={{ fontFamily: FONT }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: M3.outline, marginBottom: 10 }}>
-        Q{quarter} {year}
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: M3.outline, marginBottom: 10 }}>
+        Q{quarter} {year} · alle kanalen (kassa, bank, kas, facturen)
       </div>
-      {/* Inkomsten */}
-      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', marginBottom: 10, border: `1px solid #CEEAD6` }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#137333', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-          Inkomsten — geverifieerd
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 11, color: M3.outline }}>Incl. BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#137333' }}>{fmtEur(data.totalIn)}</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, color: M3.outline }}>BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#137333' }}>{fmtEur(data.totalBtwIn)}</div>
-          </div>
-        </div>
+
+      {/* Resultaat — cross-channel P&L (cents-accurate) */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px', marginBottom: 10 }}>
+        {line('Omzet (excl. BTW)', fmtEur(pnl.omzet), { color: '#137333' })}
+        {line('Kosten (excl. BTW)', fmtEur(pnl.kosten), { color: '#B3261E' })}
+        {line('Resultaat', fmtEur(pnl.resultaat), { strong: true, top: true })}
       </div>
-      {/* Uitgaven */}
-      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px', border: `1px solid #F9DEDC` }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#B3261E', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-          Uitgaven — geverifieerd
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 11, color: M3.outline }}>Incl. BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#B3261E' }}>{fmtEur(data.totalOut)}</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, color: M3.outline }}>BTW</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#B3261E' }}>{fmtEur(data.totalBtwOut)}</div>
-          </div>
-        </div>
+
+      {/* Concept BTW — whole-euro, matches het formulier, de ZIP en het Overzicht */}
+      <div style={{ background: '#fff', borderRadius: R.lg, boxShadow: EL1, padding: '10px 16px' }}>
+        {line('BTW verschuldigd (5a)', fmtEur(concept.verschuldigd))}
+        {line('Voorbelasting (5b)', `− ${fmtEur(concept.voorbelasting)}`)}
+        {line(
+          teBetalen ? 'Concept te betalen (5g)' : 'Concept terug te ontvangen (5g)',
+          fmtEur(Math.abs(concept.saldo)),
+          { strong: true, top: true, color: teBetalen ? M3.onSurface : '#137333' },
+        )}
       </div>
+
+      {pnl.cashOmzetZonderBtw > 0 && (
+        <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: R.md, background: '#FEE8C4', color: '#7C5800', fontSize: 12.5, lineHeight: 1.5 }}>
+          {fmtEur(pnl.cashOmzetZonderBtw)} omzet (contant of via de bank) heeft nog geen BTW-tarief — die BTW zit niet in 5a.
+        </div>
+      )}
     </div>
   )
 }

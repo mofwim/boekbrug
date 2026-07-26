@@ -4,7 +4,10 @@ import {
   needsDocument,
   counterpartKey,
   suggestIdentity,
+  isPosPayoutDescription,
+  bestSimilarMemory,
   type TxIdentity,
+  type MemoryEntry,
 } from "./bank-identity";
 
 let passed = 0;
@@ -29,6 +32,23 @@ eq("Private withdrawal", null, "Prive opname", -800, "prive");
 eq("Bank fees", "ING Bank", "Kosten betaalrekening", -1.9, "fee");
 eq("POS payout (ING DD&C) credit", "ING DD&C", "Afrek. transacties", 842.15, "pos_income");
 eq("SumUp payout credit", "SUMUP PAYOUT", "SumUp", 210.5, "pos_income");
+
+console.log("\n— [FINDING-1] acquirer coverage matches ACQUIRER_VENDOR_RE (no missed double-count) —");
+// These acquirers were in the fee-dedup regex but NOT the classifier, so their daily payout
+// fell to the sign-based 'omzet' fallback and was double-counted on top of the till takings.
+eq("Rabo OmniKassa payout credit", "Rabo OmniKassa", "afrekening periode 27", 2086.65, "pos_income");
+eq("Worldline payout credit", "Worldline", "settlement", 1540.0, "pos_income");
+eq("Nets payout credit", "Nets", "uitbetaling", 733.2, "pos_income");
+eq("Buckaroo payout credit", "Buckaroo", "uitbetaling webshop", 410.0, "pos_income");
+eq("Equens payout credit", "Equens", "CTAP afrekening", 999.9, "pos_income");
+eq("Paysquare payout credit", "Paysquare", "afrekening", 512.0, "pos_income");
+eq("Klarna payout credit", "Klarna", "uitbetaling", 305.5, "pos_income");
+// The CREDIT gate must hold: a purchase AT one of these terminals (a DEBIT) is a cost, not takings.
+eq("Worldline DEBIT (a purchase) is not takings", "Worldline", "betaalautomaat", -12.5, "unknown");
+check("isPosPayoutDescription matches an acquirer name (for the omzet-mistap safety net)",
+  isPosPayoutDescription("Rabo OmniKassa afrekening periode") === true);
+check("isPosPayoutDescription is false for a non-acquirer transfer",
+  isPosPayoutDescription("overboeking webshop bestelling 8842") === false);
 
 console.log("\n— the tricky ones (correctness the old POS heuristic got wrong) —");
 // A "betaalautomaat" DEBIT is a card PURCHASE — a real cost that needs a receipt,
@@ -79,6 +99,104 @@ check("unexplained credit → omzet",
   suggestIdentity("Onbekend", "overboeking", 250).category === "omzet");
 check("transfer beats the kosten fallback",
   suggestIdentity(null, "Opname Geldautomaat", -100).category === "transfer");
+
+console.log("\n— confident flag (governs safe bulk-apply) —");
+check("memory match is confident",
+  suggestIdentity("Shell", "brandstof", -60, "kosten").confident === true);
+check("pattern match (tax) is confident",
+  suggestIdentity("Belastingdienst", "BTW", -1200).confident === true);
+check("pattern match (transfer) is confident",
+  suggestIdentity(null, "Opname Geldautomaat", -100).confident === true);
+check("pattern match (pos_income) is confident",
+  suggestIdentity("ING DD&C", "Afrek.", 842.15).confident === true);
+check("kosten fallback is NOT confident (never auto-apply)",
+  suggestIdentity("Bol.com", "iDEAL", -49.99).confident === false);
+check("omzet fallback is NOT confident (never auto-apply)",
+  suggestIdentity("Onbekend", "overboeking", 250).confident === false);
+
+console.log("\n— bestSimilarMemory (learn from a look-alike counterpart) —");
+{
+  const mem: MemoryEntry[] = [
+    { key: "jansen", category: "kosten" },
+    { key: "belastingdienst", category: "tax" },
+    { key: "albert heijn", category: "kosten" },
+  ];
+  // Subset: the new name contains the whole memorized name → score 1.0.
+  const h1 = bestSimilarMemory("jansen groothandel amsterdam", mem);
+  check("subset match borrows the category", h1?.category === "kosten" && h1?.matchedKey === "jansen");
+  // Superset the other way: memorized "albert heijn", new "albert heijn" + store no. → contained.
+  const h2 = bestSimilarMemory("albert heijn 1234", mem);
+  check("longer memorized name still matches on containment", h2?.category === "kosten");
+  // No shared token at all → null.
+  check("no overlap → null", bestSimilarMemory("gamma bouwmarkt", mem) === null);
+  // Only a generic tussenvoegsel shared → null (no distinctive token).
+  const genMem: MemoryEntry[] = [{ key: "van der berg", category: "kosten" }];
+  check("shared tussenvoegsel only → null", bestSimilarMemory("van der meer", genMem) === null);
+  // A distinctive shared surname DOES match despite the tussenvoegsel.
+  check("distinctive surname overlap matches", bestSimilarMemory("van der berg holding", genMem)?.category === "kosten");
+  // Ambiguous: two equally-similar memories disagree on category → suggest nothing.
+  const ambMem: MemoryEntry[] = [
+    { key: "amsterdam transport", category: "kosten" },
+    { key: "amsterdam catering", category: "omzet" },
+  ];
+  check("equally-similar but conflicting categories → null", bestSimilarMemory("amsterdam handel", ambMem) === null);
+  // An exact key is NOT a similarity hit (that path is exact-memory).
+  check("exact key is excluded from similarity", bestSimilarMemory("jansen", [{ key: "jansen", category: "kosten" }]) === null);
+  // Empty / null key → null.
+  check("null key → null", bestSimilarMemory(null, mem) === null);
+
+  // [REVIEW-FIX #1] An acquirer/PSP name is noise, not a distinctive identity token: two
+  // unrelated shops settled via the same processor must NOT be matched on the processor name.
+  check("worldline-prefixed unrelated shops don't match on the PSP name",
+    bestSimilarMemory(counterpartKey("WORLDLINE*JANSEN"), [{ key: counterpartKey("WORLDLINE*PIETERSEN") ?? "", category: "kosten" }]) === null);
+  check("a bare OmniKassa memory doesn't match every OmniKassa merchant",
+    bestSimilarMemory(counterpartKey("OMNIKASSA ACME CATERING"), [{ key: counterpartKey("OMNIKASSA") ?? "x", category: "kosten" }]) === null);
+
+  // [REVIEW-FIX #2] Duplicate tokens must never push the score above 1.0 and defeat the
+  // ambiguity guard. "Jansen Jansen Advocaten" (kosten) vs "Jansen Bakkerij" (omzet) for query
+  // "Jansen" is a genuine disagreeing tie → suggest nothing.
+  const dupMem: MemoryEntry[] = [
+    { key: "jansen jansen advocaten", category: "kosten" },
+    { key: "jansen bakkerij", category: "omzet" },
+  ];
+  const dupHit = bestSimilarMemory("jansen", dupMem);
+  check("duplicate tokens can't defeat the disagreeing-category guard", dupHit === null);
+  check("score never exceeds 1.0", (bestSimilarMemory("jansen", [{ key: "jansen jansen advocaten", category: "kosten" }])?.score ?? 0) <= 1.0);
+
+  // [REVIEW-FIX #3] A shared first name is not a business match.
+  check("shared first name only → null",
+    bestSimilarMemory("pieter bakker", [{ key: "pieter jansen", category: "kosten" }]) === null);
+  check("shared SURNAME still matches (first name ignored, surname carries it)",
+    bestSimilarMemory("pieter bakker", [{ key: "jan bakker", category: "kosten" }])?.category === "kosten");
+}
+
+console.log("\n— KEY_NOISE mirrors the POS acquirer list (no drift) —");
+{
+  // Every acquirer/PSP name the classifier recognises must also be stripped by counterpartKey,
+  // or it re-enters as a false similarity token. Assert the specific ones the review flagged.
+  for (const acq of ["worldline", "paysquare", "equens", "nets", "omnikassa"]) {
+    check(`'${acq}' is stripped from the counterpart key`, counterpartKey(`${acq} WINKEL`) === "winkel");
+  }
+}
+
+console.log("\n— suggestIdentity with a similar hit (review-only, never confident) —");
+{
+  const hit = { category: "kosten", matchedKey: "jansen", score: 1 };
+  const s = suggestIdentity("Jansen Groothandel", "iDEAL", -320, null, hit);
+  check("similar borrows the category", s.category === "kosten");
+  check("similar source is 'similar'", s.source === "similar");
+  check("similar is NEVER confident (never auto-applied)", s.confident === false);
+  check("similar carries the look-alike key", s.similarTo === "jansen");
+  // Exact memory still wins over a similar hit.
+  const s2 = suggestIdentity("Jansen Groothandel", "iDEAL", -320, "prive", hit);
+  check("exact memory beats similar", s2.source === "memory" && s2.category === "prive");
+  // A confident pattern still beats a similar hit.
+  const s3 = suggestIdentity("Belastingdienst", "BTW", -1200, null, hit);
+  check("pattern (tax) beats similar", s3.source === "ai" && s3.category === "tax");
+  // No similar hit → the plain sign fallback is unchanged.
+  const s4 = suggestIdentity("Bol.com", "iDEAL", -49.99, null, null);
+  check("no similar → sign fallback unchanged", s4.category === "kosten" && s4.confident === false && s4.source === "ai");
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

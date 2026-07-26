@@ -1,0 +1,150 @@
+# Jouw lijst — alles wat alleen jij kunt doen
+
+*Bijgewerkt 26 juli 2026. Elk codepunt op deze tak is af, getest en gepusht; wat hier staat
+is de rest.*
+
+> **Lees dit als één ding:** de app is vandaag veilig live te zetten. Er wordt niemand
+> gefactureerd, niemand buitengesloten en er wordt niets verwijderd, ongeacht wat je van
+> deze lijst wel of niet doet. Alles hieronder maakt iets *mogelijk* — geen enkel punt
+> repareert iets dat stuk is.
+
+---
+
+## 1. Nu — één migratie en één instelling
+
+**☐ Migratie 10: `kluis_subscriptions.sql`**
+Stap 1 t/m 9 heb je toegepast en gecontroleerd. Deze is nieuw en moet vóór de eerste
+Bewaarkluis-betaling: zonder haar neemt de webhook het geld aan en legt de verplichting van
+zeven jaar nergens vast. Het CONTROLE-blok staat onderaan het bestand.
+
+**☐ `AI_DAILY_BUDGET_EUR=0` in Vercel**
+Nul betekent: **wél tellen, niet begrenzen**. Dat is de juiste stand voor je eerste weken —
+je leert je echte uitgaven kennen voordat je een getal kiest. Laat je hem leeg, dan geldt
+€ 5/dag, en dat is bij ± € 0,019 per gescand document zo'n 260 documenten per dag over
+*alle* gebruikers samen. Ruim voor de eerste gebruikers, krap voor tien tegelijk.
+
+Meekijken: `select * from ai_spend_daily order by day desc limit 7;`
+
+**☐ `RETENTION_PURGE_ENABLED` leeg laten**
+Dit is de enige schakelaar in de app die data vernietigt. Leeg = dry run. Er kan niets vóór
+2033 aan de beurt zijn; meldt een dry run nu al een kandidaat, dan is er een datum verkeerd
+gezet — uitzoeken, niet aanzetten.
+
+---
+
+## 2. Voordat je geld kunt aannemen
+
+**☐ KVK-inschrijving en een zakelijke bankrekening**
+Zonder deze twee keert Stripe niet uit, en zolang er geen echt KVK-nummer is blijft `/steun`
+bewust een 404: er wordt nooit om geld gevraagd zonder identificeerbare rechtspersoon.
+
+**☐ De bedrijfsidentiteit in Vercel**
+`NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` · `_ADDRESS` · `_CITY`
+Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit als een
+echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand.
+
+**☐ Stripe: twee prijzen, niet één**
+
+| | Bedrag | Vorm |
+|---|---|---|
+| `STRIPE_PRICE_ID_PLUS` | **€ 12,99 per maand**, incl. btw | terugkerend |
+| `STRIPE_PRICE_ID_KLUIS_YEAR` | **€ 19 per bewaarjaar**, incl. btw | eenmalig |
+
+Het bedrag in Stripe moet **exact** gelijk zijn aan wat de voorwaarden publiceren. De
+checkout dwingt acceptatie van die voorwaarden af, dus een verschil is precies het gat waar
+de klant gelijk in krijgt.
+
+**☐ Stripe: iDEAL aan, Invoicing aan, Billing Portal met zelf-opzeggen aan**
+Kaart-alleen verliest echte Nederlandse klanten bij de laatste klik. Zelf kunnen opzeggen is
+onder EU-consumentenrecht geen keuze.
+
+**☐ Webhook**
+Endpoint `https://boekbrug.nl/api/billing/webhook`, events:
+`checkout.session.completed`, `customer.subscription.created`, `.updated`, `.deleted`,
+`invoice.payment_failed`. Het ondertekengeheim in `STRIPE_WEBHOOK_SECRET` — dat is het enige
+dat tussen een publiek eindpunt en willekeurig wie op internet staat.
+
+**☐ Testen in testmodus, en pas daarna live**
+Kaart `4242 4242 4242 4242`, dan test-iDEAL. Kijk of de webhook aankomt en het profiel op
+`active`/`plus` springt. Zeg op → toegang loopt door tot het einde van de betaalde periode.
+Laat een betaling mislukken → de mail komt en **de toegang blijft**. Pas als dat allemaal
+klopt: live sleutels, één echte betaling op je eigen account, en kijken of de btw-factuur
+klopt.
+
+---
+
+## 3. Eén beveiligingspunt dat ik niet kon afmaken
+
+**☐ `xlsx` naar 0.20.3**
+Twee CVE's op de gepinde 0.18.5. De reparatie staat alleen op `cdn.sheetjs.com` (SheetJS is
+van npm af) en die host geeft 403 in deze omgeving — in de andere sessie ook. Je hebt er een
+omgeving voor nodig die erbij kan:
+
+```bash
+npm install https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+npm audit && npx tsc --noEmit && npx tsx --test src/lib/*.test.ts && npm run build
+```
+
+Daarna één echte Z-rapportage, één grootboekexport en één bank-`.xlsx` uploaden om te zien
+dat het parsen niet is veranderd. **Je bent intussen niet blootgesteld aan de ergste helft**:
+de prototype-pollution is ingedamd op de parsergrens (`xlsx-adapter.ts`) en de ReDoS is
+begrensd. Doe dit vóór je mensen onboardt die bestanden uploaden.
+
+---
+
+## 4. Het experiment waar dit allemaal voor was
+
+Tien mensen, persoonlijk begeleid. Geen advertenties tot deze poort door is.
+
+De poort is **niet** meer "vraag om de kaart" — het product is gratis, er is niets te vragen.
+Dat is een echte prijs van het model dat je hebt gekozen: **er is geen vroeg
+inkomstensignaal.** De vervanging:
+
+> ≥ 3 van de 10 nog actief **ná één volledig afgesloten kwartaal**, en
+> ≥ 1 boekhouder die dat kwartaal daadwerkelijk heeft opgehaald.
+
+Betalen komt later, uit Plus en uit de Bewaarkluis. Haal je die poort niet, interview dan
+alle tien — hun antwoord is meer waard dan welk strategiedocument ook, dit inbegrepen.
+
+---
+
+## 5. Wat je in week één in de gaten houdt
+
+| Waar | Waarop |
+|---|---|
+| Stripe → Webhooks | elke aflevering die geen 200 is. Een falende webhook = iemand betaalde en de app weet het niet |
+| Vercel-logs `[BILLING]` | `UNATTRIBUTED subscription` — een echte betaling zonder account erbij |
+| Vercel-logs `[KLUIS]` | `UNATTRIBUTED bewaarkluis payment` — hetzelfde, maar voor het archiefproduct |
+| Vercel-logs `[COST-GUARD]` | `DAILY AI BUDGET EXHAUSTED` — de zekering is doorgeslagen, er moet iemand kijken |
+| Vercel-logs `[CRON-RETENTION]` | élke kandidaat. Er kan niets vóór 2033 aan de beurt zijn |
+| Sentry | nieuwe fouten in `/api/billing/*`, `/api/kluis/*` en de crons |
+
+---
+
+## 6. Wat bewust NIET is gebouwd
+
+Jaarabonnementen · boekhoudersplannen · kortingscodes · proration · een volledige
+dunning-reeks · Mollie · meerdere valuta · een proefperiode.
+
+Elk daarvan is een antwoord op een vraag die je nog niet hebt verdiend. En de proefperiode
+staat er niet tussen bij toeval: die is uit de andere tak bewust **niet** overgenomen, want
+een klok die stil begint te lopen en later toegang kan intrekken is precies het gedrag waar
+dit product zich van onderscheidt. Zie `docs/PORT_VAN_BILLING_TAK.md` §3.
+
+---
+
+## 7. Twee open punten, eerlijk benoemd
+
+1. **De mailrobot telt nog niet mee in het eerlijk gebruik.** `/api/cron/email-sync` draait
+   namens de gebruiker via service_role; per binnengekomen bijlage door de poort sturen
+   vraagt een aparte ronde. Tot die er is draagt de begrenzing daar op de dagzekering, en
+   blijft een verlaten mailbox van een gratis account meelopen. Betaalbaar, niet gratis.
+2. **Eén `deletion_requests`-rij heeft `data_eligible_for_deletion_at = null`** — een account
+   dat is verwijderd voordat de tijdstempel bestond. De purge laat hem met rust (hij eist
+   twee kloppende datums), dus er gaat niets mis. Verdient ooit een blik, niet vandaag.
+
+---
+
+*Verwant: `docs/MIGRATIES_VOLGORDE.md` (de negen + één migraties) ·
+`docs/PORT_VAN_BILLING_TAK.md` (wat er uit de andere tak is overgenomen en wat niet) ·
+`docs/BEWAARKLUIS_BUSINESS_CASE.md` (waarom de bewaarplicht een voordeur is).*

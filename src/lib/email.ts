@@ -2,10 +2,57 @@
 // كل functions الإيميل في مكان واحد — Resend
 
 import { Resend } from 'resend'
+import * as Sentry from '@sentry/nextjs'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL, formatEuroNL } from './format-nl'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+// [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
+// import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
+// step imports every route module to collect page data (with no runtime env), so a
+// top-level `new Resend()` failed the whole production build / Vercel deploy over a
+// key that's only needed at REQUEST time. The env var is present when a handler runs.
+let _resend: Resend | null = null
+function getResend(): Resend {
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
+  return _resend
+}
+
+// [TRUST-DELIVERY] Resend does NOT throw on an API rejection — it resolves with { error }. A sender
+// that ignores it tells the app "verstuurd" while nothing was delivered (a silent dead-end). Every
+// sender routes its result here:
+//   - critical mail (accountant invite / draft-queue to the accountant / GDPR export summary) THROWS
+//     so the caller surfaces a real failure instead of a false success;
+//   - best-effort notifications are logged AND captured in Sentry (never lost) but never break the
+//     main action they accompany.
+async function deliverEmail(
+  result: { error: unknown } | null | undefined,
+  opts: { label: string; critical: boolean },
+): Promise<void> {
+  const err = result?.error
+  if (!err) return
+  console.error(`[TRUST-DELIVERY] ${opts.label} e-mail mislukt`, err)
+  if (opts.critical) {
+    throw new Error(`E-mail versturen mislukt (${opts.label})`)
+  }
+  Sentry.captureException(
+    err instanceof Error ? err : new Error(`${opts.label} e-mail mislukt`),
+    { extra: { label: opts.label } },
+  )
+}
+
+// [M2] Escape any user-controlled string interpolated into an HTML email body. Client
+// names, invoice numbers, message text and accountant names all reach third parties
+// (customers, accountants), so a name like <b>… or an injected link must render as
+// literal text, never as markup. Scripts are already stripped by mail clients (no XSS),
+// but this closes phishing/spoofing/hidden-text injection. Subjects are plain-text
+// headers and are deliberately NOT passed through this.
+function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
@@ -17,23 +64,24 @@ export async function sendAccountantInvite({
   zzperName: string
   acceptUrl: string
 }) {
-  await resend.emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${zzperName} wil je toevoegen als boekhouder`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Je bent uitgenodigd</h2>
-        <p style="color: #555;">${zzperName} wil je toevoegen als boekhouder via BoekBrug.</p>
-        <p style="color: #555;">Als je accepteert, zie je automatisch alle facturen van ${zzperName} in jouw dashboard.</p>
+        <h2 style="color: #202124;">Je bent uitgenodigd</h2>
+        <p style="color: #555;">${escapeHtml(zzperName)} wil je toevoegen als boekhouder via BoekBrug.</p>
+        <p style="color: #555;">Als je accepteert, zie je automatisch alle facturen van ${escapeHtml(zzperName)} in jouw dashboard.</p>
         <a href="${acceptUrl}"
-           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
+           style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'accountant-invite', critical: true })
 }
 
 // ── إيميل دعوة العميل من قبل المحاسب ─────────────────────────────────────────
@@ -48,23 +96,29 @@ export async function sendClientInvite({
   accountantName: string
   acceptUrl: string
 }) {
-  await resend.emails.send({
+  // [TRUST-DELIVERY] Capture Resend's { error } — it does NOT throw on an API
+  // rejection — and throw so the caller (invite route) rolls back the pending row
+  // and returns a retryable error instead of a silent dead-end.
+  const { error: sendError } = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${accountantName} nodigt je uit op BoekBrug`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Je bent uitgenodigd</h2>
-        <p style="color: #555;">Je boekhouder <strong>${accountantName}</strong> nodigt je uit om BoekBrug te gebruiken.</p>
+        <h2 style="color: #202124;">Je bent uitgenodigd</h2>
+        <p style="color: #555;">Je boekhouder <strong>${escapeHtml(accountantName)}</strong> nodigt je uit om BoekBrug te gebruiken.</p>
         <p style="color: #555;">Via BoekBrug kun je eenvoudig facturen delen met je boekhouder — geen WhatsApp meer, geen e-mail zoeken.</p>
         <a href="${acceptUrl}"
-           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
+           style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
+  if (sendError) {
+    throw new Error(`Resend afgewezen: ${sendError.message ?? 'onbekende fout'}`)
+  }
 }
 
 // ── إيميل للعميل عند استلام فاتورة ───────────────────────────────────────────
@@ -103,28 +157,33 @@ export async function sendInvoiceToClient({
   const numberLabel = isCreditnota ? 'Creditnotanummer' : 'Factuurnummer'
 
   const invoiceDateRow = invoiceDate
-    ? `<p style="margin:4px 0; color:#1c1c1e;"><strong>${isCreditnota ? 'Datum' : 'Factuurdatum'}:</strong> ${formatDateNL(invoiceDate)}</p>`
+    ? `<p style="margin:4px 0; color:#202124;"><strong>${isCreditnota ? 'Datum' : 'Factuurdatum'}:</strong> ${formatDateNL(invoiceDate)}</p>`
     : ''
   const dueDateRow = isCreditnota
     ? ''
-    : `<p style="margin:4px 0; color:#1c1c1e;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>`
+    : `<p style="margin:4px 0; color:#202124;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>`
 
   const attachmentLine = pdfBuffer
     ? `<p style="color: #555;">De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.</p>`
     : ''
 
-  await resend.emails.send({
+  // [TRUST-DELIVERY] Resend's SDK resolves to { data, error } and does NOT throw on
+  // an API-level rejection (invalid recipient, unverified domain, rate-limit,
+  // validation). Ignoring the return let a rejected send look delivered, so the
+  // invoice showed "verstuurd" while the customer received nothing. Capture the
+  // result and THROW on error so the caller's catch marks it email_failed.
+  const { error: sendError } = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${docLabel} ${invoiceNumber} van ${zzperName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">${isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
-        <p style="color: #555;">Beste ${clientName},</p>
-        <p style="color: #555;">Je hebt een ${docLabel.toLowerCase()} ontvangen van <strong>${zzperName}</strong>.</p>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0;">
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>${numberLabel}:</strong> ${invoiceNumber}</p>
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Bedrag:</strong> ${formatEuroNL(totalInc)}</p>
+        <h2 style="color: #202124;">${isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
+        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
+        <p style="color: #555;">Je hebt een ${docLabel.toLowerCase()} ontvangen van <strong>${escapeHtml(zzperName)}</strong>.</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0;">
+          <p style="margin:4px 0; color:#202124;"><strong>${numberLabel}:</strong> ${escapeHtml(invoiceNumber)}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Bedrag:</strong> ${formatEuroNL(totalInc)}</p>
           ${invoiceDateRow}
           ${dueDateRow}
         </div>
@@ -145,6 +204,10 @@ export async function sendInvoiceToClient({
         }
       : {})
   })
+  if (sendError) {
+    // Surface the real reason; the caller treats any throw here as email_failed.
+    throw new Error(`Resend afgewezen: ${sendError.message ?? 'onbekende fout'}`)
+  }
 }
 
 // ── BOEK-007: إيميل إشعار رسالة جديدة ────────────────────────────────────────
@@ -161,26 +224,27 @@ export async function sendMessageNotification({
   messagePreview: string
   conversationUrl: string
 }) {
-  await resend.emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `Nieuw bericht van ${senderName}`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Nieuw bericht</h2>
-        <p style="color: #555;">Beste ${receiverName},</p>
-        <p style="color: #555;"><strong>${senderName}</strong> heeft je een bericht gestuurd via BoekBrug.</p>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #007aff;">
-          <p style="margin:0; color:#1c1c1e; font-style: italic;">"${messagePreview}"</p>
+        <h2 style="color: #202124;">Nieuw bericht</h2>
+        <p style="color: #555;">Beste ${escapeHtml(receiverName)},</p>
+        <p style="color: #555;"><strong>${escapeHtml(senderName)}</strong> heeft je een bericht gestuurd via BoekBrug.</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; border-left: 3px solid #1a73e8;">
+          <p style="margin:0; color:#202124; font-style: italic;">"${escapeHtml(messagePreview)}"</p>
         </div>
         <a href="${conversationUrl}"
-           style="display:inline-block; background:#007aff; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">
+           style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:8px;">
           Bericht bekijken
         </a>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'message-notification', critical: false })
 }
 // ── إشعار المحاسب بإنهاء الربط من قبل العميل ──────────────────────────────────
 export async function sendAccountantUnlinkedNotification({
@@ -192,20 +256,21 @@ export async function sendAccountantUnlinkedNotification({
   accountantName: string
   clientName: string
 }) {
-  await resend.emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${clientName} heeft de koppeling beëindigd`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Koppeling beëindigd</h2>
-        <p style="color: #555;">Beste ${accountantName},</p>
-        <p style="color: #555;"><strong>${clientName}</strong> heeft de koppeling met jou als boekhouder beëindigd via BoekBrug.</p>
+        <h2 style="color: #202124;">Koppeling beëindigd</h2>
+        <p style="color: #555;">Beste ${escapeHtml(accountantName)},</p>
+        <p style="color: #555;"><strong>${escapeHtml(clientName)}</strong> heeft de koppeling met jou als boekhouder beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je hebt geen toegang meer tot nieuwe facturen of documenten van deze klant. Historische gegevens waar je eerder aan hebt gewerkt, blijven beschikbaar voor je administratie.</p>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'accountant-unlinked', critical: false })
 }
 
 // ── إشعار العميل بإنهاء الربط من قبل المحاسب ──────────────────────────────────
@@ -218,20 +283,21 @@ export async function sendClientUnlinkedNotification({
   clientName: string
   accountantName: string
 }) {
-  await resend.emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: `${accountantName} heeft de koppeling beëindigd`,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Koppeling beëindigd</h2>
-        <p style="color: #555;">Beste ${clientName},</p>
-        <p style="color: #555;">Je boekhouder <strong>${accountantName}</strong> heeft de koppeling met jou beëindigd via BoekBrug.</p>
+        <h2 style="color: #202124;">Koppeling beëindigd</h2>
+        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
+        <p style="color: #555;">Je boekhouder <strong>${escapeHtml(accountantName)}</strong> heeft de koppeling met jou beëindigd via BoekBrug.</p>
         <p style="color: #555;">Je facturen en documenten blijven volledig van jou en blijven beschikbaar in je account. Je kunt op elk moment een nieuwe boekhouder uitnodigen via je instellingen.</p>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'client-unlinked', critical: false })
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // [BOEK-030] APPEND THIS FUNCTION to src/lib/email.ts (end of file).
@@ -239,7 +305,7 @@ export async function sendClientUnlinkedNotification({
 // pre-approved by Tech Lead. email.ts is the single home for all Resend sends,
 // so the Draft Queue letter is sent from here (no second Resend client).
 //
-// House style matches the existing templates in this file (#007aff brand, same
+// House style matches the existing templates in this file (#1a73e8 brand, same
 // footer) — emails are brand-level, not the Workspace dashboard palette.
 // The AI/edited body is plain text with \n line breaks; we HTML-escape it and
 // convert newlines to <br> so arbitrary content can't break the markup.
@@ -258,30 +324,25 @@ export async function sendDraftQueueEmail({
   subject: string
   body: string
 }) {
-  const escape = (s: string) =>
-    s.replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
+  const safeBody = escapeHtml(body).replace(/\r?\n/g, '<br>')
 
-  const safeBody = escape(body).replace(/\r?\n/g, '<br>')
-
-  await resend.emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Bericht van je boekhouder</h2>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0; color:#1c1c1e; line-height:1.5;">
+        <h2 style="color: #202124;">Bericht van je boekhouder</h2>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0; color:#202124; line-height:1.5;">
           ${safeBody}
         </div>
         <p style="color: #aaa; font-size: 12px; margin-top: 32px;">
-          ${escape(accountantName)} · via BoekBrug — De brug tussen jou en je boekhouder
+          ${escapeHtml(accountantName)} · via BoekBrug — De brug tussen jou en je boekhouder
         </p>
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'draft-queue', critical: true })
 
   // clientName is intentionally available for future personalization / subject use.
   void clientName
@@ -291,7 +352,7 @@ export async function sendDraftQueueEmail({
 // Do NOT rewrite the rest of the file — surgical, tagged addition, pre-approved
 // by Tech Lead. email.ts is the single home for all Resend sends.
 //
-// House style matches the existing templates (#007aff brand, same footer) —
+// House style matches the existing templates (#1a73e8 brand, same footer) —
 // emails are brand-level, not the dashboard palette. All values here are
 // numbers/dates (no user free text), so no HTML escaping is required.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,17 +376,17 @@ export async function sendAccountExportSummary({
       ? `<p style="color:#999; font-size:13px;">${skippedCount} bestand(en) konden niet worden opgehaald en zijn overgeslagen.</p>`
       : ''
 
-  await resend.emails.send({
+  const __sendResult = await getResend().emails.send({
     from: 'BoekBrug <noreply@boekbrug.nl>',
     to: toEmail,
     subject: 'Je BoekBrug-gegevensexport',
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
-        <h2 style="color: #1c1c1e;">Je gegevensexport is klaar</h2>
+        <h2 style="color: #202124;">Je gegevensexport is klaar</h2>
         <p style="color: #555;">Je hebt een export van je BoekBrug-gegevens gedownload op ${datum}.</p>
-        <div style="background:#f2f2f7; border-radius:12px; padding:16px; margin:20px 0;">
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Facturen:</strong> ${invoiceCount}</p>
-          <p style="margin:4px 0; color:#1c1c1e;"><strong>Documenten:</strong> ${fileCount}</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0;">
+          <p style="margin:4px 0; color:#202124;"><strong>Facturen:</strong> ${invoiceCount}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Documenten:</strong> ${fileCount}</p>
         </div>
         ${skippedLine}
         <p style="color: #555; font-size: 13px;">Heb je deze export niet zelf aangevraagd? Neem dan direct contact met ons op.</p>
@@ -333,4 +394,149 @@ export async function sendAccountExportSummary({
       </div>
     `
   })
+  await deliverEmail(__sendResult, { label: 'account-export', critical: true })
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// [REMINDERS] Automatic payment reminder — appended to src/lib/email.ts (single
+// home for all Resend sends). Sent by the reminder cron for an outgoing invoice
+// that is still openstaand past its due date.
+//
+// TRUST / FINANCIAL-TRUTH contract:
+//   * best-effort (critical:false) — a failed reminder is logged + captured, and
+//     NEVER breaks the cron or any other action. It is a notification, not a
+//     legal delivery.
+//   * shows `openstaand` (the amount STILL owed), computed by the caller via
+//     openstaandOf — never the full total, so a part-paid invoice is honest.
+//   * every third-party-visible string (client/company name, invoice number) is
+//     HTML-escaped; the amount + date are pre-formatted numbers/dates (no free
+//     text). Reuses the existing brand template + footer.
+//   * always carries an "already paid? ignore this" line — paid-but-unreconciled
+//     is the #1 cause of a false "overdue", and we must never dun someone twice.
+//   * `firm` only softens/firms the WORDING (tier 30 vs 14) — it changes nothing
+//     financial.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function sendInvoiceReminder({
+  toEmail,
+  clientName,
+  zzperName,
+  invoiceNumber,
+  openstaand,
+  dueDate,
+  firm = false,
+  pdfBuffer,
+}: {
+  toEmail: string
+  clientName: string
+  zzperName: string
+  invoiceNumber: string
+  /** Amount STILL owed (from openstaandOf) — never the full total. */
+  openstaand: number
+  /** ISO due date — shown as the (passed) vervaldatum. */
+  dueDate: string
+  /** Firmer wording for a later tier (e.g. day 30). Wording only — no money change. */
+  firm?: boolean
+  /** Re-attach the invoice PDF when available. */
+  pdfBuffer?: Buffer
+}) {
+  const heading = firm ? 'Betalingsherinnering' : 'Herinnering'
+  const subject = firm
+    ? `Betalingsherinnering: factuur ${invoiceNumber}`
+    : `Herinnering: factuur ${invoiceNumber}`
+
+  const intro = firm
+    ? `Onze administratie laat zien dat factuur <strong>${escapeHtml(invoiceNumber)}</strong> van <strong>${escapeHtml(zzperName)}</strong> nog niet is voldaan. De vervaldatum is inmiddels verstreken.`
+    : `Een vriendelijke herinnering dat factuur <strong>${escapeHtml(invoiceNumber)}</strong> van <strong>${escapeHtml(zzperName)}</strong> nog openstaat.`
+
+  const attachmentLine = pdfBuffer
+    ? `<p style="color: #555;">De factuur is nogmaals bijgevoegd als PDF.</p>`
+    : ''
+
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">${heading}</h2>
+        <p style="color: #555;">Beste ${escapeHtml(clientName)},</p>
+        <p style="color: #555;">${intro}</p>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0;">
+          <p style="margin:4px 0; color:#202124;"><strong>Factuurnummer:</strong> ${escapeHtml(invoiceNumber)}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Openstaand bedrag:</strong> ${formatEuroNL(openstaand)}</p>
+          <p style="margin:4px 0; color:#202124;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>
+        </div>
+        ${attachmentLine}
+        <p style="color: #999; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze herinnering als niet verzonden beschouwen.</p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+    ...(pdfBuffer
+      ? {
+          attachments: [
+            {
+              filename: `${invoiceNumber}.pdf`,
+              content: pdfBuffer,
+            },
+          ],
+        }
+      : {})
+  })
+  // Best-effort: a reminder that fails to send must never break the cron run.
+  await deliverEmail(__sendResult, { label: 'invoice-reminder', critical: false })
+}
+
+// ── [BILLING] Eén mail over betalen, en bewust maar één ───────────────────────
+//
+// Op de billing-tak stonden er twee: een waarschuwing dat de proefperiode afliep, en deze.
+// De eerste is hier NIET overgenomen — wij kennen geen proefperiode, dus er is niets dat
+// afloopt en niets om voor te waarschuwen. Wat overblijft is de mail die er wel toe doet:
+// een mislukte incasso die niemand benoemt verandert een dode kaart in een opzegging.
+//
+// Best effort: een mail die niet verstuurd kan worden mag nooit de webhook breken die hem
+// aanriep.
+
+/**
+ * "We couldn't take the payment." Sent when Stripe reports a failed charge.
+ *
+ * Tone matters more here than anywhere else in the app: an expired card is not
+ * a moral failing, and the customer has NOT lost access — `past_due` keeps them
+ * in while Stripe retries. Saying that plainly is what stops a recoverable card
+ * problem from becoming a cancellation.
+ */
+export async function sendPaymentFailedEmail({
+  toEmail,
+  name,
+}: {
+  toEmail: string
+  name: string
+}) {
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject: 'Je betaling is niet gelukt',
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <h2 style="color: #202124;">De betaling is niet gelukt</h2>
+        <p style="color: #555;">Beste ${escapeHtml(name)},</p>
+        <p style="color: #555;">
+          We konden het abonnementsbedrag niet afschrijven. Meestal is de kaart verlopen
+          of het saldo net te laag — het is zo opgelost.
+        </p>
+        <p style="color: #555;">
+          <strong>Je houdt gewoon toegang tot BoekBrug.</strong> We proberen het de komende
+          dagen automatisch nog een paar keer.
+        </p>
+        <a href="https://boekbrug.nl/dashboard/settings/facturering"
+           style="display:inline-block; margin:20px 0; padding:12px 24px; background:#1A73E8; color:#fff; border-radius:8px; text-decoration:none; font-weight:600;">
+          Betaalgegevens bijwerken
+        </a>
+        <p style="color: #999; font-size: 13px;">
+          Heb je je gegevens net al aangepast? Dan kun je deze mail negeren.
+        </p>
+        <p style="color: #aaa; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+  })
+  await deliverEmail(__sendResult, { label: 'payment-failed', critical: false })
 }

@@ -8,9 +8,11 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 // [BOEK-031] Navigation Strategy — May 2026
-import { useParentPath, useHomePath } from '@/lib/navigation-hooks'
+import { useParentPath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
+import type { ProfileRow } from '@/types/rows'
 
 type InvoiceLine = {
   description: string
@@ -25,7 +27,7 @@ export default function InvoiceEditPage() {
   const invoiceId = params.id as string
   const supabase = createClient()
 
-  const [profile, setProfile] = useState<any>(null)
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -39,7 +41,6 @@ export default function InvoiceEditPage() {
   // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
   const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
   const parentHref = useParentPath(role)
-  const homeHref = useHomePath(role)
 
   // بيانات العميل
   const [clientName, setClientName] = useState('')
@@ -228,36 +229,22 @@ export default function InvoiceEditPage() {
     router.replace(`/dashboard/invoice/${invoiceId}`)
   }
 
+  // [SUBNAV] Title (+ invoice number) in the shared header; called before the
+  // loading return so hook order stays stable.
+  useSubPageHeader(
+    { title: invoiceNumber ? `Factuur bewerken · ${invoiceNumber}` : 'Factuur bewerken' },
+    [invoiceNumber]
+  )
+
   // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
-    <div className="min-h-screen bg-[#f2f2f7] flex items-center justify-center">
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <p className="text-gray-400 text-sm">Laden...</p>
     </div>
   )
 
   return (
-    <div className="min-h-screen bg-[#f2f2f7]">
-
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* [BOEK-031] Back — Link to parent /invoice/[id] — Navigation Strategy — May 2026 */}
-            <Link
-              href={parentHref}
-              className="text-gray-400 hover:text-gray-600 text-sm no-underline"
-            >
-              ← Terug
-            </Link>
-            {/* [BOEK-031] Logo — always /dashboard for ZZP — Navigation Strategy — May 2026 */}
-            <Link href={homeHref} className="no-underline">
-              <span className="text-base font-bold text-blue-600">BoekBrug</span>
-            </Link>
-            <h1 className="text-lg font-bold text-gray-900">Factuur bewerken</h1>
-          </div>
-          <span className="text-sm text-gray-400 font-mono">{invoiceNumber}</span>
-        </div>
-      </div>
+    <div className="min-h-screen bg-[#f8f9fa]">
 
       <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
 
@@ -503,14 +490,14 @@ export default function InvoiceEditPage() {
               </button>
             </>
           ) : (
-            // [BOEK-031] Sent: only Save (changes are limited by backend PUT validation) — May 2026
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving ? 'Opslaan...' : 'Wijzigingen opslaan'}
-            </button>
+            // [ART-35] A verstuurde/uitgegeven factuur is wettelijk vastgelegd en kan NIET
+            // meer worden gewijzigd — de server-PUT weigert elke niet-draft met 409. Toon
+            // dat eerlijk in plaats van een "Wijzigingen opslaan"-knop die altijd faalt; een
+            // correctie loopt via een creditnota (op de factuurpagina).
+            <p className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+              Deze factuur is verstuurd en wettelijk vastgelegd — wijzigen kan niet meer.
+              Maak een <strong>creditnota</strong> aan om te corrigeren.
+            </p>
           )}
           {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
           <Link

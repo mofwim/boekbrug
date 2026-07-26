@@ -41,7 +41,9 @@ import { sendInvoiceToClient } from '@/lib/email'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { gateFairUse, type FairUseGate } from '@/lib/fair-use-gate'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 import * as Sentry from '@sentry/nextjs'
 
 // [FACTUUR-A] Storage bucket for generated invoice PDFs.
@@ -54,6 +56,9 @@ const PDF_BUCKET = 'documents'
 const RESENDABLE_STATUSES = ['sent', 'paid', 'overdue'] as const
 
 export async function POST(request: NextRequest) {
+  // [FAIR-USE] Buiten de try, zodat de catch onderaan de reservering kan teruggeven. Blijft
+  // null wanneer het misging vóór het hek — dan valt er ook niets terug te geven.
+  let gate: FairUseGate | null = null
   try {
     // ── 1. Auth ────────────────────────────────────────────────
     const supabase = await createServerSupabaseClient()
@@ -69,6 +74,13 @@ export async function POST(request: NextRequest) {
       ...RATE_LIMITS.INVOICE_SEND,
     })
     if (!limit.allowed) return rateLimitResponse(limit)
+
+    // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens op verstuurde facturen. Het
+    // hek hierboven gaat over snelheid (100/uur), dit over hoeveel er gratis in een maand
+    // past. Faalt open. Een weigering pauzeert ALLEEN het versturen — opstellen, opslaan en
+    // als PDF downloaden blijven werken, precies zoals de onExceed-zin in fair-use.ts zegt.
+    gate = await gateFairUse({ client: supabase, userId: user.id, metric: "invoicesSent" })
+    if (!gate.allowed) return gate.response!
 
     // ── 3. Parse body ──────────────────────────────────────────
     const body = await request.json()
@@ -132,6 +144,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Factuurbedrag ontbreekt' }, { status: 400 })
     }
 
+    // ── 6b. [TRUST-TOTALS] Recompute the legal totals SERVER-SIDE from the lines ─
+    // The browser-supplied totals are never trusted on the record that gets a legal
+    // number and is e-mailed. The create path stored raw floats; only the edit PUT
+    // rounded — so the stored total depended on whether the draft was touched. We
+    // recompute here (same round2 + per-line math as the edit route) for issuance
+    // and conversion. A resend delivers the already-issued PDF, so it is untouched.
+    const round2 = (n: number): number =>
+      (n < 0 ? -1 : 1) * (Math.round(Math.abs(n) * 100 + 1e-9) / 100)
+    const { data: lines } = await supabase
+      .from('invoice_lines')
+      .select('*')
+      .eq('invoice_id', invoiceId)
+    let computedTotals: { total_ex_btw: number; btw_amount: number; total_inc_btw: number } | null = null
+    if (!resend && Array.isArray(lines) && lines.length > 0) {
+      const lineEx = (l: { line_total?: number | null; quantity?: number | null; unit_price?: number | null }) =>
+        typeof l.line_total === 'number' ? l.line_total : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0)
+      // [BTW-ROUND] Round BTW PER TARIEF, then sum — the Belastingdienst/Peppol method the
+      // legal PDF (btwBreakdown → round2 per rate) AND the UBL export use. Summing per-line
+      // BTW and rounding once (the old way) drifted a cent on multi-rate invoices, so the
+      // e-mailed total + accountant/BTW figures disagreed with the PDF/UBL the SAME invoice
+      // ships. Group ex per rate, round each rate's BTW, sum → stored == PDF == UBL to the cent.
+      const exByRate = new Map<number, number>()
+      for (const l of lines) {
+        const rate = Number(l.btw_rate) || 0
+        exByRate.set(rate, (exByRate.get(rate) ?? 0) + lineEx(l))
+      }
+      const ex = round2([...exByRate.values()].reduce((s, e) => s + e, 0))
+      const btw = round2([...exByRate.entries()].reduce((s, [rate, e]) => s + round2((e * rate) / 100), 0))
+      computedTotals = { total_ex_btw: ex, btw_amount: btw, total_inc_btw: round2(ex + btw) }
+    }
+    // The authoritative total for the e-mail + accountant notification below.
+    const finalTotalInc = computedTotals?.total_inc_btw ?? invoice.total_inc_btw
+
     // ── 7. Pro forma / Offerte → convert to official Factuur upon sending ─
     // Per Belastingdienst: only official facturen count — pro forma is not a legal invoice
     const isConversion = !resend &&
@@ -148,6 +193,18 @@ export async function POST(request: NextRequest) {
       if (!invoice.client_address || !String(invoice.client_address).trim()) {
         return NextResponse.json(
           { error: 'Klantadres ontbreekt — verplicht op een factuur (Art. 35a Wet OB 1968)' },
+          { status: 400 }
+        )
+      }
+
+      // [FACTUUR-A] Art. 35a sub e — the DATE OF ISSUE is a mandatory invoice element. Without this
+      // an undated factuur could be issued (number minted + e-mailed), which is legally invalid AND
+      // date-driven downstream (a dateless invoice is dropped from the quarter's date-range → invisible
+      // in /result and /aangifte). Enforce a real ISO date BEFORE minting the number so the check never
+      // burns a sequence number. (The UI already requires it; this is the server backstop.)
+      if (!invoice.invoice_date || !/^\d{4}-\d{2}-\d{2}/.test(String(invoice.invoice_date))) {
+        return NextResponse.json(
+          { error: 'Factuurdatum ontbreekt — verplicht op een factuur (Art. 35a Wet OB 1968)' },
           { status: 400 }
         )
       }
@@ -202,16 +259,29 @@ export async function POST(request: NextRequest) {
     // convertOnly: keep status='sent', just update number + type
     // resend: nothing to commit — delivery only
     if (!resend) {
-      const { error: updateError } = await supabase
+      // [TRUST-NUMBER] COMPARE-AND-SWAP. The status check in step 5 read a fetched
+      // row; two concurrent sends (or a double-click that races the first commit)
+      // both passed it and both minted a number under an id-only UPDATE, so one
+      // number was orphaned as a permanent gap AND the invoice was e-mailed twice.
+      // We now guard the UPDATE on the ORIGINAL state (draft for a send, pro_forma/
+      // offerte for a conversion) and require exactly one affected row. The loser of
+      // the race writes nothing and does NOT deliver — it gets a clean 409.
+      let updateQ = supabase
         .from('invoices')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
         .update({
           ...(convertOnly ? {} : { status: 'sent' as const }),
           invoice_number: finalNumber,
           invoice_type: finalType as 'factuur' | 'creditnota' | 'pro_forma' | 'offerte',
+          ...(computedTotals ?? {}),
           updated_at: new Date().toISOString(),
-        } as any)
+        })
         .eq('id', invoiceId)
+        .eq('sender_id', user.id)
+      updateQ = convertOnly
+        ? updateQ.in('invoice_type', ['pro_forma', 'offerte'])
+        : updateQ.eq('status', 'draft')
+      const { data: updatedRows, error: updateError } = await updateQ.select('id')
 
       if (updateError) {
         console.error('[FACTUUR-A] Invoice update failed', { invoiceId, updateError })
@@ -220,6 +290,18 @@ export async function POST(request: NextRequest) {
           extra: { invoiceId, finalNumber, userId: user.id },
         })
         return NextResponse.json({ error: 'Server fout' }, { status: 500 })
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        // Lost the compare-and-swap: already sent/converted by a concurrent request.
+        // The number we minted is now unused — log it so the rare gap is VISIBLE,
+        // never silent — and refuse to double-deliver.
+        console.warn('[TRUST-NUMBER] Send race lost — minted number unused (gap)', { invoiceId, finalNumber })
+        Sentry.captureMessage('invoice-send race: minted number unused (sequence gap)', {
+          level: 'warning',
+          tags: { feature: 'invoice-send' },
+          extra: { invoiceId, finalNumber, userId: user.id },
+        })
+        return NextResponse.json({ error: 'Deze factuur is al verzonden.' }, { status: 409 })
       }
 
       // ── 10. Audit log — via service_role (BOEK-SECURITY-2) ───
@@ -254,30 +336,35 @@ export async function POST(request: NextRequest) {
     const zzperName = profile?.company_name || profile?.full_name || 'Onbekend'
 
     // ── 12. [FACTUUR-A] Render the legal PDF — AFTER number commit ─
-    // The PDF must carry the final number, so it can only be rendered now.
-    const { data: lines } = await supabase
-      .from('invoice_lines')
-      .select('*')
-      .eq('invoice_id', invoiceId)
-
+    // The PDF must carry the final number + the server-recomputed totals (lines
+    // were fetched in step 6b). It can only be rendered now.
+    // [SEND-PDF-RETRY] Render is the delivery gate. A transient font/asset hiccup used to leave the
+    // invoice 'sent' (verstuurd) with NO PDF, NO email, NO signal — the customer got nothing and the
+    // owner had no idea. Retry once (catches the common transient), and on persistent failure make
+    // the failure LOUD (an owner notification) instead of a silent false 'verstuurd'.
     let pdfBuffer: Buffer | null = null
-    try {
-      pdfBuffer = await renderInvoicePdf(
-        {
-          ...invoice,
-          invoice_number: finalNumber,
-          invoice_type: finalType,
-          status: resend || convertOnly ? invoice.status : 'sent',
-        },
-        lines ?? [],
-        profile ?? {}
-      )
-    } catch (pdfErr) {
-      console.error('[FACTUUR-A] PDF render failed', { invoiceId, finalNumber, error: pdfErr })
-      Sentry.captureException(pdfErr, {
-        tags: { feature: 'invoice-send', severity: 'high' },
-        extra: { invoiceId, finalNumber, userId: user.id },
-      })
+    for (let attempt = 0; attempt < 2 && !pdfBuffer; attempt++) {
+      try {
+        pdfBuffer = await renderInvoicePdf(
+          {
+            ...invoice,
+            ...(computedTotals ?? {}),
+            invoice_number: finalNumber,
+            invoice_type: finalType,
+            status: resend || convertOnly ? invoice.status : 'sent',
+          },
+          lines ?? [],
+          profile ?? {}
+        )
+      } catch (pdfErr) {
+        console.error('[FACTUUR-A] PDF render failed', { invoiceId, finalNumber, attempt, error: pdfErr })
+        if (attempt === 1) {
+          Sentry.captureException(pdfErr, {
+            tags: { feature: 'invoice-send', severity: 'high' },
+            extra: { invoiceId, finalNumber, userId: user.id },
+          })
+        }
+      }
     }
 
     if (!pdfBuffer) {
@@ -285,14 +372,27 @@ export async function POST(request: NextRequest) {
         // Pure delivery attempt — nothing was committed, a clean error is honest
         return NextResponse.json({ error: 'PDF genereren mislukt — probeer opnieuw' }, { status: 500 })
       }
-      // Number is consumed (Art. 35 — no rollback). The invoice IS legally
-      // issued. We do NOT send a PDF-less notification — that is defect #1.
-      // The user re-delivers via resend once the cause is fixed.
+      // Number is consumed (Art. 35 — no rollback). The invoice IS legally issued, but it was NOT
+      // delivered. Do NOT let the owner believe it went out: write an owner notification so the
+      // "verstuurd" state is corrected by an explicit "opnieuw versturen" prompt (recoverable via
+      // resend once the cause is fixed). Service-role insert (notifications has no authed INSERT).
+      try {
+        const notifPipeline = createPipelineClient()
+        await notifPipeline.from('notifications').insert({
+          user_id: user.id,
+          title: 'Factuur niet verzonden',
+          body: `Factuur ${finalNumber} kreeg een nummer maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur ${finalNumber} opnieuw.`,
+          type: 'invoice',
+          read: false,
+          link: '/dashboard/facturen',
+        })
+      } catch { /* non-blocking — the warning field below is the primary signal */ }
       return NextResponse.json({
         success: true,
         invoice_number: finalNumber,
         invoice_type: finalType,
         converted: isConversion,
+        delivered: false,
         warning: 'pdf_failed',
       })
     }
@@ -332,7 +432,7 @@ export async function POST(request: NextRequest) {
         clientName: invoice.client_name,
         zzperName,
         invoiceNumber: finalNumber,
-        totalInc: invoice.total_inc_btw,
+        totalInc: finalTotalInc,
         dueDate: invoice.due_date ?? '',
         invoiceDate: invoice.invoice_date ?? undefined,
         pdfBuffer,
@@ -371,7 +471,7 @@ export async function POST(request: NextRequest) {
               user_id: accountantLink.accountant_id,
               title: 'Nieuwe factuur verzonden',
               // [FACTUUR-A] Dutch comma in the notification too — one rule everywhere
-              body: `${zzperName} heeft factuur ${finalNumber} verzonden — € ${invoice.total_inc_btw.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              body: `${zzperName} heeft factuur ${finalNumber} verzonden — € ${Number(finalTotalInc).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
               type: 'invoice',
               read: false,
               link: `/dashboard/clients/${user.id}`,
@@ -385,6 +485,24 @@ export async function POST(request: NextRequest) {
       } catch (notifErr) {
         console.error('[FACTUUR-A] Notification block error', { invoiceId, notifErr })
         // Low severity — don't bother Sentry
+      }
+    }
+
+    // ── 15b. Close the circle from the SEND side ──────────────
+    // [BANK-CIRCLE-SEND] A sales invoice that just became 'sent' may match a payment ALREADY sitting
+    // in the bank — the statement was imported before this invoice existed, so it lingered as an
+    // "ontvangen betaling zonder factuur" that only the incoming-bank flow (not invoice creation) ever
+    // re-checked. Re-run the SAME safe auto-confirm now so the payment gets linked at issuance time.
+    // Books only isSafeAutoConfirm matches, idempotent, one-tap reversible. Best-effort — a failure
+    // here must never break a legally-sent invoice, and the cron/import paths remain the backstop.
+    // First issuance only: a resend re-delivers an already-'sent' invoice (this pass already ran on
+    // its original send, and a later-arriving payment is caught by the incoming-bank flow + cron), so
+    // skip the full user-wide scan on the latency-sensitive resend path.
+    if (!resend) {
+      try {
+        await runBankAutoConfirm({ payClient: supabase, pipeline: createPipelineClient(), userId: user.id })
+      } catch (autoErr) {
+        console.error('[BANK-CIRCLE-SEND] post-send auto-confirm failed (non-fatal)', { invoiceId, autoErr })
       }
     }
 
@@ -407,6 +525,11 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (err) {
+    // [FAIR-USE] Klapte het versturen alsnog, dan is er niets verstuurd en telt het niet.
+    // `gate` kan hier nog ongedefinieerd zijn als het misging vóór het hek; vandaar de
+    // voorzichtige aanroep.
+    try { await gate?.release() } catch { /* teruggeven mag nooit de foutafhandeling breken */ }
+
     // Catch-all: any uncaught exception → Sentry + 500 (no crash)
     console.error('[FACTUUR-A] /api/invoice/send fatal error', err)
     Sentry.captureException(err, {

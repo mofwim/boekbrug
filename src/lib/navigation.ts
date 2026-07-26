@@ -34,18 +34,39 @@ export function getHomePath(role: Role): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PARENT_RULES: ParentRule[] = [
+  // ── dagomzet (turnover import) → dashboard home ───────────────────────────
+  {
+    match: /^\/dashboard\/dagomzet$/,
+    parent: () => '/dashboard',
+  },
+
+  // ── concept BTW-aangifte → dashboard home ─────────────────────────────────
+  {
+    match: /^\/dashboard\/aangifte$/,
+    parent: () => '/dashboard',
+  },
+
   // ── invoice/[id]/edit → invoice/[id] ──────────────────────────────────────
   {
     match: /^\/dashboard\/invoice\/([^/]+)\/edit$/,
     parent: (pathname) => pathname.replace(/\/edit$/, ''),
   },
 
-  // ── invoice/new → depends on clientId query param + role ──────────────────
+  // ── invoice/new → depends on the originating client + role ────────────────
+  // Two distinct flows open this page pre-filled for a client, each with its
+  // own param name and its own client tree — return the user to where they came
+  // from in both cases:
+  //   · accountant: ?clientId=  → /dashboard/clients/[id]  (accountant tree)
+  //   · ZZP'er:     ?client_id= → /dashboard/klanten/[id]  (owner's own klanten)
+  // Otherwise fall back to the role default. Every branch is an explicit
+  // ancestor — never a loop.
   {
     match: /^\/dashboard\/invoice\/new$/,
     parent: (_, role, search) => {
       const clientId = search?.get('clientId')
       if (clientId) return `/dashboard/clients/${clientId}`
+      const zzpClientId = search?.get('client_id')
+      if (zzpClientId) return `/dashboard/klanten/${zzpClientId}`
       return role === 'accountant'
         ? '/dashboard/accountant'
         : '/dashboard/facturen'
@@ -53,10 +74,27 @@ const PARENT_RULES: ParentRule[] = [
   },
 
   // ── invoice/[id] (any other) → facturen (zzp) or accountant home ──────────
+  // [NAV] Context-aware: when the invoice was opened from a client's kwartaal
+  // page (?from=client&clientId=…), "Terug" returns there — preserving q/year
+  // so the accountant lands back on the exact filtered view. Otherwise it falls
+  // back to the role default. This is loop-safe: every branch is an explicit
+  // ancestor href, never history.
   {
     match: /^\/dashboard\/invoice\/[^/]+$/,
-    parent: (_, role) =>
-      role === 'accountant' ? '/dashboard/accountant' : '/dashboard/facturen',
+    parent: (_, role, search) => {
+      const from = search?.get('from')
+      const clientId = search?.get('clientId')
+      if (from === 'client' && clientId) {
+        const q = search?.get('q')
+        const year = search?.get('year')
+        const qs = new URLSearchParams({
+          ...(q ? { q } : {}),
+          ...(year ? { year } : {}),
+        }).toString()
+        return `/dashboard/clients/${clientId}/kwartaal${qs ? `?${qs}` : ''}`
+      }
+      return role === 'accountant' ? '/dashboard/accountant' : '/dashboard/facturen'
+    },
   },
 
   // ── clients/[id]/kwartaal → clients/[id] ─────────────────────────────────
@@ -71,6 +109,14 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard/accountant',
   },
 
+  // ── clients/invite (accountant) → clients beheer ─────────────────────────
+  // MUST sit above the generic clients/[^/]+ rule below, otherwise 'invite'
+  // matches [^/]+ first and this never fires.
+  {
+    match: /^\/dashboard\/clients\/invite$/,
+    parent: () => '/dashboard/clients/beheer',
+  },
+
   // ── clients/[id] (any other) → accountant home ───────────────────────────
   {
     match: /^\/dashboard\/clients\/[^/]+$/,
@@ -80,6 +126,21 @@ const PARENT_RULES: ParentRule[] = [
   // ── accountant/werkplek → accountant home ────────────────────────────────
   {
     match: /^\/dashboard\/accountant\/werkplek$/,
+    parent: () => '/dashboard/accountant',
+  },
+
+  // ── accountant/agenda (BTW filing agenda) → accountant home ──────────────
+  // [AANGIFTE-AGENDA] The daily-driver deadline board sits directly under the
+  // accountant home; "Terug" returns there, not to the werkplek launcher.
+  {
+    match: /^\/dashboard\/accountant\/agenda$/,
+    parent: () => '/dashboard/accountant',
+  },
+
+  // ── accountant/status (Klaar-overzicht) → accountant home ────────────────
+  // [KLAAR-OVERZICHT] The cross-client readiness board — parent is the home.
+  {
+    match: /^\/dashboard\/accountant\/status$/,
     parent: () => '/dashboard/accountant',
   },
 
@@ -95,12 +156,55 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard',
   },
 
-  // ── incoming/manage → incoming ───────────────────────────────────────────
-  // [CONTROL] without this it fell through to home, so the primary "Terug"
-  // jumped past the verification list to the dashboard.
+  // ── incoming/manage → where you actually came from ───────────────────────
+  // [CONTROL] without a rule it fell through to home, so the primary "Terug"
+  // jumped past the verification list to the dashboard. Hence the default below.
+  //
+  // [NAV-FROM] But the verification list is NOT the only door into this page: the
+  // dashboard tiles and Vandaag link STRAIGHT to /incoming/manage, skipping
+  // /incoming entirely. For those visitors a fixed parent of '/dashboard/incoming'
+  // sent them "back" to a screen they had never seen. So the entry point says where
+  // it came from (?from=), exactly like /invoice/[id] does with ?from=client, and
+  // Terug honours it. Unmarked links keep the documented default, so nothing that
+  // relied on it changes. Every branch is still an explicit ancestor href — never
+  // history — so it stays loop-safe.
   {
     match: /^\/dashboard\/incoming\/manage$/,
-    parent: () => '/dashboard/incoming',
+    parent: (_, role, search) => {
+      const from = search?.get('from')
+      if (from === 'home') return getHomePath(role)
+      if (from === 'vandaag') return '/dashboard/vandaag'
+      return '/dashboard/incoming'
+    },
+  },
+
+  // ── bank/categoriseren → bank ────────────────────────────────────────────
+  // [NAV] Without this the categorise screen jumped past the bank overview
+  // straight to home. Its real parent is the bank page it was opened from.
+  {
+    match: /^\/dashboard\/bank\/categoriseren$/,
+    parent: () => '/dashboard/bank',
+  },
+
+  // ── messages/[id] → messages list ────────────────────────────────────────
+  // [NAV] A conversation's parent is the inbox, not the dashboard home.
+  {
+    match: /^\/dashboard\/messages\/[^/]+$/,
+    parent: () => '/dashboard/messages',
+  },
+
+  // ── klanten/[id] (ZZP own clients) → klanten list ────────────────────────
+  // [NAV] Distinct from the accountant's /dashboard/clients tree above.
+  {
+    match: /^\/dashboard\/klanten\/[^/]+$/,
+    parent: () => '/dashboard/klanten',
+  },
+
+  // ── kluis (document vault) → werkplek ────────────────────────────────────
+  // [NAV] The vault is reached from the ZZP werkplek; that is its parent.
+  {
+    match: /^\/dashboard\/kluis$/,
+    parent: () => '/dashboard/werkplek',
   },
 
   // ── all other /dashboard/* → home per role ────────────────────────────────

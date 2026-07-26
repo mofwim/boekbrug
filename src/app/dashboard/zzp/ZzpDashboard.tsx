@@ -2,9 +2,43 @@
 
 // src/app/dashboard/zzp/ZzpDashboard.tsx
 // [BOEK-029] Material You design — BoekBrug Design System v1.0 — May 2026
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// [DASH-SIMPLIFY] ZZP home information architecture (redesign, presentation-only)
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY: the home used to be a flat list of 12 equal-weight ActionCards — a "wall of
+// doors" the shop owner had to read top to bottom. Nothing was wrong functionally;
+// it was just undifferentiated. This redesign REGROUPS the exact same destinations
+// into four scannable sections and shrinks the six "record" screens into one compact
+// grid. It is a pure presentation change:
+//   · No route changed, no page removed, no data/fetch touched.
+//   · Every destination that was reachable before is still reachable.
+//   · The greeting, DailyTruth snapshot ("Waar je staat" + "Aandacht nodig"),
+//     the "Ben ik klaar?" hero and the +Nieuwe factuur FAB are UNCHANGED.
+//
+// The four groups (see the render for the mapping):
+//   1. Toevoegen         — the daily input actions (add bon/factuur, bulk upload)
+//   2. Mijn administratie — the record screens as a 3-col tile grid
+//                           (Facturen · Inkomend · Inkoopfacturen · Bank · Kas ·
+//                            Dagomzet · Artikelen)
+//   3. Cijfers & aangifte — "Je waarheid" (primary) + two compact MiniCards
+//   4. Meer              — Mijn werkplek
+//
+// DELIBERATE DECISION — "Financieel overzicht" (/dashboard/resultaat) is kept as a
+// de-emphasised MiniCard, NOT removed. It overlaps "Je waarheid", so the mockup
+// showed only two number screens — but /dashboard/resultaat is reachable ONLY from
+// this dashboard, so dropping the link would ORPHAN the page. Truly merging
+// waarheid+resultaat is a separate product+page decision; do that at the page level
+// (redirect resultaat → waarheid) before removing this link, never by orphaning.
+//
+// EXTENDING: add a record screen → add one <AdminTile> to the administratie grid
+// (reuse the screen's existing icon + iconBg for visual continuity). Add a number
+// screen → a MiniCard under "Je waarheid". Keep new top-level doors out of the flat
+// list; put them in the group they belong to.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase'
 import { DashboardHeader } from '../_shared'
 import { generateInvoiceFromPrompt } from '@/lib/ai'
@@ -13,6 +47,7 @@ import IntakeButton from '@/components/intake/IntakeButton'
 // invoice totals + a task count), each linking to the action that resolves it. The
 // old version was disabled for showing inferred bank-derived numbers that were wrong.
 import DailyTruth from './DailyTruth'
+import type { ProfileRow, NotificationRow } from '@/types/rows'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
   primary:           '#1A73E8',
@@ -21,27 +56,27 @@ const M3 = {
   onPrimaryContainer:'#041E49',
   tertiary:          '#7B1FA2',
   tertiaryContainer: '#E1BEE7',
-  surface:           '#FFFBFE',
-  onSurface:         '#1C1B1F',
+  surface:           '#ffffff',
+  onSurface:         '#202124',
   success:           '#34A853',
   successContainer:  '#CEEAD6',
   warning:           '#E37400',
   warningContainer:  '#FEE8C4',
-  outline:           '#79747E',
+  outline:           '#80868b',
   error:             '#B3261E',
 }
-const FONT = "'Google Sans', 'Roboto', -apple-system, sans-serif"
+const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
 
 const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }) // reserved for future use
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export function ZzpDashboard({ profile }: { profile: any }) {
+export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
   const router   = useRouter()
   const supabase = createClient()
 
-  const [notifications, setNotifications]         = useState<any[]>([])
+  const [notifications, setNotifications]         = useState<NotificationRow[]>([])
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages, setUnreadMessages]       = useState(0)
   const [accountantId, setAccountantId]           = useState<string | null>(null)
@@ -51,8 +86,6 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiError, setAiError]                     = useState<string | null>(null)
   // [BOEK-029] BOEK-011 integration — pending incoming invoices count
   const [pendingCount, setPendingCount]           = useState<number>(0)
-
-  useEffect(() => { loadGlobal() }, [])
 
   async function loadGlobal() {
     const [{ data: link }, { data: notifData }, { count }] = await Promise.all([
@@ -75,6 +108,11 @@ export function ZzpDashboard({ profile }: { profile: any }) {
       // silent — badge blijft 0
     }
   }
+
+  // Eén ophaalronde bij het openen. Staat bewust ná loadGlobal: een effect dat een functie
+  // aanroept die pas verderop gedeclareerd wordt, werkt door hoisting wel maar is voor de
+  // React-compiler niet te volgen (en breekt zodra iemand er een closure-waarde in gebruikt).
+  useEffect(() => { void (async () => { await loadGlobal() })() }, [])
 
   async function markAllRead() {
     await supabase.from('notifications').update({ read: true }).eq('user_id', profile.id).eq('read', false)
@@ -122,60 +160,122 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         {/* [HONEST-HOME] Snapshot: "waar sta ik?" answered with certain facts only,
             each a button to the action that resolves it. */}
         <DailyTruth />
-        {/* [HONEST-HOME] Simplified home — one curated menu, no duplicated doors.
-            Removed: the "Nieuwe factuur" card (the FAB below covers it) and the
-            "Inkoopfacturen" card (reachable via the "Te betalen" snapshot and from
-            within "Inkomende facturen"). Order: daily add → sales → purchases →
-            bank → BTW → workspace. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-          {/* Bon/factuur toevoegen — foto of bestand → AI sorteert (daily add). */}
-          <IntakeButton variant="card" />
+        {/* [READINESS] The connective layer — one tap to "ben ik klaar voor de
+            boekhouder?": a single verdict over everything imported (facturen, bank,
+            dagomzet, BTW) with the few things that still need attention and one-click
+            handover. Deliberately prominent (not a menu row) — it's the answer the
+            store owner actually comes for. */}
+        <button
+          onClick={() => router.push('/dashboard/klaar')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
+            padding: '18px 18px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
+            border: 'none', background: 'linear-gradient(135deg, #1A73E8, #1557B0)',
+            boxShadow: EL1, margin: '20px 0 8px',
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>fact_check</span>
+          <span style={{ flex: 1 }}>
+            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Ben ik klaar?</span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>Status van je kwartaal — en klaar voor de boekhouder</span>
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+        </button>
 
-          {/* Mijn facturen — your outgoing invoices. */}
-          <ActionCard
-            icon="description" iconBg="#00897B" iconColor="#fff"
-            label="Mijn facturen" sub="Bekijk en beheer je facturen"
-            onClick={() => router.push('/dashboard/facturen')}
-          />
+        {/* [DASH-SIMPLIFY] Grouped home — same destinations as before, now in four
+            labelled sections instead of one flat list of 12 equal cards. See the
+            file-header note for the full rationale and the group→route mapping.
+            Order: what you DO (Toevoegen) → what you MANAGE (administratie) →
+            what you GET (cijfers) → the rest (werkplek). Bigger gap BETWEEN groups
+            (22) than WITHIN a group (12) so the sections read as distinct blocks. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
 
-          {/* Inkomende facturen — supplier invoices: verify queue + manage. */}
-          <ActionCardBadge
-            icon="mark_email_unread" iconBg="#0288D1" iconColor="#fff"
-            label="Inkomende facturen" sub="Facturen van leveranciers"
-            badge={pendingCount}
-            onClick={() => router.push('/dashboard/incoming')}
-          />
+          {/* ── 1. TOEVOEGEN — the daily input actions ─────────────────────────── */}
+          <section>
+            <SectionLabel>Toevoegen</SectionLabel>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Bon/factuur toevoegen — foto of bestand → AI sorteert. Own modal
+                  (camera/upload); kept full-width as the primary daily action. */}
+              <IntakeButton variant="card" />
+              {/* [UPLOAD-HUB] Alles uploaden — many files at once; the app sorts them. */}
+              <ActionCard
+                icon="upload_file" iconBg="#1A73E8" iconColor="#fff"
+                label="Alles uploaden" sub="Meerdere bestanden tegelijk — de app sorteert"
+                onClick={() => router.push('/dashboard/upload')}
+              />
+            </div>
+          </section>
 
-          {/* Bank — statements + reconciliation. */}
-          <ActionCard
-            icon="account_balance" iconBg="#1A73E8" iconColor="#fff"
-            label="Bank" sub="Koppel je afschrift"
-            onClick={() => router.push('/dashboard/bank')}
-          />
+          {/* ── 2. MIJN ADMINISTRATIE — the record screens as a compact grid ────── */}
+          {/* Each tile reuses its screen's original icon + colour so nothing feels
+              relocated, only regrouped. The two purchase surfaces sit adjacent:
+              "Inkomend" is the verify QUEUE (/incoming, carries the pending-verify
+              badge); "Inkoopfacturen" is the CONFIRMED crediteuren-management
+              (/incoming/manage — mark paid, betaalstatus), which titles itself
+              "Inkoopfacturen" and was previously only reachable from inside the
+              queue. Surfaced here so the owner reaches their te-betalen bills
+              straight from home. */}
+          <section>
+            <SectionLabel>Mijn administratie</SectionLabel>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              <AdminTile icon="description" tint="#00897B" label="Facturen"
+                onClick={() => router.push('/dashboard/facturen')} />
+              <AdminTile icon="mark_email_unread" tint="#0288D1" label="Inkomend" badge={pendingCount}
+                onClick={() => router.push('/dashboard/incoming')} />
+              {/* [NAV-FROM] ?from=home so Terug on Inkoopfacturen returns HERE. Without it the
+                  canonical parent is /dashboard/incoming — a verification list this visitor never
+                  passed through, since this tile jumps straight to the manage surface. */}
+              <AdminTile icon="request_quote" tint="#E37400" label="Inkoopfacturen"
+                onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
+              <AdminTile icon="account_balance" tint="#1A73E8" label="Bank"
+                onClick={() => router.push('/dashboard/bank')} />
+              <AdminTile icon="payments" tint="#00897B" label="Kas"
+                onClick={() => router.push('/dashboard/kas')} />
+              <AdminTile icon="point_of_sale" tint="#7B1FA2" label="Dagomzet"
+                onClick={() => router.push('/dashboard/dagomzet')} />
+              <AdminTile icon="inventory_2" tint="#5F6368" label="Artikelen"
+                onClick={() => router.push('/dashboard/artikelen')} />
+            </div>
+          </section>
 
-          {/* [CASH-LEDGER] Kas — contante ontvangsten en uitgaven. */}
-          <ActionCard
-            icon="payments" iconBg="#00897B" iconColor="#fff"
-            label="Kas" sub="Contante ontvangsten en uitgaven"
-            onClick={() => router.push('/dashboard/kas')}
-          />
+          {/* ── 3. CIJFERS & AANGIFTE — the numbers the owner comes for ─────────── */}
+          {/* "Je waarheid" is the primary live view (full card). "Financieel
+              overzicht" and "Concept BTW-aangifte" are compact MiniCards beneath it —
+              kept reachable (never orphaned) but de-emphasised because they overlap
+              the live view. See the file-header decision note before touching this. */}
+          <section>
+            <SectionLabel>Cijfers &amp; aangifte</SectionLabel>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* [TRUTH-LENS] Je financiële waarheid — één live beeld (omzet, kosten,
+                  winst, BTW) met tijd-lens. Zelfde reconcile-pijplijn als de aangifte. */}
+              <ActionCard
+                icon="monitoring" iconBg="#0B8043" iconColor="#fff"
+                label="Je waarheid" sub="Omzet, winst en BTW — live, elke periode"
+                onClick={() => router.push('/dashboard/waarheid')}
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {/* [RESULT] Combined cross-channel result (invoices + bank + kas). */}
+                <MiniCard icon="bar_chart" tint={M3.warning}
+                  label="Financieel overzicht" sub="Resultaat & BTW"
+                  onClick={() => router.push('/dashboard/resultaat')} />
+                {/* [AANGIFTE] Concept rubrieken (1a/1b/5a/5b) — a draft, never a filing. */}
+                <MiniCard icon="receipt_long" tint="#455A64"
+                  label="Concept BTW-aangifte" sub="1a/1b/5a/5b"
+                  onClick={() => router.push('/dashboard/aangifte')} />
+              </div>
+            </div>
+          </section>
 
-          {/* [RESULT] Financieel overzicht → the combined cross-channel result (BTW,
-              omzet, kosten from invoices + bank + kas); it links on to the detailed
-              per-invoice BTW-aangifte. */}
-          <ActionCard
-            icon="bar_chart" iconBg={M3.warning} iconColor="#fff"
-            label="Financieel overzicht" sub="Resultaat en BTW dit kwartaal"
-            onClick={() => router.push('/dashboard/resultaat')}
-          />
-
-          {/* Mijn werkplek — clients, files, company data (secondary). */}
-          <ActionCard
-            icon="work" iconBg={M3.success} iconColor="#fff"
-            label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
-            onClick={() => router.push('/dashboard/werkplek')}
-          />
+          {/* ── 4. MEER — secondary workspace ──────────────────────────────────── */}
+          <section>
+            <SectionLabel>Meer</SectionLabel>
+            <ActionCard
+              icon="work" iconBg={M3.success} iconColor="#fff"
+              label="Mijn werkplek" sub="Klanten, bestanden en gegevens"
+              onClick={() => router.push('/dashboard/werkplek')}
+            />
+          </section>
 
           {/* 4. Werken met AI
           <ActionCard
@@ -202,7 +302,7 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                 placeholder='"factuur voor Mohammed voor dakdekken, 3 uur à 85 euro"'
                 style={{
                   width: '100%', borderRadius: R.md,
-                  border: `2px solid ${aiPrompt ? M3.tertiary : '#79747E'}`,
+                  border: `2px solid ${aiPrompt ? M3.tertiary : '#80868b'}`,
                   padding: '14px 16px', fontSize: 16, resize: 'none',
                   fontFamily: FONT, outline: 'none', boxSizing: 'border-box',
                   background: M3.surface, color: M3.onSurface,
@@ -216,8 +316,8 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                   marginTop: 12, width: '100%', padding: '14px',
                   borderRadius: R.full, border: 'none',
                   cursor: aiLoading || !aiPrompt.trim() ? 'default' : 'pointer',
-                  background: aiLoading || !aiPrompt.trim() ? '#E7E0EC' : M3.tertiary,
-                  color: aiLoading || !aiPrompt.trim() ? '#79747E' : '#fff',
+                  background: aiLoading || !aiPrompt.trim() ? '#f1f3f4' : M3.tertiary,
+                  color: aiLoading || !aiPrompt.trim() ? '#80868b' : '#fff',
                   fontSize: 15, fontWeight: 600, transition: 'all 0.15s',
                 }}
                 onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
@@ -271,62 +371,100 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
         <span className="material-symbols-outlined" style={{ color: iconColor, fontSize: 24 }}>{icon}</span>
       </div>
       <div style={{ flex: 1 }}>
-        <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 2 }}>{label}</p>
+        <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 2 }}>{label}</p>
         <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
       </div>
-      <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
+      <span className="material-symbols-outlined" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
     </button>
   )
 }
 
 // [BOEK-029] StatCard removed — replaced by Financieel overzicht ActionCard
+// [DASH-SIMPLIFY] ActionCardBadge removed — the only user (Inkomende facturen) is
+// now an <AdminTile> in the administratie grid, which carries the badge itself.
 
-// [BOEK-029] ActionCardBadge — like ActionCard but with a numeric badge
-function ActionCardBadge({ icon, iconBg, iconColor, label, sub, badge, onClick }: {
-  icon: string; iconBg: string; iconColor: string
-  label: string; sub: string; badge: number; onClick: () => void
+// [DASH-SIMPLIFY] SectionLabel — the small uppercase header that turns the flat
+// menu into scannable groups. Purely a grouping affordance; carries no state.
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p style={{
+      fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase',
+      color: '#8a929c', margin: '0 2px 10px',
+    }}>
+      {children}
+    </p>
+  )
+}
+
+// [DASH-SIMPLIFY] AdminTile — compact 3-per-row tile for the "Mijn administratie"
+// record screens. Same icon-tile visual language as ActionCard, but centered and
+// label-only so six sources read as ONE group instead of six full-width cards.
+// `tint` is the screen's own accent colour (reused for continuity); `badge` is an
+// optional count (used by Inkomend for the pending-verify queue).
+function AdminTile({ icon, tint, label, badge, onClick }: {
+  icon: string; tint: string; label: string; badge?: number; onClick: () => void
 }) {
   return (
     <button
       onClick={onClick}
       style={{
-        display: 'flex', alignItems: 'center', gap: 16,
-        background: '#fff', borderRadius: R.lg, padding: '18px 16px',
-        border: '2px solid transparent',
-        boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
-        transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
-        WebkitTapHighlightColor: 'transparent',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+        background: '#fff', borderRadius: R.lg, padding: '14px 6px 12px',
+        border: 'none', boxShadow: EL1, cursor: 'pointer',
+        transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
+      }}
+      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.96)')}
+      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+    >
+      <div style={{
+        position: 'relative', width: 46, height: 46, borderRadius: R.md,
+        background: tint, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 24 }}>{icon}</span>
+        {badge != null && badge > 0 && (
+          <span style={{
+            position: 'absolute', top: -5, right: -5, background: '#B3261E', color: '#fff',
+            borderRadius: 9999, minWidth: 18, height: 18, fontSize: 11, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px',
+            border: '2px solid #fff', fontFamily: FONT,
+          }}>
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
+      </div>
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: '#202124', textAlign: 'center' }}>{label}</span>
+    </button>
+  )
+}
+
+// [DASH-SIMPLIFY] MiniCard — compact 2-per-row card for the secondary number
+// screens (Financieel overzicht, Concept BTW-aangifte) that sit under the primary
+// "Je waarheid". Left-aligned icon + label + short sub; no chevron (kept light).
+function MiniCard({ icon, tint, label, sub, onClick }: {
+  icon: string; tint: string; label: string; sub: string; onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 11,
+        background: '#fff', borderRadius: R.lg, padding: '13px 12px',
+        border: 'none', boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
+        transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
       onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
       onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
-      <div style={{ position: 'relative', flexShrink: 0 }}>
-        <div style={{
-          width: 48, height: 48, borderRadius: R.md,
-          background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <span className="material-symbols-outlined" style={{ color: iconColor, fontSize: 24 }}>{icon}</span>
-        </div>
-        {/* Badge */}
-        {badge > 0 && (
-          <div style={{
-            position: 'absolute', top: -4, right: -4,
-            background: '#B3261E', color: '#fff',
-            borderRadius: 9999, minWidth: 18, height: 18,
-            fontSize: 11, fontWeight: 700,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '0 4px', fontFamily: FONT,
-            border: '2px solid #F8F9FA',
-          }}>
-            {badge > 99 ? '99+' : badge}
-          </div>
-        )}
+      <div style={{
+        width: 38, height: 38, borderRadius: R.sm, background: tint,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+      }}>
+        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 20 }}>{icon}</span>
       </div>
-      <div style={{ flex: 1 }}>
-        <p style={{ fontSize: 16, fontWeight: 600, color: '#1C1B1F', marginBottom: 2 }}>{label}</p>
-        <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0, lineHeight: 1.2 }}>{label}</p>
+        <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{sub}</p>
       </div>
-      <span className="material-symbols-outlined" style={{ color: '#79747E', fontSize: 20 }}>chevron_right</span>
     </button>
   )
 }
@@ -348,7 +486,7 @@ function Fab({ onClick }: { onClick: () => void }) {
         border: 'none', cursor: 'pointer',
         boxShadow: '0 4px 12px rgba(0,0,0,0.16)',
         display: 'flex', alignItems: 'center', gap: 8,
-        fontFamily: "'Google Sans', 'Roboto', sans-serif",
+        fontFamily: "'Roboto', sans-serif",
         zIndex: 50,
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
       }}

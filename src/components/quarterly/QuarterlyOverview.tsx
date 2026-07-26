@@ -10,11 +10,18 @@ import { formatEur } from "@/lib/quarterly";
 import { downloadCsv } from "@/lib/export";
 import { useParentPath } from "@/lib/navigation-hooks";
 import type { Role } from "@/lib/navigation";
+import { lastCompletedQuarter } from "@/lib/quarter";
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = [CURRENT_YEAR, CURRENT_YEAR - 1, CURRENT_YEAR - 2];
-const CURRENT_QUARTER = Math.ceil((new Date().getMonth() + 1) / 3) as 1 | 2 | 3 | 4;
+// [QUARTER-DEFAULT] Default to the LAST COMPLETED quarter — the one whose BTW is actually due —
+// exactly like /api/result, /api/aangifte, /api/readiness and the klaar flow (quarter.ts). The
+// old open-quarter default (Q3 mid-July) dropped the owner on an empty/partial quarter they'd have
+// to correct by hand, and disagreed with every other surface. year is defaulted to match.
+const _LC = lastCompletedQuarter();
+const CURRENT_YEAR_DEFAULT = _LC.year;
+const CURRENT_QUARTER = _LC.quarter as 1 | 2 | 3 | 4;
 
 interface Client {
   id: string;
@@ -38,26 +45,133 @@ export function QuarterlyOverview({ isAccountant, role }: Props) {
 function ZzpView({ role }: { role: Role }) {
   const parentHref = useParentPath(role);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
-  const [year, setYear] = useState(CURRENT_YEAR);
+  const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
   const [mode, setMode] = useState<"paid" | "all">("paid");
   const [data, setData] = useState<ZzpQuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [packaging, setPackaging] = useState(false); // [CLOSING-PACKAGE]
+  // [TRUST-OWNER] The RECONCILED figures (invoices + bank + cash + card takings) — the SAME source
+  // as the accountant view, the closing package and /api/aangifte. For a retail shop most omzet is
+  // pin/contant with NO invoice, so the invoices-only /api/quarterly totals (data.totalIn) show a
+  // fraction of the real omzet and must never be presented as the Q2 aangifte. null → show "…".
+  const [recon, setRecon] = useState<{
+    omzet: number; verschuldigd: number; voorbelasting: number; saldo: number;
+    salesByRate: { rate: number; omzet: number; btw: number }[];
+    // [HONESTY] Carried so the "BTW te betalen (5g)" tile can never read silently too low —
+    // omzet booked with no rate (cashOmzetZonderBtw) and verified-but-dateless invoices both
+    // leave the reconciled figure incomplete; surface them here exactly as Resultaat does.
+    cashOmzetZonderBtw: number; datelessVerifiedCount: number;
+  } | null>(null);
+  // [TRUTH-FILED] Filing state for THIS quarter: is it marked ingediend, and has the live truth
+  // diverged since (→ carry-forward vs suppletie). filingTick forces a refetch after file/unlock.
+  const [filed, setFiled] = useState<{
+    filedAt: string;
+    divergence: { changed: boolean; btwSaldoDelta: number; needsSuppletie: boolean };
+  } | null>(null);
+  const [filing, setFiling] = useState(false);
+  const [filingTick, setFilingTick] = useState(0);
 
   useEffect(() => {
-    setLoading(true);
-    setData(null);
+    void (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setLoading(true);
+      setData(null);
+      setRecon(null);
+    })();
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
       mode,
     });
+    // [NAN-GUARD] Only store a real summary — an error body ({error}) would otherwise become
+    // `data` and render "€ NaN" in the Facturen tiles. On a bad response leave data null (→ the
+    // loading/empty state), never a broken figure shown as data.
     fetch(`/api/quarterly?${params}`)
-      .then((r) => r.json())
-      .then(setData)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setData(d && !d.error ? d : null))
+      .catch(() => setData(null))
       .finally(() => setLoading(false));
+
+    // [TRUST-OWNER] Reconciled omzet + BTW in parallel — accrual (invoice date), all channels,
+    // independent of the paid/all mode. This is the real Q2 number the owner files.
+    const rparams = new URLSearchParams({ year: String(year), quarter: String(quarter) });
+    (async () => {
+      try {
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${rparams}`),
+          fetch(`/api/aangifte?${rparams}`),
+        ]);
+        if (!rRes.ok || !aRes.ok) return;
+        const r = await rRes.json();
+        const a = await aRes.json();
+        const omzet = Number(r?.result?.omzet);
+        const verschuldigd = Number(a?.aangifte?.verschuldigd);
+        const voorbelasting = Number(a?.aangifte?.voorbelasting);
+        const saldo = Number(a?.aangifte?.saldo);
+        const salesByRate = Array.isArray(r?.result?.salesByRate) ? r.result.salesByRate : [];
+        const cashOmzetZonderBtw = Number(r?.result?.cashOmzetZonderBtw) || 0;
+        const datelessVerifiedCount = Number(r?.datelessVerifiedCount) || 0;
+        if ([omzet, verschuldigd, voorbelasting, saldo].every(Number.isFinite)) {
+          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate, cashOmzetZonderBtw, datelessVerifiedCount });
+        }
+      } catch { /* leave recon null → the owner sees "…", never a wrong number */ }
+    })();
   }, [quarter, year, mode]);
+
+  // [TRUTH-FILED] Load whether this quarter is marked ingediend + any divergence since.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setFiled(null);
+      try {
+        const res = await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`);
+        if (!res.ok) return;
+        const j = await res.json();
+        if (!cancelled && j?.ok) setFiled(j.filed ?? null);
+      } catch { /* leave null — no badge, never a wrong claim */ }
+    })();
+    return () => { cancelled = true; };
+  }, [quarter, year, filingTick]);
+
+  // [TRUTH-FILED] Mark this quarter filed (freeze snapshot) / unlock (reversible).
+  async function toggleFiled(mark: boolean) {
+    setFiling(true);
+    try {
+      if (mark) {
+        // [FILING-GATE] The server warns (409) when the quarter still has unconfirmed invoices whose
+        // money isn't in the figures yet. Surface that instead of freezing an incomplete snapshot;
+        // the owner can still proceed (their declaration) → re-POST with acknowledge.
+        const res = await fetch("/api/btw/file", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ year, quarter }),
+        });
+        if (res.status === 409) {
+          const j = await res.json().catch(() => ({}));
+          const proceed = window.confirm(
+            `${j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd."}\n\nToch als ingediend markeren?`,
+          );
+          if (!proceed) return;
+          const res2 = await fetch("/api/btw/file", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ year, quarter, acknowledge: true }),
+          });
+          if (!res2.ok) { window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return; }
+        } else if (!res.ok) {
+          // Never leave a failed freeze looking successful.
+          window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return;
+        }
+      } else {
+        await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`, { method: "DELETE" });
+      }
+      setFilingTick((t) => t + 1);
+    } finally {
+      setFiling(false);
+    }
+  }
 
   // [CLOSING-PACKAGE] Download the full quarterly package (ZIP) for the accountant.
   async function handlePackageExport() {
@@ -142,12 +256,13 @@ function ZzpView({ role }: { role: Role }) {
           <button
             onClick={handleExport}
             disabled={exporting || !data}
+            title="Alleen de facturen (CSV). Voor de volledige BTW-cijfers incl. pin & contant: gebruik het Kwartaalpakket."
             className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl font-medium border hover:bg-muted disabled:opacity-40 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            {exporting ? "…" : "CSV"}
+            {exporting ? "…" : "Facturen"}
           </button>
 
           {/* [CLOSING-PACKAGE] Full quarterly package (ZIP) for the accountant */}
@@ -224,12 +339,132 @@ function ZzpView({ role }: { role: Role }) {
             <p className="text-sm text-muted-foreground mt-0.5">{quarterLabel}</p>
           </div>
 
-          {/* [BOEK-013] Inkomsten — label boven tabel beschrijft wat de cijfers zijn */}
+          {/* [TRUST-OWNER] The REAL Q2 figures — omzet incl. pin & contant + BTW te betalen — from
+              the reconciled engine (same as the accountant + closing ZIP), NOT invoices only. This
+              is what you actually file. The facturen tables below are a subset for reference. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-background border-2 border-emerald-400 rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Omzet (excl. BTW)</p>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none mt-1.5">{recon ? formatEur(recon.omzet) : "…"}</p>
+              <p className="text-[11px] text-muted-foreground mt-1.5">incl. pin & contant</p>
+            </div>
+            <div className="bg-background border-2 border-blue-400 rounded-2xl p-4 shadow-sm">
+              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">BTW te betalen (5g)</p>
+              <p className="text-2xl font-bold tabular-nums text-blue-700 leading-none mt-1.5">{recon ? formatEur(recon.saldo) : "…"}</p>
+              <p className="text-[11px] text-muted-foreground mt-1.5">na voorbelasting</p>
+            </div>
+          </div>
+
+          {/* [TRUST-OWNER] Concept BTW-aangifte from the reconciled figures — verschuldigd per
+              tarief, minus voorbelasting = te betalen (5g). Same numbers as the accountant + ZIP. */}
+          {recon && (recon.salesByRate.length > 0 || recon.verschuldigd !== 0 || recon.voorbelasting !== 0) && (
+            <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
+              <div className="px-4 py-3 border-b">
+                <h3 className="text-sm font-semibold">Concept BTW-aangifte Q{quarter} {year}</h3>
+              </div>
+              <div className="divide-y">
+                {recon.salesByRate.filter((b) => b.omzet !== 0 || b.btw !== 0).map((b) => (
+                  <div key={b.rate} className="flex items-center justify-between px-4 py-3.5">
+                    <div>
+                      <p className="text-sm font-medium">Verschuldigd {b.rate}%</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.omzet)}</p>
+                    </div>
+                    <p className="text-sm font-semibold tabular-nums">{formatEur(b.btw)}</p>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Verschuldigd (5a)</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatEur(recon.verschuldigd)}</p>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Voorbelasting (5b)</p>
+                  <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
+                  <p className="text-sm font-semibold">Te betalen (5g)</p>
+                  <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* [HONESTY] Same nudges Resultaat shows — so the "BTW te betalen (5g)" above is never
+              read as complete when it isn't. Omzet with no rate isn't in the BTW; a dateless
+              verified invoice is dropped from the quarter entirely. */}
+          {recon && recon.cashOmzetZonderBtw > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {formatEur(recon.cashOmzetZonderBtw)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
+              niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet
+              voor een compleet BTW-cijfer.
+            </div>
+          )}
+          {recon && recon.datelessVerifiedCount > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {recon.datelessVerifiedCount === 1
+                ? "1 geverifieerde factuur heeft geen datum"
+                : `${recon.datelessVerifiedCount} geverifieerde facturen hebben geen datum`} en telt daardoor niet mee in dit
+              kwartaal. Vul de factuurdatum in, anders is je omzet of BTW-aftrek te laag.
+            </div>
+          )}
+
+          {/* [TRUTH-FILED] Filing status for this quarter — the frozen-aangifte layer. Marking a
+              quarter ingediend freezes its figures; if the live truth diverges later (a late
+              invoice), we show the carry-forward vs suppletie guidance. Reversible. */}
+          {recon && (
+            <div style={{ marginTop: 12 }}>
+              {filed?.divergence?.changed && (
+                <div style={{
+                  background: filed.divergence.needsSuppletie ? "#fce8e6" : "#fef7e0",
+                  border: `1px solid ${filed.divergence.needsSuppletie ? "#e57373" : "#fbbc04"}`,
+                  borderRadius: 12, padding: "12px 14px", marginBottom: 10,
+                }}>
+                  <p style={{ fontSize: 13.5, fontWeight: 700, margin: 0, color: filed.divergence.needsSuppletie ? "#a50e0e" : "#7a4f00" }}>
+                    {filed.divergence.needsSuppletie ? "⚠️ Suppletie nodig" : "Let op — dit kwartaal is gewijzigd sinds indiening"}
+                  </p>
+                  <p style={{ fontSize: 12.5, margin: "4px 0 0", lineHeight: 1.5, color: filed.divergence.needsSuppletie ? "#7a1c1c" : "#7a4f00" }}>
+                    De BTW is met <strong>{formatEur(Math.abs(filed.divergence.btwSaldoDelta))}</strong> {filed.divergence.btwSaldoDelta >= 0 ? "gestegen" : "gedaald"}.{" "}
+                    {filed.divergence.needsSuppletie
+                      ? "Meer dan €1.000 — dien een suppletie in."
+                      : "Onder €1.000 — verwerk dit in je volgende aangifte."}
+                  </p>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                {filed ? (
+                  <>
+                    <span style={{ fontSize: 12.5 }} className="text-muted-foreground">
+                      🔒 Ingediend op {new Date(filed.filedAt).toLocaleDateString("nl-NL")} · definitief
+                    </span>
+                    <button
+                      onClick={() => toggleFiled(false)}
+                      disabled={filing}
+                      className="text-xs font-semibold text-muted-foreground underline"
+                      style={{ cursor: filing ? "default" : "pointer", background: "none", border: "none", padding: 0 }}
+                    >
+                      {filing ? "Bezig…" : "Indiening ongedaan maken"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => toggleFiled(true)}
+                    disabled={filing}
+                    style={{ cursor: filing ? "default" : "pointer" }}
+                    className="w-full px-4 py-3 rounded-xl bg-indigo-600 text-white font-semibold text-sm"
+                  >
+                    {filing ? "Bezig…" : "Markeer dit kwartaal als ingediend"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* [BOEK-013] Facturen (subset of the reconciled omzet above) — label maakt duidelijk
+              dat dit alleen de facturen zijn, niet de totale omzet incl. pin/contant. */}
           <div>
             <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
               {mode === "paid"
-                ? "Inkomsten — alleen betaalde facturen"
-                : "Inkomsten — betaald én uitstaand"}
+                ? "Facturen — inkomsten (alleen betaald)"
+                : "Facturen — inkomsten (betaald én uitstaand)"}
             </p>
             <div className="bg-background border-2 border-emerald-400 rounded-2xl overflow-hidden shadow-sm">
               <div className="grid grid-cols-2 divide-x divide-emerald-100 border-b border-emerald-100 bg-emerald-50">
@@ -259,12 +494,13 @@ function ZzpView({ role }: { role: Role }) {
             </div>
           </div>
 
-          {/* [BOEK-013] Uitgaven — label boven tabel beschrijft wat de cijfers zijn */}
+          {/* [BOEK-013] Facturen — uitgaven (subset). De voorbelasting in de aangifte hierboven
+              telt óók bonnen/kosten zonder factuur mee; deze tabel toont alleen de facturen. */}
           <div>
             <p className="text-sm font-semibold text-foreground mb-2 px-0.5">
               {mode === "paid"
-                ? "Uitgaven — alleen betaalde facturen"
-                : "Uitgaven — betaald én uitstaand"}
+                ? "Facturen — uitgaven (alleen betaald)"
+                : "Facturen — uitgaven (betaald én uitstaand)"}
             </p>
             <div className="bg-background border-2 border-red-400 rounded-2xl overflow-hidden shadow-sm">
               <div className="grid grid-cols-2 divide-x divide-red-100 border-b border-red-100 bg-red-50">
@@ -305,7 +541,7 @@ function ZzpView({ role }: { role: Role }) {
 // ─────────────────────────────────────────────────────────
 function AccountantView({ role }: { role: Role }) {
   const parentHref = useParentPath(role);
-  const [year, setYear] = useState(CURRENT_YEAR);
+  const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
   const [data, setData] = useState<QuarterlySummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -314,9 +550,20 @@ function AccountantView({ role }: { role: Role }) {
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [clientsLoading, setClientsLoading] = useState(false);
   const [packaging, setPackaging] = useState(false); // [CLOSING-PACKAGE]
+  // [TRUST-ACCOUNTANT] The RECONCILED figures (invoices + bank + cash + turnover) — the
+  // same source as the owner's screens, the closing package and clients/[id]/kwartaal. The
+  // money tiles + the BTW-aangifte block read these, NOT the invoices-only /api/quarterly
+  // summary (which for a cash/retail client shows a fraction of the real omzet/BTW and must
+  // never be presented as the aangifte). null → the tiles show "…" instead of a wrong number.
+  const [recon, setRecon] = useState<{
+    omzet: number; verschuldigd: number; voorbelasting: number; saldo: number;
+    salesByRate: { rate: number; omzet: number; btw: number }[];
+    // [HONESTY] see the owner view — surfaced so the accountant's 5g tile is never silently low.
+    cashOmzetZonderBtw: number; datelessVerifiedCount: number;
+  } | null>(null);
 
   useEffect(() => {
-    setClientsLoading(true);
+    void (async () => { setClientsLoading(true); })();
     // [BRIDGE-QUARTER-ACC] Honor ?clientId from the URL (e.g. the "Kwartaal"
     // button on the accountant dashboard) so we open the RIGHT client, not just
     // the first one. Falls back to the first client when no param is present.
@@ -338,17 +585,47 @@ function AccountantView({ role }: { role: Role }) {
 
   useEffect(() => {
     if (!selectedClientId) return;
-    setLoading(true);
-    setData(null);
+    void (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setLoading(true);
+      setData(null);
+      setRecon(null);
+    })();
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
       clientId: selectedClientId,
     });
+    // [NAN-GUARD] Same as the owner view — never let an error body become `data` and render NaN.
     fetch(`/api/quarterly?${params}`)
-      .then((r) => r.json())
-      .then(setData)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setData(d && !d.error ? d : null))
+      .catch(() => setData(null))
       .finally(() => setLoading(false));
+
+    // [TRUST-ACCOUNTANT] Reconciled figures in parallel — same source as the owner + ZIP.
+    (async () => {
+      try {
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${params}`),
+          fetch(`/api/aangifte?${params}`),
+        ]);
+        if (!rRes.ok || !aRes.ok) return;
+        const r = await rRes.json();
+        const a = await aRes.json();
+        const omzet = Number(r?.result?.omzet);
+        const verschuldigd = Number(a?.aangifte?.verschuldigd);
+        const voorbelasting = Number(a?.aangifte?.voorbelasting);
+        const saldo = Number(a?.aangifte?.saldo);
+        const salesByRate = Array.isArray(r?.result?.salesByRate) ? r.result.salesByRate : [];
+        const cashOmzetZonderBtw = Number(r?.result?.cashOmzetZonderBtw) || 0;
+        const datelessVerifiedCount = Number(r?.datelessVerifiedCount) || 0;
+        if ([omzet, verschuldigd, voorbelasting, saldo].every(Number.isFinite)) {
+          setRecon({ omzet, verschuldigd, voorbelasting, saldo, salesByRate, cashOmzetZonderBtw, datelessVerifiedCount });
+        }
+      } catch { /* leave recon null → tiles show a dash, never a wrong number */ }
+    })();
   }, [year, quarter, selectedClientId]);
 
   async function handleExport() {
@@ -406,12 +683,12 @@ function AccountantView({ role }: { role: Role }) {
         </div>
         <p className="text-sm font-medium mb-1">Geen klanten gekoppeld</p>
         <p className="text-xs text-muted-foreground mb-5">Nodig een klant uit om kwartaaloverzichten te bekijken</p>
-        <a href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
+        <Link href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
           Klant uitnodigen
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
-        </a>
+        </Link>
       </div>
     );
   }
@@ -499,8 +776,9 @@ function AccountantView({ role }: { role: Role }) {
       {!loading && data && (
         <>
           <div className="grid grid-cols-2 gap-3">
-            <SummaryCard label="Excl. BTW" value={formatEur(data.totalExcl)} accent="default" />
-            <SummaryCard label="Totaal BTW" value={formatEur(data.totalBtw)} accent="default" />
+            {/* [TRUST-ACCOUNTANT] Reconciled omzet + BTW-saldo (5g), not invoices-only. */}
+            <SummaryCard label="Omzet (excl. BTW)" value={recon ? formatEur(recon.omzet) : "…"} accent="default" />
+            <SummaryCard label="BTW te betalen (5g)" value={recon ? formatEur(recon.saldo) : "…"} accent="default" />
             <SummaryCard label="Betaald" value={formatEur(data.paid)} accent="green" />
             <SummaryCard
               label="Openstaand"
@@ -510,26 +788,53 @@ function AccountantView({ role }: { role: Role }) {
             />
           </div>
 
-          {(data.btwBreakdown?.length ?? 0) > 0 && (
+          {/* [TRUST-ACCOUNTANT] The concept BTW-aangifte from the RECONCILED figures (all
+              channels), not the invoices-only breakdown — verschuldigd per tarief, minus
+              voorbelasting, = te betalen (5g). Same numbers as the owner + the closing ZIP. */}
+          {recon && (recon.salesByRate.length > 0 || recon.verschuldigd !== 0 || recon.voorbelasting !== 0) && (
             <div className="bg-background border rounded-2xl overflow-hidden shadow-sm">
               <div className="px-4 py-3 border-b">
-                <h3 className="text-sm font-semibold">BTW aangifte Q{quarter} {year}</h3>
+                <h3 className="text-sm font-semibold">Concept BTW-aangifte Q{quarter} {year}</h3>
               </div>
               <div className="divide-y">
-                {data.btwBreakdown.map((b) => (
+                {recon.salesByRate.filter((b) => b.omzet !== 0 || b.btw !== 0).map((b) => (
                   <div key={b.rate} className="flex items-center justify-between px-4 py-3.5">
                     <div>
-                      <p className="text-sm font-medium">BTW {b.rate}%</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.totalExcl)}</p>
+                      <p className="text-sm font-medium">Verschuldigd {b.rate}%</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">over {formatEur(b.omzet)}</p>
                     </div>
-                    <p className="text-sm font-semibold tabular-nums">{formatEur(b.totalBtw)}</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatEur(b.btw)}</p>
                   </div>
                 ))}
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Verschuldigd (5a)</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatEur(recon.verschuldigd)}</p>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3.5">
+                  <p className="text-sm font-medium">Voorbelasting (5b)</p>
+                  <p className="text-sm font-semibold tabular-nums">− {formatEur(recon.voorbelasting)}</p>
+                </div>
                 <div className="flex items-center justify-between px-4 py-3.5 bg-muted/30">
-                  <p className="text-sm font-semibold">Totaal BTW</p>
-                  <p className="text-sm font-bold tabular-nums">{formatEur(data.totalBtw)}</p>
+                  <p className="text-sm font-semibold">Te betalen (5g)</p>
+                  <p className="text-sm font-bold tabular-nums">{formatEur(recon.saldo)}</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* [HONESTY] Surface the same incompleteness signals to the accountant before handover. */}
+          {recon && recon.cashOmzetZonderBtw > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {formatEur(recon.cashOmzetZonderBtw)} omzet staat nog zonder BTW-tarief (contante omzet, bankomzet of een
+              niet-gesplitste kassadag) — die BTW zit dus niet in het bedrag hierboven. Ken het tarief toe bij Kas of Dagomzet.
+            </div>
+          )}
+          {recon && recon.datelessVerifiedCount > 0 && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3.5 text-[13px] text-amber-800 leading-relaxed">
+              {recon.datelessVerifiedCount === 1
+                ? "1 geverifieerde factuur heeft geen datum"
+                : `${recon.datelessVerifiedCount} geverifieerde facturen hebben geen datum`} en telt daardoor niet mee in dit
+              kwartaal — vul de factuurdatum in, anders is de omzet of BTW-aftrek te laag.
             </div>
           )}
 

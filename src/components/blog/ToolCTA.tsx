@@ -2,7 +2,7 @@
 // [BLOG] The funnel. A visually distinct box at the end of every article that
 // links to the article's related free tool (primary) and to signup (secondary).
 // Reads relatedTool + relatedToolLabel from the article frontmatter. Matches the
-// blue-accent CTA styling used on the landing page and tools hub (#007aff).
+// blue-accent CTA styling used on the landing page and tools hub (#1a73e8).
 
 import Link from 'next/link'
 import type { Locale } from '@/lib/blog'
@@ -60,18 +60,18 @@ export default function ToolCTA({
   return (
     <aside
       style={{
-        background: '#e8f1ff',
-        border: '1px solid #cfe1ff',
+        background: '#e8f0fe',
+        border: '1px solid #d3e3fd',
         borderRadius: 18,
         padding: '26px 24px',
         margin: '36px 0 8px',
       }}
     >
-      <div style={{ fontSize: 19, fontWeight: 700, color: '#1c1c1e', marginBottom: 14 }}>
+      <div style={{ fontSize: 19, fontWeight: 700, color: '#202124', marginBottom: 14 }}>
         {t.heading}
       </div>
 
-      <p style={{ fontSize: 15, lineHeight: 1.6, color: '#3c3c43', margin: '0 0 18px' }}>
+      <p style={{ fontSize: 15, lineHeight: 1.6, color: '#3c4043', margin: '0 0 18px' }}>
         {t.body}
       </p>
 
@@ -80,7 +80,7 @@ export default function ToolCTA({
           <Link
             href={toolHref}
             style={{
-              backgroundColor: '#007aff',
+              backgroundColor: '#1a73e8',
               color: '#fff',
               fontSize: 15,
               fontWeight: 600,
@@ -98,12 +98,12 @@ export default function ToolCTA({
           href="/register"
           style={{
             backgroundColor: '#fff',
-            color: '#007aff',
+            color: '#1a73e8',
             fontSize: 15,
             fontWeight: 600,
             padding: '13px 24px',
             borderRadius: 9999,
-            border: '1.5px solid #007aff',
+            border: '1.5px solid #1a73e8',
             textDecoration: 'none',
             display: 'inline-block',
           }}
@@ -112,7 +112,7 @@ export default function ToolCTA({
         </Link>
       </div>
 
-      <p style={{ fontSize: 13, color: '#6b6b6e', margin: '14px 0 0' }}>{t.reassure}</p>
+      <p style={{ fontSize: 13, color: '#5f6368', margin: '14px 0 0' }}>{t.reassure}</p>
     </aside>
   )
 }

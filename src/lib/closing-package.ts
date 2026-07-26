@@ -36,6 +36,31 @@ import {
   type InvoiceForQuarterly,
 } from "./quarterly";
 import { calcBtwRate } from "./export";
+import { csvCell } from "./csv-safe";
+import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
+import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
+import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
+import { buildKasboek, openingBalanceForQuarter, kasboekToMatrix, type KasEntry, type KasTurnoverDay, type Quarter as KasQuarter } from "./kasboek";
+import { matrixToXlsxBytes } from "./xlsx-adapter";
+import type { EftSettlement } from "./eft-parser";
+import {
+  computeResult,
+  toResultBankTx,
+  cardBudgetBound,
+  type ResultInvoice,
+  type ResultCashEntry,
+  type ResultBankTx,
+} from "./financial-result";
+import {
+  buildAangifte,
+  buildAangifteCsv,
+  type ConceptAangifte,
+  type AangifteCompleteness,
+} from "./aangifte";
+import { fetchAllRows } from "./supabase-paginate";
+import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
+import { regimeFlagNote } from "./regime-flags";
+import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +80,7 @@ export interface PackageInvoice {
   due_date: string | null;
   pdf_url: string | null;            // outgoing PDF (FACTUUR-A)
   document_id: string | null;        // link to documents (incoming original)
+  client_btw_number: string | null;  // [AANGIFTE] EU-VAT signal for rubriek 4b (not auto-computed)
   marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
   // [FIN-4] ownership — used to infer a NULL direction so a verified row is
   // never silently dropped from the package.
@@ -91,7 +117,11 @@ export interface ClosingPackageSummary {
   quarter: string;                   // "Q1 2026"
   outgoingCount: number;
   incomingCount: number;
-  filesIncluded: number;
+  filesIncluded: number;             // total files in the ZIP (invoices-with-PDF + bank + shared)
+  // [READINESS-EVIDENCE] How many INVOICES carry a source document (PDF). This is the ONLY
+  // invoice-evidence count; filesIncluded also folds in bank-statement + shared files and must
+  // NEVER be read as an invoice-evidence signal (that inflated readiness to a false 100%).
+  invoicesWithPdf: number;
   bankStatementIncluded: boolean;
   warnings: ClosingPackageWarning[];
   generatedAt: string;               // ISO
@@ -251,12 +281,11 @@ async function resolvePaymentDates(
   return result;
 }
 
-/** CSV cell escaper (semicolon-separated, Excel NL). */
+/** CSV cell escaper (semicolon-separated, Excel NL). Delegates to the shared csvCell so a
+ *  vendor-controlled cell (e.g. an AI-extracted supplier name '=HYPERLINK(...)') is
+ *  formula-injection-neutralised before it reaches the accountant's Excel — not just RFC-quoted. */
 function esc(v: string | number): string {
-  const s = String(v ?? "");
-  return s.includes(";") || s.includes("\n") || s.includes('"')
-    ? `"${s.replace(/"/g, '""')}"`
-    : s;
+  return csvCell(v);
 }
 
 /** Map a PackageInvoice to the quarterly lib's shape (computes btw_rate). */
@@ -336,7 +365,10 @@ export function buildOverviewCsv(
       inv.client_name ?? "—",
       inv.invoice_date ?? "—",
       payCell,
-      EUR(inv.total_inc_btw ?? 0),
+      // [TRUST-NUMBER] Show the real total: fall back to excl + BTW when total_inc_btw
+      // wasn't stored, so an invoice that carries real amounts doesn't print €0,00 next
+      // to a non-zero BTW-overzicht (a contradiction the accountant would trip over).
+      EUR(inv.total_inc_btw ?? ((inv.total_ex_btw ?? 0) + (inv.btw_amount ?? 0))),
       inv.status ?? "—",
     ].map(esc).join(";"));
   }
@@ -351,6 +383,50 @@ export function buildOverviewCsv(
   }
 
   return lines.join("\r\n");
+}
+
+/** [TURNOVER-CLOSING] The retail till turnover CSV: per-rate summary, per-day payment
+ *  reconciliation, and the exceptions list. RAW numbers only — the accountant computes
+ *  the aangifte; we only hand over the reconciled evidence and flag what doesn't tie. */
+export function buildTurnoverCsv(quarterLabel: string, tc: TurnoverClosing): string {
+  const L: string[] = [];
+  L.push(`BoekBrug — Dagomzet (kassa) ${quarterLabel}`);
+  L.push("");
+
+  L.push("Samenvatting per BTW-tarief (ruwe cijfers — de boekhouder berekent de aangifte)");
+  L.push(["Tarief", "Omzet excl. BTW", "BTW"].map(esc).join(";"));
+  for (const r of tc.summary.perRate) {
+    if (r.net !== 0 || r.btw !== 0) L.push([`${r.rate}%`, EUR(r.net), EUR(r.btw)].map(esc).join(";"));
+  }
+  L.push(["Totaal", EUR(tc.summary.totalNet), EUR(tc.summary.totalBtw)].map(esc).join(";"));
+  L.push(["Totaal incl. BTW", "", EUR(tc.summary.totalIncl)].map(esc).join(";"));
+  L.push(["Betaald met PIN", EUR(tc.summary.totalPin), ""].map(esc).join(";"));
+  L.push(["Betaald contant", EUR(tc.summary.totalCash), ""].map(esc).join(";"));
+  L.push("");
+
+  L.push("Betaalreconciliatie (kassa vs bank vs kasboek)");
+  L.push(["Datum", "PIN kassa", "PIN bank", "Verschil", "Contant kassa", "Contant geteld", "Verschil"].map(esc).join(";"));
+  for (const d of tc.reconciliation) {
+    L.push([d.date, EUR(d.pinExpected), EUR(d.pinSettled), EUR(d.pinDiff), EUR(d.cashExpected), EUR(d.cashCounted), EUR(d.cashDiff)].map(esc).join(";"));
+  }
+  L.push("");
+
+  if (tc.exceptions.length > 0) {
+    L.push("Uitzonderingen — dagen die niet aansluiten (controleer deze)");
+    L.push(["Datum", "Soort", "Toelichting", "Verschil"].map(esc).join(";"));
+    for (const e of tc.exceptions) L.push([e.date, e.kind, e.note, EUR(e.diff)].map(esc).join(";"));
+  } else {
+    L.push("Geen uitzonderingen — alle dagen sluiten aan.");
+  }
+
+  return L.join("\r\n");
+}
+
+/** Shift an ISO 'YYYY-MM-DD' by whole days (for the settlement-lag window). */
+function shiftDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 // ─── Assembly (no network — fully node-testable) ────────────────────────────────
@@ -379,14 +455,34 @@ interface AssembleInput {
    *  honest "do we have bank data" signal (statement files upload after the
    *  quarter closes, so their presence alone under-reports coverage). */
   hasBankData: boolean;
+  /** [TURNOVER-CLOSING] Retail till turnover section (per-rate summary + payment
+   *  reconciliation + exceptions), or null for a non-retail owner with no daily_turnover. */
+  turnoverClosing?: TurnoverClosing | null;
+  /** [TRIANGLE] Card reconciliation (kassa PIN ↔ terminal afrekening ↔ bank payout) with
+   *  the acquirer commission and the days that don't tie out. null for a non-retail owner
+   *  or when no terminal settlement / card payout exists for the quarter. */
+  cardReconciliation?: TriangleResult | null;
+  /** [AANGIFTE] The CONCEPT BTW-aangifte for the quarter — the SAME figures the owner
+   *  sees on the app's aangifte screen (computed via the one reconciliation engine), so
+   *  the accountant opens it next to the evidence in this ZIP. null when there is no
+   *  sales data at all (nothing to declare yet). Never an invented filing. */
+  conceptAangifte?: ConceptAangifte | null;
+  /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
+   *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
+   *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
+   *  has no life this quarter. */
+  kasboekXlsx?: Uint8Array | null;
   warnings: ClosingPackageWarning[];
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, kasboekXlsx } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
+  // [READINESS-EVIDENCE] Count INVOICE PDFs specifically (distinct from filesIncluded, which also
+  // folds in bank + shared files) so the summary can report a true invoices-with-evidence figure.
+  let invoicePdfCount = 0;
 
   let filesIncluded = 0;
 
@@ -447,6 +543,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 
       zip.file(`facturen-en-bonnen/${dir}/${bucket}/${baseName}.pdf`, bytes);
       filesIncluded++;
+      invoicePdfCount++;
     }
   }
 
@@ -492,20 +589,66 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     filesIncluded++;
   }
 
-  // ── overzicht.csv + overzicht.json ──
-  const overviewCsv = buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates);
-  zip.file("overzicht.csv", "\uFEFF" + overviewCsv);
+  // ── overzicht.csv is built LATER (after all warnings are collected) so the CSV's
+  //    "Let op" section matches overzicht.json — see below. ──
+
+  // \u2500\u2500 Kasboek.xlsx ([KASBOEK] running-balance cash book in the store's Kiwi layout) \u2500\u2500
+  if (kasboekXlsx) { zip.file(`Kasboek-Q${quarter}-${year}.xlsx`, kasboekXlsx); filesIncluded++; }
+
+  // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
+  const hasTurnover = !!turnoverClosing && turnoverClosing.summary.days > 0;
+  if (hasTurnover && turnoverClosing) {
+    zip.file("dagomzet.csv", "﻿" + buildTurnoverCsv(quarterLabel, turnoverClosing));
+    if (turnoverClosing.exceptions.length > 0) {
+      warnings.push({
+        code: "turnover_exceptions",
+        message: `Dagomzet: ${turnoverClosing.exceptions.length} dag(en) sluiten niet aan (zie dagomzet.csv) — controleer voor de aangifte.`,
+      });
+    }
+  }
+
+  // ── kaart-reconciliatie.csv (kassa PIN ↔ terminal ↔ bank + acquirer-commissie) ──
+  // The card-takings tie-out the accountant otherwise does by hand: gross till PIN vs the
+  // terminal afrekening vs the net bank payout, with the commission (BTW-vrij) and the days
+  // that don't reconcile flagged. This is the reconciliation nothing else in the ZIP shows.
+  if (cardReconciliation && cardReconciliation.days.length > 0) {
+    zip.file("kaart-reconciliatie.csv", "﻿" + buildCardReconciliationCsv(quarterLabel, cardReconciliation));
+    if (cardReconciliation.grossMismatchDays > 0) {
+      warnings.push({
+        code: "card_gross_mismatch",
+        message: `Kaart-reconciliatie: ${cardReconciliation.grossMismatchDays} dag(en) waar kassa-PIN ≠ terminal-afrekening (zie kaart-reconciliatie.csv) — een echt verschil, controleer voor de aangifte.`,
+      });
+    }
+  }
+
+  // ── overzicht.csv — built HERE, after every warning (incl. turnover_exceptions and
+  //    card_gross_mismatch above) is in `warnings`, so its "Let op" section matches
+  //    overzicht.json instead of under-reporting the quarter's open points to the accountant.
+  zip.file("overzicht.csv", "﻿" + buildOverviewCsv(quarterLabel, outgoing, incoming, warnings, paymentDates));
+
+  // ── concept-btw-aangifte.csv (the concept mapped to Belastingdienst rubrieken) ──
+  // Travels WITH the evidence (invoice PDFs, dagomzet.csv, bank statement) in this same
+  // ZIP, so every rubriek figure is traceable to its source. RAW concept only, headed
+  // "GEEN ingediende aangifte" — the accountant controleert en dient in.
+  if (conceptAangifte) {
+    zip.file("concept-btw-aangifte.csv", "﻿" + buildAangifteCsv(conceptAangifte));
+  }
 
   // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
   const allQuarterly = [...outgoing, ...incoming].map(toQuarterly);
-  const fullSummary = buildQuarterlySummary(allQuarterly, year, quarter);
   const zzpSummary = buildZzpSummary(allQuarterly, year, quarter, "all");
+  // [BTW-DIRECTION] omzet_per_tarief is SALES per rate — it must be built from OUTGOING
+  // invoices ONLY. Feeding [...outgoing,...incoming] bucketed purchase costs into the
+  // "omzet" rate rows (a €800 purchase @21% inflated the 21% omzet to 1800/378 instead of
+  // 1000/210), contradicting the sibling btw_uitgaand/btw_inkomend fields in the same JSON.
+  const salesSummary = buildQuarterlySummary(outgoing.map(toQuarterly), year, quarter);
 
   const summary: ClosingPackageSummary = {
     quarter: quarterLabel,
     outgoingCount: outgoing.length,
     incomingCount: incoming.length,
     filesIncluded,
+    invoicesWithPdf: invoicePdfCount, // [READINESS-EVIDENCE] invoice-evidence count only
     bankStatementIncluded: bankFiles.length > 0,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -524,12 +667,42 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         bankafschrift_bijgevoegd: summary.bankStatementIncluded,
         // RAW numbers only — accountant computes the aangifte.
         btw_overzicht: {
-          omzet_per_tarief: fullSummary.btwBreakdown,
+          omzet_per_tarief: salesSummary.btwBreakdown,
           uitgaand_incl: zzpSummary.totalIn,
           inkomend_incl: zzpSummary.totalOut,
           btw_uitgaand: zzpSummary.totalBtwIn,
           btw_inkomend: zzpSummary.totalBtwOut,
         },
+        // [TURNOVER-CLOSING] Retail till turnover — the store's bulk revenue, per rate,
+        // with the days that don't reconcile flagged. null for a non-retail owner.
+        dagomzet: hasTurnover && turnoverClosing
+          ? {
+              dagen: turnoverClosing.summary.days,
+              omzet_per_tarief: turnoverClosing.summary.perRate,
+              totaal_excl_btw: turnoverClosing.summary.totalNet,
+              totaal_btw: turnoverClosing.summary.totalBtw,
+              totaal_incl_btw: turnoverClosing.summary.totalIncl,
+              betaald_pin: turnoverClosing.summary.totalPin,
+              betaald_contant: turnoverClosing.summary.totalCash,
+              uitzonderingen: turnoverClosing.exceptions,
+            }
+          : null,
+        // [AANGIFTE] The CONCEPT BTW-aangifte — same figures as the app's aangifte screen.
+        // A concept ("geen ingediende aangifte"): the accountant controleert en dient in.
+        // The rubriek BTW is derived from the evidence in THIS ZIP (invoices + dagomzet),
+        // so every figure is traceable; the notes state what each one depends on.
+        concept_btw_aangifte: conceptAangifte
+          ? {
+              is_concept: true,
+              kwartaal: conceptAangifte.quarterLabel,
+              rubrieken: conceptAangifte.rows,
+              verschuldigd_5a: conceptAangifte.verschuldigd,
+              voorbelasting_5b: conceptAangifte.voorbelasting,
+              saldo_5g: conceptAangifte.saldo,
+              omzet_zonder_tarief: conceptAangifte.cashOmzetZonderBtw,
+              toelichting: conceptAangifte.notes,
+            }
+          : null,
         waarschuwingen: warnings,
       },
       null,
@@ -544,7 +717,157 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, marked_paid_at, sender_id, receiver_id" as const;
+  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
+
+/**
+ * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
+ * (`.gte(...).lte(...)`) silently DROP NULL-date rows, so such an invoice belongs to
+ * this owner and is verified, yet appears in NO quarter's package and NO concept
+ * aangifte — its BTW just vanishes (voorbelasting too low / te-betalen too high) with
+ * zero trace. This finds them so the package can WARN instead of losing them. Returns
+ * the count + up-to-`cap` human labels. Never throws (a query error → empty, no crash).
+ */
+async function datelessVerifiedInvoices(
+  supabase: PipelineClient,
+  ownerId: string,
+  cap = 10,
+): Promise<{ count: number; labels: string[] }> {
+  const { data } = await supabase
+    .from("invoices")
+    .select(INVOICE_FIELDS)
+    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+    .is("invoice_date", null)
+    .neq("status", "archived");
+  const verified = (data ?? [])
+    .map((raw) => {
+      const row = raw as unknown as PackageInvoice;
+      return { ...row, direction: effectiveDirection(row, ownerId) };
+    })
+    .filter(isVerifiedForPackage);
+  return {
+    count: verified.length,
+    labels: verified.slice(0, cap).map((i) => i.invoice_number ?? i.id),
+  };
+}
+
+/** A warning for dateless verified invoices, or null when there are none. Shared by the
+ * ZIP builder and the preview summary so both tell the SAME truth. */
+function datelessWarning(d: { count: number; labels: string[] }): ClosingPackageWarning | null {
+  if (d.count === 0) return null;
+  const shown = d.labels.join(", ");
+  const more = d.count > d.labels.length ? ` (+${d.count - d.labels.length} meer)` : "";
+  return {
+    code: "invoice_no_date",
+    message:
+      `${d.count} geverifieerde factu(u)r(en) hebben GEEN datum en vallen daardoor buiten elk ` +
+      `kwartaalpakket — hun BTW/voorbelasting ontbreekt tot je een datum toekent: ${shown}${more}.`,
+  };
+}
+
+/**
+ * [FIN-10] The bank statement FILE paths for a quarter — the SAME two queries the ZIP
+ * builder uses (period-tagged + legacy created_at fallback), extracted so the preview
+ * summary can tell whether a statement file will actually be attached. Returns de-duped
+ * {path,name}. Presence of transactions ≠ presence of the statement file.
+ */
+async function bankStatementPaths(
+  supabase: PipelineClient,
+  ownerId: string,
+  year: number,
+  quarter: Quarter,
+): Promise<Array<{ path: string; name: string }>> {
+  const start = quarterStartDate(year, quarter);
+  const end = quarterEndDate(year, quarter);
+  const stmtPeriod = `${year}-Q${quarter}`;
+  const [{ data: taggedStmts }, { data: legacyStmts }] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("file_url, file_name")
+      .eq("user_id", ownerId)
+      .eq("doc_type", "bankafschrift")
+      .eq("period", stmtPeriod),
+    supabase
+      .from("documents")
+      .select("file_url, file_name")
+      .eq("user_id", ownerId)
+      .eq("doc_type", "bankafschrift")
+      .is("period", null)
+      .gte("created_at", start)
+      .lte("created_at", `${end}T23:59:59`),
+  ]);
+  const rows = [...(taggedStmts ?? []), ...(legacyStmts ?? [])] as Array<{
+    file_url: string | null;
+    file_name: string | null;
+  }>;
+  const out: Array<{ path: string; name: string }> = [];
+  const seen = new Set<string>();
+  for (const d of rows) {
+    if (!d.file_url || seen.has(d.file_url)) continue;
+    seen.add(d.file_url);
+    out.push({ path: d.file_url, name: d.file_name ?? "bankafschrift" });
+  }
+  return out;
+}
+
+/**
+ * [BRUG-FILES-SHARED] Owner-shared general docs (kassabonnen, contracten, …) split into
+ * the ones tied to THIS quarter (go in the ZIP) and a count of the ones the owner shared
+ * but that belong to another quarter OR carry no quarter at all — those silently fall out
+ * of every package, so the summary/ZIP can WARN instead of dropping them unseen. Excludes
+ * invoices (own section) and bankafschriften (own section). Shared by the ZIP + the preview
+ * so both count and warn identically.
+ */
+async function sharedDocsForQuarter(
+  supabase: PipelineClient,
+  ownerId: string,
+  year: number,
+  quarter: Quarter,
+): Promise<{ paths: Array<{ path: string; name: string }>; outsideCount: number }> {
+  const sharedPeriod = `${year}-Q${quarter}`;
+  const { data } = await supabase
+    .from("documents")
+    .select("file_url, file_name, doc_type, invoice_id, period")
+    .eq("user_id", ownerId)
+    .eq("shared", true)
+    .eq("trashed", false)
+    .is("invoice_id", null);
+  const rows = (data ?? []) as Array<{
+    file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
+  }>;
+  const paths: Array<{ path: string; name: string }> = [];
+  let outsideCount = 0;
+  for (const d of rows) {
+    if (!d.file_url || d.doc_type === "bankafschrift") continue; // not a general shared doc
+    if (d.period === sharedPeriod) paths.push({ path: d.file_url, name: d.file_name ?? "document" });
+    else outsideCount++; // shared, but another quarter / no quarter → not in THIS package
+  }
+  return { paths, outsideCount };
+}
+
+/** A warning for shared files that fall outside this quarter's package, or null. Shared by
+ *  the ZIP builder and the preview summary so both tell the SAME truth. */
+function sharedOutsideWarning(outsideCount: number): ClosingPackageWarning | null {
+  if (outsideCount <= 0) return null;
+  return {
+    code: "shared_outside_quarter",
+    message:
+      `${outsideCount} gedeeld(e) bestand(en) hoort/horen bij een ander kwartaal of hebben geen ` +
+      `kwartaal, en zitten NIET in dit pakket — controleer of ze bij dit kwartaal thuishoren.`,
+  };
+}
+
+// [AANGIFTE] EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be
+// intra-EU (rubriek 4b), which the concept aangifte does NOT auto-compute. Mirrors
+// /api/aangifte so the closing package and the app screen never disagree.
+const EU_VAT = /^(AT|BE|BG|CY|CZ|DE|DK|EE|ES|FI|FR|GR|EL|HR|HU|IE|IT|LT|LU|LV|MT|PL|PT|RO|SE|SI|SK)/i;
+
+/** Whole calendar days in a quarter (for the concept-aangifte coverage note). */
+function daysInQuarter(year: number, quarter: Quarter): number {
+  const startMonth = (quarter - 1) * 3;
+  const startMs = Date.UTC(year, startMonth, 1);
+  const endMs = Date.UTC(year, startMonth + 3, 0); // day 0 of next-next month = last day
+  return Math.round((endMs - startMs) / 86400000) + 1;
+}
 
 /**
  * [BRIDGE-HUB Overzicht] Lightweight summary of a client's quarter — WITHOUT
@@ -568,14 +891,21 @@ export async function summarizeClosingPackage(args: {
   const end = quarterEndDate(year, quarter);
   const warnings: ClosingPackageWarning[] = [];
 
-  const { data: invData, error: invErr } = await supabase
-    .from("invoices")
-    .select(INVOICE_FIELDS)
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .gte("invoice_date", start)
-    .lte("invoice_date", end)
-    .neq("status", "archived");
-  if (invErr) throw new Error(`[CLOSING-PACKAGE] summary query failed: ${invErr.message}`);
+  // [PAGINATION] Page past the ~1000-row PostgREST cap: a busy shop's quarter can exceed it,
+  // and a silent truncation would drop invoices from the count AND the readiness warning below.
+  const invData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from("invoices")
+      .select(INVOICE_FIELDS)
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .gte("invoice_date", start)
+      .lte("invoice_date", end)
+      .neq("status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e: unknown) => {
+    throw new Error(`[CLOSING-PACKAGE] summary query failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
   // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
@@ -588,6 +918,16 @@ export async function summarizeClosingPackage(args: {
   const verified = all.filter(isVerifiedForPackage);
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
+
+  // [PACKAGE-READINESS] Imported invoices dated in this quarter STILL in the verify queue
+  // (status 'processing') are real bills the owner hasn't confirmed. They don't count as
+  // verified above, so without this they'd vanish from the package with zero signal — the
+  // exact "missing invoice" the owner fears. Surface a warning so "afsluiten" is never auto-
+  // green while unverified invoices sit unbooked. (Readiness enforces the block; here we only
+  // report.) Only 'processing' — that IS the verify queue; a 'draft' is an unsent OUTGOING
+  // sales invoice (not a legal invoice yet, and often an abandoned draft), a different concern
+  // that must not falsely block the quarter close.
+  const unverifiedInQuarter = all.filter((i) => i.status === "processing").length;
 
   // Count how many verified invoices actually have a retrievable PDF path.
   // outgoing → pdf_url ; incoming → document_id (resolved to a file_url).
@@ -628,11 +968,31 @@ export async function summarizeClosingPackage(args: {
     .gte("date", start)
     .lte("date", end)
     .limit(1);
-  const bankStatementIncluded = (bankTx ?? []).length > 0;
+  const hasBankData = (bankTx ?? []).length > 0;
+  // Whether the statement FILE will actually be attached — separate from "we have bank
+  // data". Reported truthfully so the preview matches the ZIP (which two-tiers the same way).
+  const bankFilePaths = await bankStatementPaths(supabase, ownerId, year, quarter);
+  const bankStatementIncluded = bankFilePaths.length > 0;
+
+  // [C#3] Owner-shared general docs for this quarter — counted so the preview
+  // filesIncluded matches what the ZIP actually ships (invoices-with-PDF alone undercounted
+  // it, since the ZIP also carries bank + shared files). [C#2] outsideCount → a warning.
+  const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
 
   // Honest warnings — the real gaps, listed specifically.
   if (verified.length === 0) {
     warnings.push({ code: "no_invoices", message: "Geen geverifieerde facturen in dit kwartaal." });
+  }
+  // [PACKAGE-READINESS] Unverified invoices dated in the quarter → the owner must clear the
+  // verify queue before closing, else these real bills never reach the accountant.
+  if (unverifiedInQuarter > 0) {
+    warnings.push({
+      code: "unverified_in_queue",
+      message:
+        unverifiedInQuarter === 1
+          ? "1 factuur staat nog in de verwerkingsrij — verifieer die voordat je afsluit."
+          : `${unverifiedInQuarter} facturen staan nog in de verwerkingsrij — verifieer ze voordat je afsluit.`,
+    });
   }
   if (missingPdf.length > 0) {
     warnings.push({
@@ -643,15 +1003,28 @@ export async function summarizeClosingPackage(args: {
           : `${missingPdf.length} facturen zonder PDF.`,
     });
   }
-  if (!bankStatementIncluded) {
+  // [DATE-GAP] Verified invoices with no date never enter any quarter — warn, don't lose.
+  const dateless = datelessWarning(await datelessVerifiedInvoices(supabase, ownerId));
+  if (dateless) warnings.push(dateless);
+  // Bank: mirror the ZIP's two-tier truth exactly. No data at all vs. data present but the
+  // statement file isn't attached — the latter used to be invisible to the preview.
+  if (!hasBankData) {
     warnings.push({ code: "no_bank_statement", message: "Geen banktransacties gevonden voor dit kwartaal — upload het bankafschrift." });
+  } else if (!bankStatementIncluded) {
+    warnings.push({ code: "bank_file_missing", message: "Banktransacties zijn aanwezig, maar het originele bankafschrift-bestand is (nog) niet bijgevoegd — upload het bankafschrift." });
   }
+  // [C#2] Shared files that fall outside this quarter — warn, don't drop silently.
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  if (sharedOutside) warnings.push(sharedOutside);
 
   return {
     quarter: `Q${quarter} ${year}`,
     outgoingCount: outgoing.length,
     incomingCount: incoming.length,
-    filesIncluded: withPdf,
+    // [C#3] Match what the ZIP actually ships: invoices-with-PDF + bank statement file(s)
+    // + owner-shared docs for this quarter. (km is not a feature yet → 0.)
+    filesIncluded: withPdf + bankFilePaths.length + shared.paths.length,
+    invoicesWithPdf: withPdf, // [READINESS-EVIDENCE] invoice-evidence count only
     bankStatementIncluded,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -676,17 +1049,31 @@ export async function buildClosingPackageZip(args: {
     .eq("id", ownerId)
     .maybeSingle();
   if (profile) clientName = profile.company_name || profile.full_name || "Onbekend";
+  // [REGIME-FLAGS] Owner's KOR declaration (drives the accountant-handoff flag, never a figure).
+  // [DEPLOY-SAFE] Fetched in its OWN query — never folded into the clientName select above — so if
+  // the regime_kor.sql migration lags this deploy, a missing column only nulls korActive (→ no
+  // flags), and can NEVER break the client-name lookup or any figure in this package.
+  const { data: korProfile } = await supabase
+    .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
+  const korActive = !!(korProfile as { kor_active?: boolean | null } | null)?.kor_active;
 
   // Invoices of the quarter (both directions). Filter on STORED status only
   // (verified sets), within the quarter date range.
-  const { data: invData, error: invErr } = await supabase
-    .from("invoices")
-    .select(INVOICE_FIELDS)
-    .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
-    .gte("invoice_date", start)
-    .lte("invoice_date", end)
-    .neq("status", "archived");
-  if (invErr) throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${invErr.message}`);
+  // [PAGINATION] Page past the ~1000-row cap — this set feeds BOTH the evidence PDFs and
+  // invoicesForResult (the concept aangifte money), so a silent truncation would understate it.
+  const invData = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from("invoices")
+      .select(INVOICE_FIELDS)
+      .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+      .gte("invoice_date", start)
+      .lte("invoice_date", end)
+      .neq("status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e: unknown) => {
+    throw new Error(`[CLOSING-PACKAGE] invoices query failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   // [FIN-4] Never silently drop a verified row with a NULL direction: infer it
   // from ownership (mirrors the quarterly route). Previously isVerifiedForPackage
@@ -699,6 +1086,28 @@ export async function buildClosingPackageZip(args: {
   const verified = all.filter(isVerifiedForPackage);
   const outgoing = verified.filter((i) => i.direction === "outgoing");
   const incoming = verified.filter((i) => i.direction === "incoming");
+
+  // [DATE-GAP] Verified invoices with NO invoice_date are dropped by the range filter
+  // above and would vanish from BOTH the evidence and the concept aangifte with no trace.
+  // Warn (with labels) so the accountant knows to assign a date instead of losing the BTW.
+  const datelessZip = datelessWarning(await datelessVerifiedInvoices(supabase, ownerId));
+  if (datelessZip) warnings.push(datelessZip);
+
+  // [PACKAGE-UNVERIFIED] Mirror the summary's 'unverified_in_queue' warning into the ACTUAL ZIP.
+  // Invoices still 'processing' (in the verify queue) are correctly excluded from the verified set,
+  // but without this the downloaded overzicht.json/csv carried NO mention of them — voorbelasting
+  // silently understated and the accountant had zero signal. The preview summary warned; the ZIP
+  // (the thing the accountant actually receives) did not. Same wording as summarizeClosingPackage.
+  const unverifiedInQuarterZip = all.filter((i) => i.status === "processing").length;
+  if (unverifiedInQuarterZip > 0) {
+    warnings.push({
+      code: "unverified_in_queue",
+      message:
+        unverifiedInQuarterZip === 1
+          ? "1 factuur staat nog in de verwerkingsrij — verifieer die voordat je afsluit."
+          : `${unverifiedInQuarterZip} facturen staan nog in de verwerkingsrij — verifieer ze voordat je afsluit.`,
+    });
+  }
 
   // ── Resolve PDF storage paths ──
   // outgoing → invoices.pdf_url ; incoming → documents.file_url via document_id.
@@ -806,33 +1215,269 @@ export async function buildClosingPackageZip(args: {
   const hasBankData = (bankTxRows ?? []).length > 0;
 
   // ── [BRUG-FILES-SHARED] Owner-shared general docs for this quarter ──
-  // shared=true (the field the accountant RLS reads), tied to the quarter via
-  // period='{year}-Q{n}'. Exclude invoices (invoice_id set) and bank statements
-  // (doc_type='bankafschrift') — those already have their own ZIP sections.
-  const sharedPeriod = `${year}-Q${quarter}`;
-  const { data: sharedDocs } = await supabase
-    .from("documents")
-    .select("file_url, file_name, doc_type, invoice_id")
-    .eq("user_id", ownerId)
-    .eq("shared", true)
-    .eq("period", sharedPeriod)
-    .eq("trashed", false)
-    .is("invoice_id", null);
-  const sharedRows = (sharedDocs ?? []) as unknown as Array<{
-    file_url: string | null;
-    file_name: string | null;
-    doc_type: string | null;
-    invoice_id: string | null;
-  }>;
-  const sharedPaths = sharedRows
-    .filter((d) => !!d.file_url && d.doc_type !== "bankafschrift")
-    .map((d) => ({ path: d.file_url as string, name: d.file_name ?? "document" }));
-  const sharedFilesRaw = await Promise.all(sharedPaths.map((p) => dl(p.path, p.name)));
+  // Shared via the single helper (same split as the preview): in-quarter → the ZIP;
+  // outside-quarter → a [C#2] warning so a shared file that belongs elsewhere isn't
+  // silently absent. Invoices + bankafschriften are excluded (their own sections).
+  const shared = await sharedDocsForQuarter(supabase, ownerId, year, quarter);
+  const sharedFilesRaw = await Promise.all(shared.paths.map((p) => dl(p.path, p.name)));
   const sharedFiles = sharedFilesRaw.filter((f): f is PackageFile => f !== null);
+  const sharedOutside = sharedOutsideWarning(shared.outsideCount);
+  if (sharedOutside) warnings.push(sharedOutside);
 
   // ── [CLOSING-PACKAGE-PAYDATE] Resolve payment dates for PAID invoices (one query) ──
   const paidInvoices = [...outgoing, ...incoming].filter((i) => i.status === "paid");
   const paymentDates = await resolvePaymentDates(supabase, paidInvoices);
+
+  // ── [TURNOVER-CLOSING] Retail till turnover for the quarter + its reconciliation ──
+  // [COVERED-BUFFER] Fetch a 5-day PRE-quarter buffer too, so the covered-day de-dup below
+  // matches /api/aangifte exactly: a card payout booked early this quarter that settles a
+  // PREVIOUS-quarter till day (settleExact) must be suppressed here — without the buffer the
+  // ZIP counted it AGAIN as omzet-zonder-tarief, disagreeing with the in-app concept.
+  const { data: turnoverRows } = await supabase
+    .from("daily_turnover")
+    .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
+    .eq("user_id", ownerId)
+    .gte("turnover_date", shiftDays(start, -5))
+    .lte("turnover_date", end);
+  const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
+    turnover_date: t.turnover_date,
+    base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,
+    btw_9: t.btw_9 ?? 0, btw_21: t.btw_21 ?? 0,
+    total_incl: t.total_incl, pin_amount: t.pin_amount, cash_amount: t.cash_amount, other_amount: t.other_amount,
+  }));
+  // dagomzet.csv + the triangle use strictly IN-quarter rows; the covered set uses the buffer.
+  const turnover: DailyTurnover[] = allTurnover.filter((t) => t.turnover_date >= start);
+
+  let turnoverClosing: TurnoverClosing | null = null;
+  let cardReconciliation: TriangleResult | null = null;
+  if (turnover.length > 0) {
+    // pos_income lines over the quarter ± a settlement-lag buffer; the DAT date (parsed
+    // inside buildTurnoverClosing) keys each settlement to its takings day.
+    // [PAGINATION] All three MUST page past PostgREST's ~1000-row cap: a busy shop's quarter of
+    // pos_income lines (several schemes/day + refunds) exceeds it, and a truncated fetch silently
+    // understates pinSettled → fabricated pin breaks in the accountant-facing reconciliation
+    // (and understated evidence). Same trap the cash_entries fetch below already avoids.
+    const [posData, cashData, eftData] = await Promise.all([
+      fetchAllRows((from, to) =>
+        supabase
+          .from("bank_transactions")
+          .select("description, amount, date")
+          .eq("user_id", ownerId)
+          .eq("category", "pos_income")
+          .gte("date", shiftDays(start, -5))
+          .lte("date", shiftDays(end, 5))
+          .order("id", { ascending: true })
+          .range(from, to)).catch(() => []),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("cash_entries")
+          .select("entry_date, amount")
+          .eq("user_id", ownerId)
+          .eq("category", "omzet")
+          .gte("entry_date", start)
+          .lte("entry_date", end)
+          .order("id", { ascending: true })
+          .range(from, to)).catch(() => []),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("eft_settlements")
+          .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
+          .eq("user_id", ownerId)
+          .gte("settlement_date", start)
+          .lte("settlement_date", end)
+          .order("id", { ascending: true })
+          .range(from, to)).catch(() => []),
+    ]);
+    const posLines = posData.map((p) => ({ description: p.description, amount: p.amount }));
+    const cashOmzet = cashData.map((c) => ({ date: c.entry_date, amount: c.amount }));
+    turnoverClosing = buildTurnoverClosing(turnover, posLines, cashOmzet);
+
+    // [TRIANGLE] Card reconciliation (kassa ↔ terminal ↔ bank). Only meaningful when the
+    // store uploaded terminal afrekeningen; otherwise the days are 'incomplete' and it is
+    // still an honest evidence sheet (what ties out, what doesn't).
+    const eftSettlements: EftSettlement[] = eftData.map((e) => ({
+      terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
+      periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,
+      settlementDate: e.settlement_date, grossTotal: e.gross_total ?? 0, txCount: e.tx_count ?? 0,
+      byScheme: (Array.isArray(e.by_scheme) ? e.by_scheme : []) as unknown as EftSettlement["byScheme"],
+    }));
+    const netByDay = bankNetByDay(posData.map((p) => ({ description: p.description, amount: p.amount, date: p.date })));
+    // Keep only in-quarter takings days: the ±5-day fetch buffer exists to COMPLETE an
+    // end-of-quarter day whose payout lands after quarter-end (DAT still in-quarter), not to
+    // add prev/next-quarter rows to an accountant-facing sheet. Matches /api/result exactly.
+    for (const k of [...netByDay.keys()]) if (k < start || k > end) netByDay.delete(k);
+    // [LEDGER · Leg-A witness] The bookkeeper's PIN grootboek (ledger_daily kind='pin') as an
+    // independent GROSS cross-check — fed to the triangle ONLY as pinLedgerByDay (a break on
+    // mismatch), never a money source. In-quarter days only, matching /api/result.
+    const pinLedgerRows = await fetchAllRows<{ ledger_date: string; received: number | null; spent: number | null }>((from, to) =>
+      supabase.from("ledger_daily").select("ledger_date, received, spent")
+        .eq("user_id", ownerId).eq("kind", "pin")
+        .gte("ledger_date", start).lte("ledger_date", end)
+        .order("ledger_date", { ascending: true }).range(from, to)).catch(() => []);
+    // NET PIN (received − spent) — matches /api/result and the till's net-of-refunds pin_amount.
+    const pinLedgerByDay = new Map<string, number>();
+    for (const r of (pinLedgerRows ?? [])) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
+    const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
+    // Only attach when there is a card figure to show (a terminal settlement or a payout).
+    if (eftSettlements.length > 0 || netByDay.size > 0) cardReconciliation = tri;
+  }
+
+  // ── [AANGIFTE] Concept BTW-aangifte — the SAME figures as the app's aangifte screen ──
+  // Computed via the one reconciliation engine (computeResult), so the ZIP and the app
+  // never diverge. The aangifte's rubriek BTW still comes only from invoices + rated cash +
+  // turnover — a bank line carries no BTW document. But a bank line categorized
+  // 'omzet'/'pos_income' with no invoice or Z-report IS revenue with no rate, and must be
+  // surfaced as omzet-zonder-tarief here too (not silently dropped), so the ZIP matches
+  // /api/result and /api/readiness. The covered-days set excludes takings the till counted.
+  // [PAGINATION] Busy shops book many cash entries a quarter — page past the cap so the
+  // reconciliation engine sees every one (a dropped row understates omzet/kosten).
+  const cashAllRows = await fetchAllRows<{
+    direction: string; amount: number | null; category: string | null; btw_rate: number | null; entry_date: string | null; document_id: string | null;
+  }>((from, to) =>
+    supabase
+      .from("cash_entries")
+      .select("direction, amount, category, btw_rate, entry_date, document_id")
+      .eq("user_id", ownerId)
+      .gte("entry_date", start)
+      .lte("entry_date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => []);
+  const cashEntries: ResultCashEntry[] = (cashAllRows ?? []).map((c) => ({
+    direction: c.direction === "in" ? "in" : "out",
+    amount: c.amount,
+    category: c.category,
+    btw_rate: c.btw_rate,
+    date: c.entry_date,
+    document_id: c.document_id ?? null, // [CASH-COST-VAT] documented cash cost → voorbelasting
+  }));
+  // [PAGINATION] Same for bank lines — a quarter of a busy account can exceed 1000 rows.
+  const bankAllRows = await fetchAllRows<{
+    amount: number | null; category: string | null; invoice_id: string | null; date: string | null; description: string | null;
+  }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("amount, category, invoice_id, date, description, counterpart_name")
+      .eq("user_id", ownerId)
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => []);
+  // [SETTLE] Shared mapper — identical card-settlement de-dup to /api/result, /api/aangifte and
+  // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
+  // package never double-counts a covered-day card settlement.
+  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map(toResultBankTx);
+  const invoicesForResult: ResultInvoice[] = all.map((i) => ({
+    direction: i.direction as "outgoing" | "incoming" | null,
+    status: i.status,
+    total_ex_btw: i.total_ex_btw,
+    btw_amount: i.btw_amount,
+  }));
+  // [COVERED-BUFFER] Build from the BUFFERED set (incl. up to 5 pre-quarter days) so a
+  // settleExact card line paying a previous-quarter till day is suppressed — matching aangifte.
+  const coveredDates = new Set(
+    allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => t.turnover_date),
+  );
+  const coveredBudget = new Map(
+    allTurnover.filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0).map((t) => [t.turnover_date, cardBudgetBound(t)] as const),
+  );
+  // [KASSTELSEL] The concept aangifte in the ZIP must match the app: under cash basis the BTW is
+  // on the PAID date. Resolve the scheme for this quarter and, under kas, feed the settlement
+  // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
+  // a computed figure). Default factuur → byte-identical.
+  const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, kasResolution.opts);
+  const completeness: AangifteCompleteness = {
+    turnoverDays: turnover.length,
+    quarterDays: daysInQuarter(year, quarter),
+    incomingInvoiceCount: incoming.length,
+    outgoingInvoiceCount: outgoing.length,
+    hasEuPurchase: incoming.some(
+      (i) => typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim()),
+    ),
+  };
+  // [REGIME-FLAGS] Special regimes the concept can't auto-compute (KOR active / BTW verlegd /
+  // margeregeling). KOR is owner-declared; verlegd/marge are phrase-gated on the owner's own
+  // invoice-line texts (tenant-safe fetch by invoice_id). Each becomes BOTH a note on the concept
+  // and a "Let op" warning in the overzicht, so the accountant sees the handoff next to the
+  // evidence. This is exactly the "accountant-handoff" the package exists for.
+  const regimeInvoices: RegimeInvoiceRef[] = all.map((i) => ({
+    id: i.id,
+    direction: i.direction === "incoming" ? "incoming" : "outgoing",
+    label: i.invoice_number,
+  }));
+  const omzetForKorCheck =
+    result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
+  const regimeFlags = await collectRegimeFlags({
+    client: supabase, korActive, omzetForKorCheck, invoices: regimeInvoices,
+  }).catch(() => []);
+  const regimeNotes = regimeFlags.map(regimeFlagNote);
+  for (const f of regimeFlags) {
+    warnings.push({ code: `regime_${f.code}`, message: regimeFlagNote(f) });
+  }
+  // [KASSTELSEL] Note the basis on the concept, and hard-warn on paid-but-undated money (its BTW
+  // can't be placed in a quarter → the concept could be too low). The accountant sees both.
+  if (kasResolution.scheme === "kas") {
+    regimeNotes.push("Kasstelsel actief — de BTW is berekend op de BETAALdatum van de facturen (niet de factuurdatum).");
+    if (kasResolution.undatedPaidCount > 0) {
+      warnings.push({
+        code: "kas_undated_paid",
+        message: `${kasResolution.undatedPaidCount} betaalde factu(u)r(en) hebben geen betaaldatum — onder kasstelsel kan de betaalde BTW daardoor niet in het juiste kwartaal worden geplaatst. Koppel de bankbetaling of vul de betaaldatum in; anders is dit concept mogelijk te laag.`,
+      });
+      regimeNotes.push(`LET OP: ${kasResolution.undatedPaidCount} betaalde factu(u)r(en) zonder betaaldatum — concept mogelijk te laag.`);
+    }
+  }
+
+  // Only emit a concept when there is something to declare — sales, unrated cash omzet,
+  // or reclaimable voorbelasting. An empty quarter gets no invented filing.
+  const hasDeclarable =
+    result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
+  const conceptAangifte = hasDeclarable
+    ? buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes)
+    : null;
+
+  // [KASBOEK] The cash book as the accountant's own running-balance sheet (Kiwi .xlsx layout),
+  // NOT a flat dump. It is a pure PROJECTION over the truth layer — the till's daily CASH takings
+  // (daily_turnover.cash_amount) + the cash-book movements — with the running drawer balance per
+  // day (Beginsaldo · Uitgaven · Ontvangsten · Eindsaldo). It books NOTHING into the P&L (the
+  // omzet is already counted once by the turnover engine), so there is no double-count with the
+  // concept aangifte. Same generator as the live /api/kasboek endpoint and the in-app screen.
+  //
+  // The Beginsaldo must carry from ALL prior periods, so the projection is fed the FULL history
+  // up to quarter-end (two small owner-scoped queries), not just this quarter's rows.
+  const kasEntriesRaw = await fetchAllRows<{
+    entry_date: string | null; direction: string; amount: number | null; category: string | null; description: string | null;
+  }>((from, to) =>
+    supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
+      .eq("user_id", ownerId).lte("entry_date", end)
+      .order("entry_date", { ascending: true }).range(from, to),
+  ).catch(() => []);
+  const kasEntries: KasEntry[] = (kasEntriesRaw ?? []).map((r) => ({
+    entry_date: r.entry_date, direction: r.direction === "in" ? "in" : "out",
+    amount: r.amount, category: r.category, description: r.description,
+  }));
+  const kasTurnoverRaw = await fetchAllRows<{ turnover_date: string; cash_amount: number | null }>((from, to) =>
+    supabase.from("daily_turnover").select("turnover_date, cash_amount")
+      .eq("user_id", ownerId).lte("turnover_date", end)
+      .order("turnover_date", { ascending: true }).range(from, to),
+  ).catch(() => []);
+  const kasTurnover: KasTurnoverDay[] = (kasTurnoverRaw ?? []) as KasTurnoverDay[];
+
+  // [KAS-OPENING] Seed the first period with the drawer's starting float so the accountant's
+  // Kasboek eindsaldo matches the app's headline saldo and reality.
+  const { data: kasProf } = await supabase.from("profiles").select("kas_opening_balance").eq("id", ownerId).maybeSingle();
+  const kasStartingBalance = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+
+  // Only emit the sheet when the drawer has any life this quarter (takings or movements).
+  const kb = buildKasboek({
+    turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter,
+    openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter, startingBalance: kasStartingBalance }),
+  });
+  const kasboekXlsx: Uint8Array | null =
+    kb.months.length > 0 || kb.openingBalance !== 0
+      ? matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`)
+      : null;
 
   return assembleClosingPackageZip({
     year,
@@ -846,6 +1491,10 @@ export async function buildClosingPackageZip(args: {
     sharedFiles,
     paymentDates,
     hasBankData,
+    turnoverClosing,
+    cardReconciliation,
+    conceptAangifte,
+    kasboekXlsx,
     warnings,
   });
 }

@@ -7,9 +7,7 @@
 // Writes (unlink / invite) go through API routes.
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useParentPath } from '@/lib/navigation-hooks'
 import type { ClientSummary, ClientReadiness } from '../accountant.types'
 
 // ─────────────────────────────────────────────────────────
@@ -45,7 +43,6 @@ interface Props {
 
 export default function KlantenBeheer({ initialClients }: Props) {
   const router = useRouter()
-  const parentHref = useParentPath('accountant')
 
   const [clients, setClients] = useState<ClientSummary[]>(initialClients)
   const [inviteEmail, setInviteEmail] = useState('')
@@ -125,34 +122,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
   // ─────────────────────────────────────────────────────────
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Google Sans', 'Roboto', sans-serif" }}>
-
-      {/* Header */}
-      <div style={{
-        backgroundColor: '#FFFFFF',
-        borderBottom: '1px solid #E0E0E0',
-        padding: '0 24px',
-        height: 64,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 16,
-        position: 'sticky',
-        top: 0,
-        zIndex: 40,
-      }}>
-        <Link
-          href={parentHref}
-          style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500 }}
-        >
-          ← Terug
-        </Link>
-        <h1 style={{ fontSize: 18, fontWeight: 600, color: '#202124', margin: 0 }}>
-          Klanten beheren
-        </h1>
-        <span style={{ fontSize: 13, color: '#5F6368', backgroundColor: '#F1F3F4', padding: '2px 10px', borderRadius: 12, marginLeft: 4 }}>
-          {clients.length}
-        </span>
-      </div>
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
 
       <main style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
@@ -176,7 +146,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                   flex: 1,
                   fontSize: 14,
                   padding: '8px 12px',
-                  border: `1px solid ${inviteError ? '#EA4335' : '#BDBDBD'}`,
+                  border: `1px solid ${inviteError ? '#EA4335' : '#dadce0'}`,
                   borderRadius: 8,
                   backgroundColor: '#F8F9FA',
                   color: '#202124',
@@ -276,7 +246,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                     onClick={() => { setUnlinkTarget(client); setUnlinkError(null) }}
                     style={{
                       background: 'none',
-                      border: '1px solid #BDBDBD',
+                      border: '1px solid #dadce0',
                       borderRadius: 8,
                       padding: '5px 12px',
                       fontSize: 12,
@@ -336,7 +306,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                 disabled={unlinkLoading}
                 style={{
                   background: '#FFFFFF', color: '#202124',
-                  border: '1px solid #BDBDBD', borderRadius: 8,
+                  border: '1px solid #dadce0', borderRadius: 8,
                   padding: '8px 18px', fontSize: 14, fontWeight: 500,
                   cursor: 'pointer', minHeight: 36,
                 }}

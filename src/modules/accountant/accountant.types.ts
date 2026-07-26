@@ -96,6 +96,10 @@ export interface InvoiceRow {
   total_ex_btw: number
   btw_amount: number
   total_inc_btw: number
+  // [PARTIAL-PAY] Running total already settled (magnitude). The accountant must SEE that an
+  // invoice is only partly paid BEFORE marking it 'verwerkt' — that lock freezes amount_paid
+  // (invoice_accountant_write_guard), so a later instalment can no longer be booked by anyone.
+  amount_paid?: number | null
   invoice_date: string
   due_date: string | null        // [BRIDGE-A] for computed Verlopen — never stored as status
   marked_paid_at: string | null  // when client marked paid — NOT actual payment date
@@ -112,3 +116,10 @@ export interface QuarterRange {
   start: string   // YYYY-MM-DD — inclusive
   end: string     // YYYY-MM-DD — inclusive
 }
+
+// [WERKBOARD] The per-client BTW filing agenda (AangifteAgenda / AangifteAgendaItem)
+// was merged into the unified Aangifte & status board, which renders each client's
+// RICH readiness (score + status from /api/readiness) instead of the lightweight
+// facts these types carried. The pure deadline helpers in accountant.service
+// (getAangifteDeadline / getActiveAangifte / daysUntil) live on — the board's
+// deadline hero uses them — but these list types are no longer needed.

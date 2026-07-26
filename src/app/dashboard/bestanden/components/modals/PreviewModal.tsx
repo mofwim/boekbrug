@@ -8,6 +8,7 @@ import { Icon } from "../ui/Icon";
 import { Spinner } from "../ui/Spinner";
 import { BestandRow } from "../../types";
 import { fileEmoji, formatSize, formatDate } from "../../helpers";
+import { getSignedUrl } from "../../signedUrl";
 
 export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -15,11 +16,16 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
   const canPreview = doc.file_type.startsWith("image/") || doc.file_type === "application/pdf";
 
   useEffect(() => {
-    fetch(`/api/files/${doc.id}/url`)
-      .then(r => r.json())
-      .then(({ url: u }: { url: string }) => setUrl(u))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    // [F#3/F#4] Cancel-guarded via the shared cached/deduped signed-URL helper: the
+    // cleanup flips `cancelled` on doc change/unmount, so a late resolve of the
+    // previous document can never write into this render (no stale image/PDF).
+    let cancelled = false;
+    getSignedUrl(doc.id).then((u) => {
+      if (cancelled) return;
+      setUrl(u);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
   }, [doc.id]);
 
   useEffect(() => {
@@ -64,7 +70,7 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
               {formatSize(doc.file_size)} · {formatDate(doc.created_at)}
             </p>
           </div>
-          <button onClick={onClose} style={{
+          <button onClick={onClose} aria-label="Sluiten" style={{
             width: 36, height: 36, border: "none", background: T.surfaceVariant,
             borderRadius: T.full, display: "flex", alignItems: "center",
             justifyContent: "center", cursor: "pointer", flexShrink: 0,
@@ -91,7 +97,7 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
               )}
             </div>
            ) : doc.file_type.startsWith("image/") ? (
-            <img src={url} alt={doc.file_name} style={{ maxWidth: "100%", maxHeight: "60vh", borderRadius: T.md, boxShadow: T.elev2 }} />
+            <img src={url} alt={doc.file_name} loading="lazy" decoding="async" style={{ maxWidth: "100%", maxHeight: "60vh", borderRadius: T.md, boxShadow: T.elev2 }} />
            ) : (
             <iframe src={url} title={doc.file_name} style={{ width: "100%", height: "60vh", border: "none", borderRadius: T.md }} />
           )}
@@ -103,9 +109,14 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
             <a href={url} download={doc.file_name} style={{ ...btnBase, background: T.primary, color: T.onPrimary }}>
               <Icon name="download" size={18} color={T.onPrimary} /> Downloaden
             </a>
-            <a href={url} target="_blank" rel="noopener noreferrer" style={{ ...btnBase, background: T.primaryContainer, color: T.onPrimaryContainer }}>
-              <Icon name="open_in_new" size={18} color={T.onPrimaryContainer} /> Openen
-            </a>
+            {/* [F#5] Only offer inline "open in new tab" for types we render (image/pdf).
+                Opening an arbitrary type (e.g. html/svg) inline runs it on the storage
+                origin — harmless to the app (cross-origin) but pointless; download it. */}
+            {canPreview && (
+              <a href={url} target="_blank" rel="noopener noreferrer" style={{ ...btnBase, background: T.primaryContainer, color: T.onPrimaryContainer }}>
+                <Icon name="open_in_new" size={18} color={T.onPrimaryContainer} /> Openen
+              </a>
+            )}
           </div>
         )}
       </div>

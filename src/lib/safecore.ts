@@ -134,7 +134,17 @@ export function evaluateArithmetic(
     // excl + BTW must equal incl (tolerance 0.02 for rounding)
     if (Math.abs(ex + btw - incl) > 0.02) {
       flags.push('sum_mismatch')
-      reasons.push('excl + BTW ≠ totaal')
+      // [BREAKDOWN-MISSING] Distinguish "the split couldn't be READ" (both ex and BTW absent,
+      // only the printed total came through — the common email case that showed a confusing
+      // "excl + BTW ≠ totaal") from a genuine arithmetic contradiction (a split that IS present
+      // but doesn't add up). Same flag, clearer owner-facing reason. The total is still the money;
+      // the invoice is held either way until the human supplies the breakdown.
+      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      reasons.push(
+        breakdownMissing
+          ? 'de BTW-uitsplitsing (excl + BTW) ontbreekt — vul deze aan'
+          : 'excl + BTW ≠ totaal'
+      )
     }
     // Legal BTW rate: computed (btw_rate is NOT stored). Guard division by zero;
     // when ex=0 we can't derive a rate, so we skip the rate check (the sum check
@@ -157,23 +167,22 @@ export function evaluateArithmetic(
 }
 
 /**
- * [BRIDGE-CREDITNOTA-SIGN] Arithmetic gate for a CREDITNOTA.
+ * [BRIDGE-CREDITNOTA-SIGN] Arithmetic gate for a CREDITNOTA / NET-CREDIT document.
  *
- * Mirror of the standard gate with the sign expectation inverted:
- *   Structural (impossible values) → blocked:
- *     - any of ex/btw/incl is NaN, ±Infinity, or > 0 (a creditnota's amounts
- *       are NEGATIVE — matching the outgoing creditnota route [BOEK-031],
- *       which stores -(original.x), and the paper document itself)
- *     - incl >= 0 (a creditnota with no negative total is not bookable)
+ * The one hard rule is a NEGATIVE net total (they owe you). Everything else is consistency:
+ *   Structural → blocked:
+ *     - any of ex/btw/incl is NaN or ±Infinity
+ *     - incl >= 0 (a credit with no negative total is not bookable)
  *     - invoice year outside 2020–2030 (same business range)
  *   Consistency (internally wrong) → blocked:
- *     - |ex + btw − incl| > 0.02 (the sum identity holds with negatives:
- *       -4.00 + -0.84 = -4.84 — verified on real CR-002-2026)
- *     - rate ∉ [0..21]: computed with Math.abs guard on ex (neg/neg gives a
- *       positive rate; |ex| > 0.005 avoids the sign-flipped `ex > 0` trap
- *       that would silently skip the rate check for every creditnota)
+ *     - |ex + btw − incl| > 0.02 (the sum identity, sign-agnostic on ex/BTW)
+ *     - |btw / ex| ∉ [0..21] (a legal blended NL rate)
  *
- * btw = 0 is allowed (a 0%-BTW creditnota is legal — ex = incl, both negative).
+ * [NET-CREDIT] The individual signs of ex and BTW are deliberately NOT constrained. A pure
+ * creditnota has all three negative; a NET-CREDIT invoice (returns/emballage exceed goods) can
+ * have a POSITIVE BTW on its goods while 0%-BTW container returns drive the net excl/total
+ * negative (real Altena case: ex -123, BTW +13,42, totaal -109,58). The identity + rate catch the
+ * genuinely-broken reads; the mixed signs are legitimate. btw = 0 is allowed (a 0%-BTW credit).
  */
 function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
   const flags: string[] = []
@@ -183,14 +192,20 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
   const btw = c.btwAmount ?? 0
   const incl = c.totalIncBtw ?? c.amount ?? 0
 
-  // ── Structural: a creditnota's amounts must be finite and non-positive ──
-  const finiteNonPos = (v: number) => Number.isFinite(v) && v <= 0
-  if (!finiteNonPos(ex) || !finiteNonPos(btw) || !finiteNonPos(incl)) {
-    flags.push('creditnota_not_negative')
-    reasons.push('creditnota-bedragen moeten negatief zijn')
+  // ── Structural: amounts must be finite ──
+  const allFinite = Number.isFinite(ex) && Number.isFinite(btw) && Number.isFinite(incl)
+  if (!allFinite) {
+    flags.push('non_finite')
+    reasons.push('ongeldige bedragen (NaN/∞)')
   }
 
-  // incl must be strictly negative — a 0/blank creditnota is not bookable.
+  // [NET-CREDIT] The defining invariant of a creditnota / net-credit document is that the TOTAL is
+  // strictly negative (they owe YOU). The individual ex/BTW signs are NOT constrained: a net-credit
+  // invoice can carry POSITIVE BTW on its goods lines while 0%-BTW emballage/statiegeld RETURNS
+  // drive the net excl (and the total) negative — the real Altena case (ex -123, BTW +13,42,
+  // totaal -109,58, and -123 + 13,42 = -109,58 holds). Forcing every amount ≤ 0 (the old rule)
+  // falsely flagged such a correctly-read invoice "bedragen moeten negatief zijn". The identity
+  // (excl + BTW = totaal) and a legal blended rate are what actually guarantee correctness.
   if (Number.isFinite(incl) && incl >= 0) {
     flags.push('non_negative_creditnota_total')
     reasons.push('totaalbedrag van creditnota ontbreekt of is 0')
@@ -206,21 +221,35 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
     }
   }
 
-  // ── Consistency: only when the numbers are structurally sane ──
-  if (finiteNonPos(ex) && finiteNonPos(btw) && Number.isFinite(incl) && incl < 0) {
-    // excl + BTW must equal incl — the identity holds with negatives.
+  // ── Consistency: sign-agnostic on ex/BTW, only the net total must be negative. ──
+  if (allFinite && incl < 0) {
+    // excl + BTW must equal incl — the identity holds regardless of the individual signs.
     if (Math.abs(ex + btw - incl) > 0.02) {
       flags.push('sum_mismatch')
-      reasons.push('excl + BTW ≠ totaal')
+      // [BREAKDOWN-MISSING] Same clarification as the standard gate: an unreadable split
+      // (both absent) reads clearer than a false "≠ totaal".
+      const breakdownMissing = c.totalExBtw == null && c.btwAmount == null
+      reasons.push(
+        breakdownMissing
+          ? 'de BTW-uitsplitsing (excl + BTW) ontbreekt — vul deze aan'
+          : 'excl + BTW ≠ totaal'
+      )
     }
-    // Legal BTW rate — |btw/ex| with an abs-guard on ex. (neg ÷ neg = positive,
-    // so the rate itself is positive; [BTW-MIXED-RATE] blend logic applies.)
+    // Legal blended NL rate: |BTW / excl| ∈ [0..21]. The full-ratio abs() covers a mixed-sign
+    // net-credit (positive goods-BTW over a negative net excl gives a negative raw ratio that is
+    // still a valid magnitude), while a pure all-negative creditnota (neg ÷ neg) is unchanged.
     if (Math.abs(ex) > 0.005) {
-      const rate = Math.round((btw / ex) * 100)
-      if (rate < 0 || rate > 21) {
+      const rate = Math.round(Math.abs(btw / ex) * 100)
+      if (rate > 21) {
         flags.push('illegal_btw_rate')
         reasons.push(`ongeldig BTW-tarief (${rate}%)`)
       }
+    } else if (Math.abs(btw) > 0.02) {
+      // [NO-BASE] A non-trivial BTW on an essentially-ZERO base is physically impossible (implied
+      // rate → ∞) — a mis-read. The old all-≤0 structural rule caught this by accident; keep it
+      // caught now that the rate check self-disables for a near-zero base.
+      flags.push('illegal_btw_rate')
+      reasons.push('BTW zonder grondslag — controleer de bedragen')
     }
   }
 
@@ -241,11 +270,14 @@ function evaluateCreditnotaArithmetic(c: ArithmeticInput): ArithmeticVerdict {
 
 /**
  * A placeholder invoice number is a generated stand-in, not a real number.
- * Prefix-agnostic across both ingestion paths (UPLOAD-/EMAIL- + timestamp).
+ * Prefix-agnostic across ALL ingestion paths (UPLOAD-/EMAIL-/CAMERA- + timestamp).
+ * [AUTO-ADVANCE] CAMERA- was missing here, so a photographed invoice with no readable
+ * number read "clean" with a fabricated number — which would let it auto-book. Adding it
+ * keeps such an invoice in the verify queue (needs a real number before it counts).
  */
 export function isPlaceholderInvoiceNumber(n: string | null | undefined): boolean {
   if (!n) return true // null/empty is itself "no real number"
-  return /^(UPLOAD|EMAIL)-\d+$/.test(n.trim())
+  return /^(UPLOAD|EMAIL|CAMERA)-\d+$/.test(n.trim())
 }
 
 /**
@@ -254,7 +286,15 @@ export function isPlaceholderInvoiceNumber(n: string | null | undefined): boolea
  * normalization so "Atapack  B.V." and "atapack b.v." match.
  */
 export function normalizeVendor(v: string | null | undefined): string {
-  return (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  // Fold diacritics so "Café de Kroon" ≡ "Cafe de Kroon" — without this, an accent variant
+  // between two reads made the two vendors look "provably different" and suppressed a real
+  // duplicate flag (NFKD splits é into e + combining mark, which the range then strips).
+  return (v ?? '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
 }
 
 /**
@@ -331,6 +371,18 @@ export interface SemanticDedupResult {
  * `findMatch` performs the scoped DB read for a given tier and returns the first
  * matching original (or null). Kept injectable so safecore stays I/O-free.
  */
+/**
+ * [DEDUP-NUMBER-NORM] Normalize an invoice number for DUPLICATE comparison only (never
+ * for storage/display). Collapses whitespace and lowercases, so a re-generated PDF whose
+ * number renders as "26 / 3958" is recognized as the already-imported "26/3958" — the
+ * exact-string `.eq` missed this and inserted the bill twice (double cost, phantom
+ * voorbelasting). Punctuation is kept (a "/" vs "-" separator may be a real difference),
+ * so this only folds spacing, never merges genuinely different numbers.
+ */
+export function normalizeInvoiceNumber(n: string | null | undefined): string {
+  return (n ?? '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
 export async function findSemanticDuplicate(
   input: SemanticDedupInput,
   findMatch: (q: SemanticDedupQuery) => Promise<SemanticDedupMatch | null>
@@ -345,7 +397,7 @@ export async function findSemanticDuplicate(
   const hasRealDate =
     typeof input.invoiceDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(input.invoiceDate)
   const dateIso = hasRealDate
-    ? new Date(input.invoiceDate as string).toISOString().split('T')[0]
+    ? normalizeToIso(input.invoiceDate as string)
     : null
 
   if (numberIsReal) {
@@ -382,6 +434,136 @@ export async function findSemanticDuplicate(
       'geen betrouwbaar factuurnummer en geen betrouwbare afzender — duplicaatcontrole niet mogelijk',
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SAFECORE Rule 2b — POSSIBLE (soft) duplicate signal
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// findSemanticDuplicate above is BINARY: a confident block (number/vendor+total+date
+// tie) or nothing. But there is a middle ground it stays silent on — a re-arrival the
+// hard key can't prove: same amount + same DATE but the number differs (OCR misread a
+// digit) or the sender is unknown; or same amount + same vendor a few days apart. Those
+// slipped through and DOUBLE-BOOKED the cost with no trace.
+//
+// This is NEVER a block — blocking on a loose signal would reject a legitimate invoice
+// (a missing crediteur, its own serious error). Instead it is a SOFT flag: the invoice
+// still imports, carrying "mogelijk dubbel met X" so the human eyeballs it in the verify
+// queue. Never silently dropped (it imports), never silently accepted (it is flagged) —
+// the human decides at exactly the point of maximum ambiguity. Pure; the caller fetches
+// the same-total candidates and passes them in.
+
+export interface PossibleDupCandidate {
+  id: string
+  invoice_number: string | null
+  client_name: string | null
+  invoice_date: string | null   // ISO as stored
+  total_inc_btw: number | null
+}
+
+export interface PossibleDuplicate {
+  match: SemanticDedupMatch
+  reason: string // short Dutch, owner-facing (e.g. "zelfde bedrag en datum")
+}
+
+// A re-import usually arrives close to the original; a monthly RECURRING bill (same
+// vendor + same amount) is ~a month apart. Keep the vendor-near-date window short so
+// recurring invoices are NOT flagged as possible duplicates.
+export const POSSIBLE_DUP_WINDOW_DAYS = 14
+
+// Legal-suffix noise stripped for a format-insensitive vendor comparison (mirrors
+// supplier-registry / email-integration vendorCoreKey — kept local so safecore stays
+// dependency-free and never imports the email layer).
+const VENDOR_CORE_NOISE = new Set(['bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc'])
+function vendorCore(v: string | null | undefined): string {
+  return normalizeVendor(v)
+    .replace(/\./g, '')            // collapse dotted acronyms first: "b.v." → "bv"
+    .replace(/[^a-z0-9\s]/g, ' ')  // other punctuation → separator
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !VENDOR_CORE_NOISE.has(t))
+    .join(' ')
+}
+
+function isoDay(raw: string | null | undefined): string | null {
+  return typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}/.test(raw) ? normalizeToIso(raw) : null
+}
+function daysApart(aIso: string, bIso: string): number | null {
+  const a = Date.parse(aIso), b = Date.parse(bIso)
+  if (Number.isNaN(a) || Number.isNaN(b)) return null
+  return Math.abs(a - b) / 86_400_000
+}
+
+/**
+ * Assess whether this invoice is a POSSIBLE (not confident) duplicate of one already in
+ * the system, given the candidates that share its exact total. Returns the best soft match
+ * + a short reason, or null. Pure. Signals, strongest first:
+ *   • same total + same DATE + same vendor
+ *   • same total + same DATE (vendor not provably different)
+ *   • same total + same VENDOR within POSSIBLE_DUP_WINDOW_DAYS (a near-date re-import)
+ * A provably-different reliable vendor is never a duplicate (a coincidental same-amount
+ * same-day bill from another supplier), and an exact invoice-number match is a HARD
+ * duplicate handled by findSemanticDuplicate, so it is skipped here.
+ */
+export function assessPossibleDuplicate(
+  input: SemanticDedupInput,
+  candidates: PossibleDupCandidate[],
+): PossibleDuplicate | null {
+  if (typeof input.totalIncBtw !== 'number' || !Number.isFinite(input.totalIncBtw)) return null
+  const totalCents = Math.round(input.totalIncBtw * 100)
+  const inDate = isoDay(input.invoiceDate)
+  const inVendorReliable = isReliableVendor(input.vendor)
+  const inCore = inVendorReliable ? vendorCore(input.vendor) : ''
+  const inNum = normalizeInvoiceNumber(input.invoiceNumber)
+
+  let best: PossibleDuplicate | null = null
+  let bestRank = 0
+  for (const c of candidates) {
+    if (typeof c.total_inc_btw !== 'number' || Math.round(c.total_inc_btw * 100) !== totalCents) continue
+
+    const cVendorReliable = isReliableVendor(c.client_name)
+    const cCore = cVendorReliable ? vendorCore(c.client_name) : ''
+    const bothVendorsReliable = inVendorReliable && cVendorReliable && inCore !== '' && cCore !== ''
+    if (bothVendorsReliable && inCore !== cCore) continue // provably a different supplier → not a dup
+    const sameVendor = bothVendorsReliable && inCore === cCore
+
+    const cDate = isoDay(c.invoice_date)
+    const sameDate = !!(inDate && cDate && inDate === cDate)
+    const gap = inDate && cDate ? daysApart(inDate, cDate) : null
+    const nearDate = gap != null && gap > 0 && gap <= POSSIBLE_DUP_WINDOW_DAYS
+    const sameNumber = !!(inNum && normalizeInvoiceNumber(c.invoice_number) === inNum)
+
+    // The hard gate (findSemanticDuplicate) matches the total with EXACT float equality; this soft
+    // detector matches on cent-rounded equality. So a sub-cent total drift (100.004 vs 100.00, both
+    // one cent) is CENT-equal here but the hard gate's exact .eq misses it. Only treat a same-number
+    // pair as "already hard-blocked" when the totals are exactly equal — otherwise the hard gate
+    // could not have caught it and we must flag it, or it double-books silently.
+    const exactSameTotal = c.total_inc_btw === input.totalIncBtw
+    let rank = 0, reason = ''
+    if (sameNumber && sameDate && exactSameTotal) {
+      // Same number + EXACT total + date IS a hard duplicate (findSemanticDuplicate blocks it before
+      // we run) — don't downgrade it to a mere "possible". Skip.
+      continue
+    } else if (sameNumber) {
+      // [DEDUP-SOFT-CRITICAL] Same invoice number + (cent-)equal total, but the hard number-tier key
+      // missed it — because the DATE drifted (OCR misread / null date), OR the total is only cent-
+      // equal not exactly equal (sub-cent float the hard exact-.eq can't match). Either way it would
+      // otherwise import + auto-book a SECOND cost silently. A per-vendor number repeating with the
+      // same amount is all but certainly the same bill → flag it (strongest signal).
+      rank = 5
+      reason = sameDate ? 'zelfde factuurnummer en bedrag' : 'zelfde factuurnummer en bedrag, andere datum'
+    }
+    else if (sameDate && sameVendor) { rank = 4; reason = 'zelfde bedrag, datum en afzender' }
+    else if (sameDate) { rank = 3; reason = 'zelfde bedrag en datum' }
+    else if (sameVendor && nearDate) { rank = 2; reason = 'zelfde bedrag en afzender, datum dichtbij' }
+    else continue
+
+    if (rank > bestRank) {
+      bestRank = rank
+      best = { match: { id: c.id, invoice_number: c.invoice_number, client_name: c.client_name }, reason }
+    }
+  }
+  return best
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [EXTRACT-DUE-DATE] Shared due-date derivation (pure, no I/O)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -447,7 +629,13 @@ export function deriveDueDate(
  * ("2026-05-27", optionally with a time part) or Dutch "DD-MM-YYYY"
  * ("27-05-2026"). Returns null for empty/unparseable input. Pure.
  */
-function normalizeToIso(raw: string | null | undefined): string | null {
+// [DATE-ISO-SAFE / I6] Tolerant date→ISO for STORAGE. The write paths used
+// `new Date(x).toISOString()`, which THROWS on a Dutch "15-05-2026" (Invalid Date). In
+// the email loop that throw is caught as a per-message error, the watermark is held, and
+// the same invoice is re-fetched and re-thrown every sync forever — never imported, never
+// surfaced (and re-billed each run). This returns null instead of throwing, so a mis-shaped
+// date simply becomes "no date" (the verify queue then asks the human), never a stuck loop.
+export function normalizeToIso(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null
   const s = raw.trim()
   if (!s) return null

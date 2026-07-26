@@ -14,6 +14,7 @@
 //       new period (new date)  → different key             → insert as new
 
 import type { BankTransaction } from "./bank-parser";
+import { classifyBankTransaction } from "./bank-identity";
 
 /** Row shape inserted into bank_transactions. status starts 'pending' (human confirms later). */
 export interface BankTransactionRow {
@@ -22,8 +23,17 @@ export interface BankTransactionRow {
   amount: number | null;
   description: string | null;
   counterpart_name: string | null;
+  // [BANK-IBAN] The counterpart's IBAN parsed from the statement — kept so the matcher can pair a
+  // payment to the invoice bearing the SAME supplier account (a strong, collision-free signal).
+  counterpart_iban: string | null;
   reference: string | null;
   status: "pending";
+  // [BANK-AUTOCAT] Structural identity assigned at import (pos_income / fee / tax /
+  // transfer / prive). Only the UNAMBIGUOUS, structurally-detectable ones are set; a
+  // genuine business line the classifier can't explain stays null for the owner to code
+  // as kosten/omzet. Without this every line imported as null, so a retail store's card
+  // settlements (AFREK. BETAALAUTOMAAT) never reached the result until manually tagged.
+  category: string | null;
 }
 
 /** Subset of an existing DB row needed for dedup (from a scoped SELECT).
@@ -43,6 +53,28 @@ function norm(s: string | null): string {
 }
 
 /**
+ * [BANK-DEDUP-NAME] Format-stable normalization of a counterpart NAME for the
+ * dedup fingerprint only (never for storage/display). Lowercases, strips
+ * diacritics, and removes every non-alphanumeric character — so punctuation,
+ * spacing and legal-form differences that vary between export formats collapse:
+ *   MT940-derived "Jansen Bouw B.V."  ==  CSV-column "Jansen Bouw BV"  → "jansenbouwbv"
+ *
+ * Crucially it KEEPS digits. That is deliberate and load-bearing: two genuinely
+ * different same-day, same-amount, reference-less transactions — e.g. two fuel
+ * stops "Shell 123" and "Shell 456" — must stay DISTINCT ("shell123" ≠ "shell456"),
+ * otherwise the dedup would silently DROP a real transaction and under-state the
+ * owner's money. Under-counting is worse than the rare, visible cross-format
+ * double-count, so we never strip the distinguishing digits.
+ */
+function dedupName(s: string | null): string {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/**
  * Stable content fingerprint for cross-upload dedup.
  *
  * [BANK-DEDUP-DOUBLE] The fingerprint deliberately EXCLUDES `description`. Proven
@@ -51,12 +83,20 @@ function norm(s: string | null): string {
  * transaction — MT940 keeps ING's "USTD//29528/" wrapper, CAMT gives a clean
  * "29528" — so a description-based key never matched across formats and every
  * transaction was re-inserted on the second upload (an exact ×2 doubling of
- * in/uit). date + amount + counterpart + reference are IDENTICAL across formats
- * and uniquely identify each transaction (verified: 30/30 match, zero collisions,
- * including 20 reference-less POS settlements distinguished by amount). Two genuine
- * but truly identical transactions in one statement (same day, amount, counterpart
- * and reference) would still collapse — but that is the documented, accepted edge
- * of content-based dedup, and far rarer than the format-difference doubling this fixes.
+ * in/uit). date + amount + reference are IDENTICAL across formats; the counterpart
+ * NAME is the one field whose representation can differ per format (MT940/CAMT
+ * DERIVE it from the REMI, a CSV reads it from a dedicated column), so it is
+ * normalized via dedupName — collapsing "B.V." vs "BV" while keeping the digits
+ * that distinguish separate transactions. Verified 30/30 match on MT940↔CAMT with
+ * zero collisions (incl. 20 reference-less POS settlements distinguished by amount).
+ *
+ * [BANK-DEDUP-CSV] CSV↔MT940/CAMT re-upload of the SAME period: invoice transfers
+ * (a real counterparty name) now dedup across formats thanks to dedupName. Card/POS
+ * lines whose CSV column name carries a terminal/store number the derived MT940 name
+ * lacks (e.g. "Albert Heijn 1234" vs "Albert Heijn") can still both import — the
+ * accepted residual edge, chosen over merging distinct transactions. Same-FORMAT
+ * re-upload (the common case) always dedups exactly. Two genuinely identical
+ * transactions in one statement would still collapse — the documented, accepted edge.
  */
 export function contentKey(
   date: string | null,
@@ -67,7 +107,7 @@ export function contentKey(
   return [
     date ?? "",
     (amount ?? 0).toFixed(2),
-    norm(counterpart),
+    dedupName(counterpart),
     norm(reference),
   ].join("|");
 }
@@ -125,15 +165,22 @@ export function mapToRows(
   transactions: BankTransaction[],
   userId: string
 ): BankTransactionRow[] {
-  return transactions.map((t) => ({
-    user_id: userId,
-    date: t.date || null,
-    amount: t.amount,
-    description: t.description || null,
-    counterpart_name: t.counterpartName,
-    reference: t.reference,
-    status: "pending" as const,
-  }));
+  return transactions.map((t) => {
+    // Auto-classify the structural identities (card takings, fees, tax, transfers, privé).
+    // 'unknown' → null so the genuine business lines still go through human coding.
+    const id = classifyBankTransaction(t.counterpartName, t.description, t.amount);
+    return {
+      user_id: userId,
+      date: t.date || null,
+      amount: t.amount,
+      description: t.description || null,
+      counterpart_name: t.counterpartName,
+      counterpart_iban: t.counterpartIban ?? null, // [BANK-IBAN] store for supplier-account matching
+      reference: t.reference,
+      status: "pending" as const,
+      category: id === "unknown" ? null : id,
+    };
+  });
 }
 
 /** A stored bank_transactions row, as selected for the matching run (phase 3). */
@@ -143,6 +190,7 @@ export interface BankTransactionDbRow {
   amount: number | null;
   description: string | null;
   counterpart_name: string | null;
+  counterpart_iban?: string | null; // [BANK-IBAN] supplier account, for IBAN matching (optional)
   reference: string | null;
   // [BANK-MULTI-LINK-PERSIST] A partially-linked multi-invoice tx keeps
   // status='pending' but already carries an invoice_id (the last invoice paid
@@ -163,7 +211,7 @@ export function rowToTransaction(r: BankTransactionDbRow): BankTransaction {
     currency: "EUR",
     description: r.description ?? "",
     counterpartName: r.counterpart_name,
-    counterpartIban: null, // not stored
+    counterpartIban: r.counterpart_iban ?? null, // [BANK-IBAN] now stored → used by the matcher
     reference: r.reference,
     transactionId: r.id, // carry DB id → ties a suggestion to its transaction
     rawLine: "",

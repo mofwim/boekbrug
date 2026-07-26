@@ -13,6 +13,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { extractCompanyDetails } from "@/lib/ai";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { gateFairUse } from "@/lib/fair-use-gate";
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
@@ -21,6 +23,16 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
+
+  // [COST] Per-user ceiling on the AI company-details extraction (Claude vision).
+  const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/onboarding/extract", ...RATE_LIMITS.AI_OCR });
+  if (!rl.allowed) return rateLimitResponse(rl);
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
+  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
+  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   const body = await req.json();
   const { documentId, mimeType, fileName } = body;
@@ -66,6 +78,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("[BOEK-015] extract route error:", error);
+    // [FAIR-USE] Mislukt = niet gelezen = niet geteld. /eerlijk-gebruik §3 belooft dat
+    // letterlijk: "een bestand dat wij niet konden lezen telt ook niet mee".
+    await gate.release();
     return NextResponse.json({ found: false });
   }
 }

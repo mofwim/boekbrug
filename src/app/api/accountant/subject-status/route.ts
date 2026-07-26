@@ -49,10 +49,13 @@ export async function POST(req: NextRequest) {
   // ── (2) Document must be visible to the caller under RLS ──
   // documents_accountant_read only returns it if the doc is shared AND the
   // caller is a linked accountant → a null row means "not allowed" → 403.
+  // [#4] Exclude trashed documents — an accountant should not set a status / fire a
+  // "vraag" on a file the owner has moved to the trash (matches /brug's trashed=false).
   const { data: doc, error: docErr } = await supabase
     .from('documents')
     .select('user_id')
     .eq('id', subjectId)
+    .eq('trashed', false)
     .single()
 
   if (docErr || !doc) {

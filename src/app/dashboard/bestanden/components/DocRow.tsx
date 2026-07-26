@@ -46,6 +46,11 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
         userSelect: "none", opacity: isDragging ? 0.6 : 1,
         background: selected ? T.primaryContainer : hovered ? T.surfaceVariant : "transparent",
         transition: "background 0.1s",
+        // [PERF] native list virtualization: skip rendering off-screen rows.
+        // Only affects off-screen items; on-screen rows (the ones you can
+        // drag/click) render and behave identically.
+        contentVisibility: "auto",
+        containIntrinsicSize: "auto 52px",
       }}
     >
       {/* Checkbox */}
@@ -54,7 +59,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
         style={{
           width: 20, height: 20, borderRadius: T.full, flexShrink: 0,
           background: selected ? T.primary : "transparent",
-          border: `2px solid ${selected ? T.primary : "#BDBDBD"}`,
+          border: `2px solid ${selected ? T.primary : "#dadce0"}`,
           display: "flex", alignItems: "center", justifyContent: "center",
           opacity: selected || hovered ? 1 : 0, transition: "all 0.15s", cursor: "pointer",
         }}
@@ -124,6 +129,7 @@ export function DocRow({ doc, selected, onPreview, onSelect, onContextMenu, onDr
       {hovered && !selected && (
         <button
           onClick={e => { e.stopPropagation(); onContextMenu(e); }}
+          aria-label="Meer opties"
           style={{
             width: 30, height: 30, border: "none", background: "none",
             cursor: "pointer", display: "flex", alignItems: "center",
