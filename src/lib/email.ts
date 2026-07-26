@@ -540,3 +540,95 @@ export async function sendPaymentFailedEmail({
   })
   await deliverEmail(__sendResult, { label: 'payment-failed', critical: false })
 }
+
+// ── [BRUG] De mail die het hele product waarmaakt ────────────────────────────
+//
+// Dit was de grootste gat in de brug, en het zat niet in de code maar in de bezorging.
+//
+// De belofte is: "aan het eind van het kwartaal staat alles klaar voor je boekhouder."
+// Die belofte werd afgeleverd als een BADGE in de app — een notificatierij plus een
+// web-push waarop hij zich nooit heeft ingeschreven. Een eenmanskantoor logt niet in om
+// te kijken of er een badge is. De mededeling bereikte dus niemand, en de link die zij
+// wél droeg wees naar /dashboard/clients/beheer: een uitnodig-formulier, niet het kwartaal.
+//
+// Een boekhouder leeft in zijn mailbox. Daar hoort dit binnen te komen.
+//
+// De toon is bewust vlak: geen uitroeptekens, geen "geweldig nieuws". Hij krijgt dit vier
+// keer per jaar per klant en het moet lezen als een levering, niet als reclame.
+export async function sendQuarterReadyToAccountant({
+  toEmail,
+  accountantName,
+  clientName,
+  quarterLabel,
+  outgoingCount,
+  incomingCount,
+  topGaps,
+  packageUrl,
+  quarterUrl,
+}: {
+  toEmail: string
+  accountantName: string
+  clientName: string
+  quarterLabel: string
+  outgoingCount: number
+  incomingCount: number
+  /** De koppen van wat er nog mist. Leeg = niets aan de hand. */
+  topGaps: string[]
+  /** Directe download van het kwartaalpakket (ZIP + index). */
+  packageUrl: string
+  /** Het kwartaal van deze klant in de app. */
+  quarterUrl: string
+}) {
+  const compleet = topGaps.length === 0
+
+  const gapBlok = compleet
+    ? ''
+    : `
+      <div style="background:#FEF7E0; border:1px solid #FDE9B8; border-radius:10px; padding:14px 16px; margin:18px 0;">
+        <div style="color:#7C5800; font-weight:600; font-size:14px; margin-bottom:6px;">Nog niet compleet</div>
+        <ul style="margin:0; padding-left:18px; color:#7C5800; font-size:14px; line-height:1.6;">
+          ${topGaps.slice(0, 3).map((g) => `<li>${escapeHtml(g)}</li>`).join('')}
+        </ul>
+      </div>`
+
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    // Klantnaam in het onderwerp: hij heeft er tientallen en scant op naam, niet op product.
+    subject: `${escapeHtml(clientName)} — ${quarterLabel} staat klaar`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 32px;">
+        <h2 style="color:#202124; font-size:20px; margin:0 0 4px;">${escapeHtml(quarterLabel)} staat klaar</h2>
+        <p style="color:#5f6368; font-size:15px; margin:0 0 20px;">van ${escapeHtml(clientName)}</p>
+
+        <p style="color:#555; font-size:15px; line-height:1.6;">Beste ${escapeHtml(accountantName)},</p>
+        <p style="color:#555; font-size:15px; line-height:1.6;">
+          De administratie van ${escapeHtml(clientName)} over ${escapeHtml(quarterLabel)} staat klaar:
+          <strong>${outgoingCount} verkoopfactuur${outgoingCount === 1 ? '' : 'en'}</strong> en
+          <strong>${incomingCount} inkoopfactuur${incomingCount === 1 ? '' : 'en'}</strong>,
+          geordend per kwartaal met de bijlagen erbij.
+        </p>
+
+        ${gapBlok}
+
+        <a href="${packageUrl}"
+           style="display:inline-block; margin:8px 8px 8px 0; padding:12px 22px; background:#1A73E8; color:#fff; border-radius:8px; text-decoration:none; font-weight:600; font-size:15px;">
+          Download het kwartaalpakket
+        </a>
+        <a href="${quarterUrl}"
+           style="display:inline-block; margin:8px 0; padding:12px 22px; background:#fff; color:#1A73E8; border:1.5px solid #1A73E8; border-radius:8px; text-decoration:none; font-weight:600; font-size:15px;">
+          Bekijk in BoekBrug
+        </a>
+
+        <p style="color:#5f6368; font-size:13.5px; line-height:1.6; margin-top:22px;">
+          Je ziet alleen wat je klant zelf heeft verstuurd, ontvangen of als betaald heeft
+          gemarkeerd — zijn concepten blijven van hem. BoekBrug is voor jou gratis, ook met
+          honderd klanten.
+        </p>
+        <p style="color:#aaa; font-size:12px; margin-top:28px;">BoekBrug — De brug tussen jou en je boekhouder</p>
+      </div>
+    `,
+  })
+  // Best effort: een mislukte mail mag de kwartaal-cron nooit laten vallen.
+  await deliverEmail(__sendResult, { label: 'quarter-ready-accountant', critical: false })
+}

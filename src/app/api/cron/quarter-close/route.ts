@@ -21,6 +21,7 @@ import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { summarizeClosingPackage } from "@/lib/closing-package";
 import { createNotification } from "@/lib/notifications";
 import { previousQuarter, buildQuarterCloseNotice } from "@/lib/quarter-close";
+import { sendQuarterReadyToAccountant } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -110,6 +111,17 @@ export async function GET(req: NextRequest) {
         .from("accountant_clients")
         .select("accountant_id")
         .eq("zzper_id", ownerId);
+      // De klantnaam en de basis-URL één keer, niet per boekhouder.
+      const { data: ownerProfile } = await pipeline
+        .from("profiles")
+        .select("full_name, company_name")
+        .eq("id", ownerId)
+        .single();
+      const clientName =
+        ownerProfile?.company_name || ownerProfile?.full_name || "je klant";
+      const origin = (process.env.NEXT_PUBLIC_SITE_URL || "https://boekbrug.nl").replace(/\/$/, "");
+      const quarterPath = `/dashboard/clients/${ownerId}/kwartaal?q=${period.quarter}&year=${period.year}`;
+
       for (const link of links ?? []) {
         if (!link.accountant_id) continue;
         await createNotification({
@@ -117,9 +129,45 @@ export async function GET(req: NextRequest) {
           title: notice.accountantTitle,
           body: notice.accountantBody,
           type: "status",
-          link: "/dashboard/clients/beheer",
+          // [BRUG] Wees de link die hij nodig heeft. Dit was '/dashboard/clients/beheer' —
+          // het uitnodig-/ontkoppelformulier, niet het kwartaal. De kwartaalpagina rendert
+          // de pakketknop als haar tweede element.
+          link: quarterPath,
         });
         notifiedAccountants += 1;
+
+        // [BRUG] En dezelfde mededeling per E-MAIL, want dáár leeft een eenmanskantoor.
+        // De belofte "aan het eind van het kwartaal staat alles klaar voor je boekhouder"
+        // werd tot nu toe afgeleverd als een badge in een scherm dat hij niet opent.
+        //
+        // Best effort en apart ingepakt: dit is de laatste stap van de cron en een
+        // mailfout mag de al verstuurde notificatie niet ongedaan maken of de lus breken.
+        try {
+          const { data: accProfile } = await pipeline
+            .from("profiles")
+            .select("email, full_name")
+            .eq("id", link.accountant_id)
+            .single();
+          if (accProfile?.email) {
+            await sendQuarterReadyToAccountant({
+              toEmail: accProfile.email,
+              accountantName: accProfile.full_name || "boekhouder",
+              clientName,
+              quarterLabel: `Q${period.quarter} ${period.year}`,
+              outgoingCount: summary.outgoingCount,
+              incomingCount: summary.incomingCount,
+              topGaps: notice.clean ? [] : summary.warnings.map((w) => w.message).slice(0, 3),
+              packageUrl: `${origin}/api/closing-package?clientId=${ownerId}&year=${period.year}&quarter=${period.quarter}`,
+              quarterUrl: `${origin}${quarterPath}`,
+            });
+          }
+        } catch (mailErr) {
+          console.error("[CRON-QUARTER-CLOSE] kwartaalmail naar boekhouder mislukt (niet fataal)", {
+            ownerId,
+            accountantId: link.accountant_id,
+            error: mailErr instanceof Error ? mailErr.message : String(mailErr),
+          });
+        }
       }
     } catch (e) {
       failed += 1;
