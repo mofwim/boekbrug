@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { buildClosingPackageZip, type Quarter } from "@/lib/closing-package";
+import { logAuditAction } from "@/lib/audit";
 
 function safe(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -77,6 +78,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Geen toegang tot deze klant" }, { status: 403 });
     }
     ownerId = clientId;
+
+    // [BEWIJS] Leg vast dát de boekhouder dit kwartaal heeft opgehaald.
+    //
+    // Deze route logde niets, net als /api/readiness, /api/export en /api/quarterly — alleen
+    // het verbreken van een koppeling werd bijgehouden. De klant kon dus nergens zien wat
+    // zijn boekhouder had gedownload, terwijl "een ontworpen overdracht in plaats van een
+    // gedeelde map" precies is wat dit product verkoopt. Een gedeelde map laat óók niets
+    // zien; het verschil bestaat pas als het aantoonbaar is.
+    //
+    // Best effort en NA de autorisatie: een logfout mag een geautoriseerde download nooit
+    // tegenhouden, en een geweigerde poging hoort hier niet als "opgehaald" te landen.
+    void logAuditAction({
+      userId: user.id,
+      action: 'accountant.package_downloaded',
+      entityType: 'quarter',
+      entityId: `${ownerId}:${year}-Q${quarter}`,
+    })
   }
 
   // ── Build (service_role, scoped to ownerId) ──

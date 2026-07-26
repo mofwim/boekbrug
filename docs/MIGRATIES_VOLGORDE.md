@@ -4,7 +4,40 @@
 
 > **Stap 1 t/m 9 zijn toegepast en gecontroleerd op 26 juli 2026.** Daarbij kwam één echte
 > fout boven die alleen door het draaien van de CONTROLE zichtbaar werd — zie de noot bij
-> stap 7. Stap **10 is nieuw en nog niet toegepast**.
+> stap 7.
+>
+> ## ⏳ DRIE MIGRATIES STAAN OPEN — dit is de hele lijst voor morgen
+>
+> Draai ze in deze volgorde. Alle drie idempotent, alle drie met een CONTROLE-blok onderaan
+> het bestand. Samen ongeveer tien minuten.
+>
+> | # | Bestand | Waarom |
+> |---|---------|--------|
+> | 10 | `kluis_subscriptions.sql` | Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast. Ook het hek dat `RETENTION_PURGE_ENABLED` aan mag laten. |
+> | 11 | `accountant_write_holes.sql` | **Twee schrijfgaten** in de boekhoudersgrens + de vier ontbrekende invoices-indexen. |
+> | 12 | `invoice_lines_accountant_gate.sql` | De regelspolicy stond strenger dan de factuurkop: een verstuurde factuur toonde een lege regelset. |
+>
+> ### Over de urgentie van 11 — eerlijk bijgesteld
+>
+> Bij het overbrengen is dit gat te scherp gerapporteerd. De correctie, zelf geverifieerd:
+>
+> `acc_status_owner_all` staat inderdaad als `FOR ALL` zonder koppelingseis, dus élke
+> ingelogde gebruiker kan met de anon-sleutel rijen schrijven tegen een willekeurige
+> document-uuid. Maar **geen enkel eigenaarsscherm rendert `vraag_text`**:
+> `dashboard/brug/page.tsx:189-201` leest die kolom alleen wanneer `isAccountant`, en het
+> comment daar zegt het zelf ("A ZZP owner gets an empty map"). Een grep op `vraag_text`
+> geeft precies twee levende plekken: de schrijver en die boekhouder-only lezer. De unieke
+> index `(accountant_id, subject_type, subject_id)` sluit bovendien uit dat een aanvaller de
+> rij van een échte boekhouder overschrijft.
+>
+> Dus: **een latent schrijfgat dat dicht moet, geen live injectie in andermans dashboard.**
+> Het wordt pas live op de dag dat er een eigenaarsscherm bijkomt dat die vraag toont — en
+> dat scherm is precies het volgende dat gebouwd zou moeten worden. Vandaar: eerst 11, dan
+> dat scherm. Niet andersom.
+>
+> Het IBAN-gat in dezelfde migratie is wél onmiddellijk echt: een gekoppelde boekhouder kan
+> `vendor_iban` op een openstaande inkoopfactuur herschrijven en de klant tikt dat nummer
+> over in zijn bank.
 
 > **Alles hieronder is idempotent en verwijdert niets.** Twijfel je of iets al is toegepast:
 > gewoon opnieuw draaien. Een migratie die er al staat is een no-op.

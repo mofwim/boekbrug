@@ -12,10 +12,19 @@ is de rest.*
 
 ## 1. Nu — één migratie en één instelling
 
-**☐ Migratie 10: `kluis_subscriptions.sql`**
-Stap 1 t/m 9 heb je toegepast en gecontroleerd. Deze is nieuw en moet vóór de eerste
-Bewaarkluis-betaling: zonder haar neemt de webhook het geld aan en legt de verplichting van
-zeven jaar nergens vast. Het CONTROLE-blok staat onderaan het bestand.
+**☐ Drie migraties, in deze volgorde — samen ~10 minuten**
+
+1. `kluis_subscriptions.sql` — vóór de eerste Bewaarkluis-betaling: anders neemt de webhook
+   het geld aan en legt de verplichting van zeven jaar nergens vast.
+2. `accountant_write_holes.sql` — twee schrijfgaten in de boekhoudersgrens plus de vier
+   ontbrekende invoices-indexen. Het IBAN-gat hierin is het meest urgente van alles: een
+   gekoppelde boekhouder kan het rekeningnummer op een openstaande inkoopfactuur
+   herschrijven, en de klant tikt dat over in zijn bank.
+3. `invoice_lines_accountant_gate.sql` — de regelspolicy stond strenger dan de factuurkop.
+
+Elk bestand heeft onderaan een CONTROLE-blok. Draai het; het is per migratie één query en
+het is het verschil tussen "toegepast" en "toegepast en gecontroleerd". Zie
+`docs/MIGRATIES_VOLGORDE.md` voor de bijgestelde urgentie van nummer 2.
 
 **☐ `AI_DAILY_BUDGET_EUR=0` in Vercel**
 Nul betekent: **wél tellen, niet begrenzen**. Dat is de juiste stand voor je eerste weken —
