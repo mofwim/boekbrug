@@ -159,24 +159,59 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
   // this account is paying.
   const plan = status === "active" || status === "trialing" || status === "past_due" ? "pro" : "free";
 
-  const patch = {
-    subscription_status: status,
-    subscription_plan: plan,
-    subscription_stripe_id: sub.id,
-    stripe_customer_id: customerId,
-    current_period_end: subscriptionPeriodEnd(sub),
-  };
-
   const pipeline = createPipelineClient();
-  // The billing columns are added by billing_subscription.sql and are not in
-  // the generated types → relaxed client.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (pipeline as any).from("profiles").update(patch).eq("id", profileId);
 
-  if (error) {
+  // ── TWO WRITES, NOT ONE. This split is load-bearing. ────────────────
+  //
+  // These used to be a single UPDATE, and that was a latent lockout of a PAYING
+  // customer. subscription_plan is constrained by an inline CHECK
+  // (free|pro|boekhouder|boekhouder_pro). A plan value outside it makes Postgres
+  // reject the WHOLE ROW — so subscription_status ('active') and
+  // current_period_end never land either. The account stays 'trialing' with a
+  // NULL period end, the trial clock runs out, and decideAccess() then refuses
+  // access to somebody whose card is being charged every month.
+  //
+  // And it fails almost silently: the handler catches its own error and returns
+  // a 500, Stripe retries the same deterministic failure for ~3 days and gives
+  // up, there is no events table to replay from, and the only trace is a
+  // console line. The discovery channel is a customer's email.
+  //
+  // So: ACCESS FIRST, unconditionally. Then the plan label, whose failure is
+  // logged loudly and cannot take access down with it. Access is what the
+  // customer paid for; the plan label is bookkeeping about that payment.
+
+  // WRITE 1 — everything that decides access. Must never be blocked by a label.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: accessErr } = await (pipeline as any)
+    .from("profiles")
+    .update({
+      subscription_status: status,
+      subscription_stripe_id: sub.id,
+      stripe_customer_id: customerId,
+      current_period_end: subscriptionPeriodEnd(sub),
+    })
+    .eq("id", profileId);
+
+  if (accessErr) {
     // Throw → 500 → Stripe retries. Swallowing this would leave a paying
     // customer looking unpaid with nothing to replay the event.
-    throw new Error(`profiles update failed for ${profileId}: ${error.message}`);
+    throw new Error(`profiles access update failed for ${profileId}: ${accessErr.message}`);
+  }
+
+  // WRITE 2 — the plan label. Best-effort by design.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: planErr } = await (pipeline as any)
+    .from("profiles")
+    .update({ subscription_plan: plan })
+    .eq("id", profileId);
+
+  if (planErr) {
+    // Loud, but NOT fatal: access is already correct above. A rejected label is
+    // a bug for us to fix, never a reason to lock out a paying customer.
+    console.error(
+      `[BILLING] plan label '${plan}' rejected for profile ${profileId} ` +
+        `(access was still granted): ${planErr.message}`
+    );
   }
 
   console.log(`[BILLING] ${event.type} → profile ${profileId} is ${status}/${plan}`);

@@ -19,8 +19,10 @@
 |---|---|
 | **Can the app take money?** | Yes — code-complete, shipped **dark** (`BILLING_ENFORCED` unset). |
 | **Is anyone being charged?** | No. Not one line of billing code can charge anybody until you set live keys AND flip the switch. |
-| **Is anything blocking a deploy?** | No. `tsc` clean · 105/105 test files · production build green. |
+| **Is anything blocking a deploy?** | No. `tsc` clean · 105/105 test files (61 on the access decision) · eslint clean on touched files · production build green. |
 | **Biggest remaining security item** | The SheetJS upgrade (§4) — one command. |
+| **Trial length** | **30 days**, no card. Matches every leader in SMB accounting. |
+| **When a trial lapses** | The account drops to read-only **Archief** — never locked out of its own records. |
 | **Biggest remaining *business* item** | Ten conversations (§5). Not code. |
 
 ---
@@ -33,7 +35,7 @@
    days — verification is not instant.
 3. **Create one product, one price:** `€ 12,00 / month`, EUR, **incl. 21% btw**.
    Dutch B2C prices are quoted inclusive, and the number on `/prijzen` comes
-   from `PLAN.priceLabel` in `src/lib/billing.ts` — showing one price and
+   from `PLAN.priceLabel` in `src/lib/plan.ts` — showing one price and
    charging another is the single most damaging bug a pricing page can have, so
    keep the two identical.
 4. **Enable iDEAL** as a payment method. Card-only would lose real Dutch
@@ -46,19 +48,21 @@
 
 ---
 
-## 2. Apply the three migrations
+## 2. Apply the five migrations
 
-In the Supabase SQL editor, in this order. All three are idempotent and delete
+In the Supabase SQL editor, in this order. All are idempotent and delete
 nothing; each ends with a VERIFY block — run it.
 
 | # | File | What it does |
 |---|---|---|
 | 1 | `supabase/migrations/billing_subscription.sql` | Subscription columns + the **self-grant guard trigger**. Without the trigger, any logged-in user could set `subscription_plan='pro'` from their browser console. |
 | 2 | `supabase/migrations/billing_trial_reminder.sql` | The trial-reminder send log. **Depends on #1** — apply it second. |
-| 3 | `supabase/migrations/retention_purge.sql` | `purged_at`, so GDPR erasure can be idempotent. Inert on its own. |
+| 3 | `supabase/migrations/trial_30_days.sql` | Trial 14 → 30 days, and extends every trial still running. **Depends on #1.** |
+| 4 | `supabase/migrations/retention_purge.sql` | `purged_at`, so GDPR erasure can be idempotent. Inert on its own. |
+| 5 | `supabase/migrations/ai_spend_guard.sql` | **Apply this one first if you apply nothing else today.** The global Anthropic spend fuse plus a working anonymous rate-limit bucket — until it lands, the login-free AI scanner has no durable cost ceiling at all. |
 
 Two older migrations are still listed as pending in `docs/WORK_QUEUE.md`
-(`circle_integrity_and_indexes.sql`, `ledger_daily.sql`). Unlike the three
+(`circle_integrity_and_indexes.sql`, `ledger_daily.sql`). Unlike the ones
 above, **those two gate existing features** — a ledger upload cannot save until
 `ledger_daily` exists. Worth clearing while you are in the SQL editor.
 
@@ -72,6 +76,10 @@ STRIPE_PRICE_ID=price_...          ← differs between test and live mode
 STRIPE_WEBHOOK_SECRET=whsec_...
 BILLING_ENFORCED=                  ← leave UNSET until §6
 RETENTION_PURGE_ENABLED=           ← leave UNSET. Probably forever.
+AI_DAILY_BUDGET_EUR=0              ← 0 = count spend, do not limit. The right
+                                     setting for your first days: you learn the
+                                     real shape of your Anthropic bill before
+                                     choosing a ceiling. Unset would mean €5/day.
 ```
 
 Then **Stripe → Developers → Webhooks → add endpoint**:

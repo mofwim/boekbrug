@@ -285,3 +285,67 @@ export function normalizeStripeStatus(raw: string | null | undefined): Subscript
       return "none";
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [ARCHIEF] The read-only floor — nobody is ever locked out of their own records
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The paywall's first version redirected every /dashboard/* request away when a
+// trial lapsed. That is wrong three times over:
+//
+//   1. TRUST. A bookkeeping app that takes your bookkeeping hostage is a thing
+//      people warn each other about. The pressure to subscribe should come from
+//      what you cannot DO next month, never from what you cannot SEE about last
+//      month.
+//   2. THE LAW. Dutch bewaarplicht makes keeping seven years of records the
+//      USER's legal obligation. Standing between them and their own figures a
+//      week before a BTW deadline is not a pricing tactic, it is a liability —
+//      and §5.2 of the terms now promises in writing that it cannot happen.
+//   3. ACQUISITION. A hard wall ends the relationship. An account that can still
+//      read its own history stays reachable, stays in the funnel, and comes back
+//      when the next quarter starts. It also costs almost nothing to serve: a
+//      reader runs zero AI inference, so this floor cannot be abused into a bill.
+//
+// So a lapsed account is not shut out — it lands on Archief: everything already
+// recorded stays readable and downloadable, and nothing new can be created or
+// machine-read. That is also exactly the free tier the market's own history
+// argues for: Wave proved a FEATURE-rich free tier cannot fund SMB accounting
+// (it paywalled bank import, auto-categorisation and receipt scanning in 2024),
+// while every leader keeps a no-card trial. A read-only archive is the one shape
+// of "free forever" whose cost is bounded by construction.
+//
+// ⚠️ SCOPE, STATED HONESTLY: this gates PAGES, not the ~78 API routes. A lapsed
+// account that crafts its own POST can still write. That is deliberate for v1 —
+// per-route entitlement checks are a large surface and the paywall is commercial
+// pressure, not a security boundary. Do not describe this as enforcement.
+
+/**
+ * Dashboard paths an Archief (lapsed) account may still open.
+ *
+ * The test for inclusion is "does this let someone SEE or DOWNLOAD what they
+ * already recorded?" — not "is it harmless". `/dashboard/invoice/new`,
+ * `/dashboard/upload`, `/dashboard/bank` and the rest are absent on purpose:
+ * those create new work, which is what a subscription buys.
+ */
+export const ARCHIVE_PATHS: readonly string[] = [
+  "/dashboard/facturen",   // your outgoing invoices + their PDFs
+  "/dashboard/incoming",   // purchase invoices you already confirmed
+  "/dashboard/kluis",      // the 7-year vault — the bewaarplicht surface itself
+  "/dashboard/bestanden",  // your files
+  "/dashboard/documents",
+  "/dashboard/resultaat",  // your figures
+  "/dashboard/waarheid",
+  "/dashboard/aangifte",   // your BTW position — never block this near a deadline
+  "/dashboard/quarterly",
+  "/dashboard/klanten",    // your client list
+  "/dashboard/messages",   // conversations with your accountant
+  "/dashboard/settings",   // data export (GDPR), account deletion, and billing
+];
+
+/**
+ * May a lapsed account open this path? Prefix match, mirroring the middleware's
+ * existing isPublic() semantics so the two behave the same way.
+ */
+export function isArchivePath(pathname: string): boolean {
+  return ARCHIVE_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}

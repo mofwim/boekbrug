@@ -15,18 +15,21 @@
 import type { Metadata } from 'next'
 import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
-import { PLAN } from '@/lib/billing'
+import { PLAN } from '@/lib/plan'
 import SubscribeButton from './SubscribeButton'
 
 export const metadata: Metadata = {
+  // [BILLING] Every number here is derived from PLAN. See the warning above the
+  // PLAN constant in src/lib/billing.ts: these strings were hard-coded, and the
+  // price had already drifted between them and the terms of service.
   title: 'Prijzen — één abonnement, alles inbegrepen | BoekBrug',
   description:
-    'BoekBrug Pro: € 12 per maand, incl. btw. Facturen, bonnetjes scannen met AI, bank, BTW-aangifte voorbereiden en de brug naar je boekhouder. 14 dagen gratis proberen, zonder creditcard.',
+    `BoekBrug Pro: ${PLAN.priceShort} per maand, ${PLAN.btwNote}. Facturen, bonnetjes scannen met AI, bank, BTW-aangifte voorbereiden en de brug naar je boekhouder. ${PLAN.trialDays} dagen gratis proberen, zonder creditcard.`,
   keywords: ['boekbrug prijzen', 'boekhoudprogramma zzp prijs', 'boekhouden zzp kosten'],
   alternates: { canonical: '/prijzen' },
   openGraph: {
-    title: 'BoekBrug — € 12 per maand, alles inbegrepen',
-    description: '14 dagen gratis proberen, zonder creditcard. Maandelijks opzegbaar.',
+    title: `BoekBrug — ${PLAN.priceShort} per maand, alles inbegrepen`,
+    description: `${PLAN.trialDays} dagen gratis proberen, zonder creditcard. Maandelijks opzegbaar.`,
     type: 'website',
   },
 }
@@ -52,8 +55,12 @@ const INCLUDED = [
  * worse than none.
  */
 const REASONS: Record<string, string> = {
-  trial_expired: 'Je gratis proefperiode is afgelopen. Neem een abonnement om verder te gaan waar je gebleven was.',
-  subscription_ended: 'Je abonnement is gestopt. Start het opnieuw en je administratie staat er nog precies zo bij.',
+  trial_expired:
+    'Je gratis proefperiode is afgelopen. Je administratie blijft leesbaar en je kunt alles downloaden — ' +
+    'om weer facturen te maken en documenten te laten inlezen neem je een abonnement.',
+  subscription_ended:
+    'Je abonnement is gestopt. Je administratie staat er nog precies zo bij en blijft leesbaar — ' +
+    'start het abonnement opnieuw om verder te werken.',
 }
 
 export default async function PrijzenPage({
@@ -142,9 +149,11 @@ export default async function PrijzenPage({
           <div style={{ display: 'grid', gap: 18 }}>
             <Faq q={`Wat gebeurt er na ${PLAN.trialDays} dagen?`}>
               Je krijgt een seintje voordat de proefperiode afloopt. Neem je geen
-              abonnement, dan stopt de toegang — je gegevens blijven staan en komen
-              terug zodra je alsnog een abonnement neemt. Er wordt nooit stilzwijgend
-              iets afgeschreven: zonder creditcard geen afschrijving.
+              abonnement, dan gaat je account over naar <strong>Archief</strong>: je
+              facturen, documenten, cijfers en BTW-overzicht blijven leesbaar en je
+              kunt alles downloaden. Wat stopt is het maken van nieuwe facturen en het
+              automatisch inlezen van documenten. Er wordt nooit stilzwijgend iets
+              afgeschreven — zonder creditcard geen afschrijving.
             </Faq>
 
             <Faq q="Kan ik maandelijks opzeggen?">

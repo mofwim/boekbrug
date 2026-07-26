@@ -6,7 +6,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 // [BILLING] Pure decision module — no Stripe SDK, no I/O. Importing billing.ts
 // here instead would pull the whole Stripe client into the Edge bundle.
-import { decideAccess, isBillingEnforced } from "@/lib/subscription";
+import { decideAccess, isBillingEnforced, isArchivePath } from "@/lib/subscription";
 
 // Login-free public lead-gen tools — reachable by anyone, no session required:
 // /factuur-maken (invoice generator), /btw-berekenen (VAT calculator),
@@ -198,7 +198,12 @@ export async function middleware(request: NextRequest) {
         nowMs: Date.now(),
       });
 
-      if (!decision.allowed) {
+      // [ARCHIEF] A lapsed account is NOT shut out — it drops to a read-only
+      // archive. Everything already recorded stays readable and downloadable;
+      // only creating new work stops. See ARCHIVE_PATHS in subscription.ts for
+      // the three reasons (trust · bewaarplicht is the USER's legal duty ·
+      // acquisition) and for the honest scope note: this gates pages, not APIs.
+      if (!decision.allowed && !isArchivePath(request.nextUrl.pathname)) {
         const url = new URL("/prijzen", request.url);
         url.searchParams.set("reden", decision.reason);
         return NextResponse.redirect(url);

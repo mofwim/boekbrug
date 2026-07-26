@@ -19,6 +19,8 @@ import {
   isKnownStatus,
   trialBanner,
   normalizeStripeStatus,
+  isArchivePath,
+  ARCHIVE_PATHS,
   type AccessInput,
 } from "./subscription";
 
@@ -297,6 +299,45 @@ check("banner is not urgent at 7 days", trialBanner(trialing(7))?.urgent === fal
 check("banner is urgent at 3 days", trialBanner(trialing(3))?.urgent === true);
 check("no banner for an active subscriber", trialBanner(decideAccess(base())) === null);
 check("no banner for an accountant", trialBanner(decideAccess(base({ role: "accountant" }))) === null);
+
+
+console.log("\n[ARCHIEF] a lapsed account keeps READING its own records");
+
+// The paywall used to redirect every /dashboard/* request. Three reasons that is
+// wrong: trust (a bookkeeping app that takes your bookkeeping hostage), the law
+// (bewaarplicht is the USER's obligation — blocking them a week before a BTW
+// deadline is a liability, and §5.2 of the terms now promises it cannot happen),
+// and acquisition (a wall ends the relationship; an archive stays in the funnel).
+
+check("your own invoices stay reachable", isArchivePath("/dashboard/facturen"));
+check("a single invoice detail page too", isArchivePath("/dashboard/facturen/abc-123"));
+check("the 7-year vault stays reachable — it IS the bewaarplicht surface", isArchivePath("/dashboard/kluis"));
+check("your BTW position stays reachable — never block this near a deadline", isArchivePath("/dashboard/aangifte"));
+check("your figures stay reachable", isArchivePath("/dashboard/resultaat") && isArchivePath("/dashboard/waarheid"));
+check("your files stay reachable", isArchivePath("/dashboard/bestanden"));
+check("your client list stays reachable", isArchivePath("/dashboard/klanten"));
+check("conversations with your accountant stay reachable", isArchivePath("/dashboard/messages"));
+check("settings stay reachable — GDPR export and billing live there", isArchivePath("/dashboard/settings"));
+check("the billing screen specifically", isArchivePath("/dashboard/settings/facturering"));
+
+console.log("\n[ARCHIEF] creating NEW work is what a subscription buys");
+
+check("making a new invoice is not archive", !isArchivePath("/dashboard/invoice/new"));
+check("uploading is not archive", !isArchivePath("/dashboard/upload"));
+check("the bank import is not archive", !isArchivePath("/dashboard/bank"));
+check("the dashboard home is not archive", !isArchivePath("/dashboard"));
+check("the accountant work board is not archive", !isArchivePath("/dashboard/accountant"));
+
+check(
+  "a prefix must not leak: /dashboard/facturenXYZ is NOT /dashboard/facturen",
+  !isArchivePath("/dashboard/facturenXYZ")
+);
+check("a non-dashboard path is never archive", !isArchivePath("/prijzen"));
+
+check(
+  "ARCHIVE_PATHS contains no write surface by accident",
+  !ARCHIVE_PATHS.some((p) => /invoice\/new|upload|bank$|intake/.test(p))
+);
 
 console.log(`\n[BILLING] ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

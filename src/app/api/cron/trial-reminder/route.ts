@@ -29,7 +29,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { decideAccess, trialBanner } from "@/lib/subscription";
-import { PLAN } from "@/lib/billing";
+import { PLAN } from "@/lib/plan";
 import { sendTrialEndingEmail } from "@/lib/email";
 
 export const runtime = "nodejs";

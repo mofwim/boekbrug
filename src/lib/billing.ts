@@ -56,22 +56,10 @@ export function isWebhookConfigured(): boolean {
 }
 
 // ── Plan display constants ───────────────────────────────────────────
-// The AMOUNT that gets charged lives in Stripe (on the price object) and is
-// never computed here — these are for display only. Keep them in sync with the
-// Stripe price by hand; showing one number and charging another is the single
-// most damaging bug a pricing page can have.
-
-/** What the /prijzen page shows. Dutch consumer convention: BTW included. */
-export const PLAN = {
-  id: "pro",
-  name: "BoekBrug Pro",
-  /** Display string, Dutch formatting. */
-  priceLabel: "€ 12,00",
-  period: "per maand",
-  /** Dutch B2C prices are quoted incl. BTW; the Stripe price must match. */
-  btwNote: "incl. 21% btw",
-  trialDays: 14,
-} as const;
+// Live in the PURE src/lib/plan.ts (no Stripe import) because client components
+// and the public homepage need them. Re-exported here so server-side callers can
+// still get everything billing-related from one import.
+export { PLAN, PLAN_OFFER_NL, PLAN_OFFER_SHORT_NL } from "@/lib/plan";
 
 // ── Client ───────────────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@
 
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { PLAN, PLAN_OFFER_SHORT_NL } from '@/lib/plan'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { TOOLS } from '@/lib/tools'
@@ -80,7 +81,12 @@ export default async function Home() {
           <Link href="/register" style={btnPrimary}>Gratis account maken</Link>
           <Link href="/factuur-maken" style={btnGhost}>Direct een factuur maken</Link>
         </div>
-        <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 16 }}>Geen creditcard nodig · Privacy-vriendelijk · Nederlandse facturen</div>
+        {/* [BILLING] Was "Geen creditcard nodig" with no mention of a trial or a
+            price — the same hidden-clock problem as the signup page. Derived
+            from PLAN, and the price is one click away. */}
+        <div style={{ fontSize: 13, color: '#9aa0a6', marginTop: 16 }}>
+          {PLAN_OFFER_SHORT_NL} · <Link href="/prijzen" style={{ color: '#1a73e8', textDecoration: 'underline' }}>bekijk de prijs</Link>
+        </div>
       </section>
 
       {/* Features */}
@@ -118,7 +124,8 @@ export default async function Home() {
         <div style={{ background: 'linear-gradient(135deg, #1a73e8, #0056d6)', borderRadius: 24, padding: '48px 32px', textAlign: 'center', color: '#fff' }}>
           <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: -0.5, margin: '0 0 10px' }}>Minder tijd kwijt aan je administratie?</h2>
           <p style={{ fontSize: 17, opacity: 0.92, margin: '0 auto 24px', maxWidth: 480 }}>
-            Zet vandaag de eerste stap. Gratis account, in een minuut geregeld.
+            Zet vandaag de eerste stap. In een minuut geregeld, {PLAN.trialDays} dagen
+            gratis, geen creditcard.
           </p>
           <Link href="/register" style={{ backgroundColor: '#fff', color: '#1a73e8', fontSize: 16, fontWeight: 700, padding: '14px 30px', borderRadius: 9999, textDecoration: 'none', display: 'inline-block' }}>
             Gratis account maken

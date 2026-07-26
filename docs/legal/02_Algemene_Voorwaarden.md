@@ -1,7 +1,7 @@
 # Algemene Voorwaarden — BoekBrug
 
-**Laatst bijgewerkt:** 25 mei 2026
-**Versie:** 1.0
+**Laatst bijgewerkt:** 26 juli 2026
+**Versie:** 1.1
 
 ---
 
@@ -86,34 +86,47 @@ BoekBrug gebruikt AI (Claude API) voor:
 
 ## 5. Tarieven en betaling
 
-### 5.1 Abonnementen
+### 5.1 Abonnement
 
-| Plan | Prijs | Inclusief |
-|------|-------|-----------|
-| **Gratis** | €0/maand | 3 facturen/maand, Gmail-integratie |
-| **Pro** | €25/maand | Onbeperkt aantal facturen, kwartaaloverzichten |
-| **Pro+** | €45/maand | Pro + bankkoppeling (PSD2) |
-| **Boekhouder** | Gratis* | Volledige dashboard, alle klanten |
+BoekBrug heeft **één betaald abonnement**. Geen pakketten, geen meerprijs per factuur.
 
-*Het Boekhouder-abonnement is gratis zolang minimaal 1 actieve klant gekoppeld is. Zonder actieve klanten: €50/maand.
+| Plan | Prijs | Wat je krijgt |
+|------|-------|---------------|
+| **Proefperiode** | Gratis, 30 dagen | Het volledige BoekBrug Pro. Geen creditcard nodig. |
+| **BoekBrug Pro** | € 12,00 per maand, incl. 21% btw | Alles: facturen maken en versturen, bonnetjes en inkoopfacturen scannen met AI, facturen ophalen uit je e-mail, bankafschrift importeren en matchen, kasboek en dagomzet, BTW-aangifte voorbereiden, de brug naar je boekhouder, UBL-export, en 7 jaar bewaarplicht. |
+| **Archief** | Gratis, onbeperkt | Loopt je proefperiode of abonnement af, dan blijft je administratie **leesbaar en downloadbaar**. Je kunt geen nieuwe facturen maken en niets nieuws laten inlezen. |
+| **Boekhouder** | Gratis | Een boekhouder die door een klant is uitgenodigd betaalt niets. Wij factureren boekhouders niet. |
 
-### 5.2 Betaling
-- Betalingen verlopen via Stripe (iDEAL of SEPA Direct Debit)
-- Facturatie maandelijks vooruit
-- Bij wanbetaling: account wordt na 14 dagen gedeactiveerd
-- Bestaande data blijft 30 dagen toegankelijk na deactivatie
+De actuele prijs staat altijd op boekbrug.nl/prijzen. Wijkt die af van deze tabel, dan geldt de prijs op die pagina.
 
-### 5.3 Prijswijzigingen
-- Wij behouden ons het recht voor tarieven te wijzigen
-- Wijzigingen worden 60 dagen vooraf aangekondigd
-- Bij weigering van nieuwe tarieven kun je opzeggen
+### 5.2 Wat je nooit overkomt
 
-### 5.4 Geen automatische verlenging in eerste maand
-Het Pro abonnement heeft een opzegtermijn van 1 maand. In de eerste maand kun je gratis opzeggen zonder reden.
+- Je wordt **nooit stilzwijgend afgeschreven**. De proefperiode vraagt geen creditcard, dus er kan in die 30 dagen niets van je rekening af.
+- Je verliest **nooit toegang tot je eigen administratie**. Ga je niet verder met een abonnement, dan schakelt je account over naar Archief: alles wat je hebt vastgelegd blijft leesbaar en je kunt het downloaden. Dat is niet alleen netjes maar ook nodig — de bewaarplicht van 7 jaar is jouw wettelijke verplichting.
+- Wij verwijderen je gegevens niet als je stopt. Zie §10.3.
 
-### 5.5 Restitutie
-- Betaalde maandbedragen worden niet gerestitueerd
-- Bij annulering: toegang tot einde betaalde periode
+### 5.3 Betaling
+
+- Betalingen verlopen via **Stripe**, met **iDEAL of creditcard**. Je kaartgegevens komen nooit bij BoekBrug binnen.
+- Facturatie maandelijks vooruit. Van elke betaling ontvang je automatisch een **btw-factuur** op naam, die je zelf kunt downloaden in je instellingen.
+- Heb je een btw-nummer, dan kun je dat bij het afrekenen op de factuur laten zetten.
+
+### 5.4 Opzeggen
+
+- Je zegt **zelf** op, in je eigen instellingen — geen mailtje, geen telefoontje, geen opzegtermijn.
+- Je houdt toegang tot het einde van de periode die je al betaald hebt. Daarna gaat je account over naar Archief (§5.1).
+- Mislukt een betaling, dan verlies je niet direct je toegang: wij proberen het een paar keer opnieuw en laten het je weten.
+
+### 5.5 Prijswijzigingen
+
+- Wij behouden ons het recht voor het tarief te wijzigen.
+- Een wijziging wordt **60 dagen vooraf** per e-mail aangekondigd.
+- Ben je het er niet mee eens, dan kun je kosteloos opzeggen vóór de wijziging ingaat.
+
+### 5.6 Restitutie
+
+- Reeds betaalde maandbedragen worden niet gerestitueerd.
+- Bij opzegging: toegang tot einde van de betaalde periode, daarna Archief.
 
 ---
 

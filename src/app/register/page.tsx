@@ -6,6 +6,7 @@
 import { Suspense, useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { PLAN, PLAN_OFFER_NL } from '@/lib/plan'
 import { ErrorMessage } from '@/components/ui/Feedback'
 
 function RegisterContent() {
@@ -223,8 +224,15 @@ function RegisterContent() {
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-gray-900">BoekBrug</h1>
           <p className="text-gray-500 text-sm mt-1">Account aanmaken</p>
-          <p className="text-gray-600 text-sm mt-3">Maak facturen, scan bonnen en houd je BTW bij. Gratis.</p>
-          <p className="text-gray-400 text-xs mt-1">Geen creditcard nodig · Privacy-vriendelijk</p>
+          <p className="text-gray-600 text-sm mt-3">Maak facturen, scan bonnen en houd je BTW bij.</p>
+          {/* [BILLING] This said "Gratis." full stop, and said nothing about a
+              clock. The trial starts at THIS moment (trial_ends_at has a column
+              DEFAULT), and when it runs out the middleware stops the dashboard.
+              Somebody who reads "Gratis", signs up, and comes back a month later
+              has to have been told the clock existed — otherwise it is a false
+              statement at the exact moment of contracting. Derived from PLAN so
+              it can never drift from what checkout charges. */}
+          <p className="text-gray-600 text-sm mt-2">{PLAN_OFFER_NL}</p>
         </div>
 
         {/* Stap 1 — Rol kiezen */}
@@ -352,6 +360,11 @@ function RegisterContent() {
 
             {/* [AVG] Consent — a reachable link to the terms/privacy at sign-up. */}
             <p className="text-xs text-gray-400 text-center leading-relaxed">
+              Je start met {PLAN.trialDays} dagen gratis. Daarna {PLAN.priceShort} per maand{' '}
+              {PLAN.btwNote} — je beslist zelf of je doorgaat, en zonder creditcard
+              wordt er nooit iets afgeschreven.{' '}
+              <a href="/prijzen" className="text-blue-600 underline">Bekijk de prijs</a>.
+              <br />
               Als je een account maakt, ga je akkoord met onze{' '}
               <a href="/voorwaarden" className="text-blue-600 underline">Voorwaarden</a>{' '}
               en de{' '}

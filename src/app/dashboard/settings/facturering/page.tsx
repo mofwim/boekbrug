@@ -14,7 +14,7 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { decideAccess, isBillingEnforced, type AccessDecision } from '@/lib/subscription'
-import { PLAN } from '@/lib/billing'
+import { PLAN } from '@/lib/plan'
 import ManageSubscriptionButton from './ManageSubscriptionButton'
 
 export const dynamic = 'force-dynamic'
