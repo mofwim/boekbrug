@@ -5,6 +5,10 @@
 
 import BankClient from "./BankClient";
 
+// [SEARCH-DEEPLINK] BankClient reads ?find= via useSearchParams; force-dynamic keeps that
+// out of static prerendering (no Suspense-boundary build error), matching the facturen page.
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Bank | BoekBrug",
 };

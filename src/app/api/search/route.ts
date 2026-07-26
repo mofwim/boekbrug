@@ -68,6 +68,25 @@ function amountConditions(q: string): string[] {
   ];
 }
 
+// Amount matching for an arbitrary signed numeric column (bank_transactions.amount is
+// SIGNED — a debit is stored negative — and cash_entries.amount is positive). Same
+// money-shaped gate as amountConditions, but emits both the positive and the negative
+// variants so "45" finds a "-45.50" bank debit as well as a "45.50" credit. Prefix/exact
+// (never a leading %) so "45" never spuriously matches "450".
+function amountConditionsCol(col: string, q: string): string[] {
+  const trimmed = q.trim().replace(/[\s€]/g, "");
+  if (!/\d/.test(trimmed) || !/^[\d.,]+$/.test(trimmed)) return [];
+  const n = parseAmountNL(trimmed);
+  if (!(n > 0) || n >= 1e15) return [];
+  const intPart = Math.trunc(n).toString();
+  return [
+    `${col}::text.ilike.${intPart}`,     // "45", "45.50"
+    `${col}::text.ilike.${intPart}.%`,
+    `${col}::text.ilike.-${intPart}`,    // "-45", "-45.50" (bank debit)
+    `${col}::text.ilike.-${intPart}.%`,
+  ];
+}
+
 // Builds Supabase .or() string: fields × terms cartesian product (terms pre-sanitised)
 function buildOr(fields: string[], terms: string[]): string {
   return fields
@@ -81,10 +100,13 @@ type Hit = { id: string; created_at?: string | null } & Partial<
   Record<
     | "invoice_number" | "client_name" | "client_email" | "status" | "direction"
     | "file_name" | "ai_doc_type" | "doc_type" | "notes" | "period" | "folder_id"
-    | "full_name" | "company_name" | "email" | "kvk_number" | "name" | "city",
+    | "full_name" | "company_name" | "email" | "kvk_number" | "name" | "city"
+    // bank_transactions / cash_entries
+    | "counterpart_name" | "counterpart_iban" | "reference" | "description"
+    | "category" | "date" | "entry_date",
     string | null
   >
-> & { total_inc_btw?: number | null; year?: number | null };
+> & { total_inc_btw?: number | null; year?: number | null; amount?: number | null };
 
 function dedup(arr: SearchResult[]): SearchResult[] {
   const seen = new Set<string>();
@@ -168,7 +190,7 @@ export async function GET(req: NextRequest) {
     .replace(/[\uD800-\uDBFF]$/, "");
   const target = (req.nextUrl.searchParams.get("target") ?? "all") as SearchTarget;
 
-  const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [] };
+  const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [], bankTransactions: [], cashEntries: [] };
 
   if (q.length < 2) return NextResponse.json(EMPTY);
 
@@ -224,7 +246,7 @@ export async function GET(req: NextRequest) {
   const idList = senderIds.join(",");
 
   // Parallel queries across all sources
-  const [invoicesRes, docsRes, clientsRes] = await Promise.all([
+  const [invoicesRes, docsRes, clientsRes, bankRes, cashRes] = await Promise.all([
 
     // Source 1: invoices — sender OR receiver (received/incoming invoices included)
     target === "all" || target === "invoices"
@@ -277,6 +299,44 @@ export async function GET(req: NextRequest) {
             .eq("user_id", user.id)
             .or(buildOr(["name", "email", "kvk_number", "city"], terms))
             .limit(5)
+      : Promise.resolve({ data: [] as Hit[] }),
+
+    // Source 4: bank transactions — own rows. Amount is SIGNED (debit negative), so the
+    // amount conditions emit both signs. RLS also scopes to the owner (defence in depth).
+    target === "all" || target === "bank"
+      ? supabase
+          .from("bank_transactions")
+          .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, status, created_at")
+          .eq("user_id", user.id)
+          .or(
+            [
+              buildOr(["counterpart_name", "description", "counterpart_iban", "reference"], terms),
+              ...amountConditionsCol("amount", q),
+            ]
+              .filter(Boolean)
+              .join(",")
+          )
+          .order("date", { ascending: false })
+          .limit(6)
+      : Promise.resolve({ data: [] as Hit[] }),
+
+    // Source 5: cash entries (kasboek) — own rows. category is a key (omzet/kosten/…) so a
+    // "omzet" query still matches; description is the free-text line.
+    target === "all" || target === "kas"
+      ? supabase
+          .from("cash_entries")
+          .select("id, entry_date, amount, category, description, direction, created_at")
+          .eq("user_id", user.id)
+          .or(
+            [
+              buildOr(["description", "category"], terms),
+              ...amountConditionsCol("amount", q),
+            ]
+              .filter(Boolean)
+              .join(",")
+          )
+          .order("entry_date", { ascending: false })
+          .limit(6)
       : Promise.resolve({ data: [] as Hit[] }),
   ]);
 
@@ -393,5 +453,49 @@ export async function GET(req: NextRequest) {
     )
   ).slice(0, 5);
 
-  return NextResponse.json({ invoices, documents, clients });
+  // ── Bankmutaties ──────────────────────────────────────────────────────────────
+  // Deep-link: seed the bank page's own zoekbalk (?find=) with the most identifying
+  // token so the exact line surfaces there (it filters on counterpart/description/
+  // IBAN/reference/amount). Fall back to the whole-euro amount when a line has no text.
+  const bankRows: Hit[] = (bankRes.data ?? []) as unknown as Hit[];
+  const bankTransactions: SearchResult[] = dedup(
+    rankRows(bankRows, q, (r) => [r.counterpart_name, r.description, r.reference, r.counterpart_iban])
+      .map((r) => {
+        const term =
+          (r.counterpart_name || r.description || r.reference || "").trim() ||
+          (r.amount != null ? String(Math.trunc(Math.abs(r.amount))) : "");
+        return {
+          type: "banktransaction" as const,
+          id: r.id,
+          title: r.counterpart_name || r.description || "Bankmutatie",
+          subtitle:
+            r.counterpart_name && r.description ? r.description : (r.reference ?? r.date ?? ""),
+          meta: r.amount != null ? fmt(r.amount) : undefined,
+          href: `/dashboard/bank${term ? `?find=${encodeURIComponent(term)}` : ""}`,
+          createdAt: r.created_at ?? r.date ?? "",
+        };
+      })
+  ).slice(0, 6);
+
+  // ── Kasboekingen ──────────────────────────────────────────────────────────────
+  const cashRows: Hit[] = (cashRes.data ?? []) as unknown as Hit[];
+  const cashEntries: SearchResult[] = dedup(
+    rankRows(cashRows, q, (r) => [r.description, r.category])
+      .map((r) => {
+        const term =
+          (r.description || "").trim() ||
+          (r.amount != null ? String(Math.trunc(Math.abs(r.amount))) : "");
+        return {
+          type: "cashentry" as const,
+          id: r.id,
+          title: r.description || r.category || "Kasboeking",
+          subtitle: r.description && r.category ? r.category : (r.entry_date ?? ""),
+          meta: r.amount != null ? fmt(r.amount) : undefined,
+          href: `/dashboard/kas${term ? `?find=${encodeURIComponent(term)}` : ""}`,
+          createdAt: r.created_at ?? r.entry_date ?? "",
+        };
+      })
+  ).slice(0, 6);
+
+  return NextResponse.json({ invoices, documents, clients, bankTransactions, cashEntries });
 }
