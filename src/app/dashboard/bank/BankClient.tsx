@@ -81,6 +81,8 @@ interface Suggestion {
   amount: number
   description: string
   counterpart: string | null
+  // [SEARCH] tegenrekening IBAN — so the zoekbalk can match a line by IBAN as well.
+  iban?: string | null
   reference: string | null
   outcome: Outcome
   best: Candidate | null
@@ -878,7 +880,7 @@ export default function BankClient() {
     : confirmedList
 
   // [SEARCH] In-page live filter — works on EVERY bank tab now (not only "Geen factuur"):
-  // searches counterpart / reference / date / amount, accent-folded.
+  // searches counterpart / omschrijving / IBAN / reference / date / amount, accent-folded.
   const fold = (x: string) => x.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
   const activeList =
     filterText.trim()
@@ -903,6 +905,8 @@ export default function BankClient() {
               (isWhole && String(Math.trunc(an)) === qDigits))
           return (
             fold(s.counterpart ?? '').includes(q) ||
+            fold(s.description ?? '').includes(q) ||
+            fold(s.iban ?? '').includes(q) ||
             fold(s.reference ?? '').includes(q) ||
             (s.date ?? '').toLowerCase().includes(raw.toLowerCase()) ||
             amountMatch
@@ -1230,7 +1234,7 @@ export default function BankClient() {
                 type="text"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
-                placeholder="Zoek op naam, bedrag of datum"
+                placeholder="Zoek op naam, omschrijving, IBAN, bedrag of datum"
                 style={{
                   width: '100%', boxSizing: 'border-box', padding: '10px 36px 10px 38px',
                   borderRadius: R.full, border: `1px solid ${M3.surfaceVariant}`, background: '#fff',
