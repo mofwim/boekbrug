@@ -6,6 +6,7 @@ import {
   interpretAmountEntry,
   paidAmount,
   toCents,
+  buildPaymentResult,
 } from "./partial-payment";
 
 let passed = 0, failed = 0;
@@ -67,6 +68,7 @@ console.log("\n— interpretAmountEntry —");
 {
   const e = interpretAmountEntry("1000", 1000);
   check("exact open amount settles fully", e.valid === true && e.settlesFully === true && e.remainingAfter === 0);
+  check("exact open amount reports amount null (= settle everything)", e.amount === null);
 }
 {
   const e = interpretAmountEntry("4000", 1000);
@@ -92,6 +94,44 @@ console.log("\n— interpretAmountEntry —");
 {
   const e = interpretAmountEntry("1.000,00", 1000);
   check("formatted dutch input is accepted at the boundary", e.valid === true && e.settlesFully === true);
+}
+
+console.log("\n— buildPaymentResult (the API contract both clients branch on) —");
+{
+  // A real deelbetaling: €400 of €1000. The clients decide "still open" from `partial`.
+  const r = buildPaymentResult({ applied: 400, amount_paid: 400, total: 1000, is_paid: false }, "sent");
+  check("partial booking reports partial=true", r.partial === true);
+  check("partial booking keeps the open status", r.status === "sent");
+  check("partial booking reports what was applied", r.applied === 400);
+  check("partial booking reports the running total", r.amountPaid === 400);
+  check("partial booking reports what is left", r.remaining === 600);
+  check("no duplicate flag on a real booking", r.duplicate === undefined);
+}
+{
+  const r = buildPaymentResult({ applied: 600, amount_paid: 1000, total: 1000, is_paid: true }, "sent");
+  check("completing booking reports partial=false", r.partial === false);
+  check("completing booking flips the status to paid", r.status === "paid");
+  check("completing booking leaves nothing open", r.remaining === 0);
+}
+{
+  // The replay of a partial must be indistinguishable from the original, plus the flag.
+  const first = buildPaymentResult({ applied: 400, amount_paid: 400, total: 1000, is_paid: false }, "received");
+  const replay = buildPaymentResult({ applied: 400, amount_paid: 400, total: 1000, is_paid: false, duplicate: true }, "received");
+  check("replay carries the duplicate flag", replay.duplicate === true);
+  check("replay agrees with the original on partial", replay.partial === first.partial);
+  check("replay agrees with the original on remaining", replay.remaining === first.remaining);
+  check("replay agrees with the original on status", replay.status === first.status);
+  check("incoming invoice keeps 'received' while partly paid", first.status === "received");
+}
+{
+  const r = buildPaymentResult({ applied: 100, amount_paid: 100, total: 100, is_paid: true }, null);
+  check("missing open status falls back safely", r.status === "paid");
+  const p = buildPaymentResult({ applied: 30, amount_paid: 30, total: 100, is_paid: false }, null);
+  check("missing open status on a partial defaults to sent", p.status === "sent");
+}
+{
+  const r = buildPaymentResult({ applied: 0.1, amount_paid: 0.3, total: 1, is_paid: false }, "sent");
+  check("remaining is rounded to cents", r.remaining === 0.7);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

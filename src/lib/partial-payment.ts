@@ -152,14 +152,67 @@ export function interpretAmountEntry(raw: string | null | undefined, open: numbe
   }
 
   const remainingAfter = toCents(Math.max(0, openRounded - parsed));
+  // Within a cent of the balance counts as fully settled — the same epsilon the database
+  // uses when deciding to flip the status to 'paid'.
+  const settlesFully = remainingAfter <= CENT_EPSILON * 2;
   return {
-    amount: parsed,
+    // Typing the exact open balance means the same as leaving the field empty: settle it all.
+    // Reported as null so every caller has ONE representation of "the whole rest" — the
+    // server then takes its full-settlement path (which cash supports) instead of treating
+    // it as an instalment that merely happens to close the invoice.
+    amount: settlesFully ? null : parsed,
     valid: true,
     error: null,
     remainingAfter,
-    // Within a cent of the balance counts as fully settled — the same epsilon the
-    // database uses when deciding to flip the status to 'paid'.
-    settlesFully: remainingAfter <= CENT_EPSILON * 2,
+    settlesFully,
+  };
+}
+
+/** What apply_manual_payment / apply_bank_payment hand back. */
+export interface AppliedPaymentRow {
+  applied: number;
+  amount_paid: number;
+  total: number;
+  is_paid: boolean;
+  duplicate?: boolean;
+}
+
+export interface PaymentResult {
+  ok: true;
+  /** The invoice's status AFTER the booking — unchanged when it is only partly settled. */
+  status: string;
+  /** True when the invoice is still open for the rest. The clients branch on exactly this. */
+  partial: boolean;
+  applied: number;
+  amountPaid: number;
+  remaining: number;
+  duplicate?: boolean;
+}
+
+/**
+ * Shape the API answer for a booked payment. ONE function, because the write path and the
+ * idempotent-replay path must answer identically.
+ *
+ * This exists because they once did not: the replay branch returned the full shape while the
+ * real booking returned a bare {ok, status:'paid'} — correct back when paying was
+ * all-or-nothing, a lie the moment a deelbetaling became possible. The clients decide between
+ * "still open for the rest" and "settled" purely on `partial`, so the omission made every
+ * first instalment render as a completed payment while the database correctly disagreed.
+ */
+export function buildPaymentResult(
+  row: AppliedPaymentRow,
+  openStatus: string | null | undefined
+): PaymentResult {
+  const fullyPaid = row.is_paid === true;
+  const remaining = toCents(Math.max(0, (row.total ?? 0) - (row.amount_paid ?? 0)));
+  return {
+    ok: true,
+    status: fullyPaid ? "paid" : (openStatus ?? "sent"),
+    partial: !fullyPaid,
+    applied: row.applied ?? 0,
+    amountPaid: row.amount_paid ?? 0,
+    remaining,
+    ...(row.duplicate === true ? { duplicate: true } : {}),
   };
 }
 

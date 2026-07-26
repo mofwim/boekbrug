@@ -1211,6 +1211,8 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   // [MANUAL-PARTIAL-PAY] Empty means "all of it" — zero keystrokes for the ordinary case.
   const [amountText, setAmountText] = useState('')
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
+  // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
+  const canPayCash = !entry || (entry.valid && entry.settlesFully)
   return (
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
@@ -1255,7 +1257,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                       ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
                       : entry.settlesFully
                         ? 'Hiermee is de factuur volledig betaald.'
-                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)}`}
+                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} · een deelbetaling noteer je via Bank`}
                 </p>
               </>
             )}
@@ -1268,10 +1270,18 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
+              {/* [MANUAL-PARTIAL-PAY] Contant is disabled for a PARTIAL amount, on purpose.
+                  The kasboek can hold exactly one settlement entry per invoice
+                  (cash_entries_one_settlement_per_invoice), so two cash instalments would
+                  collapse into a single entry re-dated to the last one — silently moving money
+                  out of an already-filed quarter and making the daily drawer balance wrong in
+                  between. A partial payment via Bank has no such limit. Lift this once the
+                  kasboek can represent one entry per instalment. */}
               <button
-                onClick={() => { if (!entry || entry.valid) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
-                disabled={!!entry && !entry.valid}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
+                disabled={!canPayCash}
+                title={!canPayCash && entry?.valid ? 'Een deelbetaling kan alleen via Bank worden genoteerd' : undefined}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant
               </button>

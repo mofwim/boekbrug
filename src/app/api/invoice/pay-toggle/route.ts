@@ -15,6 +15,9 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+// [MANUAL-PARTIAL-PAY] one shape for a booked payment — the write path and the replay path
+// must answer identically, or the clients cannot tell a deelbetaling from a settlement.
+import { buildPaymentResult } from "@/lib/partial-payment";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +93,22 @@ export async function POST(req: NextRequest) {
       }
       payAmount = Math.round(parsed * 100) / 100;
     }
+
+    // [MANUAL-PARTIAL-PAY] A PARTIAL payment may not be booked as cash. The kasboek holds
+    // exactly one settlement entry per invoice (cash_entries_one_settlement_per_invoice), so a
+    // second cash instalment collapses into that entry and re-dates it to the latest one —
+    // retroactively moving money out of an already-filed quarter and making the daily drawer
+    // balance wrong in between. Bank instalments carry no such limit. The UI disables the
+    // Contant button for a partial amount; this is the server-side twin, because the kasboek
+    // must not depend on the client behaving. Lift both once cash_entries can hold one row per
+    // instalment. NOTE: a partial payment is only detectable here when an amount was sent —
+    // an empty amount always settles the whole balance, which cash handles fine.
+    if (payAmount != null && paymentMethod === "kas") {
+      return NextResponse.json(
+        { error: "partial_cash_unsupported", detail: "Een deelbetaling kan alleen via bank worden genoteerd." },
+        { status: 400 }
+      );
+    }
     // Idempotency key: LEAST() clamps over-payment but does NOT deduplicate, so without
     // this a double tap or a retried POST would book the instalment twice.
     const rawKey = (body as { clientKey?: unknown }).clientKey;
@@ -131,12 +150,10 @@ export async function POST(req: NextRequest) {
     const remaining = Math.max(0, Math.round(((row.total ?? 0) - (row.amount_paid ?? 0)) * 100) / 100);
 
     // A replayed request changed nothing — report the already-booked state, never a second
-    // audit row or a second kasboek reconcile.
+    // audit row or a second kasboek reconcile. Same shape as the real booking below: both go
+    // through buildPaymentResult so the two answers can never drift apart again.
     if (row.duplicate === true) {
-      return NextResponse.json({
-        ok: true, status: fullyPaid ? "paid" : inv.status, partial: !fullyPaid,
-        applied: row.applied, amountPaid: row.amount_paid, remaining, duplicate: true,
-      });
+      return NextResponse.json(buildPaymentResult(row, inv.status));
     }
 
     // Only a COMPLETED payment clears the prepared marker; a partial one leaves the
@@ -157,7 +174,14 @@ export async function POST(req: NextRequest) {
     });
     // Keep the kasboek in sync when paid in cash (create/heal the 'betaling' entry). Best-effort.
     try { await reconcileCashSettlements(supabase, user.id); } catch { /* non-fatal */ }
-    return NextResponse.json({ ok: true, status: "paid" });
+    // [MANUAL-PARTIAL-PAY] Report what ACTUALLY happened. This used to be a bare
+    // {ok, status:'paid'} — correct while the toggle was all-or-nothing, a lie the moment a
+    // deelbetaling became possible: both clients read `partial` to decide between "still open
+    // for the rest" and "settled", so an omitted flag made every first-time instalment render
+    // as a completed payment (green chip, row out of the openstaand list, a "Factuur betaald"
+    // notification) while the database correctly still said openstaand. Only the idempotent
+    // REPLAY branch above returned the full shape — the one path that writes nothing.
+    return NextResponse.json(buildPaymentResult(row, inv.status));
   }
 
   // ── action === 'undo' ──────────────────────────────────────────────────────
