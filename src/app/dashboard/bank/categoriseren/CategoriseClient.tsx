@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+import { rowMatchesQuery } from '@/lib/search'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -59,6 +60,7 @@ export default function CategoriseClient() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('todo')
+  const [search, setSearch] = useState('')
 
   async function load(which: Mode = mode) {
     try {
@@ -173,12 +175,20 @@ export default function CategoriseClient() {
   }
 
   const trulyDone = totalRemaining === 0 && items.length === 0
+  // [SMART-FILTER] live filter over the LOADED transactions (tegenpartij /
+  // omschrijving / bedrag). The list is server-capped (PAGE_SIZE), so when
+  // hasMore is set this narrows only what's on screen — the empty-state says so.
+  const rawC = search.trim()
+  const displayItems = rawC
+    ? items.filter((it) => rowMatchesQuery(rawC, [it.counterpart_name, it.description], [it.amount]))
+    : items
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
+    <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
+        {/* [HEADER-SYSTEM] Title "Wat is dit?" + back live in the shared sub-page
+            bar; the in-body h1 that repeated it was removed. Subtitle stays. */}
         <header style={{ margin: '16px 0 16px' }}>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Wat is dit?</h1>
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>
             {mode === 'todo'
               ? 'Geef elke banktransactie een plek. We onthouden je keuze per bedrijf.'
@@ -264,8 +274,29 @@ export default function CategoriseClient() {
               </p>
             )}
 
+            {/* [SMART-FILTER] live filter over the loaded transactions */}
+            <div style={{ position: 'relative', marginBottom: 12 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Zoek op tegenpartij, omschrijving of bedrag…"
+                aria-label="Transacties zoeken"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14.5, outline: 'none', background: M3.surface, color: M3.onSurface, fontFamily: FONT }}
+              />
+              {search && (
+                <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+              )}
+            </div>
+
+            {rawC && displayItems.length === 0 ? (
+              <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: '22px 18px', textAlign: 'center' }}>
+                <div style={{ fontSize: 14, color: M3.neutral }}>Geen transacties gevonden voor &ldquo;{rawC}&rdquo;{hasMore ? ` in de eerste ${items.length}` : ''}.</div>
+                {hasMore && <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 4 }}>Er staan er nog {totalRemaining - items.length} in de wachtrij die nog niet geladen zijn.</div>}
+              </div>
+            ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {items.map((it) => (
+            {displayItems.map((it) => (
               <div key={it.id} style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: '14px 16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div style={{ minWidth: 0 }}>
@@ -324,6 +355,7 @@ export default function CategoriseClient() {
               </div>
             ))}
             </div>
+            )}
 
             {/* When the page is empty but the DB still has lines (auto-applied confident
                 ones left the page), tell the truth instead of a green "done". */}

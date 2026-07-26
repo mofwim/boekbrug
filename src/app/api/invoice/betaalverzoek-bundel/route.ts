@@ -14,6 +14,8 @@ import {
   type BetaalverzoekInvoice,
 } from '@/lib/betaalverzoek'
 import { SITE_URL } from '@/lib/site'
+// [CREDITNOTA-NO-CHASE] shared helper for the credited-ids set
+import { creditedIdsFrom } from '@/lib/credited-invoices'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -42,6 +44,36 @@ export async function POST(req: NextRequest) {
     .eq('sender_id', user.id)
   if (!invoices || invoices.length !== invoiceIds.length) {
     return NextResponse.json({ error: 'Niet alle facturen gevonden' }, { status: 404 })
+  }
+
+  // [CREDITNOTA-NO-CHASE] A withdrawn invoice may not join a bundle. The pay page drops credited
+  // invoices from the payable set, so including one here would show the OWNER a higher total (and
+  // a longer reference) than the link actually asks the customer for — the two sides of the same
+  // link disagreeing, with nothing flagging it. Refuse instead of silently trimming: the owner
+  // picked those invoices deliberately and must see why one cannot be in the bundle.
+  const { data: creditRows, error: creditErr } = await supabase
+    .from('invoices')
+    .select('original_invoice_id')
+    .eq('sender_id', user.id)
+    .eq('invoice_type', 'creditnota')
+    .in('original_invoice_id', invoiceIds)
+  if (creditErr) {
+    return NextResponse.json({ error: 'Controle op creditnota’s mislukt — probeer het opnieuw.' }, { status: 500 })
+  }
+  if ((creditRows ?? []).length > 0) {
+    const creditedSet = creditedIdsFrom(creditRows as { original_invoice_id: string | null }[])
+    const names = invoices
+      .filter((i) => creditedSet.has((i as { id: string }).id))
+      .map((i) => (i as { invoice_number: string | null }).invoice_number)
+      .filter(Boolean)
+    return NextResponse.json(
+      {
+        error: names.length > 0
+          ? `Voor ${names.join(', ')} is een creditnota gemaakt — haal die uit de selectie.`
+          : 'Voor een van de geselecteerde facturen is een creditnota gemaakt — haal die uit de selectie.',
+      },
+      { status: 400 }
+    )
   }
 
   // The owner's OWN payout details — the beneficiary of the QR.

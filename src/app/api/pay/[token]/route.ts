@@ -55,6 +55,16 @@ export async function GET(
   // Same contract: minimal projection or a 404 that never confirms existence.
   if (!invoice) return bundleView(pipeline, token)
 
+  // [CREDITNOTA-NO-CHASE] The owner WITHDREW this invoice with a creditnota. The invoice keeps
+  // its 'sent' status and positive total on purpose (the +omzet stays, netted by the
+  // creditnota), so every payability rule below still passes it — and this page would keep
+  // asking a real customer, from a link they already have, to transfer money that is no longer
+  // owed. A shared link stays live forever, so "the owner just won't share it" is no guard.
+  // 404 like every other not-payable case: the page says the link is unknown, never why.
+  if (await isCredited(pipeline, (invoice as { id: string }).id)) {
+    return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+  }
+
   // The owner's OWN payout details — the beneficiary.
   const { data: owner } = await pipeline
     .from('profiles')
@@ -70,6 +80,23 @@ export async function GET(
   if (!view) return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
 
   return NextResponse.json(view)
+}
+
+// [CREDITNOTA-NO-CHASE] Has this invoice been withdrawn with a creditnota? Fail CLOSED: if the
+// lookup itself errors we treat the invoice as credited and hide the page, because the failure
+// mode on the other side is a customer transferring money that is not owed.
+async function isCredited(
+  pipeline: ReturnType<typeof createPipelineClient>,
+  invoiceId: string
+): Promise<boolean> {
+  const { data, error } = await pipeline
+    .from('invoices')
+    .select('id')
+    .eq('original_invoice_id', invoiceId)
+    .eq('invoice_type', 'creditnota')
+    .limit(1)
+  if (error) return true
+  return (data ?? []).length > 0
 }
 
 // [BUNDEL-BETAALVERZOEK] Resolve a bundle token → the combined public view
@@ -99,6 +126,27 @@ async function bundleView(pipeline: ReturnType<typeof createPipelineClient>, tok
     .eq('sender_id', bundle.user_id)
   if (!invoices || invoices.length === 0) return notFound
 
+  // [CREDITNOTA-NO-CHASE] Drop any invoice in the bundle the owner has since withdrawn, so the
+  // combined amount never asks for money that is no longer owed. Fails CLOSED (the whole page
+  // 404s) rather than risk over-asking. If nothing is left, the link is spent.
+  // Scoped to THIS bundle's invoices, so the read is small and — unlike an owner-wide select —
+  // cannot be silently truncated by PostgREST's ~1000-row cap. A truncated credited set would
+  // fail OPEN (a withdrawn invoice slipping back into the payable set and the combined amount
+  // over-asking), which is exactly the outcome the fail-closed design exists to prevent.
+  const { data: creditRows, error: creditErr } = await pipeline
+    .from('invoices')
+    .select('original_invoice_id')
+    .eq('invoice_type', 'creditnota')
+    .in('original_invoice_id', ids)
+  if (creditErr) return notFound
+  const credited = new Set(
+    ((creditRows ?? []) as { original_invoice_id: string | null }[])
+      .map((r) => r.original_invoice_id)
+      .filter((id): id is string => !!id)
+  )
+  const payable = (invoices as { id: string }[]).filter((i) => !credited.has(i.id))
+  if (payable.length === 0) return notFound
+
   const { data: owner } = await pipeline
     .from('profiles')
     .select('iban, company_name, full_name')
@@ -106,7 +154,7 @@ async function bundleView(pipeline: ReturnType<typeof createPipelineClient>, tok
     .single()
 
   const view = toPublicBundlePayView(
-    invoices as BetaalverzoekInvoice[],
+    payable as BetaalverzoekInvoice[],
     owner ?? { iban: null, company_name: null, full_name: null }
   )
   if (!view) return notFound

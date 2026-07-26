@@ -15,8 +15,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
+import { FONT } from "@/lib/design/tokens";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
+import { rowMatchesQuery } from "@/lib/search";
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
@@ -2504,18 +2506,13 @@ export default function IncomingInvoicesClient({
   // [SEARCH] Live, in-place filter over the loaded list (supplier name / invoice number /
   // whole-euro amount). The page holds the full set (server caps at 100/50), so this is
   // complete — no navigation, no reload.
-  const incFold = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  // [SMART-FILTER] shared matcher — leverancier / factuurnummer / bedrag
+  // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
   const rawQ = search.trim();
-  const q = incFold(rawQ);
-  const qDigits = rawQ.replace(/[^\d]/g, "");
-  const amountLike = qDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawQ);
   const filteredList = rawQ
-    ? list.filter((inv) => {
-        if (q && incFold(inv.client_name ?? "").includes(q)) return true;
-        if (q && incFold(inv.invoice_number ?? "").includes(q)) return true;
-        if (amountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === qDigits) return true;
-        return false;
-      })
+    ? list.filter((inv) =>
+        rowMatchesQuery(rawQ, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
+      )
     : list;
 
   // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────
@@ -2538,15 +2535,15 @@ export default function IncomingInvoicesClient({
     <div
       style={{
         maxWidth: 430, margin: "0 auto", padding: "0 0 100px",
-        fontFamily: 'var(--font-sans)',
+        // [HEADER-SYSTEM] Was var(--font-sans) (could resolve to a non-Roboto
+        // face); now the shared Roboto FONT token, matching the shared bar above.
+        fontFamily: FONT,
       }}
     >
-      {/* [BOEK-011] Header — Logo Universal Click + Terug via <Link>
-          Implements Navigation Strategy v1.0:
-          - Logo always → home (dynamic by role)
-          - Terug uses <Link>, never router.back()
-          - Logo + Terug are separate concerns: Logo = escape hatch from anywhere,
-            Terug = explicit parent (/dashboard for /dashboard/incoming) */}
+      {/* [HEADER-SYSTEM] The title "Inkomend" + back live in the shared sub-page
+          bar (DashboardChrome/STATIC_TITLES). This block is now just the status
+          subtitle. (Removed a stale comment describing a Logo/Terug header that no
+          longer exists here.) */}
       <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}

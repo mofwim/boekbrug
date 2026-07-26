@@ -45,13 +45,30 @@ export interface SettleableInvoice {
   // invoices.amount_paid by the bank confirm/unlink paths). The cash the owner physically handed
   // over is the REMAINDER — settling the full gross would overstate the drawer movement by every
   // bank instalment. Absent/0 for the common fully-cash case → identical to before.
+  //
+  // [MANUAL-PARTIAL-PAY] CAREFUL: amount_paid is no longer bank-only. Since a manual payment can
+  // be recorded as 'kas', amount_paid includes cash instalments too — so `gross − amount_paid`
+  // now yields 0 for a fully cash-paid invoice, which would make the reconciler DELETE the
+  // kasboek entry as stale and silently break the drawer balance. That is why cash_paid below
+  // exists and takes precedence: the cash portion is read from the instalments themselves.
   amount_paid?: number | null;
+  // [MANUAL-PARTIAL-PAY] The CASH portion, summed from the invoice's instalments with
+  // method='kas' (bank_tx_invoices). Authoritative when present — it says what physically left
+  // or entered the drawer, instead of inferring it from what the bank did NOT pay. Absent for
+  // legacy invoices settled before manual instalments existed → the fallback below applies.
+  cash_paid?: number | null;
 }
 
-/** The CASH the owner actually handed over for this invoice: the gross (total_inc_btw, or ex+btw
- *  when the gross wasn't stored) MINUS what the bank already settled (amount_paid). Returns null
- *  when that yields no positive amount — a €0/credit/refund (creditnota) or a fully-bank-settled
- *  invoice is never a cash settlement, so we don't auto-book one. Pure. */
+/** The CASH the owner actually handed over for this invoice. Pure.
+ *
+ *  Two regimes, in order:
+ *   1. [MANUAL-PARTIAL-PAY] cash_paid present → that IS the cash, exactly. Every cash instalment
+ *      is a recorded row (method='kas'), so no inference is needed or wanted.
+ *   2. LEGACY (no instalment rows: invoices settled before this existed) → the gross
+ *      (total_inc_btw, or ex+btw when the gross wasn't stored) MINUS what the bank settled.
+ *
+ *  Returns null when that yields no positive amount — a €0/credit/refund (creditnota) or a
+ *  fully-bank-settled invoice is never a cash settlement, so we don't auto-book one. */
 export function settlementGross(inv: SettleableInvoice): number | null {
   const raw =
     typeof inv.total_inc_btw === "number" && inv.total_inc_btw !== 0
@@ -60,8 +77,16 @@ export function settlementGross(inv: SettleableInvoice): number | null {
         ? inv.total_ex_btw + inv.btw_amount
         : NaN;
   if (!Number.isFinite(raw) || raw <= 0) return null;
-  // [CASH-PARTIAL] €500 invoice, €300 paid by bank instalment, remainder paid in cash → the
-  // drawer moved €200, not €500. Rounded to cents so float noise never produces a €0.004 entry.
+
+  // 1) Recorded cash instalments are the truth when we have them.
+  if (inv.cash_paid != null) {
+    const cash = Math.round(Math.max(0, Number(inv.cash_paid)) * 100) / 100;
+    return cash > 0.005 ? cash : null;
+  }
+
+  // 2) [CASH-PARTIAL] Legacy inference: €500 invoice, €300 paid by bank instalment, remainder
+  // paid in cash → the drawer moved €200, not €500. Rounded to cents so float noise never
+  // produces a €0.004 entry.
   const paidByBank = Math.max(0, Number(inv.amount_paid ?? 0));
   const remainder = Math.round((raw - paidByBank) * 100) / 100;
   return remainder > 0.005 ? remainder : null;

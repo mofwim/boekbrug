@@ -12,8 +12,13 @@ import { createClient } from "@/lib/supabase";
 
 const PAGE_SIZE = 20;
 
+// [PARTIAL-PAY] amount_paid rides along so the list can show a partly-settled invoice as such
+// (chip + open amount) and the bundle selection can total the OPEN amounts. Without it the
+// debtor list showed the full total on an invoice that was already half paid — the customer
+// had paid, the reminder and the pay-QR already asked only the remainder, and only this screen
+// still claimed the full sum.
 const SELECT =
-  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type, payment_date";
+  "id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type, payment_date";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +30,9 @@ export interface InvoiceRow {
   accountant_status?: string | null;
   direction: string;
   total_inc_btw: number;
+  // [PARTIAL-PAY] Running total already settled (magnitude). 0/absent = fully open.
+  // Openstaand = status 'paid' ? 0 : max(0, |total_inc_btw| − amount_paid).
+  amount_paid?: number | null;
   // [BOEK-031] add ex_btw and btw for pro_forma display — May 2026
   total_ex_btw?: number | null;
   btw_amount?: number | null;

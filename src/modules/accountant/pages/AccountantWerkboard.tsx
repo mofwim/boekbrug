@@ -15,9 +15,9 @@
 // UI language is identical to the other accountant tools (Google Workspace, Roboto).
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useParentPath } from '@/lib/navigation-hooks'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import { M3, FONT } from '@/lib/design/tokens'
 import { getAangifteDeadline, daysUntil } from '../accountant.service'
 import {
   summarizeBoard,
@@ -75,13 +75,31 @@ interface Props {
 
 export default function AccountantWerkboard({ clients, year: initYear, quarter: initQuarter }: Props) {
   const router = useRouter()
-  const parentHref = useParentPath('accountant')
   const currentYear = new Date().getFullYear()
 
   const [year, setYear] = useState(initYear)
   const [quarter, setQuarter] = useState(initQuarter)
   const [onlyAction, setOnlyAction] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+
+  // [HEADER-SYSTEM] This board is registered in the shared sub-page bar
+  // (DashboardChrome/STATIC_TITLES -> "Aangifte & status"). Instead of drawing a
+  // bespoke header, push the refresh control into the shared bar's actions slot.
+  useSubPageHeader(
+    {
+      actions: (
+        <button
+          onClick={() => setReloadKey(k => k + 1)}
+          title="Vernieuwen"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
+          Vernieuwen
+        </button>
+      ),
+    },
+    [],
+  )
   const [rows, setRows] = useState<BoardRow[]>(
     () => clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })),
   )
@@ -174,28 +192,11 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
     color: active ? '#041E49' : '#5F6368', fontFamily: "'Roboto', sans-serif",
   })
 
+  // [HEADER-SYSTEM] No bespoke header here — the shared sub-page bar renders the
+  // back + "Aangifte & status" title + the refresh action (registered above via
+  // useSubPageHeader).
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
-
-      {/* Header — identical to the other accountant tools */}
-      <div style={{
-        backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '0 24px',
-        height: 64, display: 'flex', alignItems: 'center', gap: 16, position: 'sticky', top: 0, zIndex: 40,
-      }}>
-        <Link href={parentHref} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500 }}>
-          ← Terug
-        </Link>
-        <h1 style={{ fontSize: 18, fontWeight: 600, color: '#202124', margin: 0 }}>Aangifte &amp; status</h1>
-        <button
-          onClick={() => setReloadKey(k => k + 1)}
-          title="Vernieuwen"
-          style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#1A73E8', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: "'Roboto', sans-serif" }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
-          Vernieuwen
-        </button>
-      </div>
-
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT }}>
       <main style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Deadline hero (from #1) — follows the selected quarter ── */}

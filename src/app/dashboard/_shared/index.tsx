@@ -14,6 +14,7 @@ import { StatusFilter } from '@/components/ui/StatusFilter'
 import { InvoiceRowItem, STATUS_LABEL, type InvoiceRow as InvoiceListRow } from '@/components/invoice/InvoiceRow'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { SearchBar } from '@/components/search/SearchBar'
+import { M3, FONT, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 import type { ProfileRow, NotificationRow } from '@/types/rows'
 
@@ -302,7 +303,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
             style={{
               width: '100%', padding: '10px 16px', textAlign: 'left',
               background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 14, color: '#EA4335', fontWeight: 500,
+              fontSize: 14, color: M3.error, fontWeight: 500,
               transition: 'background 0.1s ease',
             }}
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#FFF0EE')}
@@ -372,7 +373,7 @@ function NotificationsBell({
           return effectiveUnread > 0 ? (
             <span style={{
               position: 'absolute', top: 4, right: 4,
-              backgroundColor: '#EA4335', color: '#fff',
+              backgroundColor: M3.error, color: '#fff',
               fontSize: 9, fontWeight: 700, borderRadius: 9999,
               minWidth: 16, height: 16, padding: '0 3px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -573,19 +574,22 @@ export function DashboardHeader({
   const isAccountant = profile?.role === 'accountant'
   const logoHref = isAccountant ? '/dashboard/accountant' : '/dashboard'
 
+  // [HEADER-SYSTEM] Home top bar. Height + surface/border/font come from the
+  // shared tokens so it stays in lockstep with the sub-page bar (SubPageHeader);
+  // see docs/header-system.md.
   return (
     <header style={{
       position: 'sticky',
       top: 0,
       zIndex: 50,
-      backgroundColor: '#fff',
-      borderBottom: '1px solid #E0E0E0',
-      height: 60,
+      backgroundColor: M3.surface,
+      borderBottom: `1px solid ${M3.outlineVariant}`,
+      height: PAGE_HEADER_HEIGHT,
       display: 'flex',
       alignItems: 'center',
       padding: '0 16px',
       gap: 8,
-      fontFamily: "'Roboto', sans-serif",
+      fontFamily: FONT,
     }}>
 
       {/* Logo — [INTEGRATION] next/link + role-aware href — May 2026 */}

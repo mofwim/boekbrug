@@ -5,6 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
+import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -23,6 +24,9 @@ import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+import { amountOrConditions } from '@/lib/search'
+// [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
+import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -76,6 +80,12 @@ interface ConfirmPayCtx {
   // [BOEK-003] payment method — required by DB constraint invoices_paid_requires_method
   // UI shows "Bank" / "Contant"; DB stores 'bank' / 'kas'
   paymentMethod?: 'bank' | 'kas'
+  // [MANUAL-PARTIAL-PAY] The amount actually paid. null/absent = the whole open balance
+  // (the empty field), a number = a deelbetaling. clientKey makes the POST idempotent.
+  amount?: number | null
+  clientKey?: string
+  // What was still open when the dialog opened — drives the field's hint and its cap.
+  openAmount?: number
   // [BRIDGE-QUARTER] real payment date (YYYY-MM-DD) — Axis 2 / cash
   paymentDate?: string
 }
@@ -147,6 +157,8 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     status: string
     invoice_type?: string | null
     total_inc_btw?: number | null
+    // [PARTIAL-PAY] already settled by earlier instalments
+    amount_paid?: number | null
   }
 
   // Only an issued, unpaid verkoopfactuur can join a bundle (same rule as the lib).
@@ -162,7 +174,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         id: inv.id,
         number: inv.invoice_number ?? '',
         client: inv.client_name ?? '',
-        amount: inv.total_inc_btw ?? 0,
+        // [PARTIAL-PAY] The OPEN amount, not the full total — this is what the bundle's
+        // QR asks the customer (buildBundelBetaalverzoek sums the open amounts). Showing
+        // the full total here made the owner read one number and the customer pay another.
+        amount: openAmount(inv),
       }
       return next
     })
@@ -240,6 +255,31 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       .then(({ data }) => setArchivedInvoices((data ?? []) as unknown as ArchivedRow[]))
   }, [profile?.id])
 
+  // [CREDITNOTA-NO-CHASE] Which invoices did the owner WITHDRAW with a creditnota? Such an
+  // invoice deliberately keeps its 'sent' status and its positive total (the +omzet must stay
+  // to be netted by the creditnota's −omzet), so the row is indistinguishable from an ordinary
+  // open one — while the reminder cron and "Te ontvangen" now correctly ignore it. Without
+  // this the two screens disagree: the tile stops counting the money and the list keeps
+  // showing it as owed, with no explanation for why nothing is being chased. Keyed on the
+  // owner (a creditnota per owner is rare), so it costs one small read and no pagination.
+  const [creditedIds, setCreditedIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!profile?.id) return
+    supabase
+      .from('invoices')
+      .select('original_invoice_id')
+      .eq('sender_id', profile.id)
+      .eq('invoice_type', 'creditnota')
+      .not('original_invoice_id', 'is', null)
+      .then(({ data }) => {
+        const ids = ((data ?? []) as unknown as { original_invoice_id: string | null }[])
+          .map(r => r.original_invoice_id)
+          .filter((id): id is string => !!id)
+        setCreditedIds(new Set(ids))
+      })
+  }, [profile?.id])
+
   // [SEARCH] Debounced server query over ALL the user's invoices (any status), so a
   // match that hasn't been scrolled into the infinite list is still found instantly.
   useEffect(() => {
@@ -249,7 +289,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       return () => clearTimeout(t0)
     }
     const esc = q.replace(/[,()%_*\\":]/g, ' ').trim()
-    if (esc.length < 1) {
+    // [SMART-FILTER] amount-aware server search: when the query is money-shaped,
+    // also match total_inc_btw (decimaal- én duizendtal-bewust). So "670,09" /
+    // "670.0" now find the invoice, not just its number/name. (src/lib/search.ts)
+    const amountOr = amountOrConditions('total_inc_btw', q)
+    // Only add the text ILIKE parts when esc has real content — an empty esc would
+    // build `ilike.%%` (match-all). If there is nothing to match on, bail before the DB.
+    const textOr = esc.length >= 1 ? [`invoice_number.ilike.%${esc}%`, `client_name.ilike.%${esc}%`] : []
+    const orParts = [...textOr, ...amountOr]
+    if (orParts.length === 0) {
       const t0 = setTimeout(() => { setSearchResults([]); setSearchLoading(false) }, 0)
       return () => clearTimeout(t0)
     }
@@ -258,10 +306,12 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     const t = setTimeout(async () => {
       const { data } = await supabase
         .from('invoices')
-        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
+        // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
+        // chip (and feed the same bundle open-amount) as a row from the infinite list.
+        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
         .eq('sender_id', profile.id)
         .neq('status', 'archived')
-        .or(`invoice_number.ilike.%${esc}%,client_name.ilike.%${esc}%`)
+        .or(orParts.join(','))
         .order('created_at', { ascending: false })
         .limit(50)
       if (!active) return
@@ -330,7 +380,11 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
 
   async function executePay(ctx: ConfirmPayCtx) {
     setPayCtx(null); setProcessingId(ctx.id)
-    updateOptimistic(ctx.id, { status: ctx.newStatus })
+    // [MANUAL-PARTIAL-PAY] A DEELBETALING leaves the invoice open — so do NOT optimistically
+    // flip it to 'paid'; only a full settlement changes the status. The amount lands after
+    // the server confirms how much was actually applied.
+    const isPartialIntent = ctx.newStatus === 'paid' && ctx.amount != null
+    if (!isPartialIntent) updateOptimistic(ctx.id, { status: ctx.newStatus })
     // [PAY-TOGGLE] Route through the audited server endpoint (same as Crediteuren). On UNDO it also
     // detaches any bank transaction matched to this invoice — the old direct client write undid the
     // invoice side only, stranding the tx as 'matched' (payable a second time) and left no audit row.
@@ -341,13 +395,17 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
         paymentMethod: ctx.paymentMethod ?? 'bank',
         paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        // null / absent = settle the whole open balance (unchanged behaviour).
+        ...(ctx.amount != null ? { amount: ctx.amount } : {}),
+        // Idempotency: a double tap or a retried POST must not book twice.
+        ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
       }),
     })
     const json = await res.json().catch(() => ({} as { error?: string }))
     const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
     if (error) {
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
-      updateOptimistic(ctx.id, { status: prev })
+      if (!isPartialIntent) updateOptimistic(ctx.id, { status: prev })
       // [BOEK-004] verwerkt conflict (trigger) → show actionable dialog; else toast
       if (error.message && error.message.includes('verwerkt')) {
         setRequestSent(false)
@@ -356,9 +414,19 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         showToast(error.message || 'Bijwerken mislukt')
       }
     } else if (ctx.newStatus === 'paid') {
-      if (ctx.invoiceType === 'creditnota') {
+      // [MANUAL-PARTIAL-PAY] The SERVER decides whether this settled the invoice — the typed
+      // amount may have completed it (last instalment) even though the owner typed a number.
+      const partial = (json as { partial?: boolean }).partial === true
+      const amountPaidNow = (json as { amountPaid?: number }).amountPaid
+      const remaining = (json as { remaining?: number }).remaining ?? 0
+      if (partial) {
+        updateOptimistic(ctx.id, { amount_paid: amountPaidNow ?? null })
+        showToast(`${fmtEur((json as { applied?: number }).applied ?? 0)} genoteerd · nog ${fmtEur(remaining)} open`)
+      } else if (ctx.invoiceType === 'creditnota') {
+        updateOptimistic(ctx.id, { status: 'paid' })
         showToast(`Creditnota ${ctx.number} voldaan ✓`)
       } else {
+        updateOptimistic(ctx.id, { status: 'paid' })
         // Notification insert needs service role (RLS blocks client insert) → API route
         try {
           await fetch('/api/notifications/create', {
@@ -532,7 +600,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
+        padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -731,6 +799,47 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         {fmtEur(inv.total_inc_btw)}
                       </p>
 
+                      {/* [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota. The invoice keeps
+                          its 'Verzonden' chip on purpose (the +omzet stays, netted by the
+                          creditnota), so without this the owner sees an invoice that is never
+                          chased and never counted in Te ontvangen, with nothing explaining why. */}
+                      {creditedIds.has(inv.id) && (
+                        <span
+                          title="Er is een creditnota voor deze factuur gemaakt — hij wordt niet meer aangemaand en telt niet mee als openstaand."
+                          style={{
+                            fontSize: 11, fontWeight: 600, color: '#5F6368', background: M3.surfaceVariant,
+                            border: '1px solid #DADCE0', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Gecrediteerd
+                        </span>
+                      )}
+
+                      {/* [PARTIAL-PAY] Deelbetaling — part settled, rest still openstaand. The
+                          headline amount stays the invoice total (same as the incoming side);
+                          this chip carries what is actually still owed. Only for the genuine
+                          in-between state — a fully open or completed invoice has clearer UI. */}
+                      {isPartiallyPaid(inv) && !creditedIds.has(inv.id) && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (processingId === inv.id) return
+                            // The chip IS the way back in: tapping it reopens the same dialog,
+                            // now offering the REMAINING balance. Recording the next instalment
+                            // (or finishing the invoice) is one tap from where the owner reads it.
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv) })
+                          }}
+                          title={`Deelbetaling: ${fmtEur(inv.amount_paid ?? 0)} van ${fmtEur(Math.abs(inv.total_inc_btw ?? 0))} betaald — tik om de rest te noteren`}
+                          style={{
+                            fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
+                            border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                            cursor: 'pointer', fontFamily: FONT,
+                          }}
+                        >
+                          Deels betaald · {fmtEur(openAmount(inv))} open
+                        </button>
+                      )}
+
                       {/* [BOEK-029] Fix 1: correct button per type+status */}
 
                       {/* factuur + draft → Versturen (opens send modal) */}
@@ -784,7 +893,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                           onClick={e => {
                             e.stopPropagation()
                             if (processingId === inv.id) return
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur' })
+                            // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the total on a
+                            // fully open invoice, the remainder on a partly paid one) — the field's
+                            // hint and its cap.
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv) })
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
@@ -1083,8 +1195,18 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
              creditnota and undo (newStatus='sent') keep single confirm button. */
           paymentChoice={
             payCtx.invoiceType === 'factuur' && payCtx.newStatus === 'paid'
-              ? (method, paymentDate) => executePay({ ...payCtx, paymentMethod: method, paymentDate })
+              ? (method, paymentDate, amount) => executePay({
+                  ...payCtx, paymentMethod: method, paymentDate, amount,
+                  // One key per dialog opening — a retry of the same tap is a no-op server-side.
+                  clientKey: payCtx.clientKey ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined),
+                })
               : undefined
+          }
+          /* [MANUAL-PARTIAL-PAY] Offer the amount field only where a partial payment is
+             meaningful: a real factuur being marked paid. A creditnota (a refund the owner
+             owes) and an undo stay all-or-nothing. */
+          openAmount={
+            payCtx.invoiceType === 'factuur' && payCtx.newStatus === 'paid' ? payCtx.openAmount : undefined
           }
         />
       )}
@@ -1197,7 +1319,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning, paymentChoice }: {
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning, paymentChoice, openAmount: openBalance }: {
   title: string
   body: string
   confirmLabel: string
@@ -1208,11 +1330,23 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   warning?: string
   // [BOEK-003] when set, replaces single confirm button with Bank / Contant choice
   // [BRIDGE-QUARTER] now also receives the real payment date (YYYY-MM-DD)
-  paymentChoice?: (method: 'bank' | 'kas', paymentDate: string) => void
+  // [MANUAL-PARTIAL-PAY] …and the amount, when the owner typed one (null = pay it all)
+  paymentChoice?: (method: 'bank' | 'kas', paymentDate: string, amount: number | null) => void
+  // [MANUAL-PARTIAL-PAY] What is still open on this invoice. Present → the "Betaald bedrag"
+  // field is offered. Absent → no field at all (a bundle stays all-or-nothing).
+  openAmount?: number
 }) {
   // [BRIDGE-QUARTER] real payment date — only relevant when paymentChoice is set
   // (marking as paid). Defaults to today; user corrects if they paid earlier.
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  // [MANUAL-PARTIAL-PAY] The optional amount. EMPTY MEANS EVERYTHING — the common case costs
+  // zero keystrokes and nobody has to know the word "deelbetaling". Deliberately a placeholder
+  // and not a pre-filled value: pre-filling would force a phone user to wipe "€ 1.000,00"
+  // before typing, and a formatted string is exactly what a naive parser chokes on.
+  const [amountText, setAmountText] = useState('')
+  const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
+  // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
+  const canPayCash = !entry || (entry.valid && entry.settlesFully)
   // [BOEK-029] CenteredModal — replaces bottom sheet for all dialogs
   return (
     <div
@@ -1266,17 +1400,61 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />
+
+            {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty settles the whole open
+                balance, which is what this dialog always did, so the ordinary case is unchanged
+                and costs nothing. A typed amount records a deelbetaling: the invoice stays open
+                for the rest, and the reminder + pay-QR ask only that rest from then on. */}
+            {entry && openBalance != null && (
+              <>
+                <label htmlFor="betaald-bedrag" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
+                  Betaald bedrag
+                </label>
+                <input
+                  id="betaald-bedrag"
+                  type="text"
+                  inputMode="decimal"
+                  value={amountText}
+                  placeholder={openBalance.toFixed(2).replace('.', ',')}
+                  onChange={e => setAmountText(e.target.value)}
+                  style={{
+                    width: '100%', padding: '12px 14px', borderRadius: 12,
+                    border: `1px solid ${entry.error ? M3.error : '#DADCE0'}`,
+                    fontSize: 15, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box',
+                  }}
+                />
+                <p style={{ fontSize: 12, color: entry.error ? M3.error : '#5F6368', margin: '6px 2px 16px', lineHeight: 1.45 }}>
+                  {entry.error
+                    ? entry.error
+                    : amountText.trim() === ''
+                      ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
+                      : entry.settlesFully
+                        ? 'Hiermee is de factuur volledig betaald.'
+                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} · een deelbetaling noteer je via Bank`}
+                </p>
+              </>
+            )}
+
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
               <button
-                onClick={() => paymentChoice('bank', paymentDate)}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                onClick={() => { if (!entry || entry.valid) paymentChoice('bank', paymentDate, entry?.amount ?? null) }}
+                disabled={!!entry && !entry.valid}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
+              {/* [MANUAL-PARTIAL-PAY] Contant is disabled for a PARTIAL amount, on purpose. The
+                  kasboek holds exactly one settlement entry per invoice
+                  (cash_entries_one_settlement_per_invoice), so two cash instalments would collapse
+                  into one entry re-dated to the last — silently moving money out of an already
+                  filed quarter and making the daily drawer balance wrong in between. Partial via
+                  Bank has no such limit. Lift once the kasboek can hold one entry per instalment. */}
               <button
-                onClick={() => paymentChoice('kas', paymentDate)}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
+                disabled={!canPayCash}
+                title={!canPayCash && entry?.valid ? 'Een deelbetaling kan alleen via Bank worden genoteerd' : undefined}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant

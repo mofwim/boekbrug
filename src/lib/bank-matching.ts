@@ -86,6 +86,14 @@ export interface MatchCandidate {
   // (the 'amount_only' tier) demands a STRONG match — see autoConfirmTier / HIGH_NAME_SIM.
   // Optional: candidates built outside matchTransactions (e.g. batch reconcile) may omit it.
   nameSim?: number;
+  // [PARTIAL-PAY] What earlier instalments already settled (magnitude, 0 when fully open) and
+  // what is therefore still OPEN on this invoice. scorePair already targets the remaining
+  // balance (see amountTarget above) — it just never EXPORTED it, so the confirm UI compared
+  // the payment against the FULL total and cried "deelbetaling?" at the very instalment that
+  // completes the invoice. Both are magnitudes; a creditnota's negative total is abs()'d here.
+  // Optional: candidates built outside matchTransactions (e.g. batch reconcile) may omit them.
+  amountPaid?: number;
+  remaining?: number;
 }
 
 /** Outcome class for one transaction. */
@@ -605,6 +613,10 @@ export function matchTransactions(
       if (!isEligible(tx, inv)) continue;
       const { confidence, signals, reason, nameSim } = scorePair(tx, inv, opts);
       if (confidence < opts.choiceThreshold) continue;
+      // [PARTIAL-PAY] Export what's already settled and what's left, so the confirm UI can
+      // compare the payment against the REMAINING balance instead of the full total.
+      const alreadyPaid = Math.max(0, inv.amount_paid ?? 0);
+      const stillOpen = Math.max(0, Math.abs(inv.total_inc_btw ?? 0) - alreadyPaid);
       candidates.push({
         invoiceId: inv.id,
         invoiceNumber: inv.invoice_number,
@@ -614,6 +626,8 @@ export function matchTransactions(
         signals,
         reason,
         nameSim,
+        amountPaid: alreadyPaid,
+        remaining: stillOpen,
       });
     }
 

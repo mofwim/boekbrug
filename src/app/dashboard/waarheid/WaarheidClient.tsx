@@ -7,8 +7,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { FONT } from "@/lib/design/tokens";
 
-const FONT = "'Inter', -apple-system, system-ui, sans-serif";
+// [HEADER-SYSTEM] This screen previously shipped its own Inter font — the only
+// Inter surface in an otherwise Roboto app. It now uses the shared FONT token
+// (Roboto). The local `M` palette below is kept (its values already match the
+// M3 tokens); only the font was the cross-app inconsistency.
 const M = {
   primary: "#1a73e8", surface: "#fff", onSurface: "#202124", muted: "#5f6368",
   line: "#e8eaed", goodBg: "#e6f4ea", warnBg: "#fef7e0", warnFg: "#7a4f00",
@@ -117,10 +121,9 @@ export default function WaarheidClient() {
 
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "16px 14px 96px", fontFamily: FONT, color: M.onSurface }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 26, color: M.primary }}>monitoring</span>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Je financiële waarheid</h1>
-      </div>
+      {/* [HEADER-SYSTEM] The page title ("Waarheid") and back live in the shared
+          sub-page bar (DashboardChrome/STATIC_TITLES). The old in-body h1 that
+          repeated it was removed; this descriptive intro line stays. */}
       <p style={{ fontSize: 13.5, color: M.muted, margin: "0 0 16px", lineHeight: 1.5 }}>
         Eén doorlopend beeld, live berekend uit je facturen, bank en kas. Kies een periode.
       </p>

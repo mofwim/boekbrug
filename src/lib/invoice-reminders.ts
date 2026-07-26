@@ -74,6 +74,14 @@ export interface ReminderDecisionInput {
   clientEmail?: string | null;
   /** Per-invoice opt-out. */
   remindersPaused?: boolean | null;
+  /**
+   * [CREDITNOTA-NO-CHASE] A creditnota was issued against this invoice — the owner cancelled
+   * the demand. The invoice deliberately keeps its status and amounts (the +omzet must stay to
+   * be netted by the creditnota's −omzet), so nothing in the status or the money tells us it is
+   * no longer owed. Without this flag the cron keeps e-mailing the customer "please pay" for an
+   * invoice that was withdrawn — a wrong demand sent to a third party, automatically.
+   */
+  hasCreditnota?: boolean | null;
 }
 
 /**
@@ -93,10 +101,15 @@ export function reminderTierDue(input: ReminderDecisionInput): number | null {
     amountPaid,
     clientEmail,
     remindersPaused,
+    hasCreditnota,
   } = input;
 
   // ── Eligibility guards (any failure → no reminder) ──────────────────
   if (remindersPaused) return null;
+  // [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota → never chase it again. Checked up here
+  // with the other opt-outs: a credited invoice can still be 'sent', still have a positive
+  // total and still be past due, so every guard below would happily let the mail go out.
+  if (hasCreditnota) return null;
   if (direction != null && direction !== "outgoing") return null;
   if (invoiceType != null && invoiceType !== "factuur") return null;
   // Remindable states only. A 'paid' (or draft/processing/…) invoice is out.

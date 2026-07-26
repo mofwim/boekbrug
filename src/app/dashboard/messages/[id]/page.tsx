@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import { PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 import type { ProfileRow, MessageRow } from '@/types/rows'
 
 // Alleen de kolommen die deze pagina ophaalt — een volledige ProfileRow beloven terwijl er
@@ -144,7 +145,9 @@ export default function ConversationPage() {
   return (
     <div
       className="bg-[#f8f9fa] flex flex-col"
-      style={{ height: 'calc(100dvh - 56px - env(safe-area-inset-top))' }}
+      // [HEADER-SYSTEM] Full height minus the shared sub-page bar; the 56 magic
+      // number is now the PAGE_HEADER_HEIGHT token.
+      style={{ height: `calc(100dvh - ${PAGE_HEADER_HEIGHT}px - env(safe-area-inset-top))` }}
     >
 
       {/* Berichten */}

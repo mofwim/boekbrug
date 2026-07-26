@@ -42,14 +42,24 @@ export async function GET() {
   //    partially-linked multi-invoice tx (status still 'pending', but already
   //    carries the last invoice paid against it). Without this the UI loses the
   //    "partially done" state on reload and the tx wrongly falls into "Geen factuur".
-  const { data: txRows, error: txErr } = await pipeline
-    .from("bank_transactions")
-    .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
-    .eq("user_id", user.id)
-    .eq("status", "pending");
-  if (txErr) {
+  //    [SEARCH-FULL-COVERAGE] Page past PostgREST's silent ~1000-row cap. A plain .select() dropped
+  //    pending rows 1001+ — they vanished from BOTH the match engine AND the in-page zoekbalk (which
+  //    filters this loaded set), so a real unmatched line could be unfindable. Stable id order; the
+  //    matcher is order-independent and the UI re-sorts for display.
+  let txRows: BankTransactionDbRow[];
+  try {
+    txRows = await fetchAllRows<BankTransactionDbRow>((from, to) =>
+      pipeline
+        .from("bank_transactions")
+        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
+        .eq("user_id", user.id)
+        .eq("status", "pending")
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
     return NextResponse.json(
-      { error: "transactions_lookup_failed", detail: txErr.message },
+      { error: "transactions_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
       { status: 500 }
     );
   }
@@ -170,6 +180,8 @@ export async function GET() {
       amount: m.transaction.amount,
       description: m.transaction.description,
       counterpart: m.transaction.counterpartName,
+      // [SEARCH] The tegenrekening IBAN — carried so the in-page zoekbalk can find a line by IBAN.
+      iban: m.transaction.counterpartIban ?? null,
       // [BANK-REF-DISPLAY] The cleaned invoice number(s) the parser extracted from
       // REMI/Ustrd (e.g. "26702781, 26703066"). The UI shows this instead of the
       // raw description so the owner sees the real reference, not "USTD//...".
@@ -282,6 +294,8 @@ export async function GET() {
       amount: t.amount,
       description: t.description,
       counterpart: t.counterpartName,
+      // [SEARCH] IBAN of the tegenrekening — so a matched line is findable by IBAN too.
+      iban: t.counterpartIban ?? null,
       reference: t.reference,
       outcome: "auto" as const, // nominal — it is already done (allCovered), never shown as pending
       best: null,

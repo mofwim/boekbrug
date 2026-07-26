@@ -6,6 +6,7 @@
 // [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
 import { useState, useEffect, useRef } from 'react'
+import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
@@ -367,7 +368,7 @@ export default function InvoiceDetailPage() {
           (number + type badge + status chip + actions + PDF) and sticks directly
           below the shared bar. */}
       <div style={{
-        position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 10,
+        position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 10,
         backgroundColor: 'rgba(255,255,255,0.9)',
         backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',

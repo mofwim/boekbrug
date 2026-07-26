@@ -27,15 +27,29 @@ export default function KluisClient({
 }) {
   const isArchief = purpose === 'archief'
   return (
-    <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
+    <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '20px 16px 80px' }}>
+        {/* [HEADER-SYSTEM] Title "Kluis" + back live in the shared sub-page bar;
+            the in-body h1 was removed. Descriptive subtitle stays. */}
         <header style={{ margin: '16px 0 8px' }}>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>
-            {isArchief ? 'Je archief' : 'Compliance-kluis'}
-          </h1>
+          {/* [MERGE] main heeft de in-body h1 bewust weggehaald: de titel woont nu in de
+              gedeelde sub-paginabalk. Die keuze blijft staan — het onderscheid tussen een
+              archiefaccount en een gewone gebruiker verhuist daarom naar de ondertitel, waar
+              het net zo goed werkt en het headersysteem niet doorbreekt. */}
           <p style={{ fontSize: 14.5, color: M3.neutral, margin: 0, lineHeight: 1.5 }}>
-            Je administratie, per jaar bij elkaar. De Belastingdienst vraagt je stukken <strong>7 jaar</strong> te
-            bewaren — hier staan ze klaar, met één knop te exporteren voor je boekhouder.
+            {isArchief ? (
+              <>
+                Je archief, per jaar bij elkaar. De Belastingdienst vraagt je stukken{' '}
+                <strong>7 jaar</strong> te bewaren — hier staan ze klaar, doorzoekbaar en met
+                één knop per jaar te exporteren.
+              </>
+            ) : (
+              <>
+                Je administratie, per jaar bij elkaar. De Belastingdienst vraagt je stukken{' '}
+                <strong>7 jaar</strong> te bewaren — hier staan ze klaar, met één knop te
+                exporteren voor je boekhouder.
+              </>
+            )}
           </p>
         </header>
 

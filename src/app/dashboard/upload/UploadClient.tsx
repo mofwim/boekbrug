@@ -258,8 +258,9 @@ export default function UploadClient() {
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
+        {/* [HEADER-SYSTEM] Title "Uploaden" + back live in the shared sub-page bar;
+            the in-body h1 was removed. The descriptive subtitle stays. */}
         <div style={{ margin: '16px 0 8px' }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: 0 }}>Uploaden</h1>
           <p style={{ fontSize: 13.5, color: M3.neutral, marginTop: 4, lineHeight: 1.5 }}>
             Facturen, bonnen én bankafschriften — alles op één plek. Kies of sleep <strong>meerdere bestanden tegelijk</strong>;
             de app leest en sorteert elk bestand automatisch naar de juiste plek.
