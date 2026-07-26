@@ -302,9 +302,24 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
           </div>
 
           {clients.length === 0 ? (
-            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
-              Nog geen klanten — voeg je eerste klant toe
-            </p>
+            /* [ONBOARDING] First-run empty state — a clear, tappable first action
+               for a brand-new accountant instead of a dead line of text. */
+            <button
+              onClick={() => router.push('/dashboard/clients/beheer')}
+              style={{
+                width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                padding: '32px 16px', background: 'none', border: 'none', cursor: 'pointer',
+              }}
+            >
+              <span style={{
+                width: 44, height: 44, borderRadius: '50%', backgroundColor: '#E8F0FE',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <span className="material-symbols-outlined" style={{ color: '#1A73E8', fontSize: 24 }}>person_add</span>
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#202124' }}>Voeg je eerste klant toe</span>
+              <span style={{ fontSize: 12.5, color: '#5F6368' }}>Nodig een klant uit of koppel een bestaande</span>
+            </button>
           ) : (
             <div>
               {clients.map((client, idx) => (
