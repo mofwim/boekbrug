@@ -1,14 +1,26 @@
 // [Design System] Roboto via next/font/google + Material Symbols CDN
 import type { Metadata, Viewport } from "next";
-import { Roboto } from "next/font/google";
+import { Roboto, Noto_Sans_Arabic } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
 import { ServiceWorkerRegister } from "./ServiceWorkerRegister";
 import "./globals.css";
 
+// [Design System] "latin-ext" is added so Turkish glyphs (ş ğ ı İ) render in
+// Roboto instead of falling back to a mismatched system font.
 const roboto = Roboto({
   variable: "--font-sans",
-  subsets: ["latin"],
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "700"],
+  display: "swap",
+});
+
+// [Design System] Arabic reads in Noto Sans Arabic — Google's Arabic companion
+// to Roboto — so the RTL blog matches the Latin look instead of an inconsistent
+// per-device system font. Exposed as --font-arabic; applied on Arabic pages.
+const notoArabic = Noto_Sans_Arabic({
+  variable: "--font-arabic",
+  subsets: ["arabic"],
   weight: ["400", "500", "700"],
   display: "swap",
 });
@@ -54,7 +66,7 @@ export default function RootLayout({
   return (
     <html
       lang="nl"
-      className={`${roboto.variable} h-full antialiased`}
+      className={`${roboto.variable} ${notoArabic.variable} h-full antialiased`}
     >
       <head>
         {/* [Design System] Material Symbols — icon font, CDN.
