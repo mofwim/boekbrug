@@ -987,10 +987,21 @@ export default function IncomingManageClient({
                 || isAutoVerified(inv) || isVerwerkt || isPrepared
 
               return (
+                // [ROW-UNIT] De kaart en zijn prullenbak zijn nu buren, geen ouder en kind. De
+                // knop stond ín de kaart en concurreerde daar met de tekst om breedte; ernaast
+                // hoort hij zichtbaar bij deze rij (hij staat op zijn hoogte, beweegt met hem
+                // mee, en zijn aria-label noemt het factuurnummer) zonder een pixel van de
+                // inhoud af te snoepen. flex-start + marginTop houdt hem op de hoogte van de
+                // kopregel, ook wanneer de kaart uitklapt en meters hoog wordt.
                 <div
                   key={inv.id}
                   ref={el => { rowRefs.current[inv.id] = el }}
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}
+                >
+                <div
                   style={{
+                    flex: 1,
+                    minWidth: 0,
                     borderRadius: R.lg,
                     overflow: 'hidden',
                     boxShadow: highlightId === inv.id ? `0 0 0 2px ${M3.primary}, ${EL1}` : EL1,
@@ -1030,18 +1041,21 @@ export default function IncomingManageClient({
                           nowrap): een half nummer is waardeloos, daar zoek je een bankregel mee op.
                           overflowWrap:anywhere vangt het randgeval van één lange naam zonder
                           spaties, zodat die nooit uit de kaart loopt. */}
-                      <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 8, rowGap: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
                         <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 500, color: '#5F6368', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
                           {inv.invoice_number ?? '—'}
                         </span>
-                        <span style={{ flex: '1 1 120px', minWidth: 0, fontSize: 14, fontWeight: 600, color: M3.onSurface, overflowWrap: 'anywhere' }}>
+                        <span
+                          title={inv.client_name ?? undefined}
+                          style={{ minWidth: 0, fontSize: 14, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
                           {inv.client_name ?? '—'}
                         </span>
                       </div>
                       {/* Statusregel — alleen gerenderd als er iets te tonen is, zodat een kale
                           rij geen lege regel meesleept. */}
                       {hasChips && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                      <div className="inv-strip" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                         {/* Status chip */}
                         {CHIP[inv.status] && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
@@ -1104,7 +1118,7 @@ export default function IncomingManageClient({
                           Nu staat dat hier: factuurdatum · vervaldatum · de aftelling. Die laatste
                           plek is dezelfde plek die "te laat" toont zodra de datum voorbij is, zodat
                           het oog voor beide maar één plek hoeft te leren. */}
-                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 4, fontSize: 12.5, color: '#5F6368', minWidth: 0 }}>
+                      <div className="inv-strip" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12.5, color: '#5F6368' }}>
                         <span style={{ whiteSpace: 'nowrap' }}>{fmtDateSmart(inv.invoice_date)}</span>
                         {/* [OVER-DATUM] The due date is only ever a FACT here — a printed
                             vervaldatum, or invoice date + a printed term (see lib/safecore.ts).
@@ -1228,31 +1242,6 @@ export default function IncomingManageClient({
                       )}
                     </div>
 
-                    {/* [INVOICE-REMOVE] Verwijderen — visible on every row, mirroring the sales
-                        list. A purchase invoice that isn't yours (wrong supplier, a duplicate,
-                        a scan of nothing) should not need a support question to get rid of. It
-                        archives: out of kosten, voorbelasting and the accountant's workspace,
-                        kept 7 years, and back with one tap under Inkomend › Genegeerd. Hidden
-                        while selecting for a bundle payment. */}
-                    {!selectMode && (
-                      <button
-                        onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
-                        disabled={processingId === inv.id}
-                        aria-label={`Inkoopfactuur ${inv.invoice_number ?? ''} verwijderen`}
-                        title="Verwijderen"
-                        style={{
-                          flexShrink: 0, marginLeft: 2, width: 34, height: 34, borderRadius: R.full,
-                          border: 'none', background: 'transparent', color: '#9AA0A6',
-                          cursor: processingId === inv.id ? 'default' : 'pointer',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'background 0.15s, color 0.15s',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
-                      </button>
-                    )}
                   </div>
 
                   {/* Inline expand */}
@@ -1297,6 +1286,33 @@ export default function IncomingManageClient({
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* [INVOICE-REMOVE] Verwijderen — naast de kaart, niet erin. Een inkoopfactuur die
+                    niet van jou is (verkeerde leverancier, een dubbele, een scan van niets) hoort
+                    weg te kunnen zonder een vraag aan support. Het archiveert: uit kosten,
+                    voorbelasting en de werkplek van de boekhouder, zeven jaar bewaard, en met één
+                    tik terug onder Inkomend › Genegeerd. Verborgen tijdens het selecteren voor een
+                    gebundelde betaling. */}
+                {!selectMode && (
+                  <button
+                    onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
+                    disabled={processingId === inv.id}
+                    aria-label={`Inkoopfactuur ${inv.invoice_number ?? ''} verwijderen`}
+                    title="Verwijderen"
+                    style={{
+                      flexShrink: 0, marginTop: 12, width: 36, height: 36, borderRadius: R.full,
+                      border: 'none', background: 'transparent', color: '#9AA0A6',
+                      cursor: processingId === inv.id ? 'default' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'background 0.15s, color 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
+                  </button>
+                )}
                 </div>
               )
             })}
