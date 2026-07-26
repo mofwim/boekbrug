@@ -94,7 +94,7 @@ export default function ArticleLayout({
     <div style={{ minHeight: '100vh', backgroundColor: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
 
-      <div dir={LOCALE_META[locale].dir} style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 72px' }}>
+      <div dir={LOCALE_META[locale].dir} style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 72px', fontFamily: locale === 'ar' ? 'var(--font-arabic), var(--font-sans), system-ui, sans-serif' : undefined }}>
         {/* 1. Breadcrumb: Blog › [article title] */}
         <nav aria-label="Breadcrumb" style={{ fontSize: 13, color: '#9aa0a6', marginBottom: 20 }}>
           <Link href={indexPath(locale)} style={{ color: '#1a73e8', textDecoration: 'none' }}>{t.blog}</Link>

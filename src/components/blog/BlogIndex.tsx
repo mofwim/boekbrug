@@ -43,7 +43,7 @@ export default function BlogIndex({ posts, locale }: { posts: Post[]; locale: Lo
     <div style={{ minHeight: '100vh', backgroundColor: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
 
-      <div dir={LOCALE_META[locale].dir} style={{ maxWidth: 820, margin: '0 auto', padding: '0 16px' }}>
+      <div dir={LOCALE_META[locale].dir} style={{ maxWidth: 820, margin: '0 auto', padding: '0 16px', fontFamily: locale === 'ar' ? 'var(--font-arabic), var(--font-sans), system-ui, sans-serif' : undefined }}>
         <div style={{ paddingTop: 48, textAlign: 'center' }}>
           <h1 style={{ fontSize: 34, fontWeight: 800, color: '#202124', margin: '0 0 10px', letterSpacing: -0.5 }}>
             {t.heading}
