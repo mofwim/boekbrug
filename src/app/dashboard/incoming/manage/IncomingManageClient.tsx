@@ -25,6 +25,7 @@ import Link from 'next/link'
 import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
+import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -131,6 +132,26 @@ interface PayCtx {
   openAmount?: number
 }
 
+// [MATCH-BUTTON] The report POST /api/reconcile/run hands back — what the engine actually did,
+// plus what it deliberately left for the owner. Shaped to be shown as-is; no client-side money math.
+interface MatchRunResult {
+  ok: boolean
+  /** Names the passes that failed ('bank' | 'kas' | 'categorize' | 'map') — shown honestly. */
+  failed: string[]
+  booked: { invoiceId: string; invoiceNumber: string | null; amount: number; tier: string; paymentDate: string | null }[]
+  bookedCount: number
+  /** Of the bookings, the ones matched on amount + name only (no invoice number) — worth a check. */
+  amountOnlyCount: number
+  cash: { ok: boolean; created: number; updated: number; deleted: number }
+  categorized: number
+  /** Bank lines still unconfirmed after the run. 0 with 0 bookings ⇒ no statement to match against. */
+  pendingTransactions: number
+  /** Payments FOUND but too ambiguous to book — these need the owner on /dashboard/bank. */
+  pendingMatchCount: number
+  /** The post-run badge map, from the same builder the badges normally fetch (see applyMap). */
+  byInvoice?: Record<string, InvoiceRecon>
+}
+
 type FilterTab = 'all' | 'received' | 'paid' | 'auto'
 const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'all',      label: 'Alle'                  },
@@ -151,7 +172,8 @@ export default function IncomingManageClient({
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
-  const { byInvoice: recon, confirmMatch } = useInvoiceReconciliation()
+  // [MATCH-BUTTON] applyMap installs the post-run map the matcher returns (no second fetch).
+  const { byInvoice: recon, confirmMatch, applyMap } = useInvoiceReconciliation()
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
@@ -174,6 +196,9 @@ export default function IncomingManageClient({
     match: { id?: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
   } | null>(null)
   const [checkingId, setCheckingId]     = useState<string | null>(null)
+  // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
+  const [matchBusy, setMatchBusy]       = useState(false)
+  const [matchResult, setMatchResult]   = useState<MatchRunResult | null>(null)
 
   // ── [BUNDEL-BETALING] Multi-select → pay several open inkoopfacturen of the
   // same leverancier in ONE transfer. Selection is a set of ids; the rows are
@@ -329,6 +354,51 @@ export default function IncomingManageClient({
   // Local optimistic patch (no hook — this surface owns its list)
   function patchLocal(id: string, patch: Partial<IncomingRow>) {
     setInvoices(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)))
+  }
+
+  // ── [MATCH-BUTTON] "Matchen met bank & kas" ──────────────────────────────────
+  // Turns the whole matching circle on demand instead of waiting for the hourly cron: the server
+  // books the near-certain bank↔factuur matches, syncs the kasboek against the cash-paid invoices,
+  // and codes the recognizable bank lines. It does NOT decide anything the automatic engine
+  // wouldn't decide by itself — same helpers, same guards, so an ambiguous payment still stops at
+  // the human (it comes back as pendingMatchCount, not as a booking).
+  //
+  // We patch the booked rows locally with the values the server actually wrote (incl. the bank
+  // line's date as payment date) and install the returned reconciliation map, so the badges and
+  // the report cannot disagree. No router.refresh(): this list is client-owned state seeded once,
+  // so a server re-render would not update it — the patch is the update.
+  async function runReconciliation() {
+    if (matchBusy) return
+    setMatchBusy(true)
+    try {
+      const res = await fetch('/api/reconcile/run', { method: 'POST' })
+      if (!res.ok) {
+        // Kept short on purpose — the toast is a single non-wrapping line. A 429 costs the owner
+        // nothing: the run is idempotent and the hourly cron does the same work anyway.
+        showToast(
+          res.status === 429 ? 'Te vaak gematcht — probeer het straks opnieuw'
+          : res.status === 401 ? 'Sessie verlopen — log opnieuw in'
+          : 'Matchen mislukt — probeer het opnieuw'
+        )
+        return
+      }
+      const json = (await res.json()) as MatchRunResult
+      for (const b of json.booked ?? []) {
+        patchLocal(b.invoiceId, {
+          status: 'paid',
+          payment_method: 'bank',
+          payment_date: b.paymentDate,
+          // The payment is settled — the "voorbereid, nog bevestigen" nudge is done.
+          payment_prepared_at: null,
+        })
+      }
+      if (json.byInvoice) applyMap(json.byInvoice)
+      setMatchResult(json)
+    } catch {
+      showToast('Matchen mislukt — probeer het opnieuw')
+    } finally {
+      setMatchBusy(false)
+    }
   }
 
   // ── [PAY-SAFE] No-double-pay gate — runs BEFORE the mark-paid dialog ──
@@ -628,6 +698,39 @@ export default function IncomingManageClient({
           </Link>
         </div>
 
+        {/* ── [MATCH-BUTTON] Matchen met bank & kas ──────────────────────────────
+            The one tap that turns the whole matching circle now instead of waiting
+            for the hourly automatic run: bankafschrift ↔ facturen, kasboek ↔ the
+            cash-paid invoices, plus categorization of the recognizable bank lines.
+            Full-width and solid primary because it is the primary ACTION on this
+            screen — everything else here is filtering or a per-row decision. */}
+        <button
+          onClick={runReconciliation}
+          disabled={matchBusy}
+          title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            width: '100%', marginBottom: 12, padding: '11px 16px',
+            borderRadius: R.full, border: 'none',
+            background: matchBusy ? M3.surfaceVariant : M3.primary,
+            color: matchBusy ? '#9AA0A6' : M3.onPrimary,
+            fontSize: 14, fontWeight: 600, fontFamily: FONT,
+            cursor: matchBusy ? 'default' : 'pointer',
+            boxShadow: matchBusy ? 'none' : EL1,
+          }}
+        >
+          {/* Icons come from the SUBSET font in layout.tsx (icon_names=…) — 'link' (koppelen, the
+              exact verb this action performs) and a spinning 'refresh' are both already in it, so
+              no shared allowlist change is needed and nothing can render as raw ligature text. */}
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: 19, animation: matchBusy ? 'bbSpin 1s linear infinite' : undefined }}
+          >
+            {matchBusy ? 'refresh' : 'link'}
+          </span>
+          {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
+        </button>
+
         {/* Filter + Sort dropdowns (side by side) */}
         <div style={{ display: 'flex', gap: 8 }}>
           {/* Filter */}
@@ -840,6 +943,13 @@ export default function IncomingManageClient({
                       {(() => {
                         const paid = Math.max(0, inv.amount_paid ?? 0)
                         const tot = Math.abs(inv.total_inc_btw ?? 0)
+                        // [MATCH-BUTTON] A settled invoice never offers "nog te betalen", whatever
+                        // amount_paid says. The arithmetic below expressed that only indirectly, so
+                        // any row whose amount_paid trails its status showed BOTH "Betaald" and a
+                        // tappable "Deels betaald · € X open" — an invitation to pay it twice. The
+                        // on-demand matcher can produce exactly that: a multi-invoice batch settles
+                        // a part-paid invoice in full, and the list is patched from the booking.
+                        if (isPaid) return null
                         if (!(paid > 0.005 && paid < tot - 0.005)) return null
                         const remaining = openAmount(inv)
                         return (
@@ -1159,6 +1269,15 @@ export default function IncomingManageClient({
         </div>
       )}
 
+      {/* ── [MATCH-BUTTON] What the run actually did — including what it left alone ── */}
+      {matchResult && (
+        <MatchResultSheet
+          result={matchResult}
+          onClose={() => setMatchResult(null)}
+          onOpenBank={() => { setMatchResult(null); router.push('/dashboard/bank') }}
+        />
+      )}
+
       {/* ── Toast ── */}
       {toast && (
         <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
@@ -1168,6 +1287,7 @@ export default function IncomingManageClient({
 
       <style>{`
         @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+        @keyframes bbSpin { to { transform: rotate(360deg); } }
         ::-webkit-scrollbar { display: none }
       `}</style>
     </div>
@@ -1303,6 +1423,135 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── [MATCH-BUTTON] Result sheet — the honest report of one reconciliation run ──
+// Reports three things, in this order, and never rounds any of them up:
+//   1. what was BOOKED (and which bookings deserve a second look),
+//   2. what the KASBOEK did (created / healed / reversed — or that it could not run),
+//   3. what is LEFT for the owner (found-but-ambiguous payments → the Bank page).
+// A run that changed nothing says so plainly instead of implying work happened. A pass that
+// FAILED is named — a partial run must never read as a clean one.
+function MatchResultSheet({ result, onClose, onOpenBank }: {
+  result: MatchRunResult
+  onClose: () => void
+  onOpenBank: () => void
+}) {
+  const { bookedCount, amountOnlyCount, cash, categorized, pendingTransactions, pendingMatchCount, failed } = result
+  const cashTouched = cash.created + cash.updated + cash.deleted
+  const bankFailed = failed.includes('bank')
+  const kasFailed  = failed.includes('kas')
+  const changedNothing = bookedCount === 0 && cashTouched === 0 && categorized === 0
+  const nFact = (n: number) => (n === 1 ? '1 factuur' : `${n} facturen`)
+
+  const title = bookedCount > 0
+    ? `${nFact(bookedCount)} gekoppeld`
+    : changedNothing
+      ? (pendingTransactions === 0 ? 'Niets om te matchen' : 'Niets nieuws gevonden')
+      : 'Bijgewerkt'
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, maxHeight: '86vh', overflowY: 'auto', boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
+        {/* Both glyphs are in the layout.tsx icon subset — see the button's note. */}
+        <span className="material-symbols-outlined" style={{ fontSize: 40, color: bookedCount > 0 ? M3.success : M3.primary, display: 'block', textAlign: 'center', marginBottom: 8 }}>
+          {bookedCount > 0 ? 'task_alt' : 'link'}
+        </span>
+        <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 16, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+          {/* 1) Bank ↔ facturen */}
+          <ResultLine
+            icon="account_balance"
+            tone={bankFailed ? 'error' : bookedCount > 0 ? 'good' : 'neutral'}
+            text={
+              bankFailed
+                ? 'Het bankafschrift kon niet worden gematcht — probeer het straks opnieuw.'
+                : bookedCount > 0
+                  ? `${nFact(bookedCount)} herkend in je bankafschrift en op betaald gezet.`
+                  : pendingTransactions === 0
+                    ? 'Geen open banktransacties om tegen te matchen.'
+                    : 'Geen nieuwe betalingen herkend in je bankafschrift.'
+            }
+          />
+          {/* Booked on amount + name only — real bookings, but the ones worth checking. */}
+          {amountOnlyCount > 0 && (
+            <ResultLine
+              icon="error"
+              tone="warn"
+              text={`${amountOnlyCount === 1 ? '1 koppeling is' : `${amountOnlyCount} koppelingen zijn`} alleen op bedrag herkend (geen factuurnummer in de omschrijving) — controleer die even.`}
+            />
+          )}
+          {/* 2) Kas ↔ facturen */}
+          <ResultLine
+            icon="payments"
+            tone={kasFailed ? 'error' : cashTouched > 0 ? 'good' : 'neutral'}
+            text={
+              kasFailed
+                ? 'Het kasboek kon niet worden bijgewerkt — probeer het straks opnieuw.'
+                : cashTouched === 0
+                  ? 'Kasboek was al in balans met je contant betaalde facturen.'
+                  : [
+                      cash.created > 0 ? `${cash.created} kasboeking toegevoegd` : null,
+                      cash.updated > 0 ? `${cash.updated} bijgewerkt` : null,
+                      cash.deleted > 0 ? `${cash.deleted} teruggedraaid` : null,
+                    ].filter(Boolean).join(' · ')
+            }
+          />
+          {/* 3) Learned categorization — lands in the P&L immediately, so it stays reviewable. */}
+          {categorized > 0 && (
+            <ResultLine
+              icon="label"
+              tone="neutral"
+              text={`${categorized} banktransactie(s) automatisch gecategoriseerd — controleer ze op de Bank-pagina.`}
+            />
+          )}
+          {/* 4) What the engine deliberately did NOT decide. */}
+          {pendingMatchCount > 0 && (
+            <ResultLine
+              icon="help"
+              tone="warn"
+              text={`${pendingMatchCount === 1 ? '1 betaling is' : `${pendingMatchCount} betalingen zijn`} gevonden maar te onzeker om zelf te boeken — die bevestig je zelf.`}
+            />
+          )}
+          {/* Nothing to work with at all → say what to do about it. */}
+          {pendingTransactions === 0 && bookedCount === 0 && !bankFailed && (
+            <ResultLine
+              icon="upload_file"
+              tone="neutral"
+              text="Upload een bankafschrift op de Bank-pagina, dan kan de matching zijn werk doen."
+            />
+          )}
+          {/* A pass we could not run at all — never let a partial run read as a clean one. */}
+          {failed.includes('categorize') && (
+            <ResultLine icon="error" tone="error" text="Automatisch categoriseren is niet gelukt — de rest is wel bijgewerkt." />
+          )}
+        </div>
+
+        {pendingMatchCount > 0 ? (
+          <>
+            <button onClick={onOpenBank} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>
+              Bekijk op de Bank-pagina
+            </button>
+            <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Klaar</button>
+          </>
+        ) : (
+          <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Klaar</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ResultLine({ icon, text, tone }: { icon: string; text: string; tone: 'good' | 'warn' | 'error' | 'neutral' }) {
+  const color = tone === 'good' ? '#137333' : tone === 'warn' ? '#B26A00' : tone === 'error' ? M3.error : '#5F6368'
+  const bg    = tone === 'good' ? M3.successContainer : tone === 'warn' ? '#FFF3E0' : tone === 'error' ? M3.errorContainer : M3.surfaceVariant
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: R.md, background: bg }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>{icon}</span>
+      <p style={{ fontSize: 13, color, lineHeight: 1.45, margin: 0, fontWeight: 500 }}>{text}</p>
     </div>
   )
 }

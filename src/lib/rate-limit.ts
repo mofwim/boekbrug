@@ -55,6 +55,11 @@ export const RATE_LIMITS = {
   // Doorsturen is één HTTP-ronde per factuur. 20 batches/uur is ruim voor een kwartaal
   // in delen en ver onder de rate limits van de B2B-API.
   SNELSTART_PUSH:      { maxRequests: 20, windowMinutes: 60 },    // 20 push-batches / uur
+  // [MATCH-BUTTON] De handmatige matchronde (/api/reconcile/run) leest het hele bankafschrift ×
+  // alle open facturen — de zwaarste leespas van de app, nu met een knop erop. Idempotent, dus
+  // vaker tikken verandert niets; de limiet houdt alleen het herhaald hameren van die leespas
+  // binnen de perken. 20/uur is ruim: één ronde is genoeg, en de cron draait toch elk uur.
+  RECONCILE_RUN:       { maxRequests: 20, windowMinutes: 60 },    // 20 matchrondes / uur
 } as const
 
 // ── Main function ─────────────────────────────────────
