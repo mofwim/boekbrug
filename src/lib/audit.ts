@@ -63,6 +63,17 @@ export type AuditAction =
   | 'accountant.client_linked'
   | 'accountant.client_unlinked'
   | 'accountant.invoice_status_set'
+  // [BEWIJS] Wat de boekhouder van zijn klant HEEFT OPGEHAALD.
+  //
+  // De vertrouwensgrens was afgedwongen maar niet aantoonbaar: de klant kon nergens zien
+  // wat zijn boekhouder had ingezien of gedownload. Precies dát is het verschil dat dit
+  // product verkoopt tegenover een gedeelde OneDrive-map — en het was een bewering, geen
+  // feit. Een gedeelde map laat ook niets zien; het verschil bestaat pas als het te tonen is.
+  //
+  // Alleen de OPHAALHANDELING wordt vastgelegd, nooit de inhoud: entity_id is de eigenaar
+  // plus het kwartaal, en sanitizeForAudit strijkt sowieso alles wat er niet in hoort.
+  | 'accountant.package_downloaded'   // ← het kwartaalpakket (ZIP) opgehaald
+  | 'accountant.export_downloaded'    // ← een CSV/UBL-export opgehaald
   // Level 3 — Files
   | 'document.uploaded'
   | 'document.duplicate_blocked'      // ← [BRIDGE-EXTRACT] byte-hash dedup: re-upload of identical file refused
