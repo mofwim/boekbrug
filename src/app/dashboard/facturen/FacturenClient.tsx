@@ -166,8 +166,12 @@ export default function FacturenClient({ profile }: { profile: any }) {
     // also match total_inc_btw (decimaal- én duizendtal-bewust). So "670,09" /
     // "670.0" now find the invoice, not just its number/name. (src/lib/search.ts)
     const amountOr = amountOrConditions('total_inc_btw', q)
-    const orParts = [`invoice_number.ilike.%${esc}%`, `client_name.ilike.%${esc}%`, ...amountOr]
-    if (esc.length < 1 && amountOr.length === 0) { setSearchResults([]); setSearchLoading(false); return }
+    // Only add the text ILIKE parts when esc has real content — an empty esc would
+    // build `ilike.%%` (match-all). orParts is never empty-and-executed: if there is
+    // nothing to match on, bail before hitting the DB.
+    const textOr = esc.length >= 1 ? [`invoice_number.ilike.%${esc}%`, `client_name.ilike.%${esc}%`] : []
+    const orParts = [...textOr, ...amountOr]
+    if (orParts.length === 0) { setSearchResults([]); setSearchLoading(false); return }
     let active = true
     setSearchLoading(true)
     const t = setTimeout(async () => {
