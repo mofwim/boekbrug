@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { BackLink } from '@/components/ui/BackLink'
+import { rowMatchesQuery } from '@/lib/search'
 
 // Skeleton لصف محادثة واحدة
 function ConversationSkeleton() {
@@ -30,6 +31,7 @@ export default function MessagesPage() {
 
   const [conversations, setConversations] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     async function load() {
@@ -82,6 +84,13 @@ export default function MessagesPage() {
     load()
   }, [])
 
+  // [SMART-FILTER] In-page live filter over the fully-loaded conversation list
+  // (naam / laatste bericht), accent-folded via de gedeelde matcher.
+  const rawQ = search.trim()
+  const filtered = rawQ
+    ? conversations.filter(c => rowMatchesQuery(rawQ, [c.name, c.lastMessage]))
+    : conversations
+
   return (
     <div className="min-h-screen bg-[#f8f9fa]">
 
@@ -94,6 +103,23 @@ export default function MessagesPage() {
       </div>
 
       <div className="max-w-3xl mx-auto px-6 py-6">
+        {/* Search — only when there's something to filter */}
+        {!loading && conversations.length > 0 && (
+          <div className="relative mb-4">
+            <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Zoek op naam of bericht…"
+              aria-label="Berichten zoeken"
+              className="w-full bg-white border border-gray-200 rounded-xl py-2.5 pl-10 pr-9 text-sm text-gray-900 outline-none focus:border-gray-300 shadow-sm"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} aria-label="Wissen" className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center">×</button>
+            )}
+          </div>
+        )}
+
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
 
           {loading ? (
@@ -110,9 +136,13 @@ export default function MessagesPage() {
                 Stuur een bericht via de pagina van een klant of boekhouder
               </p>
             </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-16">
+              <p className="text-gray-500 text-sm font-medium">Geen berichten gevonden voor &ldquo;{rawQ}&rdquo;.</p>
+            </div>
           ) : (
             <div className="divide-y divide-gray-50">
-              {conversations.map(conv => (
+              {filtered.map(conv => (
                 <div
                   key={conv.otherId}
                   onClick={() => router.push(`/dashboard/messages/${conv.otherId}`)}
