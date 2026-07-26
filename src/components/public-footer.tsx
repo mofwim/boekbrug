@@ -32,6 +32,9 @@ export default function PublicFooter() {
         <div style={col}>
           <div style={head}>BoekBrug</div>
           <Link href="/blog" style={link}>Blog</Link>
+          {/* [BILLING] Second route to the price page, for the reader who
+              scrolled to the bottom instead of looking up at the nav. */}
+          <Link href="/prijzen" style={link}>Prijzen</Link>
           <Link href="/register" style={link}>Gratis account</Link>
           <Link href="/login" style={link}>Inloggen</Link>
         </div>

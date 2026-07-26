@@ -14,6 +14,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const staticPages: MetadataRoute.Sitemap = [
     { url: `${SITE_URL}/`, lastModified, changeFrequency: 'weekly', priority: 1 },
     { url: `${SITE_URL}/tools`, lastModified, changeFrequency: 'weekly', priority: 0.9 },
+    // [BILLING] The price page. High priority on purpose: "wat kost het?" is the
+    // last question someone asks before they buy, and a pricing page that search
+    // engines cannot see loses exactly the visitors who were ready to pay.
+    { url: `${SITE_URL}/prijzen`, lastModified, changeFrequency: 'monthly', priority: 0.9 },
     { url: `${SITE_URL}/blog`, lastModified, changeFrequency: 'weekly', priority: 0.8 },
     { url: `${SITE_URL}/en/blog`, lastModified, changeFrequency: 'weekly', priority: 0.5 },
     { url: `${SITE_URL}/register`, lastModified, changeFrequency: 'monthly', priority: 0.6 },
