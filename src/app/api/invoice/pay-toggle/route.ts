@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { reconcileCashSettlements, cashInstalmentsSupported } from "@/lib/cash-settle";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // [MANUAL-PARTIAL-PAY] one shape for a booked payment — the write path and the replay path
 // must answer identically, or the clients cannot tell a deelbetaling from a settlement.
@@ -101,6 +101,17 @@ export async function POST(req: NextRequest) {
     // cash_entries now carries settlement_id, one row per instalment with its own date and
     // amount (cash_settlement_per_instalment.sql), so the refusal is gone: paying a supplier
     // from the till in two handovers is recorded as the two movements it was.
+    //
+    // [DEPLOY-SAFE] …but only once that column really exists. Code ships before a migration is
+    // applied, and accepting the payment in that window would be the worst of both: the
+    // instalment is recorded on the invoice while the drawer never moves, so the kasboek silently
+    // understates what left the till. Until the migration lands we keep the old, honest refusal.
+    if (payAmount != null && paymentMethod === "kas" && !(await cashInstalmentsSupported(supabase))) {
+      return NextResponse.json(
+        { error: "partial_cash_unsupported", detail: "Een deelbetaling kan op dit moment alleen via bank worden genoteerd." },
+        { status: 400 }
+      );
+    }
     // Idempotency key: LEAST() clamps over-payment but does NOT deduplicate, so without
     // this a double tap or a retried POST would book the instalment twice.
     const rawKey = (body as { clientKey?: unknown }).clientKey;

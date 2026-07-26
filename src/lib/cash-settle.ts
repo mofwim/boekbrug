@@ -20,9 +20,39 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment } from "@/lib/cash";
 
+// [CASH-INSTALMENT][DEPLOY-SAFE] Per-instalment kasboek entries need cash_entries.settlement_id
+// (cash_settlement_per_instalment.sql). Code ships before a migration is applied — that is normal
+// — but here the naive version does REAL damage in that window: selecting a column that does not
+// exist fails the read, the reconcile returns early, and NOTHING is created, healed or reversed.
+// The drawer would quietly freeze for every cash-paid invoice until someone ran the SQL.
+//
+// So the capability is probed instead of assumed, and without it the module behaves EXACTLY as it
+// did before this change: one aggregate entry per invoice, no settlement_id written anywhere. The
+// day the migration lands, per-instalment entries switch on by themselves and the reconcile heals
+// the old aggregates into them.
+//
+// Cached only when TRUE: a false answer must stay re-checkable, or a server instance that started
+// before the migration would keep the old behaviour until it happened to restart.
+let settlementColumnKnown = false;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function cashInstalmentsSupported(supabase: SupabaseClient<any>): Promise<boolean> {
+  if (settlementColumnKnown) return true;
+  try {
+    const { error } = await supabase.from("cash_entries").select("settlement_id").limit(1);
+    if (error) return false;
+    settlementColumnKnown = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function reconcileCashSettlements(supabase: SupabaseClient<any>, userId: string): Promise<void> {
   try {
+    // [DEPLOY-SAFE] Without the column, run the pre-instalment model unchanged (see above).
+    const perInstalment = await cashInstalmentsSupported(supabase);
     // Invoices settled in cash, BOTH directions: an incoming (purchase) paid in cash (drawer ↓)
     // AND an outgoing (sales) invoice paid in cash (drawer ↑). Owner-scoped via the RLS .or so a
     // cash sale finally reaches the drawer instead of being invisible. Both stay P&L-neutral.
@@ -48,6 +78,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
       .is("transaction_id", null);
     const cashByInvoice = new Map<string, number>();
     const instalmentsByInvoice = new Map<string, CashInstalment[]>();
+    const lastCashDate = new Map<string, string>();
     for (const l of (kasLinkRows ?? []) as Array<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>) {
       if (!l.invoice_id) continue;
       const amount = Math.abs(Number(l.amount_applied) || 0);
@@ -55,6 +86,11 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
       const list = instalmentsByInvoice.get(l.invoice_id) ?? [];
       list.push({ id: l.id, amount, paid_on: l.paid_on ? l.paid_on.slice(0, 10) : null });
       instalmentsByInvoice.set(l.invoice_id, list);
+      // Kept for the pre-migration model: it dates its one entry by the last cash instalment.
+      const day = l.paid_on ? l.paid_on.slice(0, 10) : null;
+      if (day && (!lastCashDate.get(l.invoice_id) || day > lastCashDate.get(l.invoice_id)!)) {
+        lastCashDate.set(l.invoice_id, day);
+      }
     }
 
     const baseColumns = "id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
@@ -83,7 +119,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
     const { data: entryRows, error: entryErr } = await supabase
       .from("cash_entries")
-      .select("id, invoice_id, settlement_id, amount, entry_date, direction")
+      .select(perInstalment ? "id, invoice_id, settlement_id, amount, entry_date, direction" : "id, invoice_id, amount, entry_date, direction")
       .eq("user_id", userId)
       .eq("category", "betaling")
       .not("invoice_id", "is", null);
@@ -99,10 +135,15 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         // [CASH-INSTALMENT] …and the instalments behind it, each of which becomes its own drawer
         // movement on its own day. The invoice's payment_date is only the fallback: it can be the
         // day a BANK instalment landed, which is a different day from any cash handover.
-        cash_instalments: instalmentsByInvoice.get(r.id),
-        payment_date: r.payment_date ?? null,
+        cash_instalments: perInstalment ? instalmentsByInvoice.get(r.id) : undefined,
+        // [DEPLOY-SAFE] In the old model the single entry is dated by the LAST cash instalment —
+        // the day the till last moved — which is what it always did. With per-instalment entries
+        // each one carries its own date and this is only the fallback.
+        payment_date: (perInstalment ? null : lastCashDate.get(r.id)) ?? r.payment_date ?? null,
       })) as SettleableInvoice[];
-    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; settlement_id?: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
+    // The projection differs by capability, so PostgREST's inferred row type does too — read it
+    // back through `unknown` rather than teach the type system about a runtime-chosen select.
+    const existing = (entryRows ?? []) as unknown as Array<{ id: string; invoice_id: string | null; settlement_id?: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
     const { toCreate, toUpdate, toDeleteIds } = computeCashSettlementSync(paid, existing);
 
     // Create the missing settlements. Insert one at a time so a single bad row (or the unique
@@ -116,7 +157,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         btw_rate: row.btw_rate,
         description: row.description,
         invoice_id: row.invoice_id,
-        settlement_id: row.settlement_id,
+        ...(perInstalment ? { settlement_id: row.settlement_id } : {}),
         ...(row.entry_date ? { entry_date: row.entry_date } : {}),
       });
       if (error) {

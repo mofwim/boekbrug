@@ -410,7 +410,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       }),
     })
     const json = await res.json().catch(() => ({} as { error?: string }))
-    const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
+    // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
+    // payment refused because the kasboek cannot date it per instalment yet) — the bare
+    // error CODE would reach the owner as gibberish.
+    const error = res.ok ? null : { message: (json as { detail?: string })?.detail || json?.error || 'Bijwerken mislukt' }
     if (error) {
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       if (!isPartialIntent) updateOptimistic(ctx.id, { status: prev })
