@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "preflight": "tsx --env-file=.env.local scripts/preflight.ts"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
