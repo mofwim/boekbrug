@@ -431,9 +431,11 @@ CREATE TABLE public.profiles (
   preferred_language text DEFAULT 'nl'::text
     CHECK (preferred_language = ANY (ARRAY['nl'::text, 'en'::text, 'ar'::text, 'tr'::text])),
   referral_accountant_id uuid,
+  -- [FAIR-USE] free = ondernemer binnen eerlijk gebruik · plus = € 12,99/mnd daarboven ·
+  -- boekhouder = altijd gratis. Zie supabase/migrations/subscription_plans_fair_use.sql.
   subscription_plan text DEFAULT 'free'::text
     CHECK (subscription_plan = ANY (ARRAY[
-      'free'::text, 'pro'::text, 'boekhouder'::text, 'boekhouder_pro'::text
+      'free'::text, 'plus'::text, 'boekhouder'::text
     ])),
   subscription_stripe_id text,
   CONSTRAINT profiles_pkey PRIMARY KEY (id),

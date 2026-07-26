@@ -73,9 +73,13 @@ function ZzpView({ role }: { role: Role }) {
   const [filingTick, setFilingTick] = useState(0);
 
   useEffect(() => {
-    setLoading(true);
-    setData(null);
-    setRecon(null);
+    void (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setLoading(true);
+      setData(null);
+      setRecon(null);
+    })();
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
@@ -118,9 +122,11 @@ function ZzpView({ role }: { role: Role }) {
 
   // [TRUTH-FILED] Load whether this quarter is marked ingediend + any divergence since.
   useEffect(() => {
-    setFiled(null);
     let cancelled = false;
     (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setFiled(null);
       try {
         const res = await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`);
         if (!res.ok) return;
@@ -557,7 +563,7 @@ function AccountantView({ role }: { role: Role }) {
   } | null>(null);
 
   useEffect(() => {
-    setClientsLoading(true);
+    void (async () => { setClientsLoading(true); })();
     // [BRIDGE-QUARTER-ACC] Honor ?clientId from the URL (e.g. the "Kwartaal"
     // button on the accountant dashboard) so we open the RIGHT client, not just
     // the first one. Falls back to the first client when no param is present.
@@ -579,9 +585,13 @@ function AccountantView({ role }: { role: Role }) {
 
   useEffect(() => {
     if (!selectedClientId) return;
-    setLoading(true);
-    setData(null);
-    setRecon(null);
+    void (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setLoading(true);
+      setData(null);
+      setRecon(null);
+    })();
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
@@ -673,12 +683,12 @@ function AccountantView({ role }: { role: Role }) {
         </div>
         <p className="text-sm font-medium mb-1">Geen klanten gekoppeld</p>
         <p className="text-xs text-muted-foreground mb-5">Nodig een klant uit om kwartaaloverzichten te bekijken</p>
-        <a href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
+        <Link href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
           Klant uitnodigen
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
-        </a>
+        </Link>
       </div>
     );
   }

@@ -118,8 +118,11 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
   // can't write old-quarter rows. Resets any per-row nudge state too.
   useEffect(() => {
     let cancelled = false
-    setRows(clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })))
-    setNudge({})
+    // Reset in dezelfde tick, maar buiten de effect-body zelf.
+    void (async () => {
+      setRows(clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })))
+      setNudge({})
+    })()
 
     const queue = [...clients]
     async function worker() {

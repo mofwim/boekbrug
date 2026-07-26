@@ -46,6 +46,7 @@ import IntakeButton from '@/components/intake/IntakeButton'
 // invoice totals + a task count), each linking to the action that resolves it. The
 // old version was disabled for showing inferred bank-derived numbers that were wrong.
 import DailyTruth from './DailyTruth'
+import type { ProfileRow, NotificationRow } from '@/types/rows'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
   primary:           '#1A73E8',
@@ -70,11 +71,11 @@ const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
 const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }) // reserved for future use
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export function ZzpDashboard({ profile }: { profile: any }) {
+export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
   const router   = useRouter()
   const supabase = createClient()
 
-  const [notifications, setNotifications]         = useState<any[]>([])
+  const [notifications, setNotifications]         = useState<NotificationRow[]>([])
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages, setUnreadMessages]       = useState(0)
   const [accountantId, setAccountantId]           = useState<string | null>(null)
@@ -84,8 +85,6 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiError, setAiError]                     = useState<string | null>(null)
   // [BOEK-029] BOEK-011 integration — pending incoming invoices count
   const [pendingCount, setPendingCount]           = useState<number>(0)
-
-  useEffect(() => { loadGlobal() }, [])
 
   async function loadGlobal() {
     const [{ data: link }, { data: notifData }, { count }] = await Promise.all([
@@ -108,6 +107,11 @@ export function ZzpDashboard({ profile }: { profile: any }) {
       // silent — badge blijft 0
     }
   }
+
+  // Eén ophaalronde bij het openen. Staat bewust ná loadGlobal: een effect dat een functie
+  // aanroept die pas verderop gedeclareerd wordt, werkt door hoisting wel maar is voor de
+  // React-compiler niet te volgen (en breekt zodra iemand er een closure-waarde in gebruikt).
+  useEffect(() => { void (async () => { await loadGlobal() })() }, [])
 
   async function markAllRead() {
     await supabase.from('notifications').update({ read: true }).eq('user_id', profile.id).eq('read', false)

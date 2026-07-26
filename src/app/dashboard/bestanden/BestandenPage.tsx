@@ -193,6 +193,14 @@ interface BestandenPageProps {
   role?: "zzper" | "accountant" | "client" | null;
 }
 
+// [REFS] Gedeelde stijl van de items in het "Nieuw"-menu — buiten de component zodat er per
+// render niets opnieuw wordt opgebouwd.
+const newMenuItemStyle: React.CSSProperties = {
+  width: "100%", display: "flex", alignItems: "center", gap: 12,
+  padding: "10px 16px", background: "none", border: "none",
+  fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
+};
+
 export function BestandenPage({ role }: BestandenPageProps = {}) {
   // [BOEK-033] Normalise to navigation.ts Role union — only 'accountant' is special;
   // every other value (zzper, client, null) maps to the ZZP home.
@@ -248,6 +256,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [showSortMenu, setShowSortMenu] = useState(false);
   const sortMenuRef = useRef<HTMLDivElement>(null);
+  // [REFS] De positie van het uitklapmenu wordt vastgelegd op het moment van KLIKKEN, niet
+  // tijdens de render. Een ref uitlezen tijdens render is niet gegarandeerd correct (bij
+  // concurrent rendering kan hij nog leeg of verouderd zijn) — dan sprong het menu naar de
+  // rechterbovenhoek. Bij de klik staat het element er gegarandeerd.
+  const [sortMenuPos, setSortMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
@@ -273,7 +286,21 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   const [newFolderName, setNewFolderName] = useState("");
   const newFolderRef = useRef<HTMLInputElement>(null);
   const newMenuRef = useRef<HTMLDivElement>(null);
+  // [REFS] Zie sortMenuPos: positie vastleggen bij de klik, niet tijdens de render.
+  const [newMenuPos, setNewMenuPos] = useState<{ top: number; right: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // [REFS] Handlers die een ref aanraken staan bewust in een useCallback en niet als losse
+  // arrow in een array die tijdens de render wordt opgebouwd: de React-compiler kan van zo'n
+  // arrow niet zien dat hij alleen bij een klik draait, en behandelt de ref-toegang dan als
+  // render-toegang.
+  const openFilePicker = useCallback(() => {
+    setShowNewMenu(false);
+    fileInputRef.current?.click();
+  }, []);
+  const startNewFolder = useCallback(() => {
+    setShowNewMenu(false);
+    setNewFolderInline(true);
+  }, []);
 
   // ── Selection ──
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -302,7 +329,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setSmartView(null); // [BESTANDEN-SMART] leaving a smart view for a real folder
     setSelectedIds(new Set());
     setSearch("");
-  }, [currentFolderId, showTrash, smartView]); // eslint-disable-line
+  }, [currentFolderId, showTrash, smartView]);
 
   // [BESTANDEN-SMART] Enter a smart view. Parallels navigateTo: pushes history,
   // clears folder/trash/selection so the flat cross-folder list takes over.
@@ -312,7 +339,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     setShowTrash(false);
     setSelectedIds(new Set());
     setSearch("");
-  }, [currentFolderId, showTrash, smartView]); // eslint-disable-line
+  }, [currentFolderId, showTrash, smartView]);
 
   const navigateBack = useCallback(() => {
     const prev = navHistoryRef.current.pop();
@@ -342,13 +369,17 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     const folder = searchParams.get("folder");
     const focus = searchParams.get("focus");
     if (folder === null && focus === null) return;
-    if (folder !== null) setCurrentFolderId(folder);
-    if (focus !== null) setFocusId(focus);
-    setShowTrash(false);
-    setSmartView(null); // [BESTANDEN-SMART] a deep-link targets a real folder, leave any smart view
-    setSearch("");
-    setSearchResults(null);
-    setFolderResults([]);
+    // Alle standen van een diep-link in één wikkel: zelfde tick als voorheen, maar zonder
+    // synchrone setState in de effect-body (cascaderende renders).
+    void (async () => {
+      if (folder !== null) setCurrentFolderId(folder);
+      if (focus !== null) setFocusId(focus);
+      setShowTrash(false);
+      setSmartView(null); // [BESTANDEN-SMART] a deep-link targets a real folder, leave any smart view
+      setSearch("");
+      setSearchResults(null);
+      setFolderResults([]);
+    })();
     // Clean the URL so refresh/back don't re-trigger the deep-link.
     window.history.replaceState({}, "", "/dashboard/bestanden");
   }, [searchParams]);
@@ -410,9 +441,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   }, []);
 
   useEffect(() => {
-    loadContents(currentFolderId);
-    loadAllFolders();
-    refreshStorage(); // [BESTANDEN-SMART] keep the sidebar meter fresh on load/nav
+    void (async () => {
+      await loadContents(currentFolderId);
+      await loadAllFolders();
+      await refreshStorage(); // [BESTANDEN-SMART] keep the sidebar meter fresh on load/nav
+    })();
   }, [currentFolderId]); // eslint-disable-line
 
   // [BESTANDEN-SMART] Re-fetch the active smart view after a mutation. Cheap: only
@@ -425,7 +458,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
   useEffect(() => {
     if (!smartView) return;
     let cancelled = false;
-    setSmartLoading(true);
+    void (async () => { setSmartLoading(true); })();
     fetch(`/api/bestanden?view=${smartView}`)
       .then(r => r.json())
       .then((j: { documents?: BestandRow[] }) => { if (!cancelled) setSmartDocs(j.documents ?? []); })
@@ -454,7 +487,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       const t = setTimeout(() => { setHighlightId(null); setFocusId(null); }, 2600);
       return () => clearTimeout(t);
     }
-  }, [docs, focusId]); // eslint-disable-line
+  }, [docs, focusId]);
 
   // [BOEK-011 — removed by BOEK-011, file owned by BOEK-033]
   // The previous useEffect that read ?folder={id} from the URL was removed
@@ -465,7 +498,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
   // ── Search ── (documents + folders)
   useEffect(() => {
-    if (!search.trim()) { setSearchResults(null); setFolderResults([]); return; }
+    if (!search.trim()) {
+      void (async () => { setSearchResults(null); setFolderResults([]); })();
+      return;
+    }
     // [SEARCH] `active` guards against out-of-order responses: a superseded query's
     // in-flight fetch must not overwrite the newer query's results.
     let active = true;
@@ -1083,7 +1119,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           {/* [BESTANDEN-SORT] Sort control — Naam / Datum / Grootte + direction. */}
           <div ref={sortMenuRef} style={{ position: "relative", flexShrink: 0 }}>
             <button
-              onClick={() => setShowSortMenu(v => !v)}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setSortMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                setShowSortMenu(v => !v);
+              }}
               title="Sorteren"
               style={{
                 display: "flex", alignItems: "center", gap: 4,
@@ -1096,13 +1136,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               <span className="hidden sm:inline" style={{ fontSize: 13 }}>{SORT_LABELS[sortField]}</span>
               <Icon name={sortDir === "asc" ? "arrow_upward" : "arrow_downward"} size={14} color={T.outline} />
             </button>
-            {showSortMenu && (() => {
-              const rect = sortMenuRef.current?.getBoundingClientRect();
-              return (
+            {showSortMenu && (
                 <div style={{
                   position: "fixed",
-                  top: rect ? rect.bottom + 6 : 62,
-                  right: rect ? window.innerWidth - rect.right : 12,
+                  top: sortMenuPos ? sortMenuPos.top : 62,
+                  right: sortMenuPos ? sortMenuPos.right : 12,
                   background: "white", borderRadius: 12,
                   boxShadow: "0 4px 20px rgba(0,0,0,0.15)", border: "1px solid #E0E0E0",
                   minWidth: 180, zIndex: 9999, padding: "4px 0",
@@ -1140,8 +1178,7 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
                     {sortDir === "asc" ? "Oplopend" : "Aflopend"}
                   </button>
                 </div>
-              );
-            })()}
+                )}
           </div>
 
           {/* View toggle */}
@@ -1241,7 +1278,11 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
               accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.tiff,.doc,.docx,.xls,.xlsx,.csv,.xml,.zip,.eml"
             />
             <button
-              onClick={() => setShowNewMenu(v => !v)}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                setNewMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                setShowNewMenu(v => !v);
+              }}
               style={{
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "8px 14px", background: T.primary, color: T.onPrimary,
@@ -1256,37 +1297,35 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
             </button>
 
             {/* [BOEK-033] FINAL FIX — position:fixed bypasses ALL overflow:hidden parents */}
-            {showNewMenu && (() => {
-              const rect = newMenuRef.current?.getBoundingClientRect();
-              return (
+            {showNewMenu && (
                 <div style={{
                   position: "fixed",
-                  top: rect ? rect.bottom + 6 : 62,
-                  right: rect ? window.innerWidth - rect.right : 12,
+                  top: newMenuPos ? newMenuPos.top : 62,
+                  right: newMenuPos ? newMenuPos.right : 12,
                   background: "white",
                   borderRadius: 12,
                   boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
                   border: "1px solid #E0E0E0",
                   minWidth: 188, zIndex: 9999, padding: "4px 0",
                 }}>
-                  {[
-                    { label: "Nieuwe map", icon: "create_new_folder", onClick: () => { setShowNewMenu(false); setNewFolderInline(true); } },
-                    { label: "Bestand uploaden", icon: "upload", onClick: () => { setShowNewMenu(false); fileInputRef.current?.click(); } },
-                  ].map(item => (
-                    <button key={item.label} onClick={item.onClick} style={{
-                      width: "100%", display: "flex", alignItems: "center", gap: 12,
-                      padding: "10px 16px", background: "none", border: "none",
-                      fontSize: 14, color: T.onSurface, cursor: "pointer", textAlign: "left",
-                    }}
-                      onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
-                      onMouseLeave={e => (e.currentTarget.style.background = "none")}
-                    >
-                      <Icon name={item.icon} size={18} color={T.outline} /> {item.label}
-                    </button>
-                  ))}
+                  {/* [REFS] Twee losse knoppen in plaats van een .map over een array met
+                      handlers erin: zodra een handler die een ref aanraakt via een tijdens de
+                      render opgebouwd object wordt doorgegeven, kan de compiler niet meer zien
+                      dat hij pas bij een klik draait. */}
+                  <button onClick={startNewFolder} style={newMenuItemStyle}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                  >
+                    <Icon name="create_new_folder" size={18} color={T.outline} /> Nieuwe map
+                  </button>
+                  <button onClick={openFilePicker} style={newMenuItemStyle}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.surfaceVariant)}
+                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                  >
+                    <Icon name="upload" size={18} color={T.outline} /> Bestand uploaden
+                  </button>
                 </div>
-              );
-            })()}
+                )}
           </div>
         </div>
       </div>

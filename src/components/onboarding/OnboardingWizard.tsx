@@ -28,6 +28,7 @@ import { previewInvoiceStart, reasonToDutch } from "@/lib/invoice-template";
 // was stored and later printed on a legal invoice. KvK stays the local KVK_REGEX.
 import { BTW_REGEX } from "@/lib/validation";
 import { isValidIban, normalizeIban } from "@/lib/epc-qr";
+import Link from 'next/link'
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -103,9 +104,13 @@ export function OnboardingWizard({
 
   // [BOEK-015] Reset saving state whenever step changes — safety net for all transitions
   // Placed after useState declaration to avoid hoisting confusion
-  useEffect(() => {
+  // [REACT] Afgeleid van de stap: bij elke stapwissel is een lopende opslag niet meer
+  // relevant. Tijdens de render bijstellen scheelt een tweede renderronde.
+  const [prevStep, setPrevStep] = useState(step);
+  if (prevStep !== step) {
+    setPrevStep(step);
     setSaving(false);
-  }, [step]);
+  }
 
   // [FACTUUR-B] invoice numbering start (step 3C)
   const [invoiceStart, setInvoiceStart] = useState("");
@@ -141,8 +146,11 @@ export function OnboardingWizard({
     const stepParam = searchParams.get("step");
 
     if (gmail === "connected") {
-      setGmailConnected(true);
-      if (stepParam === "4") setStep(4);
+      // In één wikkel: zelfde tick als voorheen, zonder synchrone setState in de effect-body.
+      void (async () => {
+        setGmailConnected(true);
+        if (stepParam === "4") setStep(4);
+      })();
 
       // [BOEK-015] Auto-advance after 2s — guarded so manual "Volgende" doesn't double-fire
       // setStep uses functional form: only advances if still on step 4
@@ -387,11 +395,11 @@ export function OnboardingWizard({
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "16px 20px 0",
       }}>
-        <a href="/" style={{ textDecoration: "none" }}>
+        <Link href="/" style={{ textDecoration: "none" }}>
           <span style={{ fontSize: "20px", fontWeight: 700, color: "#1a73e8", letterSpacing: "-0.5px" }}>
             BoekBrug
           </span>
-        </a>
+        </Link>
         <span style={{ fontSize: "13px", color: "#bdc1c6" }}>
           Stap {counter.n} van {counter.total}
         </span>

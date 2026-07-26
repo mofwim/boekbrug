@@ -7,6 +7,11 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import type { ProfileRow, MessageRow } from '@/types/rows'
+
+// Alleen de kolommen die deze pagina ophaalt — een volledige ProfileRow beloven terwijl er
+// vier velden geselecteerd zijn, is een leugen die pas bij gebruik stukgaat.
+type ChatProfile = Pick<ProfileRow, 'id' | 'full_name' | 'company_name' | 'email'>
 
 // Skeleton للرسائل أثناء التحميل
 function MessageSkeleton({ isMe }: { isMe: boolean }) {
@@ -25,8 +30,8 @@ export default function ConversationPage() {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const [currentUserId, setCurrentUserId] = useState<string>('')
-  const [otherProfile, setOtherProfile] = useState<any>(null)
-  const [messages, setMessages] = useState<any[]>([])
+  const [otherProfile, setOtherProfile] = useState<ChatProfile | null>(null)
+  const [messages, setMessages] = useState<MessageRow[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
@@ -74,7 +79,7 @@ export default function ConversationPage() {
         schema: 'public',
         table: 'messages'
       }, (payload) => {
-        const msg = payload.new as any
+        const msg = payload.new as MessageRow
         const isRelevant =
           (msg.sender_id === currentUserId && msg.receiver_id === otherId) ||
           (msg.sender_id === otherId && msg.receiver_id === currentUserId)
@@ -179,10 +184,12 @@ export default function ConversationPage() {
                 >
                   <p className="leading-relaxed">{msg.content}</p>
                   <p className={`text-xs mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>
-                    {new Date(msg.created_at).toLocaleTimeString('nl-NL', {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
+                    {msg.created_at
+                      ? new Date(msg.created_at).toLocaleTimeString('nl-NL', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : ''}
                   </p>
                 </div>
               </div>

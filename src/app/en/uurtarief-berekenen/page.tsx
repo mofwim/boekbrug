@@ -105,7 +105,7 @@ export default function EnUurtariefPage() {
             that you add a buffer for tax, pension, insurance and hours you cannot invoice.
           </p>
           <p style={p}>
-            Don't forget the hours you cannot invoice. Finding clients, admin, illness and holidays all come
+            Don&rsquo;t forget the hours you cannot invoice. Finding clients, admin, illness and holidays all come
             off your billable time. So plan with about 1,200 rather than 1,800 hours.
           </p>
         </section>

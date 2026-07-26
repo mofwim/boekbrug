@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
     // source:'created' restored (was swallowed by an inline comment).
     const { data: creditnota, error: insertError } = await supabase
       .from('invoices')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       .insert({
         sender_id: user.id,
         invoice_number: creditnotaNumber,
@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
         // date. NOTE: requires the FACTUUR-A delivery_date migration + type
         // regen (CMD) before deploy.
         delivery_date: original.delivery_date ?? original.invoice_date ?? null,
-      } as any)
+      })
       .select()
       .single()
 

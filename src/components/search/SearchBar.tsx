@@ -486,6 +486,10 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
       ? recent.map((v) => ({ kind: "recent", value: v }))
       : flatResults.map((v) => ({ kind: "result", value: v }));
 
+  // Het portaaldoel (document.body) bestaat op de server niet. Het pas ná hydratie zetten is
+  // hier precies de bedoeling: zou de server al een portaal renderen, dan wijkt de HTML af
+  // van wat de browser bouwt. Deze ene render-extra is de prijs van hydratieveiligheid.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setPortalEl(document.body); }, []);
 
   useEffect(() => {
@@ -501,18 +505,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  useEffect(() => { if (open) setRecent(getRecent()); }, [open]);
 
-  useEffect(() => {
-    function onKeyDown(e: globalThis.KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        openSearch();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   // [BOEK-012] Outside-click excludes portal div
   useEffect(() => {
@@ -536,12 +529,21 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
     return () => { document.body.style.overflow = ""; };
   }, [compact, open]);
 
-  useEffect(() => { setSelectedIdx(-1); }, [flatResults.length, recent.length]);
+  // [REACT] State aanpassen tijdens de render in plaats van in een effect: zodra de
+  // resultatenlijst van vorm verandert, is de oude selectie-index betekenisloos. Dit is het
+  // patroon dat React hiervoor aanraadt en het scheelt een tweede renderronde.
+  const optionCount = showRecent ? recent.length : flatResults.length;
+  const [prevOptionCount, setPrevOptionCount] = useState(optionCount);
+  if (prevOptionCount !== optionCount) {
+    setPrevOptionCount(optionCount);
+    setSelectedIdx(-1);
+  }
 
   // ─── handlers ─────────────────────────────────────────────────────────────
 
   const openSearch = useCallback(() => {
     setOpen(true);
+    setRecent(getRecent()); // recente zoekopdrachten zijn pas relevant zodra de balk opengaat
     if (!compact) setTimeout(() => inputRef.current?.focus(), 10);
   }, [compact]);
 
@@ -549,6 +551,20 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
     setOpen(false);
     clear();
   }, [clear]);
+
+  // Cmd/Ctrl+K. Staat bewust ná openSearch: een effect dat een callback aanroept die pas
+  // verderop wordt gedeclareerd, is voor de React-compiler niet te volgen — en de callback
+  // hoort ook in de dependency-lijst, anders blijft een verouderde versie hangen.
+  useEffect(() => {
+    function onKeyDown(e: globalThis.KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        openSearch();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openSearch]);
 
   const navigate = useCallback((result: SearchResult) => {
     // Recent = what the user actually typed (falls back to the title only when the

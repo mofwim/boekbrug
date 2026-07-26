@@ -103,8 +103,12 @@ export default function CategoriseClient() {
     // the review list (auto-coded privé/overboeking/belasting to eyeball), not the to-do queue.
     const wantReview = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'review'
     const initial: Mode = wantReview ? 'review' : 'todo'
-    if (wantReview) setMode('review')
-    ;(async () => { if (!cancelled) await load(initial) })()
+    ;(async () => {
+      // De modus zetten hoort bij het laden van diezelfde lijst; binnen de async-wikkel
+      // draait het in dezelfde tick, zonder synchrone setState in de effect-body.
+      if (wantReview) setMode('review')
+      if (!cancelled) await load(initial)
+    })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

@@ -257,14 +257,14 @@ export async function POST(request: NextRequest) {
       // the race writes nothing and does NOT deliver — it gets a clean 409.
       let updateQ = supabase
         .from('invoices')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
         .update({
           ...(convertOnly ? {} : { status: 'sent' as const }),
           invoice_number: finalNumber,
           invoice_type: finalType as 'factuur' | 'creditnota' | 'pro_forma' | 'offerte',
           ...(computedTotals ?? {}),
           updated_at: new Date().toISOString(),
-        } as any)
+        })
         .eq('id', invoiceId)
         .eq('sender_id', user.id)
       updateQ = convertOnly

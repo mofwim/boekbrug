@@ -170,16 +170,21 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
   // [BRIDGE-HUB] When the accountant picks a client and opens the Documenten
   // tab, scope the tree to that client by seeding cwd to ['Klanten', label].
   // Selecting a different client resets the dive.
-  useEffect(() => {
-    if (isAccountant && selectedClient && hubTab === 'documenten') {
-      setCwd(prev => {
-        const root = ['Klanten', selectedClient.label]
-        // already inside this client → keep the deeper position
-        if (prev[0] === 'Klanten' && prev[1] === selectedClient.label) return prev
-        return root
-      })
+  // [REACT] State bijstellen tijdens de render in plaats van via een effect: dit is afgeleide
+  // state (welke klantmap hoort bij de huidige keuze), geen synchronisatie met de buitenwereld.
+  // Het effect deed een tweede renderronde en liet de gebruiker één frame de oude map zien.
+  const clientRoot =
+    isAccountant && selectedClient && hubTab === 'documenten' ? selectedClient.label : null
+  const [prevClientRoot, setPrevClientRoot] = useState<string | null>(clientRoot)
+  if (prevClientRoot !== clientRoot) {
+    setPrevClientRoot(clientRoot)
+    if (clientRoot) {
+      // Zit de gebruiker al ín deze klant, dan blijft de diepere positie staan.
+      setCwd(prev =>
+        prev[0] === 'Klanten' && prev[1] === clientRoot ? prev : ['Klanten', clientRoot],
+      )
     }
-  }, [isAccountant, selectedClient, hubTab])
+  }
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
@@ -590,13 +595,22 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setError(false); setData(null)
-    const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
-    fetch(`/api/readiness?${params}`)
-      .then(r => (r.ok ? r.json() : Promise.reject()))
-      .then(j => { if (!cancelled) (j?.report ? setData(j) : setError(true)) })
-      .catch(() => { if (!cancelled) setError(true) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    ;(async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body (cascaderende renders).
+      setLoading(true); setError(false); setData(null)
+      const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
+      try {
+        const r = await fetch(`/api/readiness?${params}`)
+        if (!r.ok) throw new Error('readiness')
+        const j = await r.json()
+        if (!cancelled) { if (j?.report) setData(j); else setError(true) }
+      } catch {
+        if (!cancelled) setError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
   }, [clientId, year, quarter])
 
@@ -682,23 +696,31 @@ function KwartaalPanel({ clientId, year, quarter }: { clientId: string; year: nu
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setError(false); setPnl(null); setConcept(null)
-    const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
-    // P&L (omzet/kosten/resultaat, cents-accurate) from /api/result; the concept BTW
-    // (5a/5b/5g, WHOLE-EURO per the Belastingdienst form) from /api/aangifte — so the
-    // Kwartaal tab's "5g" equals the Overzicht verdict, the owner's screens and the ZIP,
-    // instead of the raw cents scalar it used to (wrongly) label "5a/5b/5g".
-    Promise.all([
-      fetch(`/api/result?${params}`).then(r => (r.ok ? r.json() : Promise.reject())),
-      fetch(`/api/aangifte?${params}`).then(r => (r.ok ? r.json() : Promise.reject())),
-    ])
-      .then(([rj, aj]) => {
+    ;(async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body (cascaderende renders).
+      setLoading(true); setError(false); setPnl(null); setConcept(null)
+      const params = new URLSearchParams({ year: String(year), quarter: String(quarter), clientId })
+      // P&L (omzet/kosten/resultaat, cents-accurate) from /api/result; the concept BTW
+      // (5a/5b/5g, WHOLE-EURO per the Belastingdienst form) from /api/aangifte — so the
+      // Kwartaal tab's "5g" equals the Overzicht verdict, the owner's screens and the ZIP,
+      // instead of the raw cents scalar it used to (wrongly) label "5a/5b/5g".
+      try {
+        const [rRes, aRes] = await Promise.all([
+          fetch(`/api/result?${params}`),
+          fetch(`/api/aangifte?${params}`),
+        ])
+        if (!rRes.ok || !aRes.ok) throw new Error('kwartaal')
+        const [rj, aj] = await Promise.all([rRes.json(), aRes.json()])
         if (cancelled) return
         if (rj?.result && aj?.aangifte) { setPnl(rj.result); setConcept(aj.aangifte) }
         else setError(true)
-      })
-      .catch(() => { if (!cancelled) setError(true) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+      } catch {
+        if (!cancelled) setError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
   }, [clientId, year, quarter])
 

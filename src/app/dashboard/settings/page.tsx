@@ -14,13 +14,14 @@ import {
   validateKvk, validateBtw, validateIban,
   normalizeBtw, normalizeIban,
 } from '@/lib/validation'
+import type { ProfileRow } from '@/types/rows'
 
 export default function SettingsPage() {
   const router = useRouter()
   const supabase = createClient()
-  const [accountant, setAccountant] = useState<any>(null)
+  const [accountant, setAccountant] = useState<ProfileRow | null>(null)
   // حالة الملف الشخصي
-  const [profile, setProfile] = useState<any>(null)
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
 
   // حقول تعديل الملف الشخصي
   const [fullName, setFullName] = useState('')
@@ -178,7 +179,7 @@ export default function SettingsPage() {
     const now = new Date()
     const qStart = `${now.getFullYear()}-${String(Math.floor(now.getMonth() / 3) * 3 + 1).padStart(2, '0')}-01`
     let since = vatSchemeSince
-    if (vatScheme === 'kas' && (profile.vat_scheme !== 'kas' || !since)) since = qStart
+    if (vatScheme === 'kas' && (profile?.vat_scheme !== 'kas' || !since)) since = qStart
 
     // [REMINDERS] Parse the cadence text into positive ints (unique, ascending).
     // Empty/garbage falls back to the default {14,30} so the schedule is never blank.

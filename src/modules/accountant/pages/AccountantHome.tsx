@@ -24,6 +24,7 @@ import { composeDraftEmail } from '@/lib/ai'
 // <DraftQueue /> mount at the bottom of this file.
 // import DraftQueue from '@/components/draft-queue/DraftQueue'
 import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.types'
+import type { NotificationRow } from '@/types/rows'
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -51,11 +52,12 @@ interface Props {
     full_name: string | null
     company_name: string | null
     email: string | null
+    role: string | null
   }
   overview: AccountantOverview
   clients: ClientSummary[]
   todos: TodoItem[]
-  notifications: any[]
+  notifications: NotificationRow[]
   unreadMessages: number
 }
 
@@ -107,17 +109,21 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
 
   // ── Init ──
   useEffect(() => {
-    // Time-based greeting — set after mount to keep server/client HTML identical
-    setSalutation(timeSalutation())
+    // Beide standen komen uit de browser (klok + localStorage) en bestaan op de server niet.
+    // In één wikkel: zelfde tick, geen synchrone setState in de effect-body.
+    void (async () => {
+      // Time-based greeting — set after mount to keep server/client HTML identical
+      setSalutation(timeSalutation())
 
-    // Resolve last_client_id from localStorage
-    const storedId = localStorage.getItem(LAST_CLIENT_KEY)
-    if (storedId) {
-      setLastClientId(storedId)
-      const found = clients.find(c => c.id === storedId)
-      if (found) setLastClientName(found.company_name || found.full_name)
-      else localStorage.removeItem(LAST_CLIENT_KEY) // stale
-    }
+      // Resolve last_client_id from localStorage
+      const storedId = localStorage.getItem(LAST_CLIENT_KEY)
+      if (storedId) {
+        setLastClientId(storedId)
+        const found = clients.find(c => c.id === storedId)
+        if (found) setLastClientName(found.company_name || found.full_name)
+        else localStorage.removeItem(LAST_CLIENT_KEY) // stale
+      }
+    })()
   }, [])
 
   // ─────────────────────────────────────────────────────────

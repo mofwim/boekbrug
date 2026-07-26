@@ -7,6 +7,7 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import type { ProfileRow } from '@/types/rows'
 
 // [SEARCH] Accent-insensitive fold ("Café" ↔ "cafe") for local client filtering.
 const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
@@ -43,7 +44,7 @@ function avatarColor(name: string) {
   return colors[name.charCodeAt(0) % colors.length]
 }
 
-export default function KlantenClient({ profile }: { profile: any }) {
+export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   const router   = useRouter()
   const supabase = createClient()
 
@@ -93,8 +94,12 @@ export default function KlantenClient({ profile }: { profile: any }) {
   useEffect(() => {
     if (!focusId || loading) return
     if (!clients.some(c => c.id === focusId)) return
-    setExpandedId(focusId)
-    setHighlightId(focusId)
+    // De onthulling hoort bij dezelfde beweging als het scrollen: binnen de wikkel draait
+    // ze in dezelfde tick, maar telt ze niet als synchrone setState in de effect-body.
+    void (async () => {
+      setExpandedId(focusId)
+      setHighlightId(focusId)
+    })()
     const scrollTimer = setTimeout(() => {
       rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
@@ -160,6 +165,8 @@ export default function KlantenClient({ profile }: { profile: any }) {
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
+  // `as const` op de sleutels: daardoor weet TypeScript dat f.key een veld van het
+  // formulier is, in plaats van een willekeurige string die een cast nodig heeft.
   const FIELDS = [
     { key: 'name',        label: 'Naam *',      placeholder: 'Bedrijfsnaam of naam', required: true },
     { key: 'email',       label: 'E-mail',       placeholder: 'info@bedrijf.nl' },
@@ -169,7 +176,7 @@ export default function KlantenClient({ profile }: { profile: any }) {
     { key: 'address',     label: 'Adres',        placeholder: 'Straatnaam 1' },
     { key: 'postal_code', label: 'Postcode',     placeholder: '1234 AB' },
     { key: 'city',        label: 'Stad',         placeholder: 'Amsterdam' },
-  ]
+  ] as const
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT, WebkitFontSmoothing: 'antialiased' }}>
@@ -215,10 +222,10 @@ export default function KlantenClient({ profile }: { profile: any }) {
                 <div key={f.key}>
                   <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 4, fontWeight: 500 }}>{f.label}</p>
                   <input
-                    value={(form as any)[f.key]}
+                    value={form[f.key]}
                     onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
                     placeholder={f.placeholder}
-                    style={{ width: '100%', borderRadius: R.md, border: `2px solid ${(form as any)[f.key] ? M3.primary : M3.outline}`, padding: '12px 14px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface, transition: 'border-color 0.15s' }}
+                    style={{ width: '100%', borderRadius: R.md, border: `2px solid ${form[f.key] ? M3.primary : M3.outline}`, padding: '12px 14px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface, transition: 'border-color 0.15s' }}
                   />
                 </div>
               ))}

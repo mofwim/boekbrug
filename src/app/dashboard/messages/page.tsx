@@ -7,6 +7,15 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
+// Eén gesprek in de lijst: samengesteld uit berichten + de naam van de tegenpartij.
+interface Conversation {
+  otherId: string
+  lastMessage: string
+  lastAt: string | null
+  unread: number
+  name?: string | null
+}
+
 // Skeleton لصف محادثة واحدة
 function ConversationSkeleton() {
   return (
@@ -27,7 +36,7 @@ export default function MessagesPage() {
   const router = useRouter()
   const supabase = createClient()
 
-  const [conversations, setConversations] = useState<any[]>([])
+  const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -45,7 +54,7 @@ export default function MessagesPage() {
 
       // تجميع المحادثات — شخص واحد = محادثة واحدة
       const seen = new Set<string>()
-      const convMap: Record<string, any> = {}
+      const convMap: Record<string, Conversation> = {}
 
       for (const msg of messages) {
         const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id
@@ -124,7 +133,7 @@ export default function MessagesPage() {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <p className="text-xs text-gray-300">
-                      {new Date(conv.lastAt).toLocaleDateString('nl-NL')}
+                      {conv.lastAt ? new Date(conv.lastAt).toLocaleDateString('nl-NL') : ''}
                     </p>
                     {conv.unread > 0 && (
                       <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">

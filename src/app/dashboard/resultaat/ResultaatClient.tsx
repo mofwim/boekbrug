@@ -37,8 +37,10 @@ export default function ResultaatClient() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setData(null)
     ;(async () => {
+      // Reset binnen de async-functie, vóór de eerste await: zelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body.
+      setLoading(true); setData(null)
       try {
         const res = await fetch(`/api/result?year=${year}&quarter=${quarter}`)
         const json = await res.json()

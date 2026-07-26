@@ -602,7 +602,7 @@ function sanitizeLike(q: string): string {
 // [SEARCH] The fuzzy RPCs (search_smart.sql) aren't in the generated Supabase types.
 // Narrow cast that keeps `this` bound; returns [] on any error so search never breaks.
 type RpcCaller = { rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }> };
-async function fuzzyRpc(client: unknown, fn: string, query: string): Promise<any[]> {
+async function fuzzyRpc(client: unknown, fn: string, query: string): Promise<unknown[]> {
   try {
     const { data, error } = await (client as RpcCaller).rpc(fn, { q: query.trim() });
     if (error) return [];

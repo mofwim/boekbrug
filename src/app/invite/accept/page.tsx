@@ -4,6 +4,8 @@ import { Suspense } from 'react'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
+import type { InvitationRow } from '@/types/rows'
+import type { User } from '@supabase/supabase-js'
 
 // المكون الداخلي الذي يستخدم useSearchParams
 function AcceptInviteContent() {
@@ -13,9 +15,11 @@ function AcceptInviteContent() {
   const supabase = createClient()
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'accepted' | 'error'>('loading')
-  const [invitation, setInvitation] = useState<any>(null)
+  // Deze pagina bewaart alleen het token; de rest van de uitnodiging wordt server-side
+  // gecontroleerd. Een volledige InvitationRow beloven zou onwaar zijn.
+  const [invitation, setInvitation] = useState<Pick<InvitationRow, 'token'> | null>(null)
   const [zzperName, setZzperName] = useState('')
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
 
   useEffect(() => {
     async function load() {
