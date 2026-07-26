@@ -448,6 +448,7 @@ export async function getClientPaidInvoices(
       total_ex_btw,
       btw_amount,
       total_inc_btw,
+      amount_paid,
       invoice_date,
       due_date,
       marked_paid_at,

@@ -69,13 +69,24 @@ export async function fetchSettlementEvents(
   // 2) ALL of the owner's bank↔invoice links (by user_id, unfiltered). A payment reconciled via a
   //    bank link IS settled money — even if amount_paid/status weren't synced on the invoice row —
   //    so a linked invoice joins the settled set below (never a silent under-declaration).
-  const links = await fetchAllRows<{ invoice_id: string; transaction_id: string; amount_applied: number | null }>(
+  // [MANUAL-PARTIAL-PAY] A manual instalment is a link with NO transaction (transaction_id
+  // NULL) that carries its own date in paid_on. DEPLOY-SAFE: if that migration has not been
+  // applied yet, the richer select errors — fall back to the legacy projection so the
+  // kasstelsel aangifte keeps working (there simply are no manual rows to date yet).
+  type SettleLink = {
+    invoice_id: string; transaction_id: string | null;
+    amount_applied: number | null; paid_on?: string | null;
+  };
+  const fetchLinks = (columns: string) => fetchAllRows<SettleLink>(
     (from, to) => pipeline
       .from("bank_tx_invoices")
-      .select("invoice_id, transaction_id, amount_applied")
+      .select(columns)
       .eq("user_id", ownerId)
-      .order("id", { ascending: true }).range(from, to),
-  ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
+      .order("id", { ascending: true }).range(from, to) as never,
+  );
+  const links = await fetchLinks("invoice_id, transaction_id, amount_applied, paid_on")
+    .catch(() => fetchLinks("invoice_id, transaction_id, amount_applied"))
+    .catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
   const linkedIds = new Set(links.map((l) => l.invoice_id).filter(Boolean));
 
   const settled = invRows.filter((i) => isSettled(i) || linkedIds.has(i.id));
@@ -96,7 +107,8 @@ export async function fetchSettlementEvents(
     });
   }
 
-  const txIds = [...new Set(links.map((l) => l.transaction_id).filter(Boolean))];
+  // Manual instalments carry no transaction — they are dated by paid_on, not looked up here.
+  const txIds = [...new Set(links.map((l) => l.transaction_id).filter((id): id is string => !!id))];
   const txDate = new Map<string, string>();
   if (txIds.length > 0) {
     const txRows = await fetchAllRows<{ id: string; date: string | null }>((from, to) => pipeline
@@ -106,7 +118,7 @@ export async function fetchSettlementEvents(
     for (const t of txRows) if (t.date) txDate.set(t.id, t.date.slice(0, 10));
   }
 
-  const linksByInvoice = new Map<string, Array<{ transaction_id: string; amount_applied: number | null }>>();
+  const linksByInvoice = new Map<string, SettleLink[]>();
   for (const l of links) {
     if (!linksByInvoice.has(l.invoice_id)) linksByInvoice.set(l.invoice_id, []);
     linksByInvoice.get(l.invoice_id)!.push(l);
@@ -116,19 +128,33 @@ export async function fetchSettlementEvents(
   const raw: RawSettlement[] = [];
   for (const i of settled) {
     const bankLinks = linksByInvoice.get(i.id) ?? [];
+    // [MANUAL-PARTIAL-PAY] A bank-linked row is dated by its transaction; a MANUAL row
+    // (transaction_id NULL) by its own paid_on. Without this branch txDate.get(null) yields
+    // undefined and a perfectly dated cash instalment would be treated as undated — pushing
+    // real settled money into the "onbekende datum" bucket and out of its quarter.
     const dated = bankLinks
-      .map((l) => ({ date: txDate.get(l.transaction_id) ?? null, mag: Math.abs(Number(l.amount_applied) || 0) }))
+      .map((l) => ({
+        date: l.transaction_id ? (txDate.get(l.transaction_id) ?? null) : (l.paid_on ?? null),
+        mag: Math.abs(Number(l.amount_applied) || 0),
+      }))
       .filter((l) => l.mag > 0);
-    if (dated.length > 0) {
-      for (const d of dated) raw.push({ invoiceId: i.id, payDate: d.date, magnitude: d.mag, estimated: false });
-      continue;
-    }
-    // No bank link → cash/manual: payment_date (exact) → marked_paid_at (estimate) → undated.
     const paidMag = headers.get(i.id)!.amountPaidMagnitude; // amount_paid, or full total for a legacy 'paid'
-    if (paidMag <= 0) continue;
-    if (i.payment_date) raw.push({ invoiceId: i.id, payDate: i.payment_date.slice(0, 10), magnitude: paidMag, estimated: false });
-    else if (i.marked_paid_at) raw.push({ invoiceId: i.id, payDate: i.marked_paid_at.slice(0, 10), magnitude: paidMag, estimated: true });
-    else raw.push({ invoiceId: i.id, payDate: null, magnitude: paidMag, estimated: true });
+    for (const d of dated) raw.push({ invoiceId: i.id, payDate: d.date, magnitude: d.mag, estimated: false });
+
+    // [PARTIAL-PAY] The links do NOT always account for everything that was settled. A batch
+    // booking historically left amount_paid untouched, and a cash/manual instalment has no bank
+    // link at all — so an invoice can be settled for more than its links describe. The old code
+    // `continue`d as soon as ONE dated link existed, and that difference silently vanished from
+    // the kasstelsel BTW-aangifte: an under-declaration with no warning, because the undated
+    // check nets to zero when a dated link is present. Book the REMAINDER through the same
+    // exact → estimate → undated ladder, so money can never be settled yet uncounted.
+    // Structurally the remainder is 0 once every path maintains amount_paid; this is the net.
+    const datedMag = dated.reduce((s, d) => s + d.mag, 0);
+    const remainderMag = Math.round((paidMag - datedMag) * 100) / 100;
+    if (remainderMag <= 0.005) continue;
+    if (i.payment_date) raw.push({ invoiceId: i.id, payDate: i.payment_date.slice(0, 10), magnitude: remainderMag, estimated: false });
+    else if (i.marked_paid_at) raw.push({ invoiceId: i.id, payDate: i.marked_paid_at.slice(0, 10), magnitude: remainderMag, estimated: true });
+    else raw.push({ invoiceId: i.id, payDate: null, magnitude: remainderMag, estimated: true });
   }
 
   return buildQuarterSettlements(headers, raw, start, end);

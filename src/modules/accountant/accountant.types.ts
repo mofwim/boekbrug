@@ -96,6 +96,10 @@ export interface InvoiceRow {
   total_ex_btw: number
   btw_amount: number
   total_inc_btw: number
+  // [PARTIAL-PAY] Running total already settled (magnitude). The accountant must SEE that an
+  // invoice is only partly paid BEFORE marking it 'verwerkt' — that lock freezes amount_paid
+  // (invoice_accountant_write_guard), so a later instalment can no longer be booked by anyone.
+  amount_paid?: number | null
   invoice_date: string
   due_date: string | null        // [BRIDGE-A] for computed Verlopen — never stored as status
   marked_paid_at: string | null  // when client marked paid — NOT actual payment date

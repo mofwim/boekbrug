@@ -210,26 +210,35 @@ export type Database = {
       bank_tx_invoices: {
         Row: {
           amount_applied: number | null
+          client_key: string | null
           created_at: string | null
           id: string
           invoice_id: string
-          transaction_id: string
+          method: string | null
+          paid_on: string | null
+          transaction_id: string | null
           user_id: string
         }
         Insert: {
           amount_applied?: number | null
+          client_key?: string | null
           created_at?: string | null
           id?: string
           invoice_id: string
-          transaction_id: string
+          method?: string | null
+          paid_on?: string | null
+          transaction_id?: string | null
           user_id: string
         }
         Update: {
           amount_applied?: number | null
+          client_key?: string | null
           created_at?: string | null
           id?: string
           invoice_id?: string
-          transaction_id?: string
+          method?: string | null
+          paid_on?: string | null
+          transaction_id?: string | null
           user_id?: string
         }
         Relationships: []
@@ -1677,6 +1686,26 @@ export type Database = {
           amount_paid: number
           total: number
           is_paid: boolean
+        }[]
+      }
+      apply_manual_payment: {
+        Args: {
+          p_user_id: string
+          p_invoice_id: string
+          /** null = settle the whole remaining balance (the empty "Betaald bedrag" field) */
+          p_amount: number | null
+          p_pay_date: string
+          p_method: string
+          p_payable_statuses: string[]
+          p_client_key: string | null
+        }
+        Returns: {
+          applied: number
+          amount_paid: number
+          total: number
+          is_paid: boolean
+          /** true = this client_key was already booked; nothing was written */
+          duplicate: boolean
         }[]
       }
       book_bank_batch: {

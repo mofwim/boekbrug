@@ -110,26 +110,40 @@ BEGIN
       USING ERRCODE = '55000';   -- object_not_in_prerequisite_state
   END IF;
 
-  -- (3) Pay every invoice. All verified unpaid above → each flips exactly once.
+  -- (3) [PARTIAL-PAY] Record EVERY invoice this payment paid, WITH the amount applied —
+  --     and do it BEFORE the invoices are updated, because the amount this batch applies is
+  --     the balance that is still OPEN right now: abs(total) − amount_paid. Using the full
+  --     total here would make SUM(amount_applied) exceed the invoice whenever the batch
+  --     completes an invoice that earlier instalments had already partly settled, and
+  --     recompute_invoice_amount_paid (which re-derives amount_paid from that SUM on every
+  --     unlink) would then clamp/overstate. The rows are locked FOR UPDATE above, so this
+  --     pre-update read is stable. Also the collision-free reversal index (unchanged role).
+  INSERT INTO public.bank_tx_invoices (user_id, transaction_id, invoice_id, amount_applied)
+  SELECT p_user_id, p_tx_id, i.id,
+         GREATEST(0, abs(coalesce(i.total_inc_btw, 0)) - coalesce(i.amount_paid, 0))
+  FROM unnest(p_invoice_ids) AS ids(id)
+  JOIN public.invoices i ON i.id = ids.id
+  ON CONFLICT (transaction_id, invoice_id) DO NOTHING;
+
+  -- (4) Pay every invoice. All verified unpaid above → each flips exactly once.
+  --     [PARTIAL-PAY] amount_paid must land on the FULL magnitude: this batch settles the
+  --     invoice completely. Leaving it at its mid-instalment figure (the old behaviour) made
+  --     a fully-paid invoice read as still-partly-open, and under KASSTELSEL the uncounted
+  --     portion silently dropped out of the BTW-aangifte.
   UPDATE public.invoices
   SET status         = 'paid',
       payment_method = 'bank',
       marked_paid_at = now(),
-      payment_date   = p_pay_date
+      payment_date   = p_pay_date,
+      amount_paid    = abs(coalesce(total_inc_btw, 0))
   WHERE id = ANY (p_invoice_ids);
 
-  -- (4) Link the bank line → matched, with a representative invoice_id (the
+  -- (5) Link the bank line → matched, with a representative invoice_id (the
   --     last id — the same element the prior app code used as `rep`).
   v_rep := p_invoice_ids[array_upper(p_invoice_ids, 1)];
   UPDATE public.bank_transactions
   SET status = 'matched', invoice_id = v_rep
   WHERE id = p_tx_id AND user_id = p_user_id;
-
-  -- (5) Record EVERY invoice this payment paid (collision-free reversal index).
-  INSERT INTO public.bank_tx_invoices (user_id, transaction_id, invoice_id)
-  SELECT p_user_id, p_tx_id, ids.id
-  FROM unnest(p_invoice_ids) AS ids(id)
-  ON CONFLICT (transaction_id, invoice_id) DO NOTHING;
 
   -- Hand the paid ids back so the caller builds its result + audit row.
   RETURN QUERY SELECT ids.id FROM unnest(p_invoice_ids) AS ids(id);
@@ -137,7 +151,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.book_bank_batch(uuid, uuid, uuid[], date) IS
-  '[BANK-BATCH-ATOMIC] Atomically books one multi-invoice batch tie: locks the bank line (mutex), re-verifies every invoice is still unpaid + not verwerkt under the lock, pays them all, links the tx (matched + representative invoice_id), and records bank_tx_invoices join rows — all-or-nothing. Empty result = tx already claimed (skip). Exception = an invoice turned unpayable (whole batch rolled back).';
+  '[BANK-BATCH-ATOMIC] Atomically books one multi-invoice batch tie: locks the bank line (mutex), re-verifies every invoice is still unpaid + not verwerkt under the lock, records bank_tx_invoices join rows with amount_applied = the still-open balance (pre-update), pays them all (amount_paid → full magnitude), and links the tx (matched + representative invoice_id) — all-or-nothing. Empty result = tx already claimed (skip). Exception = an invoice turned unpayable (whole batch rolled back).';
 
 -- Both the authenticated session client and the service-role pipeline call this.
 REVOKE ALL ON FUNCTION public.book_bank_batch(uuid, uuid, uuid[], date) FROM PUBLIC;
