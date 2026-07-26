@@ -295,6 +295,10 @@ input::placeholder, textarea::placeholder {
 @media (max-width: 520px) {
   .inv-row      { flex-wrap: wrap; row-gap: 10px; }
   .inv-row-main { flex: 1 1 100%; }
+  /* Op de strook eronder gaan bedrag en knop uit elkaar: het bedrag links, waar het   */
+  /* oog na de datumregel al is, en "Heb je betaald?" helemaal rechts — waar een duim  */
+  /* hem vanzelf raakt en waar hij niet tegen het bedrag aan plakt. Op een breed       */
+  /* scherm blijft de kolom rechts uitgelijnd; daar staan ze onder elkaar.             */
   .inv-row-side { flex: 1 1 auto; flex-direction: row; align-items: center;
-                  justify-content: flex-end; }
+                  justify-content: space-between; }
 }
