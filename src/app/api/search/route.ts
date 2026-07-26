@@ -156,6 +156,12 @@ export async function GET(req: NextRequest) {
     .slice(0, 100)
     .replace(/[\uD800-\uDBFF]$/, "");
   const target = (req.nextUrl.searchParams.get("target") ?? "all") as SearchTarget;
+  // [SEARCH] full=1 → the dedicated results page (/dashboard/zoeken) wants more
+  // rows per group than the header dropdown's compact preview (8/4/5).
+  const full = req.nextUrl.searchParams.get("full") === "1";
+  const CAP = full
+    ? { invoices: 30, documents: 20, clients: 20 }
+    : { invoices: 8, documents: 4, clients: 5 };
 
   const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [] };
 
@@ -234,7 +240,7 @@ export async function GET(req: NextRequest) {
               .join(",")
           )
           .order("created_at", { ascending: false })
-          .limit(8)
+          .limit(CAP.invoices)
       : Promise.resolve({ data: [] as any[] }),
 
     // Source 2: documents — own, non-trashed
@@ -246,7 +252,7 @@ export async function GET(req: NextRequest) {
           .eq("trashed", false) // [T#3] don't surface soft-deleted files in global search
           .or(buildOr(["file_name", "doc_type", "ai_doc_type", "notes"], terms))
           .order("created_at", { ascending: false })
-          .limit(4)
+          .limit(CAP.documents)
       : Promise.resolve({ data: [] as any[] }),
 
     // Source 3: clients — accountant: linked profiles; zzp'er: own clients registry
@@ -258,14 +264,14 @@ export async function GET(req: NextRequest) {
               .select("id, full_name, company_name, email, kvk_number, created_at")
               .in("id", senderIds.filter((id) => id !== user.id))
               .or(buildOr(["full_name", "company_name", "email", "kvk_number"], terms))
-              .limit(5)
+              .limit(CAP.clients)
           : Promise.resolve({ data: [] as any[] })
         : supabase
             .from("clients")
             .select("id, name, email, kvk_number, city, created_at")
             .eq("user_id", user.id)
             .or(buildOr(["name", "email", "kvk_number", "city"], terms))
-            .limit(5)
+            .limit(CAP.clients)
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
@@ -325,7 +331,7 @@ export async function GET(req: NextRequest) {
           : `/dashboard/facturen?focus=${inv.id}`,
         createdAt: inv.created_at,
       }))
-  ).slice(0, 8);
+  ).slice(0, CAP.invoices);
 
   const documents: SearchResult[] = dedup(
     rankRows(docRows, q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
@@ -341,7 +347,7 @@ export async function GET(req: NextRequest) {
           : `/dashboard/bestanden?focus=${doc.id}`,
         createdAt: doc.created_at,
       }))
-  ).slice(0, 4);
+  ).slice(0, CAP.documents);
 
   const clients: SearchResult[] = dedup(
     rankRows(clientRows, q, (row) =>
@@ -371,7 +377,7 @@ export async function GET(req: NextRequest) {
             createdAt: row.created_at,
           }
     )
-  ).slice(0, 5);
+  ).slice(0, CAP.clients);
 
   return NextResponse.json({ invoices, documents, clients });
 }

@@ -50,25 +50,6 @@ function saveRecent(term: string) {
   localStorage.setItem(RECENT_KEY, JSON.stringify(next));
 }
 
-// [SEARCH] Enter-with-no-selection should open the BEST match across all groups, not
-// just the first invoice (flatResults is grouped invoices→documents→clients, so the
-// API's per-group ranking is otherwise lost for the Enter shortcut).
-const foldStr = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
-function pickBest(results: SearchResult[], query: string): SearchResult | undefined {
-  if (results.length === 0) return undefined;
-  const q = foldStr(query.trim());
-  if (!q) return results[0];
-  const score = (r: SearchResult) => {
-    const t = foldStr(r.title), s = foldStr(r.subtitle);
-    if (t === q) return 5;
-    if (t.startsWith(q)) return 4;
-    if (s === q || s.startsWith(q)) return 3;
-    if (t.includes(q)) return 2;
-    if (s.includes(q)) return 1;
-    return 0;
-  };
-  return results.reduce((best, r) => (score(r) > score(best) ? r : best), results[0]);
-}
 
 // ─── Highlight ────────────────────────────────────────────────────────────────
 
@@ -336,12 +317,13 @@ interface DropdownContentProps {
   onSelectRecent: (term: string) => void;
   onSelectResult: (item: SearchResult) => void;
   onHoverIdx: (idx: number) => void;
+  onSeeAll: () => void;
 }
 
 function DropdownContent({
   showRecent, showResults, loading, error, query, recent,
   groups, flatResults, selectedIdx, totalCount,
-  onSelectRecent, onSelectResult, onHoverIdx,
+  onSelectRecent, onSelectResult, onHoverIdx, onSeeAll,
 }: DropdownContentProps) {
   return (
     <>
@@ -451,6 +433,24 @@ function DropdownContent({
             );
           })}
         </>
+      )}
+
+      {/* [SEARCH] Always-present jump to the dedicated full-app results page. */}
+      {showResults && !loading && !error && totalCount > 0 && (
+        <button
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onSeeAll}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            padding: "12px 16px", borderTop: "1px solid #f1f3f4",
+            background: "transparent", border: "none", cursor: "pointer",
+            fontSize: 13, fontWeight: 500, color: "#1A73E8",
+            WebkitTapHighlightColor: "transparent",
+          }}
+        >
+          Alle resultaten voor &ldquo;{query.trim()}&rdquo;
+          <IconChevron />
+        </button>
       )}
     </>
   );
@@ -563,6 +563,15 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
     setSelectedIdx(-1);
   }, [setQuery]);
 
+  // [SEARCH] Open the dedicated full-app results page for the current query.
+  const seeAllResults = useCallback(() => {
+    const q = query.trim();
+    if (!q) return;
+    saveRecent(q);
+    closeSearch();
+    router.push(`/dashboard/zoeken?q=${encodeURIComponent(q)}`);
+  }, [query, closeSearch, router]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (!open) { setOpen(true); return; }
     switch (e.key) {
@@ -576,17 +585,10 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
         break;
       case "Enter":
         e.preventDefault();
-        // [SEARCH] Enter with no selection → open the top result if there is one;
-        // otherwise fall back to the facturen list pre-filled with the query
-        // (FacturenClient now reads ?search=). — Jul 2026
+        // [SEARCH] Enter with no row selected → open the full results page for the
+        // whole app (the dropdown is just a preview). — Jul 2026
         if (selectedIdx < 0) {
-          const top = showResults ? pickBest(flatResults, query) : undefined;
-          if (top) { navigate(top); break; }
-          if (query.trim()) {
-            saveRecent(query.trim());
-            closeSearch();
-            router.push(`/dashboard/facturen?search=${encodeURIComponent(query.trim())}`);
-          }
+          if (query.trim()) { seeAllResults(); }
           break;
         }
         const item = navItems[selectedIdx];
@@ -599,7 +601,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
         closeSearch();
         break;
     }
-  }, [open, navItems, selectedIdx, applyRecent, navigate, closeSearch, showResults, flatResults, query, router]);
+  }, [open, navItems, selectedIdx, applyRecent, navigate, closeSearch, query, seeAllResults]);
 
   const onInputChange = useCallback((val: string) => {
     setQuery(val);
@@ -617,6 +619,7 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
     onSelectRecent: applyRecent,
     onSelectResult: navigate,
     onHoverIdx: setSelectedIdx,
+    onSeeAll: seeAllResults,
   };
 
   const desktopInputProps: SearchInputProps = {
