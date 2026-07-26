@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
+import { FONT } from "@/lib/design/tokens";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
 import { rowMatchesQuery } from "@/lib/search";
@@ -2534,15 +2535,15 @@ export default function IncomingInvoicesClient({
     <div
       style={{
         maxWidth: 430, margin: "0 auto", padding: "0 0 100px",
-        fontFamily: 'var(--font-sans)',
+        // [HEADER-SYSTEM] Was var(--font-sans) (could resolve to a non-Roboto
+        // face); now the shared Roboto FONT token, matching the shared bar above.
+        fontFamily: FONT,
       }}
     >
-      {/* [BOEK-011] Header — Logo Universal Click + Terug via <Link>
-          Implements Navigation Strategy v1.0:
-          - Logo always → home (dynamic by role)
-          - Terug uses <Link>, never router.back()
-          - Logo + Terug are separate concerns: Logo = escape hatch from anywhere,
-            Terug = explicit parent (/dashboard for /dashboard/incoming) */}
+      {/* [HEADER-SYSTEM] The title "Inkomend" + back live in the shared sub-page
+          bar (DashboardChrome/STATIC_TITLES). This block is now just the status
+          subtitle. (Removed a stale comment describing a Logo/Terug header that no
+          longer exists here.) */}
       <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}

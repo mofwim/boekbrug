@@ -5,6 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
+import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
@@ -180,7 +181,7 @@ export default function KlantenClient({ profile }: { profile: any }) {
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px 10px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
+        padding: '12px 16px 10px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
           <button

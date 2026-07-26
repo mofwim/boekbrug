@@ -22,6 +22,7 @@
 // Defense in depth: the update touches ONLY payment fields — never amounts.
 
 import Link from 'next/link'
+import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
@@ -599,7 +600,7 @@ export default function IncomingManageClient({
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
+        padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
         {/* [BUNDEL-BETALING] Left: the multi-select toggle — the entry point for
             paying several facturen van één leverancier with one QR. Given a clear

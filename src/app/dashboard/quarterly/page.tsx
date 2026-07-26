@@ -24,14 +24,14 @@ export default async function QuarterlyPage() {
   // [BOEK-013] role for navigation helper in QuarterlyOverview
   const role = isAccountant ? "accountant" : "zzper";
 
+  // [HEADER-SYSTEM] Title "Kwartaaloverzicht" + back live in the shared sub-page
+  // bar (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
+  // removed. The one-line description stays as intro copy.
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Kwartaaloverzicht</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          BTW-aangifte, totalen en export per kwartaal
-        </p>
-      </div>
+      <p className="text-muted-foreground text-sm mb-6">
+        BTW-aangifte, totalen en export per kwartaal
+      </p>
       <QuarterlyOverview isAccountant={isAccountant} role={role} />
     </div>
   );
