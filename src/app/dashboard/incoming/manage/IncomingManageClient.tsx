@@ -1000,6 +1000,7 @@ export default function IncomingManageClient({
                   {/* Main row — in select mode a tap toggles the bundle selection
                       (only for open 'received' rows); otherwise it expands. */}
                   <div
+                    className="inv-row"
                     onClick={() => selectMode
                       ? (inv.status === 'received' && toggleSelect(inv.id))
                       : setExpandedId(expanded ? null : inv.id)}
@@ -1011,7 +1012,7 @@ export default function IncomingManageClient({
                         {selectedIds[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="inv-row-main" style={{ flex: 1, minWidth: 0 }}>
                       {/* ── [ROW-HEAD] Wie + welke factuur, op één kopregel ──────────────────
                           De "Ink."-badge is weg: op Inkoopfacturen is ELKE rij een inkoop, dus
                           hij herhaalde alleen de paginatitel — 336 keer.
@@ -1019,23 +1020,28 @@ export default function IncomingManageClient({
                           regel eronder. Ze deelden die kopregel, dus bij meerdere chips brak de
                           regel rommelig af (op een telefoon stond "Automatisch" ineens onder het
                           nummer); nu is de rijhoogte voorspelbaar zonder er één regel bij.
-                          Wie krimpt er als de ruimte op is? De NAAM. Een afgekapt nummer is
-                          waardeloos — daar zoek je een bankregel mee op — terwijl "W.KETELS & ZN
-                          EIERHAN…" nog steeds te herkennen is. Vandaar flexShrink:0 op het
-                          nummer. De naam draagt het gewicht: die scan je ("aan wie moet ik nog
-                          betalen?"), het nummer zoek je op. */}
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+                          Geen van beide wordt afgekapt. Op een telefoon houdt de rechterkolom
+                          (bedrag + "Heb je betaald?" + prullenbak) zoveel breedte vast dat er voor
+                          de naam ~50px overbleef: "GROOTH…", "W.K…", "Enka Ho…". Een leverancier
+                          die je niet kunt lezen is geen rij, het is een raadsel. Dus wrapt de kop:
+                          past de naam ernaast, dan staat hij ernaast; past hij niet, dan zakt hij
+                          naar zijn eigen regel over de volle breedte en breekt daar netjes af —
+                          altijd volledig leesbaar. Het nummer blijft op één regel (flexShrink:0,
+                          nowrap): een half nummer is waardeloos, daar zoek je een bankregel mee op.
+                          overflowWrap:anywhere vangt het randgeval van één lange naam zonder
+                          spaties, zodat die nooit uit de kaart loopt. */}
+                      <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 8, rowGap: 1, minWidth: 0 }}>
                         <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 500, color: '#5F6368', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
                           {inv.invoice_number ?? '—'}
                         </span>
-                        <span style={{ minWidth: 0, fontSize: 14, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ flex: '1 1 120px', minWidth: 0, fontSize: 14, fontWeight: 600, color: M3.onSurface, overflowWrap: 'anywhere' }}>
                           {inv.client_name ?? '—'}
                         </span>
                       </div>
                       {/* Statusregel — alleen gerenderd als er iets te tonen is, zodat een kale
                           rij geen lege regel meesleept. */}
                       {hasChips && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
                         {/* Status chip */}
                         {CHIP[inv.status] && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
@@ -1137,7 +1143,7 @@ export default function IncomingManageClient({
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    <div className="inv-row-side" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>
