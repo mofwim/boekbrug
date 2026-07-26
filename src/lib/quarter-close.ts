@@ -51,7 +51,15 @@ export function buildQuarterCloseNotice(
   const empty = activity === 0;
   const clean = !empty && gapCount === 0;
 
-  const ownerTitle = `${quarterLabel} is afgesloten`;
+  // [BELOFTE §4.3] "staat klaar", nooit "is gedaan".
+  //
+  // Hier stond "{quarterLabel} is afgesloten" en verderop "Je klant heeft {quarterLabel}
+  // afgesloten". Allebei onwaar: deze cron vuurt op de 5e en de klant heeft niets gedaan —
+  // wij hebben zijn stukken bij elkaar gezet. AV §4.3 legt vast dat een uitkomst van het
+  // systeem een suggestie is die de mens bevestigt, en belofte.ts stelt de regel expliciet:
+  // overal `staat klaar`, nooit `is gedaan`. Een melding die zegt dat het kwartaal áf is,
+  // is precies de zin waarop wij worden aangesproken als er iets ontbrak.
+  const ownerTitle = `${quarterLabel} staat klaar`;
   const ownerBody = clean
     ? `Je facturen voor ${quarterLabel} zijn gecontroleerd (${summary.outgoingCount} verkoop, ${summary.incomingCount} inkoop). Controleer je cijfers op het kwartaaloverzicht en dien je BTW-aangifte in.`
     : `${quarterLabel} heeft nog ${gapCount} aandachtspunt(en) voordat je kunt indienen: ${summary.warnings
@@ -60,11 +68,14 @@ export function buildQuarterCloseNotice(
         .join(" · ")}${gapCount > 3 ? " …" : ""}`;
 
   const accountantTitle = clean
-    ? `Kwartaal ${quarterLabel} klaar voor review`
-    : `Kwartaal ${quarterLabel} afgesloten — nog aandachtspunten`;
+    ? `${quarterLabel} staat klaar voor je`
+    : `${quarterLabel} staat klaar — met ${gapCount} aandachtspunt(en)`;
+  // "zijn gecontroleerd" mag blijven staan: dat gaat over de verstuurd/ontvangen/betaald-set
+  // die AV §7.2 zelf omschrijft als "alles wat je zelf hebt gecontroleerd". Wat wég moest is
+  // de bewering dat de KLANT het kwartaal heeft afgesloten.
   const accountantBody = clean
-    ? `De facturen van je klant voor ${quarterLabel} zijn gecontroleerd. Je kunt het kwartaalpakket downloaden in je werkplek.`
-    : `Je klant heeft ${quarterLabel} afgesloten, maar er zijn nog ${gapCount} aandachtspunt(en). Bekijk het kwartaal in je werkplek.`;
+    ? `De facturen van je klant voor ${quarterLabel} zijn gecontroleerd (${summary.outgoingCount} verkoop, ${summary.incomingCount} inkoop). Het kwartaalpakket staat klaar om te downloaden.`
+    : `${quarterLabel} van je klant staat klaar, met nog ${gapCount} aandachtspunt(en). Bekijk het kwartaal om te zien wat er mist.`;
 
   return { empty, clean, gapCount, ownerTitle, ownerBody, accountantTitle, accountantBody };
 }

@@ -82,6 +82,10 @@ export interface PackageInvoice {
   document_id: string | null;        // link to documents (incoming original)
   client_btw_number: string | null;  // [AANGIFTE] EU-VAT signal for rubriek 4b (not auto-computed)
   marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
+  // [HERTIKKEN] factuur | creditnota. Zonder deze kolom is een creditnota in de inhoudslijst
+  // alleen aan een minteken te herkennen, en dat is precies het soort verschil waar een
+  // boekhouder een half uur aan kwijt is als hij het pas bij het inboeken ontdekt.
+  invoice_type: string | null;
   // [FIN-4] ownership — used to infer a NULL direction so a verified row is
   // never silently dropped from the package.
   sender_id: string | null;
@@ -358,19 +362,36 @@ export function buildOverviewCsv(
 
   // ── Content list ──
   lines.push("Inhoud van dit pakket");
-  lines.push(["Richting", "Factuurnummer", "Naam", "Datum factuur", "Datum betaling", "Bedrag incl. BTW", "Status"].map(esc).join(";"));
+  // [HERTIKKEN] De bedragen erbij die BoekBrug al heeft uitgelezen.
+  //
+  // Deze lijst droeg alleen het totaal incl. btw. De boekhouder moest daardoor 60 facturen
+  // openen en het bedrag exclusief, het btw-bedrag en het tarief met de hand overtikken —
+  // precies de cijfers die de AI bij binnenkomst al van de bon heeft gelezen. Zijn echte
+  // knelpunt is niet het ONTVANGEN van de stukken, het is het INTIKKEN ervan.
+  //
+  // Bewust in DEZE ene lijst en niet als tweede CSV ernaast: één bestand dat compleet is,
+  // leest beter dan twee bestanden waarvan je moet raden welke je nodig hebt.
+  //
+  // 'Type' scheidt een creditnota van een factuur — die was tot nu toe alleen aan een
+  // minteken te herkennen.
+  lines.push(["Richting", "Type", "Factuurnummer", "Naam", "Datum factuur", "Datum betaling", "Bedrag excl. BTW", "BTW bedrag", "BTW tarief %", "Bedrag incl. BTW", "Status"].map(esc).join(";"));
   for (const inv of [...outgoing, ...incoming]) {
     const pay = paymentDates.get(inv.id);
     const payCell =
       inv.status === "paid" && pay?.date
         ? `${formatNlDate(pay.date)}${pay.estimated ? " (geschat)" : ""}`
         : "—";
+    const rate = calcBtwRate(inv.btw_amount, inv.total_ex_btw);
     lines.push([
       inv.direction === "outgoing" ? "Uitgaand" : "Inkomend",
+      inv.invoice_type ?? "factuur",
       inv.invoice_number ?? "—",
       inv.client_name ?? "—",
       inv.invoice_date ?? "—",
       payCell,
+      EUR(inv.total_ex_btw ?? 0),
+      EUR(inv.btw_amount ?? 0),
+      rate === null ? "—" : String(rate),
       // [TRUST-NUMBER] Show the real total: fall back to excl + BTW when total_inc_btw
       // wasn't stored, so an invoice that carries real amounts doesn't print €0,00 next
       // to a non-zero BTW-overzicht (a contradiction the accountant would trip over).
@@ -727,7 +748,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
