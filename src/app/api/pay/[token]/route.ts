@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { toPublicPayView, toPublicBundlePayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
-import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,7 +28,20 @@ export async function GET(
   }
 
   // Bucket per token so one shared/leaked link can't be hammered.
-  const limit = await checkRateLimit({ userId: token, endpoint: '/api/pay', ...RATE_LIMITS.PUBLIC_PAY })
+  //
+  // [COST-GUARD] Was checkRateLimit({ userId: token }). `token` IS a valid uuid,
+  // but it is invoices.pay_token — not a profiles.id — so it violated
+  // rate_limits' foreign key on EVERY request, the helper failed open, and this
+  // limiter never once ran. Now on the text-keyed bucket, which has no FK.
+  //
+  // failOpen: this path spends no money and the caller is a customer trying to
+  // pay an invoice. A database blip must not stand between them and that.
+  const limit = await checkRateLimitByKey({
+    bucketKey: `pay:${token}`,
+    endpoint: '/api/pay',
+    ...RATE_LIMITS.PUBLIC_PAY,
+    failOpen: true,
+  })
   if (!limit.allowed) return rateLimitResponse(limit)
 
   const pipeline = createPipelineClient()

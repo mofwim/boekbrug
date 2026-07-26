@@ -44,7 +44,30 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "kon verbindingen niet laden" }, { status: 500 });
   }
 
-  const userIds = [...new Set((conns ?? []).map((c) => c.user_id).filter((x): x is string => !!x))];
+  let userIds = [...new Set((conns ?? []).map((c) => c.user_id).filter((x): x is string => !!x))];
+
+  // ── [COST-GUARD] Wat de kosten van dit script begrenst ─────────────────
+  //
+  // Dit is verreweg het duurste dat de app doet: syncUserEmails() classificeert
+  // per ronde tot SYNC_BATCH_MAX (40) documenten met maximaal 5 drain-rondes —
+  // ~240 betaalde Claude-calls per gebruiker per run, twaalf runs per dag.
+  //
+  // Op het billing-experiment werd hier een RECHTENFILTER gezet: alleen mailboxen
+  // van accounts binnen hun proefperiode of abonnement werden nog gesynct. Dat
+  // filter is hier bewust NIET overgenomen, want het hoort bij een model dat wij
+  // niet voeren. Bij ons is de app gratis en is er niets om "geen toegang" van te
+  // maken; wie te veel leest loopt tegen het eerlijk gebruik aan
+  // (aiDocuments in src/lib/fair-use.ts), niet tegen een betaalmuur.
+  //
+  // Tot die maandteller ook hier meetelt — hij bestaat nu in code en op de
+  // publieke pagina, nog niet als kolom — draagt de begrenzing op twee dingen:
+  //   1. de globale dagzekering in src/lib/ai-budget.ts, die ELKE weg naar
+  //      Anthropic afdekt en dus ook deze;
+  //   2. de rondelimiet hierboven plus de zachte deadline hieronder.
+  //
+  // ⚠️ OPEN PUNT, eerlijk opgeschreven: een verlaten mailbox van een gratis
+  // account blijft tot die maandteller er is meelopen in deze run. De dagzekering
+  // maakt dat betaalbaar, maar niet gratis. Zie docs/PORT_VAN_BILLING_TAK.md §4.
 
   let synced = 0, failed = 0, saved = 0, truncated = 0;
   // [CRON-FAIRNESS] Rotate the start each run so a fixed tail of mailboxes never permanently starves

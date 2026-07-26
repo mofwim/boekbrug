@@ -25,6 +25,12 @@
 // Rule: AI prepares + presents. Human confirms. System executes.
 // ─────────────────────────────────────────────────────────
 
+// [COST-GUARD] The global daily spend fuse. Every path to Anthropic goes through
+// one of the three transports below, and each of them reserves budget first —
+// so there is no way to reach the paid API that skips the ceiling. See
+// src/lib/ai-budget.ts for why a GLOBAL ceiling and not a better per-user quota.
+import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
+
 // [BOEK-018] constants — May 2026
 // [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
 // hard-coded switch to 'claude-sonnet-4-5-20251001' returned HTTP 404 (that exact id is not
@@ -496,6 +502,15 @@ async function callClaude(
   systemPrompt: string,
   model: string = CLAUDE_MODEL
 ): Promise<string> {
+  // [COST-GUARD] Reserve before spending. A refusal throws, which every caller
+  // already handles as "AI unavailable" and degrades to manual entry.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.shortText + Math.ceil((prompt.length + systemPrompt.length) / 4),
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaude',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
+
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -638,6 +653,14 @@ async function callClaudeWithPdf(
 ): Promise<string> {
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(pdfBase64)
+
+  // [COST-GUARD] A raw PDF is the most expensive shape we send.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.rawPdfDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaudeWithPdf',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -797,6 +820,16 @@ async function callClaudeWithImage(
     cleanData,
     mimeType
   )
+
+  // [COST-GUARD] Reserved AFTER the downscale, so the fuse is charged the real
+  // (reduced) size rather than the raw photo — the cost lever above is worth
+  // ~13× on image tokens and the ceiling should reflect that, not punish it.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.imageDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaudeWithImage',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',

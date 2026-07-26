@@ -274,6 +274,9 @@ export default function GratisFactuur() {
   const [sender, setSender] = useState<Sender>(emptySender())
   const [client, setClient] = useState<Client>(emptyClient())
   const [lines, setLines] = useState<Line[]>([emptyLine()])
+  // [FUNNEL] Set when regels were carried over from /factuur-scannen, so the UI
+  // can say so and ask the user to check them. See the effect below.
+  const [fromScan, setFromScan] = useState(false)
   // Mirrors the PDF link's loading flag so handleDownload can ignore early clicks.
   const pdfLoadingRef = useRef(false)
 
@@ -294,6 +297,56 @@ export default function GratisFactuur() {
     } catch {
       /* ignore corrupt storage */
     }
+    // [FUNNEL] Carry over a scan from /factuur-scannen. Read ONCE and removed
+    // immediately: a stale handoff silently reappearing on a later, unrelated
+    // visit would be worse than no handoff at all.
+    //
+    // Only the LINE ITEMS, amounts and the invoice date come across — the
+    // tedious part. The counterparty deliberately does NOT: a scanned invoice is
+    // one you RECEIVED, so its vendor is not your client, and prefilling that
+    // would quietly address your invoice to the wrong party.
+    try {
+      const raw = sessionStorage.getItem('boekbrug.scan-handoff')
+      if (raw) {
+        sessionStorage.removeItem('boekbrug.scan-handoff')
+        const h = JSON.parse(raw) as {
+          line_items?: Array<{ description?: string | null; quantity?: number | null; unit_price?: number | null; amount?: number | null }>
+          invoice_date?: string | null
+        }
+        const carried = (h.line_items ?? [])
+          .map((li) => {
+            // A scan may give quantity+unit_price, or only a line total. When it
+            // is only a total, treat it as 1 × total so the arithmetic still adds
+            // up to what the paper said.
+            const qty = typeof li.quantity === 'number' && li.quantity > 0 ? li.quantity : 1
+            const unit =
+              typeof li.unit_price === 'number' && li.unit_price > 0
+                ? li.unit_price
+                : typeof li.amount === 'number'
+                  ? li.amount / qty
+                  : null
+            if (unit === null || !Number.isFinite(unit)) return null
+            return {
+              description: (li.description ?? '').trim(),
+              quantity: String(qty),
+              unit_price: unit.toFixed(2).replace('.', ','),
+              btw_rate: 21,
+            } as Line
+          })
+          .filter((l): l is Line => l !== null)
+
+        if (carried.length > 0) {
+          setLines(carried)
+          setFromScan(true)
+        }
+        if (h.invoice_date && /^\d{4}-\d{2}-\d{2}$/.test(h.invoice_date)) {
+          setInvoiceDate(h.invoice_date)
+        }
+      }
+    } catch {
+      /* ignore corrupt storage — the user just fills it in themselves */
+    }
+
     setHydrated(true)
   }, [])
 
@@ -585,6 +638,24 @@ export default function GratisFactuur() {
         {/* ── Regels ── */}
         <div style={s.card}>
           <p style={s.cardTitle}>Regels</p>
+
+          {/* [FUNNEL] Say plainly that these came from a machine read, and ask
+              for a check. The AI is a suggestion, never a fact — the same rule
+              the rest of the app follows, and §4.3 of the terms commits to it. */}
+          {fromScan && (
+            <div
+              role="status"
+              style={{
+                background: '#FEE8C4', border: '1px solid #7C5800', color: '#7C5800',
+                borderRadius: 10, padding: '10px 12px', margin: '0 0 12px',
+                fontSize: 13, lineHeight: 1.5,
+              }}
+            >
+              <strong>Overgenomen uit je gescande factuur.</strong> Controleer de regels,
+              bedragen en het BTW-tarief — een scan is een suggestie, geen feit. Je klant
+              vul je zelf in: een gescande factuur is er één die jij <em>ontvangen</em> hebt.
+            </div>
+          )}
           <div style={s.lineScroll}>
             <div style={{ ...s.lineRow, marginBottom: 6 }}>
               <span style={s.label}>Omschrijving</span>

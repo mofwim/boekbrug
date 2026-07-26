@@ -72,6 +72,7 @@ export type AuditAction =
   | 'user.password_changed'
   | 'user.email_changed'
   | 'user.account_deletion_requested'
+  | 'user.data_purged'                // ← [A1] retention purge erased a deactivated account's files after the 7-year bewaarplicht ran out. IRREVERSIBLE — this is the only record that it happened.
   | 'email.connection_created'
   | 'email.connection_revoked'
   // Level 5 — Boekhoudkoppelingen

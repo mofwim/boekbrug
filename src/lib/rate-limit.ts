@@ -138,3 +138,107 @@ export function rateLimitResponse(limit: RateLimitResult): Response {
     }
   )
 }
+// ── [COST-GUARD] Anonymous, text-keyed rate limiting ──────────────────
+//
+// WHY A SECOND FUNCTION. `rate_limits.user_id` is `uuid NOT NULL` with a FOREIGN
+// KEY to `profiles(id)`, and `check_rate_limit()` takes `p_user_id uuid`. Two
+// callers were passing something that is neither:
+//
+//   · /api/tools/scan-invoice → 'scan-ip:1.2.3.4'  — not a uuid → cast error
+//   · /api/pay/[token]        → invoices.pay_token — a uuid, but no such profile
+//
+// and checkRateLimit() above FAILS OPEN on any error. So both anonymous
+// surfaces — including the login-free scanner that calls the PAID Claude API —
+// had no durable ceiling at all, on every single request, permanently. The
+// comment claiming a DB-backed limiter "holds the ceiling ACROSS instances" was
+// describing something that never once executed.
+//
+// Fixed with a parallel text-keyed bucket (ai_spend_guard.sql) rather than by
+// altering the uuid column, so no working authenticated path is touched.
+
+/**
+ * Rate-limit an ANONYMOUS caller by an arbitrary string key (an IP, a payment
+ * token). Same atomic counter, different identity column.
+ *
+ * ⚠️ FAILS CLOSED. If the store errors, this REFUSES.
+ *
+ * That is the opposite of checkRateLimit() above, on purpose. Its fail-open is a
+ * defensible availability choice for a logged-in user doing their bookkeeping —
+ * we would rather serve them than protect a quota. But on an unauthenticated
+ * path that spends money on every request, "allow when unsure" is not a
+ * trade-off, it is the absence of a limit: exactly the bug this replaces. A
+ * public visitor briefly seeing "try again later" costs nothing; an unbounded
+ * Anthropic bill on a marketing page is unrecoverable.
+ */
+export async function checkRateLimitByKey({
+  bucketKey,
+  endpoint,
+  maxRequests,
+  windowMinutes,
+  failOpen = false,
+}: {
+  bucketKey: string
+  endpoint: string
+  maxRequests: number
+  windowMinutes: number
+  /**
+   * What to do when the STORE itself is unavailable (not when the caller is over
+   * the limit — that always refuses).
+   *
+   * Default false = refuse, which is the only safe answer on a path that spends
+   * money per request. Pass true for a read-only public path where turning a
+   * real visitor away is the worse outcome — /api/pay/[token] is a customer
+   * trying to pay an invoice, and it costs us nothing to serve.
+   */
+  failOpen?: boolean
+}): Promise<RateLimitResult> {
+  const onStoreFailure: RateLimitResult = failOpen
+    ? { allowed: true, remaining: maxRequests, resetAt: new Date(Date.now() + windowMinutes * 60 * 1000) }
+    : { allowed: false, remaining: 0, resetAt: new Date(Date.now() + windowMinutes * 60 * 1000) }
+
+  const denied: RateLimitResult = {
+    allowed: false,
+    remaining: 0,
+    resetAt: new Date(Date.now() + windowMinutes * 60 * 1000),
+  }
+
+  if (!bucketKey || !bucketKey.trim()) {
+    // No identity means no ceiling is possible. Refuse.
+    console.warn('[COST-GUARD] rate limit called with an empty bucket key — refusing', { endpoint })
+    return denied
+  }
+
+  try {
+    const supabase = createPipelineClient()
+    // check_rate_limit_key is added by ai_spend_guard.sql and is not in the
+    // generated types → relaxed client.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any).rpc('check_rate_limit_key', {
+      p_bucket_key:     bucketKey,
+      p_endpoint:       endpoint,
+      p_max_requests:   maxRequests,
+      p_window_minutes: windowMinutes,
+    })
+
+    if (error || !data || data.length === 0) {
+      console.error(
+        `[COST-GUARD] anonymous rate limit unavailable — ${failOpen ? 'allowing' : 'REFUSING'}`,
+        { endpoint, error: error?.message ?? 'no rows' }
+      )
+      return onStoreFailure
+    }
+
+    const row = data[0]
+    return {
+      allowed:   Boolean(row.allowed),
+      remaining: Number(row.remaining ?? 0),
+      resetAt:   new Date(row.reset_at ?? Date.now() + windowMinutes * 60 * 1000),
+    }
+  } catch (err) {
+    console.error(
+      `[COST-GUARD] anonymous rate limit threw — ${failOpen ? 'allowing' : 'REFUSING'}`,
+      { endpoint, err }
+    )
+    return onStoreFailure
+  }
+}
