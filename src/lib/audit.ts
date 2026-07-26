@@ -49,6 +49,8 @@ export type AuditAction =
   | 'invoice.partial_payment'         // ← [MANUAL-PARTIAL-PAY] owner recorded a deelbetaling by hand (invoice stays openstaand)
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)
   | 'creditnota.created'              // ← v2: matches historical data
+  | 'invoice.archived'                 // ← [INVOICE-REMOVE] owner removed an invoice from the books (kept 7 years, reversible)
+  | 'invoice.restored'                 // ← [INVOICE-REMOVE] owner put an archived invoice back
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
   | 'invoice.arithmetic_blocked'       // ← [BOEK-SAFECORE] auto-import held in 'processing': excl+BTW≠incl, illegal rate, or NaN/∞/≤0/bad-date
