@@ -138,10 +138,14 @@ verdedigbaar is. Alleen: als er nooit een muur is, hoeft er ook geen deur in.
 1. **`xlsx` staat nog op 0.18.5.** De reparatie staat alleen op `cdn.sheetjs.com` en die
    host geeft ook hier 403 (zelfde netwerkbeleid). De indamming op de parsergrens is wel
    overgenomen. Dit moet gebeuren in een omgeving die die host kan bereiken.
-2. **De fair-use-tellers bestaan nog niet als databasekolom.** `evaluateFairUse()` en de
-   gepubliceerde tabel zijn er; de maandmeting niet. Tot dan draagt de begrenzing op de
-   globale dagzekering. Concreet: een verlaten mailbox van een gratis account blijft
-   meelopen in de email-sync-cron. De zekering maakt dat betaalbaar, niet gratis.
+2. ~~De fair-use-tellers bestaan nog niet als databasekolom.~~ **Opgelost.**
+   `fair_use_usage.sql` + `src/lib/fair-use-usage.ts` + `src/lib/fair-use-gate.ts` meten nu
+   echt: alle zes AI-routes en het versturen van facturen gaan door de poort, en de stand
+   staat op `/dashboard/settings/facturering`. Wat er nog NIET doorheen gaat is de
+   email-sync-cron: die draait op de service-role namens de gebruiker, en per binnengekomen
+   bijlage door de poort sturen vraagt een aparte ronde. Tot die er is draagt daar de globale
+   dagzekering, en dat is een echte grens: een verlaten mailbox van een gratis account blijft
+   meelopen.
 3. **`RETENTION_PURGE_ENABLED` mag niet op `true`** voordat er een `kluis_subscriptions`
    bestaat. Anders weet de purge niet wie hij níét mag aanraken. Dat is nu de enige harde
    koppeling tussen de purge en de Bewaarkluis.

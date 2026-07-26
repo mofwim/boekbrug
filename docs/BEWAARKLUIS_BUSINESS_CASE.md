@@ -83,7 +83,51 @@ Wie dat verwart, bouwt een gat in het vierde jaar.
 
 ---
 
-## 4. De tweede markt — en die is groter
+## 4. De voordeur, niet de achterdeur — en dit is de kern
+
+De hoofdstukken hierboven beschrijven de Bewaarkluis als **uitgangsproduct**: iets wat je
+verkoopt aan de klant die vertrekt. Dat klopt, maar het is de kleinste versie van het idee.
+
+De grotere versie is dit: **de bewaarplicht is een voordeur.**
+
+Iemand die zoekt op *"hoe lang moet ik mijn administratie bewaren"* of *"mijn zaak is
+gestopt, wat doe ik met mijn boekhouding"* zoekt geen boekhoudprogramma. Hij heeft een
+probleem zonder productcategorie. Daar staat geen enkele leverancier voor klaar, want
+SnelStart, Moneybird en Exact verkopen allemaal aan wie *nu* boekhoudt.
+
+Wat die deur oplevert:
+
+1. **Een relatie met iemand die anders nooit klant was geworden.** Hij zoekt niet naar ons
+   en hij vergelijkt ons met niemand.
+2. **Voor bijna niets.** Een archief van een kleine zaak weegt ~2 GB en kost minder dan
+   € 10 over de volle zeven jaar (§2). Er is geen AI, geen support en geen ontwikkeling.
+3. **Zijn stukken staan al in een systeem waar de rest klaarstaat.** Begint hij ooit weer,
+   of blijkt hij nog één factuur te moeten sturen, dan hoeft hij niets over te zetten.
+4. **Tijd.** Zeven jaar is lang genoeg om een product rustig beter te maken terwijl de
+   relatie gewoon doorloopt.
+
+Dat is de volgorde die deze pagina voorstelt: **eerst het archief, dan de rest.** Niet
+andersom.
+
+`/bewaarplicht` is die deur — een publieke pagina die het probleem beschrijft in de woorden
+waarin mensen het zoeken, niet in de woorden waarin wij het product hebben gebouwd.
+
+### ⚠️ Eén ding dat hier NIET uit volgt
+
+De redenering "opslag levert geld op, dus de abonnementen kunnen goedkoper" is verleidelijk
+en op dit moment **onjuist** — niet omdat de logica fout is, maar omdat de omzet nog nul is.
+Een prijs verlagen op basis van inkomsten die nog moeten ontstaan is precies hoe een
+vooruitbetaling van zeven jaar een gat in het vierde jaar wordt (§3).
+
+De volgorde die wél klopt: **eerst archiefomzet die er echt is, dan pas de prijs van Plus
+heroverwegen.** Concreet — pas als de jaarlijkse archiefomzet de geschatte AI-kosten van de
+gratis gebruikers dekt (~€ 0,95 per gratis gebruiker per maand, zie
+`docs/PORT_VAN_BILLING_TAK.md` §4), is er iets te verdelen. Tot die dag blijft Plus
+€ 12,99 en is dat geen koppigheid maar boekhouden.
+
+---
+
+## 5. De tweede markt — en die is groter
 
 De vertrokken klant is de voor de hand liggende doelgroep. De interessantere is:
 
@@ -104,7 +148,7 @@ volstrekt ander verkoopgesprek dan "stap over naar onze software".
 
 ---
 
-## 5. De derde vorm: de kantoorkluis
+## 6. De derde vorm: de kantoorkluis
 
 Een boekhouder met zestig klanten heeft zestig keer hetzelfde probleem, en heeft het
 *beroepsmatig*: hij wordt aangesproken als een dossier onvindbaar is.
@@ -119,7 +163,7 @@ kantoorkluis is een *extra dienst*, nooit een beperking van wat al gratis is.
 
 ---
 
-## 6. Wat er in de weg staat — de vier eerlijke bezwaren
+## 7. Wat er in de weg staat — de vier eerlijke bezwaren
 
 **"Wie vertrouwt een bedrijf van één jaar met zeven jaar archief?"**
 Niemand, en terecht. Daarom zijn de waarborgen geen marketing maar clausules: vooruit
@@ -144,24 +188,30 @@ denken dat er al inkomsten zijn.
 
 ---
 
-## 7. Wat er staat en wat er nog moet
+## 8. Wat er staat en wat er nog moet
 
 **Staat er al:**
 `src/lib/bewaarkluis.ts` (rekenkern, 14 tests) · `compliance-vault.ts` +
 `/dashboard/kluis` + `/api/kluis/export` (het archief zelf) · `retention-purge.ts` + de
 cron (verwijdering ná de termijn, als dry run) · voorwaarden §5.7 en §10.3 ·
-`createKluisCheckoutSession()` in `billing.ts` · de pitch op `/prijzen`.
+`createKluisCheckoutSession()` in `billing.ts` · `/api/kluis/offerte` (GET de offerte uit
+het eigen jongste boekjaar, POST de checkout — het bedrag wordt op de server berekend, nooit
+uit de body gelezen) · de offertekaart in `/dashboard/kluis` · de pitch op `/prijzen` · de
+publieke voordeur `/bewaarplicht`.
 
 **Moet nog:**
 
 1. Een Stripe-prijs voor één bewaarjaar (`STRIPE_PRICE_ID_KLUIS_YEAR`).
-2. Een route die de offerte maakt uit het jongste boekjaar van het account en de checkout
-   start; nu bestaat alleen de bouwsteen.
-3. `kluis_subscriptions` — wie tot wanneer betaald heeft, zodat de purge weet wie hij
+2. `kluis_subscriptions` — wie tot wanneer betaald heeft, zodat de purge weet wie hij
    *niet* mag aanraken. **Dit is de enige harde koppeling: zonder die tabel mag
-   `RETENTION_PURGE_ENABLED` nooit op `true`.**
-4. De jaarlijkse leesbaarheidscontrole die `KLUIS_WEL` belooft.
-5. Het inleverpunt voor de tweede markt (upload van een oud archief zonder verder gebruik).
+   `RETENTION_PURGE_ENABLED` nooit op `true`.** De webhook moet die tabel vullen op
+   `checkout.session.completed` met `metadata.product === 'bewaarkluis'`.
+3. Een onboarding waarin "ik kom alleen mijn archief brengen" een echte keuze is. De knop op
+   `/bewaarplicht` stuurt nu naar `/register?doel=archief`, maar die parameter doet nog
+   niets: de nieuwe gebruiker loopt de gewone onboarding in. Dat is de grootste wrijving in
+   de hele voordeur en het eerstvolgende wat aandacht verdient.
+4. Een massale upload (een ZIP of een map ineens) voor wie zeven jaar in één keer binnenbrengt.
+5. De jaarlijkse leesbaarheidscontrole die `KLUIS_WEL` belooft.
 
 ---
 

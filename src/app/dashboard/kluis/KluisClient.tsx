@@ -9,6 +9,7 @@
 import { useState } from 'react'
 import type { YearSummary } from '@/lib/compliance-vault'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+import BewaarkluisCard from './BewaarkluisCard'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -34,6 +35,11 @@ export default function KluisClient({ summaries, currentYear }: { summaries: Yea
             {summaries.map((s) => <YearCard key={s.year} s={s} currentYear={currentYear} />)}
           </div>
         )}
+
+        {/* [KLUIS] De Bewaarkluis staat ONDER het archief, nooit erboven: eerst ziet de
+            gebruiker zijn eigen stukken, dan pas wat het kost om ze na een opzegging te
+            laten staan. Andersom leest het als een dreigement. */}
+        <BewaarkluisCard />
       </div>
     </div>
   )
