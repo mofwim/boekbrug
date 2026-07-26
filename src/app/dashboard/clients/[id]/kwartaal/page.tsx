@@ -12,6 +12,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import { rowMatchesQuery } from '@/lib/search'
 
 // ─────────────────────────────────────────────────────────
 // Types & constants
@@ -115,6 +116,7 @@ export default function KwartaalPage() {
   // exact endpoints the Brug KwartaalPanel already uses. One client, one truth.
   const [recon, setRecon] = useState<{ omzet: number; kosten: number; saldo: number } | null>(null)
   const [sortAsc, setSortAsc] = useState(false)
+  const [search, setSearch] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   // [COHERENCE-CLOSING] Generate the closing package right where the accountant finishes
@@ -239,6 +241,14 @@ export default function KwartaalPage() {
     const db = new Date(b.marked_paid_at ?? b.invoice_date).getTime()
     return sortAsc ? da - db : db - da
   })
+
+  // [SMART-FILTER] In-page live filter over the quarter's invoices (factuurnummer /
+  // klant / bedrag), via the shared decimal-aware matcher. Filters within the fixed
+  // status sections below — no navigation.
+  const rawKw = search.trim()
+  const shown = rawKw
+    ? sorted.filter((inv) => rowMatchesQuery(rawKw, [inv.invoice_number, inv.client_name], [getAmount(inv)]))
+    : sorted
 
   // [TRUST-ACCOUNTANT] The invoices-only client-side totals were removed — the quarter
   // tiles now use the reconciled /api/result + /api/aangifte figures (see `recon`), so
@@ -415,15 +425,35 @@ export default function KwartaalPage() {
             </h2>
           </div>
 
+          {sorted.length > 0 && (
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', position: 'relative' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 28, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Zoek op factuurnummer, klant of bedrag…"
+                aria-label="Facturen zoeken"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '9px 34px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 14, outline: 'none', color: '#202124', fontFamily: "'Roboto', sans-serif" }}
+              />
+              {search && (
+                <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+              )}
+            </div>
+          )}
+
           {sorted.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '48px 0' }}>
               Geen facturen in Q{q} {year}
+            </p>
+          ) : shown.length === 0 ? (
+            <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '48px 0' }}>
+              Geen facturen gevonden voor &ldquo;{rawKw}&rdquo;
             </p>
           ) : (
             <div style={{ borderTop: '1px solid #E0E0E0' }}>
               {/* [BRIDGE-A] Accounting sections — empty sections hidden */}
               {SECTIONS.map(section => {
-                const rows = sorted.filter(section.filter)
+                const rows = shown.filter(section.filter)
                 if (rows.length === 0) return null
                 return (
                   <div key={section.key}>

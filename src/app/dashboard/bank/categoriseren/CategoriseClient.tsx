@@ -264,9 +264,18 @@ export default function CategoriseClient() {
             )}
 
             {mode === 'review' && (
-              <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
-                Tik op een categorie om die te wijzigen en bevestig. Wat de app zelf invulde staat bovenaan.
-              </p>
+              <>
+                <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 14px' }}>
+                  Tik op een categorie om die te wijzigen en bevestig. Wat de app zelf invulde staat bovenaan.
+                </p>
+                {/* [HONEST-TRUNCATION] A >200 review page must say so — never let a
+                    search that misses the loaded page read as "niets gevonden". */}
+                {hasMore && (
+                  <div style={{ fontSize: 13, color: M3.neutral, margin: '0 0 14px' }}>
+                    <strong style={{ color: M3.onSurface }}>{totalRemaining}</strong> ingevulde transacties · we tonen de eerste {items.length}
+                  </div>
+                )}
+              </>
             )}
 
             {/* [SMART-FILTER] live filter over the loaded transactions */}
