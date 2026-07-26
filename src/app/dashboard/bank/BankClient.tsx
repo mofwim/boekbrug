@@ -892,37 +892,63 @@ export default function BankClient() {
   // [SEARCH] In-page live filter — works on EVERY bank tab now (not only "Geen factuur"):
   // searches counterpart / omschrijving / IBAN / reference / date / amount, accent-folded.
   const fold = (x: string) => x.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+  // Extracted so the same predicate can be reused to auto-select the tab a ?find= hit lives in.
+  const matchesFilter = (s: Suggestion, raw: string): boolean => {
+    const q = fold(raw)
+    // Amount: only when the query is AMOUNT-LIKE (digits/separators/€ only) — a
+    // text query that merely contains a digit ("factuur 2") must NOT trigger it.
+    // Exact value ("1.500,00" / "45,50"), plus a whole-euro match ("15" → €15,xx)
+    // ONLY when no decimal was typed (so "1,5" means €1,50, not also €15,xx).
+    const amountLike = raw.length > 0 && !/[^\d.,\s€-]/.test(raw)
+    const qDigits = raw.replace(/[^\d]/g, '')
+    const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
+    // "whole euro" = the parsed value is an integer ("15","1.500","1.500,00"),
+    // NOT that the raw string lacks separators — a NL thousands-dot ("1.500")
+    // is still a whole number and must keep the whole-euro match.
+    const isWhole = Number.isInteger(qNum)
+    const an = Math.abs(s.amount)
+    const amountMatch =
+      amountLike && qDigits.length > 0 &&
+      ((Number.isFinite(qNum) && qNum > 0 && Math.abs(an - qNum) < 0.005) ||
+        (isWhole && String(Math.trunc(an)) === qDigits))
+    return (
+      fold(s.counterpart ?? '').includes(q) ||
+      fold(s.description ?? '').includes(q) ||
+      fold(s.iban ?? '').includes(q) ||
+      fold(s.reference ?? '').includes(q) ||
+      (s.date ?? '').toLowerCase().includes(raw.toLowerCase()) ||
+      amountMatch
+    )
+  }
   const activeList =
     filterText.trim()
-      ? activeListRaw.filter((s) => {
-          const raw = filterText.trim()
-          const q = fold(raw)
-          // Amount: only when the query is AMOUNT-LIKE (digits/separators/€ only) — a
-          // text query that merely contains a digit ("factuur 2") must NOT trigger it.
-          // Exact value ("1.500,00" / "45,50"), plus a whole-euro match ("15" → €15,xx)
-          // ONLY when no decimal was typed (so "1,5" means €1,50, not also €15,xx).
-          const amountLike = raw.length > 0 && !/[^\d.,\s€-]/.test(raw)
-          const qDigits = raw.replace(/[^\d]/g, '')
-          const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
-          // "whole euro" = the parsed value is an integer ("15","1.500","1.500,00"),
-          // NOT that the raw string lacks separators — a NL thousands-dot ("1.500")
-          // is still a whole number and must keep the whole-euro match.
-          const isWhole = Number.isInteger(qNum)
-          const an = Math.abs(s.amount)
-          const amountMatch =
-            amountLike && qDigits.length > 0 &&
-            ((Number.isFinite(qNum) && qNum > 0 && Math.abs(an - qNum) < 0.005) ||
-              (isWhole && String(Math.trunc(an)) === qDigits))
-          return (
-            fold(s.counterpart ?? '').includes(q) ||
-            fold(s.description ?? '').includes(q) ||
-            fold(s.iban ?? '').includes(q) ||
-            fold(s.reference ?? '').includes(q) ||
-            (s.date ?? '').toLowerCase().includes(raw.toLowerCase()) ||
-            amountMatch
-          )
-        })
+      ? activeListRaw.filter((s) => matchesFilter(s, filterText.trim()))
       : activeListRaw
+
+  // [SEARCH-DEEPLINK] A ?find= hit (from the global Cmd+K search) can live in ANY tab, but
+  // the page opens on 'confirm'. Without this, seeding the filter would filter the DEFAULT
+  // tab — showing an empty list when the line is actually a matched/ignored/none one. Once,
+  // after the suggestions load, jump to the first tab that actually contains the hit. One-shot
+  // (findJumpedRef) so it never fights the owner's later manual tab clicks or typing.
+  const findJumpedRef = useRef(false)
+  useEffect(() => {
+    if (findJumpedRef.current) return
+    const raw = findParam.trim()
+    if (!raw || !data) return
+    const order: Array<['confirm' | 'none' | 'pin' | 'ignored' | 'done', Suggestion[]]> = [
+      ['confirm', toConfirm], ['none', noMatch], ['pin', posList], ['done', confirmedList], ['ignored', ignoredInQ],
+    ]
+    const here = order.find(([k]) => k === bankTab)
+    if (here && here[1].some((s) => matchesFilter(s, raw))) { findJumpedRef.current = true; return }
+    const target = order.find(([, list]) => list.some((s) => matchesFilter(s, raw)))
+    if (!target) return
+    // Defer the tab switch out of the effect body (setState-in-effect) — same setTimeout(0)
+    // pattern the ?find= seed effects use. One-shot: mark jumped so it never re-fires.
+    findJumpedRef.current = true
+    const t = setTimeout(() => setBankTab(target[0]), 0)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findParam, data, bankTab, toConfirm, noMatch, posList, confirmedList, ignoredInQ])
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
