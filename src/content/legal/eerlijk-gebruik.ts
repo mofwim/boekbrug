@@ -11,6 +11,11 @@ import {
   fairUseTableMarkdown,
   PLUS_PRICE_EUR,
 } from "@/lib/fair-use";
+import {
+  BEWAARPLICHT_YEARS,
+  KLUIS_DELETE_NOTICE_DAYS,
+  KLUIS_GRACE_MONTHS,
+} from "@/lib/bewaarkluis";
 import { fillCompanyIdentity } from "./company";
 
 const prijs = PLUS_PRICE_EUR.toFixed(2).replace(".", ",");
@@ -94,9 +99,16 @@ opzegbaar).
 ${altijdGratis}
 
 Dit is de belangrijkste regel van dit hele beleid: **een grens raakt nooit je toegang tot je
-eigen administratie.** Je gegevens zijn van jou. Ook als je nooit een cent betaalt, ook als
-je jaren boven de grens zit, ook nadat je opzegt: inzien, doorzoeken en exporteren blijven
-werken.
+eigen administratie.** Je gegevens zijn van jou. Ook als je nooit een cent betaalt en ook
+als je jaren boven de grens zit: inzien, doorzoeken en exporteren blijven werken.
+
+**En als je stopt?** Dan bewaren wij je administratie nog **${KLUIS_GRACE_MONTHS} maanden
+kosteloos**, en blijft exporteren in die hele periode werken. Vóór wij daarna iets
+verwijderen krijg je **minstens ${KLUIS_DELETE_NOTICE_DAYS} dagen van tevoren** een e-mail,
+met de gelegenheid alsnog alles te downloaden. Wil je dat je stukken langer online blijven
+staan omdat je fiscale bewaarplicht van ${BEWAARPLICHT_YEARS} jaar doorloopt, dan is daar de
+[Bewaarkluis](/prijzen) voor — een aparte, optionele dienst. Zonder die dienst verlies je
+niets, zolang je binnen die ${KLUIS_GRACE_MONTHS} maanden je export veiligstelt.
 
 ---
 

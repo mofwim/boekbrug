@@ -1,9 +1,10 @@
 // [KLUIS] Pure node test — run: npx tsx --test src/lib/bewaarkluis.test.ts
 //
-// Elke test hieronder komt overeen met een zin die wij publiek zeggen op /kluis of in de
+// Elke test hieronder komt overeen met een zin die wij publiek zeggen op /prijzen of in de
 // Algemene Voorwaarden §5.7. Gaat er één stuk, dan klopt onze verkooptekst niet meer.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   BEWAARPLICHT_YEARS,
@@ -129,4 +130,59 @@ test("bedragen staan er Nederlands op", () => {
   assert.equal(eur(19), "€ 19");
   assert.equal(eur(133), "€ 133");
   assert.equal(eur(12.99), "€ 12,99");
+});
+
+// ── De gepubliceerde tekst moet kloppen met de code ───────────────────────────
+//
+// De bedragen van de Bewaarkluis staan in de bindende Algemene Voorwaarden §5.7. Die tekst
+// is een lange string en kan dus niet uit deze module worden opgebouwd zoals de tabel op
+// /eerlijk-gebruik dat wel doet. Daarom deze controle: verandert er hier een bedrag of een
+// termijn, dan valt de test om zolang §5.7 niet is meeveranderd.
+//
+// Dit is geen formaliteit. Precies dit verschil — een prijs in de code die niet meer gelijk
+// is aan de prijs in de voorwaarden die de klant bij het afrekenen moet accepteren — is het
+// gat waar de klant gelijk in krijgt, want onduidelijkheid in je eigen algemene voorwaarden
+// wordt tegen jou uitgelegd.
+
+test("de Algemene Voorwaarden §5.7 noemen dezelfde bedragen en termijnen als deze module", () => {
+  const av = readFileSync("src/content/legal/algemene-voorwaarden.ts", "utf8");
+
+  assert.ok(av.includes("5.7 Bewaarkluis"), "§5.7 ontbreekt in de voorwaarden");
+  assert.ok(
+    av.includes(`€ ${KLUIS_PREPAY_YEAR_PRICE_EUR} per resterend bewaarjaar`),
+    "het vooruitbetaaltarief in §5.7 wijkt af van KLUIS_PREPAY_YEAR_PRICE_EUR",
+  );
+  assert.ok(
+    av.includes(`€ ${KLUIS_YEAR_PRICE_EUR} per jaar`),
+    "het jaartarief in §5.7 wijkt af van KLUIS_YEAR_PRICE_EUR",
+  );
+  assert.ok(
+    av.includes(`**${KLUIS_GRACE_MONTHS} maanden kosteloos**`),
+    "de gratis bewaartermijn in §5.7 wijkt af van KLUIS_GRACE_MONTHS",
+  );
+  assert.ok(
+    av.includes(`minstens ${KLUIS_DELETE_NOTICE_DAYS} dagen vooraf`),
+    "de verwijdertermijn in §5.7 wijkt af van KLUIS_DELETE_NOTICE_DAYS",
+  );
+  assert.ok(
+    av.includes(`minstens ${KLUIS_SHUTDOWN_NOTICE_DAYS} dagen vooraf`),
+    "de opzegtermijn bij eigen stop wijkt af van KLUIS_SHUTDOWN_NOTICE_DAYS",
+  );
+  assert.ok(
+    av.includes(`**${BEWAARPLICHT_YEARS} jaar**`),
+    "de bewaartermijn in §5.7 wijkt af van BEWAARPLICHT_YEARS",
+  );
+
+  // De belofte die nooit mag verdwijnen: de bewaarplicht blijft van de ondernemer.
+  assert.ok(
+    av.includes("Wij nemen jouw bewaarplicht **niet** over"),
+    "§5.7 mag nooit gaan suggereren dat wij de bewaarplicht overnemen",
+  );
+  assert.ok(av.includes("wij zijn je tweede exemplaar, nooit je enige"));
+
+  // §10.3 mag niet meer de oude, ruimere belofte doen die met §5.7 in strijd is.
+  assert.ok(
+    !av.includes("bewaren wij de financiële gegevens zodat je bewaarplicht niet in gevaar komt, en verwijderen wij ze na afloop van die termijn"),
+    "§10.3 belooft nog gratis bewaring voor de volle 7 jaar en spreekt §5.7 dus tegen",
+  );
 });

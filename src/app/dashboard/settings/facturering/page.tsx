@@ -76,7 +76,7 @@ export default async function FactureringPage({
     role: profile?.role ?? null,
     subscriptionStatus: columnsPresent ? profile?.subscription_status ?? null : null,
     currentPeriodEnd: columnsPresent ? profile?.current_period_end ?? null : null,
-    nowMs: Date.now(),
+    nowMs: readClock(),
   })
 
   const hasCustomer = Boolean(profile?.stripe_customer_id)
@@ -161,6 +161,17 @@ export default async function FactureringPage({
       </section>
     </main>
   )
+}
+
+/**
+ * De klok, één keer gelezen, buiten de render om.
+ *
+ * `Date.now()` rechtstreeks in het lichaam van (ook) een server-component wordt door de
+ * React-compiler terecht als onzuiver aangemerkt. Hier apart, zodat de renderfunctie zelf
+ * puur blijft en er precies één moment is waarop de tijd wordt vastgesteld.
+ */
+function readClock(): number {
+  return new Date().getTime()
 }
 
 function planLabel(decision: PlanDecision, profile: BillingProfile | null): string {

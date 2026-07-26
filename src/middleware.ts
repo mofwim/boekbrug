@@ -38,6 +38,10 @@ const PUBLIC_PATHS = [
   "/blog",
   "/en/blog",
   "/privacy",
+  // [BILLING] De prijzenpagina is in de eerste plaats een marketingpagina: een uitgelogde
+  // bezoeker (en een crawler) moet kunnen zien wat BoekBrug kost zonder account. Veilig
+  // tegen de startsWith()-regel hieronder: geen andere route begint met "/prijzen".
+  "/prijzen",
   "/voorwaarden",
   "/cookies",
 ];
