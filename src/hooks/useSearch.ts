@@ -22,12 +22,17 @@ interface UseSearchOptions {
   minLength?: number;
   debounceMs?: number;
   target?: SearchTarget;
+  // [SEARCH] full=true → the dedicated results page (/dashboard/zoeken): the API
+  // returns more rows per group than the header dropdown's compact preview.
+  full?: boolean;
+  // Seed the query (e.g. from a ?q= URL param on the results page).
+  initialQuery?: string;
 }
 
 export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
-  const { minLength = 2, debounceMs = 200, target = "all" } = opts;
+  const { minLength = 2, debounceMs = 200, target = "all", full = false, initialQuery = "" } = opts;
 
-  const [query, setQueryState] = useState("");
+  const [query, setQueryState] = useState(initialQuery);
   const [groups, setGroups] = useState<SearchResultGroup>(EMPTY_GROUP);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +73,7 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
     timerRef.current = setTimeout(async () => {
       try {
         const params = new URLSearchParams({ q: query, target });
+        if (full) params.set("full", "1");
         // [BOEK-012] fetch API only — never import supabase-server directly
         const res = await fetch(`/api/search?${params}`, { signal: controller.signal });
         if (!res.ok) throw new Error("Zoekopdracht mislukt");
@@ -90,7 +96,7 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
       controller.abort();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [query, minLength, debounceMs, target]);
+  }, [query, minLength, debounceMs, target, full]);
 
   const totalCount =
     groups.invoices.length + groups.documents.length + groups.clients.length +

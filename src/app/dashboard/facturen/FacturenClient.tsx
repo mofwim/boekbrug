@@ -23,6 +23,7 @@ import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+import { amountOrConditions } from '@/lib/search'
 // [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
 import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
 
@@ -287,7 +288,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       return () => clearTimeout(t0)
     }
     const esc = q.replace(/[,()%_*\\":]/g, ' ').trim()
-    if (esc.length < 1) {
+    // [SMART-FILTER] amount-aware server search: when the query is money-shaped,
+    // also match total_inc_btw (decimaal- én duizendtal-bewust). So "670,09" /
+    // "670.0" now find the invoice, not just its number/name. (src/lib/search.ts)
+    const amountOr = amountOrConditions('total_inc_btw', q)
+    // Only add the text ILIKE parts when esc has real content — an empty esc would
+    // build `ilike.%%` (match-all). If there is nothing to match on, bail before the DB.
+    const textOr = esc.length >= 1 ? [`invoice_number.ilike.%${esc}%`, `client_name.ilike.%${esc}%`] : []
+    const orParts = [...textOr, ...amountOr]
+    if (orParts.length === 0) {
       const t0 = setTimeout(() => { setSearchResults([]); setSearchLoading(false) }, 0)
       return () => clearTimeout(t0)
     }
@@ -301,7 +310,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
         .eq('sender_id', profile.id)
         .neq('status', 'archived')
-        .or(`invoice_number.ilike.%${esc}%,client_name.ilike.%${esc}%`)
+        .or(orParts.join(','))
         .order('created_at', { ascending: false })
         .limit(50)
       if (!active) return

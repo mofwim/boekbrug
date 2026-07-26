@@ -34,6 +34,7 @@ import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-bet
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
 import { openAmount, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
+import { rowMatchesQuery } from '@/lib/search'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 
@@ -308,19 +309,14 @@ export default function IncomingManageClient({
 
   // [SEARCH] In-page live filter (leverancier / factuurnummer / bedrag), on top of the
   // status tabs — in place, no navigation.
-  const mFold = (x: string) => (x ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
   const rawS = search.trim()
-  const sq = mFold(rawS)
-  const sDigits = rawS.replace(/[^\d]/g, '')
-  const sAmountLike = sDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawS)
   const displayed = sortRows(
     invoices.filter(inv => {
       const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
       if (!tabOk) return false
-      if (!rawS) return true
-      return mFold(inv.client_name ?? '').includes(sq)
-        || mFold(inv.invoice_number ?? '').includes(sq)
-        || (sAmountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === sDigits)
+      // [SMART-FILTER] shared matcher — leverancier / factuurnummer / bedrag
+      // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
+      return rowMatchesQuery(rawS, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
     }),
     sortBy,
   )
