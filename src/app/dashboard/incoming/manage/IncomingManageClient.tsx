@@ -36,6 +36,8 @@ import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-bet
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
 import { openAmount, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
+import { overdueDays } from '@/lib/overdue'
 import { rowMatchesQuery } from '@/lib/search'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
@@ -71,8 +73,18 @@ const CHIP: Record<string, { bg: string; color: string; label: string }> = {
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short' })
+const NL_DATE_Y = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 const fmtEur  = (n: number | null) => NL_EUR.format(n ?? 0)
 const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
+// [DATE-VISIBLE] The row date, with the YEAR only when it isn't this year. "12 mrt" is fine for a
+// recent bill and ambiguous on a two-year-old one; printing 2026 on every row is noise. Guards an
+// unparseable date too — Intl.format THROWS on an Invalid Date, which would blank the whole list.
+const fmtDateSmart = (s: string | null) => {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.getFullYear() === new Date().getFullYear() ? NL_DATE.format(d) : NL_DATE_Y.format(d)
+}
 // [BOEK-029] btw_rate does not exist in DB — always compute
 const calcBtw = (btw: number | null, ex: number | null) =>
   ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : 21
@@ -367,6 +379,15 @@ export default function IncomingManageClient({
   // 1000-cap is unreachable by design — plus the 200 most recent paid ones), so on a long history
   // these are the counts of THIS LIST. totalCount says what the owner really has, and the note
   // below the counter names the difference instead of passing 200 off as "everything".
+  // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
+  // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
+  // clock itself). Local date, not toISOString(): near midnight UTC those are different days, and
+  // "te laat" must follow the owner's calendar, not UTC's.
+  const todayIso = (() => {
+    const n = new Date()
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
+  })()
+
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
   const listedCount   = invoices.length
@@ -911,6 +932,10 @@ export default function IncomingManageClient({
               // [CROSS-QUARTER] Paid in a different quarter than booked → marker (accrual
               // unchanged). null for same-quarter / unpaid / undated.
               const xq = isPaid ? crossQuarterPayment(inv.invoice_date, inv.payment_date) : null
+              // [OVER-DATUM] Whole days past the stated vervaldatum — null when the bill is paid
+              // (a settled invoice cannot be late), when it isn't due yet, or when the invoice
+              // never stated a due date at all. `todayIso` is computed once per render below.
+              const daysLate = isPaid ? null : overdueDays(inv.due_date, todayIso)
 
               return (
                 <div
@@ -993,9 +1018,30 @@ export default function IncomingManageClient({
                           </span>
                         )}
                       </div>
-                      <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {inv.client_name ?? '—'} · {fmtDate(inv.invoice_date)}
-                      </p>
+                      {/* ── [DATE-VISIBLE] Leverancier · factuurdatum ─────────────────────────
+                          This used to be ONE text node with an ellipsis, so a long supplier name
+                          ate the date completely — the date was in the markup and invisible on
+                          exactly the rows with the longest names. Now the name is the only thing
+                          that shrinks (flex + ellipsis) and the date is flexShrink:0, so it
+                          survives every name length. Same one line, no extra clutter. */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#5F6368', minWidth: 0 }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                          {inv.client_name ?? '—'}
+                        </span>
+                        <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>· {fmtDateSmart(inv.invoice_date)}</span>
+                        {/* [OVER-DATUM] Only on an unpaid bill, and only when the invoice actually
+                            STATED a due date (printed vervaldatum, or invoice date + printed term —
+                            see lib/overdue.ts). No due date ⇒ no claim: inventing the customary 30
+                            days would put a deadline on the row that the supplier never set. */}
+                        {daysLate !== null && (
+                          <span
+                            title={`Vervaldatum ${fmtDateSmart(inv.due_date)} — ${daysLate} ${daysLate === 1 ? 'dag' : 'dagen'} te laat`}
+                            style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px', background: M3.errorContainer, color: M3.error }}
+                          >
+                            {daysLate} {daysLate === 1 ? 'dag' : 'dagen'} te laat
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
@@ -1089,6 +1135,12 @@ export default function IncomingManageClient({
                     <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 16 }}>
                         <InfoLine label="Leverancier" value={inv.client_name} />
+                        {/* [DATE-VISIBLE] The full dates live HERE, where there is room for them —
+                            the collapsed row keeps only the short factuurdatum. Vervaldatum is shown
+                            only when the invoice stated one; a missing due date is left out rather
+                            than printed as "—", which would read like a field we failed to fill. */}
+                        <InfoLine label="Factuurdatum" value={fmtDateSmart(inv.invoice_date)} />
+                        {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDateSmart(inv.due_date)} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
                         <InfoLine label={`BTW (${calcBtw(btwAmount, totalExBtw)}%)`} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />

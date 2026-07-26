@@ -223,8 +223,11 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
                 onClick={() => router.push('/dashboard/facturen')} />
               <AdminTile icon="mark_email_unread" tint="#0288D1" label="Inkomend" badge={pendingCount}
                 onClick={() => router.push('/dashboard/incoming')} />
+              {/* [NAV-FROM] ?from=home so Terug on Inkoopfacturen returns HERE. Without it the
+                  canonical parent is /dashboard/incoming — a verification list this visitor never
+                  passed through, since this tile jumps straight to the manage surface. */}
               <AdminTile icon="request_quote" tint="#E37400" label="Inkoopfacturen"
-                onClick={() => router.push('/dashboard/incoming/manage')} />
+                onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
               <AdminTile icon="account_balance" tint="#1A73E8" label="Bank"
                 onClick={() => router.push('/dashboard/bank')} />
               <AdminTile icon="payments" tint="#00897B" label="Kas"

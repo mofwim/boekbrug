@@ -172,8 +172,10 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   // mark-as-paid dialog (?action=pay), so the owner lands directly on Bank/Contant
   // + date. The write itself still happens only in IncomingManageClient (one
   // source of truth) — Vandaag merely passes the intent via the URL.
+  // [NAV-FROM] &from=vandaag so Terug on the manage surface returns to Vandaag, not to the
+  // verification list this visitor never opened.
   const confirmPaid = (id: string) =>
-    router.push(`/dashboard/incoming/manage?focus=${id}&action=pay`);
+    router.push(`/dashboard/incoming/manage?focus=${id}&action=pay&from=vandaag`);
 
   // [SORT] Owner-chosen order, applied inside each list.
   const [sortBy, setSortBy] = useState<SortKey>("due_asc");
@@ -258,7 +260,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
           the owner still owes can never be silently forgotten behind an empty "all clear". */}
       {!loadFailed && datelessPayableCount > 0 && (
         <button
-          onClick={() => router.push("/dashboard/incoming/manage")}
+          onClick={() => router.push("/dashboard/incoming/manage?from=vandaag")}
           style={{
             width: "100%", textAlign: "left", cursor: "pointer",
             display: "flex", alignItems: "center", gap: 12,
