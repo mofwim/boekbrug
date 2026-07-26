@@ -1629,7 +1629,13 @@ function TxCard({
   // the "X/Y bevestigd" progress banner tells the story from there.
   const batch = wasMulti
     ? reconcileBatch(
-        slots.map((sl) => ({ refNum: sl.refNum, amount: sl.cand?.amount ?? null, isConfirmed: sl.isConfirmed })),
+        // [PARTIAL-PAY] Reconcile on what each invoice still has OPEN, not its full total: that
+        // is what the bank line moved, and it is exactly what the app's own gebundeld
+        // betaalverzoek asked the customer for. Summing totals told the owner "de bedragen
+        // kloppen niet" about a payment that was precisely right. `remaining` is absent on
+        // candidates built outside matchTransactions → fall back to the total (open == total
+        // for a fully open invoice anyway).
+        slots.map((sl) => ({ refNum: sl.refNum, amount: sl.cand?.remaining ?? sl.cand?.amount ?? null, isConfirmed: sl.isConfirmed })),
         s.amount,
       )
     : null

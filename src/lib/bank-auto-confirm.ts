@@ -97,6 +97,9 @@ export async function runBankAutoConfirm(args: {
   const invoices = allInvoices.filter((i) => Math.max(0, Number(i.amount_paid ?? 0)) === 0);
   if (invoices.length === 0) return [];
   const invById = new Map(invoices.map((i) => [i.id, i]));
+  // [PARTIAL-PAY] The BATCH pass may legitimately settle a partly-paid invoice (see its comment),
+  // so it needs an index over every candidate, not just the fully-open 1:1 pool.
+  const allById = new Map(allInvoices.map((i) => [i.id, i]));
   const result = matchTransactions(transactions, invoices);
   // [BANK-AMOUNT-ONLY] Book BOTH auto tiers. 'certain' (printed number / IBAN + amount) is booked
   // silently; 'amount_only' (exact amount + matching counterpart name, single clear winner) is
@@ -233,11 +236,22 @@ export async function runBankAutoConfirm(args: {
     if (!txId || row.status !== "pending" || row.invoice_id || bookedTxIds.has(txId)) continue;
 
     // Candidates exclude anything already booked this run, so two batches can't claim one invoice.
-    const candidates = invoices.filter((i) => !bookedInvoiceIds.has(i.id)) as BatchCandidateInvoice[];
+    // [PARTIAL-PAY] The batch pass draws from allInvoices, NOT the 1:1 pool: that pool drops every
+    // invoice with amount_paid > 0 because a lone payment against a half-paid invoice is genuinely
+    // ambiguous (the restant? a coincidental same-amount line?). A batch carries far stronger
+    // evidence — ≥2 referenced numbers, each resolving to exactly one invoice, one supplier, and
+    // the sum of the OPEN amounts equal to the cent — so that ambiguity does not exist here.
+    // Excluding partials made the app unable to auto-book the very payment it generates: a
+    // gebundeld betaalverzoek asks for the sum of the open amounts, so one prior instalment on any
+    // invoice in the bundle silently disabled automatic reconciliation for the whole payment.
+    // book_bank_batch settles each invoice fully and records amount_applied = its open balance.
+    const candidates = allInvoices.filter((i) => !bookedInvoiceIds.has(i.id)) as BatchCandidateInvoice[];
     const plan = planBatchAutoConfirm({ reference: row.reference ?? null, bankAmount: row.amount ?? null, invoices: candidates });
     if (!plan) continue;
 
-    const planInvs = plan.invoiceIds.map((id) => invById.get(id)).filter((x): x is InvoiceForMatching => !!x);
+    // Resolve against ALL invoices — invById only indexes the fully-open 1:1 pool, so a batch
+    // containing a partly-paid invoice would otherwise lose it here and be skipped silently.
+    const planInvs = plan.invoiceIds.map((id) => allById.get(id)).filter((x): x is InvoiceForMatching => !!x);
     if (planInvs.length !== plan.invoiceIds.length) continue;
     const tx = rowToTransaction(row);
     if (!planInvs.every((inv) => isEligible(tx, inv))) continue; // accountant-'verwerkt' + invariants

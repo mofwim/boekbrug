@@ -48,11 +48,37 @@ export function countResolvedReferences(
 
 export interface BatchSlotInput {
   refNum: string;
-  /** The matched invoice's gross total (total_inc_btw), or null when no invoice with
-   *  this number is in the system yet (the slot shows "Koppelen"). */
+  /**
+   * What this payment can still SETTLE on the matched invoice: its gross total minus what
+   * earlier instalments already covered ([PARTIAL-PAY] amount_paid), sign preserved. Null when
+   * no invoice with this number is in the system yet (the slot shows "Koppelen").
+   *
+   * It is the OPEN amount, not the total, because that is what actually leaves the bank. The
+   * app's own gebundeld betaalverzoek asks the customer for exactly the sum of the open amounts
+   * (buildBundelBetaalverzoek), so summing TOTALS here would call the app's own, perfectly
+   * correct payment a mismatch as soon as one invoice in the bundle had a prior instalment.
+   * For a fully open invoice open == total, so the classic wholesale batch is unchanged.
+   */
   amount: number | null;
   /** Already paid/confirmed against this transaction. */
   isConfirmed: boolean;
+}
+
+/**
+ * The still-settleable amount of an invoice: its magnitude minus what is already paid, carrying
+ * the invoice's own sign (a creditnota stays negative so it REDUCES a batch sum — see
+ * [BATCH-SIGN] in reconcileBatch). Returns null when the total is unusable, so a corrupt value
+ * can never silently pass as a slot amount.
+ */
+export function settleableAmount(
+  totalIncBtw: number | null | undefined,
+  amountPaid?: number | null,
+): number | null {
+  if (totalIncBtw == null || !Number.isFinite(totalIncBtw)) return null;
+  const paid = Math.max(0, Number(amountPaid ?? 0));
+  const open = Math.max(0, Math.abs(totalIncBtw) - paid);
+  const signed = totalIncBtw < 0 ? -open : open;
+  return Math.round(signed * 100) / 100;
 }
 
 export type BatchStatus =
@@ -144,6 +170,10 @@ export interface BatchCandidateInvoice {
   id: string;
   invoice_number: string | null;
   total_inc_btw: number | null;
+  /** [PARTIAL-PAY] Already settled by earlier instalments. Absent/0 = fully open. The batch
+   *  ties on what is STILL OPEN, so a bundle whose customer was asked for the open sum
+   *  reconciles against exactly what the bank shows. */
+  amount_paid?: number | null;
   client_name: string | null;
   direction: "incoming" | "outgoing" | null;
   status: string | null; // 'paid' invoices are excluded as candidates
@@ -192,6 +222,10 @@ export function planBatchAutoConfirm(args: {
     // MAGNITUDE, so a credit could satisfy a tie for the wrong (magnitude) amount. A net-of-credit
     // batch is genuinely ambiguous — leave it for the human. (≤ 0 covers creditnota + any junk.)
     if (inv.total_inc_btw <= 0) return null;
+    // [PARTIAL-PAY] Nothing left to settle → this invoice cannot be part of what the bank paid.
+    // Booking it would settle it for €0 and let the rest of the batch tie on a short amount.
+    const open = settleableAmount(inv.total_inc_btw, inv.amount_paid);
+    if (open == null || open <= 0) return null;
     if (usedIds.has(inv.id)) return null; // the same invoice can't satisfy two references
     usedIds.add(inv.id);
     picked.push(inv);
@@ -203,9 +237,10 @@ export function planBatchAutoConfirm(args: {
   suppliers.delete("");
   if (suppliers.size > 1) return null;
 
+  // Tie on what is still OPEN per invoice — that is the money the bank line actually moved.
   const slots: BatchSlotInput[] = picked.map((p) => ({
     refNum: normalizeRef(p.invoice_number ?? ""),
-    amount: p.total_inc_btw,
+    amount: settleableAmount(p.total_inc_btw, p.amount_paid),
     isConfirmed: false,
   }));
   if (reconcileBatch(slots, bankAmount).status !== "ties") return null;
