@@ -34,14 +34,32 @@ check("past the comma, dot '670.0'", amountMatchesQuery(670.09, "670.0") === tru
 check("past the comma, comma '670,0'", amountMatchesQuery(670.09, "670,0") === true);
 check("full decimal '670,09'", amountMatchesQuery(670.09, "670,09") === true);
 check("full decimal dot '670.09'", amountMatchesQuery(670.09, "670.09") === true);
-check("no-separator digits '67009'", amountMatchesQuery(670.09, "67009") === true);
 check("no false positive '700'", amountMatchesQuery(670.09, "700") === false);
 check("no false positive '671'", amountMatchesQuery(670.09, "671") === false);
 check("integer boundary: '1000' ✗ 100.00", amountMatchesQuery(100.0, "1000") === false);
+check("whole-euro query ✗ sub-€10 cents: '670' ✗ 6.70", amountMatchesQuery(6.7, "670") === false);
 check("thousands '1500' → 1500.00", amountMatchesQuery(1500.0, "1500") === true);
 check("thousands dot '1.500' → 1500.00", amountMatchesQuery(1500.0, "1.500") === true);
 check("distinct decimal '1.500' ✗ 1.50", amountMatchesQuery(1.5, "1.500") === false);
 check("'1,50' → 1.50", amountMatchesQuery(1.5, "1,50") === true);
+// [Finding 1] amounts ≥ €1000 typed WITH the NL thousands separator, into the cents
+check("thousands+decimal '1.234' → 1234.56", amountMatchesQuery(1234.56, "1.234") === true);
+check("thousands+decimal '1.234,' → 1234.56", amountMatchesQuery(1234.56, "1.234,") === true);
+check("thousands+decimal '1.234,5' → 1234.56", amountMatchesQuery(1234.56, "1.234,5") === true);
+check("thousands+decimal '1.234,56' → 1234.56", amountMatchesQuery(1234.56, "1.234,56") === true);
+check("'12.500,5' → 12500.50", amountMatchesQuery(12500.5, "12.500,5") === true);
+check("'12500,5' == '12.500,5'", amountMatchesQuery(12500.5, "12500,5") === true);
+check("wrong cents '1.234,7' ✗ 1234.56", amountMatchesQuery(1234.56, "1.234,7") === false);
+// Mid-typing a thousands number: the DOT is ambiguous (thousands-in-progress),
+// so "3.4"/"3.43" keep matching €3.431,70 as the user types.
+check("dot-ambiguous '3.4' → 3431.70", amountMatchesQuery(3431.7, "3.4") === true);
+check("dot-ambiguous '3.43' → 3431.70", amountMatchesQuery(3431.7, "3.43") === true);
+check("dot-ambiguous '3.431' → 3431.70", amountMatchesQuery(3431.7, "3.431") === true);
+// A COMMA is unambiguously decimal — "3,4" is €3,4x and must NOT match €34 / €340 / €3.431.
+check("comma-strict '3,4' → 3.40", amountMatchesQuery(3.4, "3,4") === true);
+check("comma-strict '3,4' ✗ 34.00", amountMatchesQuery(34.0, "3,4") === false);
+check("comma-strict '3,4' ✗ 340.00", amountMatchesQuery(340.0, "3,4") === false);
+check("comma-strict '3,4' ✗ 3431.70", amountMatchesQuery(3431.7, "3,4") === false);
 check("negative (creditnota) '201'", amountMatchesQuery(-201.0, "201") === true);
 check("negative full '201,00'", amountMatchesQuery(-201.0, "201,00") === true);
 check("text query never matches amount", amountMatchesQuery(670.09, "abc") === false);
@@ -60,10 +78,14 @@ const eq = (a: string[], b: string[]) => JSON.stringify(a) === JSON.stringify(b)
 check("'670' → exact + decimals", eq(amountOrConditions("total_inc_btw", "670"), [
   "total_inc_btw::text.ilike.670", "total_inc_btw::text.ilike.670.%",
 ]));
-check("'670,0' → decimal prefix only", eq(amountOrConditions("total_inc_btw", "670,0"), [
+check("'670,0' comma → decimal prefix only", eq(amountOrConditions("total_inc_btw", "670,0"), [
   "total_inc_btw::text.ilike.670.0%",
 ]));
-check("'670.09' → exact decimal", eq(amountOrConditions("total_inc_btw", "670.09"), [
+check("'670.09' dot → decimal + thousands-ambiguous", eq(amountOrConditions("total_inc_btw", "670.09"), [
+  "total_inc_btw::text.ilike.670.09%",
+  "total_inc_btw::text.ilike.67009%",
+]));
+check("'670,09' comma → decimal only (no thousands fallback)", eq(amountOrConditions("total_inc_btw", "670,09"), [
   "total_inc_btw::text.ilike.670.09%",
 ]));
 check("'1.500' thousands → integer forms", eq(amountOrConditions("total_inc_btw", "1.500"), [

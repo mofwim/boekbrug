@@ -58,13 +58,55 @@ export function isAmountQuery(rawQuery: string): boolean {
 }
 
 /**
- * Match a stored numeric amount against what the user is typing, the way a
- * human reads the amount left-to-right. Decimal-aware AND thousands-aware:
+ * Split a money-shaped query into its euro (integer) and cent (decimal) digit
+ * runs, applying the NL convention so thousands separators never leak into the
+ * value. The single source of truth for BOTH the client matcher and the server
+ * OR-builder, so they agree on every input.
  *
- *   670.09  ← "670"  "670,"  "670.0"  "670,0"  "670,09"  "670.09"  "67009"
- *   1500.00 ← "1500" "1.500"
- *   670.09  ✗ "700"   (not a prefix — no false positive)
- *   100.00  ✗ "1000"  (integer part "100" is not prefixed by "1000")
+ * NL convention: the LAST separator followed by exactly 1–2 digits is the
+ * decimal comma; any other dot (before 3 digits) is a thousands separator.
+ *
+ *   "670"      → { intDigits: "670",  decDigits: "",  hasDecimalSep: false }
+ *   "670,"     → { intDigits: "670",  decDigits: "",  hasDecimalSep: false }
+ *   "670,0"    → { intDigits: "670",  decDigits: "0", hasDecimalSep: true  }
+ *   "1.234,5"  → { intDigits: "1234", decDigits: "5", hasDecimalSep: true  }
+ *   "1.500"    → { intDigits: "1500", decDigits: "",  hasDecimalSep: false }
+ *
+ * Returns null when the query is not money-shaped (letters, empty, no digits).
+ */
+export function amountQueryParts(
+  rawQuery: string
+): { intDigits: string; decDigits: string; hasDecimalSep: boolean; decimalSepIsComma: boolean } | null {
+  const raw = rawQuery.trim().replace(/[\s€]/g, "");
+  if (!raw || !/^[\d.,-]+$/.test(raw) || !/\d/.test(raw)) return null;
+
+  const lastSep = Math.max(raw.lastIndexOf("."), raw.lastIndexOf(","));
+  if (lastSep >= 0) {
+    const after = raw.slice(lastSep + 1);
+    if (/^\d{1,2}$/.test(after)) {
+      // decimal separator (1–2 trailing digits)
+      return {
+        intDigits: raw.slice(0, lastSep).replace(/\D/g, ""),
+        decDigits: after,
+        hasDecimalSep: true,
+        decimalSepIsComma: raw[lastSep] === ",",
+      };
+    }
+  }
+  // no decimal: everything is the integer part (thousands separators dropped)
+  return { intDigits: raw.replace(/\D/g, ""), decDigits: "", hasDecimalSep: false, decimalSepIsComma: false };
+}
+
+/**
+ * Match a stored numeric amount against what the user is typing, the way a
+ * human reads the amount left-to-right. Decimal- AND thousands-aware:
+ *
+ *   670.09    ← "670"  "670,"  "670.0"  "670,0"  "670,09"  "670.09"
+ *   1234.56   ← "1.234"  "1.234,5"  "1.234,56"   (NL thousands dot handled)
+ *   1500.00   ← "1500"  "1.500"
+ *   670.09    ✗ "700"    (not a prefix — no false positive)
+ *   100.00    ✗ "1000"   (integer part "100" is not prefixed by "1000")
+ *   6.70      ✗ "670"    (whole-euro query never matches a sub-€10 cents amount)
  *
  * Only fires for amount-like queries (see isAmountQuery); text queries never
  * reach here, so a client name that contains digits still matches as text.
@@ -73,71 +115,58 @@ export function amountMatchesQuery(
   amount: number | null | undefined,
   rawQuery: string
 ): boolean {
-  if (!isAmountQuery(rawQuery)) return false;
+  const parts = amountQueryParts(rawQuery);
+  if (!parts || !parts.intDigits) return false;
   if (amount == null) return false; // no amount → nothing to match (don't fold null→0)
   const amt = Math.abs(Number(amount));
   if (!Number.isFinite(amt)) return false;
 
-  const raw = rawQuery.trim();
-  const digits = raw.replace(/[^\d]/g, "");
-  const target = amt.toFixed(2);                    // "670.09"
-  const targetInt = target.slice(0, -3);            // "670"
+  const target = amt.toFixed(2);         // "670.09"
+  const targetInt = target.slice(0, -3); // "670"
 
-  // Exact full-amount digits, no separator typed: "67009" → 670.09. Equality
-  // only (not prefix) so "1000" still can't match 100.00 ("10000").
-  if (target.replace(".", "") === digits) return true;
-
-  // Decimal-aware prefix: unify the user's decimal separator (comma or dot) to
-  // a dot, then match against the canonical "int.dec" string. Handles the
-  // reported bug — typing past the comma ("670,0", "670.0") now keeps matching.
-  const asDecimal = raw.replace(/[€\s]/g, "").replace(/,/g, ".");
-  if (target.startsWith(asDecimal)) return true;
-
-  // Integer/thousands prefix: compare digit-runs against the euro (integer)
-  // part only, so the decimal boundary is never crossed ("1000" ≠ 100.00).
-  if (targetInt.startsWith(digits)) return true;
-
-  return false;
+  if (parts.hasDecimalSep) {
+    // A decimal was typed → prefix-match the canonical "int.dec" against the
+    // amount. Thousands separators were already stripped from intDigits, so
+    // "1.234,5" → "1234.5" correctly prefixes 1234.56.
+    if (target.startsWith(`${parts.intDigits}.${parts.decDigits}`)) return true;
+    // A DOT is ambiguous in NL (thousands vs decimal); a COMMA is unambiguously
+    // decimal. So for a dot only, also accept the "thousands-in-progress"
+    // reading — the digit run still inside the euro part — so "3.4" keeps
+    // matching €3.431,70 mid-typing. A comma ("3,4") stays strictly €3,4x.
+    if (!parts.decimalSepIsComma && targetInt.startsWith(parts.intDigits + parts.decDigits)) return true;
+    return false;
+  }
+  // No decimal separator → whole-euro prefix on the integer part only, so the
+  // decimal boundary is never crossed ("1000" ✗ 100.00, "670" ✗ 6.70).
+  return targetInt.startsWith(parts.intDigits);
 }
 
 /**
  * Build PostgREST `.or()` fragments so a Supabase-backed search can match a
  * numeric money column against what the user typed — the server-side companion
- * to amountMatchesQuery. Digits-only interpolation, so injection-safe.
+ * to amountMatchesQuery (shares amountQueryParts, so they agree). Digits-only
+ * interpolation, so injection-safe.
  *
  *   column="total_inc_btw", "670"    → ["…ilike.670", "…ilike.670.%"]   (670.xx)
  *   column="total_inc_btw", "670,0"  → ["…ilike.670.0%"]                (670.09, not 670.50)
  *   column="total_inc_btw", "1.500"  → ["…ilike.1500", "…ilike.1500.%"] (thousands dot)
- *
- * NL convention: a trailing separator followed by 1–2 digits is the decimal
- * comma; a dot before exactly 3 digits is the thousands separator.
  */
 export function amountOrConditions(column: string, rawQuery: string): string[] {
-  const raw = rawQuery.trim().replace(/[\s€]/g, "");
-  if (!raw || !/^[\d.,-]+$/.test(raw) || !/\d/.test(raw)) return [];
+  const parts = amountQueryParts(rawQuery);
+  if (!parts || !parts.intDigits || parts.intDigits.length > 15) return [];
 
-  const lastSep = Math.max(raw.lastIndexOf("."), raw.lastIndexOf(","));
-  let intDigits = "";
-  let decDigits = "";
-  if (lastSep >= 0) {
-    const after = raw.slice(lastSep + 1);
-    if (/^\d{1,2}$/.test(after)) {
-      decDigits = after;                                  // decimal separator
-      intDigits = raw.slice(0, lastSep).replace(/\D/g, "");
-    } else {
-      intDigits = raw.replace(/\D/g, "");                 // thousands / 3+ digits
+  if (parts.hasDecimalSep) {
+    const conds = [`${column}::text.ilike.${parts.intDigits}.${parts.decDigits}%`];
+    // Mirror the client's dot ambiguity: a dot may be a thousands-in-progress
+    // separator, so also match the digit run inside the euro part ("3.4" → 34xx).
+    if (!parts.decimalSepIsComma) {
+      conds.push(`${column}::text.ilike.${parts.intDigits}${parts.decDigits}%`);
     }
-  } else {
-    intDigits = raw.replace(/\D/g, "");
-  }
-
-  if (!intDigits || intDigits.length > 15) return [];
-  if (decDigits) {
-    return [`${column}::text.ilike.${intDigits}.${decDigits}%`];
+    return conds;
   }
   return [
-    `${column}::text.ilike.${intDigits}`,     // integer-stored exact "670"
-    `${column}::text.ilike.${intDigits}.%`,   // "670.09", "670.5"
+    `${column}::text.ilike.${parts.intDigits}`,     // integer-stored exact "670"
+    `${column}::text.ilike.${parts.intDigits}.%`,   // "670.09", "670.5"
   ];
 }
 
