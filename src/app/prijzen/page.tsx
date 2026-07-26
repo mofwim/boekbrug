@@ -34,7 +34,10 @@ export const metadata: Metadata = {
     `Boven het eerlijk gebruik kost Plus ${PLUS.priceLabel} per maand ${PLUS.btwNote}. ` +
     `Geen proefperiode, geen automatische afschrijving, en nooit een slot op je eigen administratie.`,
   keywords: ['boekbrug prijzen', 'gratis boekhoudprogramma zzp', 'boekhouden zzp kosten', 'bewaarplicht 7 jaar'],
-  alternates: { canonical: '/prijzen' },
+  alternates: {
+    canonical: '/prijzen',
+    languages: { 'nl-NL': '/prijzen', 'en-GB': '/en/prijzen', ar: '/ar/prijzen', 'tr-TR': '/tr/prijzen' },
+  },
   openGraph: {
     title: 'BoekBrug — gratis voor jou én je boekhouder',
     description: `Plus kost ${PLUS.priceLabel} per maand en is alleen nodig boven het eerlijk gebruik.`,

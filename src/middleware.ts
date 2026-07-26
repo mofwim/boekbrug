@@ -44,6 +44,9 @@ const PUBLIC_PATHS = [
   // bezoeker (en een crawler) moet kunnen zien wat BoekBrug kost zonder account. Veilig
   // tegen de startsWith()-regel hieronder: geen andere route begint met "/prijzen".
   "/prijzen",
+  "/en/prijzen",
+  "/ar/prijzen",
+  "/tr/prijzen",
   // [KLUIS] De voordeur voor mensen die geen boekhoudprogramma zoeken maar een oplossing voor
   // hun bewaarplicht. Moet uitgelogd leesbaar zijn — dat is het hele punt van de pagina.
   "/bewaarplicht",
