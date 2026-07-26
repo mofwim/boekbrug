@@ -16,7 +16,10 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import {
-  getCurrentQuarter,
+  // [KWARTAAL] getActiveAangifte, NIET getCurrentQuarter. Zie de toelichting bij de drie
+  // aanroepen hieronder: dit oppervlak gaat over het kwartaal dat AANGEGEVEN moet worden,
+  // niet over het kwartaal waar we vandaag in leven.
+  getActiveAangifte,
   getQuarterRange,
 } from './accountant.service'
 import type {
@@ -27,6 +30,7 @@ import type {
   InvoiceRow,
   TodoItem,
 } from './accountant.types'
+import { shouldBlockReinvite } from '@/lib/invite-guard'
 
 // ─────────────────────────────────────────────────────────
 // [READINESS] Honest per-client facts for a quarter.
@@ -120,7 +124,17 @@ export async function getAccountantClients(
 
   if (error || !data) return []
 
-  const { year, quarter } = getCurrentQuarter()
+  // [KWARTAAL] Het AANGIFTE-kwartaal, niet het lopende.
+  //
+  // Hier stond getCurrentQuarter(): het kwartaal waar vandaag in valt. Op 26 juli is dat
+  // Q3 — 26 dagen oud en per definitie zo goed als leeg — terwijl de deadline-hero op de
+  // agenda correct aftelt naar de Q2-aangifte van 31 juli. De landingspagina van de
+  // boekhouder beschreef dus een ander kwartaal dan zijn eigen deadline, in precies de
+  // week dat het ertoe doet.
+  //
+  // getActiveAangifte() geeft het vorige (afgesloten) kwartaal plus zijn deadline, en is
+  // wat de agenda al gebruikt. Eén kwartaal over het hele oppervlak.
+  const { year, quarter } = getActiveAangifte()
 
   // The joined `profiles` relation post-dates the generated types → shape cast.
   type LinkedProfileRow = {
@@ -232,7 +246,8 @@ export async function getClientDetail(
 
   if (!profile) return null
 
-  const { year, quarter } = getCurrentQuarter()
+  // [KWARTAAL] Het aangifte-kwartaal — zie de toelichting bij de eerste aanroep hierboven.
+  const { year, quarter } = getActiveAangifte()
   const readiness = await computeClientReadiness(supabase, clientId, year, quarter)
 
   return {
@@ -260,14 +275,19 @@ export async function getClientDetail(
  * provable facts across the linked clients.
  */
 export async function getAccountantOverview(
-  accountantId: string
+  accountantId: string,
+  // [FAN-OUT] De lijst mag worden meegegeven. De landingspagina haalde hem toch al op in
+  // dezelfde Promise.all, en deze functie haalde hem daarna nóg een keer op — inclusief de
+  // vijf queries per klant die eraan hangen. Bij 30 klanten: 300 queries in plaats van 150,
+  // op het traagste scherm van de sessie.
+  clients?: ClientSummary[]
 ): Promise<AccountantOverview> {
-  const clients = await getAccountantClients(accountantId)
+  const clientList = clients ?? await getAccountantClients(accountantId)
 
   return {
-    total_clients: clients.length,
-    clients_with_open_questions: clients.filter(c => c.readiness.openQuestions > 0).length,
-    clients_missing_bank: clients.filter(c => !c.readiness.hasBankData).length,
+    total_clients: clientList.length,
+    clients_with_open_questions: clientList.filter(c => c.readiness.openQuestions > 0).length,
+    clients_missing_bank: clientList.filter(c => !c.readiness.hasBankData).length,
   }
 }
 
@@ -297,7 +317,8 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
 
   if (!links) return []
 
-  const { year, quarter } = getCurrentQuarter()
+  // [KWARTAAL] Het aangifte-kwartaal — zie de toelichting bij de eerste aanroep hierboven.
+  const { year, quarter } = getActiveAangifte()
   const { start, end } = getQuarterRange(year, quarter)
 
   // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes sent/received
@@ -522,15 +543,22 @@ export async function inviteClient(
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   if (!emailRegex.test(clientEmail)) return { error: 'Ongeldig e-mailadres.' }
 
-  // Check for duplicate pending invite from this accountant
+  // Check for duplicate pending invite from this accountant.
+  //
+  // [SEC-INVITE] `.maybeSingle()` op een query die legitiem méér dan één rij kan matchen
+  // is een harde fout, geen null. Zolang de accept-status nooit werd weggeschreven kon er
+  // per adres maar één rij bestaan en was dat onbereikbaar; nu die write is gerepareerd
+  // wordt het de derde uitnodiging aan hetzelfde adres. Neem de NIEUWSTE rij.
   const { data: existing } = await supabase
     .from('invitations')
     .select('id, status')
     .eq('accountant_email', clientEmail)
     .eq('invited_by', 'accountant')
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle()
 
-  if (existing?.status === 'pending') {
+  if (shouldBlockReinvite(existing?.status ?? null)) {
     return { error: 'Er is al een uitnodiging verstuurd naar dit adres.' }
   }
 

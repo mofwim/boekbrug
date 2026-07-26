@@ -9,6 +9,18 @@
 //   - a linked accountant exports a client's quarter (accountant_clients link).
 // Auth on the SESSION client; the actual build uses the service_role pipeline
 // client scoped explicitly to ownerId (service_role bypasses RLS).
+//
+// [RUNTIME] Deze route had GEEN maxDuration en geen runtime-config, terwijl elke zware
+// buurman die wel heeft (snelstart/push:56, alle vijf crons op 300). Zij haalt élke
+// factuur-PDF uit Storage, herschrijft elke betaalde door pdf-lib en DEFLATE't de hele
+// stapel — zonder plafond. Bij een druk kwartaal loopt dat tegen de standaard-timeout van
+// het platform aan, en de gebruiker ziet een afgebroken download zonder uitleg.
+//
+// 300 seconden, gelijk aan de crons. Het CONTENT-plafond dat kluis/export hanteert
+// (MAX_FILES / MAX_TOTAL_BYTES) wordt hier bewust NIET overgenomen: vier gepubliceerde
+// zinnen beloven dat een export altijd compleet is (fair-use.ts ALWAYS_FREE, AV §5.2
+// belofte 3, AV §5.7.1, bewaarkluis.ts KLUIS_WEL). Begrens de looptijd, niet de inhoud.
+export const maxDuration = 300
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
