@@ -196,6 +196,62 @@ check(
   }).allowed === true
 );
 
+console.log("\n[BILLING] the accountant exemption needs EVIDENCE, not a claim");
+
+// `role` is picked by the user on the signup form (register/page.tsx), so on its
+// own it is a free-forever button anybody can press. These pin the fix.
+
+check(
+  "a REAL accountant — role plus a consented client link — is exempt",
+  (() => {
+    const d = decideAccess(
+      base({ role: "accountant", subscriptionStatus: "none", trialEndsAt: iso(NOW - 90 * DAY), currentPeriodEnd: null, hasAccountantClients: true })
+    );
+    return d.allowed === true && d.reason === "accountant";
+  })()
+);
+
+check(
+  "a self-declared 'accountant' with NO client link and an expired trial is refused",
+  (() => {
+    const d = decideAccess(
+      base({ role: "accountant", subscriptionStatus: "none", trialEndsAt: iso(NOW - DAY), currentPeriodEnd: null, hasAccountantClients: false })
+    );
+    return d.allowed === false;
+  })()
+);
+
+check(
+  "a brand-new accountant with no client yet is NOT stranded — the trial still carries them",
+  (() => {
+    const d = decideAccess(
+      base({ role: "accountant", subscriptionStatus: "trialing", trialEndsAt: iso(NOW + 20 * DAY), currentPeriodEnd: null, hasAccountantClients: false })
+    );
+    return d.allowed === true && d.reason === "trialing";
+  })()
+);
+
+check(
+  "an unchecked accountant (undefined) stays exempt — ambiguity favours the user",
+  decideAccess(
+    base({ role: "accountant", subscriptionStatus: "none", trialEndsAt: iso(NOW - 90 * DAY), currentPeriodEnd: null })
+  ).allowed === true
+);
+
+check(
+  "a linked accountant is exempt even while their own trial is long gone",
+  decideAccess(
+    base({ role: "accountant", subscriptionStatus: "canceled", trialEndsAt: iso(NOW - 400 * DAY), currentPeriodEnd: iso(NOW - 300 * DAY), hasAccountantClients: true })
+  ).reason === "accountant"
+);
+
+check(
+  "hasAccountantClients is irrelevant for a zzper — it never grants a ZZP'er anything",
+  decideAccess(
+    base({ role: "zzper", subscriptionStatus: "none", trialEndsAt: iso(NOW - DAY), currentPeriodEnd: null, hasAccountantClients: true })
+  ).allowed === false
+);
+
 console.log("\n[BILLING] trial clock arithmetic");
 
 check("6 hours left still reads as 1 day, never 0", daysUntil(NOW + DAY / 4, NOW) === 1);

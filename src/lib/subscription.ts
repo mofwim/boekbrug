@@ -43,6 +43,25 @@ export type AccessInput = {
   trialEndsAt: string | null;
   /** profiles.current_period_end as an ISO string, or null. */
   currentPeriodEnd: string | null;
+  /**
+   * Does this account have at least one CONSENTED accountant_clients link?
+   *
+   * The accountant exemption used to rest on `role` alone — but `role` is a
+   * SELF-DECLARATION: src/app/register/page.tsx has a role picker whose value
+   * flows through signup metadata into handle_new_user(). Anyone could tick
+   * "Accountant" at signup and never pay. No database trigger can fix that,
+   * because the declaration happens at INSERT and is legitimate for real
+   * accountants.
+   *
+   * So the exemption now needs evidence. Self-linking is already blocked by
+   * accountant_clients_insert_consent.sql, which makes a link something only
+   * another human can grant you.
+   *
+   * Optional, and `undefined` is treated as "we did not check" — callers that
+   * do not care about the accountant path (or could not afford the query) still
+   * get a correct answer for everyone else.
+   */
+  hasAccountantClients?: boolean;
   /** Now, in epoch ms. Injected so tests are deterministic (no real clock). */
   nowMs: number;
 };
@@ -124,11 +143,25 @@ export function decideAccess(input: AccessInput): AccessDecision {
   const trialEnd = parseTimestamp(input.trialEndsAt);
   const periodEnd = parseTimestamp(input.currentPeriodEnd);
 
-  // 1. Accountants are never billed in v1. They are the distribution channel —
-  //    one accountant brings their whole book of ZZP clients — and charging the
-  //    channel before it has proven itself would be backwards. Their own portal
-  //    must therefore never sit behind the ZZP paywall.
-  if (role === "accountant") {
+  // 1. Accountants are never billed. They are not the customer — they have their
+  //    own software (Exact/Twinfield) and use BoekBrug only as the RECIPIENT of
+  //    a client's bookkeeping, so their side of the bridge must never sit behind
+  //    the ZZP paywall.
+  //
+  //    But the exemption needs EVIDENCE, not a claim. `role` is self-declared at
+  //    signup (see AccessInput.hasAccountantClients), so on its own it is a
+  //    free-forever button anyone can press. Requiring a consented client link
+  //    makes it something only another person can grant.
+  //
+  //    A genuine accountant with no client linked YET is not stranded: they are
+  //    still inside their trial (rule 3), which is ample time to accept or send
+  //    an invitation. A ZZP'er who ticked "accountant" to dodge the paywall
+  //    gains nothing beyond the trial they already had.
+  //
+  //    `undefined` means the caller did not check. Per the governing rule that
+  //    ambiguity favours the user, an unchecked accountant is still exempt —
+  //    every caller that CAN check does.
+  if (role === "accountant" && input.hasAccountantClients !== false) {
     return { allowed: true, reason: "accountant", trialDaysLeft: null };
   }
 

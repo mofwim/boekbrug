@@ -168,11 +168,33 @@ export async function middleware(request: NextRequest) {
       // reads as "my payment failed" at the worst possible moment.
       !request.nextUrl.pathname.startsWith("/dashboard/settings/facturering")
     ) {
+      // [COST-GUARD] The accountant exemption needs evidence, not a claim —
+      // `role` is picked by the user at signup, so on its own it is a
+      // free-forever button. One extra existence check, and ONLY for the small
+      // minority who claim to be accountants, so the common path is unchanged.
+      // A failure here leaves it `undefined`, which decideAccess() reads as
+      // "not checked" and resolves in the user's favour.
+      let hasAccountantClients: boolean | undefined;
+      if (profile.role === "accountant") {
+        try {
+          const { data: link } = await supabase
+            .from("accountant_clients")
+            .select("accountant_id")
+            .eq("accountant_id", user.id)
+            .limit(1)
+            .maybeSingle();
+          hasAccountantClients = Boolean(link);
+        } catch {
+          hasAccountantClients = undefined;
+        }
+      }
+
       const decision = decideAccess({
         role: profile.role ?? null,
         subscriptionStatus: profile.subscription_status ?? null,
         trialEndsAt: profile.trial_ends_at ?? null,
         currentPeriodEnd: profile.current_period_end ?? null,
+        hasAccountantClients,
         nowMs: Date.now(),
       });
 

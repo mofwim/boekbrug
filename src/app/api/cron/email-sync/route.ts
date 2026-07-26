@@ -14,6 +14,7 @@ import * as Sentry from "@sentry/nextjs";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { syncUserEmails } from "@/lib/email-integration";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
+import { decideAccess } from "@/lib/subscription";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow the batch time (actual ceiling depends on the plan)
@@ -44,7 +45,70 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "kon verbindingen niet laden" }, { status: 500 });
   }
 
-  const userIds = [...new Set((conns ?? []).map((c) => c.user_id).filter((x): x is string => !!x))];
+  let userIds = [...new Set((conns ?? []).map((c) => c.user_id).filter((x): x is string => !!x))];
+
+  // ── [COST-GUARD] Only sync mailboxes whose owner still has access ──────
+  //
+  // This scan had NO entitlement filter, and the mail robot is by far the most
+  // expensive thing in the app: syncUserEmails() classifies up to SYNC_BATCH_MAX
+  // (40) documents per round with up to 5 drain rounds — ~240 paid Claude calls
+  // per user per run, twelve runs a day. One connected mailbox belonging to a
+  // lapsed or never-paying account is a four-hundred-euro-a-month bleed that
+  // nothing in the code was stopping.
+  //
+  // The same decision the paywall uses (decideAccess) is applied here, so a
+  // mailbox is serviced exactly while its owner is entitled to the feature —
+  // never by a separate rule that could drift from what the app shows on screen.
+  //
+  // Fails OPEN per profile: if we cannot read a profile we still sync it. The
+  // global daily euro fuse in src/lib/ai-budget.ts is the backstop that makes
+  // that safe, and the alternative — silently stopping a paying customer's mail
+  // import because of a read error — is worse.
+  if (userIds.length > 0) {
+    try {
+      // Billing columns come from billing_subscription.sql (hand-applied) and are
+      // not in the generated types → relaxed client. A missing column throws and
+      // is caught below, leaving every mailbox enabled exactly as before.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: owners, error: ownerErr } = await (pipeline as any)
+        .from("profiles")
+        .select("id, role, subscription_status, trial_ends_at, current_period_end")
+        .in("id", userIds);
+
+      if (ownerErr) throw new Error(ownerErr.message);
+
+      const nowMs = Date.now();
+      const entitled = new Set<string>();
+      for (const o of (owners ?? []) as Array<{
+        id: string;
+        role: string | null;
+        subscription_status: string | null;
+        trial_ends_at: string | null;
+        current_period_end: string | null;
+      }>) {
+        const decision = decideAccess({
+          role: o.role ?? null,
+          subscriptionStatus: o.subscription_status ?? null,
+          trialEndsAt: o.trial_ends_at ?? null,
+          currentPeriodEnd: o.current_period_end ?? null,
+          nowMs,
+        });
+        if (decision.allowed) entitled.add(o.id);
+      }
+
+      // A profile we could not read at all is left in (fail open, see above).
+      const seen = new Set((owners ?? []).map((o: { id: string }) => o.id));
+      const before = userIds.length;
+      userIds = userIds.filter((id) => entitled.has(id) || !seen.has(id));
+      if (before !== userIds.length) {
+        console.log(
+          `[CRON-EMAIL] skipped ${before - userIds.length} mailbox(es) whose owner has no access`
+        );
+      }
+    } catch (err) {
+      console.error("[CRON-EMAIL] entitlement filter unavailable — syncing all:", err);
+    }
+  }
 
   let synced = 0, failed = 0, saved = 0, truncated = 0;
   // [CRON-FAIRNESS] Rotate the start each run so a fixed tail of mailboxes never permanently starves
