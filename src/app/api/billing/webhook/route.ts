@@ -1,0 +1,295 @@
+// src/app/api/billing/webhook/route.ts
+// [BILLING] Stripe webhook — the ONLY writer of subscription state.
+//
+// Money is decided by Stripe. This endpoint is how Stripe tells us, and our
+// profiles row is a cache of what it said. No other code path in the app may
+// write subscription_status / subscription_plan / stripe_customer_id /
+// current_period_end — the prevent_billing_self_grant trigger enforces that at
+// the database, and this route is the one caller allowed through it (it runs on
+// the service-role client, where auth.uid() is NULL).
+//
+// SECURITY: this endpoint is PUBLIC — Stripe calls it with no session and no
+// bearer token. Its only guard is the HMAC signature over the raw body. Without
+// that check anyone on the internet could POST `subscription.active` and grant
+// themselves a paid plan, so an unverified payload is rejected before a single
+// field is read, and is never logged in full.
+//
+// RAW BODY: the signature covers the exact bytes Stripe sent. `req.text()` is
+// used, never `req.json()` — parsing and re-serialising changes key order and
+// whitespace and the signature stops verifying. This is the single most common
+// way a Stripe integration breaks. The app's middleware runs on /api/* but only
+// calls supabase.auth.getUser() (cookies only) and returns early, so it never
+// touches this body.
+//
+// ORDERING: webhooks arrive out of order and are re-delivered on our 5xx. So
+// every handler RE-READS the subscription from Stripe and writes that, rather
+// than trusting the (possibly stale) object inside the event. A late-arriving
+// old event therefore rewrites the same current truth instead of regressing it,
+// which makes the endpoint naturally idempotent without an events table.
+
+import { NextRequest, NextResponse } from "next/server";
+import type Stripe from "stripe";
+import {
+  getStripe,
+  constructWebhookEvent,
+  isWebhookConfigured,
+  subscriptionPeriodEnd,
+} from "@/lib/billing";
+import { normalizeStripeStatus } from "@/lib/subscription";
+import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { sendPaymentFailedEmail } from "@/lib/email";
+
+// Stripe's signature verification needs Node crypto and the raw body.
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/** Events we act on. Anything else is acknowledged and ignored. */
+const HANDLED = new Set([
+  "checkout.session.completed",
+  "customer.subscription.created",
+  "customer.subscription.updated",
+  "customer.subscription.deleted",
+  // Not a state change — Stripe also sends subscription.updated for that. This
+  // is purely the trigger for telling the customer their card failed, which is
+  // the difference between a dead card and a cancellation.
+  "invoice.payment_failed",
+]);
+
+export async function POST(req: NextRequest) {
+  // Not configured (no keys yet) → tell Stripe we are not ready. 503 makes
+  // Stripe retry later rather than marking the event permanently failed.
+  if (!isWebhookConfigured()) {
+    console.error("[BILLING] webhook hit but STRIPE_WEBHOOK_SECRET/SECRET_KEY missing");
+    return NextResponse.json({ error: "billing_not_configured" }, { status: 503 });
+  }
+
+  const rawBody = await req.text();
+  const signature = req.headers.get("stripe-signature");
+
+  let event: Stripe.Event;
+  try {
+    event = constructWebhookEvent(rawBody, signature);
+  } catch (err) {
+    // Never log the body — an unverified payload is attacker-controlled.
+    console.error(
+      "[BILLING] webhook signature verification failed:",
+      err instanceof Error ? err.message : "unknown"
+    );
+    return NextResponse.json({ error: "invalid_signature" }, { status: 400 });
+  }
+
+  if (!HANDLED.has(event.type)) {
+    // 200 so Stripe stops retrying an event we deliberately ignore.
+    return NextResponse.json({ received: true, ignored: event.type });
+  }
+
+  try {
+    await handleEvent(event);
+  } catch (err) {
+    // 500 → Stripe retries with backoff. Better a retry than a customer who
+    // paid and whose account never reflects it.
+    console.error(`[BILLING] webhook handler failed (${event.type}):`, err);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
+  }
+
+  return NextResponse.json({ received: true });
+}
+
+async function handleEvent(event: Stripe.Event): Promise<void> {
+  const stripe = getStripe();
+
+  // ── A failed charge: notify, change nothing ────────────────────────
+  // Handled first and returned early because it is NOT a state change.
+  // Stripe moves the subscription to past_due itself and sends
+  // customer.subscription.updated for that; here we only tell the human. Note
+  // that past_due deliberately KEEPS access (see subscription.ts rule 4) — the
+  // mail says so, because a customer locked out over an expired card cancels.
+  if (event.type === "invoice.payment_failed") {
+    await notifyPaymentFailed(stripe, event.data.object as Stripe.Invoice);
+    return;
+  }
+
+  // ── Resolve the subscription id this event is about ────────────────
+  let subscriptionId: string | null = null;
+  let sessionProfileId: string | null = null;
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    subscriptionId =
+      typeof session.subscription === "string"
+        ? session.subscription
+        : session.subscription?.id ?? null;
+    sessionProfileId = session.metadata?.profile_id ?? null;
+  } else {
+    const sub = event.data.object as Stripe.Subscription;
+    subscriptionId = sub.id;
+  }
+
+  if (!subscriptionId) {
+    console.warn(`[BILLING] ${event.type} carried no subscription id — ignored`);
+    return;
+  }
+
+  // ── Re-read current truth from Stripe (see ORDERING in the header) ──
+  const sub = await stripe.subscriptions.retrieve(subscriptionId);
+
+  const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+
+  // ── Find the BoekBrug profile this belongs to ──────────────────────
+  // Three independent routes to the same answer, cheapest first. Money events
+  // must not be dropped because one link went missing.
+  const profileId =
+    sub.metadata?.profile_id ??
+    sessionProfileId ??
+    (await profileIdFromCustomer(stripe, customerId)) ??
+    (await profileIdFromDatabase(customerId));
+
+  if (!profileId) {
+    // Loud: a real payment we cannot attribute needs a human, now.
+    console.error(
+      `[BILLING] UNATTRIBUTED subscription ${sub.id} (customer ${customerId}) — no profile_id found`
+    );
+    return;
+  }
+
+  const status = normalizeStripeStatus(sub.status);
+
+  // Het planlabel volgt de status: alleen een lopend abonnement is 'plus'. Wie eruit valt
+  // gaat terug naar 'free' — dat is bij ons geen verlies van toegang maar het terugvallen op
+  // de gratis grenzen, precies zoals /eerlijk-gebruik het beschrijft.
+  //
+  // De waarde is 'plus', niet 'pro': subscription_plans_fair_use.sql beperkt deze kolom tot
+  // free|plus|boekhouder. Een waarde daarbuiten laat Postgres de HELE rij weigeren, en dat
+  // is precies het lek dat de splitsing hieronder afdekt.
+  const plan = status === "active" || status === "past_due" || status === "paused" ? "plus" : "free";
+
+  const pipeline = createPipelineClient();
+
+  // ── TWO WRITES, NOT ONE. This split is load-bearing. ────────────────
+  //
+  // These used to be a single UPDATE, and that was a latent lockout of a PAYING
+  // customer. subscription_plan is constrained by an inline CHECK
+  // (free|plus|boekhouder). A plan value outside it makes Postgres
+  // reject the WHOLE ROW — so subscription_status ('active') and
+  // current_period_end never land either. The account stays 'trialing' with a
+  // NULL period end, en het account leest als 'free' terwijl de kaart elke maand wordt belast.
+  //
+  // And it fails almost silently: the handler catches its own error and returns
+  // a 500, Stripe retries the same deterministic failure for ~3 days and gives
+  // up, there is no events table to replay from, and the only trace is a
+  // console line. The discovery channel is a customer's email.
+  //
+  // So: ACCESS FIRST, unconditionally. Then the plan label, whose failure is
+  // logged loudly and cannot take access down with it. Access is what the
+  // customer paid for; the plan label is bookkeeping about that payment.
+
+  // WRITE 1 — everything that decides access. Must never be blocked by a label.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: accessErr } = await (pipeline as any)
+    .from("profiles")
+    .update({
+      subscription_status: status,
+      subscription_stripe_id: sub.id,
+      stripe_customer_id: customerId,
+      current_period_end: subscriptionPeriodEnd(sub),
+    })
+    .eq("id", profileId);
+
+  if (accessErr) {
+    // Throw → 500 → Stripe retries. Swallowing this would leave a paying
+    // customer looking unpaid with nothing to replay the event.
+    throw new Error(`profiles access update failed for ${profileId}: ${accessErr.message}`);
+  }
+
+  // WRITE 2 — the plan label. Best-effort by design.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: planErr } = await (pipeline as any)
+    .from("profiles")
+    .update({ subscription_plan: plan })
+    .eq("id", profileId);
+
+  if (planErr) {
+    // Loud, but NOT fatal: access is already correct above. A rejected label is
+    // a bug for us to fix, never a reason to lock out a paying customer.
+    console.error(
+      `[BILLING] plan label '${plan}' rejected for profile ${profileId} ` +
+        `(access was still granted): ${planErr.message}`
+    );
+  }
+
+  console.log(`[BILLING] ${event.type} → profile ${profileId} is ${status}/${plan}`);
+}
+
+/**
+ * Tell the customer their payment failed. Never throws: a mail problem must not
+ * make the webhook 500, because Stripe would then retry the whole event and the
+ * customer would get the same mail again — turning our outage into their spam.
+ */
+async function notifyPaymentFailed(stripe: Stripe, invoice: Stripe.Invoice): Promise<void> {
+  try {
+    const customerId =
+      typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id ?? null;
+    if (!customerId) return;
+
+    // Same two-way lookup as the state handler: a customer we cannot attribute
+    // is a customer we cannot warn, and a silent failed payment becomes a
+    // silent cancellation.
+    const profileId =
+      (await profileIdFromDatabase(customerId)) ??
+      (await profileIdFromCustomer(stripe, customerId));
+
+    if (!profileId) {
+      console.warn(`[BILLING] payment_failed for unknown customer ${customerId} — no mail sent`);
+      return;
+    }
+
+    const pipeline = createPipelineClient();
+    const { data } = await pipeline
+      .from("profiles")
+      .select("email, full_name, company_name")
+      .eq("id", profileId)
+      .single();
+
+    // Prefer the address Stripe billed, fall back to the account's own.
+    const to = invoice.customer_email ?? data?.email ?? null;
+    if (!to) return;
+
+    await sendPaymentFailedEmail({
+      toEmail: to,
+      name: data?.company_name || data?.full_name || "ondernemer",
+    });
+    console.log(`[BILLING] payment-failed mail sent to profile ${profileId}`);
+  } catch (err) {
+    console.error("[BILLING] payment-failed notification failed:", err);
+  }
+}
+
+/** Read profile_id off the Stripe customer's metadata (set at creation). */
+async function profileIdFromCustomer(
+  stripe: Stripe,
+  customerId: string
+): Promise<string | null> {
+  try {
+    const customer = await stripe.customers.retrieve(customerId);
+    if (customer.deleted) return null;
+    return customer.metadata?.profile_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Last resort: find the profile we previously linked to this customer. */
+async function profileIdFromDatabase(customerId: string): Promise<string | null> {
+  try {
+    const pipeline = createPipelineClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (pipeline as any)
+      .from("profiles")
+      .select("id")
+      .eq("stripe_customer_id", customerId)
+      .maybeSingle();
+    return data?.id ?? null;
+  } catch {
+    return null;
+  }
+}
