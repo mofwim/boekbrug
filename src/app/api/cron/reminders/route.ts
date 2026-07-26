@@ -143,6 +143,34 @@ export async function GET(req: NextRequest) {
       .range(from, to),
   ).catch(() => [] as { invoice_id: string; day_offset: number }[]);
 
+  // ── [CREDITNOTA-NO-CHASE] Which candidates were withdrawn with a creditnota? ──
+  // A credited invoice KEEPS its 'sent'/'overdue' status, its positive total and its due date
+  // (the +omzet must stay to be netted by the creditnota's −omzet), so nothing the query above
+  // filters on reveals it. Without this read the cron mails the customer a payment demand for
+  // an invoice the owner already withdrew. One batched query over the same candidate ids;
+  // a failure degrades to "none credited", i.e. exactly the old behaviour, never a crash.
+  // Keyed on the OWNERS (the same bounded list the candidate query uses), not on the candidate
+  // ids: an .in() over thousands of uuids would blow the URL length long before it broke
+  // anything visible. A creditnota per owner is rare, so this stays a small read.
+  const creditNoteRows = await fetchAllRows<{ original_invoice_id: string | null }>((from, to) =>
+    pipeline
+      .from("invoices")
+      .select("original_invoice_id")
+      .in("sender_id", ownerIds)
+      .eq("invoice_type", "creditnota")
+      .not("original_invoice_id", "is", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e) => {
+    console.error("[CRON-REMINDERS] creditnota lookup failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return [] as { original_invoice_id: string | null }[];
+  });
+  const creditedInvoiceIds = new Set(
+    creditNoteRows.map((r) => r.original_invoice_id).filter((id): id is string => !!id),
+  );
+
   const sentByInvoice = new Map<string, number[]>();
   for (const r of sentRows) {
     const arr = sentByInvoice.get(r.invoice_id) ?? [];
@@ -204,6 +232,8 @@ export async function GET(req: NextRequest) {
         amountPaid: inv.amount_paid,
         clientEmail: inv.client_email,
         remindersPaused: false,
+        // [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota → stop chasing the customer.
+        hasCreditnota: creditedInvoiceIds.has(inv.id),
       });
       if (tier == null) continue;
 

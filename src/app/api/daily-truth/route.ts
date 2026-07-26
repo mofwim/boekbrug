@@ -110,7 +110,28 @@ export async function GET() {
     .range(from, to)
   ).catch(() => null);
 
-  const recv = (recvRows ?? []) as InvoiceRow[];
+  // [CREDITNOTA-NO-CHASE] Drop invoices the owner WITHDREW with a creditnota. Such an invoice
+  // deliberately keeps its 'sent' status and its positive total (the +omzet must stay to be
+  // netted by the creditnota's −omzet), so it looks exactly like an ordinary open invoice here
+  // — and "Te ontvangen" would claim money that is no longer owed, with the credited invoice
+  // even counted among the overdue ones. Best-effort: a failed lookup leaves the totals as they
+  // were rather than dropping the whole tile.
+  const recvAll = (recvRows ?? []) as InvoiceRow[];
+  const creditedIds = new Set<string>();
+  if (recvAll.length > 0) {
+    // Keyed on the owner rather than on the candidate ids — an .in() over every open invoice
+    // would grow the URL without bound, and one owner's creditnotas are few.
+    const { data: creditRows } = await pipeline
+      .from("invoices")
+      .select("original_invoice_id")
+      .eq("sender_id", user.id)
+      .eq("invoice_type", "creditnota")
+      .not("original_invoice_id", "is", null);
+    for (const c of (creditRows ?? []) as { original_invoice_id: string | null }[]) {
+      if (c.original_invoice_id) creditedIds.add(c.original_invoice_id);
+    }
+  }
+  const recv = recvAll.filter((r) => !creditedIds.has(r.id));
   const toReceive = {
     count: recv.length,
     total: recv.reduce((s, r) => s + openstaandOf(r), 0),
