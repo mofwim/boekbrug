@@ -7,8 +7,8 @@
 // that all lives server-side in bridge-tree.ts.
 
 import { useMemo, useState, useEffect } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
 import { lastCompletedQuarter } from '@/lib/quarter'
 
@@ -163,9 +163,28 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
 
   const level = useMemo(() => computeLevel(nodes, cwd, showHidden), [nodes, cwd, showHidden])
   const showToggle = useMemo(() => hasHidden(nodes), [nodes])
-  const homeHref = role === 'accountant' ? '/dashboard/accountant' : '/dashboard'
 
   const isEmpty = level.folders.length === 0 && level.files.length === 0
+
+  // [HEADER-SYSTEM] Title "Brug" + back live in the shared sub-page bar
+  // (DashboardChrome/STATIC_TITLES). The old in-body header duplicated the title
+  // and offered a "Home" link instead of back; it is removed and only the explicit
+  // refresh action is pushed into the shared bar's actions slot.
+  useSubPageHeader(
+    {
+      actions: (
+        <button
+          onClick={() => router.refresh()}
+          title="Vernieuwen"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
+          Vernieuwen
+        </button>
+      ),
+    },
+    [],
+  )
 
   // [BRIDGE-HUB] When the accountant picks a client and opens the Documenten
   // tab, scope the tree to that client by seeding cwd to ['Klanten', label].
@@ -183,30 +202,6 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 16px 80px', fontFamily: FONT }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: 0, letterSpacing: -0.3 }}>
-          Brug
-        </h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {/* [BRIDGE-REFRESH] expliciete vernieuw-knop — naast de automatische focus-refresh */}
-          <button
-            onClick={() => router.refresh()}
-            title="Vernieuwen"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
-            Vernieuwen
-          </button>
-          <Link
-            href={homeHref}
-            style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>home</span>
-            Home
-          </Link>
-        </div>
-      </div>
 
       {/* [BRIDGE-HUB] Layer 2 — accountant control center: client dropdown +
           persistent Pakket action + tabs. ZZP keeps the classic tree below. */}

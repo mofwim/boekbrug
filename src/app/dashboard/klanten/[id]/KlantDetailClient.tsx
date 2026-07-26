@@ -34,8 +34,24 @@ export default function KlantDetailClient({ client, invoices, totals }: {
   client: Client; invoices: KlantInvoice[]; totals: { billed: number; open: number; count: number }
 }) {
   const router = useRouter()
-  // [SUBNAV] Push the client's name as the shared sub-page header title.
-  useSubPageHeader({ title: client.name }, [client.name])
+  // [SUBNAV] Push the client's name as the shared sub-page header title, and the
+  // "+ Nieuwe factuur" action into the bar's actions slot. [HEADER-SYSTEM] The
+  // page used to ALSO draw an in-body header with the same name — removed below.
+  // (newInvoice is a hoisted function declaration, so it is safe to reference here.)
+  useSubPageHeader(
+    {
+      title: client.name,
+      actions: (
+        <button
+          onClick={newInvoice}
+          style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}
+        >
+          + Nieuwe factuur
+        </button>
+      ),
+    },
+    [client.name],
+  )
   const [notes, setNotes] = useState(client.notes ?? '')
   const [savedNote, setSavedNote] = useState<string>(client.notes ?? '')
   const [savingNote, setSavingNote] = useState(false)
@@ -67,12 +83,10 @@ export default function KlantDetailClient({ client, invoices, totals }: {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 80px' }}>
-        <header style={{ margin: '16px 0 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div>
-            <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 2px' }}>{client.name}</h1>
-            <p style={{ fontSize: 14, color: M3.neutral, margin: 0 }}>{client.email || 'Geen e-mail'}</p>
-          </div>
-          <button onClick={newInvoice} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '10px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>+ Nieuwe factuur</button>
+        {/* [HEADER-SYSTEM] Name (title) + "+ Nieuwe factuur" (action) now live in the
+            shared sub-page bar; only the e-mail line remains in-body. */}
+        <header style={{ margin: '16px 0 18px' }}>
+          <p style={{ fontSize: 14, color: M3.neutral, margin: 0 }}>{client.email || 'Geen e-mail'}</p>
         </header>
 
         {/* Totals */}

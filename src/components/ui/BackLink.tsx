@@ -18,6 +18,7 @@
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { getParentPath, type Role } from '@/lib/navigation'
+import { M3 } from '@/lib/design/tokens'
 import type { CSSProperties } from 'react'
 
 export interface BackLinkProps {
@@ -56,7 +57,7 @@ export function BackLink({
         gap: 4,
         fontSize: 14,
         fontWeight: 500,
-        color: '#1A73E8',
+        color: M3.primary,
         textDecoration: 'none',
         transition: 'opacity 0.15s',
         ...style,

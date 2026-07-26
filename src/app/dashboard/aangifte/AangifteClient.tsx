@@ -48,11 +48,10 @@ export default function AangifteClient() {
   const teBetalen = data ? data.saldo >= 0 : true
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
+    <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 8px' }}>
-          Concept BTW-aangifte {data ? `— ${data.quarterLabel}` : ''}
-        </h1>
+        {/* [HEADER-SYSTEM] Title "Aangifte" + back live in the shared sub-page bar;
+            the in-body h1 was removed. The quarter is shown by the picker below. */}
 
         {/* [QUARTER] Quarter picker — parity with klaar/resultaat, so a figure and the page
             it links from always refer to the same quarter. */}

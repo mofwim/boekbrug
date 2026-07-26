@@ -948,11 +948,9 @@ export default function BankClient() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }}>account_balance</span>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Bank</h1>
-      </div>
+      {/* [HEADER-SYSTEM] Title "Bank" + back live in the shared sub-page bar
+          (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
+          removed. The descriptive intro line stays. */}
       <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
         Upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
       </p>
