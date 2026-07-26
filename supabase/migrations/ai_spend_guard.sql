@@ -102,6 +102,17 @@ COMMENT ON COLUMN public.rate_limits.bucket_key IS
 
 -- Text-keyed twin of check_rate_limit. Same algorithm, same atomicity: one
 -- INSERT ... ON CONFLICT DO UPDATE, so concurrent requests cannot race past it.
+--
+-- ⚠️ THE `WHERE bucket_key IS NOT NULL` ON THE CONFLICT TARGET IS LOAD-BEARING.
+-- The unique index above is PARTIAL, and Postgres will not infer a partial index from a
+-- bare `ON CONFLICT (bucket_key, endpoint)` — the statement must repeat the index
+-- predicate, or inference fails with:
+--     42P10: there is no unique or exclusion constraint matching the ON CONFLICT
+--            specification
+-- That is not a cosmetic error. checkRateLimitByKey() in src/lib/rate-limit.ts fails
+-- CLOSED, so the exception made it REFUSE every request — turning the login-free invoice
+-- scanner (a lead-generation page) off completely. Verified against a real database on
+-- 26 July 2026; the first version of this file shipped without the predicate.
 CREATE OR REPLACE FUNCTION public.check_rate_limit_key(
   p_bucket_key text,
   p_endpoint text,
@@ -127,7 +138,7 @@ BEGIN
 
   INSERT INTO public.rate_limits (bucket_key, endpoint, count, window_start)
   VALUES (p_bucket_key, p_endpoint, 1, v_now)
-  ON CONFLICT (bucket_key, endpoint) DO UPDATE
+  ON CONFLICT (bucket_key, endpoint) WHERE bucket_key IS NOT NULL DO UPDATE
     SET count = CASE
                   WHEN public.rate_limits.window_start
                        < v_now - make_interval(mins => p_window_minutes)
@@ -256,6 +267,9 @@ COMMIT;
 -- 1. The anonymous bucket now counts instead of failing open:
 --      select * from public.check_rate_limit_key('scan-ip:1.2.3.4', '/test', 2, 60);
 --      -- run 3×: expect allowed = true, true, false
+--      -- A 42P10 here means the ON CONFLICT predicate is missing again — see the
+--      -- warning above check_rate_limit_key. Clean up after testing:
+--      --   delete from public.rate_limits where bucket_key = 'scan-ip:1.2.3.4';
 --
 -- 2. An empty key is refused, never allowed:
 --      select * from public.check_rate_limit_key('', '/test', 5, 60);  -- allowed = false
