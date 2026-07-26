@@ -32,6 +32,18 @@ const COPY: Record<Locale, { heading: string; body: string; register: string; re
     register: 'Create a free account',
     reassure: 'Free account, set up in a minute. Your data stays yours.',
   },
+  ar: {
+    heading: 'ابدأ بشكل صحيح — مجاناً',
+    body: 'أو احتفظ بفواتيرك وإيصالاتك وضريبة القيمة المضافة في مكان واحد داخل BoekBrug. تُجمَع تلقائياً كل ربع سنة وجاهزة لإقرارك ولمحاسبك.',
+    register: 'أنشئ حساباً مجانياً',
+    reassure: 'حساب مجاني، يُجهَّز في دقيقة. بياناتك تبقى لك.',
+  },
+  tr: {
+    heading: 'Baştan doğru yapın — ücretsiz',
+    body: 'Ya da faturalarınızı, fişlerinizi ve KDV’nizi BoekBrug’da tek yerde tutun. Üç ayda bir otomatik toplanır; beyannameniz ve muhasebeciniz için hazır.',
+    register: 'Ücretsiz hesap oluştur',
+    reassure: 'Ücretsiz hesap, bir dakikada kurulur. Verileriniz sizin kalır.',
+  },
 }
 
 export default function ToolCTA({

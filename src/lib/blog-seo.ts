@@ -8,7 +8,8 @@ import type { Metadata } from 'next'
 import {
   articlePath,
   indexPath,
-  getAlternate,
+  getAlternates,
+  LOCALE_META,
   type Locale,
   type Post,
 } from '@/lib/blog'
@@ -19,11 +20,11 @@ import { absoluteUrl } from '@/lib/site'
 const DEFAULT_OG_IMAGE = '/opengraph-image'
 
 function ogLocale(locale: Locale): string {
-  return locale === 'nl' ? 'nl_NL' : 'en_GB'
+  return LOCALE_META[locale].ogLocale
 }
 
 function hreflang(locale: Locale): string {
-  return locale === 'nl' ? 'nl-NL' : 'en-GB'
+  return LOCALE_META[locale].hreflang
 }
 
 export function buildArticleMetadata(post: Post, locale: Locale): Metadata {
@@ -31,11 +32,9 @@ export function buildArticleMetadata(post: Post, locale: Locale): Metadata {
   const canonical = articlePath(locale, frontmatter.slug)
   const image = frontmatter.coverImage ?? DEFAULT_OG_IMAGE
 
-  // hreflang: always self-reference; add the alternate language when a published
-  // counterpart exists.
+  // hreflang: always self-reference; add every published counterpart language.
   const languages: Record<string, string> = { [hreflang(locale)]: canonical }
-  const alt = getAlternate(post)
-  if (alt) languages[hreflang(alt.locale)] = alt.path
+  for (const alt of getAlternates(post)) languages[hreflang(alt.locale)] = alt.path
 
   return {
     title: `${frontmatter.title} | BoekBrug`,
