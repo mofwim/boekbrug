@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { BackLink } from '@/components/ui/BackLink'
+import { rowMatchesQuery } from '@/lib/search'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
@@ -241,15 +242,11 @@ export default function KasClient() {
   }
 
   // [SEARCH] In-page live filter over the cash ledger (omschrijving / categorie / bedrag).
-  const kasFold = (s: string) => (s ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
-  const kq = kasFold(search.trim())
-  const kqDigits = search.replace(/[^\d]/g, '')
-  const kAmountLike = kqDigits.length >= 2 && /^[\d.,\s€-]+$/.test(search.trim())
-  const filteredEntries = kq
+  // [SMART-FILTER] shared matcher — decimaal- én duizendtal-bewust (src/lib/search.ts)
+  const rawK = search.trim()
+  const filteredEntries = rawK
     ? entries.filter((e) =>
-        kasFold(e.description ?? '').includes(kq) ||
-        kasFold(catLabel(e.category, e.direction)).includes(kq) ||
-        (kAmountLike && String(Math.trunc(Math.abs(e.amount ?? 0))) === kqDigits)
+        rowMatchesQuery(rawK, [e.description, catLabel(e.category, e.direction)], [e.amount])
       )
     : entries
 

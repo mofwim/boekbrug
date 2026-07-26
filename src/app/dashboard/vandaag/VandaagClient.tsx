@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
 import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
+import { rowMatchesQuery } from "@/lib/search";
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -182,15 +183,11 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   // 3-day window to the full payable/remind sets (minus dismissed), so you can find
   // any invoice this page tracks — in place, no navigation.
   const [search, setSearch] = useState("");
-  const vFold = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
   const rawV = search.trim();
-  const vq = vFold(rawV);
-  const vDigits = rawV.replace(/[^\d]/g, "");
-  const vAmountLike = vDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawV);
+  // [SMART-FILTER] shared matcher — klant / factuurnummer / bedrag
+  // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
   const matchV = (inv: VandaagInvoice) =>
-    vFold(inv.client_name ?? "").includes(vq) ||
-    vFold(inv.invoice_number ?? "").includes(vq) ||
-    (vAmountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === vDigits);
+    rowMatchesQuery(rawV, [inv.client_name, inv.invoice_number], [inv.total_inc_btw]);
   const searching = rawV.length > 0;
   const canSearch = payable.length > 0 || remind.length > 0;
   const displayPayable = searching ? payable.filter((i) => !dismissed.has(i.id) && matchV(i)) : visiblePayable;

@@ -18,6 +18,7 @@ import Link from "next/link";
 import { useHomePath, useParentPath } from "@/lib/navigation-hooks";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
+import { rowMatchesQuery } from "@/lib/search";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -2499,18 +2500,13 @@ export default function IncomingInvoicesClient({
   // [SEARCH] Live, in-place filter over the loaded list (supplier name / invoice number /
   // whole-euro amount). The page holds the full set (server caps at 100/50), so this is
   // complete — no navigation, no reload.
-  const incFold = (s: string) => (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+  // [SMART-FILTER] shared matcher — leverancier / factuurnummer / bedrag
+  // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
   const rawQ = search.trim();
-  const q = incFold(rawQ);
-  const qDigits = rawQ.replace(/[^\d]/g, "");
-  const amountLike = qDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawQ);
   const filteredList = rawQ
-    ? list.filter((inv) => {
-        if (q && incFold(inv.client_name ?? "").includes(q)) return true;
-        if (q && incFold(inv.invoice_number ?? "").includes(q)) return true;
-        if (amountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === qDigits) return true;
-        return false;
-      })
+    ? list.filter((inv) =>
+        rowMatchesQuery(rawQ, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
+      )
     : list;
 
   // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────

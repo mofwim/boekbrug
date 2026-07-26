@@ -15,6 +15,7 @@ import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+import { amountOrConditions } from '@/lib/search'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -161,7 +162,12 @@ export default function FacturenClient({ profile }: { profile: any }) {
     const q = search.trim()
     if (q.length < 2) { setSearchResults(null); setSearchLoading(false); return }
     const esc = q.replace(/[,()%_*\\":]/g, ' ').trim()
-    if (esc.length < 1) { setSearchResults([]); setSearchLoading(false); return }
+    // [SMART-FILTER] amount-aware server search: when the query is money-shaped,
+    // also match total_inc_btw (decimaal- én duizendtal-bewust). So "670,09" /
+    // "670.0" now find the invoice, not just its number/name. (src/lib/search.ts)
+    const amountOr = amountOrConditions('total_inc_btw', q)
+    const orParts = [`invoice_number.ilike.%${esc}%`, `client_name.ilike.%${esc}%`, ...amountOr]
+    if (esc.length < 1 && amountOr.length === 0) { setSearchResults([]); setSearchLoading(false); return }
     let active = true
     setSearchLoading(true)
     const t = setTimeout(async () => {
@@ -170,7 +176,7 @@ export default function FacturenClient({ profile }: { profile: any }) {
         .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
         .eq('sender_id', profile.id)
         .neq('status', 'archived')
-        .or(`invoice_number.ilike.%${esc}%,client_name.ilike.%${esc}%`)
+        .or(orParts.join(','))
         .order('created_at', { ascending: false })
         .limit(50)
       if (!active) return

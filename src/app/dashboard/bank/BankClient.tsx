@@ -11,6 +11,7 @@ import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconc
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint } from '@/lib/bank-matching'
+import { rowMatchesQuery } from '@/lib/search'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
 const M3 = {
@@ -879,35 +880,15 @@ export default function BankClient() {
 
   // [SEARCH] In-page live filter — works on EVERY bank tab now (not only "Geen factuur"):
   // searches counterpart / reference / date / amount, accent-folded.
-  const fold = (x: string) => x.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+  // [SMART-FILTER] tekst + bedrag via de gedeelde, decimaal-bewuste matcher
+  // (src/lib/search.ts); de datum blijft een losse ISO-substring-match.
+  const rawB = filterText.trim()
   const activeList =
-    filterText.trim()
-      ? activeListRaw.filter((s) => {
-          const raw = filterText.trim()
-          const q = fold(raw)
-          // Amount: only when the query is AMOUNT-LIKE (digits/separators/€ only) — a
-          // text query that merely contains a digit ("factuur 2") must NOT trigger it.
-          // Exact value ("1.500,00" / "45,50"), plus a whole-euro match ("15" → €15,xx)
-          // ONLY when no decimal was typed (so "1,5" means €1,50, not also €15,xx).
-          const amountLike = raw.length > 0 && !/[^\d.,\s€-]/.test(raw)
-          const qDigits = raw.replace(/[^\d]/g, '')
-          const qNum = Number(raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''))
-          // "whole euro" = the parsed value is an integer ("15","1.500","1.500,00"),
-          // NOT that the raw string lacks separators — a NL thousands-dot ("1.500")
-          // is still a whole number and must keep the whole-euro match.
-          const isWhole = Number.isInteger(qNum)
-          const an = Math.abs(s.amount)
-          const amountMatch =
-            amountLike && qDigits.length > 0 &&
-            ((Number.isFinite(qNum) && qNum > 0 && Math.abs(an - qNum) < 0.005) ||
-              (isWhole && String(Math.trunc(an)) === qDigits))
-          return (
-            fold(s.counterpart ?? '').includes(q) ||
-            fold(s.reference ?? '').includes(q) ||
-            (s.date ?? '').toLowerCase().includes(raw.toLowerCase()) ||
-            amountMatch
-          )
-        })
+    rawB
+      ? activeListRaw.filter((s) =>
+          rowMatchesQuery(rawB, [s.counterpart, s.reference], [s.amount]) ||
+          (s.date ?? '').toLowerCase().includes(rawB.toLowerCase())
+        )
       : activeListRaw
 
   return (

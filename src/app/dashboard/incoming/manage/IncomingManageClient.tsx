@@ -31,6 +31,7 @@ import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 import { crossQuarterPayment } from '@/lib/quarter'
+import { rowMatchesQuery } from '@/lib/search'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const M3 = {
@@ -267,19 +268,14 @@ export default function IncomingManageClient({
 
   // [SEARCH] In-page live filter (leverancier / factuurnummer / bedrag), on top of the
   // status tabs — in place, no navigation.
-  const mFold = (x: string) => (x ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
   const rawS = search.trim()
-  const sq = mFold(rawS)
-  const sDigits = rawS.replace(/[^\d]/g, '')
-  const sAmountLike = sDigits.length >= 2 && /^[\d.,\s€-]+$/.test(rawS)
   const displayed = sortRows(
     invoices.filter(inv => {
       const tabOk = filter === 'all' ? true : filter === 'auto' ? isAutoVerified(inv) : inv.status === filter
       if (!tabOk) return false
-      if (!rawS) return true
-      return mFold(inv.client_name ?? '').includes(sq)
-        || mFold(inv.invoice_number ?? '').includes(sq)
-        || (sAmountLike && String(Math.trunc(Math.abs(inv.total_inc_btw ?? 0))) === sDigits)
+      // [SMART-FILTER] shared matcher — leverancier / factuurnummer / bedrag
+      // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
+      return rowMatchesQuery(rawS, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
     }),
     sortBy,
   )
