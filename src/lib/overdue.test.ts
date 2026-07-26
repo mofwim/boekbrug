@@ -1,5 +1,5 @@
 // [OVER-DATUM] Pure node test — run: npx tsx src/lib/overdue.test.ts
-import { overdueDays } from "./overdue";
+import { overdueDays, daysUntilDue } from "./overdue";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -52,6 +52,41 @@ console.log("\n— DST cannot shift the count (Europe/Amsterdam switches 2026-03
   // 2026-03-28 → 2026-03-30 spans the spring-forward night; the answer must be whole days.
   check("across the DST switch stays exact", overdueDays("2026-03-28", "2026-03-30") === 2);
   check("across the autumn switch stays exact", overdueDays("2026-10-24", "2026-10-26") === 2);
+}
+
+
+console.log("\n— [DATE-LINE] the countdown: how many days are still LEFT —");
+{
+  check("due in 5 days → 5", daysUntilDue("2026-07-31", TODAY) === 5);
+  check("due tomorrow → 1", daysUntilDue("2026-07-27", TODAY) === 1);
+  check("due TODAY → 0 (the row reads 'vandaag', not 'te laat')", daysUntilDue("2026-07-26", TODAY) === 0);
+  check("already past due → null (overdueDays owns that side)", daysUntilDue("2026-07-20", TODAY) === null);
+  check("a timestamp is tolerated", daysUntilDue("2026-07-31T23:59:59Z", TODAY) === 5);
+  check("across the DST switch stays exact", daysUntilDue("2026-03-30", "2026-03-28") === 2);
+}
+
+console.log("\n— no due date ⇒ no countdown (never invent a deadline) —");
+{
+  check("null → null", daysUntilDue(null, TODAY) === null);
+  check("empty → null", daysUntilDue("", TODAY) === null);
+  check("garbage → null", daysUntilDue("binnenkort", TODAY) === null);
+  check("31 February → null", daysUntilDue("2026-02-31", TODAY) === null);
+  check("unpadded day → null", daysUntilDue("2026-7-31", TODAY) === null);
+  check("a bad today → null", daysUntilDue("2026-07-31", "not-a-day") === null);
+}
+
+console.log("\n— the two halves partition the timeline: never both, never neither —");
+{
+  // Walk a window around today. With a real due date exactly one of the two must answer, so a row
+  // can never show "nog 3 dagen" next to "2 dagen te laat", nor fall silent while a date exists.
+  let bothOrNeither = 0;
+  for (let d = 1; d <= 31; d++) {
+    const due = `2026-07-${String(d).padStart(2, "0")}`;
+    const late = overdueDays(due, TODAY);
+    const left = daysUntilDue(due, TODAY);
+    if ((late === null) === (left === null)) bothOrNeither++;
+  }
+  check("exactly one of the two answers on every day of the month", bothOrNeither === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
