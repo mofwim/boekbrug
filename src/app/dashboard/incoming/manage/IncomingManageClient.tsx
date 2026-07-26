@@ -168,7 +168,15 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 export default function IncomingManageClient({
   profile,
   initialInvoices,
-}: { profile: { id: string }; initialInvoices: IncomingRow[] }) {
+  totalCount = null,
+}: {
+  profile: { id: string }
+  initialInvoices: IncomingRow[]
+  // [INVOICE-COUNTER] How many confirmed inkoopfacturen the owner really has (server count).
+  // Only used to disclose that this list is capped — never as the counter itself, because it
+  // cannot move when the owner pays a factuur. Null when the count query failed.
+  totalCount?: number | null
+}) {
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -348,6 +356,25 @@ export default function IncomingManageClient({
   )
   // [AUTO-ADVANCE] Count for the review nudge — how many invoices the app booked for you.
   const autoCount = invoices.filter(isAutoVerified).length
+
+  // ── [INVOICE-COUNTER] "Hoeveel facturen heb ik eigenlijk?" ───────────────────
+  // Derived from `invoices` on every render, NOT from a server number fetched once. That is the
+  // whole point: the moment a factuur is betaald, undone, matched by the bank-run or removed as a
+  // duplicate, this array changes and so do the counts. A server total could not move with those
+  // actions and would sit there contradicting the list.
+  //
+  // The trade-off is honest and disclosed: `invoices` is the fetched window (all open rows — the
+  // 1000-cap is unreachable by design — plus the 200 most recent paid ones), so on a long history
+  // these are the counts of THIS LIST. totalCount says what the owner really has, and the note
+  // below the counter names the difference instead of passing 200 off as "everything".
+  const receivedCount = invoices.filter(i => i.status === 'received').length
+  const paidCount     = invoices.filter(i => i.status === 'paid').length
+  const listedCount   = invoices.length
+  const hiddenCount   = totalCount != null ? Math.max(0, totalCount - listedCount) : 0
+  const nFacturen = (n: number) => `${n} ${n === 1 ? 'factuur' : 'facturen'}`
+  // Per-tab counts, so choosing a filter already tells you how much is behind it.
+  const tabCount = (id: FilterTab) =>
+    id === 'all' ? listedCount : id === 'received' ? receivedCount : id === 'paid' ? paidCount : autoCount
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
@@ -741,8 +768,10 @@ export default function IncomingManageClient({
               onClick={() => { setShowFilterMenu(p => !p); setShowSortMenu(false) }}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
             >
+              {/* [INVOICE-COUNTER] The active filter carries its count, so the number is on
+                  screen even with the menu closed and the list scrolled away. */}
               <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'}
+                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'} · {tabCount(filter)}
               </span>
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }}>
                 {showFilterMenu ? 'expand_less' : 'expand_more'}
@@ -754,9 +783,14 @@ export default function IncomingManageClient({
                   <button
                     key={f.id}
                     onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
-                    style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                   >
-                    {f.label}
+                    <span>{f.label}</span>
+                    {/* [INVOICE-COUNTER] How many rows this filter would show — so the owner
+                        sees the split without having to pick each tab to find out. */}
+                    <span style={{ fontSize: 12.5, fontWeight: 600, fontFamily: FONT_NUM, color: filter === f.id ? M3.onPrimaryContainer : '#5F6368', background: filter === f.id ? 'rgba(255,255,255,0.6)' : M3.surfaceVariant, borderRadius: R.full, padding: '1px 8px', flexShrink: 0 }}>
+                      {tabCount(f.id)}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -823,6 +857,36 @@ export default function IncomingManageClient({
             {search && (
               <button onClick={() => setSearch('')} aria-label="Wissen"
                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+            )}
+          </div>
+        )}
+
+        {/* ── [INVOICE-COUNTER] Hoeveel facturen heb ik? ──────────────────────────
+            One line, right above the list, that always answers it — and adapts to
+            what the owner is doing instead of repeating what the filter already says:
+              · zoeken        → how many rows the query found (his explicit ask)
+              · geen filter   → the total plus the te-betalen / betaald split
+              · wél een filter→ how many of the total this tab holds
+            All three counts come from the loaded rows, so they move the instant a
+            factuur is betaald, teruggedraaid, gematcht of als dubbel verwijderd.
+            aria-live so a screen reader hears the number change while typing.
+            Suppressed on a fruitless search — the empty message below already says
+            "geen facturen gevonden voor …" and "0 facturen gevonden" adds nothing. */}
+        {invoices.length > 0 && !(rawS && displayed.length === 0) && (
+          <div aria-live="polite" style={{ marginBottom: 10, padding: '0 2px' }}>
+            <p style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT, margin: 0, fontWeight: 500 }}>
+              {rawS
+                ? `${nFacturen(displayed.length)} gevonden`
+                : filter === 'all'
+                  ? `${nFacturen(listedCount)} · ${receivedCount} te betalen · ${paidCount} betaald`
+                  : `${displayed.length} van ${nFacturen(listedCount)}`}
+            </p>
+            {/* The list is a window, not the archive: the paid query stops at 200. Say so rather
+                than let the counter imply the owner owns fewer facturen than he does. */}
+            {hiddenCount > 0 && (
+              <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
+                Je hebt er {totalCount} in totaal. Deze lijst toont de {receivedCount} openstaande en de {paidCount} meest recente betaalde.
+              </p>
             )}
           </div>
         )}
