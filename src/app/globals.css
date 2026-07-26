@@ -274,3 +274,18 @@ input::placeholder, textarea::placeholder {
     transform: none !important;
   }
 }
+/* ── [ROW-STACK] Inkoopfactuur-rij op een smal scherm ────────────────────────── */
+/* De rechterkolom van een factuurrij (bedrag + "Heb je betaald?" + prullenbak)   */
+/* houdt ~210px vast, ongeacht de schermbreedte. Op een telefoon bleef daardoor   */
+/* 114–184px over voor ALLE tekst: de leveranciersnaam brak in vieren, elke       */
+/* statuschip kreeg een eigen regel, en de aftelling zakte onder de datum. Alles  */
+/* stond er, niets was te lezen.                                                  */
+/* Onder 520px wordt de rij daarom tweelaags: alle tekst op de volle breedte, en  */
+/* het geld met zijn knoppen op een eigen strook eronder, rechts uitgelijnd —     */
+/* dezelfde leesrichting als op een breed scherm, alleen gekanteld.               */
+@media (max-width: 520px) {
+  .inv-row      { flex-wrap: wrap; row-gap: 10px; }
+  .inv-row-main { flex: 1 1 100%; }
+  .inv-row-side { flex: 1 1 auto; flex-direction: row; align-items: center;
+                  justify-content: flex-end; }
+}
