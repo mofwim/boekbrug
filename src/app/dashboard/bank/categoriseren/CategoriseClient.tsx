@@ -180,10 +180,11 @@ export default function CategoriseClient() {
     : items
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
+    <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
+        {/* [HEADER-SYSTEM] Title "Wat is dit?" + back live in the shared sub-page
+            bar; the in-body h1 that repeated it was removed. Subtitle stays. */}
         <header style={{ margin: '16px 0 16px' }}>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 4px' }}>Wat is dit?</h1>
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>
             {mode === 'todo'
               ? 'Geef elke banktransactie een plek. We onthouden je keuze per bedrijf.'

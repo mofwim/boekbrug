@@ -20,6 +20,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { getParentPath, getHomePath, type Role } from "@/lib/navigation";
+import { M3, FONT, PAGE_HEADER_HEIGHT } from "@/lib/design/tokens";
 import type { ReactNode } from "react";
 
 export default function SubPageHeader({
@@ -46,17 +47,17 @@ export default function SubPageHeader({
         position: "sticky",
         top: 0,
         zIndex: 50,
-        backgroundColor: "#fff",
-        borderBottom: "1px solid #E0E0E0",
+        backgroundColor: M3.surface,
+        borderBottom: `1px solid ${M3.outlineVariant}`,
         // Clear the device status bar in standalone PWA mode.
         paddingTop: "env(safe-area-inset-top)",
         display: "flex",
         alignItems: "center",
         gap: 8,
-        height: "calc(56px + env(safe-area-inset-top))",
+        height: `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area-inset-top))`,
         paddingLeft: 8,
         paddingRight: 12,
-        fontFamily: "'Roboto', sans-serif",
+        fontFamily: FONT,
       }}
     >
       {/* Back → canonical parent (single source of truth, loop-safe) */}
@@ -85,7 +86,7 @@ export default function SubPageHeader({
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
             d="M15 18l-6-6 6-6"
-            stroke="#5F6368"
+            stroke={M3.onSurfaceVariant}
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -99,12 +100,12 @@ export default function SubPageHeader({
         style={{
           fontWeight: 700,
           fontSize: 17,
-          color: "#1A73E8",
+          color: M3.primary,
           flexShrink: 0,
           letterSpacing: "-0.3px",
           lineHeight: 1,
           textDecoration: "none",
-          fontFamily: "'Roboto', sans-serif",
+          fontFamily: FONT,
           transition: "opacity 0.15s",
         }}
         onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.opacity = "0.75")}

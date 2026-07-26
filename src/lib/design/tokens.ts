@@ -34,3 +34,16 @@ export const M3 = {
 } as const
 export const FONT = "'Roboto', -apple-system, sans-serif"
 export const FONT_NUM = "'Roboto Mono', monospace"
+
+// [HEADER-SYSTEM] Single source of truth for the sticky-header height.
+// The shared sub-page bar (components/nav/SubPageHeader) and the home bar
+// (app/dashboard/_shared DashboardHeader) both use this, and any secondary
+// sticky toolbar that must sit BELOW the header offsets by it — so nobody
+// hardcodes a magic `56` again. If the header height ever changes, change it
+// here only. See docs/header-system.md.
+export const PAGE_HEADER_HEIGHT = 56
+
+// CSS `top:` value for a secondary sticky bar that must clear the page header,
+// including the notch inset on standalone PWA. Use as:
+//   position: 'sticky', top: STICKY_BELOW_HEADER
+export const STICKY_BELOW_HEADER = `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area-inset-top))`

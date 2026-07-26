@@ -131,8 +131,9 @@ export default function DagomzetImportClient() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 4px' }}>Dagomzet importeren</h1>
-        <p style={{ fontSize: 14, color: M3.neutral, margin: '0 0 20px', lineHeight: 1.5 }}>
+        {/* [HEADER-SYSTEM] Title "Dagomzet" + back live in the shared sub-page bar;
+            the in-body h1 was removed. The descriptive intro stays. */}
+        <p style={{ fontSize: 14, color: M3.neutral, margin: '16px 0 20px', lineHeight: 1.5 }}>
           Upload het Z-rapport van de kassa (.xls, .xlsx of .csv). Je ziet eerst precies wat er is gelezen —
           er wordt niets opgeslagen tot je op <b>Goedkeuren</b> klikt. Upload je een grootboek-overzicht
           (OVERZICHT/KASBOEK van de boekhouder), dan wordt dat automatisch herkend en als <b>controle</b>

@@ -27,6 +27,7 @@ import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
 import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
+import { FONT } from "@/lib/design/tokens";
 import { rowMatchesQuery } from "@/lib/search";
 // [SORT] Same ordering module as Inkoopfacturen (IncomingManageClient) — one
 // implementation, no drifting copies. Vandaag offers the subset of keys whose
@@ -212,21 +213,14 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         maxWidth: 640,
         margin: "0 auto",
         padding: "24px 16px 64px",
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        // [HEADER-SYSTEM] Was a bespoke system-ui font stack (the only one in the
+        // app); now the shared Roboto FONT token.
+        fontFamily: FONT,
       }}
     >
+      {/* [HEADER-SYSTEM] Title "Vandaag" + back live in the shared sub-page bar;
+          the in-body h1 was removed. The one-line subtitle stays. */}
       <header style={{ marginBottom: 24 }}>
-        <h1
-          style={{
-            fontSize: 28,
-            fontWeight: 700,
-            color: M3.onSurface,
-            margin: "0 0 4px",
-          }}
-        >
-          Vandaag
-        </h1>
         <p style={{ fontSize: 15, color: M3.onSurfaceVariant, margin: 0 }}>
           Dit heeft vandaag je aandacht nodig.
         </p>
