@@ -18,8 +18,9 @@
 //
 // The four groups (see the render for the mapping):
 //   1. Toevoegen         — the daily input actions (add bon/factuur, bulk upload)
-//   2. Mijn administratie — the six record screens as a 3-col tile grid
-//                           (Facturen · Inkomend · Bank · Kas · Dagomzet · Artikelen)
+//   2. Mijn administratie — the record screens as a 3-col tile grid
+//                           (Facturen · Inkomend · Inkoopfacturen · Bank · Kas ·
+//                            Dagomzet · Artikelen)
 //   3. Cijfers & aangifte — "Je waarheid" (primary) + two compact MiniCards
 //   4. Meer              — Mijn werkplek
 //
@@ -202,9 +203,15 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             </div>
           </section>
 
-          {/* ── 2. MIJN ADMINISTRATIE — the six record screens as a compact grid ── */}
+          {/* ── 2. MIJN ADMINISTRATIE — the record screens as a compact grid ────── */}
           {/* Each tile reuses its screen's original icon + colour so nothing feels
-              relocated, only regrouped. Inkomend carries the pending-verify badge. */}
+              relocated, only regrouped. The two purchase surfaces sit adjacent:
+              "Inkomend" is the verify QUEUE (/incoming, carries the pending-verify
+              badge); "Inkoopfacturen" is the CONFIRMED crediteuren-management
+              (/incoming/manage — mark paid, betaalstatus), which titles itself
+              "Inkoopfacturen" and was previously only reachable from inside the
+              queue. Surfaced here so the owner reaches their te-betalen bills
+              straight from home. */}
           <section>
             <SectionLabel>Mijn administratie</SectionLabel>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
@@ -212,6 +219,8 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                 onClick={() => router.push('/dashboard/facturen')} />
               <AdminTile icon="mark_email_unread" tint="#0288D1" label="Inkomend" badge={pendingCount}
                 onClick={() => router.push('/dashboard/incoming')} />
+              <AdminTile icon="request_quote" tint="#E37400" label="Inkoopfacturen"
+                onClick={() => router.push('/dashboard/incoming/manage')} />
               <AdminTile icon="account_balance" tint="#1A73E8" label="Bank"
                 onClick={() => router.push('/dashboard/bank')} />
               <AdminTile icon="payments" tint="#00897B" label="Kas"
