@@ -116,6 +116,23 @@ export async function GET() {
   // [BANK-SLOT-PERSIST] Per-tx list of reference numbers already paid — so the UI marks
   // those slots "Betaald" on reload instead of showing an already-paid invoice as open.
   const coveredByTx = new Map<string, string[]>();
+  // [BANK-ONE-PAYMENT-MANY-INVOICES] How much of each still-pending bank line is already
+  // booked on invoices. A line stays pending precisely because money of it is unassigned, and
+  // the owner cannot act on "still here" without knowing how much is left. Read from the join
+  // table's amount_applied — the same figure every booking path now writes.
+  const appliedByTx = new Map<string, number>();
+
+  if (linkedTxRows.length > 0) {
+    const { data: appliedRows } = await pipeline
+      .from("bank_tx_invoices")
+      .select("transaction_id, amount_applied")
+      .eq("user_id", user.id)
+      .in("transaction_id", linkedTxRows.map((r) => (r as BankTransactionDbRow).id));
+    for (const r of (appliedRows ?? []) as { transaction_id: string; amount_applied: number | null }[]) {
+      if (r.amount_applied == null) continue; // pre-[PARTIAL-PAY] link: amount unknown, don't guess
+      appliedByTx.set(r.transaction_id, (appliedByTx.get(r.transaction_id) ?? 0) + Math.max(0, Number(r.amount_applied)));
+    }
+  }
 
   if (linkedTxRows.length > 0) {
     // Paid invoice numbers for this user, both directions (cheap, single read).
@@ -198,6 +215,10 @@ export async function GET() {
       // [BANK-SLOT-PERSIST] Normalized reference numbers already paid against this tx, so
       // the multi-invoice UI marks those slots "Betaald" after a reload (session state gone).
       coveredNumbers: isLinked ? (coveredByTx.get(txId!) ?? []) : [],
+      // [BANK-ONE-PAYMENT-MANY-INVOICES] Euros of this bank line already booked on invoices
+      // (null when nothing is linked or the links predate amount_applied — then the UI says
+      // nothing rather than something wrong).
+      appliedAmount: isLinked ? (appliedByTx.get(txId!) ?? null) : null,
       // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
       explainedByPaid: txId != null && paidExplained.has(txId),
     };

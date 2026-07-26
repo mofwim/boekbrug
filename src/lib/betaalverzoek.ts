@@ -14,7 +14,7 @@
 //      ids, other invoices) is deliberately dropped here so the public read API can
 //      never leak it, even by accident. This is the single allowlist.
 
-import { buildEpcQrPayload, isValidIban, normalizeIban } from "./epc-qr";
+import { buildEpcQrPayload, isValidIban, normalizeIban, EPC_REMITTANCE_MAX } from "./epc-qr";
 
 // ─── Inputs ────────────────────────────────────────────────────────────────────
 
@@ -223,12 +223,43 @@ export function buildBundelBetaalverzoek(
     .filter(Boolean)
     .join(", ");
 
+  // [BUNDEL-REFERENCE-FITS] Every invoice number MUST reach the bank statement, or the payment
+  // can never be reconciled to the invoices it settled. The EPC remittance is capped at 140
+  // characters and buildEpcQrPayload truncates silently: a 20-invoice bundle fits only ~14
+  // numbers, so the customer pays the full sum while quoting a partial list — the batch engine
+  // then sums the invoices it CAN see, finds they do not equal the payment, and reports a
+  // mismatch that nothing can resolve. Refuse up front, with the number that does fit, instead
+  // of minting an unreconcilable request. (MAX_BUNDLE_INVOICES stays the hard ceiling; this is
+  // the real, reference-length-driven limit underneath it.)
+  if (reference.length > EPC_REMITTANCE_MAX) {
+    const fits = countFittingReferences(invoices);
+    return {
+      ok: false,
+      error: `Te veel facturen voor één betaalverzoek: de bank kan maar ${EPC_REMITTANCE_MAX} tekens aan kenmerk meesturen, dus niet alle factuurnummers passen erin. Selecteer er maximaal ${fits} en maak zo nodig een tweede betaalverzoek.`,
+    };
+  }
+
   const qr = buildEpcQrPayload({ iban, name: beneficiaryName, amount, reference });
   if (!qr.ok || !qr.payload) {
     return { ok: false, error: qr.error ?? "Geen betaal-QR mogelijk." };
   }
 
   return { ok: true, epcPayload: qr.payload, beneficiaryName, iban, amount, reference, items };
+}
+
+/** How many of these invoices' numbers fit in one EPC remittance, joined by ", ". */
+function countFittingReferences(invoices: BetaalverzoekInvoice[]): number {
+  let used = 0;
+  let n = 0;
+  for (const inv of invoices) {
+    const num = (inv.invoice_number || inv.payment_reference || "").trim();
+    if (!num) continue;
+    const add = n === 0 ? num.length : num.length + 2; // ", "
+    if (used + add > EPC_REMITTANCE_MAX) break;
+    used += add;
+    n++;
+  }
+  return Math.max(1, n);
 }
 
 // ─── Public projection (the allowlist) ─────────────────────────────────────────
