@@ -22,11 +22,12 @@ const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 
 
 // ─── [FACTUUR-A] Numbering moved server-side — June 2026 ─────────────────────
 // The browser-side generateNumber() was removed: it did a SELECT-then-compute
-// from the client (the same race the TODO in invoice-numbering.ts warns about)
-// AND bypassed the atomic, legal numbering in /api/invoice/send. The page now
-// ALWAYS saves a draft (no number) and lets the send route mint the number —
-// single source of truth, no gaps (Art. 35 Wet OB 1968). BRIDGE-C later swaps
-// the route's internals to a PostgreSQL sequence.
+// from the client AND bypassed the atomic, legal numbering in /api/invoice/send.
+// The page now ALWAYS saves a draft (no number) and lets the send route mint the
+// number — single source of truth, no gaps (Art. 35 Wet OB 1968).
+// [FACTUUR-B] That route no longer computes the sequence either: it allocates it
+// atomically via the next_invoice_seq() rpc, so no SELECT-then-compute window
+// remains on any path.
 
 // ─── [FACTUUR-A] Client-side BTW-id format check — June 2026 ─────────────────
 // Mirrors BOEK-019: NL + 9 digits + 'B' + 2 digits (e.g. NL123456789B01).

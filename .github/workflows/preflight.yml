@@ -1,0 +1,102 @@
+# [PREFLIGHT] Scheduled environment check against the LIVE deployment.
+#
+# ci.yml proves the CODE is sound on every PR. It cannot prove the ENVIRONMENT still
+# is — and the environment drifts on its own: a migration nobody ran, an env var lost
+# in a project migration, an expiring DNS record, an RLS policy edited by hand in the
+# Supabase dashboard. Every one of those degrades SILENTLY (the app is built to fail
+# soft), so nothing tells you until a customer's invoice quietly stops being matched.
+# This job asks the live system, once a day, whether it is still whole.
+#
+# WHY A SEPARATE WORKFLOW (not a job in ci.yml):
+#   · It needs production secrets — never expose those to pull_request runs, which
+#     can execute a contributor's code.
+#   · It tests the deployed site, so it must run on a schedule, not on a commit.
+#
+# SAFETY: scripts/preflight.ts is read-only. No writes, and no database function is
+# ever executed — see the header of that file. Running it hourly would be harmless;
+# daily is enough to catch drift.
+#
+# SETUP — add these under Settings → Secrets and variables → Actions → Secrets:
+#   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY,
+#   SUPABASE_SERVICE_ROLE_KEY, NEXT_PUBLIC_APP_URL
+#   RESEND_API_KEY (optional — the e-mail gate SKIPs without it)
+# Until the required ones exist the job exits 0 with a notice instead of failing, so
+# it never nags before it is configured.
+
+name: Preflight (live environment)
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # 06:00 UTC daily — before the working day starts
+  workflow_dispatch: # and on demand, e.g. right before a launch
+
+# Never let two runs overlap; a queued duplicate tells you nothing new.
+concurrency:
+  group: preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Check live environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Exit cleanly when the secrets have not been added yet — an unconfigured
+      # repository must not produce a daily red X that everyone learns to ignore.
+      - name: Are the secrets configured?
+        id: guard
+        env:
+          URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          ANON: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SERVICE: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$ANON" ] || [ -z "$SERVICE" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Preflight skipped — add the Supabase secrets to enable the daily live check (see this workflow's header)."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run preflight
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # Force plain output — GitHub's log viewer renders ANSI poorly in summaries.
+          NO_COLOR: '1'
+        # Invoked directly rather than via `npm run preflight`, which loads .env.local
+        # (a file that exists only on a developer machine).
+        #
+        # pipefail is REQUIRED: without it the pipeline reports tee's exit code (always
+        # 0) and a FAIL would render as a green run — the exact silent-success failure
+        # this whole workflow exists to prevent.
+        run: |
+          set -o pipefail
+          npx tsx scripts/preflight.ts | tee preflight.log
+
+      # Put the verdict on the run's summary page, so a failure is readable without
+      # opening the log.
+      - name: Publish result
+        if: always() && steps.guard.outputs.configured == 'true'
+        run: |
+          {
+            echo '## Preflight — live environment'
+            echo
+            echo '```'
+            tail -n 40 preflight.log 2>/dev/null || echo '(no output — the run crashed before reporting)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

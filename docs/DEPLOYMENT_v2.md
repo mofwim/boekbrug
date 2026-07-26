@@ -1,19 +1,46 @@
 # BOEK-SECURITY-2 Deployment — v2
 
+> ## ⚠️ وثيقة تاريخية — الخطوة ١ لم تعد تنطبق
+>
+> ملف `1_rate_limit_and_audit_v2.sql` **لم يعد موجوداً في المستودع**: محتواه دُمج
+> بالكامل في `database.sql` (المخطط المرجعي). لا تبحث عنه.
+>
+> **قاعدة بيانات جديدة** → شغّل `database.sql` وحده؛ يحتوي على جدول `rate_limits`
+> وفهارسه وسياسة `rate_limits_select_own` ودالتي `check_rate_limit` و
+> `cleanup_old_rate_limits`. سياسة `"System can insert logs"` لا تُنشأ أصلاً، فلا
+> شيء يُحذف.
+>
+> **قاعدة بيانات قائمة من قبل هذا التغيير** → الشيء الوحيد الذي قد يلزم يدوياً:
+> ```sql
+> DROP POLICY IF EXISTS "System can insert logs" ON public.audit_logs;
+> ```
+>
+> **للتحقق من الحالة الفعلية** استعمل الفحص الآلي بدل قراءة هذه الوثيقة:
+> ```bash
+> npm run preflight
+> ```
+> بوابة «SCHEMA» فيه تتحقق من `rate_limits` و `audit_logs` و `check_rate_limit()`
+> مباشرة على القاعدة الحية.
+>
+> باقي الوثيقة (الخطوات ٢ فما بعد) ما زال صحيحاً كسجل لما جرى.
+
 ## التغييرات في v2
 
 | ملف | تغيير |
 |------|-------|
-| `1_rate_limit_and_audit_v2.sql` | + DROP "System can insert logs" policy |
+| ~~`1_rate_limit_and_audit_v2.sql`~~ → `database.sql` | + DROP "System can insert logs" policy |
 | `audit.ts` | + `invoice.duplicated` + `creditnota.created` actions |
 | `rate-limit.ts` | لا تغيير |
 | `sanitize.ts` | لا تغيير |
 
 ## التسلسل (مهم — لا تخالف)
 
-### الخطوة ١ — Supabase Migration
+### الخطوة ١ — Supabase Migration ~~(قديم)~~
 
-افتح Supabase SQL Editor، شغّل `1_rate_limit_and_audit_v2.sql` بالكامل.
+<sub>الأصل: «افتح Supabase SQL Editor، شغّل `1_rate_limit_and_audit_v2.sql` بالكامل.»
+انظر التنبيه أعلاه — استعمل `database.sql`.</sub>
+
+المخرجات المتوقعة وقتها كانت:
 
 **Expected output:**
 - `CREATE TABLE` ✓

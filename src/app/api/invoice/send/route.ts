@@ -30,8 +30,12 @@
 //   Nothing incomplete ever reaches the recipient.
 //
 // TODO: Add DB trigger for AUTO-UPDATE updated_at, then remove manual setting
-// TODO(BRIDGE-C): swap generateInvoiceNumber internals to a PostgreSQL
-//   sequence — closes the SELECT-then-compute race. Call site stays as-is.
+//
+// [FACTUUR-B] DONE (was TODO(BRIDGE-C)): the SELECT-then-compute race is closed.
+//   generateInvoiceNumber now allocates the raw sequence through the SECURITY
+//   DEFINER rpc next_invoice_seq() — one row-locked read+increment — and only
+//   FORMATS the integer it returns. The call site here is unchanged, as planned.
+//   See src/lib/invoice-numbering.ts + supabase/migrations/factuur_b_numbering.sql.
 // =====================================================
 
 import { NextRequest, NextResponse } from 'next/server'
