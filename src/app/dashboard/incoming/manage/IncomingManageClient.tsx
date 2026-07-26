@@ -31,6 +31,8 @@ import { createClient } from '@/lib/supabase'
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
+// [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
+import { openAmount, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
@@ -120,6 +122,11 @@ interface PayCtx {
   newStatus: 'paid' | 'received'
   paymentMethod?: 'bank' | 'kas'
   paymentDate?: string
+  // [MANUAL-PARTIAL-PAY] null/absent = settle the whole open balance; a number = instalment.
+  amount?: number | null
+  clientKey?: string
+  // What was still open when the dialog opened — the field's hint and cap.
+  openAmount?: number
 }
 
 type FilterTab = 'all' | 'received' | 'paid' | 'auto'
@@ -334,7 +341,9 @@ export default function IncomingManageClient({
   // check is a convenience, not a guard). 'received' → 'paid' only; an undo
   // (paid → received) skips the check entirely.
   async function requestPay(inv: IncomingRow) {
-    const ctx: PayCtx = { id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid' }
+    // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the full total on an untouched
+    // invoice, the remainder once instalments were recorded) — the amount field's hint and cap.
+    const ctx: PayCtx = { id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', openAmount: openAmount(inv) }
     setCheckingId(inv.id)
     try {
       const res = await fetch('/api/incoming/check-paid', {
@@ -451,7 +460,10 @@ export default function IncomingManageClient({
   // ── Mark paid / undo — session client, PAYMENT FIELDS ONLY ──
   async function executePay(ctx: PayCtx) {
     setPayCtx(null); setProcessingId(ctx.id)
-    patchLocal(ctx.id, { status: ctx.newStatus })
+    // [MANUAL-PARTIAL-PAY] A deelbetaling leaves the invoice on 'Te betalen' — only a full
+    // settlement flips the status, so don't claim otherwise before the server answers.
+    const isPartialIntent = ctx.newStatus === 'paid' && ctx.amount != null
+    if (!isPartialIntent) patchLocal(ctx.id, { status: ctx.newStatus })
 
     // [PAY-TOGGLE] Route through the server so the mutation is AUDITED and — crucially on undo —
     // any bank transaction matched to this invoice is DETACHED (never a paid-undone invoice beside
@@ -464,6 +476,8 @@ export default function IncomingManageClient({
         action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
         paymentMethod: ctx.paymentMethod ?? 'bank',
         paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        ...(ctx.amount != null ? { amount: ctx.amount } : {}),
+        ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
       }),
     })
     const json = await res.json().catch(() => ({} as { error?: string }))
@@ -472,7 +486,7 @@ export default function IncomingManageClient({
     if (error) {
       // rollback optimistic
       const prev = ctx.newStatus === 'paid' ? 'received' : 'paid'
-      patchLocal(ctx.id, { status: prev })
+      if (!isPartialIntent) patchLocal(ctx.id, { status: prev })
       // [BOEK-004] verwerkt conflict (trigger) → actionable dialog; else toast
       if (error.message && error.message.includes('verwerkt')) {
         setRequestSent(false)
@@ -485,8 +499,19 @@ export default function IncomingManageClient({
         payment_method: (ctx.paymentMethod ?? 'bank') as 'kas' | 'bank',
         payment_date: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
       }
+      // [MANUAL-PARTIAL-PAY] The server decides: the typed amount may have completed the
+      // invoice after all (the last instalment).
+      const partial = (json as { partial?: boolean }).partial === true
+      if (partial) {
+        patchLocal(ctx.id, {
+          amount_paid: (json as { amountPaid?: number }).amountPaid ?? null,
+          payment_date: patch.payment_date,
+        })
+        showToast(`${fmtEur((json as { applied?: number }).applied ?? 0)} genoteerd · nog ${fmtEur((json as { remaining?: number }).remaining ?? 0)} open`)
+      } else {
       // reflect the new payment fields locally
       patchLocal(ctx.id, {
+        status: 'paid',
         payment_method: patch.payment_method,
         payment_date: patch.payment_date,
         payment_prepared_at: null,
@@ -504,6 +529,7 @@ export default function IncomingManageClient({
         })
       } catch { /* non-blocking — payment already succeeded */ }
       showToast(`Inkoopfactuur ${ctx.number} betaald ✓`)
+      }
     } else {
       patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null })
       showToast(`Betaling ongedaan gemaakt`)
@@ -818,17 +844,26 @@ export default function IncomingManageClient({
                         const paid = Math.max(0, inv.amount_paid ?? 0)
                         const tot = Math.abs(inv.total_inc_btw ?? 0)
                         if (!(paid > 0.005 && paid < tot - 0.005)) return null
-                        const remaining = Math.max(0, tot - paid)
+                        const remaining = openAmount(inv)
                         return (
-                          <span
-                            title={`Deelbetaling: € ${paid.toFixed(2)} van € ${tot.toFixed(2)} betaald`}
+                          // [MANUAL-PARTIAL-PAY] The chip is now the way back in: tapping it
+                          // reopens the pay dialog offering the REMAINING balance, so recording
+                          // the next instalment starts where the owner reads the number.
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              if (processingId === inv.id || checkingId === inv.id) return
+                              requestPay(inv)
+                            }}
+                            title={`Deelbetaling: € ${paid.toFixed(2)} van € ${tot.toFixed(2)} betaald — tik om de rest te noteren`}
                             style={{
                               fontSize: 11, fontWeight: 600, color: '#b06000', background: '#fef7e0',
                               border: '1px solid #fde293', borderRadius: 6, padding: '2px 6px', whiteSpace: 'nowrap',
+                              cursor: 'pointer', fontFamily: FONT,
                             }}
                           >
                             Deels betaald · € {remaining.toFixed(2)} open
-                          </span>
+                          </button>
                         )
                       })()}
 
@@ -1007,9 +1042,15 @@ export default function IncomingManageClient({
           onCancel={() => setPayCtx(null)}
           paymentChoice={
             payCtx.newStatus === 'paid'
-              ? (method, paymentDate) => executePay({ ...payCtx, paymentMethod: method, paymentDate })
+              ? (method, paymentDate, amount) => executePay({
+                  ...payCtx, paymentMethod: method, paymentDate, amount,
+                  clientKey: payCtx.clientKey ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined),
+                })
               : undefined
           }
+          // [MANUAL-PARTIAL-PAY] Amount field only when marking as paid; an undo is
+          // all-or-nothing ("Deelbetalingen wissen" resets to zero paid).
+          openAmount={payCtx.newStatus === 'paid' ? payCtx.openAmount : undefined}
           // [PAY-NOT-YET] Third answer on mark-paid only: "no, I have not paid".
           // Clears the prepared marker (Voorbereid chip + nudge disappear); the
           // invoice stays open as te betalen. Undo-paid keeps its two buttons.
@@ -1148,21 +1189,28 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction }: {
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction, openAmount: openBalance }: {
   title: string
   body: string
   confirmLabel: string
   confirmBg: string
   onConfirm: () => void
   onCancel: () => void
-  paymentChoice?: (method: 'bank' | 'kas', paymentDate: string) => void
+  // [MANUAL-PARTIAL-PAY] the third argument is the typed amount (null = pay the whole rest)
+  paymentChoice?: (method: 'bank' | 'kas', paymentDate: string, amount: number | null) => void
   // [PAY-NOT-YET] Optional third answer between confirm and Annuleren — e.g.
   // "Nee, nog niet betaald" (clears the prepared marker; invoice stays open).
   // Distinct from Annuleren: this is an ANSWER (writes state), Annuleren is
   // "ask me later" (keeps everything). Absent → sheet renders exactly as before.
   secondaryAction?: { label: string; onClick: () => void }
+  // [MANUAL-PARTIAL-PAY] What is still open. Present → the "Betaald bedrag" field is offered.
+  // Absent → no field (a bundle payment stays all-or-nothing).
+  openAmount?: number
 }) {
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  // [MANUAL-PARTIAL-PAY] Empty means "all of it" — zero keystrokes for the ordinary case.
+  const [amountText, setAmountText] = useState('')
+  const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
   return (
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
@@ -1179,12 +1227,51 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />
+            {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty pays the whole open
+                balance (unchanged behaviour); a number records an instalment and leaves the
+                invoice on "Te betalen" for the rest, with the pay-QR asking only that rest. */}
+            {entry && openBalance != null && (
+              <>
+                <label htmlFor="ink-betaald-bedrag" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
+                  Betaald bedrag
+                </label>
+                <input
+                  id="ink-betaald-bedrag"
+                  type="text"
+                  inputMode="decimal"
+                  value={amountText}
+                  placeholder={openBalance.toFixed(2).replace('.', ',')}
+                  onChange={e => setAmountText(e.target.value)}
+                  style={{
+                    width: '100%', padding: '12px 14px', borderRadius: 12,
+                    border: `1px solid ${entry.error ? M3.error : '#DADCE0'}`,
+                    fontSize: 15, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box',
+                  }}
+                />
+                <p style={{ fontSize: 12, color: entry.error ? M3.error : '#5F6368', margin: '6px 2px 16px', lineHeight: 1.45 }}>
+                  {entry.error
+                    ? entry.error
+                    : amountText.trim() === ''
+                      ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
+                      : entry.settlesFully
+                        ? 'Hiermee is de factuur volledig betaald.'
+                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)}`}
+                </p>
+              </>
+            )}
+
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-              <button onClick={() => paymentChoice('bank', paymentDate)} style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <button
+                onClick={() => { if (!entry || entry.valid) paymentChoice('bank', paymentDate, entry?.amount ?? null) }}
+                disabled={!!entry && !entry.valid}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
-              <button onClick={() => paymentChoice('kas', paymentDate)} style={{ flex: 1, padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <button
+                onClick={() => { if (!entry || entry.valid) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
+                disabled={!!entry && !entry.valid}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant
               </button>

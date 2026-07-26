@@ -69,13 +69,24 @@ export async function fetchSettlementEvents(
   // 2) ALL of the owner's bank↔invoice links (by user_id, unfiltered). A payment reconciled via a
   //    bank link IS settled money — even if amount_paid/status weren't synced on the invoice row —
   //    so a linked invoice joins the settled set below (never a silent under-declaration).
-  const links = await fetchAllRows<{ invoice_id: string; transaction_id: string; amount_applied: number | null }>(
+  // [MANUAL-PARTIAL-PAY] A manual instalment is a link with NO transaction (transaction_id
+  // NULL) that carries its own date in paid_on. DEPLOY-SAFE: if that migration has not been
+  // applied yet, the richer select errors — fall back to the legacy projection so the
+  // kasstelsel aangifte keeps working (there simply are no manual rows to date yet).
+  type SettleLink = {
+    invoice_id: string; transaction_id: string | null;
+    amount_applied: number | null; paid_on?: string | null;
+  };
+  const fetchLinks = (columns: string) => fetchAllRows<SettleLink>(
     (from, to) => pipeline
       .from("bank_tx_invoices")
-      .select("invoice_id, transaction_id, amount_applied")
+      .select(columns)
       .eq("user_id", ownerId)
-      .order("id", { ascending: true }).range(from, to),
-  ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
+      .order("id", { ascending: true }).range(from, to) as never,
+  );
+  const links = await fetchLinks("invoice_id, transaction_id, amount_applied, paid_on")
+    .catch(() => fetchLinks("invoice_id, transaction_id, amount_applied"))
+    .catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
   const linkedIds = new Set(links.map((l) => l.invoice_id).filter(Boolean));
 
   const settled = invRows.filter((i) => isSettled(i) || linkedIds.has(i.id));
@@ -96,7 +107,8 @@ export async function fetchSettlementEvents(
     });
   }
 
-  const txIds = [...new Set(links.map((l) => l.transaction_id).filter(Boolean))];
+  // Manual instalments carry no transaction — they are dated by paid_on, not looked up here.
+  const txIds = [...new Set(links.map((l) => l.transaction_id).filter((id): id is string => !!id))];
   const txDate = new Map<string, string>();
   if (txIds.length > 0) {
     const txRows = await fetchAllRows<{ id: string; date: string | null }>((from, to) => pipeline
@@ -106,7 +118,7 @@ export async function fetchSettlementEvents(
     for (const t of txRows) if (t.date) txDate.set(t.id, t.date.slice(0, 10));
   }
 
-  const linksByInvoice = new Map<string, Array<{ transaction_id: string; amount_applied: number | null }>>();
+  const linksByInvoice = new Map<string, SettleLink[]>();
   for (const l of links) {
     if (!linksByInvoice.has(l.invoice_id)) linksByInvoice.set(l.invoice_id, []);
     linksByInvoice.get(l.invoice_id)!.push(l);
@@ -116,8 +128,15 @@ export async function fetchSettlementEvents(
   const raw: RawSettlement[] = [];
   for (const i of settled) {
     const bankLinks = linksByInvoice.get(i.id) ?? [];
+    // [MANUAL-PARTIAL-PAY] A bank-linked row is dated by its transaction; a MANUAL row
+    // (transaction_id NULL) by its own paid_on. Without this branch txDate.get(null) yields
+    // undefined and a perfectly dated cash instalment would be treated as undated — pushing
+    // real settled money into the "onbekende datum" bucket and out of its quarter.
     const dated = bankLinks
-      .map((l) => ({ date: txDate.get(l.transaction_id) ?? null, mag: Math.abs(Number(l.amount_applied) || 0) }))
+      .map((l) => ({
+        date: l.transaction_id ? (txDate.get(l.transaction_id) ?? null) : (l.paid_on ?? null),
+        mag: Math.abs(Number(l.amount_applied) || 0),
+      }))
       .filter((l) => l.mag > 0);
     const paidMag = headers.get(i.id)!.amountPaidMagnitude; // amount_paid, or full total for a legacy 'paid'
     for (const d of dated) raw.push({ invoiceId: i.id, payDate: d.date, magnitude: d.mag, estimated: false });

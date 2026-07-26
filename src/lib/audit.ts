@@ -46,6 +46,7 @@ export type AuditAction =
   | 'bank.confirmed'                  // ← [BANK-CONFIRM] owner confirmed a bank↔invoice match (invoice fully paid)
   | 'bank.partial_payment'            // ← [PARTIAL-PAY] a deelbetaling booked against an invoice (still openstaand)
   | 'bank.overpayment_residue'        // ← [PARTIAL-PAY-RESIDUE] payment exceeded the balance; the excess was NOT booked
+  | 'invoice.partial_payment'         // ← [MANUAL-PARTIAL-PAY] owner recorded a deelbetaling by hand (invoice stays openstaand)
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
