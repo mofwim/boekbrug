@@ -218,7 +218,10 @@ export async function POST(
   if (priorFc) {
     for (const k of Object.keys(priorFc)) {
       if (k.startsWith("_intake")) carried[k] = priorFc[k];
-      else if (!freshHasTotal && (k === "_safecore" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
+      // [BTW-SUM-FIX] _btw_derived explains the STORED amounts ("this BTW is ours, not the
+      // invoice's"). Keep it alongside _safecore when we keep those amounts — dropping it would
+      // leave a derived BTW sitting in the row with nothing left saying so.
+      else if (!freshHasTotal && (k === "_safecore" || k === "_btw_derived" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
     }
   }
   const aiConfidence = (c.fieldConfidence ?? null) as Record<string, unknown> | null;
