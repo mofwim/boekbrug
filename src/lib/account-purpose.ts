@@ -22,6 +22,8 @@
 // er al staat voor als hij hem nodig heeft (zie docs/BEWAARKLUIS_BUSINESS_CASE.md §4). Een
 // archiefaccount dat dingen NIET mag, zou dat idee kapotmaken.
 
+import { BELOFTE_KORT, BELOFTE_GERUST } from "./belofte";
+
 /** Waarvoor het account is aangemaakt. Beïnvloedt de begroeting, nooit de rechten. */
 export type AccountPurpose = "boekhouden" | "archief";
 
@@ -88,11 +90,14 @@ export function purposeCopy(purpose: AccountPurpose): PurposeCopy {
       cta: "Archief aanmaken",
     };
   }
+  // [BELOFTE] Geen opsomming van functies meer. Wat hier stond ("Maak facturen, scan bonnen
+  // en houd je BTW bij") is een featurelijst, en een featurelijst nodigt uit tot vergelijken
+  // met pakketten die op elke regel meer hebben. Bron: src/lib/belofte.ts.
   return {
-    subtitle: "Account aanmaken",
-    promise: "Maak facturen, scan bonnen en houd je BTW bij. Gratis.",
-    reassurance: "Geen creditcard nodig · Privacy-vriendelijk",
-    cta: "Account aanmaken",
+    subtitle: "Niets meer kwijtraken",
+    promise: BELOFTE_KORT,
+    reassurance: BELOFTE_GERUST,
+    cta: "Gratis beginnen",
   };
 }
 

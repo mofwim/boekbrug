@@ -16,7 +16,10 @@ const roboto = Roboto({
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "BoekBrug — Financieel Command Center",
-  description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
+  // [BELOFTE] Zie src/lib/belofte.ts — hier letterlijk, want Next verlangt in de
+  // metadata-export een statische waarde en geen import-expressie.
+  description:
+    "Je hoeft geen boekhouding te doen — alleen niets kwijt te raken. Fotografeer je bonnen of laat ze binnenkomen via je mail; aan het eind van het kwartaal staat alles klaar voor je boekhouder.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },
@@ -31,7 +34,8 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "BoekBrug — Financieel Command Center",
-    description: "Al je facturen, documenten en klanten op één plek. Voor ZZP'ers en boekhouders.",
+    description:
+      "Je hoeft geen boekhouding te doen — alleen niets kwijt te raken. Aan het eind van het kwartaal staat alles klaar voor je boekhouder.",
     images: ["/opengraph-image"],
   },
 };

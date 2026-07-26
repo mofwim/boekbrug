@@ -24,6 +24,7 @@ import PublicFooter from '@/components/public-footer'
 import { PLUS, KLUIS } from '@/lib/plan'
 import { FAIR_USE_LIMITS, formatLimit, fairUseLimit } from '@/lib/fair-use'
 import { BEWAARPLICHT_YEARS, KLUIS_GRACE_MONTHS, eur, KLUIS_PREPAY_YEAR_PRICE_EUR } from '@/lib/bewaarkluis'
+import { BELOFTE_KOP, BELOFTE_KOP_2, BELOFTE_UITLEG } from '@/lib/belofte'
 import SubscribeButton from './SubscribeButton'
 
 export const metadata: Metadata = {
@@ -77,13 +78,18 @@ export default async function PrijzenPage({
       <PublicHeader />
 
       <main style={{ ...wrap, paddingTop: 40, paddingBottom: 64 }}>
-        <h1 style={{ fontSize: 32, fontWeight: 700, color: '#202124', margin: '0 0 8px' }}>
-          Gratis voor jou. Gratis voor je boekhouder.
+        {/* [BELOFTE] Ook de prijspagina begint bij wat je NIET hoeft, niet bij wat het kost.
+            Iemand die hier landt weet nog niet waarom hij zou betalen als hij niet weet
+            waarvoor. Bron: src/lib/belofte.ts. */}
+        <h1 style={{ fontSize: 32, fontWeight: 700, color: '#202124', margin: '0 0 8px', lineHeight: 1.25 }}>
+          {BELOFTE_KOP} <span style={{ color: '#1a73e8' }}>{BELOFTE_KOP_2}</span>
         </h1>
+        <p style={{ fontSize: 17, color: '#5f6368', margin: '0 0 16px', lineHeight: 1.6, maxWidth: 640 }}>
+          {BELOFTE_UITLEG}
+        </p>
         <p style={{ fontSize: 17, color: '#5f6368', margin: '0 0 28px', lineHeight: 1.6, maxWidth: 620 }}>
-          Geen proefperiode die stilletjes afloopt, geen creditcard vooraf, en geen slot op je
-          eigen administratie. Je betaalt alleen als je BoekBrug zó intensief gebruikt dat het
-          ons echt geld kost — en dan nog kies je dat zelf.
+          En dat is <strong>gratis</strong> — voor jou én voor je boekhouder. Geen proefperiode die
+          stilletjes afloopt, geen creditcard vooraf, en geen slot op je eigen administratie.
         </p>
 
         {cancelled && (

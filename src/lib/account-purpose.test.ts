@@ -49,10 +49,32 @@ test("de archiefteksten beloven niets over facturen", () => {
   assert.ok(alles.includes("tweede exemplaar"));
 });
 
-test("het gewone pad houdt zijn eigen tekst", () => {
+test("het gewone pad belooft de uitkomst, niet een lijst functies", () => {
+  // Deze test verving een oudere die eiste dat er "factuur" in stond. Dat was precies de
+  // positionering die wij hebben losgelaten: een opsomming van functies nodigt uit tot
+  // vergelijken met pakketten die op elke regel méér hebben. Nu moet er staan wat de
+  // gebruiker eraan OVERHOUDT.
   const gewoon = purposeCopy("boekhouden");
-  assert.ok(gewoon.promise.toLowerCase().includes("factu"));
+  const tekst = `${gewoon.subtitle} ${gewoon.promise}`.toLowerCase();
+
+  assert.ok(tekst.includes("kwartaal"), "de uitkomst — het afgesloten kwartaal — hoort erin");
+  assert.ok(tekst.includes("boekhouder"), "en voor wie het klaarstaat");
   assert.notEqual(gewoon.subtitle, purposeCopy("archief").subtitle);
+});
+
+test("geen enkel pad belooft dat het kwartaal zichzelf doet", () => {
+  // De grens uit voorwaarden §4.3: een AI-uitkomst is een SUGGESTIE, nooit een feit, en de
+  // controle blijft bij de gebruiker. Marketingtekst die "automatisch gedaan" zegt maakt van
+  // die clausule een loze zin — en van ons een partij die wordt aangesproken op iets wat wij
+  // nergens hebben willen beloven. Vandaar overal "staat klaar" en nooit "is gedaan".
+  const verboden = ["vanzelf gedaan", "automatisch gedaan", "doet zichzelf", "is gedaan", "wij doen je boekhouding"];
+  for (const purpose of ["boekhouden", "archief"] as const) {
+    const c = purposeCopy(purpose);
+    const alles = `${c.subtitle} ${c.promise} ${c.reassurance} ${c.cta}`.toLowerCase();
+    for (const zin of verboden) {
+      assert.equal(alles.includes(zin), false, `"${zin}" belooft meer dan §4.3 toestaat (${purpose})`);
+    }
+  }
 });
 
 test("een archiefaccount is geen nieuwe rol", () => {

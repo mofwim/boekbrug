@@ -910,8 +910,21 @@ function StepAccountant({ accountantEmail, setAccountantEmail }: {
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Heb je een boekhouder?</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
-          Stuur een uitnodiging — hij kan dan al je facturen inzien.
+        {/* [BELOFTE] Dit is de afloop van de hele belofte: hier wordt "staat klaar voor je
+            boekhouder" iets echts. Daarom staat het resultaat er, niet de handeling.
+
+            En hier stond een ONJUISTHEID: "hij kan dan al je facturen inzien". Dat spreekt
+            voorwaarden §7.3 tegen — je boekhouder ziet NOOIT je concepten, alleen wat jij zelf
+            hebt verstuurd, ontvangen of als betaald gemarkeerd. Een belofte over privacy die
+            in de app ruimer klinkt dan in het contract is precies de verkeerde kant op fout. */}
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368", lineHeight: 1.55 }}>
+          Nodig hem uit, dan haalt hij aan het eind van het kwartaal alles in één keer op.
+          Hij ziet alleen wat jij zelf hebt verstuurd, ontvangen of als betaald hebt gemarkeerd —
+          je concepten blijven van jou alleen.
+        </p>
+        <p style={{ margin: "10px 0 0", fontSize: "14.5px", color: "#5f6368", lineHeight: 1.55 }}>
+          Nog geen boekhouder? Sla dit gerust over. Je kunt hem later in één klik koppelen, en
+          voor hem is BoekBrug altijd gratis.
         </p>
       </div>
       <Input label="E-mailadres boekhouder" placeholder="jan@boekhouder.nl"
