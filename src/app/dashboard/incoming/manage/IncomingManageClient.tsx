@@ -980,6 +980,11 @@ export default function IncomingManageClient({
               // — null when paid (a settled bill has no deadline left to count), and null when the
               // invoice stated no vervaldatum. daysLate and daysLeft can never both be set.
               const daysLeft = isPaid ? null : daysUntilDue(inv.due_date, todayIso)
+              // [ROW-HEAD] Does this row have ANY status chip? The chip row sits between the
+              // header and the dates, so rendering it empty would push every plain row 5px taller
+              // for nothing — across a list this long that reads as sloppy spacing.
+              const hasChips = !!CHIP[inv.status] || !!recon[inv.id] || !!xq
+                || isAutoVerified(inv) || isVerwerkt || isPrepared
 
               return (
                 <div
@@ -1007,10 +1012,30 @@ export default function IncomingManageClient({
                       </span>
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                        {/* [BRIDGE-POLISH 3a-1 parity] incoming direction marker */}
-                        <span style={{ fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.errorContainer, color: M3.error }}>Ink.</span>
-                        <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
+                      {/* ── [ROW-HEAD] Wie + welke factuur, op één kopregel ──────────────────
+                          De "Ink."-badge is weg: op Inkoopfacturen is ELKE rij een inkoop, dus
+                          hij herhaalde alleen de paginatitel — 336 keer.
+                          Nummer en naam staan nu naast elkaar, met de statuschips op hun eigen
+                          regel eronder. Ze deelden die kopregel, dus bij meerdere chips brak de
+                          regel rommelig af (op een telefoon stond "Automatisch" ineens onder het
+                          nummer); nu is de rijhoogte voorspelbaar zonder er één regel bij.
+                          Wie krimpt er als de ruimte op is? De NAAM. Een afgekapt nummer is
+                          waardeloos — daar zoek je een bankregel mee op — terwijl "W.KETELS & ZN
+                          EIERHAN…" nog steeds te herkennen is. Vandaar flexShrink:0 op het
+                          nummer. De naam draagt het gewicht: die scan je ("aan wie moet ik nog
+                          betalen?"), het nummer zoek je op. */}
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+                        <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 500, color: '#5F6368', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
+                          {inv.invoice_number ?? '—'}
+                        </span>
+                        <span style={{ minWidth: 0, fontSize: 14, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {inv.client_name ?? '—'}
+                        </span>
+                      </div>
+                      {/* Statusregel — alleen gerenderd als er iets te tonen is, zodat een kale
+                          rij geen lege regel meesleept. */}
+                      {hasChips && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, flexWrap: 'wrap' }}>
                         {/* Status chip */}
                         {CHIP[inv.status] && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
@@ -1062,21 +1087,18 @@ export default function IncomingManageClient({
                           </span>
                         )}
                       </div>
-                      {/* ── [DATE-LINE] Leverancier op zijn eigen regel, de datums eronder ────
+                      )}
+                      {/* ── [DATE-LINE] Alle datumfeiten op hun eigen regel ──────────────────
                           [DATE-VISIBLE] had naam en factuurdatum op ÉÉN regel gezet, met de datum
                           op flexShrink:0 zodat een lange naam hem niet meer opat. Dat werkte, maar
                           de prijs stond op het scherm: de NAAM moest krimpen, dus las de lijst als
-                          "DHL FR…", "W.KETELS & ZN EIERHAN…", "GROOTH…". En één regel had geen
-                          plaats meer voor waar het bij een openstaande rekening om draait — wanneer
-                          hij uiterlijk betaald moet zijn, en hoeveel dagen dat nog is.
-                          Nu: de naam krijgt de volle breedte, en alle datumfeiten staan op een
-                          eigen regel eronder — factuurdatum · vervaldatum · de aftelling. Die
-                          laatste plek is dezelfde plek die "te laat" toont zodra de datum voorbij
-                          is, zodat het oog voor beide maar één plek hoeft te leren. */}
-                      <div style={{ fontSize: 13, color: '#5F6368', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {inv.client_name ?? '—'}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2, fontSize: 12.5, color: '#5F6368', minWidth: 0 }}>
+                          "DHL FR…", "GROOTH…". En één regel had geen plaats meer voor waar het bij
+                          een openstaande rekening om draait — wanneer hij uiterlijk betaald moet
+                          zijn, en hoeveel dagen dat nog is.
+                          Nu staat dat hier: factuurdatum · vervaldatum · de aftelling. Die laatste
+                          plek is dezelfde plek die "te laat" toont zodra de datum voorbij is, zodat
+                          het oog voor beide maar één plek hoeft te leren. */}
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 4, fontSize: 12.5, color: '#5F6368', minWidth: 0 }}>
                         <span style={{ whiteSpace: 'nowrap' }}>{fmtDateSmart(inv.invoice_date)}</span>
                         {/* [OVER-DATUM] The due date is only ever a FACT here — a printed
                             vervaldatum, or invoice date + a printed term (see lib/safecore.ts).
