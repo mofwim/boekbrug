@@ -50,6 +50,10 @@ function roundTrip(numbers: string[], totals: number[], remitWrapper: (ref: stri
   const refs = parseReferenceNumbers(extracted);
   const plan = planBatchAutoConfirm({
     reference: extracted,
+    // [BUNDEL-REF-RECOVER] The statement line the bank stored is what the importer keeps as the
+    // description — and for any numbering that is not the app's own {year}{seq}, it is the ONLY
+    // place the whole invoice number survives.
+    description: remi,
     bankAmount: built.amount!, // a CREDIT: money in, settles outgoing invoices
     invoices: numbers.map((n, i) => cand(n, totals[i])),
   });
@@ -90,6 +94,41 @@ console.log("\n— default numbering ({year}{seq}, padding 4) —");
   check("three invoices, one partly paid → asks 1350", built.amount === 1350);
   check("all three numbers survive", parseReferenceNumbers(extracted).length === 3);
   check("the partly-paid bundle is auto-bookable", plan !== null && plan.invoiceIds.length === 3);
+}
+
+console.log("\n— [BUNDEL-REF-RECOVER] numbering that is not the app's own —");
+{
+  // THE regression this suite exists for. extractInvoiceReference cuts a number at every
+  // separator and drops a leading year as "a bare year", so the reference the importer STORES
+  // for a "2026-045, 2026-046" bundle is "045, 046" — two fragments below the 4-char identity
+  // floor. Before the fix the batch engine saw nothing at all: no bundle from an owner on a
+  // year-separated template could EVER auto-reconcile, and since every SUPPLIER numbers their
+  // own invoices, that is the normal case for the incoming (bundel-betaling) side.
+  const r = roundTrip(["2026-045", "2026-046"], [605, 495],
+    (ref) => `SEPA Overboeking Omschrijving: Betaling facturen ${ref}`);
+  check("the extractor really does mutilate this reference", r.refs.length === 0);
+  check("...yet the bundle still auto-reconciles (recovered from the statement line)",
+    r.plan !== null && r.plan.invoiceIds.length === 2);
+}
+{
+  const r = roundTrip(["F-1001", "F-1002"], [605, 495], (ref) => `Betaling ${ref}`);
+  check("a prefixed number ('F-1001' → '1001') survives end to end", r.plan !== null);
+}
+{
+  const r = roundTrip(["2026/045", "2026/046"], [605, 495],
+    (ref) => `/TRTP/SEPA OVERBOEKING/IBAN/NL91ABNA0417164300/BIC/ABNANL2A/NAME/KLANT BV/REMI/${ref}`);
+  check("a slash-separated number in a structured remittance still reconciles", r.plan !== null);
+}
+{
+  // The guard the wider recognition must not loosen: a payment carrying a number we cannot
+  // resolve (a customer number, an invoice not yet imported) stays a human decision.
+  const plan = planBatchAutoConfirm({
+    reference: "20260001, 20260002, 884512",
+    description: "Betaling facturen 20260001, 20260002 klantnr 884512",
+    bankAmount: 1100,
+    invoices: [cand("20260001", 605), cand("20260002", 495)],
+  });
+  check("an unresolvable number in the reference still blocks the automatic booking", plan === null);
 }
 
 console.log("\n— [BUNDEL-REFERENCE-FITS] the app never mints an unreconcilable request —");

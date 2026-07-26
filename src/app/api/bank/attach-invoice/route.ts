@@ -459,7 +459,14 @@ export async function POST(req: NextRequest) {
   // on one pending tx, but tx.invoice_id only ever holds the LAST one — so without the join row a
   // later unlink would restore only the last-attached invoice, stranding the earlier ones paid with
   // no bank line. Recording every attached invoice here makes the whole set reversible by id.
-  await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id]);
+  // [PARTIAL-PAY] Write the applied amount with it: recompute_invoice_amount_paid re-derives
+  // invoices.amount_paid as SUM(amount_applied) over the surviving links on every unlink/undo, so a
+  // link with a NULL amount makes this invoice — created 'paid' by this very payment — recompute to
+  // amount_paid 0 and re-open at its full total. The invoice is created fully settled by this
+  // transaction, so the applied amount is its own total.
+  await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id], {
+    [invoice.id]: Math.abs(totalIncBtw),
+  });
 
   // 11. Notification (non-blocking) — service_role by rule.
   try {

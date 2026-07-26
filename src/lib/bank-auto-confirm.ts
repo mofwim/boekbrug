@@ -109,11 +109,22 @@ export async function runBankAutoConfirm(args: {
     .map((m): { m: TransactionMatch; tier: AutoConfirmTier | null } => ({ m, tier: autoConfirmTier(m) }))
     .filter((x): x is { m: TransactionMatch; tier: AutoConfirmTier } => x.tier !== null);
 
+  // [BANK-PARTLY-CONSUMED] A PENDING bank line that already carries an invoice_id has already
+  // paid something: the multi-invoice confirm flow keeps a batch visible for its remaining
+  // numbers, and apply_bank_payment leaves a payment pending while money of it is unspent. The
+  // 1:1 pass books the FULL amount of such a line against another invoice with no awareness of
+  // what it already settled — the same euros counted twice. The batch pass has always skipped
+  // these lines (row.invoice_id below); the 1:1 pass must too.
+  const partlyConsumedTxIds = new Set(
+    (txRows as BankTransactionDbRow[]).filter((r) => r.invoice_id).map((r) => r.id).filter(Boolean),
+  );
+
   const confirmed: AutoConfirmed[] = [];
   for (const { m, tier } of autoMatches) {
     const txId = m.transaction.transactionId;
     const invoiceId = m.best?.invoiceId;
     if (!txId || !invoiceId) continue;
+    if (partlyConsumedTxIds.has(txId)) continue;
     const inv = invById.get(invoiceId);
     if (!inv) continue;
 
@@ -201,7 +212,13 @@ export async function runBankAutoConfirm(args: {
     // [BANK-TX-INVOICES] Record the exact invoice this payment paid so a later reversal
     // (unlink / delete-statement) reverses by id, never by number. Best-effort — the money-truth
     // is the tx.invoice_id + invoice.status above; this row is only the collision-free undo index.
-    await recordPaymentLinks(pipeline, userId, txId, [invoiceId]);
+    // [PARTIAL-PAY] The amount MUST travel with the link: recompute_invoice_amount_paid re-derives
+    // invoices.amount_paid as SUM(amount_applied) on every later unlink/undo, so a NULL here would
+    // silently zero a genuinely settled invoice. This pass only ever books fully-open invoices
+    // (amount_paid === 0, line 97) at their full total, so the applied amount is that total.
+    await recordPaymentLinks(pipeline, userId, txId, [invoiceId], {
+      [invoiceId]: Math.abs(Number(inv.total_inc_btw ?? 0)),
+    });
 
     confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0, tier });
     await logAuditAction({
@@ -246,7 +263,15 @@ export async function runBankAutoConfirm(args: {
     // invoice in the bundle silently disabled automatic reconciliation for the whole payment.
     // book_bank_batch settles each invoice fully and records amount_applied = its open balance.
     const candidates = allInvoices.filter((i) => !bookedInvoiceIds.has(i.id)) as BatchCandidateInvoice[];
-    const plan = planBatchAutoConfirm({ reference: row.reference ?? null, bankAmount: row.amount ?? null, invoices: candidates });
+    // [BUNDEL-REF-RECOVER] The description travels with the reference: the extractor mutilates any
+    // invoice number that carries a prefix or a separator ("2026-045" → "045"), and the raw
+    // statement line is where the real number still is.
+    const plan = planBatchAutoConfirm({
+      reference: row.reference ?? null,
+      description: row.description ?? null,
+      bankAmount: row.amount ?? null,
+      invoices: candidates,
+    });
     if (!plan) continue;
 
     // Resolve against ALL invoices — invById only indexes the fully-open 1:1 pool, so a batch

@@ -57,7 +57,14 @@ export async function POST(req: Request) {
   // Without this, an auto-booked batch would be irreversible — violating the "everything the app
   // books, the owner can undo" rule that makes quiet auto-booking trustworthy.
   const refNums = parseReferenceNumbers(tx.reference);
-  if (refNums.length > 1) {
+  // [BANK-ONE-PAYMENT-MANY-INVOICES] Route on the FACT of how many invoices this payment paid —
+  // the join table — not only on how many number tokens the reference happens to carry. The
+  // extractor mutilates any invoice number with a prefix or a separator ("2026-045, 2026-046" is
+  // stored as "045, 046"), and it can leave a bundle with a single token or none at all. Undoing
+  // such a payment through the single path would reverse only the LAST invoice and leave the
+  // others paid with their bank line gone — an invisible, unreachable half-reversal.
+  const linkedIds = await invoiceIdsForTransactions(pipeline, user.id, [transactionId]);
+  if (refNums.length > 1 || linkedIds.length > 1) {
     return unlinkBatch({ pipeline, payClient: supabase, userId: user.id, transactionId, tx, refNums });
   }
 

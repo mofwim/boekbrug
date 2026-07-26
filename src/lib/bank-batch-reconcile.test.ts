@@ -1,5 +1,5 @@
 // [BANK-BATCH-RECONCILE] Pure node test — run: npx tsx src/lib/bank-batch-reconcile.test.ts
-import { reconcileBatch, countResolvedReferences, planBatchAutoConfirm, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
+import { reconcileBatch, resolveBatchNumbers, planBatchAutoConfirm, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -99,40 +99,70 @@ console.log("\n— an empty slot list is incomplete, not a tie —");
   check("allMatched = false on empty", r.allMatched === false);
 }
 
-console.log("\n— countResolvedReferences: genuine batch vs PSP junk vs coincidental full-amount —");
+console.log("\n— resolveBatchNumbers: genuine batch vs PSP junk vs coincidental full-amount —");
 {
+  const n = (reference: string | null, known: string[], description = "") =>
+    resolveBatchNumbers({ reference, description }, known).length;
+
   // M.H. BAL: 3 reference numbers, all real invoices → a genuine batch (≥2).
   check("3 real invoice numbers → 3 resolved (genuine batch)",
-    countResolvedReferences(["262627", "262744", "262762"], ["262627", "262744", "262762"]) === 3);
+    n("262627, 262744, 262762", ["262627", "262744", "262762"]) === 3);
 
   // HorecaRama: a Mollie hash + order number, ZERO are invoices → not a batch.
   check("PSP hash + order number → 0 resolved (fall back to single match)",
-    countResolvedReferences(["8152314131466030", "72802"], ["82910"]) === 0);
+    n("8152314131466030, 72802", ["82910"]) === 0);
 
   // The adversarial-review case: a real batch 501+502, PLUS an unrelated invoice 480 that
   // happens to equal the full debit. The reference still resolves to the 2 real invoices —
   // 480 must NOT collapse the batch (it isn't in the reference).
   check("genuine batch keeps 2 resolved even with an unrelated full-amount candidate present",
-    countResolvedReferences(["501", "502"], ["501", "502", "480"]) === 2);
+    n("501, 502", ["501", "502", "480"]) === 2);
 
   // Whitespace/format independence (matches the matcher's normalizeRef).
   check("normalizes formatting: '26 / 3958' reference resolves to '26/3958' invoice",
-    countResolvedReferences(["26 / 3958"], ["26/3958"]) === 1);
+    n("26 / 3958", ["26/3958"]) === 1);
 
   // A confirmed (already-paid) number still counts as resolved, so a partially-paid batch
   // stays a batch even after its paid invoices leave the live candidate set.
   check("confirmed numbers count as resolved (partial-pay batch stays a batch)",
-    countResolvedReferences(["A100", "A101"], ["A100"].concat(["A101"])) === 2);
+    n("A100, A101", ["A100", "A101"]) === 2);
 
   // A doubled reference number is not two invoices.
-  check("a doubled reference fragment counts once",
-    countResolvedReferences(["A100", "A100"], ["A100"]) === 1);
+  check("a doubled reference fragment counts once", n("A100, A100", ["A100"]) === 1);
 
   // Only one of two references is a real invoice → 1 (not a genuine batch on its own).
-  check("one real + one junk → 1 resolved",
-    countResolvedReferences(["A100", "ORDER99"], ["A100"]) === 1);
+  check("one real + one junk → 1 resolved", n("A100, ORDER99", ["A100"]) === 1);
 
-  check("empty reference list → 0", countResolvedReferences([], ["A100"]) === 0);
+  check("empty reference → 0", n(null, ["A100"]) === 0);
+
+  // [BUNDEL-REF-RECOVER] The reason this reads the description: the extractor cut the numbers.
+  check("mutilated reference + intact description recovers the real numbers",
+    n("045, 046", ["2026-045", "2026-046"], "SEPA Overboeking Betaling facturen 2026-045, 2026-046") === 2);
+  check("a prefixed number ('F-1001' → '1001') is recovered too",
+    n("1001, 1002", ["F-1001", "F-1002"], "Betaling F-1001, F-1002") === 2);
+  check("the returned value is the INVOICE's number, not the fragment",
+    resolveBatchNumbers({ reference: "045, 046", description: "facturen 2026-045, 2026-046" },
+      ["2026-045", "2026-046"]).join("|") === "2026-045|2026-046");
+  check("a number that is NOT in the payment text stays unresolved",
+    n("045", ["2026-045", "2026-099"], "factuur 2026-045") === 1);
+  // A short number is exact-equality-matchable against the reference the extractor wrote (the
+  // manual slot UI has always shown these), but never through the free-text scan…
+  check("a 3-digit number resolves by exact fragment equality", n("045, 046", ["045", "046"]) === 2);
+  check("…but never from free text alone (below the identity floor)",
+    n(null, ["045", "046"], "facturen 045 en 046") === 0);
+  // …and it is never enough to book money unattended.
+  check("[BANK-BATCH-SHORT-NUMBER] a 3-digit batch is never auto-booked",
+    planBatchAutoConfirm({
+      reference: "045, 046", bankAmount: -300,
+      invoices: [
+        { id: "s1", invoice_number: "045", total_inc_btw: 100, client_name: "Groothandel", direction: "incoming", status: "received" },
+        { id: "s2", invoice_number: "046", total_inc_btw: 200, client_name: "Groothandel", direction: "incoming", status: "received" },
+      ],
+    }) === null);
+  check("a bare year is never an identity",
+    n("", ["2026"], "Huur juli 2026") === 0);
+  check("a fragment of a longer number does not resolve ('2050' ⊄ '26302050')",
+    n("26302050", ["2050"], "factuur 26302050") === 0);
 }
 
 console.log("\n— [ROOT] planBatchAutoConfirm: auto-book ONLY a provably-unambiguous batch —");
