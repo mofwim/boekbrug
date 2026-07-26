@@ -71,9 +71,9 @@ console.log("\n— [BATCH-SIGN] a creditnota slot REDUCES the batch total (net, 
 {
   // Invoice €300 + creditnota −€20 → the supplier debits the NET €280. The old Σ|amount| showed
   // "ties" against a −€320 debit (300+20) — a green light on a €40 over-charge.
-  const net = reconcileBatch([slot("F-1", 300), slot("CN-1", -20)], -280);
+  const net = reconcileBatch([slot("F-1001", 300), slot("CN-1", -20)], -280);
   check("net €280 against a −€280 debit → ties", net.status === "ties");
-  const overcharge = reconcileBatch([slot("F-1", 300), slot("CN-1", -20)], -320);
+  const overcharge = reconcileBatch([slot("F-1001", 300), slot("CN-1", -20)], -320);
   check("the −€320 over-charge is a MISMATCH (was a false tie)", overcharge.status === "mismatch");
   check("diff reports the €40 gap", Math.abs(overcharge.diff - -40) < 0.005);
 }
@@ -187,5 +187,50 @@ console.log("\n— [ROOT] planBatchAutoConfirm: auto-book ONLY a provably-unambi
     planBatchAutoConfirm({ reference: "1001, CR55", bankAmount: -280, invoices: withCredit }) === null);
 }
 
+console.log("\n— [BUNDEL] the app must recognise the payment IT generated —");
+{
+  // The gebundeld betaalverzoek asks the customer for the SUM OF THE OPEN AMOUNTS
+  // (src/lib/betaalverzoek.ts buildBundelBetaalverzoek). Invoice A is EUR 1000 with EUR 400
+  // already settled by an earlier instalment, invoice B is EUR 500 and fully open, so the QR
+  // asks EUR 1100 and the customer transfers exactly that, quoting both numbers.
+  // Summing the invoice TOTALS (1500) against that EUR 1100 credit calls the app's own,
+  // perfectly correct payment a mismatch.
+  const r = reconcileBatch([slot("2026001", 600.00), slot("2026002", 500.00)], 1100.00);
+  check("bundle with a partly paid invoice ties on the OPEN amounts", r.status === "ties");
+
+  const invoices: BatchCandidateInvoice[] = [
+    { id: "a", invoice_number: "2026-001", total_inc_btw: 1000, amount_paid: 400, client_name: "Klant BV", direction: "outgoing", status: "sent" },
+    { id: "b", invoice_number: "2026-002", total_inc_btw: 500, amount_paid: 0, client_name: "Klant BV", direction: "outgoing", status: "sent" },
+  ];
+  const plan = planBatchAutoConfirm({ reference: "2026-001, 2026-002", bankAmount: 1100, invoices });
+  check("auto-confirm books the bundle it generated", plan !== null && plan.invoiceIds.length === 2);
+
+  // The old, total-based reading must NOT tie: EUR 1500 of totals never left the bank.
+  const wrong = planBatchAutoConfirm({ reference: "2026-001, 2026-002", bankAmount: 1500, invoices });
+  check("a payment equal to the TOTALS (not the open sum) is refused", wrong === null);
+}
+{
+  // Fully-open invoices: open == total, so the classic wholesaler batch is untouched.
+  const invoices: BatchCandidateInvoice[] = [
+    { id: "a", invoice_number: "F-1001", total_inc_btw: 300, amount_paid: 0, client_name: "Groothandel", direction: "incoming", status: "received" },
+    { id: "b", invoice_number: "F-1002", total_inc_btw: 200, amount_paid: 0, client_name: "Groothandel", direction: "incoming", status: "received" },
+  ];
+  const plan = planBatchAutoConfirm({ reference: "F-1001, F-1002", bankAmount: -500, invoices });
+  check("all-open batch is unchanged", plan !== null && plan.invoiceIds.length === 2);
+  check("missing amount_paid is treated as zero",
+    planBatchAutoConfirm({ reference: "F-1001, F-1002", bankAmount: -500, invoices: invoices.map(i => ({ ...i, amount_paid: null })) }) !== null);
+}
+{
+  // An invoice whose balance is already covered contributes nothing and must not be
+  // auto-booked as part of a batch — it would settle for EUR 0.
+  const invoices: BatchCandidateInvoice[] = [
+    { id: "a", invoice_number: "F-1001", total_inc_btw: 300, amount_paid: 300, client_name: "Groothandel", direction: "incoming", status: "received" },
+    { id: "b", invoice_number: "F-1002", total_inc_btw: 200, amount_paid: 0, client_name: "Groothandel", direction: "incoming", status: "received" },
+  ];
+  check("a fully covered invoice blocks the automatic batch",
+    planBatchAutoConfirm({ reference: "F-1001, F-1002", bankAmount: -200, invoices }) === null);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+
