@@ -27,6 +27,9 @@ import { crossQuarterPayment } from '@/lib/quarter'
 import { amountOrConditions } from '@/lib/search'
 // [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
 import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
+// [INVOICE-REMOVE] One rule decides what "Verwijderen" does to THIS invoice — the same rule the
+// API route re-checks before it writes. The dialog below is that decision, rendered.
+import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/invoice-removal"
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -70,7 +73,8 @@ const calcBtw = (btw: number | null, ex: number | null) =>
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SortOrder = 'desc' | 'asc'
 type FilterTab = 'all' | 'sent' | 'paid' | 'draft' | 'overdue' | 'offerte' | 'credit'
-interface DeleteCtx { id: string; number: string; status: string }
+// [INVOICE-REMOVE] What the confirm dialog is about: the invoice, and the decision made for it.
+interface RemoveCtx { id: string; decision: RemovalDecision }
 // [BOEK-029] Fix 1+3: invoiceType distinguishes factuur vs creditnota dialogs
 interface ConfirmPayCtx {
   id: string
@@ -125,7 +129,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const [showFilterMenu, setShowFilterMenu] = useState(false)  // [BOEK-029] dropdown
   const [expandedId, setExpandedId]     = useState<string | null>(null)
   const [toast, setToast]               = useState<string | null>(null)
-  const [deleteCtx, setDeleteCtx]       = useState<DeleteCtx | null>(null)
+  const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
   const [payCtx, setPayCtx]             = useState<ConfirmPayCtx | null>(null)
   const [sendCtx, setSendCtx]           = useState<SendCtx | null>(null)  // [BOEK-029] Versturen confirm
   const [processingId, setProcessingId] = useState<string | null>(null)
@@ -243,6 +247,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
   const [archivedInvoices, setArchivedInvoices] = useState<ArchivedRow[]>([])
+  // [INVOICE-REMOVE] …and re-fetched after every removal/restore. This list IS the undo, so it
+  // has to be current the moment an invoice lands in it — otherwise the owner removes something
+  // and the "terug te zetten onderaan de lijst" the toast just promised isn't there yet.
+  const [archivedTick, setArchivedTick] = useState(0)
 
   useEffect(() => {
     if (!profile?.id) return
@@ -253,7 +261,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       .eq('status', 'archived')
       .order('created_at', { ascending: false })
       .then(({ data }) => setArchivedInvoices((data ?? []) as unknown as ArchivedRow[]))
-  }, [profile?.id])
+  }, [profile?.id, archivedTick])
 
   // [CREDITNOTA-NO-CHASE] Which invoices did the owner WITHDRAW with a creditnota? Such an
   // invoice deliberately keeps its 'sent' status and its positive total (the +omzet must stay
@@ -480,22 +488,64 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     }
   }
 
-  async function executeDelete(ctx: DeleteCtx) {
-    setDeleteCtx(null)
-    removeOptimistic(ctx.id)
-    await supabase.from('invoice_lines').delete().eq('invoice_id', ctx.id)
-    await supabase.from('invoices').delete().eq('id', ctx.id)
-    showToast('Factuur verwijderd')
+  // ── [INVOICE-REMOVE] "Verwijderen" — one button, four honest outcomes ──────────────────────
+  // The owner taps once; decideRemoval says what that means for THIS invoice, the dialog shows
+  // it in full, and only then does anything happen. Nothing here decides policy — that lives in
+  // invoice-removal.ts and is re-checked by the server, which never trusts this decision.
+  function handleRemoveRequest(inv: RemovalInvoice & { id: string }) {
+    setRemoveCtx({ id: inv.id, decision: decideRemoval(inv) })
   }
 
-  async function handleDeleteRequest(id: string, number: string, status: string) {
-    // [COHERENCE-CREDITNOTA] A paid invoice may never be deleted — it is corrected with
-    // a creditnota. Send the owner to the invoice detail with ?action=credit, which opens
-    // the creditnota dialog that calls /api/invoice/creditnota (copies lines, keeps the
-    // link). The old target (/invoice/new?type=creditnota) was a dead blank form that
-    // produced an orphan creditnota with original_invoice_id=null.
-    if (status === 'paid') { router.push(`/dashboard/invoice/${id}?action=credit`); return }
-    setDeleteCtx({ id, number, status })
+  async function executeRemoval(ctx: RemoveCtx) {
+    const { id, decision } = ctx
+    setRemoveCtx(null)
+
+    // A dead end (paid, verwerkt): the dialog has already explained it. The confirm button is
+    // just "Sluiten" — except for a paid sale, where the way forward IS the creditnota.
+    if (!decision.allowed) {
+      // [COHERENCE-CREDITNOTA] Open the real creditnota dialog on the invoice detail — it copies
+      // the lines and keeps original_invoice_id, unlike a blank new-invoice form.
+      if (decision.mode === 'creditnota') router.push(`/dashboard/invoice/${id}?action=credit`)
+      return
+    }
+
+    if (decision.mode === 'delete') {
+      // A concept / offerte was never a bookkeeping record — really gone, lines and all.
+      removeOptimistic(id)
+      await supabase.from('invoice_lines').delete().eq('invoice_id', id)
+      await supabase.from('invoices').delete().eq('id', id)
+      showToast('Verwijderd')
+      return
+    }
+
+    setProcessingId(id)
+    try {
+      const res = await fetch(`/api/invoice/${id}/archive`, {
+        method: decision.mode === 'restore' ? 'PATCH' : 'POST',
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The server checked the same rules against fresher data and said no. Show ITS reason.
+        showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
+        await refresh()
+        return
+      }
+      setArchivedTick(t => t + 1) // the archief list is the undo — keep it current
+      if (decision.mode === 'restore') {
+        showToast('Teruggezet')
+      } else {
+        removeOptimistic(id)
+        // Consequences the row could not show: a filed BTW quarter that now differs, a bundled
+        // payment link that stopped working. Said out loud, once, instead of discovered later.
+        const notices: string[] = Array.isArray(json?.notices) ? json.notices : []
+        showToast(notices.length > 0 ? notices[0] : 'Verwijderd — terug te zetten onderaan de lijst')
+      }
+      await refresh()
+    } catch {
+      showToast('Verwijderen mislukt — probeer opnieuw')
+    } finally {
+      setProcessingId(null)
+    }
   }
 
   // [BOEK-029] Versturen flow — open modal with client details
@@ -979,6 +1029,33 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         </button>
                       )}
                     </div>
+
+                    {/* [INVOICE-REMOVE] Verwijderen — visible on EVERY row, not buried in the
+                        expanded panel. An invoice added by mistake is a normal thing to happen
+                        and the way out must be as easy to find as the way in. It never acts on
+                        the tap: the dialog first says exactly what will happen to this invoice
+                        (archived and reversible / really deleted / a creditnota instead), and
+                        for a paid or verwerkt invoice it says why the answer is no. Hidden while
+                        selecting for a bundle, where every tap belongs to the selection. */}
+                    {!selectMode && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
+                        disabled={processingId === inv.id}
+                        aria-label={`Factuur ${inv.invoice_number ?? ''} verwijderen`}
+                        title="Verwijderen"
+                        style={{
+                          flexShrink: 0, marginLeft: 2, width: 34, height: 34, borderRadius: R.full,
+                          border: 'none', background: 'transparent', color: '#9AA0A6',
+                          cursor: processingId === inv.id ? 'default' : 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          transition: 'background 0.15s, color 0.15s',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Inline expand — Material You surface variant */}
@@ -994,20 +1071,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        {/* [BOEK-029] Delete rules: draft (not creditnota) + pro_forma only */}
-                        {(() => {
-                          const canDelete =
-                            (inv.status === 'draft' && inv.invoice_type !== 'creditnota') ||
-                            inv.invoice_type === 'pro_forma'
-                          return canDelete ? (
-                            <button
-                              onClick={e => { e.stopPropagation(); handleDeleteRequest(inv.id, inv.invoice_number ?? '', inv.status) }}
-                              style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                              Verwijderen
-                            </button>
-                          ) : null
-                        })()}
+                        {/* [INVOICE-REMOVE] The same action as the row's trash icon, spelled out
+                            for whoever opened the panel — and now offered for EVERY invoice, not
+                            only concepts and offertes: the dialog is what decides, per invoice. */}
+                        <button
+                          onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
+                          style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                          Verwijderen
+                        </button>
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1034,7 +1106,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                   <p style={{ fontSize: 11, color: '#9AA0A6', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
                 </div>
                 {archivedInvoices.map(inv => (
-                  <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1, opacity: 0.4 }}>
+                  <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1, opacity: inv.replaced_by_number ? 0.4 : 0.6 }}>
                     <div style={{ background: '#fff', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'default' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
@@ -1043,6 +1115,24 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         )}
                       </div>
                       <p style={{ fontSize: 14, fontWeight: 700, color: '#5F6368', fontFamily: FONT_NUM }}>{fmtEur(inv.total_inc_btw)}</p>
+                      {/* [INVOICE-REMOVE] The way back. Removing an invoice is only safe to offer
+                          this openly because it is reversible — so the undo has to be here, on
+                          the row, not a support question. An invoice a creditnota replaced has no
+                          way back (that would double-count the omzet) and shows no button. */}
+                      {!inv.replaced_by_number && (
+                        <button
+                          onClick={() => handleRemoveRequest({ ...inv, status: 'archived', direction: 'outgoing' } as RemovalInvoice & { id: string })}
+                          disabled={processingId === inv.id}
+                          style={{
+                            flexShrink: 0, border: 'none', background: M3.surfaceVariant, color: '#3C4043',
+                            borderRadius: R.full, padding: '6px 12px', fontSize: 12, fontWeight: 600,
+                            fontFamily: FONT, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>undo</span>
+                          Terugzetten
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1233,17 +1323,21 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         />
       )}
 
-      {/* ── Delete dialog ── */}
-      {deleteCtx && (
+      {/* ── [INVOICE-REMOVE] Remove dialog — the decision, rendered ──
+          One component for all four answers. The confirm button is green-lit only when the
+          decision allows it; for a paid sale it becomes "Creditnota maken" (the real way
+          forward) and for a locked one simply "Sluiten". */}
+      {removeCtx && (
         <BottomSheet
-          title={deleteCtx.status === 'sent' ? 'Factuur verwijderen?' : 'Concept verwijderen?'}
-          body={deleteCtx.status === 'sent'
-            ? `Factuur ${deleteCtx.number} is al verzonden naar de klant. Weet je zeker dat je deze wilt verwijderen?`
-            : `Factuur ${deleteCtx.number} wordt permanent verwijderd.`}
-          confirmLabel={deleteCtx.status === 'sent' ? 'Ja, toch verwijderen' : 'Verwijderen'}
-          confirmBg={M3.error}
-          onConfirm={() => executeDelete(deleteCtx)}
-          onCancel={() => setDeleteCtx(null)}
+          title={removeCtx.decision.title}
+          body={removeCtx.decision.body}
+          warning={removeCtx.decision.warning}
+          confirmLabel={removeCtx.decision.confirmLabel}
+          confirmBg={removeCtx.decision.allowed
+            ? (removeCtx.decision.mode === 'restore' ? M3.primary : M3.error)
+            : (removeCtx.decision.mode === 'creditnota' ? M3.primary : '#5F6368')}
+          onConfirm={() => executeRemoval(removeCtx)}
+          onCancel={() => setRemoveCtx(null)}
         />
       )}
 

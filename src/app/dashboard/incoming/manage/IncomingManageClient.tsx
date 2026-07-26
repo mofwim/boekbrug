@@ -38,6 +38,9 @@ import { crossQuarterPayment } from '@/lib/quarter'
 import { rowMatchesQuery } from '@/lib/search'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
+// [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
+// both sides of the app — and the server re-checks it before writing.
+import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const M3 = {
@@ -161,6 +164,8 @@ export default function IncomingManageClient({
   const [expandedId, setExpandedId]     = useState<string | null>(null)
   const [toast, setToast]               = useState<string | null>(null)
   const [payCtx, setPayCtx]             = useState<PayCtx | null>(null)
+  // [INVOICE-REMOVE] The confirm dialog for "Verwijderen": the invoice + what removing it means.
+  const [removeCtx, setRemoveCtx]       = useState<{ id: string; decision: RemovalDecision } | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BOEK-004] dialog when a change is blocked because the accountant verwerkt it
   const [verwerktCtx, setVerwerktCtx]   = useState<{ id: string; number: string } | null>(null)
@@ -396,6 +401,41 @@ export default function IncomingManageClient({
       } else {
         showToast('Verwijderen mislukt — probeer opnieuw')
       }
+    } catch {
+      showToast('Verwijderen mislukt — probeer opnieuw')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // ── [INVOICE-REMOVE] "Verwijderen" on a purchase invoice ──────────────────────────────────
+  // A supplier invoice lands here from e-mail, upload or intake — so a wrong one lands here too:
+  // someone else's invoice, a duplicate the dedup missed, a scan of nothing. Removing it must be
+  // as ordinary as adding it. Under the hood it ARCHIVES (status 'archived'), never a physical
+  // delete: the bewaarplicht keeps the record and the owner keeps the undo (on /dashboard/incoming
+  // under "Genegeerd"). The dialog says exactly that before anything happens, and a paid or
+  // accountant-verwerkt invoice is refused with the way out named instead.
+  function handleRemoveRequest(inv: IncomingRow) {
+    setRemoveCtx({ id: inv.id, decision: decideRemoval(inv as RemovalInvoice) })
+  }
+
+  async function executeRemoval(ctx: { id: string; decision: RemovalDecision }) {
+    const { id, decision } = ctx
+    setRemoveCtx(null)
+    if (!decision.allowed) return // a dead end the dialog already explained
+
+    setProcessingId(id)
+    try {
+      const res = await fetch(`/api/invoice/${id}/archive`, { method: 'POST' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The server asked the same questions of fresher data. Show ITS answer, not ours.
+        showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
+        return
+      }
+      setInvoices(prev => prev.filter(i => i.id !== id))
+      const notices: string[] = Array.isArray(json?.notices) ? json.notices : []
+      showToast(notices.length > 0 ? notices[0] : 'Verwijderd — terug te zetten bij Inkomend › Genegeerd')
     } catch {
       showToast('Verwijderen mislukt — probeer opnieuw')
     } finally {
@@ -906,6 +946,32 @@ export default function IncomingManageClient({
                         </button>
                       )}
                     </div>
+
+                    {/* [INVOICE-REMOVE] Verwijderen — visible on every row, mirroring the sales
+                        list. A purchase invoice that isn't yours (wrong supplier, a duplicate,
+                        a scan of nothing) should not need a support question to get rid of. It
+                        archives: out of kosten, voorbelasting and the accountant's workspace,
+                        kept 7 years, and back with one tap under Inkomend › Genegeerd. Hidden
+                        while selecting for a bundle payment. */}
+                    {!selectMode && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
+                        disabled={processingId === inv.id}
+                        aria-label={`Inkoopfactuur ${inv.invoice_number ?? ''} verwijderen`}
+                        title="Verwijderen"
+                        style={{
+                          flexShrink: 0, marginLeft: 2, width: 34, height: 34, borderRadius: R.full,
+                          border: 'none', background: 'transparent', color: '#9AA0A6',
+                          cursor: processingId === inv.id ? 'default' : 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          transition: 'background 0.15s, color 0.15s',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Inline expand */}
@@ -1021,6 +1087,19 @@ export default function IncomingManageClient({
           onConfirm={() => { /* paymentChoice handles it */ }}
           onCancel={() => setBundlePayRows(null)}
           paymentChoice={(method, paymentDate) => executeBundlePay(bundlePayRows, method, paymentDate)}
+        />
+      )}
+
+      {/* ── [INVOICE-REMOVE] Remove dialog — the decision, rendered ── */}
+      {removeCtx && (
+        <BottomSheet
+          title={removeCtx.decision.title}
+          body={removeCtx.decision.body}
+          warning={removeCtx.decision.warning}
+          confirmLabel={removeCtx.decision.confirmLabel}
+          confirmBg={removeCtx.decision.allowed ? M3.error : '#5F6368'}
+          onConfirm={() => executeRemoval(removeCtx)}
+          onCancel={() => setRemoveCtx(null)}
         />
       )}
 
@@ -1186,9 +1265,12 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction, openAmount: openBalance }: {
+function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction, openAmount: openBalance }: {
   title: string
   body: string
+  // [INVOICE-REMOVE] The consequence to weigh before tapping — shown in an amber box, the same
+  // one the sales list uses, so a warning looks identical wherever the owner meets it.
+  warning?: string
   confirmLabel: string
   confirmBg: string
   onConfirm: () => void
@@ -1214,7 +1296,14 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
         <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
-        <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: 24, lineHeight: 1.5 }}>{body}</p>
+        <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: warning ? 16 : 24, lineHeight: 1.5 }}>{body}</p>
+
+        {warning && (
+          <div style={{ background: '#FEF7E0', borderRadius: 12, padding: '12px 14px', marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#EA8600', flexShrink: 0, marginTop: 1 }}>warning</span>
+            <p style={{ fontSize: 12.5, color: '#7C5800', lineHeight: 1.5, margin: 0 }}>{warning}</p>
+          </div>
+        )}
 
         {paymentChoice ? (
           <>
