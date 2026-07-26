@@ -20,6 +20,10 @@ export default function ClientDetailPage() {
   const [client, setClient] = useState<any>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  // [SEARCH-LANDING] A stale/unlinked client id (deleted, or an accountant not
+  // linked to it → RLS returns no row) must land on a real 404, not an empty
+  // card full of "—" placeholders that looks like a broken page.
+  const [missing, setMissing] = useState(false)
 
   const year = new Date().getFullYear()
   const currentQ = Math.ceil((new Date().getMonth() + 1) / 3)
@@ -33,6 +37,7 @@ export default function ClientDetailPage() {
       if (!user) { router.push('/login'); return }
       const { data: clientData } = await supabase.from('profiles').select('*').eq('id', clientId).single()
       if (clientData) setClient(clientData)
+      else setMissing(true)
       const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId).eq('receiver_id', user.id).eq('read', false)
       setUnreadCount(count || 0)
@@ -82,6 +87,10 @@ export default function ClientDetailPage() {
       <p style={{ fontSize: 14, color: '#5F6368' }}>Laden...</p>
     </div>
   )
+
+  // Placed AFTER all hooks + the loading guard (never skips a hook): a stale/unlinked
+  // client id resolves to a real 404 instead of a card full of "—" placeholders.
+  if (missing) notFound()
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>

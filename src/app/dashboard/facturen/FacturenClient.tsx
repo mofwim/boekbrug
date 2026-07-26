@@ -221,17 +221,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const focusId = searchParams.get('focus')
   const [highlightId, setHighlightId] = useState<string | null>(null)
 
-  // [SEARCH] Quick text-filter over the loaded invoices. Seeded from ?search= (set by
-  // the global search bar's Enter fallback). The global bar is now reachable on every
-  // page, so a ?search= push can arrive while we're already mounted on /dashboard/facturen
-  // (no remount) — sync on param change, not just at mount. Local typing doesn't change
-  // the param, so it never clobbers the user's input.
-  const searchParam = searchParams.get('search') ?? ''
-  const [search, setSearch] = useState(searchParam)
-  useEffect(() => {
-    const t = setTimeout(() => setSearch(searchParam), 0)
-    return () => clearTimeout(t)
-  }, [searchParam])
+  // [SEARCH] Quick text-filter over the loaded invoices. Starts empty; the global
+  // search bar now opens the dedicated results page (/dashboard/zoeken), so nothing
+  // deep-links a query into this page anymore — the old ?search= seeding was removed.
+  const [search, setSearch] = useState('')
 
   // [SEARCH] In-page live filter, SERVER-backed: finds ALL matching invoices (every
   // status, not only the loaded/paginated rows), in place — no navigation, no reload.
