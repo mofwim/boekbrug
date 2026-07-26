@@ -303,3 +303,14 @@ input::placeholder, textarea::placeholder {
   .inv-row-side { flex: 1 1 auto; flex-direction: row-reverse; align-items: center;
                   justify-content: space-between; }
 }
+
+/* ── Dashboard header — mobile declutter ─────────────────────────────────────── */
+/* [HEADER-SYSTEM] The shared DashboardHeader packs logo + search + role nav links
+   (Klanten for accountants, Vandaag for owners) + message/notification/profile
+   icons into one row. On narrow phones the text nav links collide with the search
+   box. Hide them below 640px — every destination is reachable from the home. */
+@media (max-width: 640px) {
+  .dash-nav-links {
+    display: none !important;
+  }
+}
