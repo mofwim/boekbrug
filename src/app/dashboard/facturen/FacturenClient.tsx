@@ -1033,14 +1033,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       )}
                     </div>
 
-                    {/* [INVOICE-REMOVE] Verwijderen — visible on EVERY row, not buried in the
-                        expanded panel. An invoice added by mistake is a normal thing to happen
-                        and the way out must be as easy to find as the way in. It never acts on
-                        the tap: the dialog first says exactly what will happen to this invoice
-                        (archived and reversible / really deleted / a creditnota instead), and
-                        for a paid or verwerkt invoice it says why the answer is no. Hidden while
-                        selecting for a bundle, where every tap belongs to the selection. */}
-                    {!selectMode && (
+                    {/* [INVOICE-REMOVE] Verwijderen — on the rows where it is a real option: a
+                        concept or an offerte (never issued, so really deletable). It never acts
+                        on the tap; the dialog says first exactly what will happen.
+                        [ISSUED-STAYS] A verstuurde verkoopfactuur shows NO button at all. Its
+                        number comes from our own doorlopende reeks and it is corrected with a
+                        creditnota, not removed — so a delete affordance there would only promise
+                        something the app must refuse. Hidden while selecting for a bundle too,
+                        where every tap belongs to the selection. */}
+                    {!selectMode && decideRemoval(inv as RemovalInvoice).allowed && (
                       <button
                         onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
                         disabled={processingId === inv.id}
@@ -1075,14 +1076,16 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {/* [INVOICE-REMOVE] The same action as the row's trash icon, spelled out
-                            for whoever opened the panel — and now offered for EVERY invoice, not
-                            only concepts and offertes: the dialog is what decides, per invoice. */}
-                        <button
-                          onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
-                          style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                          Verwijderen
-                        </button>
+                            for whoever opened the panel — and shown under the same rule, so the
+                            two can never disagree about what this invoice allows. */}
+                        {decideRemoval(inv as RemovalInvoice).allowed && (
+                          <button
+                            onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
+                            style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                            Verwijderen
+                          </button>
+                        )}
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1118,24 +1121,11 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         )}
                       </div>
                       <p style={{ fontSize: 14, fontWeight: 700, color: '#5F6368', fontFamily: FONT_NUM }}>{fmtEur(inv.total_inc_btw)}</p>
-                      {/* [INVOICE-REMOVE] The way back. Removing an invoice is only safe to offer
-                          this openly because it is reversible — so the undo has to be here, on
-                          the row, not a support question. An invoice a creditnota replaced has no
-                          way back (that would double-count the omzet) and shows no button. */}
-                      {!inv.replaced_by_number && (
-                        <button
-                          onClick={() => handleRemoveRequest({ ...inv, status: 'archived', direction: 'outgoing' } as RemovalInvoice & { id: string })}
-                          disabled={processingId === inv.id}
-                          style={{
-                            flexShrink: 0, border: 'none', background: M3.surfaceVariant, color: '#3C4043',
-                            borderRadius: R.full, padding: '6px 12px', fontSize: 12, fontWeight: 600,
-                            fontFamily: FONT, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-                          }}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>undo</span>
-                          Terugzetten
-                        </button>
-                      )}
+                      {/* [ISSUED-STAYS] Read-only, deliberately. These rows are sales invoices a
+                          creditnota replaced (or ones archived before this rule existed), and a
+                          sales invoice does not leave or re-enter the doorlopende nummering on a
+                          tap — putting one back would re-add omzet the creditnota already netted.
+                          Bringing one back is a per-case decision, not a button. */}
                     </div>
                   </div>
                 ))}

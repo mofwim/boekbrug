@@ -4,9 +4,13 @@
 //   POST   → archive  (status 'archived')
 //   PATCH  → restore  (back to what the row itself proves it was)
 //
-// Works for BOTH directions — a sales invoice created by mistake and a purchase invoice that
-// isn't yours are the same need. The existing DELETE on /api/invoice/[id] keeps its own job:
-// physically removing a concept, which was never a bookkeeping record.
+// [ISSUED-STAYS] PURCHASE invoices only. A supplier invoice that isn't yours — wrong supplier, a
+// duplicate the dedup missed, a scan of nothing — has to be removable, and it carries the
+// SUPPLIER's number, so removing it breaks no sequence of ours. An issued SALES invoice is the
+// opposite case: its number comes from our own doorlopende reeks (art. 35 Wet OB), and a hole in
+// that sequence is precisely what an auditor looks for. Those are corrected with a creditnota,
+// never removed — refused here as well as in the dialog. The existing DELETE on /api/invoice/[id]
+// keeps its own job: physically removing a concept, which was never a bookkeeping record.
 //
 // Why archiving is enough to take an invoice out of the books: every financial surface in this
 // app reads from an ALLOW-list, never a deny-list — omzet/kosten/BTW (financial-result:
@@ -16,6 +20,7 @@
 // the invoice leaves the accountant's workspace by itself. One status change, every ledger.
 //
 // What this route will NOT do, and says so instead of doing it quietly:
+//   · an issued sales invoice is never taken out of the numbering — refused;
 //   · money that has moved (status 'paid' or a deelbetaling) is never hidden — refused;
 //   · an invoice the accountant marked 'verwerkt' is never touched — refused;
 //   · a bank line linked to the invoice means a booking happened — refused, even when the
@@ -38,6 +43,9 @@ const SELECT =
 /** Dutch, UI-ready reason per refusal — the dialog already said it, this is the server saying no. */
 const REFUSAL_TEXT: Record<string, string> = {
   verwerkt: "Je boekhouder heeft deze factuur al verwerkt — vraag hem de verwerking eerst ongedaan te maken.",
+  // [ISSUED-STAYS] A verkoopfactuur carries a number from the doorlopende reeks; a hole in that
+  // sequence is what an auditor looks for. It is corrected with a creditnota, never removed.
+  issued_sales_invoice: "Een verstuurde verkoopfactuur wordt niet verwijderd — corrigeer hem met een creditnota, zodat je factuurnummering doorloopt.",
   money_settled: "Er is al betaald op deze factuur — draai eerst de betaling terug.",
   bank_linked: "Er is een banktransactie aan deze factuur gekoppeld — ontkoppel die eerst op de Bank-pagina.",
   already_archived: "Deze factuur is al verwijderd.",
@@ -192,6 +200,16 @@ export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ i
   }
   // [BOEK-031] A creditnota already corrected this invoice. Bringing it back would put the +omzet
   // in a second time while the creditnota's −omzet stays: a double count, silently.
+  // [ISSUED-STAYS] Restore mirrors archive: only the purchase side ever archives now, so only
+  // the purchase side comes back. An outgoing row in 'archived' is either a creditnota-replaced
+  // invoice (blocked right below) or one archived before this rule existed — either way its
+  // return has to be a considered, per-case decision, not a tap.
+  if ((invoice.direction ?? "") !== "incoming") {
+    return NextResponse.json(
+      { error: "issued_sales_invoice", detail: REFUSAL_TEXT.issued_sales_invoice },
+      { status: 409 },
+    );
+  }
   if (invoice.replaced_by_number) {
     return NextResponse.json(
       { error: "replaced", detail: `Deze factuur is vervangen door creditnota ${invoice.replaced_by_number}.` },
