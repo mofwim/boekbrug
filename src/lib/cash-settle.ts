@@ -24,6 +24,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment } from "@/lib/cash";
+// [PAGINATION] PostgREST truncates at ~1000 rows SILENTLY. Everywhere else that is an
+// understatement; here it feeds a DESTRUCTIVE pass — see the note above the reads below.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 // [CASH-INSTALMENT][DEPLOY-SAFE] Per-instalment kasboek entries need cash_entries.settlement_id
 // (cash_settlement_per_instalment.sql). Code ships before a migration is applied — that is normal
@@ -97,16 +100,29 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     // [CASH-INSTALMENT] Read the instalments THEMSELVES, not just their sum: each one becomes its
     // own drawer movement, on its own day. Summing them (the old model) made the kasboek claim
     // the whole amount left the till on the date of the last payment.
-    const { data: kasLinkRows } = await supabase
-      .from("bank_tx_invoices")
-      .select("id, invoice_id, amount_applied, paid_on")
-      .eq("user_id", userId)
-      .eq("method", "kas")
-      .is("transaction_id", null);
+    //
+    // [PAGINATION] All three reads below MUST page. PostgREST caps a response at ~1000 rows and
+    // says nothing about it, and this function does not merely REPORT what it read — it DELETES
+    // on the strength of it. computeCashSettlementSync treats any existing 'betaling' entry whose
+    // invoice is missing from the paid set as an orphan and removes it. Truncate the invoice read
+    // and hundreds of perfectly good kasboek entries become "orphans" on the next hourly run:
+    // real cash outflows vanish from the book the Belastingdienst reads, and the drawer balance
+    // is overstated by their sum. They are never recreated, because creation is driven from the
+    // same truncated set. A trader with more than a thousand till-settled invoices hits this.
+    const kasLinkRows = await fetchAllRows<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>(
+      (from, to) => supabase
+        .from("bank_tx_invoices")
+        .select("id, invoice_id, amount_applied, paid_on")
+        .eq("user_id", userId)
+        .eq("method", "kas")
+        .is("transaction_id", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     const cashByInvoice = new Map<string, number>();
     const instalmentsByInvoice = new Map<string, CashInstalment[]>();
     const lastCashDate = new Map<string, string>();
-    for (const l of (kasLinkRows ?? []) as Array<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>) {
+    for (const l of kasLinkRows) {
       if (!l.invoice_id) continue;
       const amount = Math.abs(Number(l.amount_applied) || 0);
       cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + amount);
@@ -121,38 +137,51 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     }
 
     const baseColumns = "id, direction, total_inc_btw, total_ex_btw, btw_amount, payment_date, invoice_number, client_name, amount_paid";
-    const { data: invRows, error: invErr } = await supabase
-      .from("invoices")
-      .select(baseColumns)
-      .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
-      .eq("status", "paid")
-      .eq("payment_method", "kas");
-    if (invErr) return CASH_SETTLE_BAILED;
-
-    // Invoices that hold cash but are not (yet) fully paid — invisible to the query above.
-    const knownIds = new Set((invRows ?? []).map((r) => (r as { id: string }).id));
-    const openCashIds = [...cashByInvoice.keys()].filter((id) => !knownIds.has(id));
-    let openCashRows: unknown[] = [];
-    if (openCashIds.length > 0) {
-      const { data } = await supabase
+    const invRows = await fetchAllRows<Record<string, unknown> & { id: string }>(
+      (from, to) => supabase
         .from("invoices")
         .select(baseColumns)
         .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
-        .in("id", openCashIds);
-      openCashRows = data ?? [];
+        .eq("status", "paid")
+        .eq("payment_method", "kas")
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown> & { id: string }> | null; error: { message: string } | null }>,
+    );
+
+    // Invoices that hold cash but are not (yet) fully paid — invisible to the query above.
+    // [PAGINATION] Chunked rather than paged: a single .in() with hundreds of uuids builds a URL
+    // long enough to be rejected by the gateway, and a rejected read here reads as "no paid
+    // invoices" — the same destructive shape as truncation. 200 ids per chunk keeps both the URL
+    // and each response well under their caps.
+    const knownIds = new Set(invRows.map((r) => r.id));
+    const openCashIds = [...cashByInvoice.keys()].filter((id) => !knownIds.has(id));
+    const openCashRows: unknown[] = [];
+    const ID_CHUNK = 200;
+    for (let i = 0; i < openCashIds.length; i += ID_CHUNK) {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select(baseColumns)
+        .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
+        .in("id", openCashIds.slice(i, i + ID_CHUNK));
+      // A failed chunk would silently shrink the paid set, so it bails instead of deleting.
+      if (error) return CASH_SETTLE_BAILED;
+      openCashRows.push(...(data ?? []));
     }
 
     // Existing invoice-linked settlement entries (the ones this reconcile owns). We read amount +
     // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
-    const { data: entryRows, error: entryErr } = await supabase
-      .from("cash_entries")
-      .select(perInstalment ? "id, invoice_id, settlement_id, amount, entry_date, direction" : "id, invoice_id, amount, entry_date, direction")
-      .eq("user_id", userId)
-      .eq("category", "betaling")
-      .not("invoice_id", "is", null);
-    if (entryErr) return CASH_SETTLE_BAILED;
+    const entryRows = await fetchAllRows<Record<string, unknown>>(
+      (from, to) => supabase
+        .from("cash_entries")
+        .select(perInstalment ? "id, invoice_id, settlement_id, amount, entry_date, direction" : "id, invoice_id, amount, entry_date, direction")
+        .eq("user_id", userId)
+        .eq("category", "betaling")
+        .not("invoice_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>,
+    );
 
-    const paid = ([...(invRows ?? []), ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
+    const paid = ([...invRows, ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
       .map((r) => ({
         ...r,
         direction: r.direction === "outgoing" ? "outgoing" : "incoming",
