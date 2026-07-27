@@ -572,21 +572,34 @@ export default function KasClient() {
                   ) : kb.months.map((m) => (
                     <div key={m.key} style={{ marginTop: 14 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, marginBottom: 4 }}>{m.label}</div>
+                      {/* [LEDGER-SCROLL] A day with BOTH a receipt and an expense packs the fixed
+                          date + three nowrap money columns (ontvangsten / uitgaven / eindsaldo)
+                          wider than a phone, which starved the description to 0 and clipped the
+                          running balance. This is a ledger — the columns must stay aligned — so the
+                          strip scrolls horizontally (hidden scrollbar, swipe) below its min width
+                          instead of wrapping. On a wide screen the min width is exceeded and nothing
+                          scrolls. */}
                       <div style={{ border: `1px solid ${M3.outlineVariant}`, borderRadius: 10, overflow: 'hidden' }}>
+                        <div className="inv-strip">
+                          {/* One shared min width so every row is the same width and the columns
+                              line up; below it the strip scrolls as a unit (see [LEDGER-SCROLL]). */}
+                          <div style={{ minWidth: 320 }}>
                         {m.rows.map((r, i) => (
                           <div key={r.date} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '7px 10px', borderTop: i > 0 ? '1px solid #ECEFF1' : 'none', fontSize: 13 }}>
                             <span style={{ width: 52, flexShrink: 0, color: M3.neutral }}>{formatDate(r.date)}</span>
                             <span style={{ flex: 1, minWidth: 0, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {r.descriptions.length ? r.descriptions.join(' · ') : (r.ontvangsten > 0 ? 'Kasontvangsten' : 'Kasuitgave')}
                             </span>
-                            {r.ontvangsten > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.success, whiteSpace: 'nowrap' }}>+{eur.format(r.ontvangsten)}</span>}
-                            {r.uitgaven > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.error, whiteSpace: 'nowrap' }}>−{eur.format(r.uitgaven)}</span>}
-                            <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: r.eindsaldo < 0 ? M3.error : M3.onSurface, minWidth: 72, textAlign: 'right', whiteSpace: 'nowrap' }}>{eur.format(r.eindsaldo)}</span>
+                            {r.ontvangsten > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.success, whiteSpace: 'nowrap', flexShrink: 0 }}>+{eur.format(r.ontvangsten)}</span>}
+                            {r.uitgaven > 0 && <span style={{ fontFamily: FONT_NUM, color: M3.error, whiteSpace: 'nowrap', flexShrink: 0 }}>−{eur.format(r.uitgaven)}</span>}
+                            <span style={{ fontFamily: FONT_NUM, fontWeight: 700, color: r.eindsaldo < 0 ? M3.error : M3.onSurface, minWidth: 72, textAlign: 'right', whiteSpace: 'nowrap', flexShrink: 0 }}>{eur.format(r.eindsaldo)}</span>
                           </div>
                         ))}
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 10px', borderTop: `1px solid ${M3.outlineVariant}`, background: '#FAFAFA', fontSize: 12.5, fontWeight: 600, color: M3.neutral }}>
                           <span>Totaal {m.label}</span>
                           <span style={{ fontFamily: FONT_NUM }}>+{eur.format(m.totalIn)} · −{eur.format(m.totalOut)}</span>
+                        </div>
+                          </div>
                         </div>
                       </div>
                     </div>

@@ -472,8 +472,10 @@ export default function KwartaalPage() {
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            {/* [ROW-LAYOUT] minWidth:0 lets the invoice number actually ellipsize in
+                                this flex row; without it a long number spills over the badges/amount. */}
+                            <p style={{ minWidth: 0, fontSize: 14, fontWeight: 500, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {/* [QUARTER-VENDOR-NAME v2] invoice_number primary — matches bridge pattern */}
                               {invoice.invoice_number}
                             </p>
