@@ -58,7 +58,10 @@ import {
   type AangifteCompleteness,
 } from "./aangifte";
 // [ICP] Rubriek 3b + the separate ICP-opgaaf, keyed on the customers' EU VAT numbers.
-import { buildIcp, buildIcpCsv, icpNote, type IcpInvoice, type IcpResult } from "./icp";
+import {
+  buildIcp, buildIcpCsv, icpNote, buildForeignPurchases, buildForeignPurchaseCsv, foreignPurchaseNote,
+  type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
+} from "./icp";
 import { fetchAllRows } from "./supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
@@ -504,6 +507,10 @@ interface AssembleInput {
    *  of concept-btw-aangifte.csv, which is exactly how an owner would come to believe it was
    *  filed along with the rest. null/absent when the quarter has nothing intra-EU. */
   icp?: IcpResult | null;
+  /** [ICP] The quarter's EU purchases (rubriek 4a/4b). A LISTING, never a calculation: the
+   *  verlegde BTW and its matching deduction stay out of the concept on purpose. It becomes its
+   *  own file so the accountant has the invoices in front of them instead of hunting for them. */
+  euPurchases?: ForeignPurchaseResult | null;
   /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
    *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
    *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
@@ -513,7 +520,7 @@ interface AssembleInput {
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, kasboekXlsx } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -679,6 +686,17 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // unnoticed until the boete.
   if (icpForZip && (icpForZip.lines.length > 0 || icpForZip.problems.length > 0)) {
     zip.file("concept-icp-opgaaf.csv", "﻿" + buildIcpCsv(icpForZip, quarterLabel));
+    filesIncluded++;
+  }
+
+  // ── eu-inkopen.csv (rubriek 4a/4b) ──
+  // The counterpart of the file above, and the one piece of quarter work this app deliberately
+  // leaves to a human: which Dutch rate applies to a foreign purchase is a judgement, and for a
+  // KOR or partly-exempt owner 4b and 5b stop cancelling. So it hands over the invoices instead
+  // of a number — which is still the whole difference between "there are EU purchases" and a
+  // list somebody can work from.
+  if (euPurchasesForZip && euPurchasesForZip.purchases.length > 0) {
+    zip.file("eu-inkopen.csv", "﻿" + buildForeignPurchaseCsv(euPurchasesForZip, quarterLabel));
     filesIncluded++;
   }
 
@@ -1523,8 +1541,25 @@ export async function buildClosingPackageZip(args: {
     });
   }
 
+  // [ICP] The purchase mirror: EU inkopen NAMED for the accountant, never computed.
+  const euPurchases = buildForeignPurchases({
+    invoices: incoming.map((i): IcpInvoice => ({
+      invoiceNumber: i.invoice_number,
+      clientName: i.client_name,
+      clientVatNumber: i.client_btw_number,
+      direction: "incoming",
+      status: i.status,
+      totalExBtw: i.total_ex_btw,
+      btwAmount: i.btw_amount,
+    })),
+  });
+
   const conceptAangifte = hasDeclarable
-    ? buildAangifte({ ...result, intraEuOmzet: icp.totalExBtw }, completeness, `Q${quarter} ${year}`, regimeNotes)
+    ? buildAangifte(
+        { ...result, intraEuOmzet: icp.totalExBtw },
+        { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
+        `Q${quarter} ${year}`, regimeNotes,
+      )
     : null;
 
   // [KASBOEK] The cash book as the accountant's own running-balance sheet (Kiwi .xlsx layout),
@@ -1585,6 +1620,7 @@ export async function buildClosingPackageZip(args: {
     cardReconciliation,
     conceptAangifte,
     icp,
+    euPurchases,
     kasboekXlsx,
     warnings,
   });

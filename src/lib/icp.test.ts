@@ -1,6 +1,7 @@
 // [ICP] Pure node test — run: npx tsx src/lib/icp.test.ts
 import {
   classifyVatNumber, normalizeVatNumber, buildIcp, icpNote, buildIcpCsv, ICP_MIN_EUR,
+  buildForeignPurchases, foreignPurchaseNote, buildForeignPurchaseCsv,
   type IcpInvoice,
 } from "./icp";
 
@@ -114,6 +115,43 @@ console.log("\n— the CSV the accountant gets —");
   check("the total is labelled as rubriek 3b, so the two can be tied", /Totaal \(= rubriek 3b\);1000,00/.test(csv));
   check("the problem invoices get their own section", /Eerst controleren/.test(csv));
   check("a semicolon in a name could never break a column", buildIcpCsv(icp([inv({ clientName: "A;B GmbH" })]), "Q3 2026").includes('"A;B GmbH"'));
+}
+
+console.log("\n— the purchase mirror: EU-inkopen listed, never computed —");
+{
+  const pur = (over: Partial<IcpInvoice> = {}): IcpInvoice => ({
+    invoiceNumber: "LEV-9", clientName: "Hansen GmbH", clientVatNumber: "DE987654321",
+    direction: "incoming", status: "received", totalExBtw: 800, btwAmount: 0, ...over,
+  });
+  const fp = (invoices: IcpInvoice[]) => buildForeignPurchases({ invoices });
+
+  check("an EU supplier invoice is listed", fp([pur()]).purchases.length === 1);
+  check("…with the country and the total", near(fp([pur()]).totalExBtw, 800) && fp([pur()]).purchases[0].country === "DE");
+  check("a Dutch supplier is not a foreign purchase", fp([pur({ clientVatNumber: "NL123456789B01" })]).purchases.length === 0);
+  check("a supplier with no VAT number cannot be placed in 4b", fp([pur({ clientVatNumber: null })]).purchases.length === 0);
+  check("a SALE is not a purchase", fp([pur({ direction: "outgoing" })]).purchases.length === 0);
+  check("a row still in the processing queue is not counted", fp([pur({ status: "processing" })]).purchases.length === 0);
+  check("a PAID EU purchase still needs placing in 4b", fp([pur({ status: "paid" })]).purchases.length === 1);
+  check("a suspect number is still listed — a listing cannot be rejected",
+    fp([pur({ clientVatNumber: "DE98765432" })]).purchases.length === 1);
+  check("BTW on the supplier invoice is flagged, not hidden",
+    fp([pur({ btwAmount: 152 })]).purchases[0].btwCharged === true);
+  check("biggest purchase first", fp([pur(), pur({ invoiceNumber: "LEV-10", totalExBtw: 5000 })]).purchases[0].invoiceNumber === "LEV-10");
+
+  const note = foreignPurchaseNote(fp([pur()]))!;
+  check("the note names rubriek 4b and the aftrek in 5b", /4b/.test(note) && /5b/.test(note));
+  check("it says plainly that the app does NOT compute it", /berekent die verlegging NIET/.test(note));
+  check("it says WHY not (a judgement, and KOR breaks the cancelling)", /beoordeling/.test(note) && /KOR/.test(note));
+  check("it names the invoices, so nobody has to hunt", /LEV-9/.test(note));
+  check("nothing foreign → no note", foreignPurchaseNote(fp([pur({ clientVatNumber: "NL123456789B01" })])) === null);
+  check("a supplier that charged BTW gets its own warning in the note",
+    /waarschijnlijk geen verlegde inkoop/.test(foreignPurchaseNote(fp([pur({ btwAmount: 152 })]))!));
+
+  const csv = buildForeignPurchaseCsv(fp([pur(), pur({ invoiceNumber: "LEV-10", btwAmount: 152 })]), "Q3 2026");
+  check("the CSV says it is a list, not a calculation", /LIJST, geen berekening/.test(csv));
+  check("it warns that 4b and 5b are NOT in the concept", /NIET in het concept/.test(csv));
+  check("each row carries the supplier, the invoice and the amount", /DE;DE987654321;Hansen GmbH;LEV-9;800,00;nee/.test(csv));
+  check("a supplier that charged BTW is marked for checking", /LEV-10;800,00;ja — controleer/.test(csv));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

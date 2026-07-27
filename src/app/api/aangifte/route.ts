@@ -19,7 +19,7 @@ import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
 import { badDebtNote, vatClawbackNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
 // [ICP] Rubriek 3b + the separate ICP-opgaaf, read from the customers' EU VAT numbers.
-import { buildIcp, icpNote, type IcpInvoice } from "@/lib/icp";
+import { buildIcp, icpNote, buildForeignPurchases, foreignPurchaseNote, type IcpInvoice } from "@/lib/icp";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 
@@ -243,9 +243,25 @@ export async function GET(req: NextRequest) {
   const icNote = icpNote(icp);
   if (icNote) regimeNotes.push(icNote);
 
+  // [ICP] The purchase mirror (4a/4b). Not computed — see buildForeignPurchases for why — but
+  // NAMED, so the accountant does not have to page through the quarter to find which invoices
+  // carry verlegde BTW.
+  const euPurchases = buildForeignPurchases({
+    invoices: invRaw.map((i): IcpInvoice => ({
+      invoiceNumber: (i.invoice_number as string | null) ?? null,
+      clientName: (i.client_name as string | null) ?? null,
+      clientVatNumber: (i.client_btw_number as string | null) ?? null,
+      direction: effDir(i),
+      status: (i.status as string | null) ?? null,
+      totalExBtw: i.total_ex_btw as number | null,
+      btwAmount: i.btw_amount as number | null,
+    })),
+  });
+
   const aangifte = buildAangifte(
     { ...result, intraEuOmzet: icp.totalExBtw },
-    completeness, `Q${quarter} ${year}`, regimeNotes,
+    { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
+    `Q${quarter} ${year}`, regimeNotes,
   );
   return NextResponse.json({
     ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount,
@@ -257,5 +273,6 @@ export async function GET(req: NextRequest) {
     // declaration, and presenting it as a rubriek would be the one thing that makes an owner
     // think it was filed with the rest.
     icp: { lines: icp.lines, totalExBtw: Math.round(icp.totalExBtw), problems: icp.problems },
+    euPurchases: { count: euPurchases.purchases.length, totalExBtw: Math.round(euPurchases.totalExBtw) },
   });
 }

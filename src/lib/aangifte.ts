@@ -32,6 +32,9 @@ export interface AangifteCompleteness {
   incomingInvoiceCount: number;  // purchase invoices feeding 5b (voorbelasting)
   outgoingInvoiceCount: number;  // sales invoices feeding 1a/1b
   hasEuPurchase: boolean;        // an incoming invoice from outside NL (rubriek 4b — not auto-computed)
+  // [ICP] The richer version of the line above: the EU purchases NAMED, built by
+  // foreignPurchaseNote(). When present it replaces the bare "there are EU purchases" sentence.
+  euPurchaseNote?: string | null;
   // Verified invoices with NO invoice_date. A date-range fetch silently drops them, so they
   // are NOT in the figures above — surfaced as a note so the concept isn't quietly too low.
   datelessVerifiedCount?: number;
@@ -136,7 +139,13 @@ export function buildAangifte(
       "Ken een tarief toe voor een compleet beeld.",
     );
   }
-  if (completeness.hasEuPurchase) {
+  // [ICP] The EU-purchase note. When the caller supplies the LISTING (euPurchaseNote), that one
+  // wins: it names the invoices instead of merely announcing that some exist, which is the
+  // difference between a warning and something the accountant can act on. The bare sentence
+  // stays as the fallback for callers that do not build the listing.
+  if (completeness.euPurchaseNote) {
+    notes.push(completeness.euPurchaseNote);
+  } else if (completeness.hasEuPurchase) {
     notes.push(
       "Er zijn inkopen uit het buitenland (EU). BTW-verlegging (rubriek 4b) en de bijbehorende voorbelasting " +
       "worden hier NIET automatisch berekend — je boekhouder verwerkt dit.",
