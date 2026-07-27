@@ -107,6 +107,10 @@ export interface ReadinessSignals {
   // knows the invoice is unpaid in its own records, which is not proof it is unpaid in the world.
   // Optional (undefined → none).
   vatClawback?: { count: number; repayableBtw: number };
+  // [ICP] Sales to EU businesses that cannot go on the ICP-opgaaf as they stand (BTW charged, or
+  // a VAT number that cannot be right). The opgaaf itself is not a readiness matter; one that
+  // will be REJECTED is, because a rejected opgaaf counts as not done. Optional (undefined → 0).
+  icpProblems?: number;
 }
 
 export interface ReconException {
@@ -531,6 +535,27 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       severity: "risk",
       title: f.title,
       detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
+  }
+
+  // [ICP] An EU sale that cannot go on the opgaaf as it stands. Either BTW was charged to a
+  // business you also listed as intra-EU, or the VAT number cannot be right — both make the
+  // opgaaf bounce, and a bounced opgaaf counts as never filed. A risk, not a gap: charging BTW
+  // to an EU customer is sometimes exactly correct (a service taxed in NL), so the app points
+  // at the invoice and lets the owner decide which of the two is wrong.
+  if ((s.icpProblems ?? 0) > 0) {
+    const n = s.icpProblems ?? 0;
+    risks.push({
+      severity: "risk",
+      title: n === 1
+        ? "1 EU-verkoop kan niet in de ICP-opgaaf"
+        : `${n} EU-verkopen kunnen niet in de ICP-opgaaf`,
+      detail:
+        "Op een verkoop aan een EU-ondernemer is BTW berekend, of het BTW-nummer heeft niet de lengte " +
+        "van dat land. Bij een intracommunautaire levering verleg je de BTW (0%) en geef je de klant op " +
+        "in de ICP-opgaaf — een aparte aangifte naast de BTW-aangifte. Een afgekeurde opgaaf telt als " +
+        "niet gedaan; controleer het nummer (VIES) of de BTW op de factuur.",
+      fix: FIX.facturen,
     });
   }
 
