@@ -16,8 +16,8 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { regimeFlagNote } from "@/lib/regime-flags";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
-import { collectBadDebt } from "@/lib/bad-debt-collect";
-import { badDebtNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
+import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
+import { badDebtNote, vatClawbackNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 
@@ -214,10 +214,21 @@ export async function GET(req: NextRequest) {
   // say "1 factuur / €0 terugvraagbaar" (an immaterial sub-euro reclaim rounds to 0 and isn't flagged).
   const bdMaterial = badDebt.totalReclaimableBtw >= BAD_DEBT_MIN_EUR;
 
+  // [BAD-DEBT] Art. 29 lid 7 — the other direction: voorbelasting on purchase invoices >1 year
+  // unpaid becomes payable again. The sales note above is money to GET; this one is money to
+  // GIVE, which is why it goes first in the list — it is the only art. 29 side that turns into a
+  // naheffing when it is ignored. KOR-active owners deduct nothing, so they are never told this.
+  const clawback = await collectVatClawback(pipeline, ownerId, sr.scheme, end, korActive);
+  const cbNote = vatClawbackNote(clawback);
+  if (cbNote) regimeNotes.unshift(cbNote);
+  const cbMaterial = clawback.totalRepayableBtw >= BAD_DEBT_MIN_EUR;
+
   const aangifte = buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes);
   return NextResponse.json({
     ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount,
     badDebtReclaimableBtw: bdMaterial ? Math.round(badDebt.totalReclaimableBtw) : 0,
     badDebtCount: bdMaterial ? badDebt.eligible.length : 0,
+    vatClawbackBtw: cbMaterial ? Math.round(clawback.totalRepayableBtw) : 0,
+    vatClawbackCount: cbMaterial ? clawback.eligible.length : 0,
   });
 }

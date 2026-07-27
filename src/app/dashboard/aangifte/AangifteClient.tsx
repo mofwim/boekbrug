@@ -21,6 +21,16 @@ interface Aangifte {
   notes: string[]
 }
 
+// [BAD-DEBT] Art. 29 Wet OB, both directions — reported alongside the concept, never inside it.
+// Neither figure is booked: the rubrieken above are what the owner's data says, these two are
+// what the CALENDAR says on top of it, and the period they land in is the accountant's call.
+interface Art29 {
+  vatClawbackBtw: number   // lid 7 — deducted voorbelasting that became payable again (you owe)
+  vatClawbackCount: number
+  badDebtReclaimableBtw: number // lid 1 — BTW on sales nobody paid (you get back)
+  badDebtCount: number
+}
+
 export default function AangifteClient() {
   const sp = useSearchParams()
   // [QUARTER] Honour ?year&quarter (e.g. from the readiness card's link), else default to
@@ -29,6 +39,7 @@ export default function AangifteClient() {
   const [year, setYear] = useState(initial.year)
   const [quarter, setQuarter] = useState<number>(initial.quarter)
   const [data, setData] = useState<Aangifte | null>(null)
+  const [art29, setArt29] = useState<Art29 | null>(null)
   const [loading, setLoading] = useState(true)
   const curYear = new Date().getFullYear()
 
@@ -38,11 +49,19 @@ export default function AangifteClient() {
       // De reset staat binnen de async-functie maar vóór de eerste await: hij draait dus in
       // dezelfde tick als voorheen. Het verschil is dat de compiler nu kan zien dat er geen
       // synchrone setState in de effect-body zelf zit.
-      setLoading(true); setData(null)
+      setLoading(true); setData(null); setArt29(null)
       try {
         const res = await fetch(`/api/aangifte?year=${year}&quarter=${quarter}`)
         const json = await res.json()
-        if (!cancelled && res.ok) setData(json.aangifte)
+        if (!cancelled && res.ok) {
+          setData(json.aangifte)
+          setArt29({
+            vatClawbackBtw: Number(json.vatClawbackBtw) || 0,
+            vatClawbackCount: Number(json.vatClawbackCount) || 0,
+            badDebtReclaimableBtw: Number(json.badDebtReclaimableBtw) || 0,
+            badDebtCount: Number(json.badDebtCount) || 0,
+          })
+        }
       } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
     })()
     return () => { cancelled = true }
@@ -77,6 +96,39 @@ export default function AangifteClient() {
           ⚠ Dit is een CONCEPT op basis van je ingevoerde gegevens — geen ingediende aangifte.
           Je boekhouder controleert en dient in.
         </div>
+
+        {/* [BAD-DEBT] Art. 29 Wet OB — the two things the calendar adds to this quarter that the
+            rubrieken above cannot show, because they are not in the invoices of this quarter at
+            all. The one that COSTS money stands first and in the error tone: a deduction that
+            became payable again grows belastingrente in silence, and this is usually the first
+            and only place the owner ever hears about it. Both are amounts to DISCUSS, never
+            amounts the app booked — the wording says so. */}
+        {art29 && art29.vatClawbackCount > 0 && (
+          <div style={{ background: M3.errorContainer, color: M3.error, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
+            <strong style={{ fontWeight: 700 }}>
+              €{art29.vatClawbackBtw.toLocaleString('nl-NL')} voorbelasting terugbetalen
+            </strong>
+            <div style={{ marginTop: 4 }}>
+              {art29.vatClawbackCount === 1 ? '1 inkoopfactuur staat' : `${art29.vatClawbackCount} inkoopfacturen staan`}
+              {' '}meer dan een jaar na de vervaldatum open. De BTW die je hierover in aftrek bracht wordt
+              dan weer verschuldigd (art. 29 lid 7 Wet OB). Heb je ze wél betaald? Koppel de betaling of zet
+              ze op betaald. Dit bedrag zit <strong>niet</strong> in de rubrieken hierboven.
+            </div>
+          </div>
+        )}
+        {art29 && art29.badDebtCount > 0 && (
+          <div style={{ background: M3.successContainer, color: M3.success, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
+            <strong style={{ fontWeight: 700 }}>
+              €{art29.badDebtReclaimableBtw.toLocaleString('nl-NL')} BTW terug te vragen
+            </strong>
+            <div style={{ marginTop: 4 }}>
+              {art29.badDebtCount === 1 ? '1 verkoopfactuur staat' : `${art29.badDebtCount} verkoopfacturen staan`}
+              {' '}meer dan een jaar na de vervaldatum onbetaald. De BTW die je hierover afdroeg kun je
+              terugvragen (oninbare vordering, art. 29 Wet OB). Ook dit bedrag zit <strong>niet</strong> in
+              de rubrieken hierboven — bespreek het tijdvak met je boekhouder.
+            </div>
+          </div>
+        )}
 
         {loading && <div style={{ color: M3.neutral, fontSize: 14 }}>Berekenen…</div>}
 
