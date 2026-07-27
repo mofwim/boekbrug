@@ -6,7 +6,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter, InvoiceRow } from '@/hooks/useInfiniteInvoices'
@@ -73,6 +73,20 @@ const calcBtw = (btw: number | null, ex: number | null) =>
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SortOrder = 'desc' | 'asc'
 type FilterTab = 'all' | 'sent' | 'paid' | 'draft' | 'overdue' | 'offerte' | 'credit'
+// [HERHAAL] One recurring schedule, as /api/invoice/schedules returns it — including the invoice
+// it repeats, because an owner recognises a schedule by its customer, never by a uuid.
+interface ScheduleRow {
+  id: string
+  source_invoice_id: string
+  cadence: 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+  next_run_date: string
+  ends_on: string | null
+  active: boolean
+  source: { invoice_number: string | null; client_name: string | null; total_inc_btw: number | null } | null
+}
+const CADENCE_NL: Record<string, string> = {
+  weekly: 'elke week', monthly: 'elke maand', quarterly: 'elk kwartaal', yearly: 'elk jaar',
+}
 // [INVOICE-REMOVE] What the confirm dialog is about: the invoice, and the decision made for it.
 interface RemoveCtx { id: string; decision: RemovalDecision }
 // [BOEK-029] Fix 1+3: invoiceType distinguishes factuur vs creditnota dialogs
@@ -131,22 +145,33 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const [toast, setToast]               = useState<string | null>(null)
   const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
   // [HERHAAL] The invoice the owner is about to start (or stop) repeating.
-  const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string } | null>(null)
-  // [HERHAAL] Which invoices are currently being repeated, keyed by the invoice they repeat. The
-  // schedule lives ON the invoice — that is what the dialog promises ("stoppen kan altijd"), so
-  // the list has to show it there and let the owner stop it there.
-  const [schedules, setSchedules] = useState<Record<string, { id: string; cadence: string; next_run_date: string }>>({})
+  const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string; active?: boolean } | null>(null)
+  // [HERHAAL] Every schedule this owner has, in full — not just a lookup keyed by invoice.
+  //
+  // The per-row badge needs the map; the PANEL needs the list, and the panel is the part that
+  // makes the promise true. A schedule can only be reached from the invoice it repeats, and that
+  // invoice ages: after a year of monthly concepts the source sits hundreds of rows down, or
+  // behind a different filter tab. A feature that creates invoices by itself may never be harder
+  // to switch off than it was to switch on.
+  const [scheduleList, setScheduleList] = useState<ScheduleRow[]>([])
+  const schedules = useMemo(() => {
+    // PAUSED schedules belong in here too. Leaving them out made the row offer "Herhalen"
+    // again, which the server refuses (one schedule per invoice) — a dead end on a button the
+    // owner had every reason to press. The row now says what is actually true, and the dialog
+    // offers the way back.
+    const map: Record<string, { id: string; cadence: string; next_run_date: string; active: boolean }> = {}
+    for (const sc of scheduleList) {
+      map[sc.source_invoice_id] = { id: sc.id, cadence: sc.cadence, next_run_date: sc.next_run_date, active: sc.active }
+    }
+    return map
+  }, [scheduleList])
 
   async function loadSchedules() {
     try {
       const res = await fetch('/api/invoice/schedules')
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json?.schedules) return
-      const map: Record<string, { id: string; cadence: string; next_run_date: string }> = {}
-      for (const sc of json.schedules as Array<{ id: string; source_invoice_id: string; cadence: string; next_run_date: string; active: boolean }>) {
-        if (sc.active) map[sc.source_invoice_id] = { id: sc.id, cadence: sc.cadence, next_run_date: sc.next_run_date }
-      }
-      setSchedules(map)
+      setScheduleList(json.schedules as ScheduleRow[])
     } catch { /* silent — the feature is simply not shown */ }
   }
   const [payCtx, setPayCtx]             = useState<ConfirmPayCtx | null>(null)
@@ -281,11 +306,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         const res = await fetch('/api/invoice/schedules')
         const json = await res.json().catch(() => ({}))
         if (cancelled || !res.ok || !json?.schedules) return
-        const map: Record<string, { id: string; cadence: string; next_run_date: string }> = {}
-        for (const sc of json.schedules as Array<{ id: string; source_invoice_id: string; cadence: string; next_run_date: string; active: boolean }>) {
-          if (sc.active) map[sc.source_invoice_id] = { id: sc.id, cadence: sc.cadence, next_run_date: sc.next_run_date }
-        }
-        setSchedules(map)
+        setScheduleList(json.schedules as ScheduleRow[])
       } catch { /* silent */ }
     })()
     return () => { cancelled = true }
@@ -577,6 +598,27 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     } catch { showToast('Stoppen mislukt') }
   }
 
+  // [HERHAAL] Pause is the button an owner actually reaches for. A customer goes quiet for a
+  // month, a project is on hold — stopping means losing the schedule and rebuilding it later
+  // from an invoice that has meanwhile scrolled away. Pausing keeps it, and the cron simply
+  // produces nothing while it is off.
+  async function toggleRepeat(scheduleId: string, active: boolean) {
+    try {
+      const res = await fetch('/api/invoice/schedules', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: scheduleId, active }),
+      })
+      if (res.ok) {
+        showToast(active ? 'Herhalen hervat' : 'Herhalen gepauzeerd — er wordt niets meer klaargezet')
+        await loadSchedules()
+      } else {
+        const j = await res.json().catch(() => ({}))
+        showToast(j?.detail || (active ? 'Hervatten mislukt' : 'Pauzeren mislukt'))
+      }
+    } catch { showToast(active ? 'Hervatten mislukt' : 'Pauzeren mislukt') }
+  }
+
   // ── [INVOICE-REMOVE] "Verwijderen" — one button, four honest outcomes ──────────────────────
   // The owner taps once; decideRemoval says what that means for THIS invoice, the dialog shows
   // it in full, and only then does anything happen. Nothing here decides policy — that lives in
@@ -834,6 +876,54 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
 
       {/* ── Invoice list ── */}
       <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 100px' }}>
+        {/* [HERHAAL] Everything that repeats, in one place at the top.
+            The per-row button can only be found by finding the invoice, and the invoice that
+            started a monthly series is a year older every twelve concepts. This panel is the
+            answer to "wat staat er eigenlijk aan?" and to "hoe zet ik het uit?", and it is
+            deliberately ABOVE the list: something the app does on its own belongs in sight.
+            Hidden entirely when nothing repeats, and while searching (the results are the
+            answer to a different question). */}
+        {!searching && scheduleList.length > 0 && (
+          <div style={{ background: '#fff', borderRadius: R.md, border: '1px solid #E8EAED', padding: '14px 16px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#137333' }}>autorenew</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, fontFamily: FONT }}>
+                Terugkerende facturen
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5, color: '#5F6368', lineHeight: 1.5, marginBottom: 10, fontFamily: FONT }}>
+              De app zet het concept klaar; versturen blijft aan jou.
+            </div>
+            {scheduleList.map(sc => (
+              <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderTop: '1px solid #F1F3F4' }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: sc.active ? M3.onSurface : '#5F6368', fontFamily: FONT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sc.source?.client_name ?? 'Onbekende klant'}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT }}>
+                    {sc.active
+                      ? `${CADENCE_NL[sc.cadence] ?? sc.cadence} · volgende ${fmtDate(sc.next_run_date)}`
+                      : `${CADENCE_NL[sc.cadence] ?? sc.cadence} · gepauzeerd`}
+                    {sc.source?.invoice_number ? ` · ${sc.source.invoice_number}` : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => toggleRepeat(sc.id, !sc.active)}
+                    style={{ fontSize: 12.5, color: M3.onPrimaryContainer, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
+                    {sc.active ? 'Pauzeer' : 'Hervat'}
+                  </button>
+                  <button
+                    onClick={() => stopRepeat(sc.id)}
+                    style={{ fontSize: 12.5, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
+                    Stop
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {(searching ? searchLoading : loading) && sorted.length === 0 ? (
           <SkeletonList />
         ) : sorted.length === 0 ? (
@@ -1177,22 +1267,24 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                             you bill again every month. */}
                         {!isCredit && !isOfferte && inv.status !== 'draft' && (() => {
                           const sc = schedules[inv.id]
-                          const label = sc
-                            ? sc.cadence === 'weekly' ? 'Herhaalt elke week'
-                              : sc.cadence === 'monthly' ? 'Herhaalt elke maand'
-                              : sc.cadence === 'quarterly' ? 'Herhaalt elk kwartaal'
-                              : 'Herhaalt elk jaar'
-                            : 'Herhalen'
+                          const label = !sc
+                            ? 'Herhalen'
+                            : !sc.active
+                              ? 'Herhalen gepauzeerd'
+                              : sc.cadence === 'weekly' ? 'Herhaalt elke week'
+                                : sc.cadence === 'monthly' ? 'Herhaalt elke maand'
+                                  : sc.cadence === 'quarterly' ? 'Herhaalt elk kwartaal'
+                                    : 'Herhaalt elk jaar'
                           return (
                             <button
                               onClick={e => {
                                 e.stopPropagation()
                                 setRepeatCtx({
                                   id: inv.id, number: inv.invoice_number ?? '', client: inv.client_name ?? 'deze klant',
-                                  ...(sc ? { scheduleId: sc.id, cadence: sc.cadence, nextRun: sc.next_run_date } : {}),
+                                  ...(sc ? { scheduleId: sc.id, cadence: sc.cadence, nextRun: sc.next_run_date, active: sc.active } : {}),
                                 })
                               }}
-                              style={{ fontSize: 13, color: sc ? '#137333' : M3.onPrimaryContainer, background: sc ? M3.successContainer : M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              style={{ fontSize: 13, color: sc && sc.active ? '#137333' : M3.onPrimaryContainer, background: sc && sc.active ? M3.successContainer : M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>autorenew</span>
                               {label}
                             </button>
@@ -1442,11 +1534,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
             style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}
           >
             <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>
-              {repeatCtx.scheduleId ? 'Deze factuur herhaalt' : 'Hoe vaak herhalen?'}
+              {!repeatCtx.scheduleId ? 'Hoe vaak herhalen?' : repeatCtx.active === false ? 'Herhalen staat op pauze' : 'Deze factuur herhaalt'}
             </p>
             <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: 20, lineHeight: 1.5 }}>
               {repeatCtx.scheduleId ? (
-                <>Het volgende concept voor {repeatCtx.client} staat klaar op <strong>{fmtDate(repeatCtx.nextRun ?? null)}</strong>.</>
+                repeatCtx.active === false ? (
+                  <>Er wordt niets klaargezet voor {repeatCtx.client} zolang dit op pauze staat. Het schema blijft bewaard.</>
+                ) : (
+                  <>Het volgende concept voor {repeatCtx.client} staat klaar op <strong>{fmtDate(repeatCtx.nextRun ?? null)}</strong>.</>
+                )
               ) : (
                 <>We maken deze factuur voor {repeatCtx.client} telkens opnieuw klaar — met dezelfde regels en hetzelfde
                 betaaltermijn. Je krijgt een <strong>concept</strong> dat je zelf verstuurt.</>
@@ -1456,12 +1552,21 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                 the same place. It removes only the schedule: every concept it already produced is
                 an ordinary invoice and stays exactly where it is. */}
             {repeatCtx.scheduleId ? (
-              <button
-                onClick={() => stopRepeat(repeatCtx.scheduleId as string)}
-                style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.errorContainer, color: M3.error, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
-              >
-                Stoppen met herhalen
-              </button>
+              <>
+                {/* Pause first: it is the reversible one, and the one most owners actually want. */}
+                <button
+                  onClick={() => { const id = repeatCtx.scheduleId as string; const next = repeatCtx.active === false; setRepeatCtx(null); void toggleRepeat(id, next) }}
+                  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
+                >
+                  {repeatCtx.active === false ? 'Hervatten' : 'Pauzeren'}
+                </button>
+                <button
+                  onClick={() => stopRepeat(repeatCtx.scheduleId as string)}
+                  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.errorContainer, color: M3.error, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
+                >
+                  Stoppen met herhalen
+                </button>
+              </>
             ) : (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
               {([
