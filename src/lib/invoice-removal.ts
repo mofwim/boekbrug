@@ -136,6 +136,35 @@ export function decideRemoval(inv: RemovalInvoice): RemovalDecision {
     };
   }
 
+  // ── [ISSUED-STAYS] An OUTGOING invoice that has been issued is never removed ───────────────
+  // The owner's rule, and the law's: a verkoopfactuur carries a number from a doorlopende reeks
+  // (art. 35 Wet OB). Taking one out of the books leaves a hole in that sequence that nothing in
+  // the administration explains — and a hole is exactly what an auditor looks for. So an issued
+  // sales invoice is corrected, never removed: a creditnota books the reversal, keeps its own
+  // number, and leaves both documents standing.
+  //
+  // This sits ABOVE the money check on purpose: the answer is the same whether the invoice was
+  // paid or not, and naming the sequence is the honest reason. A concept and an offerte fall
+  // through (they were never issued — see below), and an incoming invoice is untouched by this:
+  // a supplier's invoice carries the SUPPLIER's number, never ours, so removing one breaks no
+  // sequence of ours. That asymmetry is the whole point.
+  if (!incoming && !isOfferte && status !== "draft") {
+    const isFactuur = !isCredit;
+    return {
+      mode: isFactuur ? "creditnota" : "blocked",
+      allowed: false,
+      title: isFactuur ? "Een verstuurde factuur wordt gecrediteerd" : "Een creditnota blijft staan",
+      body: isFactuur
+        ? `${what.charAt(0).toUpperCase() + what.slice(1)} heeft een factuurnummer uit je doorlopende reeks. Die reeks mag geen gat hebben — dus een verstuurde factuur haal je niet weg, je corrigeert hem met een creditnota. Die boekt het bedrag terug en beide documenten blijven zichtbaar.`
+        : `${what.charAt(0).toUpperCase() + what.slice(1)} is zelf al een correctie, met een eigen nummer uit je doorlopende reeks. Weghalen zou een gat achterlaten én de oorspronkelijke factuur weer als openstaand laten tellen.`,
+      warning: isFactuur
+        ? "Is deze factuur per ongeluk aangemaakt en nooit verstuurd? Neem dan contact op — dit lossen we per geval op, zodat je nummering klopt."
+        : undefined,
+      confirmLabel: isFactuur ? "Creditnota maken" : "Sluiten",
+      ...(isFactuur ? { alternative: { kind: "creditnota" as const, label: "Creditnota maken" } } : {}),
+    };
+  }
+
   // ── Money moved → never hide it ────────────────────────────────────────────────────────────
   if (hasSettledMoney(inv)) {
     const paid = Math.max(0, Number(inv.amount_paid ?? 0));
@@ -227,15 +256,24 @@ export function decideRemoval(inv: RemovalInvoice): RemovalDecision {
  * The server's own answer to the same question — it never trusts the client's mode. Returns null
  * when the archive may proceed, or the machine-readable reason to refuse.
  */
-export type ArchiveRefusal = "verwerkt" | "money_settled" | "already_archived" | "not_archivable";
+export type ArchiveRefusal =
+  | "verwerkt"
+  | "money_settled"
+  | "already_archived"
+  | "issued_sales_invoice"
+  | "not_archivable";
 
 export function refuseArchive(inv: RemovalInvoice): ArchiveRefusal | null {
   if ((inv.status ?? "") === "archived") return "already_archived";
   if (inv.accountant_status === "verwerkt") return "verwerkt";
+  // [ISSUED-STAYS] The route is a public API; the rule above must hold here too, not only in the
+  // dialog. An issued sales invoice is corrected with a creditnota — never taken out of the
+  // doorlopende nummering.
+  if ((inv.direction ?? "") !== "incoming") return "issued_sales_invoice";
   if (hasSettledMoney(inv)) return "money_settled";
-  // Everything that is a real, unpaid record may be archived. A draft goes through the delete
-  // path instead (it is not archived — it never existed as a record).
-  const ok = new Set(["sent", "overdue", "processing", "received"]);
+  // Everything that is a real, unpaid PURCHASE record may be archived. A draft goes through the
+  // delete path instead (it is not archived — it never existed as a record).
+  const ok = new Set(["processing", "received"]);
   return ok.has(inv.status ?? "") ? null : "not_archivable";
 }
 

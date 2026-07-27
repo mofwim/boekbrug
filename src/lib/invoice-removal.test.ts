@@ -22,22 +22,33 @@ const inc = (o: Partial<RemovalInvoice> = {}): RemovalInvoice => ({
   invoice_number: "2026-045", total_inc_btw: 605, amount_paid: 0, ...o,
 });
 
-console.log("\n— the normal case: an issued invoice is ARCHIVED, never destroyed —");
+console.log("\n— [ISSUED-STAYS] an issued SALES invoice is never removed, in any state —");
 {
+  // The rule: its number comes from our own doorlopende reeks (art. 35), and a hole in that
+  // sequence is what an auditor looks for. It is corrected, not removed.
   const d = decideRemoval(out());
-  check("a sent sales invoice archives", d.mode === "archive" && d.allowed === true);
-  check("it says what stops counting", /omzet en BTW/.test(d.body));
-  check("it says it will not be chased anymore", /aangemaand/.test(d.body));
-  check("it promises the 7-year keep", /7 jaar bewaarplicht/.test(d.body));
-  check("it promises reversibility", /terugzetten/.test(d.body));
+  check("a sent sales invoice is refused", d.allowed === false);
+  check("...and pointed at the creditnota", d.mode === "creditnota" && d.alternative?.kind === "creditnota");
+  check("the reason named is the numbering itself", /doorlopende reeks|gat/.test(d.body));
   check("it names the invoice", d.body.includes("20260041"));
-  check("it asks the one question only the owner can answer", /al naar je klant gestuurd/.test(d.warning ?? ""));
-  check("...and offers the creditnota next to it", d.alternative?.kind === "creditnota");
+  check("the never-sent case is acknowledged, not silently refused", /nooit verstuurd/.test(d.warning ?? ""));
 }
 {
-  const d = decideRemoval(out({ status: "overdue" }));
-  check("an overdue invoice behaves the same", d.mode === "archive");
+  check("an overdue invoice is refused too", decideRemoval(out({ status: "overdue" })).allowed === false);
+  check("a paid one as well", decideRemoval(out({ status: "paid", amount_paid: 1210 })).allowed === false);
+  check("and a partly paid one", decideRemoval(out({ amount_paid: 500 })).allowed === false);
+  // The rule outranks the money check: the answer is the same either way, and the sequence is
+  // the honest reason.
+  check("the numbering reason is given even when money moved",
+    /doorlopende reeks/.test(decideRemoval(out({ amount_paid: 500 })).body));
 }
+{
+  const d = decideRemoval(out({ invoice_type: "creditnota", invoice_number: "20260042" }));
+  check("a creditnota is not removable either (it has its own number)", d.allowed === false && d.mode === "blocked");
+  check("...and it says the original would re-open", /openstaand/.test(d.body));
+}
+
+console.log("\n— the purchase side: an invoice that isn't yours must be removable —");
 {
   const d = decideRemoval(inc());
   check("an incoming invoice archives", d.mode === "archive" && d.allowed === true);
@@ -50,26 +61,19 @@ console.log("\n— the normal case: an issued invoice is ARCHIVED, never destroy
   check("an unverified incoming invoice archives too", d.mode === "archive");
 }
 
-console.log("\n— money is the line that is never crossed —");
-{
-  const d = decideRemoval(out({ status: "paid", amount_paid: 1210 }));
-  check("a PAID sales invoice is never removed", d.mode === "creditnota" && d.allowed === false);
-  check("it names the legal instrument", /creditnota/.test(d.body));
-  check("...and says why", /Belastingdienst|mag niet uit je boekhouding/.test(d.body));
-}
-{
-  // The case the partial-payment engine made possible: still 'sent', but €500 has arrived.
-  const d = decideRemoval(out({ amount_paid: 500 }));
-  check("a PARTLY paid invoice is not removable either", d.allowed === false);
-  check("it states the amount already settled", d.body.includes("500,00"));
-  check("it states the total it belongs to", d.body.includes("1.210,00"));
-  check("it tells the owner how to get out", /betaling terug/i.test(d.warning ?? ""));
-}
+console.log("\n— money is the line that is never crossed (purchase side) —");
 {
   const d = decideRemoval(inc({ status: "paid", amount_paid: 605 }));
   check("a paid PURCHASE invoice is blocked", d.mode === "blocked" && d.allowed === false);
   check("it points at the undo path", d.alternative?.kind === "undo-payment");
   check("it explains the money would vanish", /kas- en bankoverzicht/.test(d.body));
+  check("it states the amount already settled", d.body.includes("605,00") || /betaald/.test(d.body));
+}
+{
+  const half = decideRemoval(inc({ amount_paid: 200 }));
+  check("a partly paid purchase invoice is blocked too", half.allowed === false);
+  check("it names what was already settled", half.body.includes("200,00"));
+  check("it tells the owner how to get out", /betaling terug/i.test(half.warning ?? ""));
 }
 {
   check("a cent of dust is not a payment", hasSettledMoney(out({ amount_paid: 0.004 })) === false);
@@ -106,22 +110,10 @@ console.log("\n— what was never a bookkeeping record is really deleted —");
   check("money outranks 'it is only a concept'", d.mode !== "delete" && d.allowed === false);
 }
 
-console.log("\n— a creditnota —");
-{
-  const d = decideRemoval(out({ invoice_type: "creditnota", invoice_number: "20260042" }));
-  check("an unpaid creditnota archives", d.mode === "archive" && d.allowed === true);
-  check("it warns the original becomes chaseable again", /weer als openstaand/.test(d.warning ?? ""));
-  check("...and that it will be chased again", /aangemaand/.test(d.warning ?? ""));
-}
-{
-  const d = decideRemoval(out({ invoice_type: "creditnota", status: "paid", amount_paid: 500 }));
-  check("a settled creditnota is blocked, not 'creditnota'", d.mode === "blocked");
-}
-
 console.log("\n— coming back —");
 {
-  const d = decideRemoval(out({ status: "archived" }));
-  check("an archived invoice offers restore", d.mode === "restore" && d.allowed === true);
+  const d = decideRemoval(inc({ status: "archived" }));
+  check("an archived purchase invoice offers restore", d.mode === "restore" && d.allowed === true);
   check("it says the figures come back too", /telt weer mee/.test(d.body));
 }
 {
@@ -137,26 +129,29 @@ console.log("\n— coming back —");
 
 console.log("\n— refuseArchive: the server's own answer (it never trusts the client) —");
 {
-  check("an open sales invoice may be archived", refuseArchive(out()) === null);
-  check("an overdue one too", refuseArchive(out({ status: "overdue" })) === null);
-  check("an open purchase invoice too", refuseArchive(inc()) === null);
+  check("[ISSUED-STAYS] an open sales invoice is refused", refuseArchive(out()) === "issued_sales_invoice");
+  check("...an overdue one too", refuseArchive(out({ status: "overdue" })) === "issued_sales_invoice");
+  check("...and a paid one (the rule does not depend on the money)",
+    refuseArchive(out({ status: "paid" })) === "issued_sales_invoice");
+  check("an open purchase invoice may be archived", refuseArchive(inc()) === null);
   check("one in the verify queue too", refuseArchive(inc({ status: "processing" })) === null);
-  check("paid is refused", refuseArchive(out({ status: "paid" })) === "money_settled");
-  check("partly paid is refused", refuseArchive(out({ amount_paid: 1 })) === "money_settled");
-  check("verwerkt is refused", refuseArchive(out({ accountant_status: "verwerkt" })) === "verwerkt");
-  check("already archived is refused", refuseArchive(out({ status: "archived" })) === "already_archived");
-  check("a draft is not archived (it is deleted)", refuseArchive(out({ status: "draft" })) === "not_archivable");
-  check("an unknown status is refused", refuseArchive(out({ status: "zzz" })) === "not_archivable");
-  check("the lock is checked before the money", refuseArchive(out({ status: "paid", accountant_status: "verwerkt" })) === "verwerkt");
+  check("a paid purchase invoice is refused", refuseArchive(inc({ status: "paid" })) === "money_settled");
+  check("a partly paid one is refused", refuseArchive(inc({ amount_paid: 1 })) === "money_settled");
+  check("verwerkt is refused", refuseArchive(inc({ accountant_status: "verwerkt" })) === "verwerkt");
+  check("already archived is refused", refuseArchive(inc({ status: "archived" })) === "already_archived");
+  check("an unknown status is refused", refuseArchive(inc({ status: "zzz" })) === "not_archivable");
+  check("the lock is checked before everything else",
+    refuseArchive(out({ status: "paid", accountant_status: "verwerkt" })) === "verwerkt");
 }
 
 console.log("\n— restoreStatus: derived from what the row proves, never guessed —");
 {
   check("incoming always returns to the verify queue", restoreStatus(inc()) === "processing");
   check("...even when it was 'received'", restoreStatus(inc({ status: "archived" })) === "processing");
-  check("an outgoing invoice WITH a number was issued → sent", restoreStatus(out({ status: "archived" })) === "sent");
-  check("an outgoing invoice WITHOUT a number was a concept → draft",
-    restoreStatus(out({ status: "archived", invoice_number: null })) === "draft");
+  // The pure rule still answers for the outgoing shape (the route refuses those separately —
+  // [ISSUED-STAYS] — but a derivation that guesses would be worse than one that is defined).
+  check("an outgoing invoice WITH a number derives 'sent'", restoreStatus(out({ status: "archived" })) === "sent");
+  check("one WITHOUT a number derives 'draft'", restoreStatus(out({ status: "archived", invoice_number: null })) === "draft");
   check("a blank number counts as none", restoreStatus(out({ invoice_number: "   " })) === "draft");
 }
 
