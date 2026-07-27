@@ -148,10 +148,18 @@ BEGIN
 
   -- Alles hieronder is een NIET-eigenaar met leesrecht: de gekoppelde boekhouder.
   -- Hij mag uitsluitend accountant_status en accountant_note verzetten.
-  IF (NEW.total_inc_btw        IS DISTINCT FROM OLD.total_inc_btw)        OR
-     (NEW.subtotal_excl_btw    IS DISTINCT FROM OLD.subtotal_excl_btw)    OR
+  -- [SEC-GUARD-FIX] Deze lijst is de ORIGINELE uit invoice_accountant_write_guard.sql,
+  -- ongewijzigd, plus de drie die hier bij horen. Een eerdere versie van dit blok noemde
+  -- vijf kolommen die niet op public.invoices bestaan (subtotal_excl_btw, btw_rate,
+  -- paid_at, paid_amount, vendor_name). plpgsql bindt veldnamen pas bij UITVOERING, dus
+  -- CREATE OR REPLACE slikte dat — en elke boekhouder die daarna op 'Verwerkt' klikte
+  -- kreeg 42703 (record "new" has no field ...). Diezelfde herschrijving liet bovendien
+  -- zes ECHTE kolommen vallen die de vorige versie wél beschermde: total_ex_btw,
+  -- amount_paid, payment_method, payment_date, marked_paid_at en payment_prepared_at.
+  -- Alle namen hieronder zijn geverifieerd tegen het schema.
+  IF (NEW.total_ex_btw         IS DISTINCT FROM OLD.total_ex_btw)         OR
      (NEW.btw_amount           IS DISTINCT FROM OLD.btw_amount)           OR
-     (NEW.btw_rate             IS DISTINCT FROM OLD.btw_rate)             OR
+     (NEW.total_inc_btw        IS DISTINCT FROM OLD.total_inc_btw)        OR
      (NEW.invoice_number       IS DISTINCT FROM OLD.invoice_number)       OR
      (NEW.invoice_date         IS DISTINCT FROM OLD.invoice_date)         OR
      (NEW.due_date             IS DISTINCT FROM OLD.due_date)             OR
@@ -160,11 +168,16 @@ BEGIN
      (NEW.sender_id            IS DISTINCT FROM OLD.sender_id)            OR
      (NEW.receiver_id          IS DISTINCT FROM OLD.receiver_id)          OR
      (NEW.direction            IS DISTINCT FROM OLD.direction)            OR
-     (NEW.paid_at              IS DISTINCT FROM OLD.paid_at)              OR
-     (NEW.paid_amount          IS DISTINCT FROM OLD.paid_amount)          OR
+     (NEW.amount_paid          IS DISTINCT FROM OLD.amount_paid)          OR
+     (NEW.payment_method       IS DISTINCT FROM OLD.payment_method)       OR
+     (NEW.payment_date         IS DISTINCT FROM OLD.payment_date)         OR
+     (NEW.marked_paid_at       IS DISTINCT FROM OLD.marked_paid_at)       OR
+     (NEW.payment_prepared_at  IS DISTINCT FROM OLD.payment_prepared_at)  OR
      (NEW.pay_token            IS DISTINCT FROM OLD.pay_token)            OR
+     -- [SEC-GUARD-FIX] document_id hoort er ook bij: het is de KOPPELING naar het bewijs.
+     -- Een boekhouder die hem verzet, verwisselt het document onder een geboekte factuur.
+     -- Geen enkel boekhouderspad schrijft hem (de UI zet alleen accountant_status/-note).
      (NEW.document_id          IS DISTINCT FROM OLD.document_id)          OR
-     (NEW.vendor_name          IS DISTINCT FROM OLD.vendor_name)          OR
      -- [SEC] Hieronder de twee die ontbraken. vendor_iban is het nummer dat de klant
      -- overtikt in zijn bank (IncomingManageClient.tsx:1354-1361); payment_reference is
      -- het kenmerk dat bij die overboeking hoort. Een boekhouder die deze twee kan
