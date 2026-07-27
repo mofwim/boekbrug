@@ -945,19 +945,25 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
     }
 
     // Single item
+    // [UI-HONESTY] Check the write before removing the row. Drag-and-drop was the one
+    // move path that skipped this (the menu's handleMove and the bulk move both check):
+    // a refused PATCH still made the file disappear from the folder you dragged it out
+    // of, so it looked filed somewhere it never arrived — until a reload put it back.
     if (type === "folder") {
       if (id === targetFolderId) return; // can't drop on itself
-      await fetch(`/api/bestanden/folders?id=${id}`, {
+      const res = await fetch(`/api/bestanden/folders?id=${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parent_id: targetFolderId }),
       });
+      if (!res.ok) { flashToast("Verplaatsen mislukt"); setDraggedId(null); setDraggedType(null); return; }
       setSubFolders(p => p.filter(f => f.id !== id));
       loadAllFolders();
     } else {
-      await fetch(`/api/bestanden?id=${id}`, {
+      const res = await fetch(`/api/bestanden?id=${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder_id: targetFolderId }),
       });
+      if (!res.ok) { flashToast("Verplaatsen mislukt"); setDraggedId(null); setDraggedType(null); return; }
       setDocs(p => p.filter(d => d.id !== id));
     }
 
@@ -1003,10 +1009,14 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
           onAccept={async () => {
             const { docId, folderId } = aiSuggest;
             setAiSuggest(null);
-            await fetch(`/api/bestanden?id=${docId}`, {
+            // [UI-HONESTY] Accepting the AI's folder suggestion is a real move — only
+            // drop the row once the server accepted it, or the file reads as filed in
+            // a folder it never reached.
+            const res = await fetch(`/api/bestanden?id=${docId}`, {
               method: "PATCH", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ folder_id: folderId }),
             });
+            if (!res.ok) { flashToast("Verplaatsen mislukt — het bestand staat nog hier"); return; }
             setDocs(p => p.filter(d => d.id !== docId));
           }}
           onChooseManually={() => {

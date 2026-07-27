@@ -1627,6 +1627,11 @@ export async function syncUserEmails(
   fetched: number
   verified: number
   saved: number
+  // [AUTO-ADVANCE-HONESTY] Subset of `saved` that the app verified AND booked itself
+  // (status 'received'). These are NOT in the verify queue — they are on Inkoopfacturen.
+  // Every caller that reports "X geïmporteerd" must read this, or it tells the owner to
+  // go confirm invoices that no longer need confirming.
+  autoAdvanced: number
   errors: number
   remaining: number
   skipped: number
@@ -1751,7 +1756,7 @@ export async function syncUserEmails(
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [H3] The per-message "already done" skip set was removed — it was prefix-matched on
@@ -1797,7 +1802,7 @@ export async function syncUserEmails(
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, skipped: 0, couldNotRead: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [EMAIL→BANK] Surface any machine-readable bank statements (MT940 / CAMT.053 / bank CSV)
@@ -3266,14 +3271,37 @@ export async function syncUserEmails(
     // so — don't tell the user to confirm payment on an invoice we've flagged
     // as arithmetically wrong. We don't over-claim ("all checked"); we state
     // the concrete situation only.
-    const cleanCount = saved - held
+    //
+    // [AUTO-ADVANCE-HONESTY] …and never tell the owner to confirm invoices the app
+    // ALREADY confirmed. `autoAdvanced` landed as 'received' (booked, unpaid) and is
+    // therefore NOT in the verify queue — it lives on Inkoopfacturen. The old copy
+    // said "Bevestig ze in Inkomend" for every imported invoice and always linked
+    // there, so a sync that auto-booked everything sent the owner to an empty queue
+    // looking for work that was already done. Split the two groups; link to whichever
+    // one actually needs them (the queue when anything waits, else the booked list).
+    const queued = Math.max(0, saved - autoAdvanced) // still awaiting a confirming tap
+    const heldNote =
+      held > 0
+        ? ` ${held} ${held === 1 ? 'daarvan heeft' : 'daarvan hebben'} extra aandacht nodig (mogelijk een rekenfout).`
+        : ''
     let body: string
-    if (held > 0 && cleanCount > 0) {
+    if (autoAdvanced > 0 && queued === 0) {
+      // Everything was clean and confident: nothing to confirm at all.
+      body =
+        `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald en ` +
+        `${saved === 1 ? 'hem' : 'ze'} automatisch gecontroleerd en geboekt — klaar voor je boekhouder. ` +
+        `Je hoeft niets te bevestigen; nakijken kan bij Inkoopfacturen.`
+    } else if (autoAdvanced > 0) {
+      body =
+        `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald. ` +
+        `${autoAdvanced} ${autoAdvanced === 1 ? 'is' : 'zijn'} automatisch geboekt (staan bij Inkoopfacturen); ` +
+        `${queued} ${queued === 1 ? 'wacht' : 'wachten'} op je bevestiging in Inkomend.${heldNote}`
+    } else if (held > 0 && held < saved) {
       body =
         `BoekBrug heeft ${saved} ${saved === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald. ` +
         `${held} ${held === 1 ? 'factuur staat' : 'facturen staan'} klaar ter controle ` +
         `(mogelijk een rekenfout). Bevestig de rest.`
-    } else if (held > 0 && cleanCount === 0) {
+    } else if (held > 0) {
       body =
         `BoekBrug heeft ${held} ${held === 1 ? 'factuur' : 'facturen'} uit je ${providerLabel} gehaald die ` +
         `${held === 1 ? 'controle nodig heeft' : 'controle nodig hebben'} (mogelijk een rekenfout).`
@@ -3287,7 +3315,10 @@ export async function syncUserEmails(
       body,
       type: 'invoice',
       read: false,
-      link: '/dashboard/incoming',
+      // [AUTO-ADVANCE-HONESTY] Land the owner where the work (or the result) is.
+      link: queued === 0 && autoAdvanced > 0
+        ? '/dashboard/incoming/manage?filter=auto'
+        : '/dashboard/incoming',
     })
     if (notifErr) {
       console.error('[BOEK-011] Failed to write notification', notifErr)
@@ -3332,6 +3363,11 @@ export async function syncUserEmails(
     fetched: attachments.length,
     verified,
     saved,
+    // [AUTO-ADVANCE-HONESTY] Of `saved`, how many the app verified AND booked itself
+    // ('received'). These are NOT in the verify queue, so a caller that says
+    // "X geïmporteerd — bevestig ze" without this number is telling the owner to go
+    // find work that no longer exists. Every sync UI reads it (see the incoming page).
+    autoAdvanced,
     errors,
     // [BOEK-011] New attachments beyond this batch's cap — the client uses
     // this to auto-continue syncing until the backlog is drained, showing

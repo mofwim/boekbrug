@@ -46,6 +46,12 @@ interface Item {
   file: File
   status: Status
   destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'turnover' | 'ledger'
+  // [AUTO-ADVANCE-HONESTY] The app verified AND booked this invoice itself
+  // ([AUTO-ADVANCE] in /api/intake) — status 'received'. It is therefore NOT in the
+  // verify queue this page links to, but on Inkoopfacturen. Kept separate from
+  // `destination` because the destination IS still an invoice; only the place it
+  // waits differs — and that is exactly what the owner needs to be told.
+  autoVerified?: boolean
   message?: string
   canForce?: boolean
   force?: boolean   // set on a "toch toevoegen" retry → sends force=true to override a semantic dup
@@ -95,15 +101,22 @@ export default function UploadClient() {
   const mpFileRef = useRef<HTMLInputElement>(null)
   const mpCameraRef = useRef<HTMLInputElement>(null)
   // [REPROCESS] Book the kassa/grootboek/dagomzet files already sitting in bestanden — no re-upload.
-  const [reproc, setReproc] = useState<{ busy: boolean; done: boolean; summary?: ReprocSummary; results?: ReprocResult[] }>({ busy: false, done: false })
+  const [reproc, setReproc] = useState<{ busy: boolean; done: boolean; summary?: ReprocSummary; results?: ReprocResult[]; error?: string }>({ busy: false, done: false })
   const runReprocess = useCallback(async () => {
     setReproc({ busy: true, done: false })
     try {
       const res = await fetch('/api/documents/reprocess', { method: 'POST' })
       const data = await res.json().catch(() => ({}))
+      // [UI-HONESTY] A rejected run (401/429/500) returns no summary, and the result
+      // block only renders WITH a summary — so the button used to go quiet and the
+      // owner was left believing nothing needed booking. Say what happened instead.
+      if (!res.ok || !data?.summary) {
+        setReproc({ busy: false, done: true, error: data?.error || 'Boeken is niet gelukt — probeer het zo opnieuw.' })
+        return
+      }
       setReproc({ busy: false, done: true, summary: data.summary, results: data.results })
     } catch {
-      setReproc({ busy: false, done: true })
+      setReproc({ busy: false, done: true, error: 'Boeken is niet gelukt — controleer je verbinding en probeer het opnieuw.' })
     }
   }, [])
 
@@ -144,6 +157,7 @@ export default function UploadClient() {
           if (res.ok) {
             patch(item.id, {
               status: 'done', destination: data.destination, message: data.message,
+              autoVerified: data.auto_verified === true,
               vendor: data.vendor ?? null, total: data.total_inc_btw ?? null, number: data.invoice_number ?? null,
             })
           } else if (res.status === 409 && data.duplicate) {
@@ -253,6 +267,14 @@ export default function UploadClient() {
   const dups = items.filter((i) => i.status === 'duplicate')
   const errs = items.filter((i) => i.status === 'error')
   const countBy = (d: string) => done.filter((i) => i.destination === d).length
+  // [AUTO-ADVANCE-HONESTY] Invoices split by WHERE they now wait: auto-booked ones sit
+  // on Inkoopfacturen, the rest in the verify queue. The summary used to lump both into
+  // "X factuur/bon" with a single "Naar Te verifiëren →", so a batch the app fully
+  // handled itself pointed at an empty queue.
+  const autoBooked = done.filter((i) => i.autoVerified).length
+  const toVerify = done.filter(
+    (i) => (i.destination === 'invoice' || i.destination === 'receipt') && !i.autoVerified,
+  ).length
   const anyResult = done.length + dups.length + errs.length > 0
 
   return (
@@ -385,6 +407,10 @@ export default function UploadClient() {
             {reproc.busy ? '🔄 Bezig met boeken…' : '🔄 Boek mijn opgeslagen bestanden'}
           </button>
 
+          {reproc.done && reproc.error && (
+            <p style={{ fontSize: 13, color: M3.error, margin: '10px 0 0', lineHeight: 1.5 }}>{reproc.error}</p>
+          )}
+
           {reproc.done && reproc.summary && (
             <div style={{ marginTop: 12 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: '0 0 6px' }}>
@@ -465,8 +491,10 @@ export default function UploadClient() {
                       )}
                     </div>
                     {it.status === 'done' && d && (
-                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: d.color, background: '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
-                        {d.label}
+                      // [AUTO-ADVANCE-HONESTY] The badge names the OUTCOME, not just the type:
+                      // "Factuur" on a row the app already booked reads as "still to do".
+                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: it.autoVerified ? '#0B5A28' : d.color, background: it.autoVerified ? '#E6F4EA' : '#F1F3F4', borderRadius: 999, padding: '3px 10px' }}>
+                        {it.autoVerified ? 'Automatisch geboekt' : d.label}
                       </span>
                     )}
                   </div>
@@ -496,7 +524,8 @@ export default function UploadClient() {
           <div style={{ marginTop: 18, background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 14, padding: 16 }}>
             <p style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, margin: '0 0 8px' }}>Klaar ✓</p>
             <p style={{ fontSize: 13, color: M3.neutral, margin: '0 0 12px', lineHeight: 1.6 }}>
-              {countBy('invoice') + countBy('receipt') > 0 && <>{countBy('invoice') + countBy('receipt')} factuur/bon · </>}
+              {autoBooked > 0 && <><strong style={{ color: M3.success }}>{autoBooked} automatisch geboekt</strong> · </>}
+              {toVerify > 0 && <>{toVerify} factuur/bon te controleren · </>}
               {countBy('bank') > 0 && <>{countBy('bank')} bankafschrift · </>}
               {countBy('turnover') > 0 && <>{countBy('turnover')} kassa-omzet · </>}
               {countBy('ledger') > 0 && <>{countBy('ledger')} controle-check · </>}
@@ -515,8 +544,22 @@ export default function UploadClient() {
                 </p>
               </div>
             )}
+            {/* [AUTO-ADVANCE-HONESTY] What "automatisch geboekt" means, once — booked as
+                a purchase invoice, nothing paid, and checkable on Inkoopfacturen. */}
+            {autoBooked > 0 && (
+              <p style={{ fontSize: 12.5, color: '#0B5A28', background: '#E6F4EA', border: '1px solid #B7E1C4', borderRadius: 10, padding: '10px 12px', margin: '0 0 12px', lineHeight: 1.5 }}>
+                {autoBooked === 1 ? 'Eén factuur was' : `${autoBooked} facturen waren`} zeker genoeg om zelf te controleren
+                en {autoBooked === 1 ? 'is' : 'zijn'} meteen geboekt als inkoopfactuur — klaar voor je boekhouder.
+                Er is niets betaald; nakijken kan bij Inkoopfacturen onder “Automatisch verwerkt”.
+              </p>
+            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {countBy('invoice') + countBy('receipt') > 0 && (
+              {autoBooked > 0 && (
+                <Link href="/dashboard/incoming/manage?filter=auto" style={{ fontSize: 13, fontWeight: 600, color: '#0B5A28', textDecoration: 'none', background: '#E6F4EA', borderRadius: 999, padding: '8px 14px' }}>
+                  Naar Inkoopfacturen →
+                </Link>
+              )}
+              {toVerify > 0 && (
                 <Link href="/dashboard/incoming" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>
                   Naar Te verifiëren →
                 </Link>

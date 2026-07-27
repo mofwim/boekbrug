@@ -346,7 +346,9 @@ export async function POST(req: NextRequest) {
   }
   const documentId = doc.id;
 
-  // Save the invoice — status 'received', awaiting confirmation
+  // Save the invoice — status 'processing' (the verify queue), awaiting confirmation.
+  // (The comment used to say 'received', which is the CONFIRMED state; the insert below
+  // has always written 'processing'. Fixed so nobody "corrects" the code to match it.)
   // [BOEK-011 + BOEK-SECURITY] Incoming invoice: receiver_id = user, sender_id = null.
   // Must use service_role: invoices_zzp_insert RLS requires sender_id = auth.uid(),
   // which fails for incoming (sender_id is null — vendor isn't a BoekBrug user).

@@ -225,7 +225,9 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
             ? "1 factuur staat nog in de verwerkingsrij"
             : `${unverified} facturen staan nog in de verwerkingsrij`,
         detail: "Controleer en bevestig deze facturen voordat je afsluit — anders gaan ze niet mee naar de boekhouder.",
-        fix: { label: "Naar Facturen", href: "/dashboard/incoming" },
+        // Label names the screen it opens (Inkomend), not "Facturen" — which is a
+        // different screen in this app (outgoing sales invoices).
+        fix: { label: "Naar Inkomend", href: "/dashboard/incoming" },
       });
     }
     if (!applicable) notes.push("Nog geen facturen geïmporteerd voor dit kwartaal.");
@@ -239,7 +241,9 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         severity: "risk",
         title: autoV === 1 ? "1 factuur is automatisch verwerkt" : `${autoV} facturen zijn automatisch verwerkt`,
         detail: "De app heeft deze duidelijk leesbare facturen automatisch geverifieerd. Loop ze even na (tab 'Automatisch verwerkt') voordat je afsluit.",
-        fix: { label: "Bekijk", href: "/dashboard/incoming/manage" },
+        // The detail names the tab, so the link opens that tab (?filter=auto) instead of
+        // the full ledger the owner would then have to filter by hand.
+        fix: { label: "Bekijk", href: "/dashboard/incoming/manage?filter=auto" },
       });
     }
   }

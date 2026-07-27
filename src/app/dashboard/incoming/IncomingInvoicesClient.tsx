@@ -318,6 +318,11 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     let totalDuplicate = 0;
     let totalErrors = 0;
     let totalCouldNotRead = 0;
+    // [AUTO-ADVANCE-HONESTY] Of everything imported, how many the app verified and
+    // booked itself. Those land on Inkoopfacturen, NOT in the queue below — so the
+    // summary must say so, or "12 geïmporteerd" followed by a queue showing 3 reads
+    // as if nine invoices went missing.
+    let totalAutoBooked = 0;
     let anyUnbalanced = false;
     // [BOEK-011] No-progress guard: if a round saves nothing AND remaining
     // didn't shrink, looping again would just repeat the same work. Stop and
@@ -343,6 +348,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         }
 
         totalSaved += data.saved ?? 0;
+        totalAutoBooked += data.autoAdvanced ?? 0;
         // [BOEK-TRUST] Roll up the reconciliation buckets.
         if (data.balance) {
           totalSkipped += data.balance.skipped ?? 0;
@@ -394,6 +400,16 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             extra > 0
               ? `${totalSaved} geïmporteerd. Alles is verwerkt (${extra} overgeslagen of al aanwezig).`
               : `${totalSaved} geïmporteerd. Alles is verwerkt.`;
+        }
+        // [AUTO-ADVANCE-HONESTY] Say where the imported invoices actually went. The
+        // page reloads right after this line, so without it the owner reads
+        // "12 geïmporteerd" and then counts 3 cards — the nine the app verified and
+        // booked itself look lost. They are on Inkoopfacturen, and nothing was paid.
+        if (totalAutoBooked > 0) {
+          message +=
+            totalAutoBooked === 1
+              ? " 1 daarvan was zeker genoeg en is automatisch geboekt — die staat bij Inkoopfacturen."
+              : ` ${totalAutoBooked} daarvan waren zeker genoeg en zijn automatisch geboekt — die staan bij Inkoopfacturen.`;
         }
         // [COULD-NOT-READ] Never hide files we couldn't read: tell the owner to check
         // them in bestanden (they were kept, not discarded, and not booked as anything).

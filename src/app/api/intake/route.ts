@@ -787,8 +787,13 @@ export async function POST(req: NextRequest) {
       await pipeline.from("notifications").insert({
         user_id: user.id,
         title: "Factuur automatisch verwerkt",
-        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en klaargezet voor de boekhouder. Controleer indien nodig.`.replace("  ", " "),
+        body: `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`.replace("  ", " "),
         type: "invoice",
+        // [AUTO-ADVANCE-HONESTY] Deep-link like every other notification
+        // ([BRIDGE-NOTIF]). Without it this was the one bell in the app you could
+        // tap for nothing: it announces a booking and then leaves the owner to find
+        // the invoice by hand — on a surface the notification never names.
+        link: `/dashboard/incoming/manage?focus=${invoice.id}`,
       })
     } catch { /* non-essential */ }
   }

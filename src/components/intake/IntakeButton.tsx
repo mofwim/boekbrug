@@ -168,7 +168,15 @@ export default function IntakeButton({
       // Route the owner to where the item landed, so they can confirm/see it.
       if (data.destination === 'invoice' || data.destination === 'receipt') {
         showToast(data.message || 'Toegevoegd ✓')
-        setTimeout(() => router.push('/dashboard/incoming'), 600)
+        // [AUTO-ADVANCE-HONESTY] An auto-verified invoice is booked ('received') and so
+        // is NOT in the verify queue. Sending the owner to /dashboard/incoming — as this
+        // did for every invoice — landed them on a queue that does not contain the file
+        // they just photographed, right after a toast saying it was processed. Route to
+        // the surface that actually holds it, focused on the row.
+        const target = data.auto_verified && data.invoice_id
+          ? `/dashboard/incoming/manage?focus=${data.invoice_id}`
+          : '/dashboard/incoming'
+        setTimeout(() => router.push(target), 600)
       } else if (data.destination === 'bank') {
         showToast(data.message || 'Toegevoegd ✓')
         setTimeout(() => router.push('/dashboard/bank'), 600)
@@ -534,6 +542,10 @@ export interface IntakeResult {
   error?: string
   duplicate?: boolean
   invoice_id?: string
+  // [AUTO-ADVANCE-HONESTY] true when the app verified AND booked this invoice itself
+  // ([AUTO-ADVANCE] in /api/intake): status 'received', so it is NOT in the verify
+  // queue but on Inkoopfacturen. Drives where we send the owner afterwards.
+  auto_verified?: boolean
   original_id?: string  // [DUP-MODAL] the existing invoice this duplicates → deep-link
   canForce?: boolean    // [INTAKE-FORCE] a semantic dup that may be overridden ("toch toevoegen")
   suggest_paid?: boolean

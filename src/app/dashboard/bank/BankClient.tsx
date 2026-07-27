@@ -183,7 +183,17 @@ export default function BankClient() {
   // component state and vanished on reload.
   const [initialLoading, setInitialLoading] = useState(true)
   // [BANK-TABS] Active tab — defaults to the one the owner acts on.
-  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'pin' | 'ignored' | 'done'>('confirm')
+  // [NOTIF-DEADEND] …unless a deep link names one (?tab=done). The auto-confirm bell
+  // ("N facturen automatisch gekoppeld — bekijk ze onder Bevestigd") had no link at all,
+  // and pointing it at /dashboard/bank alone would still open "Te bevestigen": the owner
+  // reads "look under Bevestigd" and lands on a different tab. An unknown value falls
+  // back to the default, and the tab bar keeps working normally afterwards.
+  const tabParam = searchParams.get('tab')
+  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'pin' | 'ignored' | 'done'>(
+    tabParam === 'done' || tabParam === 'none' || tabParam === 'pin' || tabParam === 'ignored'
+      ? tabParam
+      : 'confirm'
+  )
   // [BANK-QUARTER] Which quarter's transactions to show. 'auto' resolves to the newest
   // quarter that has data, so an owner working on Q2 lands on Q2 instead of an all-quarters
   // pile (old Q1 uploads inflated "Geen factuur" to 335). 'all' shows every quarter.
