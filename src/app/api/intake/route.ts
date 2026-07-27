@@ -793,12 +793,21 @@ export async function POST(req: NextRequest) {
     } catch { /* non-essential */ }
   }
 
+  // [INTAKE-AUTO-FEEDBACK] Where the FILE itself was filed. The document path already
+  // echoed folder_id/folder_name so the upload modal could say "opgeslagen in …"; the
+  // invoice path never did, so an invoice — the one thing the owner most wants to be
+  // able to find back — landed without a location. Same breadcrumb helper, best-effort:
+  // a failure here must never affect the (already committed) invoice.
+  const invoiceFolderPath = await buildFolderBreadcrumb(supabase, user.id, folderId).catch(() => [])
+
   return NextResponse.json({
     ok: true,
     destination: decision.destination, // 'invoice' | 'receipt'
     invoice_id: invoice?.id,
     suggest_paid: decision.suggestPaid,
     auto_verified: autoAdv.advance,
+    folder_id: folderId,
+    folder_name: invoiceFolderPath.length ? invoiceFolderPath[invoiceFolderPath.length - 1] : null,
     // [UPLOAD-HUB] Echo the key extracted fields so the upload page can show WHAT each file is
     // (leverancier · bedrag · nummer) at a glance — the owner verifies without opening every file.
     vendor: v.vendor ?? null,
@@ -814,7 +823,12 @@ export async function POST(req: NextRequest) {
         : possibleDup
           ? `Factuur herkend — let op: mogelijk dubbel${possibleDup.match.invoice_number ? ` met ${possibleDup.match.invoice_number}` : ""} (${possibleDup.reason}). Controleer voor je bevestigt.`
           : autoAdv.advance
-            ? "Factuur herkend en automatisch verwerkt ✓ — klaar voor de boekhouder."
+            // [INTAKE-AUTO-FEEDBACK] Name the DESTINATION, not just the fact. "Automatisch
+            // verwerkt" alone left the owner looking for the invoice in the verify queue,
+            // where an auto-advanced invoice never appears — it is booked (unpaid) on
+            // Inkoopfacturen. Saying so, plus "nog niet betaald", is what makes the
+            // automatic step checkable instead of merely fast.
+            ? "Herkend, gecontroleerd en geboekt als inkoopfactuur — klaar voor de boekhouder (nog niet betaald)."
             : "Factuur herkend — controleer en bevestig.",
   })
 }

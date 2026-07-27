@@ -11,8 +11,34 @@
 //     "Markeer als betaald" → Bank/Contant (marks paid)
 // - "Negeer" → confirmation → archive (recoverable)
 // - Restore ignored invoices → back to the verification queue
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// [INCOMING-TIDY] Layout regroup (presentation only) — juli 2026
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY: the page had grown into one long, flat column — a status line, a re-read
+// button, a manage link, a big e-mail card with four stacked text links, tabs, a
+// select toolbar, a search field, the invoice list, and finally (below dozens of
+// cards) the upload block. Everything was full-width and equally loud, so nothing
+// read as a group and "een factuur toevoegen" was unreachable without scrolling
+// past the whole queue.
+//
+// The same four-section grammar as the ZZP home (ZzpDashboard, [DASH-SIMPLIFY]):
+//   1. Status        — one card answering "waar sta ik?" (+ the re-read action
+//                      and the link to the confirmed inkoopfacturen)
+//   2. Toevoegen     — camera / bestanden / meerdere pagina's, in one card, at
+//                      the TOP (as on the home) instead of below the list
+//   3. Automatisch   — the e-mail connection, compact: one sync button, with the
+//      inlezen         secondary controls (backfill, overgeslagen, ontkoppel)
+//                      behind one "Meer opties" expander — nothing removed
+//   4. Facturen      — tabs, select toolbar, search and the cards
+//
+// Nothing about the data, the routes or the verify/ignore/restore logic changed;
+// every control that existed before still exists and does exactly the same thing.
+// Shared visual language: #F8F9FA page, white cards with EL1, R radii, Roboto,
+// Material Symbols (all names below are in layout.tsx's icon subset).
+// ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
 import { FONT } from "@/lib/design/tokens";
@@ -150,6 +176,101 @@ function formatSignedAmount(amount: number): string {
   return Number.isFinite(amount) && amount !== 0 ? NL_CURRENCY.format(amount) : "—";
 }
 
+// ── [INCOMING-TIDY] Design tokens ─────────────────────────────────────────────
+// Same values the ZZP home and Inkoopfacturen use, so the three purchase surfaces
+// read as one system. Kept local (like every other dashboard client) — only FONT
+// comes from the shared token file.
+const R = { sm: 8, md: 12, lg: 16, xl: 20, full: 9999 };
+const EL1 = "0 1px 2px rgba(0,0,0,0.08)";
+const C = {
+  primary: "#1A73E8",
+  primaryContainer: "#E8F0FE",
+  onPrimaryContainer: "#174EA6",
+  bg: "#F8F9FA",
+  surface: "#FFFFFF",
+  onSurface: "#202124",
+  muted: "#5F6368",
+  faint: "#8A929C",
+  line: "#E8EAED",
+  success: "#137333",
+  successContainer: "#E6F4EA",
+  warn: "#B06000",
+  warnStrong: "#9A5B00",
+  warnContainer: "#FEF7E0",
+  warnLine: "#FDE293",
+  error: "#B3261E",
+  errorContainer: "#FCE8E6",
+  errorLine: "#F5B5AE",
+} as const;
+
+// [INCOMING-TIDY] Material Symbols helper. Every name used on this page is in the
+// icon subset loaded in app/layout.tsx — an unlisted name renders as raw text, so
+// check that list before introducing a new one.
+function Icon({
+  name,
+  size = 20,
+  color,
+  spin,
+}: {
+  name: string;
+  size?: number;
+  color?: string;
+  spin?: boolean;
+}) {
+  return (
+    <span
+      className="material-symbols-outlined"
+      aria-hidden="true"
+      style={{
+        fontSize: size,
+        color,
+        lineHeight: 1,
+        flexShrink: 0,
+        animation: spin ? "bbSpin 1s linear infinite" : undefined,
+      }}
+    >
+      {name}
+    </span>
+  );
+}
+
+// [INCOMING-TIDY] The small uppercase header that turns a flat column into
+// scannable groups — same component (and role) as SectionLabel on the ZZP home.
+function SectionLabel({ children, right }: { children: ReactNode; right?: ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "baseline", justifyContent: "space-between",
+        gap: 10, margin: "0 2px 10px",
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11, fontWeight: 700, letterSpacing: 0.6,
+          textTransform: "uppercase", color: C.faint,
+        }}
+      >
+        {children}
+      </span>
+      {right}
+    </div>
+  );
+}
+
+// [INCOMING-TIDY] The one card shape of this page: white, one elevation, one radius.
+function Card({ children, style }: { children: ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div
+      style={{
+        background: C.surface, borderRadius: R.lg, boxShadow: EL1,
+        padding: 16, ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 // ── Email connect card ────────────────────────────────────────────────────────
 
 function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
@@ -169,6 +290,10 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     { filename: string; reason: string; createdAt: string }[] | null
   >(null);
   const [couldNotReadCount, setCouldNotReadCount] = useState(0);
+  // [INCOMING-TIDY] One expander for the three secondary controls (backfill,
+  // overgeslagen, ontkoppel). They used to sit as four loose text links under the
+  // card and dominated it; nothing is removed, they are one tap away.
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // [BOEK-011] One tap = full import. The server caps each call at 25 new
   // invoices (function time limit); it reports `remaining` and we simply call
@@ -332,37 +457,43 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     const needsReauth = status.needs_reauth;
 
     return (
-      <div
-        style={{
-          background: "#f8f9fa",
-          borderRadius: 16,
-          padding: "16px 20px",
-          marginBottom: 20,
-        }}
-      >
+      <Card style={{ padding: 14 }}>
+        {/* Identity row — provider, live/dead dot, mailbox */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-          <span style={{ fontSize: 28 }}>📧</span>
+          <div
+            style={{
+              width: 40, height: 40, borderRadius: R.md, flexShrink: 0,
+              background: needsReauth ? C.errorContainer : C.primaryContainer,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <Icon
+              name="mark_email_unread"
+              size={22}
+              color={needsReauth ? C.error : C.primary}
+            />
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontWeight: 600, fontSize: 15, color: "#202124" }}>
+              <span style={{ fontWeight: 600, fontSize: 15, color: C.onSurface }}>
                 {needsReauth ? `${providerName} — verbinding verlopen` : `${providerName} verbonden`}
               </span>
               <span
                 style={{
                   width: 8, height: 8, borderRadius: "50%",
-                  background: needsReauth ? "#ea4335" : "#34a853", display: "inline-block",
+                  background: needsReauth ? "#EA4335" : "#34A853", display: "inline-block",
                 }}
               />
             </div>
-            <div style={{ fontSize: 13, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 13, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {status.email}
             </div>
           </div>
         </div>
 
         {needsReauth && (
-          <div style={{ background: "#FCE8E6", border: "1px solid #F5B5AE", borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: "#B3261E", marginBottom: 6 }}>
+          <div style={{ background: C.errorContainer, border: `1px solid ${C.errorLine}`, borderRadius: R.md, padding: "12px 14px", marginBottom: 12 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: C.error, marginBottom: 6 }}>
               Automatisch inlezen is gestopt
             </div>
             <div style={{ fontSize: 13, color: "#8C1D18", marginBottom: 10, lineHeight: 1.45 }}>
@@ -370,193 +501,227 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             </div>
             <a
               href={`/api/email/connect?provider=${status.provider}`}
-              style={{ display: "inline-block", background: "#B3261E", color: "#fff", borderRadius: 10, padding: "9px 16px", fontWeight: 600, fontSize: 14, textDecoration: "none" }}
+              style={{ display: "inline-block", background: C.error, color: "#fff", borderRadius: R.sm, padding: "9px 16px", fontWeight: 600, fontSize: 14, textDecoration: "none" }}
             >
               Verbind {providerName} opnieuw
             </a>
           </div>
         )}
 
+        {/* [INCOMING-TIDY] The one action that matters here, full width. The rest
+            (backfill / overgeslagen / ontkoppel) moved behind "Meer opties". */}
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => handleSync()}
             disabled={syncing}
             style={{
-              flex: 1,
-              background: syncing ? "#e0e0e0" : "#1a73e8",
-              color: syncing ? "#5f6368" : "#fff",
-              border: "none", borderRadius: 10, padding: "10px 0",
-              fontWeight: 600, fontSize: 14,
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              background: syncing ? "#F1F3F4" : C.primary,
+              color: syncing ? C.muted : "#fff",
+              border: "none", borderRadius: R.md, padding: "11px 0",
+              fontWeight: 600, fontSize: 14, fontFamily: "inherit",
               cursor: syncing ? "not-allowed" : "pointer",
             }}
           >
+            <Icon name="refresh" size={18} spin={syncing} />
             {syncing ? "Bezig…" : "Synchroniseer nu"}
           </button>
           <button
-            onClick={handleDisconnect}
+            onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={moreOpen}
+            aria-label="Meer opties voor je e-mailkoppeling"
             style={{
-              background: "transparent", border: "1.5px solid #ea4335",
-              color: "#ea4335", borderRadius: 10, padding: "10px 16px",
-              fontWeight: 600, fontSize: 14, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 4,
+              background: "#F1F3F4", border: "none", borderRadius: R.md,
+              padding: "11px 14px", color: "#3C4043",
+              fontWeight: 600, fontSize: 13.5, fontFamily: "inherit", cursor: "pointer",
             }}
           >
-            Ontkoppel
+            Meer
+            <Icon name={moreOpen ? "expand_less" : "expand_more"} size={18} color="#3C4043" />
           </button>
-        </div>
-
-        {/* [BACKFILL] Re-scan an earlier period. The daily sync only looks forward, so an
-            invoice that was missed at the time (and is now fixable) needs a one-off re-pull.
-            Nothing is duplicated — the re-scan imports only what's still missing. */}
-        <div style={{ marginTop: 10 }}>
-          {!backfillOpen ? (
-            <button
-              onClick={() => setBackfillOpen(true)}
-              disabled={syncing}
-              style={{
-                background: "transparent", border: "none",
-                color: syncing ? "#dadce0" : "#1a73e8",
-                fontSize: 13, fontWeight: 500,
-                cursor: syncing ? "default" : "pointer", padding: 0,
-              }}
-            >
-              Mis je een factuur? Oudere e-mails opnieuw ophalen…
-            </button>
-          ) : (
-            <div style={{ background: "#fff", borderRadius: 10, padding: 12 }}>
-              <div style={{ fontSize: 12.5, color: "#3c4043", lineHeight: 1.5, marginBottom: 8 }}>
-                Ik scan je e-mail opnieuw vanaf deze datum en importeer wat er nog mist. Al
-                geïmporteerde facturen blijven zoals ze zijn — niets wordt dubbel.
-              </div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <input
-                  type="date"
-                  value={backfillDate}
-                  max={new Date().toISOString().slice(0, 10)}
-                  onChange={(e) => setBackfillDate(e.target.value)}
-                  disabled={syncing}
-                  style={{
-                    border: "1px solid #dadce0", borderRadius: 8, padding: "8px 10px",
-                    fontSize: 14, fontFamily: "inherit",
-                  }}
-                />
-                <button
-                  onClick={() => handleSync(backfillDate)}
-                  disabled={syncing || !backfillDate}
-                  style={{
-                    background: syncing ? "#e0e0e0" : "#1a73e8",
-                    color: syncing ? "#5f6368" : "#fff",
-                    border: "none", borderRadius: 8, padding: "8px 16px",
-                    fontWeight: 600, fontSize: 14,
-                    cursor: syncing || !backfillDate ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {syncing ? "Bezig…" : "Opnieuw ophalen"}
-                </button>
-                <button
-                  onClick={() => setBackfillOpen(false)}
-                  disabled={syncing}
-                  style={{
-                    background: "transparent", border: "none", color: "#5f6368",
-                    fontSize: 13, cursor: syncing ? "default" : "pointer", padding: "8px 4px",
-                  }}
-                >
-                  Annuleer
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
         {syncResult && (
           <div
             style={{
-              marginTop: 10, fontSize: 13, textAlign: "center",
-              color: syncResult.startsWith("Fout") ? "#ea4335" : "#34a853",
+              marginTop: 10, fontSize: 13, lineHeight: 1.45,
+              padding: "10px 12px", borderRadius: R.sm,
+              background: syncResult.startsWith("Fout") ? C.errorContainer : C.successContainer,
+              color: syncResult.startsWith("Fout") ? C.error : C.success,
             }}
           >
             {syncResult}
           </div>
         )}
 
-        {/* [OBSERVABILITY] What did import NOT turn into an invoice, and why. Read-only
-            transparency so a misjudged or unreadable document is never invisibly lost. */}
-        <div style={{ marginTop: 10 }}>
-          {!skippedOpen ? (
+        {/* [INCOMING-TIDY] Secondary controls — same functionality as the old loose
+            links, collected in one place so the card has a single voice. */}
+        {moreOpen && (
+          <div style={{ marginTop: 12, borderTop: `1px solid ${C.line}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* [BACKFILL] Re-scan an earlier period. The daily sync only looks forward, so an
+                invoice that was missed at the time (and is now fixable) needs a one-off re-pull.
+                Nothing is duplicated — the re-scan imports only what's still missing. */}
+            {!backfillOpen ? (
+              <button
+                onClick={() => setBackfillOpen(true)}
+                disabled={syncing}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10, width: "100%",
+                  background: "transparent", border: "none", padding: "2px 0",
+                  color: syncing ? "#DADCE0" : C.onSurface, textAlign: "left",
+                  fontSize: 13.5, fontWeight: 500, fontFamily: "inherit",
+                  cursor: syncing ? "default" : "pointer",
+                }}
+              >
+                <Icon name="schedule" size={19} color={syncing ? "#DADCE0" : C.muted} />
+                <span style={{ flex: 1 }}>Mis je een factuur? Oudere e-mails ophalen</span>
+                <Icon name="chevron_right" size={18} color={C.faint} />
+              </button>
+            ) : (
+              <div style={{ background: C.bg, borderRadius: R.md, padding: 12 }}>
+                <div style={{ fontSize: 12.5, color: "#3C4043", lineHeight: 1.5, marginBottom: 8 }}>
+                  Ik scan je e-mail opnieuw vanaf deze datum en importeer wat er nog mist. Al
+                  geïmporteerde facturen blijven zoals ze zijn — niets wordt dubbel.
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input
+                    type="date"
+                    value={backfillDate}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setBackfillDate(e.target.value)}
+                    disabled={syncing}
+                    style={{
+                      border: "1px solid #DADCE0", borderRadius: R.sm, padding: "8px 10px",
+                      fontSize: 14, fontFamily: "inherit", background: "#fff", color: C.onSurface,
+                    }}
+                  />
+                  <button
+                    onClick={() => handleSync(backfillDate)}
+                    disabled={syncing || !backfillDate}
+                    style={{
+                      background: syncing ? "#E0E0E0" : C.primary,
+                      color: syncing ? C.muted : "#fff",
+                      border: "none", borderRadius: R.sm, padding: "8px 16px",
+                      fontWeight: 600, fontSize: 14, fontFamily: "inherit",
+                      cursor: syncing || !backfillDate ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {syncing ? "Bezig…" : "Opnieuw ophalen"}
+                  </button>
+                  <button
+                    onClick={() => setBackfillOpen(false)}
+                    disabled={syncing}
+                    style={{
+                      background: "transparent", border: "none", color: C.muted,
+                      fontSize: 13, fontFamily: "inherit",
+                      cursor: syncing ? "default" : "pointer", padding: "8px 4px",
+                    }}
+                  >
+                    Annuleer
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* [OBSERVABILITY] What did import NOT turn into an invoice, and why. Read-only
+                transparency so a misjudged or unreadable document is never invisibly lost. */}
+            {!skippedOpen ? (
+              <button
+                onClick={openSkipped}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10, width: "100%",
+                  background: "transparent", border: "none", padding: "2px 0",
+                  color: C.onSurface, textAlign: "left",
+                  fontSize: 13.5, fontWeight: 500, fontFamily: "inherit", cursor: "pointer",
+                }}
+              >
+                <Icon name="rule" size={19} color={C.muted} />
+                <span style={{ flex: 1 }}>Bekijk wat is overgeslagen bij het importeren</span>
+                <Icon name="chevron_right" size={18} color={C.faint} />
+              </button>
+            ) : (
+              <div style={{ background: C.bg, borderRadius: R.md, padding: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.onSurface }}>Overgeslagen bij import</span>
+                  <button
+                    onClick={() => setSkippedOpen(false)}
+                    style={{ background: "transparent", border: "none", color: C.muted, fontSize: 13, fontFamily: "inherit", cursor: "pointer" }}
+                  >
+                    Sluit
+                  </button>
+                </div>
+                {skippedLoading ? (
+                  <div style={{ fontSize: 13, color: C.muted }}>Laden…</div>
+                ) : (
+                  <>
+                    {couldNotReadCount > 0 && (
+                      <div style={{ fontSize: 12.5, color: C.warnStrong, background: C.warnContainer, borderRadius: R.sm, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
+                        {couldNotReadCount} {couldNotReadCount === 1 ? "bestand konden" : "bestanden konden"} we niet lezen — {couldNotReadCount === 1 ? "het staat" : "ze staan"} in je bestanden, controleer {couldNotReadCount === 1 ? "het" : "ze"} even.
+                      </div>
+                    )}
+                    {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
+                      <div style={{ fontSize: 12.5, color: C.muted }}>
+                        Niets overgeslagen — alles wat binnenkwam is verwerkt.
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {(skippedItems ?? []).map((s, i) => (
+                          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
+                            <span style={{ color: C.onSurface, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                              {s.filename}
+                            </span>
+                            <span style={{ color: C.muted, flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {friendlySkipReason(s.reason)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8, lineHeight: 1.5 }}>
+                      Mis je hier een echte factuur? Gebruik &ldquo;Oudere e-mails ophalen&rdquo; hierboven, of voeg hem toe met een foto.
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             <button
-              onClick={openSkipped}
+              onClick={handleDisconnect}
               style={{
-                background: "transparent", border: "none", color: "#5f6368",
-                fontSize: 12.5, cursor: "pointer", padding: 0,
+                display: "flex", alignItems: "center", gap: 10, width: "100%",
+                background: "transparent", border: "none", padding: "2px 0",
+                color: "#C5221F", textAlign: "left",
+                fontSize: 13.5, fontWeight: 500, fontFamily: "inherit", cursor: "pointer",
               }}
             >
-              Bekijk wat is overgeslagen bij het importeren
+              <Icon name="link_off" size={19} color="#C5221F" />
+              <span style={{ flex: 1 }}>Ontkoppel {providerName}</span>
             </button>
-          ) : (
-            <div style={{ background: "#fff", borderRadius: 10, padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#202124" }}>Overgeslagen bij import</span>
-                <button
-                  onClick={() => setSkippedOpen(false)}
-                  style={{ background: "transparent", border: "none", color: "#5f6368", fontSize: 13, cursor: "pointer" }}
-                >
-                  Sluit
-                </button>
-              </div>
-              {skippedLoading ? (
-                <div style={{ fontSize: 13, color: "#5f6368" }}>Laden…</div>
-              ) : (
-                <>
-                  {couldNotReadCount > 0 && (
-                    <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
-                      {couldNotReadCount} {couldNotReadCount === 1 ? "bestand konden" : "bestanden konden"} we niet lezen — {couldNotReadCount === 1 ? "het staat" : "ze staan"} in je bestanden, controleer {couldNotReadCount === 1 ? "het" : "ze"} even.
-                    </div>
-                  )}
-                  {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
-                    <div style={{ fontSize: 12.5, color: "#5f6368" }}>
-                      Niets overgeslagen — alles wat binnenkwam is verwerkt.
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {(skippedItems ?? []).map((s, i) => (
-                        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
-                          <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-                            {s.filename}
-                          </span>
-                          <span style={{ color: "#5f6368", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {friendlySkipReason(s.reason)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 8, lineHeight: 1.5 }}>
-                    Mis je hier een echte factuur? Gebruik &ldquo;Oudere e-mails opnieuw ophalen&rdquo; hierboven, of voeg hem toe met een foto.
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+          </div>
+        )}
+      </Card>
     );
   }
 
   // Not connected
   return (
-    <div
-      style={{
-        background: "#f8f9fa", borderRadius: 20,
-        padding: "24px 20px", marginBottom: 20, textAlign: "center",
-      }}
-    >
-      <div style={{ fontSize: 44, marginBottom: 12 }}>📬</div>
-      <div style={{ fontWeight: 700, fontSize: 17, color: "#202124", marginBottom: 8 }}>
+    <Card style={{ padding: "22px 18px", textAlign: "center" }}>
+      <div
+        style={{
+          width: 52, height: 52, borderRadius: R.lg, margin: "0 auto 12px",
+          background: C.primaryContainer, display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >
+        <Icon name="mark_email_unread" size={28} color={C.primary} />
+      </div>
+      <div style={{ fontWeight: 700, fontSize: 17, color: C.onSurface, marginBottom: 6 }}>
         Verbind je e-mail
       </div>
       <div
         style={{
-          fontSize: 14, color: "#5f6368", lineHeight: 1.5,
-          maxWidth: 280, margin: "0 auto 24px",
+          fontSize: 14, color: C.muted, lineHeight: 1.5,
+          maxWidth: 280, margin: "0 auto 18px",
         }}
       >
         Facturen komen automatisch binnen — je hoeft niets meer door te sturen.
@@ -568,18 +733,22 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             href={`/api/email/connect?provider=${provider}`}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              gap: 10, background: "#fff", border: "1.5px solid #e0e0e0",
-              borderRadius: 12, padding: "14px 20px", textDecoration: "none",
-              color: "#202124", fontWeight: 600, fontSize: 15,
-              boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+              gap: 10, background: provider === "gmail" ? C.primary : "#fff",
+              border: provider === "gmail" ? "1.5px solid transparent" : `1.5px solid ${C.line}`,
+              borderRadius: R.md, padding: "13px 20px", textDecoration: "none",
+              color: provider === "gmail" ? "#fff" : C.onSurface, fontWeight: 600, fontSize: 15,
             }}
           >
-            <span style={{ fontSize: 20 }}>{provider === "gmail" ? "📧" : "📮"}</span>
+            <Icon
+              name="mark_email_unread"
+              size={20}
+              color={provider === "gmail" ? "#fff" : C.primary}
+            />
             Verbind {provider === "gmail" ? "Gmail" : "Outlook"}
           </a>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -738,14 +907,14 @@ function ConfirmPaidModal({
               invoice.health.reasons.length > 0 && (
                 <div
                   style={{
-                    display: "flex", alignItems: "flex-start", gap: 8,
+                    display: "flex", alignItems: "flex-start", gap: 9,
                     padding: "12px 14px", marginBottom: 16,
-                    background: "#fff4e5", borderRadius: 12,
-                    border: "1px solid #ffd9a8",
+                    background: C.warnContainer, borderRadius: R.md,
+                    border: `1px solid ${C.warnLine}`,
                   }}
                 >
-                  <span style={{ fontSize: 15, lineHeight: 1.3 }}>⚠️</span>
-                  <span style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
+                  <Icon name="warning" size={17} color={C.warn} />
+                  <span style={{ fontSize: 12.5, color: C.warnStrong, lineHeight: 1.5 }}>
                     {invoice.health.reasons
                       .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
                       .join(" · ")}
@@ -806,8 +975,8 @@ function ConfirmPaidModal({
 
               {/* [BRIDGE-B] TRAIL 3 flag — non-blocking warning on an unexpected BTW rate */}
               {rateFlag && (
-                <div style={{ fontSize: 12, color: "#EA8600", lineHeight: 1.4, marginBottom: 12, display: "flex", gap: 6 }}>
-                  <span>⚠️</span>
+                <div style={{ fontSize: 12, color: C.warn, lineHeight: 1.4, marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
+                  <Icon name="warning" size={15} color={C.warn} />
                   <span>BTW-tarief lijkt {btwRate}% — controleer de bedragen (verwacht 0%, 9% of 21%).</span>
                 </div>
               )}
@@ -835,13 +1004,13 @@ function ConfirmPaidModal({
                   the specific fields the AI was not sure about. Soft, never blocks. */}
               {anyLow && (
                 <div style={{
-                  display: "flex", alignItems: "flex-start", gap: 8,
+                  display: "flex", alignItems: "flex-start", gap: 9,
                   padding: "10px 12px", marginBottom: 14,
-                  background: "#fff4e5", borderRadius: 10,
-                  border: "1px solid #ffd9a8",
+                  background: C.warnContainer, borderRadius: R.sm,
+                  border: `1px solid ${C.warnLine}`,
                 }}>
-                  <span style={{ fontSize: 14, lineHeight: 1.3 }}>💡</span>
-                  <span style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.4 }}>
+                  <Icon name="info" size={16} color={C.warn} />
+                  <span style={{ fontSize: 12.5, color: C.warnStrong, lineHeight: 1.4 }}>
                     De AI was niet zeker over{" "}
                     {[
                       vendorLow ? "de leverancier" : null,
@@ -855,8 +1024,8 @@ function ConfirmPaidModal({
 
               {/* Vendor */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
-                <span style={{ fontSize: 14, color: vendorLow ? "#EA8600" : "#5f6368", flexShrink: 0, fontWeight: vendorLow ? 600 : 400 }}>
-                  Leverancier {vendorLow && "⚠️"}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 14, color: vendorLow ? C.warn : "#5f6368", flexShrink: 0, fontWeight: vendorLow ? 600 : 400 }}>
+                  Leverancier {vendorLow && <Icon name="warning" size={14} color={C.warn} />}
                 </span>
                 {editing ? (
                   <input
@@ -900,16 +1069,16 @@ function ConfirmPaidModal({
 
               {/* [BRIDGE-EXTRACT] N-N flag — likely a page number, not an invoice number */}
               {numberFlag && (
-                <div style={{ fontSize: 12, color: "#EA8600", lineHeight: 1.4, marginBottom: 12, display: "flex", gap: 6 }}>
-                  <span>⚠️</span>
+                <div style={{ fontSize: 12, color: C.warn, lineHeight: 1.4, marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 6 }}>
+                  <Icon name="warning" size={15} color={C.warn} />
                   <span>&ldquo;{invoiceNumber}&rdquo; lijkt een paginanummer — controleer het factuurnummer.</span>
                 </div>
               )}
 
               {/* Invoice date */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 14, color: (dateLow || dateMissing) ? "#EA8600" : "#5f6368", flexShrink: 0, fontWeight: (dateLow || dateMissing) ? 600 : 400 }}>
-                  Factuurdatum {(dateLow || dateMissing) && "⚠️"}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 14, color: (dateLow || dateMissing) ? C.warn : "#5f6368", flexShrink: 0, fontWeight: (dateLow || dateMissing) ? 600 : 400 }}>
+                  Factuurdatum {(dateLow || dateMissing) && <Icon name="warning" size={14} color={C.warn} />}
                 </span>
                 {editing ? (
                   <input
@@ -961,11 +1130,11 @@ function ConfirmPaidModal({
             {fc?._intake_suggest === "paid" ? (
               <>
                 <div style={{
-                  display: "flex", alignItems: "center", gap: 6, marginBottom: 10,
-                  padding: "8px 12px", borderRadius: 10, background: "#e8f5e9",
-                  color: "#1b5e20", fontSize: 13, fontWeight: 600,
+                  display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+                  padding: "9px 12px", borderRadius: R.sm, background: C.successContainer,
+                  color: C.success, fontSize: 13, fontWeight: 600,
                 }}>
-                  <span style={{ fontSize: 16 }}>🧾</span>
+                  <Icon name="receipt_long" size={17} color={C.success} />
                   Kassabon — waarschijnlijk al betaald. Controleer en bevestig.
                 </div>
 
@@ -1099,25 +1268,27 @@ function ConfirmPaidModal({
                 onClick={() => handlePay("bank")}
                 disabled={submitting}
                 style={{
-                  flex: 1, padding: "16px", borderRadius: 14,
+                  flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                  padding: "16px", borderRadius: 14,
                   background: submitting ? "#dadce0" : "#34a853",
-                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
+                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16, fontFamily: "inherit",
                   cursor: submitting ? "not-allowed" : "pointer",
                 }}
               >
-                🏛️ Bank
+                <Icon name="account_balance" size={19} /> Bank
               </button>
               <button
                 onClick={() => handlePay("kas")}
                 disabled={submitting}
                 style={{
-                  flex: 1, padding: "16px", borderRadius: 14,
+                  flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                  padding: "16px", borderRadius: 14,
                   background: submitting ? "#dadce0" : "#34a853",
-                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16,
+                  color: "#fff", border: "none", fontWeight: 700, fontSize: 16, fontFamily: "inherit",
                   cursor: submitting ? "not-allowed" : "pointer",
                 }}
               >
-                💳 Contant
+                <Icon name="payments" size={19} /> Contant
               </button>
             </div>
 
@@ -1292,13 +1463,13 @@ function InvoiceCard({
     <div
       id={domId}
       style={{
-        background: "#fff", borderRadius: 16, marginBottom: 12,
+        background: C.surface, borderRadius: R.lg, marginBottom: 10,
         overflow: "hidden",
         // [INTAKE-FOCUS] brief ring when deep-linked from the upload results
         // modal; scrollMarginTop keeps the card clear of the sticky header.
         boxShadow: highlighted
-          ? "0 1px 4px rgba(0,0,0,0.08), 0 0 0 3px rgba(26,115,232,0.35)"
-          : "0 1px 4px rgba(0,0,0,0.08)",
+          ? `${EL1}, 0 0 0 3px rgba(26,115,232,0.35)`
+          : EL1,
         transition: "box-shadow 0.5s ease",
         scrollMarginTop: 96,
       }}
@@ -1307,10 +1478,10 @@ function InvoiceCard({
       <button
         onClick={selectMode ? onSelect : onToggle}
         style={{
-          width: "100%", padding: "16px", border: "none",
+          width: "100%", padding: "14px 14px", border: "none",
           background: "transparent", cursor: "pointer", textAlign: "left",
           display: "flex", justifyContent: "space-between", alignItems: "center",
-          gap: 12,
+          gap: 10, fontFamily: "inherit",
         }}
       >
         {/* [INTAKE-VERIFY-BULK] selection checkbox — only in pending select mode */}
@@ -1318,118 +1489,123 @@ function InvoiceCard({
           <span
             style={{
               flexShrink: 0, width: 22, height: 22, borderRadius: 11,
-              border: `2px solid ${selected ? "#34a853" : "#dadce0"}`,
-              background: selected ? "#34a853" : "transparent",
+              border: `2px solid ${selected ? "#34A853" : "#DADCE0"}`,
+              background: selected ? "#34A853" : "transparent",
               display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#fff", fontSize: 13, fontWeight: 700,
             }}
           >
-            {selected ? "✓" : ""}
+            {selected && <Icon name="check" size={14} color="#fff" />}
           </span>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
-              fontWeight: 700, fontSize: 16, color: "#202124", marginBottom: 3,
+              fontWeight: 700, fontSize: 15.5, color: C.onSurface, marginBottom: 2,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}
           >
             {invoice.client_name || "Onbekende afzender"}
           </div>
-          <div style={{ fontSize: 13, color: "#5f6368" }}>
+          <div style={{ fontSize: 12.5, color: C.muted }}>
             {formatDate(invoice.invoice_date)}
           </div>
-          {/* [BRIDGE-CREDITNOTA-SIGN] Creditnota badge — a credit note is a
-              DIFFERENT financial animal (negative amounts by design), so the
-              owner must see it at a glance. Independent of the health badge:
-              a clean creditnota shows Creditnota + "ready", a broken one shows
-              Creditnota + "Aandacht nodig". */}
-          {invoice.invoice_type === "creditnota" && (
-            <div
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                marginTop: 6, marginRight: 6, padding: "3px 9px", borderRadius: 8,
-                background: "#fdecea", border: "1px solid #f5b5ae",
-              }}
-            >
-              <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 600 }}>
+
+          {/* [INCOMING-TIDY] Badges share one wrapping row, so a creditnota that
+              also needs attention can never push the layout apart on a phone. */}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
+            {/* [BRIDGE-CREDITNOTA-SIGN] Creditnota badge — a credit note is a
+                DIFFERENT financial animal (negative amounts by design), so the
+                owner must see it at a glance. Independent of the health badge:
+                a clean creditnota shows Creditnota + "ready", a broken one shows
+                Creditnota + "Aandacht nodig". */}
+            {invoice.invoice_type === "creditnota" && (
+              <span
+                style={{
+                  display: "inline-flex", alignItems: "center",
+                  padding: "2px 8px", borderRadius: R.sm,
+                  background: C.errorContainer, border: `1px solid ${C.errorLine}`,
+                  fontSize: 11.5, color: C.error, fontWeight: 600,
+                }}
+              >
                 Creditnota
               </span>
-            </div>
-          )}
-          {/* [IMPORT-MONITOR] Health badge — only in the pending queue. Flagged
-              invoices get a calm-but-clear attention pill; clean invoices get a
-              quiet "ready to confirm" hint (calm, never the alarming "review").
-              The ignored tab shows nothing here — it must not nag. */}
-          {mode === "pending" && (
-            invoice.health.level === "needs-review" ? (
-              <div
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                  marginTop: 6, padding: "3px 9px", borderRadius: 8,
-                  background: "#fff4e5", border: "1px solid #ffd9a8",
-                }}
-              >
-                <span style={{ fontSize: 11 }}>⚠️</span>
-                <span style={{ fontSize: 12, color: "#9a5b00", fontWeight: 600 }}>
+            )}
+            {/* [IMPORT-MONITOR] Health badge — only in the pending queue. Flagged
+                invoices get a calm-but-clear attention pill; clean invoices get a
+                quiet "ready to confirm" hint (calm, never the alarming "review").
+                The ignored tab shows nothing here — it must not nag. */}
+            {mode === "pending" && (
+              invoice.health.level === "needs-review" ? (
+                <span
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    padding: "2px 8px", borderRadius: R.sm,
+                    background: C.warnContainer, border: `1px solid ${C.warnLine}`,
+                    fontSize: 11.5, color: C.warn, fontWeight: 600,
+                  }}
+                >
+                  <Icon name="warning" size={13} color={C.warn} />
                   Aandacht nodig
                 </span>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 5,
-                  marginTop: 6,
-                }}
-              >
-                <span style={{ fontSize: 11, color: "#34a853" }}>✓</span>
-                <span style={{ fontSize: 12, color: "#5f6368" }}>
+              ) : (
+                <span
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    fontSize: 11.5, color: C.muted,
+                  }}
+                >
+                  <Icon name="check_circle" size={13} color="#34A853" />
                   Klaar om te bevestigen
                 </span>
-              </div>
-            )
-          )}
+              )
+            )}
+          </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontWeight: 700, fontSize: 18, color: "#202124", whiteSpace: "nowrap" }}>
-            {formatSignedAmount(invoice.total_inc_btw)}
-          </span>
-          {/* [PARTIAL-PAY] Deelbetaling badge — part received, rest still openstaand. Shown only
-              while 0 < amount_paid < total (a fully-paid invoice leaves this list entirely). */}
-          {(() => {
-            const paid = Math.max(0, invoice.amount_paid ?? 0);
-            const total = Math.abs(invoice.total_inc_btw ?? 0);
-            if (!(paid > 0.005 && paid < total - 0.005)) return null;
-            const remaining = Math.max(0, total - paid);
-            return (
-              <span
-                title={`Deelbetaling: € ${paid.toFixed(2)} van € ${total.toFixed(2)} ontvangen`}
-                style={{
-                  fontSize: 11, fontWeight: 600, color: "#b06000", background: "#fef7e0",
-                  border: "1px solid #fde293", borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap",
-                }}
-              >
-                Deels betaald · € {remaining.toFixed(2)} open
-              </span>
-            );
-          })()}
+        {/* [INCOMING-TIDY] Right column stacks (amount above its badge) instead of
+            sitting in one horizontal row — on a phone the deelbetaling badge used to
+            squeeze the amount and the supplier name against each other. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+            <span style={{ fontWeight: 700, fontSize: 16.5, color: C.onSurface, whiteSpace: "nowrap" }}>
+              {formatSignedAmount(invoice.total_inc_btw)}
+            </span>
+            {/* [PARTIAL-PAY] Deelbetaling badge — part received, rest still openstaand. Shown only
+                while 0 < amount_paid < total (a fully-paid invoice leaves this list entirely). */}
+            {(() => {
+              const paid = Math.max(0, invoice.amount_paid ?? 0);
+              const total = Math.abs(invoice.total_inc_btw ?? 0);
+              if (!(paid > 0.005 && paid < total - 0.005)) return null;
+              const remaining = Math.max(0, total - paid);
+              return (
+                <span
+                  title={`Deelbetaling: € ${paid.toFixed(2)} van € ${total.toFixed(2)} ontvangen`}
+                  style={{
+                    fontSize: 10.5, fontWeight: 600, color: C.warn, background: C.warnContainer,
+                    border: `1px solid ${C.warnLine}`, borderRadius: 6, padding: "1px 6px", whiteSpace: "nowrap",
+                  }}
+                >
+                  Deels betaald · € {remaining.toFixed(2)} open
+                </span>
+              );
+            })()}
+          </div>
           <span
             style={{
-              fontSize: 18, color: "#dadce0",
+              display: "flex",
               transform: expanded ? "rotate(90deg)" : "none",
               transition: "transform 0.2s",
             }}
           >
-            ›
+            <Icon name="chevron_right" size={20} color="#C9CDD2" />
           </span>
         </div>
       </button>
 
       {/* Expanded detail */}
       {expanded && (
-        <div style={{ padding: "0 16px 16px" }}>
-          <div style={{ height: 1, background: "#f8f9fa", marginBottom: 14 }} />
+        <div style={{ padding: "0 14px 14px" }}>
+          <div style={{ height: 1, background: C.line, marginBottom: 12 }} />
 
           {/* [IMPORT-MONITOR] Part 3 — the WHY. For a flagged invoice, show the
               plain-language reason(s) the system is unsure, sourced from the
@@ -1442,18 +1618,18 @@ function InvoiceCard({
             invoice.health.reasons.length > 0 && (
               <div
                 style={{
-                  display: "flex", alignItems: "flex-start", gap: 8,
-                  padding: "12px 14px", marginBottom: 14,
-                  background: "#fff4e5", borderRadius: 12,
-                  border: "1px solid #ffd9a8",
+                  display: "flex", alignItems: "flex-start", gap: 9,
+                  padding: "12px 14px", marginBottom: 12,
+                  background: C.warnContainer, borderRadius: R.md,
+                  border: `1px solid ${C.warnLine}`,
                 }}
               >
-                <span style={{ fontSize: 15, lineHeight: 1.3 }}>💡</span>
+                <Icon name="info" size={18} color={C.warn} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#9a5b00", marginBottom: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.warn, marginBottom: 3 }}>
                     Even controleren
                   </div>
-                  <div style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 12.5, color: C.warnStrong, lineHeight: 1.5 }}>
                     {/* Capitalize the first reason; join the rest naturally. */}
                     {invoice.health.reasons
                       .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
@@ -1467,13 +1643,14 @@ function InvoiceCard({
                     onClick={handleReimport}
                     disabled={reimporting}
                     style={{
-                      marginTop: 10, padding: "7px 12px", borderRadius: 9,
-                      background: reimporting ? "#f0d9b8" : "#fff", cursor: reimporting ? "default" : "pointer",
-                      border: "1px solid #e0a94f", color: "#9a5b00", fontWeight: 600, fontSize: 12.5,
+                      marginTop: 10, padding: "7px 12px", borderRadius: R.sm,
+                      background: reimporting ? "#F5E6C8" : "#fff", cursor: reimporting ? "default" : "pointer",
+                      border: `1px solid ${C.warnLine}`, color: C.warn, fontWeight: 600, fontSize: 12.5,
+                      fontFamily: "inherit",
                       display: "inline-flex", alignItems: "center", gap: 6,
                     }}
                   >
-                    <span style={{ fontSize: 13 }}>↻</span>
+                    <Icon name="refresh" size={15} color={C.warn} spin={reimporting} />
                     {reimporting ? "Bezig met opnieuw inlezen…" : "Opnieuw inlezen"}
                   </button>
                 </div>
@@ -1481,7 +1658,7 @@ function InvoiceCard({
             )}
 
           {/* Detail rows */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 12 }}>
             <DetailRow label="Factuurnummer" value={invoice.invoice_number || "—"} />
             <DetailRow label="Afzender" value={invoice.client_email || "—"} />
             <DetailRow
@@ -1509,14 +1686,14 @@ function InvoiceCard({
               onClick={handleOpenPdf}
               disabled={loadingPdf}
               style={{
-                width: "100%", padding: "12px", borderRadius: 12,
-                background: "#e8f0fe", border: "1.5px solid #1a73e8",
-                color: "#1a73e8", fontWeight: 600, fontSize: 14,
-                cursor: loadingPdf ? "wait" : "pointer", marginBottom: 10,
+                width: "100%", padding: "11px", borderRadius: R.md,
+                background: C.primaryContainer, border: "none",
+                color: C.primary, fontWeight: 600, fontSize: 14, fontFamily: "inherit",
+                cursor: loadingPdf ? "wait" : "pointer", marginBottom: 8,
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}
             >
-              <span style={{ fontSize: 16 }}>📄</span>
+              <Icon name="picture_as_pdf" size={18} />
               {loadingPdf ? "Openen…" : "Bekijk factuur"}
             </button>
           )}
@@ -1526,19 +1703,19 @@ function InvoiceCard({
             <a
               href={`/dashboard/bestanden?folder=${invoice.folder_id}`}
               style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "10px 12px", borderRadius: 10, marginBottom: 10,
-                background: "#f8f9fa", textDecoration: "none",
+                display: "flex", alignItems: "center", gap: 9,
+                padding: "10px 12px", borderRadius: R.md, marginBottom: 8,
+                background: C.bg, textDecoration: "none",
               }}
             >
-              <span style={{ fontSize: 15 }}>📁</span>
-              <span style={{ flex: 1, fontSize: 13, color: "#5f6368" }}>
+              <Icon name="folder" size={18} color={C.muted} />
+              <span style={{ flex: 1, fontSize: 12.5, color: C.muted, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                 Opgeslagen in{" "}
-                <span style={{ color: "#202124", fontWeight: 600 }}>
+                <span style={{ color: C.onSurface, fontWeight: 600 }}>
                   {invoice.folder_name || "Mijn Bestanden"}
                 </span>
               </span>
-              <span style={{ fontSize: 15, color: "#dadce0" }}>›</span>
+              <Icon name="chevron_right" size={17} color={C.faint} />
             </a>
           )}
 
@@ -1549,19 +1726,24 @@ function InvoiceCard({
                management (mark paid, edit, accountant handoff) lives on Crediteuren. */
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{
-                display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 12px",
-                borderRadius: 980, fontSize: 13, fontWeight: 700,
-                background: invoice.status === "paid" ? "#e6f4ea" : "#e8f0fe",
-                color: invoice.status === "paid" ? "#137333" : "#1a56c4",
+                display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px",
+                borderRadius: R.full, fontSize: 12.5, fontWeight: 700,
+                background: invoice.status === "paid" ? C.successContainer : C.primaryContainer,
+                color: invoice.status === "paid" ? C.success : C.onPrimaryContainer,
               }}>
-                <span style={{ fontSize: 15 }}>{invoice.status === "paid" ? "✓" : "•"}</span>
+                <Icon
+                  name={invoice.status === "paid" ? "check_circle" : "schedule"}
+                  size={15}
+                  color={invoice.status === "paid" ? C.success : C.onPrimaryContainer}
+                />
                 {invoice.status === "paid" ? "Betaald" : "Bevestigd · te betalen"}
               </span>
               <a
                 href="/dashboard/incoming/manage"
-                style={{ marginLeft: "auto", fontSize: 13, fontWeight: 600, color: "#1a73e8", textDecoration: "none" }}
+                style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 3, fontSize: 13, fontWeight: 600, color: C.primary, textDecoration: "none" }}
               >
-                Beheren ›
+                Beheren
+                <Icon name="chevron_right" size={16} />
               </a>
             </div>
           ) : mode === "pending" ? (
@@ -1569,9 +1751,9 @@ function InvoiceCard({
               <button
                 onClick={onIgnore}
                 style={{
-                  flex: 1, padding: "13px 0", borderRadius: 12,
-                  background: "#f8f9fa", border: "none", color: "#5f6368",
-                  fontWeight: 600, fontSize: 14, cursor: "pointer",
+                  flex: 1, padding: "12px 0", borderRadius: R.md,
+                  background: C.bg, border: "none", color: C.muted,
+                  fontWeight: 600, fontSize: 13.5, fontFamily: "inherit", cursor: "pointer",
                 }}
               >
                 Negeer
@@ -1582,9 +1764,9 @@ function InvoiceCard({
               <button
                 onClick={onEdit}
                 style={{
-                  flex: 1, padding: "13px 0", borderRadius: 12,
-                  background: "#eaf2ff", border: "none", color: "#1a73e8",
-                  fontWeight: 600, fontSize: 14, cursor: "pointer",
+                  flex: 1, padding: "12px 0", borderRadius: R.md,
+                  background: C.primaryContainer, border: "none", color: C.primary,
+                  fontWeight: 600, fontSize: 13.5, fontFamily: "inherit", cursor: "pointer",
                 }}
               >
                 Bewerken
@@ -1592,9 +1774,9 @@ function InvoiceCard({
               <button
                 onClick={onConfirmPaid}
                 style={{
-                  flex: 2, padding: "13px 0", borderRadius: 12,
-                  background: "#34a853", border: "none", color: "#fff",
-                  fontWeight: 700, fontSize: 14, cursor: "pointer",
+                  flex: 2, padding: "12px 0", borderRadius: R.md,
+                  background: "#34A853", border: "none", color: "#fff",
+                  fontWeight: 700, fontSize: 13.5, fontFamily: "inherit", cursor: "pointer",
                 }}
               >
                 Verifiëren
@@ -1604,9 +1786,9 @@ function InvoiceCard({
             <button
               onClick={onRestore}
               style={{
-                width: "100%", padding: "13px 0", borderRadius: 12,
-                background: "#e8f0fe", border: "1.5px solid #1a73e8",
-                color: "#1a73e8", fontWeight: 600, fontSize: 14, cursor: "pointer",
+                width: "100%", padding: "12px 0", borderRadius: R.md,
+                background: C.primaryContainer, border: "none",
+                color: C.primary, fontWeight: 600, fontSize: 13.5, fontFamily: "inherit", cursor: "pointer",
               }}
             >
               Terugzetten naar wachtrij
@@ -1621,10 +1803,10 @@ function InvoiceCard({
 function DetailRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-      <span style={{ fontSize: 13, color: "#5f6368" }}>{label}</span>
+      <span style={{ fontSize: 12.5, color: C.muted }}>{label}</span>
       <span
         style={{
-          fontSize: 13, color: "#202124",
+          fontSize: 12.5, color: C.onSurface,
           fontWeight: bold ? 700 : 500,
           textAlign: "right", overflow: "hidden", textOverflow: "ellipsis",
         }}
@@ -1638,9 +1820,28 @@ function DetailRow({ label, value, bold }: { label: string; value: string; bold?
 // ── Manual upload ─────────────────────────────────────────────────────────────
 
 // [INTAKE-FEEDBACK] Per-file outcome shown in the results modal.
+// [INTAKE-AUTO-FEEDBACK] 'auto' is its own outcome, split off from 'invoice'.
+// /api/intake auto-advances a clean, confident invoice straight to 'received'
+// ([AUTO-ADVANCE]) — it is BOOKED and lives on Inkoopfacturen, NOT in this verify
+// queue. The modal used to report it as a plain "invoice" and offer "Naar controle
+// →" to /dashboard/incoming?focus=…, where the card is not: the owner was sent
+// looking for an invoice the app had already handled. Now the two are separate
+// outcomes with separate destinations. 'receipt' likewise (a bon always waits for
+// a human pay-confirm), 'turnover'/'ledger' are the booked sheet paths.
+type IntakeStatus =
+  | "auto"      // invoice read, verified AND booked automatically → Inkoopfacturen
+  | "invoice"   // invoice read → waits for one confirming tap in this queue
+  | "receipt"   // bon read → waits here too (probably already paid)
+  | "document"  // no invoice/bon recognised → kept in Mijn bestanden
+  | "bank"      // bank statement → transactions imported
+  | "turnover"  // kassa/dagomzet sheet → booked in Dagomzet
+  | "ledger"    // grootboek sheet → reconciliation witness
+  | "duplicate" // already added earlier
+  | "error";
+
 type IntakeResult = {
   name: string;
-  status: "invoice" | "document" | "bank" | "duplicate" | "error";
+  status: IntakeStatus;
   message: string;
   // present for document / duplicate → deep-link + focus in Mijn bestanden
   link?: { folderId: string | null; focusId: string };
@@ -1648,15 +1849,40 @@ type IntakeResult = {
   // this card in the verify queue (?focus=). The API always returned invoice_id;
   // the modal just never used it — the owner was told "controleer en bevestig"
   // without a path to the invoice.
+  // [INTAKE-AUTO-FEEDBACK] on an 'auto' row the same id deep-links to the BOOKED
+  // invoice on /dashboard/incoming/manage instead.
   invoiceId?: string;
+  // [INTAKE-AUTO-FEEDBACK] What the app read, echoed by the API (vendor /
+  // invoice_number / total_inc_btw). Shown on the row so the owner recognises the
+  // invoice without opening anything — the whole point of an automatic booking is
+  // that you can still check it at a glance.
+  vendor?: string | null;
+  invoiceNumber?: string | null;
+  amount?: number | null;
+  // Where the file itself was filed in Mijn bestanden ("2026 / Q3 / juli / Facturen").
+  folderName?: string | null;
+  // [DEDUP-SOFT] Soft heads-up: looks like an invoice that is already in the books.
+  possibleDuplicate?: string | null;
+  // [TRUST-INTAKE] The file was stored but could NOT be read — never dressed up as
+  // a confident "geen factuur herkend".
+  couldNotRead?: boolean;
 };
 
-const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string }> = {
-  invoice:   { icon: "✓",  color: "#34a853" },
-  document:  { icon: "📁", color: "#1a73e8" },
-  bank:      { icon: "🏦", color: "#1a73e8" },
-  duplicate: { icon: "ℹ️", color: "#5f6368" },
-  error:     { icon: "⚠️", color: "#b3261e" },
+// Per-outcome presentation: icon (Material Symbols subset), accent colour and the
+// short label that says WHAT happened before the server's own sentence.
+const RESULT_META: Record<
+  IntakeStatus,
+  { icon: string; color: string; bg: string; label: string }
+> = {
+  auto:      { icon: "task_alt",      color: C.success, bg: C.successContainer,  label: "Automatisch verwerkt" },
+  invoice:   { icon: "receipt_long",  color: C.primary, bg: C.primaryContainer,  label: "Wacht op je controle" },
+  receipt:   { icon: "receipt_long",  color: C.primary, bg: C.primaryContainer,  label: "Bon — wacht op je controle" },
+  document:  { icon: "folder",        color: C.muted,   bg: "#F1F3F4",           label: "In je bestanden" },
+  bank:      { icon: "account_balance", color: C.primary, bg: C.primaryContainer, label: "Bankafschrift" },
+  turnover:  { icon: "point_of_sale", color: C.success, bg: C.successContainer,  label: "Omzet geboekt" },
+  ledger:    { icon: "link",          color: "#7B1FA2", bg: "#F3E5F5",           label: "Controle-check" },
+  duplicate: { icon: "info",          color: C.muted,   bg: "#F1F3F4",           label: "Al toegevoegd" },
+  error:     { icon: "error",         color: C.error,   bg: C.errorContainer,    label: "Niet gelukt" },
 };
 
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
@@ -1708,23 +1934,53 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
 
       if (res.ok) {
-        const dest = (data as { destination?: string }).destination;
-        const message = (data as { message?: string }).message || "Toegevoegd";
+        const d = data as {
+          destination?: string;
+          message?: string;
+          document_id?: string;
+          folder_id?: string | null;
+          folder_name?: string | null;
+          could_not_read?: boolean;
+          invoice_id?: string;
+          auto_verified?: boolean;
+          vendor?: string | null;
+          invoice_number?: string | null;
+          total_inc_btw?: number | null;
+          possibleDuplicate?: { invoice_number?: string | null; client_name?: string | null; reason?: string };
+        };
+        const dest = d.destination;
+        const message = d.message || "Toegevoegd";
         if (dest === "document") {
-          const docId = (data as { document_id?: string }).document_id;
+          const docId = d.document_id;
           return {
             name: file.name, status: "document", message,
-            link: docId ? { folderId: (data as { folder_id?: string }).folder_id ?? null, focusId: docId } : undefined,
+            couldNotRead: d.could_not_read === true,
+            folderName: d.folder_name ?? null,
+            link: docId ? { folderId: d.folder_id ?? null, focusId: docId } : undefined,
           };
         }
-        if (dest === "bank") {
-          return { name: file.name, status: "bank", message };
-        }
-        // invoice | receipt → lives in this verify queue
-        // [INTAKE-FOCUS] keep invoice_id so the row can deep-link to the card
+        if (dest === "bank") return { name: file.name, status: "bank", message };
+        if (dest === "turnover") return { name: file.name, status: "turnover", message };
+        if (dest === "ledger") return { name: file.name, status: "ledger", message };
+
+        // invoice | receipt.
+        // [INTAKE-AUTO-FEEDBACK] auto_verified === true → the app already verified
+        // AND booked it (status 'received'); it is on Inkoopfacturen, not in this
+        // queue. Anything else waits here for one confirming tap.
+        // [INTAKE-FOCUS] keep invoice_id so the row can deep-link to the invoice.
+        const dup = d.possibleDuplicate;
         return {
-          name: file.name, status: "invoice", message,
-          invoiceId: (data as { invoice_id?: string }).invoice_id,
+          name: file.name,
+          status: d.auto_verified === true ? "auto" : dest === "receipt" ? "receipt" : "invoice",
+          message,
+          invoiceId: d.invoice_id,
+          vendor: d.vendor ?? null,
+          invoiceNumber: d.invoice_number ?? null,
+          amount: typeof d.total_inc_btw === "number" ? d.total_inc_btw : null,
+          folderName: d.folder_name ?? null,
+          possibleDuplicate: dup
+            ? `Mogelijk dubbel${dup.invoice_number ? ` met ${dup.invoice_number}` : ""}${dup.client_name ? ` (${dup.client_name})` : ""} — controleer voor je bevestigt.`
+            : null,
         };
       }
 
@@ -1867,185 +2123,227 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     window.location.assign(`/dashboard/incoming?focus=${invoiceId}`);
   };
 
-  const addedCount = results.filter((r) => r.status === "invoice" || r.status === "document" || r.status === "bank").length;
+  // [INTAKE-AUTO-FEEDBACK] An auto-verified invoice is NOT in this queue — it is
+  // booked on Inkoopfacturen, which takes the same ?focus= deep link (expand +
+  // scroll + highlight the row). Without this the owner was pointed at a card
+  // that isn't there.
+  const goToBooked = (invoiceId: string) => {
+    window.location.assign(`/dashboard/incoming/manage?focus=${invoiceId}`);
+  };
+
+  // [INTAKE-AUTO-FEEDBACK] Honest headline + one-line breakdown. "Toegevoegd" is
+  // everything the app actually kept and did something with; the split beneath it
+  // says WHAT it did — automatically booked, waiting for you, or filed.
+  const autoCount = results.filter((r) => r.status === "auto").length;
+  const queueCount = results.filter((r) => r.status === "invoice" || r.status === "receipt").length;
+  const fileCount = results.filter(
+    (r) => r.status === "document" || r.status === "bank" || r.status === "turnover" || r.status === "ledger"
+  ).length;
+  const errorCount = results.filter((r) => r.status === "error").length;
+  const duplicateCount = results.filter((r) => r.status === "duplicate").length;
+  const addedCount = autoCount + queueCount + fileCount;
+
+  const headline =
+    addedCount === 0
+      ? errorCount > 0
+        ? "Er ging iets mis"
+        : "Klaar"
+      : autoCount === addedCount
+        ? autoCount === 1
+          ? "Factuur automatisch verwerkt"
+          : `${autoCount} facturen automatisch verwerkt`
+        : `${addedCount} bestand${addedCount > 1 ? "en" : ""} toegevoegd`;
+
+  const summaryParts = [
+    autoCount > 0 ? `${autoCount} automatisch geboekt` : null,
+    queueCount > 0 ? `${queueCount} wacht${queueCount > 1 ? "en" : ""} op je controle` : null,
+    fileCount > 0 ? `${fileCount} in je administratie` : null,
+    duplicateCount > 0 ? `${duplicateCount} al aanwezig` : null,
+    errorCount > 0 ? `${errorCount} niet gelukt` : null,
+  ].filter(Boolean) as string[];
 
   return (
-    <div style={{ marginBottom: 32 }}>
-      <div
-        style={{
-          fontSize: 13, fontWeight: 600, color: "#5f6368",
-          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
-        }}
-      >
-        Toevoegen
-      </div>
-
-      {/* [SMART-INTAKE-B] Camera button — fast path for the cashier (10 sec) */}
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style={{ display: "none" }}
-        onChange={(e) => {
-          handleFiles(e.target.files);
-          e.currentTarget.value = "";
-        }}
-      />
-      <button
-        onClick={() => !uploading && cameraInputRef.current?.click()}
-        disabled={uploading}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          width: "100%", padding: "16px", borderRadius: 16, marginBottom: 10,
-          background: uploading ? "#dadce0" : "#1a73e8", color: "#fff",
-          border: "none", fontWeight: 700, fontSize: 16,
-          cursor: uploading ? "not-allowed" : "pointer",
-        }}
-      >
-        <span style={{ fontSize: 20 }}>📷</span>
-        {uploading ? "Verwerken…" : "Foto maken"}
-      </button>
-
-      {/* File / drag-drop (PDF, image, bank statement) — [INTAKE-MULTI] multiple */}
-      <label
-        style={{
-          display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-          padding: "20px", borderRadius: 16,
-          border: `2px dashed ${dragOver ? "#1a73e8" : "#dadce0"}`,
-          background: dragOver ? "#e8f0fe" : "#f8f9fa",
-          cursor: uploading ? "not-allowed" : "pointer",
-        }}
-        onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          handleFiles(e.dataTransfer.files);
-        }}
-      >
+    <>
+      <Card style={{ padding: 14 }}>
+        {/* [SMART-INTAKE-B] Camera button — fast path for the cashier (10 sec) */}
         <input
+          ref={cameraInputRef}
           type="file"
-          multiple
-          accept=".pdf,image/*,.xml,.ubl,.mt940,.sta,.camt,.053,.txt,.csv,.doc,.docx,.xls,.xlsx,.ods,.odt,.html,.htm,.eml,.p7m"
+          accept="image/*"
+          capture="environment"
           style={{ display: "none" }}
-          disabled={uploading}
           onChange={(e) => {
             handleFiles(e.target.files);
             e.currentTarget.value = "";
           }}
         />
-        <span style={{ fontSize: 28 }}>{uploading ? "⏳" : "📎"}</span>
-        <span style={{ fontSize: 14, color: uploading ? "#5f6368" : "#1a73e8", fontWeight: 600 }}>
-          {uploading
-            ? (total > 1 ? `${current} van ${total} verwerkt…` : "Verwerken…")
-            : "Kies bestanden of sleep hier naartoe"}
-        </span>
-        <span style={{ fontSize: 12, color: "#5f6368" }}>
-          PDF, afbeelding of bankafschrift — meerdere tegelijk (max {MAX_BATCH})
-        </span>
-
-        {/* [INTAKE-MULTI] Batch progress bar */}
-        {uploading && total > 1 && (
-          <div style={{ width: "100%", height: 4, background: "#e0e0e0", borderRadius: 9999, overflow: "hidden", marginTop: 4 }}>
-            <div style={{
-              width: `${Math.round((current / total) * 100)}%`,
-              height: "100%", background: "#1a73e8", borderRadius: 9999,
-              transition: "width 0.3s cubic-bezier(0.4,0,0.2,1)",
-            }} />
-          </div>
-        )}
-      </label>
-
-      {/* [MULTI-PAGE] Hidden inputs for the multi-page flow (camera adds one page at a time;
-          the file picker can add several images at once). Images only — pages of one invoice. */}
-      <input
-        ref={mpCameraRef} type="file" accept="image/*" capture="environment"
-        style={{ display: "none" }}
-        onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = ""; }}
-      />
-      <input
-        ref={mpFileRef} type="file" accept="image/*" multiple
-        style={{ display: "none" }}
-        onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = ""; }}
-      />
-
-      {/* [MULTI-PAGE] Entry button — a paper invoice of 2+ pages photographed as several images. */}
-      {!mpOpen ? (
         <button
-          onClick={() => !uploading && setMpOpen(true)}
+          onClick={() => !uploading && cameraInputRef.current?.click()}
           disabled={uploading}
           style={{
             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            width: "100%", padding: "12px", borderRadius: 14, marginTop: 10,
-            background: "#fff", color: "#007aff", border: "1.5px solid #d1d1d6",
-            fontWeight: 600, fontSize: 14, cursor: uploading ? "not-allowed" : "pointer",
+            width: "100%", padding: "14px", borderRadius: R.md, marginBottom: 10,
+            background: uploading ? "#F1F3F4" : C.primary,
+            color: uploading ? C.muted : "#fff",
+            border: "none", fontWeight: 600, fontSize: 15.5, fontFamily: "inherit",
+            cursor: uploading ? "not-allowed" : "pointer",
           }}
         >
-          <span style={{ fontSize: 17 }}>📄</span>
-          Factuur met meerdere pagina&apos;s
+          <Icon name="photo_camera" size={21} />
+          {uploading ? "Verwerken…" : "Foto maken"}
         </button>
-      ) : (
-        <div style={{ marginTop: 10, padding: 14, borderRadius: 16, border: "1.5px solid #007aff", background: "#f5faff" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#1c1c1e", marginBottom: 4 }}>
-            Eén factuur, meerdere pagina&apos;s
-          </div>
-          <div style={{ fontSize: 12.5, color: "#5f6368", marginBottom: 12, lineHeight: 1.4 }}>
-            Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één
-            factuur — geen losse facturen. (Voor verschillende facturen: voeg ze los toe.)
-          </div>
 
-          {/* Collected pages */}
-          {mpPages.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-              {mpPages.map((f, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#fff", borderRadius: 10, border: "1px solid #e5e5ea" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#007aff", minWidth: 58 }}>Pagina {i + 1}</span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                  <button onClick={() => removeMpPage(i)} aria-label="Verwijder pagina"
-                    disabled={combining}
-                    style={{ border: "none", background: "transparent", color: "#9aa0a6", fontSize: 18, cursor: combining ? "default" : "pointer", lineHeight: 1 }}>×</button>
-                </div>
-              ))}
+        {/* File / drag-drop (PDF, image, bank statement) — [INTAKE-MULTI] multiple */}
+        <label
+          style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+            padding: "18px 14px", borderRadius: R.md,
+            border: `1.5px dashed ${dragOver ? C.primary : "#DADCE0"}`,
+            background: dragOver ? C.primaryContainer : C.bg,
+            cursor: uploading ? "not-allowed" : "pointer",
+            transition: "background 0.15s, border-color 0.15s",
+          }}
+          onDragOver={(e) => { e.preventDefault(); if (!uploading) setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            handleFiles(e.dataTransfer.files);
+          }}
+        >
+          <input
+            type="file"
+            multiple
+            accept=".pdf,image/*,.xml,.ubl,.mt940,.sta,.camt,.053,.txt,.csv,.doc,.docx,.xls,.xlsx,.ods,.odt,.html,.htm,.eml,.p7m"
+            style={{ display: "none" }}
+            disabled={uploading}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.currentTarget.value = "";
+            }}
+          />
+          <Icon
+            name={uploading ? "hourglass_empty" : "upload_file"}
+            size={26}
+            color={uploading ? C.muted : C.primary}
+          />
+          <span style={{ fontSize: 14, color: uploading ? C.muted : C.primary, fontWeight: 600 }}>
+            {uploading
+              ? (total > 1 ? `${current} van ${total} verwerkt…` : "Verwerken…")
+              : "Kies bestanden of sleep hier naartoe"}
+          </span>
+          <span style={{ fontSize: 12, color: C.muted, textAlign: "center" }}>
+            PDF, afbeelding of bankafschrift — meerdere tegelijk (max {MAX_BATCH})
+          </span>
+
+          {/* [INTAKE-MULTI] Batch progress bar */}
+          {uploading && total > 1 && (
+            <div style={{ width: "100%", height: 4, background: "#E0E0E0", borderRadius: R.full, overflow: "hidden", marginTop: 4 }}>
+              <div style={{
+                width: `${Math.round((current / total) * 100)}%`,
+                height: "100%", background: C.primary, borderRadius: R.full,
+                transition: "width 0.3s cubic-bezier(0.4,0,0.2,1)",
+              }} />
             </div>
           )}
+        </label>
 
-          {/* Add-page actions */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-            <button onClick={() => !combining && mpCameraRef.current?.click()} disabled={combining}
-              style={{ flex: 1, padding: "10px", borderRadius: 12, border: "1px solid #d1d1d6", background: "#fff", color: "#007aff", fontWeight: 600, fontSize: 13, cursor: combining ? "default" : "pointer" }}>
-              📷 Pagina fotograferen
-            </button>
-            <button onClick={() => !combining && mpFileRef.current?.click()} disabled={combining}
-              style={{ flex: 1, padding: "10px", borderRadius: 12, border: "1px solid #d1d1d6", background: "#fff", color: "#007aff", fontWeight: 600, fontSize: 13, cursor: combining ? "default" : "pointer" }}>
-              🖼️ Pagina&apos;s kiezen
-            </button>
-          </div>
+        {/* [MULTI-PAGE] Hidden inputs for the multi-page flow (camera adds one page at a time;
+            the file picker can add several images at once). Images only — pages of one invoice. */}
+        <input
+          ref={mpCameraRef} type="file" accept="image/*" capture="environment"
+          style={{ display: "none" }}
+          onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = ""; }}
+        />
+        <input
+          ref={mpFileRef} type="file" accept="image/*" multiple
+          style={{ display: "none" }}
+          onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = ""; }}
+        />
 
-          {/* Combine + cancel */}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={cancelMultiPage} disabled={combining}
-              style={{ padding: "11px 16px", borderRadius: 12, border: "none", background: "#f1f3f4", color: "#5f6368", fontWeight: 600, fontSize: 14, cursor: combining ? "default" : "pointer" }}>
-              Annuleer
-            </button>
-            <button onClick={combineAndUpload} disabled={combining || uploading || mpPages.length === 0}
-              style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
-                background: combining || uploading || mpPages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
-                cursor: combining || uploading || mpPages.length === 0 ? "default" : "pointer" }}>
-              {combining ? "Bezig…" : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? "" : "'s"} → één factuur` : "Voeg eerst pagina's toe"}
-            </button>
+        {/* [MULTI-PAGE] Entry button — a paper invoice of 2+ pages photographed as several images. */}
+        {!mpOpen ? (
+          <button
+            onClick={() => !uploading && setMpOpen(true)}
+            disabled={uploading}
+            style={{
+              display: "flex", alignItems: "center", gap: 10,
+              width: "100%", padding: "11px 12px", borderRadius: R.md, marginTop: 10,
+              background: "transparent", color: C.onSurface, border: `1px solid ${C.line}`,
+              fontWeight: 500, fontSize: 13.5, fontFamily: "inherit", textAlign: "left",
+              cursor: uploading ? "not-allowed" : "pointer",
+            }}
+          >
+            <Icon name="picture_as_pdf" size={19} color={C.muted} />
+            <span style={{ flex: 1 }}>Factuur met meerdere pagina&apos;s</span>
+            <Icon name="chevron_right" size={18} color={C.faint} />
+          </button>
+        ) : (
+          <div style={{ marginTop: 10, padding: 14, borderRadius: R.md, border: `1.5px solid ${C.primary}`, background: "#F5FAFF" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.onSurface, marginBottom: 4 }}>
+              Eén factuur, meerdere pagina&apos;s
+            </div>
+            <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 12, lineHeight: 1.4 }}>
+              Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één
+              factuur — geen losse facturen. (Voor verschillende facturen: voeg ze los toe.)
+            </div>
+
+            {/* Collected pages */}
+            {mpPages.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                {mpPages.map((f, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#fff", borderRadius: R.sm, border: `1px solid ${C.line}` }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.primary, minWidth: 58 }}>Pagina {i + 1}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                    <button onClick={() => removeMpPage(i)} aria-label="Verwijder pagina"
+                      disabled={combining}
+                      style={{ border: "none", background: "transparent", padding: 0, display: "flex", cursor: combining ? "default" : "pointer" }}>
+                      <Icon name="close" size={18} color="#9AA0A6" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add-page actions */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <button onClick={() => !combining && mpCameraRef.current?.click()} disabled={combining}
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: R.md, border: `1px solid ${C.line}`, background: "#fff", color: C.primary, fontWeight: 600, fontSize: 13, fontFamily: "inherit", cursor: combining ? "default" : "pointer" }}>
+                <Icon name="add_a_photo" size={17} /> Fotograferen
+              </button>
+              <button onClick={() => !combining && mpFileRef.current?.click()} disabled={combining}
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: R.md, border: `1px solid ${C.line}`, background: "#fff", color: C.primary, fontWeight: 600, fontSize: 13, fontFamily: "inherit", cursor: combining ? "default" : "pointer" }}>
+                <Icon name="attach_file" size={17} /> Pagina&apos;s kiezen
+              </button>
+            </div>
+
+            {/* Combine + cancel */}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={cancelMultiPage} disabled={combining}
+                style={{ padding: "11px 16px", borderRadius: R.md, border: "none", background: "#F1F3F4", color: C.muted, fontWeight: 600, fontSize: 14, fontFamily: "inherit", cursor: combining ? "default" : "pointer" }}>
+                Annuleer
+              </button>
+              <button onClick={combineAndUpload} disabled={combining || uploading || mpPages.length === 0}
+                style={{ flex: 1, padding: "11px", borderRadius: R.md, border: "none", fontWeight: 700, fontSize: 14, fontFamily: "inherit",
+                  background: combining || uploading || mpPages.length === 0 ? "#DADCE0" : C.primary, color: "#fff",
+                  cursor: combining || uploading || mpPages.length === 0 ? "default" : "pointer" }}>
+                {combining ? "Bezig…" : mpPages.length > 0 ? `Combineer ${mpPages.length} pagina${mpPages.length === 1 ? "" : "'s"} → één factuur` : "Voeg eerst pagina's toe"}
+              </button>
+            </div>
           </div>
+        )}
+
+        {/* [MULTI-PAGE] Honest note: one PDF must be one invoice — the app reads a PDF as a single
+            invoice (all pages together). A PDF holding several DIFFERENT invoices can't be split. */}
+        <div style={{ fontSize: 11.5, color: C.faint, marginTop: 10, lineHeight: 1.45 }}>
+          Let op: één PDF = één factuur (alle pagina&apos;s samen). Zitten er meerdere verschillende
+          facturen in één PDF? Splits ze niet — voeg elke factuur los toe.
         </div>
-      )}
+      </Card>
 
-      {/* [MULTI-PAGE] Honest note: one PDF must be one invoice — the app reads a PDF as a single
-          invoice (all pages together). A PDF holding several DIFFERENT invoices can't be split. */}
-      <div style={{ fontSize: 11.5, color: "#8e8e93", marginTop: 8, lineHeight: 1.45 }}>
-        Let op: één PDF = één factuur (alle pagina&apos;s samen). Zitten er meerdere verschillende
-        facturen in één PDF? Splits ze niet — voeg elke factuur los toe.
-      </div>
-
-      {/* [INTAKE-FEEDBACK] Results modal — where did each file go? */}
+      {/* [INTAKE-FEEDBACK] Results modal — where did each file go?
+          [INTAKE-AUTO-FEEDBACK] …and, for an invoice the app could verify itself,
+          that it is already BOOKED — with the path to it on Inkoopfacturen. */}
       {showResults && results.length > 0 && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 2000 }}
@@ -2054,50 +2352,122 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
-              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
-              width: "100%", maxWidth: 430, maxHeight: "80vh", overflowY: "auto",
+              background: "#fff", borderRadius: "20px 20px 0 0", padding: "22px 20px",
+              paddingBottom: "calc(22px + env(safe-area-inset-bottom))",
+              width: "100%", maxWidth: 460, maxHeight: "84vh", overflowY: "auto",
+              fontFamily: FONT,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
-              {addedCount > 0
-                ? `${addedCount} bestand${addedCount > 1 ? "en" : ""} toegevoegd`
-                : "Klaar"}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              {addedCount > 0 && (
+                <Icon
+                  name={autoCount === addedCount ? "task_alt" : "check_circle"}
+                  size={24}
+                  color={autoCount === addedCount ? C.success : C.primary}
+                />
+              )}
+              <div style={{ fontWeight: 700, fontSize: 19, color: C.onSurface }}>{headline}</div>
             </div>
-            <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 16 }}>
-              Dit is er met je {results.length > 1 ? "bestanden" : "bestand"} gebeurd:
+            <div style={{ fontSize: 13.5, color: C.muted, marginBottom: 16, lineHeight: 1.5 }}>
+              {summaryParts.length > 0
+                ? summaryParts.join(" · ")
+                : `Dit is er met je ${results.length > 1 ? "bestanden" : "bestand"} gebeurd:`}
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+            {/* [INTAKE-AUTO-FEEDBACK] The reassurance the automatic path owes the
+                owner: what "automatisch verwerkt" MEANS (geboekt, niet betaald) and
+                where it now lives — stated once, above the rows. */}
+            {autoCount > 0 && (
+              <div style={{
+                display: "flex", gap: 10, alignItems: "flex-start",
+                padding: "12px 14px", marginBottom: 14, borderRadius: R.md,
+                background: C.successContainer, border: "1px solid #B7E1C4",
+              }}>
+                <Icon name="auto_awesome" size={19} color={C.success} />
+                <div style={{ fontSize: 12.5, color: "#0B5A28", lineHeight: 1.5 }}>
+                  {autoCount === 1 ? "Deze factuur is" : `Deze ${autoCount} facturen zijn`} gelezen,
+                  gecontroleerd en meteen geboekt als inkoopfactuur — klaar voor je boekhouder.
+                  Er is <strong>niets betaald</strong>: {autoCount === 1 ? "hij staat" : "ze staan"} bij
+                  Inkoopfacturen onder &ldquo;Automatisch verwerkt&rdquo;, waar je{" "}
+                  {autoCount === 1 ? "hem" : "ze"} kunt nakijken of alsnog aanpassen.
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
               {results.map((r, i) => {
                 const meta = RESULT_META[r.status];
+                // What the app read — shown as one compact line so the invoice is
+                // recognisable without opening it.
+                const facts = [
+                  r.vendor || null,
+                  typeof r.amount === "number" && r.amount !== 0 ? formatSignedAmount(r.amount) : null,
+                  r.invoiceNumber ? `nr. ${r.invoiceNumber}` : null,
+                ].filter(Boolean) as string[];
                 return (
-                  <div key={i} style={{ display: "flex", gap: 10, padding: "10px 12px", borderRadius: 12, background: "#f8f9fa" }}>
-                    <span style={{ fontSize: 16, lineHeight: "20px" }}>{meta.icon}</span>
+                  <div key={i} style={{ display: "flex", gap: 10, padding: "12px", borderRadius: R.md, background: C.bg }}>
+                    <div style={{
+                      width: 30, height: 30, borderRadius: R.sm, flexShrink: 0, background: meta.bg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <Icon name={meta.icon} size={18} color={meta.color} />
+                    </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: "#202124", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {r.name}
+                      <p style={{ fontSize: 12.5, fontWeight: 700, color: meta.color, margin: "0 0 3px" }}>
+                        {meta.label}
                       </p>
-                      <p style={{ fontSize: 12, color: meta.color, margin: 0 }}>{r.message}</p>
+                      {facts.length > 0 && (
+                        <p style={{ fontSize: 13.5, fontWeight: 600, color: C.onSurface, margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {facts.join(" · ")}
+                        </p>
+                      )}
+                      <p style={{ fontSize: 12, color: C.muted, margin: 0, lineHeight: 1.45 }}>{r.message}</p>
+                      {/* The file itself — same file name the owner picked, plus where it landed. */}
+                      <p style={{ fontSize: 11.5, color: C.faint, margin: "4px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.name}
+                        {r.folderName ? ` · opgeslagen in ${r.folderName}` : ""}
+                      </p>
+                      {/* [DEDUP-SOFT] Soft heads-up — never blocks. Only when the
+                          server's own sentence doesn't already carry it, so the row
+                          never says "mogelijk dubbel" twice. */}
+                      {r.possibleDuplicate && !/dubbel/i.test(r.message) && (
+                        <p style={{ fontSize: 12, color: C.warn, margin: "6px 0 0", lineHeight: 1.45 }}>
+                          {r.possibleDuplicate}
+                        </p>
+                      )}
+                      {/* Destination links — one per row, pointing at where it IS. */}
                       {r.link && (
                         <button
                           type="button"
                           onClick={() => openInBestanden(r.link!)}
-                          style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                          style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, cursor: "pointer", color: C.primary, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit" }}
                         >
-                          Bekijk in bestanden →
+                          Bekijk in bestanden
+                          <Icon name="chevron_right" size={15} />
+                        </button>
+                      )}
+                      {/* [INTAKE-AUTO-FEEDBACK] Booked automatically → Inkoopfacturen. */}
+                      {r.status === "auto" && r.invoiceId && (
+                        <button
+                          type="button"
+                          onClick={() => goToBooked(r.invoiceId!)}
+                          style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, cursor: "pointer", color: C.success, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit" }}
+                        >
+                          Bekijk bij Inkoopfacturen
+                          <Icon name="chevron_right" size={15} />
                         </button>
                       )}
                       {/* [INTAKE-FOCUS] Invoice/receipt landed in THIS queue,
                           hidden behind this modal — give the owner the path to
                           it instead of just "controleer en bevestig". */}
-                      {r.status === "invoice" && r.invoiceId && (
+                      {(r.status === "invoice" || r.status === "receipt") && r.invoiceId && (
                         <button
                           type="button"
                           onClick={() => goToInvoice(r.invoiceId!)}
-                          style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                          style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, cursor: "pointer", color: C.primary, fontSize: 12.5, fontWeight: 600, fontFamily: "inherit" }}
                         >
-                          Naar controle →
+                          Naar controle
+                          <Icon name="chevron_right" size={15} />
                         </button>
                       )}
                     </div>
@@ -2106,12 +2476,30 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
               })}
             </div>
 
+            {/* [INTAKE-AUTO-FEEDBACK] With more than one automatic booking, one link
+                to the whole set (the manage screen opens on its "Automatisch
+                verwerkt" filter) instead of a link per row. */}
+            {autoCount > 1 && (
+              <a
+                href="/dashboard/incoming/manage?filter=auto"
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  width: "100%", padding: "13px", borderRadius: R.md, marginBottom: 8,
+                  background: C.successContainer, color: C.success,
+                  fontWeight: 600, fontSize: 14.5, textDecoration: "none", boxSizing: "border-box",
+                }}
+              >
+                <Icon name="request_quote" size={19} />
+                Bekijk de {autoCount} automatisch verwerkte facturen
+              </a>
+            )}
+
             <button
               onClick={closeResults}
               style={{
-                width: "100%", padding: "16px", borderRadius: 14,
-                background: "#34a853", color: "#fff", border: "none",
-                fontWeight: 700, fontSize: 16, cursor: "pointer",
+                width: "100%", padding: "15px", borderRadius: R.md,
+                background: C.primary, color: "#fff", border: "none",
+                fontWeight: 700, fontSize: 15.5, fontFamily: "inherit", cursor: "pointer",
               }}
             >
               Klaar
@@ -2119,7 +2507,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -2509,11 +2897,26 @@ export default function IncomingInvoicesClient({
   // [SMART-FILTER] shared matcher — leverancier / factuurnummer / bedrag
   // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
   const rawQ = search.trim();
-  const filteredList = rawQ
+  const searchedList = rawQ
     ? list.filter((inv) =>
         rowMatchesQuery(rawQ, [inv.client_name, inv.invoice_number], [inv.total_inc_btw])
       )
     : list;
+
+  // [INCOMING-TIDY] Health lens over the pending queue. With a mailbox backfill the
+  // queue is dozens of cards deep, and the two states in it need opposite handling:
+  // the flagged ones want one-by-one attention, the clean ones want one bulk tap. The
+  // status card's two counters double as this filter (tap = only those, tap again =
+  // all), so the number you read is the list you get. Pending tab only; purely a view.
+  const [healthLens, setHealthLens] = useState<"all" | "attention" | "ready">("all");
+  const filteredList =
+    tab === "pending" && healthLens !== "all"
+      ? searchedList.filter((inv) =>
+          healthLens === "attention"
+            ? inv.health.level === "needs-review"
+            : inv.health.level !== "needs-review"
+        )
+      : searchedList;
 
   // ── [IMPORT-MONITOR] Two orthogonal facts the header must convey ──────────────
   // HEALTH: "is anything WRONG?"  → invoices the AI/arithmetic flagged.
@@ -2531,231 +2934,372 @@ export default function IncomingInvoicesClient({
   ).length;
   const readyToConfirmCount = pending.length - needsAttentionCount;
 
+  // [INCOMING-TIDY] Tabs carry their own counts; switching one always resets the
+  // per-card expansion and the health lens (which only means anything on pending).
+  const switchTab = (next: Tab) => {
+    setTab(next);
+    setExpandedId(null);
+    setHealthLens("all");
+  };
+
   return (
     <div
       style={{
-        maxWidth: 430, margin: "0 auto", padding: "0 0 100px",
+        minHeight: "100vh",
+        background: C.bg,
         // [HEADER-SYSTEM] Was var(--font-sans) (could resolve to a non-Roboto
         // face); now the shared Roboto FONT token, matching the shared bar above.
         fontFamily: FONT,
+        WebkitFontSmoothing: "antialiased",
       }}
     >
       {/* [HEADER-SYSTEM] The title "Inkomend" + back live in the shared sub-page
-          bar (DashboardChrome/STATIC_TITLES). This block is now just the status
-          subtitle. (Removed a stale comment describing a Logo/Terug header that no
-          longer exists here.) */}
-      <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
-        {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
-            about flow. Never says "done" while items still wait to be sent. */}
-        {pending.length === 0 ? (
-          <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
-            Alles verwerkt
-          </p>
-        ) : needsAttentionCount > 0 ? (
-          <p style={{ fontSize: 14, color: "#EA8600", margin: "4px 0 0", fontWeight: 600 }}>
-            {needsAttentionCount}{" "}
-            {needsAttentionCount === 1 ? "factuur heeft" : "facturen hebben"} je
-            aandacht nodig
-            {readyToConfirmCount > 0 && (
-              <span style={{ color: "#5f6368", fontWeight: 400 }}>
-                {" "}· {readyToConfirmCount} klaar om te bevestigen
-              </span>
-            )}
-          </p>
-        ) : (
-          <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
-            <span style={{ color: "#34a853", fontWeight: 600 }}>
-              Niets om te corrigeren
-            </span>{" "}
-            · {readyToConfirmCount}{" "}
-            {readyToConfirmCount === 1 ? "factuur klaar" : "facturen klaar"} om te
-            bevestigen
-          </p>
-        )}
-        {/* [REIMPORT-ALL] One tap re-reads every "Aandacht nodig" invoice — each keeps its
-            own current state (improve-or-keep, never verified). Only on the pending tab and
-            only when something is actually flagged. */}
-        {tab === "pending" && needsAttentionCount > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <button
-              type="button"
-              onClick={handleReimportAllNeedsAttention}
-              disabled={reimportAllRunning}
-              aria-label="Alle facturen die aandacht nodig hebben opnieuw inlezen"
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                padding: "8px 14px", borderRadius: 10,
-                background: "#fef7e0", color: "#B06000",
-                border: "1px solid #FDE293",
-                fontSize: 14, fontWeight: 600,
-                cursor: reimportAllRunning ? "default" : "pointer",
-                opacity: reimportAllRunning ? 0.7 : 1,
-              }}
-            >
-              {reimportAllRunning
-                ? `Bezig met opnieuw inlezen… (${reimportAllDone}/${needsAttentionCount})`
-                : `↻ Alles met aandacht opnieuw inlezen (${needsAttentionCount})`}
-            </button>
-          </div>
-        )}
-
-        {/* [BRIDGE-POLISH 3b] Entry to the management surface for confirmed
-            incoming invoices (received/paid). iOS-styled to match THIS surface. */}
-        <Link
-          href="/dashboard/incoming/manage"
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            marginTop: 12, padding: "8px 14px", borderRadius: 10,
-            background: "#e8f0fe", color: "#1a73e8",
-            fontSize: 14, fontWeight: 600, textDecoration: "none",
-          }}
-        >
-          Bevestigde inkoopfacturen ›
-        </Link>
-      </div>
-
-      <div style={{ padding: "0 16px" }}>
-        <ConnectEmailCard status={connectionStatus} />
-
-        {/* Tabs */}
-        <div
-          style={{
-            display: "flex", gap: 8, marginBottom: 16,
-            background: "#f8f9fa", borderRadius: 12, padding: 4,
-          }}
-        >
-          {([
-            ["pending", `Te bevestigen${pending.length ? ` (${pending.length})` : ""}`],
-            ["confirmed", `Bevestigd${confirmed.length ? ` (${confirmed.length})` : ""}`],
-            ["ignored", `Genegeerd${ignored.length ? ` (${ignored.length})` : ""}`],
-          ] as const).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => { setTab(key); setExpandedId(null); }}
-              style={{
-                flex: 1, padding: "9px 0", borderRadius: 9, border: "none",
-                background: tab === key ? "#fff" : "transparent",
-                color: tab === key ? "#202124" : "#5f6368",
-                fontWeight: 600, fontSize: 14, cursor: "pointer",
-                boxShadow: tab === key ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* [INTAKE-VERIFY-BULK] Bulk-select toolbar — pending tab only */}
-        {tab === "pending" && pending.length > 0 && (
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "0 4px", marginBottom: 12, gap: 8,
-          }}>
-            {!selectMode ? (
-              <button
-                onClick={() => setSelectMode(true)}
-                style={{
-                  background: "#e8f0fe", border: "none", color: "#1a73e8",
-                  fontWeight: 600, fontSize: 14, cursor: "pointer",
-                  padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
-                }}
-              >
-                Selecteer
-              </button>
+          bar (DashboardChrome/STATIC_TITLES); this page starts at its content.
+          [INCOMING-TIDY] One column, four labelled sections, a bigger gap BETWEEN
+          groups (20) than WITHIN one — the same grammar as the ZZP home. */}
+      <main
+        style={{
+          maxWidth: 480, margin: "0 auto", padding: "16px 16px 110px",
+          display: "flex", flexDirection: "column", gap: 20,
+        }}
+      >
+        {/* ── 1. STATUS — "waar sta ik?" in één kaart ─────────────────────────── */}
+        <section>
+          <SectionLabel>Status</SectionLabel>
+          <Card style={{ padding: 16 }}>
+            {/* [IMPORT-MONITOR] Two-axis headline — calm about correctness, honest
+                about flow. Never says "done" while items still wait to be sent. */}
+            {pending.length === 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: R.md, flexShrink: 0,
+                  background: C.successContainer, display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <Icon name="task_alt" size={22} color={C.success} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.onSurface }}>Alles verwerkt</div>
+                  <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>
+                    Er wacht niets op je controle.
+                  </div>
+                </div>
+              </div>
             ) : (
               <>
-                <button
-                  onClick={selectAllReady}
-                  style={{
-                    background: "#e8f0fe", border: "none", color: "#1a73e8",
-                    fontWeight: 700, fontSize: 14, cursor: "pointer",
-                    padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
-                  }}
-                >
-                  Selecteer klaar ({pending.filter((p) => p.health.level !== "needs-review").length})
-                </button>
-                <button
-                  onClick={exitSelectMode}
-                  style={{
-                    background: "#f8f9fa", border: "none", color: "#3c4043",
-                    fontWeight: 600, fontSize: 14, cursor: "pointer",
-                    padding: "8px 16px", borderRadius: 980, whiteSpace: "nowrap",
-                  }}
-                >
-                  Annuleer
-                </button>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 30, fontWeight: 700, color: C.onSurface, letterSpacing: -0.5 }}>
+                    {pending.length}
+                  </span>
+                  <span style={{ fontSize: 15, fontWeight: 600, color: C.onSurface }}>
+                    {pending.length === 1 ? "factuur wacht op jou" : "facturen wachten op jou"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5, marginBottom: 14 }}>
+                  {needsAttentionCount > 0
+                    ? "Bevestig wat klaarstaat en kijk de gemarkeerde facturen even na."
+                    : "Niets om te corrigeren — één tik en ze gaan naar je boekhouder."}
+                </div>
+
+                {/* [INCOMING-TIDY] The two counters that used to be one long sentence.
+                    Each is also the filter for its own half of the queue, so the number
+                    you read is the list you get. */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <StatCell
+                    icon="warning"
+                    tone={C.warn}
+                    bg={C.warnContainer}
+                    line={C.warnLine}
+                    count={needsAttentionCount}
+                    label="Aandacht nodig"
+                    active={tab === "pending" && healthLens === "attention"}
+                    disabled={needsAttentionCount === 0}
+                    onClick={() => {
+                      if (tab !== "pending") switchTab("pending");
+                      setHealthLens((v) => (v === "attention" ? "all" : "attention"));
+                    }}
+                  />
+                  <StatCell
+                    icon="check_circle"
+                    tone={C.success}
+                    bg={C.successContainer}
+                    line="#B7E1C4"
+                    count={readyToConfirmCount}
+                    label="Klaar om te bevestigen"
+                    active={tab === "pending" && healthLens === "ready"}
+                    disabled={readyToConfirmCount === 0}
+                    onClick={() => {
+                      if (tab !== "pending") switchTab("pending");
+                      setHealthLens((v) => (v === "ready" ? "all" : "ready"));
+                    }}
+                  />
+                </div>
+
+                {/* [REIMPORT-ALL] One tap re-reads every "Aandacht nodig" invoice — each keeps its
+                    own current state (improve-or-keep, never verified). Only when something is
+                    actually flagged. */}
+                {needsAttentionCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleReimportAllNeedsAttention}
+                    disabled={reimportAllRunning}
+                    aria-label="Alle facturen die aandacht nodig hebben opnieuw inlezen"
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      width: "100%", marginTop: 10, padding: "11px 14px", borderRadius: R.md,
+                      background: C.warnContainer, color: C.warn,
+                      border: `1px solid ${C.warnLine}`,
+                      fontSize: 13.5, fontWeight: 600, fontFamily: "inherit",
+                      cursor: reimportAllRunning ? "default" : "pointer",
+                      opacity: reimportAllRunning ? 0.7 : 1,
+                    }}
+                  >
+                    <Icon name="refresh" size={18} spin={reimportAllRunning} />
+                    {reimportAllRunning
+                      ? `Bezig met opnieuw inlezen… (${reimportAllDone}/${needsAttentionCount})`
+                      : `Alles met aandacht opnieuw inlezen (${needsAttentionCount})`}
+                  </button>
+                )}
               </>
             )}
-          </div>
-        )}
 
-        {/* [SEARCH] In-page live filter (this page only) */}
-        {(list.length > 0 || rawQ) && (
-          <div style={{ position: "relative", marginBottom: 14 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" strokeWidth="2" style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Zoek op leverancier, factuurnummer of bedrag…"
-              aria-label="Inkomende facturen zoeken"
-              style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
-            />
-            {search && (
-              <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen"
-                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>✕</button>
-            )}
-          </div>
-        )}
+            {/* [BRIDGE-POLISH 3b] Entry to the management surface for confirmed
+                incoming invoices (received/paid) — including everything the app
+                verified automatically. */}
+            <Link
+              href="/dashboard/incoming/manage"
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}`,
+                textDecoration: "none", color: C.onSurface,
+              }}
+            >
+              <Icon name="request_quote" size={20} color={C.primary} />
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>Bevestigde inkoopfacturen</span>
+              <Icon name="chevron_right" size={18} color={C.faint} />
+            </Link>
+          </Card>
+        </section>
 
-        {/* Invoice list */}
-        {filteredList.length > 0 ? (
-          <div style={{ marginBottom: 24 }}>
-            {filteredList.map((inv) => (
-              <InvoiceCard
-                key={inv.id}
-                invoice={inv}
-                mode={tab}
-                expanded={expandedId === inv.id}
-                onToggle={() => setExpandedId(expandedId === inv.id ? null : inv.id)}
-                onConfirmPaid={() => setConfirmPaidFor(inv)}
-                onEdit={() => setEditFor(inv)}
-                onIgnore={() => setIgnoreFor(inv)}
-                onRestore={() => handleRestore(inv)}
-                selectMode={tab === "pending" && selectMode}
-                selected={selected.has(inv.id)}
-                onSelect={() => toggleSelect(inv.id)}
-                domId={`incoming-card-${inv.id}`}
-                highlighted={focusId === inv.id}
-              />
+        {/* ── 2. TOEVOEGEN — de dagelijkse invoer, bovenaan (net als op de home) ─ */}
+        {/* Was the LAST block on the page: with a full queue you had to scroll past
+            every card to photograph a bon. Same component, same flow, now in reach. */}
+        <section>
+          <SectionLabel>Toevoegen</SectionLabel>
+          <ManualUpload onUploaded={() => {}} />
+        </section>
+
+        {/* ── 3. AUTOMATISCH INLEZEN — de e-mailkoppeling ─────────────────────── */}
+        <section>
+          <SectionLabel>Automatisch inlezen</SectionLabel>
+          <ConnectEmailCard status={connectionStatus} />
+        </section>
+
+        {/* ── 4. FACTUREN — tabs, selectie, zoeken en de lijst ────────────────── */}
+        <section>
+          <SectionLabel
+            right={
+              tab === "pending" && pending.length > 0 ? (
+                !selectMode ? (
+                  <button
+                    onClick={() => setSelectMode(true)}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 5,
+                      background: "transparent", border: "none", color: C.primary,
+                      fontWeight: 600, fontSize: 13, fontFamily: "inherit",
+                      cursor: "pointer", padding: 0,
+                    }}
+                  >
+                    <Icon name="checklist" size={17} />
+                    Selecteer
+                  </button>
+                ) : (
+                  <button
+                    onClick={exitSelectMode}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 5,
+                      background: "transparent", border: "none", color: C.muted,
+                      fontWeight: 600, fontSize: 13, fontFamily: "inherit",
+                      cursor: "pointer", padding: 0,
+                    }}
+                  >
+                    <Icon name="close" size={17} />
+                    Klaar met selecteren
+                  </button>
+                )
+              ) : undefined
+            }
+          >
+            Facturen
+          </SectionLabel>
+
+          {/* Tabs — segmented control */}
+          <div
+            style={{
+              display: "flex", gap: 4, marginBottom: 12,
+              background: "#EDEFF2", borderRadius: R.md, padding: 4,
+            }}
+          >
+            {([
+              ["pending", "Te bevestigen", pending.length],
+              ["confirmed", "Bevestigd", confirmed.length],
+              ["ignored", "Genegeerd", ignored.length],
+            ] as const).map(([key, label, count]) => (
+              <button
+                key={key}
+                onClick={() => switchTab(key)}
+                style={{
+                  flex: 1, padding: "8px 0", borderRadius: R.sm, border: "none",
+                  background: tab === key ? "#fff" : "transparent",
+                  color: tab === key ? C.onSurface : C.muted,
+                  fontWeight: 600, fontSize: 13, fontFamily: "inherit", cursor: "pointer",
+                  boxShadow: tab === key ? EL1 : "none",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                  minWidth: 0,
+                }}
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {label}
+                </span>
+                {count > 0 && (
+                  <span
+                    style={{
+                      flexShrink: 0, fontSize: 11, fontWeight: 700, borderRadius: R.full,
+                      padding: "1px 6px",
+                      background: tab === key ? C.primaryContainer : "#E0E3E7",
+                      color: tab === key ? C.onPrimaryContainer : C.muted,
+                    }}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
             ))}
           </div>
-        ) : rawQ ? (
-          <div style={{ textAlign: "center", padding: "48px 24px", color: "#8e8e93" }}>
-            <div style={{ fontSize: 44, marginBottom: 14 }}>🔍</div>
-            <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#1c1c1e" }}>Geen facturen gevonden</div>
-            <div style={{ fontSize: 14, lineHeight: 1.5 }}>Niets voor &ldquo;{rawQ}&rdquo; in {tab === "pending" ? "te verwerken" : tab === "confirmed" ? "bevestigd" : "genegeerd"}.</div>
-          </div>
-        ) : (
-          <div style={{ textAlign: "center", padding: "48px 24px", color: "#5f6368" }}>
-            <div style={{ fontSize: 52, marginBottom: 16 }}>
-              {tab === "pending" ? "✅" : tab === "confirmed" ? "🗂️" : "📭"}
-            </div>
-            <div style={{ fontWeight: 600, fontSize: 17, marginBottom: 8, color: "#202124" }}>
-              {tab === "pending" ? "Alles bijgewerkt" : tab === "confirmed" ? "Nog niets bevestigd" : "Geen genegeerde facturen"}
-            </div>
-            <div style={{ fontSize: 14, lineHeight: 1.5 }}>
-              {tab === "pending"
-                ? "Nieuwe facturen verschijnen hier zodra ze binnenkomen."
-                : tab === "confirmed"
-                  ? "Facturen die je verifieert of markeert als betaald verschijnen hier."
-                  : "Facturen die je negeert komen hier terecht."}
-            </div>
-          </div>
-        )}
 
-        {/* Manual upload — only on pending tab */}
-        {tab === "pending" && <ManualUpload onUploaded={() => {}} />}
-      </div>
+          {/* [INTAKE-VERIFY-BULK] Select-all bar — only while selecting */}
+          {tab === "pending" && selectMode && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <button
+                onClick={selectAllReady}
+                style={{
+                  flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                  background: C.primaryContainer, border: "none", color: C.onPrimaryContainer,
+                  fontWeight: 600, fontSize: 13.5, fontFamily: "inherit", cursor: "pointer",
+                  padding: "10px 14px", borderRadius: R.md,
+                }}
+              >
+                <Icon name="done_all" size={18} />
+                Selecteer alles wat klaar is ({pending.filter((p) => p.health.level !== "needs-review").length})
+              </button>
+            </div>
+          )}
+
+          {/* [SEARCH] In-page live filter (this page only) */}
+          {(list.length > 0 || rawQ) && (
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", display: "flex" }}>
+                <Icon name="search" size={19} color="#9AA0A6" />
+              </span>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Zoek op leverancier, factuurnummer of bedrag…"
+                aria-label="Inkomende facturen zoeken"
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "11px 38px",
+                  borderRadius: R.md, border: `1px solid ${C.line}`, fontSize: 14.5,
+                  outline: "none", background: "#fff", color: C.onSurface, fontFamily: "inherit",
+                }}
+              />
+              {search && (
+                <button onClick={() => setSearch("")} aria-label="Zoekopdracht wissen"
+                  style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#E5E5EA", color: "#3A3A3C", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+                  <Icon name="close" size={14} color="#3A3A3C" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* [INCOMING-TIDY] Active health lens — always visible and always
+              undoable, so a filtered list can never be mistaken for the whole queue. */}
+          {tab === "pending" && healthLens !== "all" && (
+            <button
+              onClick={() => setHealthLens("all")}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, width: "100%",
+                marginBottom: 12, padding: "9px 12px", borderRadius: R.md,
+                background: healthLens === "attention" ? C.warnContainer : C.successContainer,
+                border: `1px solid ${healthLens === "attention" ? C.warnLine : "#B7E1C4"}`,
+                color: healthLens === "attention" ? C.warn : C.success,
+                fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <Icon name={healthLens === "attention" ? "warning" : "check_circle"} size={17} />
+              <span style={{ flex: 1 }}>
+                Je ziet alleen {healthLens === "attention" ? "wat aandacht nodig heeft" : "wat klaar is"}
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                Toon alles
+                <Icon name="close" size={15} />
+              </span>
+            </button>
+          )}
+
+          {/* Invoice list */}
+          {filteredList.length > 0 ? (
+            <div>
+              {filteredList.map((inv) => (
+                <InvoiceCard
+                  key={inv.id}
+                  invoice={inv}
+                  mode={tab}
+                  expanded={expandedId === inv.id}
+                  onToggle={() => setExpandedId(expandedId === inv.id ? null : inv.id)}
+                  onConfirmPaid={() => setConfirmPaidFor(inv)}
+                  onEdit={() => setEditFor(inv)}
+                  onIgnore={() => setIgnoreFor(inv)}
+                  onRestore={() => handleRestore(inv)}
+                  selectMode={tab === "pending" && selectMode}
+                  selected={selected.has(inv.id)}
+                  onSelect={() => toggleSelect(inv.id)}
+                  domId={`incoming-card-${inv.id}`}
+                  highlighted={focusId === inv.id}
+                />
+              ))}
+            </div>
+          ) : rawQ || (tab === "pending" && healthLens !== "all") ? (
+            <Card style={{ textAlign: "center", padding: "36px 24px", color: C.muted }}>
+              <Icon name="search_off" size={40} color="#C9CDD2" />
+              <div style={{ fontWeight: 600, fontSize: 15.5, margin: "10px 0 6px", color: C.onSurface }}>
+                Geen facturen gevonden
+              </div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>
+                {rawQ
+                  ? `Niets voor “${rawQ}” in ${tab === "pending" ? "te bevestigen" : tab === "confirmed" ? "bevestigd" : "genegeerd"}.`
+                  : "Niets in deze selectie — tik op “Toon alles” hierboven."}
+              </div>
+            </Card>
+          ) : (
+            <Card style={{ textAlign: "center", padding: "36px 24px", color: C.muted }}>
+              <Icon
+                name={tab === "pending" ? "task_alt" : tab === "confirmed" ? "request_quote" : "inbox"}
+                size={44}
+                color={tab === "pending" ? C.success : "#C9CDD2"}
+              />
+              <div style={{ fontWeight: 600, fontSize: 16, margin: "10px 0 6px", color: C.onSurface }}>
+                {tab === "pending" ? "Alles bijgewerkt" : tab === "confirmed" ? "Nog niets bevestigd" : "Geen genegeerde facturen"}
+              </div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>
+                {tab === "pending"
+                  ? "Nieuwe facturen verschijnen hier zodra ze binnenkomen."
+                  : tab === "confirmed"
+                    ? "Facturen die je verifieert of markeert als betaald verschijnen hier."
+                    : "Facturen die je negeert komen hier terecht."}
+              </div>
+            </Card>
+          )}
+        </section>
+      </main>
 
       {/* Confirm-paid modal */}
       {confirmPaidFor && (
@@ -2787,16 +3331,16 @@ export default function IncomingInvoicesClient({
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1500,
             padding: "12px 16px calc(12px + env(safe-area-inset-bottom))",
             background: "rgba(255,255,255,0.96)", backdropFilter: "blur(8px)",
-            borderTop: "1px solid #e0e0e0",
+            borderTop: `1px solid ${C.line}`,
             display: "flex", justifyContent: "center",
           }}
         >
           <button
             onClick={() => setBulkConfirmOpen(true)}
             style={{
-              width: "100%", maxWidth: 430, padding: "16px", borderRadius: 14,
-              background: "#34a853", color: "#fff", border: "none",
-              fontWeight: 700, fontSize: 16, cursor: "pointer",
+              width: "100%", maxWidth: 448, padding: "15px", borderRadius: R.md,
+              background: "#34A853", color: "#fff", border: "none",
+              fontWeight: 700, fontSize: 15.5, fontFamily: "inherit", cursor: "pointer",
             }}
           >
             Bevestig {selected.size} factuur{selected.size > 1 ? "en" : ""}
@@ -2807,7 +3351,7 @@ export default function IncomingInvoicesClient({
       {/* [INTAKE-VERIFY-BULK] Running overlay */}
       {bulkRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
-          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124" }}>
+          <div style={{ background: "#fff", borderRadius: R.lg, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: C.onSurface }}>
             Bezig met verifiëren…
           </div>
         </div>
@@ -2818,9 +3362,9 @@ export default function IncomingInvoicesClient({
           a 409. */}
       {reimportAllRunning && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2100 }}>
-          <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: "#202124", textAlign: "center" }}>
+          <div style={{ background: "#fff", borderRadius: R.lg, padding: "24px 28px", fontSize: 15, fontWeight: 600, color: C.onSurface, textAlign: "center" }}>
             Bezig met opnieuw inlezen…
-            <div style={{ fontSize: 13, fontWeight: 400, color: "#5f6368", marginTop: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 400, color: C.muted, marginTop: 4 }}>
               {reimportAllDone}/{needsAttentionCount}
             </div>
           </div>
@@ -2838,21 +3382,21 @@ export default function IncomingInvoicesClient({
             style={{
               background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
               paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
-              width: "100%", maxWidth: 430,
+              width: "100%", maxWidth: 460,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 19, color: "#202124", marginBottom: 4 }}>
+            <div style={{ fontWeight: 700, fontSize: 19, color: C.onSurface, marginBottom: 4 }}>
               {selected.size} factuur{selected.size > 1 ? "en" : ""} bevestigen?
             </div>
-            <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
+            <div style={{ fontSize: 14, color: C.muted, marginBottom: 20, lineHeight: 1.5 }}>
               De geselecteerde facturen worden geverifieerd en als Crediteur naar je boekhouder gestuurd. De bedragen worden overgenomen zoals uitgelezen.
             </div>
             <button
               onClick={handleVerifyBatch}
               style={{
-                width: "100%", padding: "16px", borderRadius: 14,
-                background: "#34a853", color: "#fff", border: "none",
-                fontWeight: 700, fontSize: 16, cursor: "pointer", marginBottom: 8,
+                width: "100%", padding: "15px", borderRadius: R.md,
+                background: "#34A853", color: "#fff", border: "none",
+                fontWeight: 700, fontSize: 15.5, fontFamily: "inherit", cursor: "pointer", marginBottom: 8,
               }}
             >
               Ja, bevestig {selected.size}
@@ -2860,9 +3404,9 @@ export default function IncomingInvoicesClient({
             <button
               onClick={() => setBulkConfirmOpen(false)}
               style={{
-                width: "100%", padding: "14px", borderRadius: 14,
-                background: "#f8f9fa", color: "#202124", border: "none",
-                fontWeight: 600, fontSize: 15, cursor: "pointer",
+                width: "100%", padding: "13px", borderRadius: R.md,
+                background: C.bg, color: C.onSurface, border: "none",
+                fontWeight: 600, fontSize: 15, fontFamily: "inherit", cursor: "pointer",
               }}
             >
               Annuleren
@@ -2877,7 +3421,7 @@ export default function IncomingInvoicesClient({
           title="Factuur negeren?"
           message="De factuur wordt verplaatst naar Genegeerd. Je kunt hem later terugzetten."
           confirmLabel="Ja, negeer"
-          confirmColor="#ea4335"
+          confirmColor="#EA4335"
           onConfirm={() => handleIgnore(ignoreFor)}
           onCancel={() => setIgnoreFor(null)}
         />
@@ -2890,14 +3434,59 @@ export default function IncomingInvoicesClient({
             position: "fixed", bottom: 32, left: "50%",
             transform: "translateX(-50%)",
             background: "rgba(28,28,30,0.92)", color: "#fff",
-            padding: "12px 20px", borderRadius: 20, fontSize: 14, fontWeight: 600,
-            backdropFilter: "blur(12px)", whiteSpace: "nowrap", zIndex: 3000,
-            boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
+            padding: "12px 20px", borderRadius: R.xl, fontSize: 14, fontWeight: 600,
+            backdropFilter: "blur(12px)", maxWidth: "92vw", textAlign: "center",
+            zIndex: 3000, boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
           }}
         >
           {toast}
         </div>
       )}
+
+      <style>{`@keyframes bbSpin { to { transform: rotate(360deg); } }`}</style>
     </div>
+  );
+}
+
+// [INCOMING-TIDY] One half of the status card: a count with its meaning, doubling
+// as the filter for that half of the queue. Disabled (and visibly quiet) at zero —
+// tapping a counter that would empty the list is never useful.
+function StatCell({
+  icon, tone, bg, line, count, label, active, disabled, onClick,
+}: {
+  icon: string;
+  tone: string;
+  bg: string;
+  line: string;
+  count: number;
+  label: string;
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2,
+        padding: "10px 12px", borderRadius: R.md, textAlign: "left",
+        background: disabled ? C.bg : bg,
+        border: `1px solid ${active ? tone : disabled ? "transparent" : line}`,
+        cursor: disabled ? "default" : "pointer",
+        fontFamily: "inherit", width: "100%",
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <Icon name={icon} size={17} color={disabled ? C.faint : tone} />
+        <span style={{ fontSize: 19, fontWeight: 700, color: disabled ? C.faint : tone }}>{count}</span>
+      </span>
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: disabled ? C.faint : tone, lineHeight: 1.3 }}>
+        {label}
+      </span>
+    </button>
   );
 }

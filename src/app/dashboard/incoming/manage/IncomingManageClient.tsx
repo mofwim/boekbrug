@@ -197,8 +197,21 @@ export default function IncomingManageClient({
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
   // [MATCH-BUTTON] applyMap installs the post-run map the matcher returns (no second fetch).
   const { byInvoice: recon, confirmMatch, applyMap } = useInvoiceReconciliation()
+  // [BRIDGE-NOTIF] Deep links land here with ?focus= / ?action= (see the effects
+  // below). Read once, up here, because the filter tab below is INITIALISED from
+  // the URL — setting it from an effect would be a cascading render.
+  const searchParams = useSearchParams()
+  // ── [INTAKE-AUTO-FEEDBACK] Deep-link a FILTER (?filter=auto) ────────────────
+  // The upload results modal on /dashboard/incoming tells the owner that N invoices
+  // were verified and booked automatically, and links here to see them. Landing on
+  // "Alle" would drop them back into the full ledger; opening straight on the tab
+  // that holds exactly those rows is the whole point of the link. Read-only intent:
+  // an unknown value falls back to 'Alle', and the owner can switch freely after.
+  const filterParam = searchParams.get('filter')
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
-  const [filter, setFilter]             = useState<FilterTab>('all')
+  const [filter, setFilter]             = useState<FilterTab>(
+    FILTERS.some(f => f.id === filterParam) ? (filterParam as FilterTab) : 'all'
+  )
   const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortBy, setSortBy]             = useState<SortKey>('added_desc')
@@ -311,7 +324,7 @@ export default function IncomingManageClient({
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // Lands the user on the exact row: auto-expand, scroll into view, brief highlight.
-  const searchParams = useSearchParams()
+  // (searchParams is read at the top of the component — see the filter note there.)
   const focusId = searchParams.get('focus')
   // [TODAY-AL-BETAALD] patch note (cross-ticket: owned by TODAY-UX, lives here):
   // Vandaag's "Al betaald?" routes here with ?action=pay to open the EXISTING
