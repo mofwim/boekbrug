@@ -31,6 +31,13 @@ interface Art29 {
   badDebtCount: number
 }
 
+// [ICP] The ICP-opgaaf that belongs with this quarter. It is a SEPARATE declaration, so it gets
+// its own block below the rubrieken — never a row inside them, which is how someone comes to
+// believe the app filed it along with the aangifte.
+interface IcpLine { vatNumber: string; country: string; clientName: string | null; amountExBtw: number; invoiceCount: number }
+interface IcpProblem { kind: string; invoiceNumber: string | null; clientName: string | null; vatNumber: string; detail: string }
+interface Icp { lines: IcpLine[]; totalExBtw: number; problems: IcpProblem[] }
+
 export default function AangifteClient() {
   const sp = useSearchParams()
   // [QUARTER] Honour ?year&quarter (e.g. from the readiness card's link), else default to
@@ -40,6 +47,7 @@ export default function AangifteClient() {
   const [quarter, setQuarter] = useState<number>(initial.quarter)
   const [data, setData] = useState<Aangifte | null>(null)
   const [art29, setArt29] = useState<Art29 | null>(null)
+  const [icp, setIcp] = useState<Icp | null>(null)
   const [loading, setLoading] = useState(true)
   const curYear = new Date().getFullYear()
 
@@ -49,7 +57,7 @@ export default function AangifteClient() {
       // De reset staat binnen de async-functie maar vóór de eerste await: hij draait dus in
       // dezelfde tick als voorheen. Het verschil is dat de compiler nu kan zien dat er geen
       // synchrone setState in de effect-body zelf zit.
-      setLoading(true); setData(null); setArt29(null)
+      setLoading(true); setData(null); setArt29(null); setIcp(null)
       try {
         const res = await fetch(`/api/aangifte?year=${year}&quarter=${quarter}`)
         const json = await res.json()
@@ -61,6 +69,7 @@ export default function AangifteClient() {
             badDebtReclaimableBtw: Number(json.badDebtReclaimableBtw) || 0,
             badDebtCount: Number(json.badDebtCount) || 0,
           })
+          setIcp(json.icp ?? null)
         }
       } catch { /* silent */ } finally { if (!cancelled) setLoading(false) }
     })()
@@ -175,6 +184,49 @@ export default function AangifteClient() {
                 strong color={teBetalen ? M3.onSurface : M3.success}
               />
             </div>
+
+            {/* [ICP] The ICP-opgaaf — a SEPARATE declaration, so it gets its own block outside
+                the rubriek list. Everything the form asks for is already here (land, BTW-nummer,
+                bedrag per klant); what the app cannot do is submit it, and the header says so
+                rather than letting a filled-in table imply otherwise. */}
+            {icp && (icp.lines.length > 0 || icp.problems.length > 0) && (
+              <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '16px 18px', marginBottom: 16 }}>
+                <div style={{ fontSize: 12.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>
+                  ICP-opgaaf · aparte aangifte
+                </div>
+                <div style={{ fontSize: 13, color: M3.neutral, lineHeight: 1.55, marginBottom: 12 }}>
+                  Leveringen aan ondernemers in de EU (rubriek 3b hierboven) moet je óók per BTW-nummer opgeven.
+                  Dit is <strong>geen onderdeel</strong> van de BTW-aangifte en wordt hier <strong>niet</strong> ingediend.
+                </div>
+                {icp.lines.map((l) => (
+                  <div key={l.vatNumber} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '9px 0', borderBottom: `1px solid ${M3.outlineVariant}` }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {l.clientName ?? l.vatNumber}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: M3.neutral, fontFamily: FONT_NUM }}>
+                        {l.vatNumber} · {l.invoiceCount} {l.invoiceCount === 1 ? 'factuur' : 'facturen'}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
+                      {eur.format(l.amountExBtw)}
+                    </span>
+                  </div>
+                ))}
+                {icp.lines.length > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingTop: 10 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface }}>Totaal · gelijk aan 3b</span>
+                    <span style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>{eur.format(icp.totalExBtw)}</span>
+                  </div>
+                )}
+                {icp.problems.map((p, i) => (
+                  <div key={i} style={{ background: M3.errorContainer, color: M3.error, borderRadius: 10, padding: '10px 12px', fontSize: 13, lineHeight: 1.5, marginTop: 10 }}>
+                    <strong style={{ fontWeight: 700 }}>{p.invoiceNumber ?? 'Factuur'}{p.clientName ? ` · ${p.clientName}` : ''}</strong>
+                    <div style={{ marginTop: 2 }}>{p.detail}</div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Honest notes — the trust layer */}
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '16px 18px' }}>

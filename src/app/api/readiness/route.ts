@@ -27,6 +27,8 @@ import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
+// [ICP] Sales to EU businesses: only the PROBLEMS reach readiness — see the call site.
+import { buildIcp, type IcpInvoice } from "@/lib/icp";
 
 export const dynamic = "force-dynamic";
 // [RUNTIME] Deze route doet ~22 databaseronden per klant en wordt door het werkbord één
@@ -341,6 +343,10 @@ export async function GET(req: NextRequest) {
     outgoingInvoiceCount: invRaw.filter((i) => effDir(i) === "outgoing" && OUT_OK.has(i.status ?? "")).length,
     hasEuPurchase: invRaw.some((i) => effDir(i) === "incoming" && IN_OK.has(i.status ?? "") && typeof i.client_btw_number === "string" && EU_VAT.test(i.client_btw_number.trim())),
   };
+  // [ICP] Deliberately built WITHOUT intraEuOmzet, unlike /api/aangifte. Moving turnover from 1e
+  // to 3b cannot change 5a, 5b or 5g (both rubrieken carry €0 BTW), and those three are the only
+  // figures this route exposes — so the two concepts are identical here, and rebuilding the ICP
+  // just to reach the same numbers would be work that proves nothing.
   const aangifte = buildAangifte(result, completeness, quarterLabel);
   const hasUndecidableRate = aangifte.rows.some((r) => r.code === "1c");
 
@@ -396,6 +402,23 @@ export async function GET(req: NextRequest) {
   // back), which is why it is read after the KOR profile above.
   const vatClawback = await collectVatClawback(pipeline, ownerId, sr.scheme, end, korActive);
 
+  // [ICP] The ICP-opgaaf itself belongs on the aangifte screen and in the accountant's ZIP, not
+  // in a readiness score. What DOES belong here is the part that cannot be filed as it stands: an
+  // opgaaf the Belastingdienst rejects counts as not done, and the owner is the only one who can
+  // fix the invoice behind it. Names are not needed to count, so they are not fetched.
+  const icpProblems = buildIcp({
+    korActive,
+    invoices: invRaw.map((i): IcpInvoice => ({
+      invoiceNumber: (i.invoice_number as string | null) ?? null,
+      clientName: null,
+      clientVatNumber: (i.client_btw_number as string | null) ?? null,
+      direction: effDir(i),
+      status: (i.status as string | null) ?? null,
+      totalExBtw: i.total_ex_btw as number | null,
+      btwAmount: i.btw_amount as number | null,
+    })),
+  }).problems.length;
+
   // ── 6) Assemble the signals → the verdict ──
   const signals: ReadinessSignals = {
     quarterLabel,
@@ -436,6 +459,7 @@ export async function GET(req: NextRequest) {
     vatClawback: vatClawback.eligible.length > 0
       ? { count: vatClawback.eligible.length, repayableBtw: vatClawback.totalRepayableBtw }
       : undefined, // [BAD-DEBT] repayable voorbelasting on >1yr-unpaid purchases → risk, never a block
+    icpProblems, // [ICP] EU sales that cannot go on the opgaaf as they stand → risk
   };
   const report = buildReadiness(signals);
 

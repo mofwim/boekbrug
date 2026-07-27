@@ -18,7 +18,13 @@ import type { FinancialResult } from "./financial-result";
 export type AangifteInput = Pick<
   FinancialResult,
   "salesByRate" | "btwVoorbelasting" | "cashOmzetZonderBtw"
->;
+> & {
+  // [ICP] Turnover supplied to businesses in other EU member states (ex BTW), read from the
+  // customers' VAT numbers — it belongs in rubriek 3b, not in 1e. Not part of FinancialResult
+  // because no RATE distinguishes it: 0% is 0% until you look at who the customer is. Both
+  // rubrieken carry €0 BTW, so stating it correctly can never move 5a, 5b or 5g.
+  intraEuOmzet?: number;
+};
 
 export interface AangifteCompleteness {
   turnoverDays: number;          // days of dagomzet imported for the period
@@ -32,7 +38,7 @@ export interface AangifteCompleteness {
 }
 
 export interface AangifteRow {
-  code: "1a" | "1b" | "1c" | "1e";
+  code: "1a" | "1b" | "1c" | "1e" | "3b";
   label: string;
   omzet: number;                 // whole euros
   btw: number;                   // whole euros (0 for 1e)
@@ -56,6 +62,7 @@ const RATE_LABEL: Record<string, string> = {
   "1b": "Leveringen/diensten belast met laag tarief (9%)",
   "1c": "Leveringen/diensten belast met overige tarieven, behalve 0%",
   "1e": "Leveringen/diensten belast met 0% of niet bij u belast",
+  "3b": "Leveringen naar landen binnen de EU",
 };
 
 /**
@@ -88,7 +95,16 @@ export function buildAangifte(
     { code: "1b", label: RATE_LABEL["1b"], omzet: euro(om1b), btw: euro(btw1b) },
   ];
   if (euro(om1c) !== 0 || euro(btw1c) !== 0) rows.push({ code: "1c", label: RATE_LABEL["1c"], omzet: euro(om1c), btw: euro(btw1c) });
-  if (euro(om1e) !== 0) rows.push({ code: "1e", label: RATE_LABEL["1e"], omzet: euro(om1e), btw: 0 });
+  // [ICP] Intra-EU supplies are 0%-turnover that the rate alone cannot distinguish, so they land
+  // in the 1e bucket above. Move them to 3b, where the Belastingdienst cross-checks them against
+  // the ICP-opgaaf. Capped at what 1e actually holds: 1e can never go negative, and turnover that
+  // is not there is not invented. Both rubrieken carry €0 BTW, which is the whole safety of this
+  // step — 5a, and therefore 5g, is identical with or without it.
+  const intraEu = Math.max(0, Math.round(input.intraEuOmzet ?? 0));
+  const om3b = Math.min(intraEu, euro(om1e));
+  const rest1e = euro(om1e) - om3b;
+  if (rest1e !== 0) rows.push({ code: "1e", label: RATE_LABEL["1e"], omzet: rest1e, btw: 0 });
+  if (om3b !== 0) rows.push({ code: "3b", label: RATE_LABEL["3b"], omzet: om3b, btw: 0 });
 
   const verschuldigd = rows.reduce((s, r) => s + r.btw, 0); // 5a — sum of rounded rubrieken
   const voorbelasting = euro(input.btwVoorbelasting);        // 5b

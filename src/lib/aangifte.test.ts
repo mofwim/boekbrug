@@ -130,5 +130,43 @@ console.log("\n— buildAangifteCsv: a refund quarter shows 'terug te ontvangen'
   check("saldo itself stays signed (−210) in the object", a.saldo === -210);
 }
 
+console.log("\n— [ICP] rubriek 3b: stated correctly, and it can never change what you pay —");
+{
+  const sales: AangifteInput["salesByRate"] = [
+    { rate: 21, omzet: 5000, btw: 1050 },
+    { rate: 0, omzet: 3000, btw: 0 },
+  ];
+  const zonder = buildAangifte({ salesByRate: sales, btwVoorbelasting: 200, cashOmzetZonderBtw: 0 }, compl(), "Q3 2026");
+  const met = buildAangifte({ salesByRate: sales, btwVoorbelasting: 200, cashOmzetZonderBtw: 0, intraEuOmzet: 1200 }, compl(), "Q3 2026");
+
+  check("without intra-EU turnover all 0% stays in 1e",
+    zonder.rows.some((r) => r.code === "1e" && r.omzet === 3000) && !zonder.rows.some((r) => r.code === "3b"));
+  check("intra-EU turnover appears as its own rubriek 3b",
+    met.rows.some((r) => r.code === "3b" && r.omzet === 1200));
+  check("…and it LEAVES 1e, so it is never stated twice",
+    met.rows.some((r) => r.code === "1e" && r.omzet === 1800));
+  check("THE SAFETY PROPERTY: 5a is untouched", met.verschuldigd === zonder.verschuldigd);
+  check("…and so is 5b", met.voorbelasting === zonder.voorbelasting);
+  check("…and so is what the owner actually pays (5g)", met.saldo === zonder.saldo);
+  check("3b carries no BTW of its own", met.rows.find((r) => r.code === "3b")!.btw === 0);
+
+  const all = buildAangifte({ salesByRate: sales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: 3000 }, compl(), "Q3 2026");
+  check("when ALL the 0% is intra-EU, 1e disappears rather than showing €0",
+    all.rows.some((r) => r.code === "3b" && r.omzet === 3000) && !all.rows.some((r) => r.code === "1e"));
+
+  // A mismatch between the two sources must never invent turnover or drive 1e negative.
+  const over = buildAangifte({ salesByRate: sales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: 9999 }, compl(), "Q3 2026");
+  check("more intra-EU than there is 0%-turnover is capped, never invented",
+    over.rows.find((r) => r.code === "3b")!.omzet === 3000);
+  check("…and 1e can never go negative", !over.rows.some((r) => r.code === "1e" && r.omzet < 0));
+
+  check("a negative intra-EU figure is refused, not subtracted from 1e",
+    buildAangifte({ salesByRate: sales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: -500 }, compl(), "Q3 2026")
+      .rows.find((r) => r.code === "1e")!.omzet === 3000);
+
+  check("the CSV carries 3b with its Belastingdienst label",
+    /3b;Leveringen naar landen binnen de EU;1200,00/.test(buildAangifteCsv(met)));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

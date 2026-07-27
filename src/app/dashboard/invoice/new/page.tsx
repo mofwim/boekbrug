@@ -15,6 +15,9 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL } from '@/lib/format-nl'
+// [ICP] Same classifier the aangifte and the ICP-opgaaf use, so the invoice screen and the
+// quarter can never disagree about which customer counts as intra-EU.
+import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
@@ -438,6 +441,10 @@ function NewInvoicePageContent() {
   const [clientPostal, setClientPostal]   = useState(aiClientPostal)
   const [clientCity, setClientCity]       = useState(aiClientCity)
   const [clientBtw, setClientBtw]         = useState(aiClientBtw)
+  // [ICP] A customer number that names another EU member state but cannot have that length.
+  // classifyVatNumber is deliberately conservative — it only says "suspect" when the length is
+  // impossible for that country, so a valid number is never called wrong.
+  const euVatSuspect = classifyVatNumber(clientBtw).kind === 'eu_suspect'
 
   // ── Dates ────────────────────────────────────────────────────────────────────
   const today = new Date().toISOString().split('T')[0]
@@ -836,6 +843,14 @@ function NewInvoicePageContent() {
       setError('Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)')
       return
     }
+    // [ICP] A number that names another EU member state but cannot have that length is caught
+    // HERE, not three months later. This one invoice decides two things at once: whether the
+    // BTW may be verlegd, and whether the customer can go on the ICP-opgaaf — and a rejected
+    // opgaaf counts as never filed. Blocking here costs a retype; not blocking costs a quarter.
+    if (euVatSuspect) {
+      setError(`Het BTW-nummer ${clientBtw.trim()} heeft niet de lengte die dat EU-land gebruikt. Controleer het bij de klant (of via VIES) — het bepaalt of de BTW verlegd mag worden en of de klant in de ICP-opgaaf komt.`)
+      return
+    }
 
     const lineErrs = lines.map(l => ({
       description: !l.description.trim(),
@@ -1148,9 +1163,15 @@ function NewInvoicePageContent() {
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />
               </div>
               <div>
-                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)} />
+                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
                 {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
                   <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
+                )}
+                {/* [ICP] Said while the number is still on screen and still fixable. */}
+                {euVatSuspect && (
+                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>
+                    Deze lengte klopt niet voor dat EU-land — controleer via VIES. Het bepaalt de BTW-verlegging én de ICP-opgaaf.
+                  </p>
                 )}
               </div>
             </div>

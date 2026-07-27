@@ -344,6 +344,18 @@ console.log("\n— [KASSTELSEL] undated paid money blocks 'klaar' —");
   check("both art. 29 sides are reported, never netted into one figure", iClaw >= 0 && iBad >= 0);
   check("the liability is listed before the reclaim", iClaw < iBad);
 }
+{
+  // [ICP] An opgaaf that will be rejected counts as not filed — so it is raised. But charging
+  // BTW to an EU customer is sometimes right, so it never blocks.
+  const r = buildReadiness(perfect({ icpProblems: 2 }));
+  check("an unfilable EU sale surfaces as a risk", r.risks.some((x) => /ICP-opgaaf/.test(x.title)));
+  check("…counted, so the owner knows how many to look at", r.risks.some((x) => /^2 EU-verkopen/.test(x.title)));
+  check("one problem reads in the singular", buildReadiness(perfect({ icpProblems: 1 })).risks.some((x) => /^1 EU-verkoop kan/.test(x.title)));
+  check("it explains BOTH ways to resolve it", r.risks.some((x) => /VIES/.test(x.detail ?? "") && /verleg je de BTW/.test(x.detail ?? "")));
+  check("it never blocks the quarter", r.missing.length === 0 && r.status === "ready");
+  check("no EU problems → no risk", !buildReadiness(perfect({ icpProblems: 0 })).risks.some((x) => /ICP-opgaaf/.test(x.title)));
+  check("a quarter with no EU sales at all is untouched", !buildReadiness(perfect()).risks.some((x) => /ICP-opgaaf/.test(x.title)));
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
