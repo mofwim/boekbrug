@@ -18,6 +18,7 @@ import {
   kasboekToMatrix,
   type KasTurnoverDay,
   type KasEntry,
+  lowestDrawerPoint,
   type Quarter,
 } from "@/lib/kasboek";
 import { matrixToXlsxBytes } from "@/lib/xlsx-adapter";
@@ -75,5 +76,10 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ ok: true, kasboek: kb });
+  // [KAS-NEGATIEF] The lowest point the drawer reaches in this quarter, computed with the SAME
+  // witness the readiness gate blocks on (lowestDrawerPoint) — so the Kas page and the filing
+  // gate can never tell the owner two different stories. A negative kassaldo is physically
+  // impossible (you cannot pay out cash you never had) and is the single strongest signal the
+  // Belastingdienst uses to reject a cash administration. Null when it never goes below zero.
+  return NextResponse.json({ ok: true, kasboek: kb, lowestPoint: lowestDrawerPoint(kb) });
 }

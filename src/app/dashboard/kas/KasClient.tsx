@@ -106,6 +106,13 @@ export default function KasClient() {
   const [kb, setKb] = useState<Kasboek | null>(null)
   const [kbLoading, setKbLoading] = useState(false)
   const [kbPeriod, setKbPeriod] = useState<{ year: number; quarter: number } | null>(null)
+  // [KAS-NEGATIEF] The day this quarter's drawer went below zero, if it ever did. A negative
+  // kassaldo is physically impossible — you cannot pay out cash you never had — and it is the
+  // single strongest reason the Belastingdienst rejects a cash administration. The app already
+  // detected it and blocked the aangifte on it; it just never said so HERE, on the one screen
+  // where the owner can actually fix it. Same witness as the readiness gate, so the two can
+  // never disagree.
+  const [lowestPoint, setLowestPoint] = useState<{ date: string; balance: number } | null>(null)
 
   async function loadKasboek(period: { year: number; quarter: number } | null) {
     setKbLoading(true)
@@ -116,6 +123,7 @@ export default function KasClient() {
       if (res.ok && json.kasboek) {
         setKb(json.kasboek as Kasboek)
         setKbPeriod({ year: json.kasboek.year, quarter: json.kasboek.quarter })
+        setLowestPoint((json.lowestPoint ?? null) as { date: string; balance: number } | null)
       }
     } catch { /* silent — the panel shows a retry */ } finally { setKbLoading(false) }
   }
@@ -160,6 +168,16 @@ export default function KasClient() {
           else { setLoadError(true) }
         }
       } catch { if (!cancelled) setLoadError(true) } finally { if (!cancelled) setLoading(false) }
+
+      // [KAS-NEGATIEF] Then, separately and silently, ask this quarter's drawer whether it ever
+      // dipped below zero. A dip can happen mid-quarter and recover — the headline saldo would
+      // look perfectly healthy while the kasboek an inspector reads does not. Failure here is
+      // silent on purpose: it is a warning channel, never a reason to break the page.
+      try {
+        const kbRes = await fetch('/api/kasboek')
+        const kbJson = await kbRes.json()
+        if (!cancelled && kbRes.ok) setLowestPoint((kbJson.lowestPoint ?? null) as { date: string; balance: number } | null)
+      } catch { /* silent */ }
     })()
     return () => { cancelled = true }
   }, [])
@@ -324,6 +342,36 @@ export default function KasClient() {
             </div>
           )}
         </div>
+
+        {/* [KAS-NEGATIEF] The dip the headline saldo cannot show. A drawer can go below zero
+            mid-quarter and recover before today, so the big number above looks perfectly healthy
+            while the kasboek — the document an inspector actually reads, day by day — says money
+            was paid out that was never there. The app already knew (it blocks the aangifte on
+            exactly this witness); it just never said it on the screen where the owner can fix it.
+            The three causes are named, because "your cash is negative" without a next step is an
+            accusation, not help. */}
+        {lowestPoint && (
+          <div style={{ margin: '0 0 20px', background: '#FCECEA', border: `1px solid ${M3.error}`, borderRadius: 14, padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error }}>error</span>
+              <div style={{ fontSize: 14.5, fontWeight: 700, color: M3.error }}>
+                Je kas stond op {formatDate(lowestPoint.date)} op {eur.format(lowestPoint.balance)}
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: M3.onSurface, marginTop: 6, lineHeight: 1.5 }}>
+              Een kas kan niet onder nul komen — je kunt geen geld uitgeven dat er niet was. Voor de
+              Belastingdienst is dit het duidelijkste signaal dat er iets ontbreekt. Meestal is het één van deze drie:
+            </div>
+            <ul style={{ fontSize: 13, color: M3.onSurface, margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+              <li>het <strong>beginsaldo</strong> staat te laag (het geld dat al in de kassa lag)</li>
+              <li>een <strong>contante ontvangst</strong> is nog niet geboekt</li>
+              <li>een uitgave staat op de <strong>verkeerde datum</strong> — vóór het geld binnenkwam</li>
+            </ul>
+            <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 8 }}>
+              Zolang dit openstaat, blokkeert de app je BTW-aangifte — juist om te voorkomen dat je iets indient wat niet kan kloppen.
+            </div>
+          </div>
+        )}
 
         {/* [KAS-UPLOAD] Add a cash-paid invoice/receipt (photo or PDF). It goes to the verify queue
             pre-marked "contant betaald"; the human confirms and the payment lands in the kasboek
