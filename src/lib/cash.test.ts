@@ -1,5 +1,5 @@
 // [CASH-LEDGER] Pure node test — run: npx tsx src/lib/cash.test.ts
-import { computeCashBalance, computeDrawerBalance, isCashCategory, buildCashSettlement, computeCashSettlementSync, settlementGross } from "./cash";
+import { computeCashBalance, computeDrawerBalance, isCashCategory, buildCashSettlement, buildCashSettlements, computeCashSettlementSync, settlementGross } from "./cash";
 
 let passed = 0;
 let failed = 0;
@@ -73,7 +73,7 @@ console.log("\n— [CASH-SETTLE] computeCashSettlementSync (self-healing: create
   ];
   const sync = computeCashSettlementSync(paid, existing);
   check("creates the missing settlement (B), not the already-settled one (A)",
-    sync.toCreate.length === 1 && sync.toCreate[0].id === "B");
+    sync.toCreate.length === 1 && sync.toCreate[0].invoice_id === "B");
   check("no spurious update when the amount already matches", sync.toUpdate.length === 0);
   check("deletes the orphaned settlement (Z un-paid) — the reversal",
     sync.toDeleteIds.length === 1 && sync.toDeleteIds[0] === "e2");
@@ -168,6 +168,123 @@ console.log("\n— [CASH-DUP-HEAL] duplicate settlements for one invoice: keep t
   );
   check("duplicate deleted AND the kept entry heals its amount",
     dupDrift.toDeleteIds.includes("e2") && dupDrift.toUpdate.length === 1 && dupDrift.toUpdate[0].id === "e1");
+}
+
+console.log("\n— [CASH-INSTALMENT] one drawer movement per CASH PAYMENT, on its own day —");
+{
+  // The case the app used to refuse: a €1.210 supplier invoice paid from the till in two
+  // handovers. As ONE entry it claimed €1.210 left the drawer on 12 June — the balance was
+  // €500 too high for five weeks, and half the money moved out of Q2 into Q3.
+  const inv = {
+    id: "A", direction: "incoming" as const, total_inc_btw: 1210, invoice_number: "2026-045",
+    client_name: "Groothandel BV", payment_date: "2026-06-12",
+    cash_instalments: [
+      { id: "p2", amount: 710, paid_on: "2026-06-12" },
+      { id: "p1", amount: 500, paid_on: "2026-05-03" },
+    ],
+  };
+  const rows = buildCashSettlements(inv);
+  check("two cash payments → two drawer movements", rows.length === 2);
+  check("oldest first, on its OWN day", rows[0].entry_date === "2026-05-03" && rows[0].amount === 500);
+  check("...and the second on its own day", rows[1].entry_date === "2026-06-12" && rows[1].amount === 710);
+  check("together they equal the invoice", rows[0].amount + rows[1].amount === 1210);
+  check("each carries its instalment key", rows[0].settlement_id === "p1" && rows[1].settlement_id === "p2");
+  check("both lower the drawer (a purchase)", rows.every((r) => r.direction === "out"));
+  check("both are P&L-neutral", rows.every((r) => r.category === "betaling" && r.btw_rate === null));
+  check("the lines are told apart", /1e termijn van 2/.test(rows[0].description) && /2e termijn van 2/.test(rows[1].description));
+}
+{
+  // A cash SALE works the same way, raising the drawer.
+  const rows = buildCashSettlements({
+    id: "S", direction: "outgoing", total_inc_btw: 300, invoice_number: "20260007",
+    cash_instalments: [{ id: "q1", amount: 100, paid_on: "2026-04-01" }, { id: "q2", amount: 200, paid_on: "2026-04-08" }],
+  });
+  check("a cash sale in two parts raises the drawer twice", rows.length === 2 && rows.every((r) => r.direction === "in"));
+}
+{
+  // One instalment: exactly one entry, and no "1e termijn van 1" noise.
+  const rows = buildCashSettlements({
+    id: "B", total_inc_btw: 121, invoice_number: "F-9", client_name: "Sligro",
+    cash_instalments: [{ id: "s1", amount: 121, paid_on: "2026-05-03" }],
+  });
+  check("a single cash payment is still one entry", rows.length === 1 && rows[0].amount === 121);
+  check("...keyed to its instalment", rows[0].settlement_id === "s1");
+  check("...and reads plainly", !/termijn/.test(rows[0].description));
+}
+{
+  // No instalment rows at all (an invoice settled before instalments existed): the legacy
+  // aggregate, remainder-of-the-bank rule, with no key.
+  const rows = buildCashSettlements({ id: "L", total_inc_btw: 500, amount_paid: 300, payment_date: "2026-03-09" });
+  check("legacy invoice → one aggregate entry of the remainder", rows.length === 1 && rows[0].amount === 200);
+  check("...with no instalment key", rows[0].settlement_id === null);
+  check("nothing bookable → no rows at all", buildCashSettlements({ id: "Z", total_inc_btw: 0 }).length === 0);
+  check("a €0 instalment is not a movement",
+    buildCashSettlements({ id: "Z2", total_inc_btw: 100, cash_instalments: [{ id: "z", amount: 0, paid_on: "2026-01-01" }] }).length === 1);
+  check("buildCashSettlement still answers for one-payment callers",
+    buildCashSettlement({ id: "B", total_inc_btw: 121, cash_instalments: [{ id: "s1", amount: 121, paid_on: "2026-05-03" }] })?.amount === 121);
+}
+
+console.log("\n— [CASH-INSTALMENT] the reconcile keeps one entry per payment, and migrates the old one —");
+{
+  const inv = {
+    id: "A", total_inc_btw: 1210,
+    cash_instalments: [{ id: "p1", amount: 500, paid_on: "2026-05-03" }, { id: "p2", amount: 710, paid_on: "2026-06-12" }],
+  };
+  // First run after the migration: the drawer still holds ONE aggregate entry.
+  const migrate = computeCashSettlementSync([inv], [{ id: "old", invoice_id: "A", settlement_id: null, amount: 1210, entry_date: "2026-06-12" }]);
+  check("the legacy aggregate entry is replaced, not kept alongside",
+    migrate.toDeleteIds.length === 1 && migrate.toDeleteIds[0] === "old");
+  check("...by one entry per instalment", migrate.toCreate.length === 2);
+  check("...which together still equal the invoice",
+    migrate.toCreate.reduce((s, r) => s + r.amount, 0) === 1210);
+
+  // Steady state: both entries exist and match → nothing to do.
+  const settled = computeCashSettlementSync([inv], [
+    { id: "e1", invoice_id: "A", settlement_id: "p1", amount: 500, entry_date: "2026-05-03" },
+    { id: "e2", invoice_id: "A", settlement_id: "p2", amount: 710, entry_date: "2026-06-12" },
+  ]);
+  check("in sync → no create, no update, no delete",
+    settled.toCreate.length === 0 && settled.toUpdate.length === 0 && settled.toDeleteIds.length === 0);
+
+  // A second instalment added after the first was booked → only the new one is created.
+  const grew = computeCashSettlementSync([inv], [{ id: "e1", invoice_id: "A", settlement_id: "p1", amount: 500, entry_date: "2026-05-03" }]);
+  check("a new cash payment adds exactly one movement",
+    grew.toCreate.length === 1 && grew.toCreate[0].settlement_id === "p2" && grew.toDeleteIds.length === 0);
+
+  // An instalment the owner undid → its entry goes, the other stays.
+  const undone = computeCashSettlementSync(
+    [{ id: "A", total_inc_btw: 1210, cash_instalments: [{ id: "p1", amount: 500, paid_on: "2026-05-03" }] }],
+    [
+      { id: "e1", invoice_id: "A", settlement_id: "p1", amount: 500, entry_date: "2026-05-03" },
+      { id: "e2", invoice_id: "A", settlement_id: "p2", amount: 710, entry_date: "2026-06-12" },
+    ],
+  );
+  check("undoing one payment removes only ITS movement",
+    undone.toDeleteIds.length === 1 && undone.toDeleteIds[0] === "e2" && undone.toCreate.length === 0);
+
+  // A corrected instalment amount heals in place (no delete/recreate).
+  const heal = computeCashSettlementSync([inv], [
+    { id: "e1", invoice_id: "A", settlement_id: "p1", amount: 450, entry_date: "2026-05-03" },
+    { id: "e2", invoice_id: "A", settlement_id: "p2", amount: 710, entry_date: "2026-06-12" },
+  ]);
+  check("a corrected instalment heals its own entry only",
+    heal.toUpdate.length === 1 && heal.toUpdate[0].id === "e1" && heal.toUpdate[0].row.amount === 500);
+
+  // Duplicates on the SAME instalment are still collapsed.
+  const dup = computeCashSettlementSync([inv], [
+    { id: "e1", invoice_id: "A", settlement_id: "p1", amount: 500, entry_date: "2026-05-03" },
+    { id: "e1b", invoice_id: "A", settlement_id: "p1", amount: 500, entry_date: "2026-05-03" },
+    { id: "e2", invoice_id: "A", settlement_id: "p2", amount: 710, entry_date: "2026-06-12" },
+  ]);
+  check("a duplicate of one instalment is deleted, the rest untouched",
+    dup.toDeleteIds.length === 1 && dup.toDeleteIds[0] === "e1b" && dup.toCreate.length === 0);
+
+  // The invoice stops being cash-paid → every movement is reversed.
+  const reversed = computeCashSettlementSync([], [
+    { id: "e1", invoice_id: "A", settlement_id: "p1", amount: 500 },
+    { id: "e2", invoice_id: "A", settlement_id: "p2", amount: 710 },
+  ]);
+  check("un-paying the invoice reverses BOTH movements", reversed.toDeleteIds.length === 2);
 }
 
 console.log("\n— computeDrawerBalance (the ONE saldo shown on both the Kas page and the home) —");

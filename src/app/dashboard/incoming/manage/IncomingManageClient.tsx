@@ -636,7 +636,10 @@ export default function IncomingManageClient({
       }),
     })
     const json = await res.json().catch(() => ({} as { error?: string }))
-    const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
+    // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
+    // payment refused because the kasboek cannot date it per instalment yet) — the bare
+    // error CODE would reach the owner as gibberish.
+    const error = res.ok ? null : { message: (json as { detail?: string })?.detail || json?.error || 'Bijwerken mislukt' }
 
     if (error) {
       // rollback optimistic
@@ -1604,7 +1607,8 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
   const [amountText, setAmountText] = useState('')
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
   // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
-  const canPayCash = !entry || (entry.valid && entry.settlesFully)
+  // [CASH-INSTALMENT] A cash instalment is a real, dated drawer movement now — see cash.ts.
+  const canPayCash = !entry || entry.valid
   return (
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
@@ -1656,7 +1660,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
                       ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
                       : entry.settlesFully
                         ? 'Hiermee is de factuur volledig betaald.'
-                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} · een deelbetaling noteer je via Bank`}
+                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} — kies hieronder hoe je dit deel betaalde`}
                 </p>
               </>
             )}
@@ -1679,7 +1683,6 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
               <button
                 onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
                 disabled={!canPayCash}
-                title={!canPayCash && entry?.valid ? 'Een deelbetaling kan alleen via Bank worden genoteerd' : undefined}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant

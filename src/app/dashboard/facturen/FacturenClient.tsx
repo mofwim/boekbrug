@@ -410,7 +410,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       }),
     })
     const json = await res.json().catch(() => ({} as { error?: string }))
-    const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
+    // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
+    // payment refused because the kasboek cannot date it per instalment yet) — the bare
+    // error CODE would reach the owner as gibberish.
+    const error = res.ok ? null : { message: (json as { detail?: string })?.detail || json?.error || 'Bijwerken mislukt' }
     if (error) {
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       if (!isPartialIntent) updateOptimistic(ctx.id, { status: prev })
@@ -1439,8 +1442,12 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   // before typing, and a formatted string is exactly what a naive parser chokes on.
   const [amountText, setAmountText] = useState('')
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
-  // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
-  const canPayCash = !entry || (entry.valid && entry.settlesFully)
+  // [CASH-INSTALMENT] Cash may now settle PART of an invoice too. It could not before: the
+  // kasboek held one settlement entry per invoice, so two cash handovers collapsed into one
+  // entry dated to the last — the drawer wrong in between, and money able to jump a filed
+  // quarter. Each cash payment is now its own dated drawer movement, so the only rule left is
+  // the ordinary one: the amount has to be valid.
+  const canPayCash = !entry || entry.valid
   // [BOEK-029] CenteredModal — replaces bottom sheet for all dialogs
   return (
     <div
@@ -1524,7 +1531,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                       ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
                       : entry.settlesFully
                         ? 'Hiermee is de factuur volledig betaald.'
-                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} · een deelbetaling noteer je via Bank`}
+                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} — kies hieronder hoe je dit deel betaalde`}
                 </p>
               </>
             )}
@@ -1538,16 +1545,15 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
-              {/* [MANUAL-PARTIAL-PAY] Contant is disabled for a PARTIAL amount, on purpose. The
-                  kasboek holds exactly one settlement entry per invoice
-                  (cash_entries_one_settlement_per_invoice), so two cash instalments would collapse
-                  into one entry re-dated to the last — silently moving money out of an already
-                  filed quarter and making the daily drawer balance wrong in between. Partial via
-                  Bank has no such limit. Lift once the kasboek can hold one entry per instalment. */}
+              {/* [CASH-INSTALMENT] Contant accepts a PARTIAL amount now. It used to be refused
+                  because the kasboek held one settlement entry per invoice, so two cash handovers
+                  collapsed into a single entry re-dated to the last — the daily drawer balance
+                  wrong in between, and money able to move out of an already filed quarter. Each
+                  cash payment is now its own dated movement in the kasboek, so paying a supplier
+                  in two handovers from the till is simply recorded as what it was. */}
               <button
                 onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
                 disabled={!canPayCash}
-                title={!canPayCash && entry?.valid ? 'Een deelbetaling kan alleen via Bank worden genoteerd' : undefined}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>

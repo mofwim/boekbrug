@@ -57,6 +57,22 @@ export interface SettleableInvoice {
   // or entered the drawer, instead of inferring it from what the bank did NOT pay. Absent for
   // legacy invoices settled before manual instalments existed → the fallback below applies.
   cash_paid?: number | null;
+  // [CASH-INSTALMENT] The cash instalments themselves, each with its own day and amount. Present
+  // → the drawer gets ONE entry PER instalment, because that is what physically happened: €500
+  // out of the till on 3 May and €710 on 12 June are two movements, not one of €1.210 on the
+  // later date. Summing them into a single entry made the balance wrong for every day in
+  // between and could move money across an already-filed quarter.
+  cash_instalments?: CashInstalment[];
+}
+
+/** One recorded cash payment against an invoice (a bank_tx_invoices row with method 'kas'). */
+export interface CashInstalment {
+  /** bank_tx_invoices.id — the stable identity of this movement, and the kasboek entry's key. */
+  id: string;
+  /** Magnitude actually handed over / received. */
+  amount: number;
+  /** ISO day the money moved. Null only on a malformed legacy row. */
+  paid_on?: string | null;
 }
 
 /** The CASH the owner actually handed over for this invoice. Pure.
@@ -94,6 +110,8 @@ export function settlementGross(inv: SettleableInvoice): number | null {
 
 export interface CashSettlementRow {
   invoice_id: string;
+  /** [CASH-INSTALMENT] The instalment this movement is, or null for a legacy aggregate entry. */
+  settlement_id: string | null;
   direction: "in" | "out";
   amount: number;
   category: "betaling";
@@ -102,29 +120,95 @@ export interface CashSettlementRow {
   description: string;
 }
 
-/** The kasboek settlement entry for one cash-paid invoice, or null when its total is unusable
- *  (never write a €0/garbage settlement). Pure. Direction follows the invoice: an outgoing (sales)
- *  invoice paid in cash raises the drawer ('in'); an incoming (purchase) invoice lowers it ('out').
- *  Both are category 'betaling' (P&L-neutral) — the omzet/cost already came from the invoice. */
-export function buildCashSettlement(inv: SettleableInvoice): CashSettlementRow | null {
-  const amount = settlementGross(inv);
-  if (amount === null) return null;
+/** Round to cents; the drawer is counted in coins, not in float dust. */
+function cents(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** How a settlement reads in the kasboek. Direction follows the invoice: an outgoing (sales)
+ *  invoice paid in cash raises the drawer ('in'); an incoming (purchase) invoice lowers it
+ *  ('out'). Both are category 'betaling' (P&L-neutral) — the omzet/cost already came from the
+ *  invoice. `part` numbers a movement when there are several ("1e termijn"), so the owner can
+ *  tell them apart in a list of otherwise identical lines. */
+function settlementDescription(inv: SettleableInvoice, part?: { index: number; of: number }): string {
   const outgoing = inv.direction === "outgoing";
-  const dir: "in" | "out" = outgoing ? "in" : "out";
   const verb = outgoing ? "Ontvangen (contant) factuur" : "Betaling factuur";
   const label = [verb, inv.invoice_number ?? ""].join(" ").trim();
-  const desc = inv.client_name ? `${label} — ${inv.client_name}` : label;
-  const iso =
-    inv.payment_date && /^\d{4}-\d{2}-\d{2}/.test(inv.payment_date) ? inv.payment_date.slice(0, 10) : undefined;
-  return {
-    invoice_id: inv.id,
-    direction: dir,
-    amount,
-    category: "betaling",
-    btw_rate: null,
-    ...(iso ? { entry_date: iso } : {}),
-    description: desc,
-  };
+  const withParty = inv.client_name ? `${label} — ${inv.client_name}` : label;
+  return part && part.of > 1 ? `${withParty} (${part.index}e termijn van ${part.of})` : withParty;
+}
+
+function isoDay(value: string | null | undefined): string | undefined {
+  return value && /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : undefined;
+}
+
+/**
+ * [CASH-INSTALMENT] Every drawer movement this invoice caused — one row per cash instalment.
+ *
+ * This is the heart of the change. A cash payment is a physical event with a day and an amount;
+ * two payments are two events. Aggregating them into one entry (the old model, forced by a
+ * one-per-invoice unique index) made the kasboek claim the money left the till all at once, on
+ * the day of the LAST instalment — so the balance was wrong for every day in between and part of
+ * the money could jump into a different, possibly already-filed, quarter.
+ *
+ * Falls back to a single aggregate row when no instalments are recorded: invoices settled before
+ * instalments existed, where the only truth available is "gross minus what the bank paid".
+ * Returns [] when there is nothing usable to book — a €0/negative gross, or a fully bank-settled
+ * invoice — because a garbage entry in the kasboek is worse than none.
+ */
+export function buildCashSettlements(inv: SettleableInvoice): CashSettlementRow[] {
+  const outgoing = inv.direction === "outgoing";
+  const dir: "in" | "out" = outgoing ? "in" : "out";
+
+  const instalments = (inv.cash_instalments ?? [])
+    .filter((p) => p && p.id && cents(Math.abs(Number(p.amount) || 0)) > 0.005)
+    .map((p) => ({ id: p.id, amount: cents(Math.abs(Number(p.amount))), paid_on: isoDay(p.paid_on) }));
+
+  if (instalments.length > 0) {
+    // Oldest first, so the numbering in the description matches the order the money moved.
+    instalments.sort((a, b) => (a.paid_on ?? "").localeCompare(b.paid_on ?? "") || a.id.localeCompare(b.id));
+    return instalments.map((p, i) => ({
+      invoice_id: inv.id,
+      settlement_id: p.id,
+      direction: dir,
+      amount: p.amount,
+      category: "betaling" as const,
+      btw_rate: null,
+      // An instalment without a date would silently land on "today" in the ledger; fall back to
+      // the invoice's payment date, which is at least the right neighbourhood.
+      ...((p.paid_on ?? isoDay(inv.payment_date)) ? { entry_date: (p.paid_on ?? isoDay(inv.payment_date))! } : {}),
+      description: settlementDescription(inv, { index: i + 1, of: instalments.length }),
+    }));
+  }
+
+  const amount = settlementGross(inv);
+  if (amount === null) return [];
+  const iso = isoDay(inv.payment_date);
+  return [
+    {
+      invoice_id: inv.id,
+      settlement_id: null,
+      direction: dir,
+      amount,
+      category: "betaling" as const,
+      btw_rate: null,
+      ...(iso ? { entry_date: iso } : {}),
+      description: settlementDescription(inv),
+    },
+  ];
+}
+
+/** The single aggregate settlement — kept for the legacy path and for callers that only ever
+ *  deal with a one-payment invoice. Returns null when nothing should be booked. */
+export function buildCashSettlement(inv: SettleableInvoice): CashSettlementRow | null {
+  const rows = buildCashSettlements(inv);
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return rows[0];
+  // Several instalments: report their sum with no settlement key, which is precisely what the
+  // old model wrote. Only a caller that has not been taught about instalments asks this.
+  const total = cents(rows.reduce((s, r) => s + r.amount, 0));
+  const last = rows[rows.length - 1];
+  return { ...last, settlement_id: null, amount: total, description: settlementDescription(inv) };
 }
 
 /**
@@ -138,20 +222,26 @@ export function buildCashSettlement(inv: SettleableInvoice): CashSettlementRow |
 export interface ExistingSettlement {
   id: string;
   invoice_id: string | null;
+  /** [CASH-INSTALMENT] Which instalment this entry is. NULL on a legacy aggregate entry. */
+  settlement_id?: string | null;
   amount?: number | null;
   entry_date?: string | null;
   direction?: "in" | "out" | null;
 }
 
+/** A legacy aggregate entry has no instalment key; fold it onto one bucket so it stays unique
+ *  per invoice (mirrors the coalesce in the database's unique index). */
+const AGGREGATE_KEY = "";
+
 export function computeCashSettlementSync(
   paidKasInvoices: SettleableInvoice[],
   existing: ExistingSettlement[],
-): { toCreate: SettleableInvoice[]; toUpdate: Array<{ id: string; inv: SettleableInvoice }>; toDeleteIds: string[] } {
+): { toCreate: CashSettlementRow[]; toUpdate: Array<{ id: string; row: CashSettlementRow }>; toDeleteIds: string[] } {
   const paidIds = new Set(paidKasInvoices.map((i) => i.id));
-  // [CASH-DUP-HEAL] Track EVERY linked entry per invoice, not "last wins". A duplicate 'betaling'
-  // row (a pre-index race, dirty legacy data) double-counts the drawer forever if the reconcile can
-  // only see one of them — the extras were invisible to heal AND excluded from delete. Now the
-  // first entry is the one we keep/heal; every extra is deleted (the self-healing contract).
+  // [CASH-DUP-HEAL] Track EVERY linked entry, keyed by invoice AND instalment, not "last wins". A
+  // duplicate 'betaling' row (a pre-index race, dirty legacy data) double-counts the drawer
+  // forever if the reconcile can only see one of them — the extras were invisible to heal AND
+  // excluded from delete. The first entry per key is kept/healed; every extra is deleted.
   const linkedByInvoice = new Map<string, ExistingSettlement[]>();
   for (const e of existing) {
     if (!e.invoice_id) continue;
@@ -160,39 +250,54 @@ export function computeCashSettlementSync(
     else linkedByInvoice.set(e.invoice_id, [e]);
   }
 
-  const toCreate: SettleableInvoice[] = [];
-  const toUpdate: Array<{ id: string; inv: SettleableInvoice }> = [];
+  const toCreate: CashSettlementRow[] = [];
+  const toUpdate: Array<{ id: string; row: CashSettlementRow }> = [];
   const toDeleteIds: string[] = [];
+
   for (const inv of paidKasInvoices) {
-    const s = buildCashSettlement(inv);
+    const wanted = buildCashSettlements(inv);
     const linked = linkedByInvoice.get(inv.id) ?? [];
-    if (!s) {
-      // [CASH-STALE-DELETE] No usable settlement amount (gross edited to €0/negative, or the bank
-      // has since settled the full amount). NEVER create one — but a previously-linked entry must
-      // not survive either: the old `continue` left it untouched (also excluded from the orphan
-      // delete below because the invoice IS still paid-kas), so the drawer stayed permanently
-      // wrong by the stale amount with no future reconcile ever fixing it. Delete it — that IS
-      // the self-healing contract.
+
+    // [CASH-STALE-DELETE] Nothing to book (gross edited to €0/negative, or the bank has since
+    // settled the whole amount). NEVER create one — and a previously-linked entry must not
+    // survive either: leaving it would keep the drawer permanently wrong by the stale amount,
+    // with no future reconcile ever fixing it. Deleting it IS the self-healing contract.
+    if (wanted.length === 0) {
       for (const e of linked) toDeleteIds.push(e.id);
       continue;
     }
-    if (linked.length === 0) {
-      toCreate.push(inv);
-      continue;
+
+    // Index what exists by instalment key, keeping the first of any duplicates.
+    const byKey = new Map<string, ExistingSettlement>();
+    for (const e of linked) {
+      const key = e.settlement_id ?? AGGREGATE_KEY;
+      if (byKey.has(key)) toDeleteIds.push(e.id); // duplicate on the same key
+      else byKey.set(key, e);
     }
-    const existingEntry = linked[0];
-    // [CASH-DUP-HEAL] One settlement per invoice — every duplicate beyond the first is deleted.
-    for (const extra of linked.slice(1)) toDeleteIds.push(extra.id);
-    // [CASH-SETTLE] Heal a stale entry: if the invoice's gross or payment date was corrected
-    // after it was paid (the confirm route persists a re-reviewed amount on pay), the linked
-    // 'betaling' entry must move too — otherwise the kas balance is permanently off by the delta.
-    const amountDrift =
-      typeof existingEntry.amount === "number" ? Math.abs(existingEntry.amount - s.amount) > 0.005 : true;
-    const dateDrift = !!s.entry_date && (existingEntry.entry_date ?? null) !== s.entry_date;
-    // [CASH-SETTLE-BIDIR] Heal the direction too: if an invoice's direction was corrected (or a
-    // legacy 'out' entry predates the bidirectional model), the drawer would move the wrong way.
-    const directionDrift = !!existingEntry.direction && existingEntry.direction !== s.direction;
-    if (amountDrift || dateDrift || directionDrift) toUpdate.push({ id: existingEntry.id, inv });
+
+    for (const row of wanted) {
+      const key = row.settlement_id ?? AGGREGATE_KEY;
+      const found = byKey.get(key);
+      if (!found) {
+        toCreate.push(row);
+        continue;
+      }
+      byKey.delete(key);
+      // [CASH-SETTLE] Heal a stale entry: an invoice's gross, date or direction can be corrected
+      // after it was paid (the confirm route persists a re-reviewed amount), and the drawer must
+      // follow — otherwise the kas balance is off by the delta forever.
+      const amountDrift = typeof found.amount === "number" ? Math.abs(found.amount - row.amount) > 0.005 : true;
+      const dateDrift = !!row.entry_date && (found.entry_date ?? null) !== row.entry_date;
+      // [CASH-SETTLE-BIDIR] A corrected direction (or a legacy 'out' entry from before the
+      // bidirectional model) would move the drawer the wrong way.
+      const directionDrift = !!found.direction && found.direction !== row.direction;
+      if (amountDrift || dateDrift || directionDrift) toUpdate.push({ id: found.id, row });
+    }
+
+    // [CASH-INSTALMENT] Whatever is left over belongs to no current instalment: the legacy
+    // aggregate entry of an invoice that now has per-instalment rows (this is the migration, done
+    // silently and exactly once), or the entry of an instalment the owner has since undone.
+    for (const orphan of byKey.values()) toDeleteIds.push(orphan.id);
   }
 
   for (const e of existing) {

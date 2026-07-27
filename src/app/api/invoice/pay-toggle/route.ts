@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { reconcileCashSettlements } from "@/lib/cash-settle";
+import { reconcileCashSettlements, cashInstalmentsSupported } from "@/lib/cash-settle";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // [MANUAL-PARTIAL-PAY] one shape for a booked payment — the write path and the replay path
 // must answer identically, or the clients cannot tell a deelbetaling from a settlement.
@@ -94,18 +94,21 @@ export async function POST(req: NextRequest) {
       payAmount = Math.round(parsed * 100) / 100;
     }
 
-    // [MANUAL-PARTIAL-PAY] A PARTIAL payment may not be booked as cash. The kasboek holds
-    // exactly one settlement entry per invoice (cash_entries_one_settlement_per_invoice), so a
-    // second cash instalment collapses into that entry and re-dates it to the latest one —
-    // retroactively moving money out of an already-filed quarter and making the daily drawer
-    // balance wrong in between. Bank instalments carry no such limit. The UI disables the
-    // Contant button for a partial amount; this is the server-side twin, because the kasboek
-    // must not depend on the client behaving. Lift both once cash_entries can hold one row per
-    // instalment. NOTE: a partial payment is only detectable here when an amount was sent —
-    // an empty amount always settles the whole balance, which cash handles fine.
-    if (payAmount != null && paymentMethod === "kas") {
+    // [CASH-INSTALMENT] A partial CASH payment used to be refused here. The reason was real: the
+    // kasboek held exactly one settlement entry per invoice, so a second cash instalment
+    // collapsed into that entry and re-dated it to the latest one — retroactively moving money
+    // out of an already-filed quarter and leaving the daily drawer balance wrong in between.
+    // cash_entries now carries settlement_id, one row per instalment with its own date and
+    // amount (cash_settlement_per_instalment.sql), so the refusal is gone: paying a supplier
+    // from the till in two handovers is recorded as the two movements it was.
+    //
+    // [DEPLOY-SAFE] …but only once that column really exists. Code ships before a migration is
+    // applied, and accepting the payment in that window would be the worst of both: the
+    // instalment is recorded on the invoice while the drawer never moves, so the kasboek silently
+    // understates what left the till. Until the migration lands we keep the old, honest refusal.
+    if (payAmount != null && paymentMethod === "kas" && !(await cashInstalmentsSupported(supabase))) {
       return NextResponse.json(
-        { error: "partial_cash_unsupported", detail: "Een deelbetaling kan alleen via bank worden genoteerd." },
+        { error: "partial_cash_unsupported", detail: "Een deelbetaling kan op dit moment alleen via bank worden genoteerd." },
         { status: 400 }
       );
     }
