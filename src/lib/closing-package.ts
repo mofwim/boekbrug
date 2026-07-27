@@ -61,6 +61,9 @@ import { fetchAllRows } from "./supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
 import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
+// [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — the same helper the aangifte
+// and the result engine use, so the accountant's package cannot show different rubrieken.
+import { fetchRateShares } from "./btw-rate-split-fetch";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1401,11 +1404,20 @@ export async function buildClosingPackageZip(args: {
   // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
   // package never double-counts a covered-day card settlement.
   const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map(toResultBankTx);
+  // [RUBRIEK-SPLIT] The accountant's package must show the same rubrieken as the aangifte the
+  // owner files, so a mixed-rate sales invoice is split by its own lines here too. Only invoices
+  // whose lines add up to their header are split; everything else keeps the header-derived rate.
+  const rateSharesByInvoice = await fetchRateShares(
+    supabase as unknown as Parameters<typeof fetchRateShares>[0],
+    (all as Array<{ id?: string; direction: string | null; total_ex_btw: number | null; btw_amount: number | null }>)
+      .filter((i) => i.direction !== "incoming"),
+  );
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
     status: i.status,
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
+    rate_lines: (i as { id?: string }).id ? rateSharesByInvoice.get((i as { id: string }).id) ?? null : null,
   }));
   // [COVERED-BUFFER] Build from the BUFFERED set (incl. up to 5 pre-quarter days) so a
   // settleExact card line paying a previous-quarter till day is suppressed — matching aangifte.
@@ -1420,7 +1432,7 @@ export async function buildClosingPackageZip(args: {
   // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
   // a computed figure). Default factuur → byte-identical.
   const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
-  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, kasResolution.opts);
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...kasResolution.opts, rateSharesByInvoice });
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),

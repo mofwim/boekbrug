@@ -23,7 +23,35 @@
 // this function actually produced.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildCashSettlement, computeCashSettlementSync, type SettleableInvoice } from "@/lib/cash";
+import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment } from "@/lib/cash";
+
+// [CASH-INSTALMENT][DEPLOY-SAFE] Per-instalment kasboek entries need cash_entries.settlement_id
+// (cash_settlement_per_instalment.sql). Code ships before a migration is applied — that is normal
+// — but here the naive version does REAL damage in that window: selecting a column that does not
+// exist fails the read, the reconcile returns early, and NOTHING is created, healed or reversed.
+// The drawer would quietly freeze for every cash-paid invoice until someone ran the SQL.
+//
+// So the capability is probed instead of assumed, and without it the module behaves EXACTLY as it
+// did before this change: one aggregate entry per invoice, no settlement_id written anywhere. The
+// day the migration lands, per-instalment entries switch on by themselves and the reconcile heals
+// the old aggregates into them.
+//
+// Cached only when TRUE: a false answer must stay re-checkable, or a server instance that started
+// before the migration would keep the old behaviour until it happened to restart.
+let settlementColumnKnown = false;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function cashInstalmentsSupported(supabase: SupabaseClient<any>): Promise<boolean> {
+  if (settlementColumnKnown) return true;
+  try {
+    const { error } = await supabase.from("cash_entries").select("settlement_id").limit(1);
+    if (error) return false;
+    settlementColumnKnown = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * [MATCH-BUTTON] What this reconcile actually changed in the drawer. Every existing caller
@@ -50,6 +78,8 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
   let updated = 0;
   let deleted = 0;
   try {
+    // [DEPLOY-SAFE] Without the column, run the pre-instalment model unchanged (see above).
+    const perInstalment = await cashInstalmentsSupported(supabase);
     // Invoices settled in cash, BOTH directions: an incoming (purchase) paid in cash (drawer ↓)
     // AND an outgoing (sales) invoice paid in cash (drawer ↑). Owner-scoped via the RLS .or so a
     // cash sale finally reaches the drawer instead of being invisible. Both stay P&L-neutral.
@@ -64,20 +94,29 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     //  2. The cash amount comes from those instalment rows (method='kas'), not from
     //     gross − amount_paid: amount_paid now includes cash too, so the old formula would
     //     compute €0 for a fully cash-paid invoice and the reconciler would DELETE its entry.
+    // [CASH-INSTALMENT] Read the instalments THEMSELVES, not just their sum: each one becomes its
+    // own drawer movement, on its own day. Summing them (the old model) made the kasboek claim
+    // the whole amount left the till on the date of the last payment.
     const { data: kasLinkRows } = await supabase
       .from("bank_tx_invoices")
-      .select("invoice_id, amount_applied, paid_on")
+      .select("id, invoice_id, amount_applied, paid_on")
       .eq("user_id", userId)
       .eq("method", "kas")
       .is("transaction_id", null);
     const cashByInvoice = new Map<string, number>();
+    const instalmentsByInvoice = new Map<string, CashInstalment[]>();
     const lastCashDate = new Map<string, string>();
-    for (const l of (kasLinkRows ?? []) as Array<{ invoice_id: string; amount_applied: number | null; paid_on: string | null }>) {
+    for (const l of (kasLinkRows ?? []) as Array<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>) {
       if (!l.invoice_id) continue;
-      cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + Math.abs(Number(l.amount_applied) || 0));
-      // The drawer entry is dated by the LAST cash instalment — the day the till last moved.
-      if (l.paid_on && (!lastCashDate.get(l.invoice_id) || l.paid_on > lastCashDate.get(l.invoice_id)!)) {
-        lastCashDate.set(l.invoice_id, l.paid_on.slice(0, 10));
+      const amount = Math.abs(Number(l.amount_applied) || 0);
+      cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + amount);
+      const list = instalmentsByInvoice.get(l.invoice_id) ?? [];
+      list.push({ id: l.id, amount, paid_on: l.paid_on ? l.paid_on.slice(0, 10) : null });
+      instalmentsByInvoice.set(l.invoice_id, list);
+      // Kept for the pre-migration model: it dates its one entry by the last cash instalment.
+      const day = l.paid_on ? l.paid_on.slice(0, 10) : null;
+      if (day && (!lastCashDate.get(l.invoice_id) || day > lastCashDate.get(l.invoice_id)!)) {
+        lastCashDate.set(l.invoice_id, day);
       }
     }
 
@@ -107,7 +146,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
     // entry_date + direction so a corrected invoice amount/date/direction can HEAL the linked entry.
     const { data: entryRows, error: entryErr } = await supabase
       .from("cash_entries")
-      .select("id, invoice_id, amount, entry_date, direction")
+      .select(perInstalment ? "id, invoice_id, settlement_id, amount, entry_date, direction" : "id, invoice_id, amount, entry_date, direction")
       .eq("user_id", userId)
       .eq("category", "betaling")
       .not("invoice_id", "is", null);
@@ -120,33 +159,39 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         // [MANUAL-PARTIAL-PAY] Authoritative cash portion (undefined → settlementGross falls
         // back to the legacy gross − amount_paid inference for pre-instalment invoices).
         cash_paid: cashByInvoice.has(r.id) ? cashByInvoice.get(r.id) : undefined,
-        // Date the drawer entry by the last cash instalment when we have one; the invoice's
-        // payment_date can be the day a BANK instalment landed, which is a different day.
-        payment_date: lastCashDate.get(r.id) ?? r.payment_date ?? null,
+        // [CASH-INSTALMENT] …and the instalments behind it, each of which becomes its own drawer
+        // movement on its own day. The invoice's payment_date is only the fallback: it can be the
+        // day a BANK instalment landed, which is a different day from any cash handover.
+        cash_instalments: perInstalment ? instalmentsByInvoice.get(r.id) : undefined,
+        // [DEPLOY-SAFE] In the old model the single entry is dated by the LAST cash instalment —
+        // the day the till last moved — which is what it always did. With per-instalment entries
+        // each one carries its own date and this is only the fallback.
+        payment_date: (perInstalment ? null : lastCashDate.get(r.id)) ?? r.payment_date ?? null,
       })) as SettleableInvoice[];
-    const existing = (entryRows ?? []) as Array<{ id: string; invoice_id: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
+    // The projection differs by capability, so PostgREST's inferred row type does too — read it
+    // back through `unknown` rather than teach the type system about a runtime-chosen select.
+    const existing = (entryRows ?? []) as unknown as Array<{ id: string; invoice_id: string | null; settlement_id?: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;
     const { toCreate, toUpdate, toDeleteIds } = computeCashSettlementSync(paid, existing);
 
     // Create the missing settlements. Insert one at a time so a single bad row (or the unique
     // index catching a race) never aborts the rest.
-    for (const inv of toCreate) {
-      const s = buildCashSettlement(inv);
-      if (!s) continue;
+    for (const row of toCreate) {
       const { error } = await supabase.from("cash_entries").insert({
         user_id: userId,
-        direction: s.direction,
-        amount: s.amount,
-        category: s.category,
-        btw_rate: s.btw_rate,
-        description: s.description,
-        invoice_id: s.invoice_id,
-        ...(s.entry_date ? { entry_date: s.entry_date } : {}),
+        direction: row.direction,
+        amount: row.amount,
+        category: row.category,
+        btw_rate: row.btw_rate,
+        description: row.description,
+        invoice_id: row.invoice_id,
+        ...(perInstalment ? { settlement_id: row.settlement_id } : {}),
+        ...(row.entry_date ? { entry_date: row.entry_date } : {}),
       });
       if (error) {
         // Unique-index conflict (a concurrent reconcile already created it) is benign. NOT counted
         // as created either — the entry exists, but this run did not write it.
         if (!/duplicate key|unique/i.test(error.message)) {
-          console.error("[CASH-SETTLE] settlement insert failed (non-fatal)", { invoice: inv.id, error: error.message });
+          console.error("[CASH-SETTLE] settlement insert failed (non-fatal)", { invoice: row.invoice_id, error: error.message });
         }
       } else {
         created += 1;
@@ -155,16 +200,14 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
 
     // [CASH-SETTLE] Heal stale settlements: the invoice's gross or payment date changed after it
     // was cash-paid, so the linked entry must move too — else the kas balance drifts permanently.
-    for (const { id, inv } of toUpdate) {
-      const s = buildCashSettlement(inv);
-      if (!s) continue;
+    for (const { id, row } of toUpdate) {
       const { error } = await supabase
         .from("cash_entries")
         .update({
-          amount: s.amount,
-          direction: s.direction, // [CASH-SETTLE-BIDIR] heal the drawer direction too
-          description: s.description,
-          ...(s.entry_date ? { entry_date: s.entry_date } : {}),
+          amount: row.amount,
+          direction: row.direction, // [CASH-SETTLE-BIDIR] heal the drawer direction too
+          description: row.description,
+          ...(row.entry_date ? { entry_date: row.entry_date } : {}),
         })
         .eq("id", id)
         .eq("user_id", userId);

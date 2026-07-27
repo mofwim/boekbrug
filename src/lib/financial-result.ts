@@ -20,6 +20,8 @@ import { nearestLegalRate } from "./btw-rate";
 import { isPosPayoutDescription } from "./bank-identity";
 import { computeSettlementSlices, type SettlementEvent, type PriorSettled } from "./kas-payment-events";
 import type { VatScheme } from "./vat-scheme";
+// [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — see btw-rate-split.ts.
+import { splitSliceByShares, type RateShare } from "./btw-rate-split";
 
 // [KASSTELSEL] Optional cash-basis inputs. When scheme==='kas', the invoice leg books the
 // quarter's SETTLEMENT slices (BTW on the paid date) instead of the full invoice on its
@@ -29,6 +31,10 @@ export interface ComputeOpts {
   scheme?: VatScheme;
   settlements?: SettlementEvent[];
   priorByInvoice?: Map<string, PriorSettled>;
+  // [RUBRIEK-SPLIT] Per invoice: its omzet per BTW rate, for the mixed-rate sales invoices whose
+  // header cannot express it. Under kasstelsel each payment then books a proportional share of
+  // every rate instead of one blended one. Absent → the header-derived rate, as before.
+  rateSharesByInvoice?: Map<string, RateShare[]>;
 }
 
 export interface ResultInvoice {
@@ -36,6 +42,13 @@ export interface ResultInvoice {
   status: string | null;
   total_ex_btw: number | null;
   btw_amount: number | null;
+  // [RUBRIEK-SPLIT] The invoice's omzet per BTW rate, when its lines say more than its header
+  // can. Only for SALES: the aangifte splits omzet across rubriek 1a/1b/1c, and a header-derived
+  // blend puts a mixed-rate invoice (21% materials + 9% labour) entirely in one of them. The
+  // buckets are validated against the header before they get here (rateSharesFromLines), so
+  // using them can only move omzet BETWEEN rubrieken, never change a total. Absent → the
+  // header derivation below, unchanged, which is exact for a single-rate invoice.
+  rate_lines?: RateShare[] | null;
 }
 export interface ResultBankTx {
   amount: number | null;       // signed: + credit, − debit
@@ -305,7 +318,13 @@ export function computeResult(
       if (s.direction === "outgoing") {
         omzet += s.ex;
         btwVerschuldigd += s.btw;
-        addSale(s.rate, s.ex, s.btw);
+        // [RUBRIEK-SPLIT] A payment settles a FRACTION of the invoice, and that fraction carries
+        // a proportional share of every rate on it — a €500 instalment on a mixed 21%/9% invoice
+        // is not 21% money. Split it the same way the accrual branch does, so both schemes put
+        // the omzet in the same rubriek. The pieces re-sum to this slice exactly.
+        const mix = splitSliceByShares(opts.rateSharesByInvoice?.get(s.invoiceId), s.ex, s.btw);
+        if (mix) for (const part of mix) addSale(part.rate, part.ex, part.btw);
+        else addSale(s.rate, s.ex, s.btw);
       } else {
         kosten += s.ex;
         btwVoorbelasting += s.btw;
@@ -319,13 +338,22 @@ export function computeResult(
       if (inv.direction === "outgoing" && OUTGOING_OK.has(st)) {
         omzet += ex;
         btwVerschuldigd += btw;
-        // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
-        // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
-        // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
-        // instead of falling to rate-0 and over-declaring BTW.
-        // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
-        // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
-        addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
+        // [RUBRIEK-SPLIT] When the invoice's own lines carry more than one rate, book each rate
+        // where it belongs. The buckets were checked against this header before they arrived, so
+        // the omzet and BTW added above are untouched — only their rubriek changes. Without this
+        // a €1.000 @ 21% + €1.000 @ 9% invoice blends to 15%, snaps to 21%, and declares the
+        // whole €2.000 in rubriek 1a.
+        if (inv.rate_lines && inv.rate_lines.length > 1) {
+          for (const share of inv.rate_lines) addSale(share.rate, share.ex, share.btw);
+        } else {
+          // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
+          // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
+          // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
+          // instead of falling to rate-0 and over-declaring BTW.
+          // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
+          // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
+          addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
+        }
       } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
         kosten += ex;
         btwVoorbelasting += btw;
