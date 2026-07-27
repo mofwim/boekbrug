@@ -94,6 +94,8 @@ COMMIT;
 --   -- Verwacht: precies één rij, cmd = SELECT.
 --
 --   -- 3. Dezelfde Stripe-sessie kan geen twee kluizen opleveren.
+--   --    (Dit blok SCHRIJFT wel echt. Pak het in een transactie zodat er niets achterblijft:
+--   --     begin; <de twee inserts>; rollback;  — de tweede hoort te falen.)
 --   insert into public.kluis_subscriptions
 --     (user_id, keep_through_year, years_purchased, stripe_session_id)
 --   values ((select id from public.profiles limit 1), 2033, 7, 'cs_test_dubbel');

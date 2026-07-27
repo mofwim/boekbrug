@@ -55,26 +55,18 @@ COMMENT ON POLICY invoice_lines_select_accountant ON public.invoice_lines IS
 COMMIT;
 
 -- =====================================================================
--- CONTROLE (apart draaien na het toepassen):
+-- CONTROLE (apart draaien na het toepassen)
 --
---   -- 1. De policy staat er en noemt `shared`, niet `paid`.
+-- Leest de catalogus, dus werkt gewoon in de Supabase SQL-editor (service_role).
+--
 --   select policyname,
---          pg_get_expr(polqual, polrelid) ilike '%shared%' as gebruikt_shared,
---          pg_get_expr(polqual, polrelid) ilike '%paid%'   as gebruikt_nog_paid
---     from pg_policies p
---     join pg_policy   pol on pol.polname = p.policyname
---     join pg_class    c   on c.oid = pol.polrelid and c.relname = 'invoice_lines'
---    where p.schemaname = 'public' and p.tablename = 'invoice_lines'
---      and p.policyname = 'invoice_lines_select_accountant';
---   -- Verwacht: gebruikt_shared = true, gebruikt_nog_paid = false
+--          qual ilike '%shared%' as gebruikt_shared,
+--          qual ilike '%paid%'   as gebruikt_nog_paid
+--     from pg_policies
+--    where schemaname = 'public'
+--      and tablename  = 'invoice_lines'
+--      and policyname = 'invoice_lines_select_accountant';
 --
---   -- 2. Als een GEKOPPELDE boekhouder (niet in de SQL-editor): een verstuurde, niet
---   --    betaalde factuur van een klant hoort nu regels te hebben.
---   select i.invoice_number, i.status, count(l.id) as regels
---     from public.invoices i
---     left join public.invoice_lines l on l.invoice_id = i.id
---    where i.shared = true and i.status <> 'paid'
---    group by 1, 2
---    limit 5;
---   -- Verwacht: regels > 0 waar de factuur regels heeft. Vóór deze migratie: altijd 0.
+--   VOORAF : gebruikt_shared = false, gebruikt_nog_paid = true   ← de te strenge grens
+--   ACHTERAF: gebruikt_shared = true,  gebruikt_nog_paid = false
 -- =====================================================================
