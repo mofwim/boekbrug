@@ -102,6 +102,11 @@ export interface ReadinessSignals {
   // them is reclaimable (oninbare vordering). A helpful nudge (risk), never a block — it's money to
   // get back, not a gap. Optional (undefined → none).
   badDebt?: { count: number; reclaimableBtw: number };
+  // [BAD-DEBT] The mirror (art. 29 lid 7): purchase invoices >1 year past due and still unpaid, so
+  // the voorbelasting deducted on them has become payable again. A risk, not a block — the app
+  // knows the invoice is unpaid in its own records, which is not proof it is unpaid in the world.
+  // Optional (undefined → none).
+  vatClawback?: { count: number; repayableBtw: number };
 }
 
 export interface ReconException {
@@ -526,6 +531,27 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       severity: "risk",
       title: f.title,
       detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
+  }
+
+  // [BAD-DEBT] Art. 29 lid 7 — purchase invoices >1 year past due and still unpaid, so the
+  // voorbelasting deducted on them becomes payable AGAIN. This is the only art. 29 side that
+  // costs money, and it grows belastingrente while nobody looks — so it is worded as a liability
+  // and stands BEFORE the reclaim below. Still a RISK, never a blocking gap: "unpaid in our
+  // records" is not proof of "unpaid in the world" (a bank that was never linked, cash at the
+  // counter, a payment arrangement), and blocking a filing on an inference the app cannot verify
+  // would trap the owner with no way out. So it names the amount and both ways to resolve it.
+  if (s.vatClawback && s.vatClawback.repayableBtw >= BAD_DEBT_MIN_EUR && s.vatClawback.count > 0) {
+    const n = s.vatClawback.count;
+    risks.push({
+      severity: "risk",
+      title: `${n} onbetaalde inkoopfactu${n === 1 ? "ur" : "ren"} >1 jaar — €${euro(s.vatClawback.repayableBtw)} voorbelasting terugbetalen`,
+      detail:
+        "Deze inkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open in je administratie. " +
+        "De BTW die je hierover in aftrek bracht wordt dan weer verschuldigd (art. 29 lid 7 Wet OB). " +
+        "Heb je ze wél betaald? Koppel de bankbetaling of zet ze op betaald. Zo niet, dan hoort dit bedrag " +
+        "terug in je aangifte — dit wordt NIET automatisch verrekend.",
+      fix: { label: "Naar Inkoop", href: "/dashboard/incoming/manage" },
     });
   }
 

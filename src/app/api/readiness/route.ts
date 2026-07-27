@@ -26,7 +26,7 @@ import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "@/lib/regime-collect";
 import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
-import { collectBadDebt } from "@/lib/bad-debt-collect";
+import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
 
 export const dynamic = "force-dynamic";
 // [RUNTIME] Deze route doet ~22 databaseronden per klant en wordt door het werkbord één
@@ -391,6 +391,10 @@ export async function GET(req: NextRequest) {
 
   // [BAD-DEBT] Reclaimable BTW on sales invoices >1 year past due (factuur only; kas → none).
   const badDebt = await collectBadDebt(pipeline, ownerId, sr.scheme, end);
+  // [BAD-DEBT] Art. 29 lid 7 — the mirror: voorbelasting on purchase invoices >1 year unpaid
+  // becomes payable again. korActive short-circuits it (nothing was deducted, so nothing goes
+  // back), which is why it is read after the KOR profile above.
+  const vatClawback = await collectVatClawback(pipeline, ownerId, sr.scheme, end, korActive);
 
   // ── 6) Assemble the signals → the verdict ──
   const signals: ReadinessSignals = {
@@ -429,6 +433,9 @@ export async function GET(req: NextRequest) {
     badDebt: badDebt.eligible.length > 0
       ? { count: badDebt.eligible.length, reclaimableBtw: badDebt.totalReclaimableBtw }
       : undefined, // [BAD-DEBT] reclaimable BTW on >1yr-unpaid sales → risk, never a block
+    vatClawback: vatClawback.eligible.length > 0
+      ? { count: vatClawback.eligible.length, repayableBtw: vatClawback.totalRepayableBtw }
+      : undefined, // [BAD-DEBT] repayable voorbelasting on >1yr-unpaid purchases → risk, never a block
   };
   const report = buildReadiness(signals);
 
