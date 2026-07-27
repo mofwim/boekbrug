@@ -413,7 +413,12 @@ function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: bool
   async function applyStatus(next: 'verwerkt' | 'in_behandeling' | 'vraag') {
     let vraagText: string | undefined
     if (next === 'vraag') {
-      const answer = window.prompt('Vraag over dit document (optioneel):')
+      // [BRUG-RETOUR] De klant ziet deze tekst nu écht — op /dashboard/vragen, met het
+      // document erbij en een antwoordveld. Zeg dat erbij: een boekhouder die denkt dat
+      // hij in het niets typt, schrijft "?" en pakt daarna de telefoon.
+      const answer = window.prompt(
+        'Vraag over dit document. Je klant ziet deze tekst op zijn scherm en kan er direct op antwoorden.',
+      )
       if (answer === null) return // cancelled — assert nothing
       vraagText = answer.trim() || undefined
     }

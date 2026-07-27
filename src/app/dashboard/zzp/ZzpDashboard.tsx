@@ -47,6 +47,9 @@ import IntakeButton from '@/components/intake/IntakeButton'
 // invoice totals + a task count), each linking to the action that resolves it. The
 // old version was disabled for showing inferred bank-derived numbers that were wrong.
 import DailyTruth from './DailyTruth'
+// [BRUG-RETOUR] De terugweg van de brug: een vraag van de boekhouder hoort op de home,
+// niet alleen in een notificatie die je één keer ziet.
+import { VRAAG_STATUS, vragenBannerTekst } from '@/lib/vragen'
 import type { ProfileRow, NotificationRow } from '@/types/rows'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -86,16 +89,23 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
   const [aiError, setAiError]                     = useState<string | null>(null)
   // [BOEK-029] BOEK-011 integration — pending incoming invoices count
   const [pendingCount, setPendingCount]           = useState<number>(0)
+  // [BRUG-RETOUR] Openstaande vragen van de boekhouder over eigen documenten.
+  const [vragenCount, setVragenCount]             = useState<number>(0)
 
   async function loadGlobal() {
-    const [{ data: link }, { data: notifData }, { count }] = await Promise.all([
+    const [{ data: link }, { data: notifData }, { count }, { count: vragen }] = await Promise.all([
       supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
       supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
+      // [BRUG-RETOUR] RLS (acc_status_client_read_document) beperkt dit al tot documenten
+      // van deze gebruiker; er is hier geen eigenaarskolom om op te filteren.
+      supabase.from('accountant_subject_status').select('subject_id', { count: 'exact', head: true })
+        .eq('subject_type', 'document').eq('status', VRAAG_STATUS),
     ])
     if (link?.accountant_id) setAccountantId(link.accountant_id)
     if (notifData) setNotifications(notifData)
     setUnreadMessages(count || 0)
+    setVragenCount(vragen || 0)
 
     // [BOEK-029] BOEK-011: fetch pending incoming invoices count
     try {
@@ -157,6 +167,32 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
         <h1 style={{ fontSize: 28, fontWeight: 700, color: M3.onSurface, marginBottom: 28, letterSpacing: -0.5 }}>
           {firstName} 👋
         </h1>
+        {/* [BRUG-RETOUR] Een mens wacht op je. Dit staat bewust bóven de cijfers: een vraag
+            van je boekhouder is het enige op deze pagina waar iemand anders op zit te
+            wachten. Verschijnt alleen als er echt iets openstaat — nooit als lege balk. */}
+        {vragenCount > 0 && (
+          <button
+            onClick={() => router.push('/dashboard/vragen')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
+              padding: '15px 16px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid #F0C36D', background: M3.warningContainer,
+              boxShadow: EL1, marginBottom: 18,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7a4f00' }}>help</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 15.5, fontWeight: 700, color: '#5a3e00' }}>
+                {vragenBannerTekst(vragenCount)}
+              </span>
+              <span style={{ display: 'block', fontSize: 12.5, color: '#7a4f00', marginTop: 2 }}>
+                Bekijk de vraag en antwoord hier
+              </span>
+            </span>
+            <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#7a4f00' }}>chevron_right</span>
+          </button>
+        )}
+
         {/* [HONEST-HOME] Snapshot: "waar sta ik?" answered with certain facts only,
             each a button to the action that resolves it. */}
         <DailyTruth />

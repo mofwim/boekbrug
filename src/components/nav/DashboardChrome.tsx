@@ -36,6 +36,8 @@ const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/resultaat", "Resultaat"],
   ["/dashboard/artikelen", "Artikelen"],
   ["/dashboard/kluis", "Kluis"],
+  // [BRUG-RETOUR] De vragen van de boekhouder aan de ondernemer.
+  ["/dashboard/vragen", "Vragen van je boekhouder"],
   ["/dashboard/klaar", "Ben ik klaar?"],
   ["/dashboard/quarterly", "Kwartaaloverzicht"],
   ["/dashboard/waarheid", "Waarheid"],

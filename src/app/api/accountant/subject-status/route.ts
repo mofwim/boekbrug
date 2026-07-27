@@ -122,7 +122,11 @@ export async function POST(req: NextRequest) {
           : 'Je boekhouder heeft een vraag over een document.',
         type: 'status',
         read: false,
-        link: '/dashboard/bestanden',
+        // [BRUG-RETOUR] Wees naar de vraag, niet naar de map. /dashboard/bestanden toonde
+        // een bestandenlijst zonder vraag, zonder tekst en zonder antwoordknop — waarna het
+        // gesprek naar WhatsApp verhuisde. /dashboard/vragen toont de vraag zelf, het
+        // document erbij en één veld om te antwoorden.
+        link: '/dashboard/vragen',
       })
     } catch (err) {
       console.error('[subject-status] vraag notification failed:', err)
