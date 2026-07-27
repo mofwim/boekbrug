@@ -603,10 +603,14 @@ CREATE POLICY accountant_clients_select ON public.accountant_clients
 --    If authenticated linking is ever reintroduced it MUST be gated on an accepted invitation for
 --    THIS (accountant, client) pair (see the migration for the exact WITH CHECK).
 
-CREATE POLICY accountant_clients_update ON public.accountant_clients
-  FOR UPDATE TO authenticated
-  USING (accountant_id = auth.uid())
-  WITH CHECK (accountant_id = auth.uid());
+-- [SEC-LINK] There is deliberately NO UPDATE policy either. The one that used to sit here
+--    constrained only accountant_id, leaving zzper_id free — so the holder of a single link row
+--    could re-point it at any victim (`update({zzper_id: VICTIM}).eq('accountant_id', ME)`) and
+--    reach the exact escalation the INSERT note above describes, through a different verb. It was
+--    dropped in supabase/migrations/accountant_clients_update_consent.sql; the baseline now omits
+--    it so a FRESH deploy from this file is safe even before that migration runs. No app code ever
+--    UPDATEs this table — a link is created once by the verified accept route (service_role) and
+--    from then on only read or deleted. If updating is ever needed it MUST pin zzper_id too.
 
 CREATE POLICY accountant_clients_delete ON public.accountant_clients
   FOR DELETE TO authenticated
