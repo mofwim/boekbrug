@@ -46,7 +46,8 @@ const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/werkplek", "Mijn werkplek"],
   ["/dashboard/clients/invite", "Klant toevoegen"],
   ["/dashboard/clients/beheer", "Klanten beheren"],
-  ["/dashboard/accountant/werkplek", "Mijn werkplek"],
+  // [ROLE-PARITY] /dashboard/accountant/werkplek now redirects to the home (its
+  // tools live there as a tile grid), so it no longer needs a sub-page title.
   // The board registers its refresh button via useSubPageHeader; this is its title.
   ["/dashboard/accountant/agenda", "Aangifte & status"],
   // HAS-ACTIONS pages: the shared bar gives back + title; the page keeps its own

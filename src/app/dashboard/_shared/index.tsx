@@ -461,14 +461,17 @@ function AccountantNavLinks() {
   const router = useRouter()
 
   const links = [
-    // [CONTROL] was '/dashboard/werkplek' — the ZZP werkplek, dropping accountants
-    // onto a wrong-role screen. Point at the real (role-guarded) accountant werkplek.
-    { label: 'Werkplek', href: '/dashboard/accountant/werkplek' },
+    // [ROLE-PARITY] 'Werkplek' link removed — the werkplek tools now live as a tile
+    // grid on the accountant home, and the logo already returns there, so a nav
+    // link to it was redundant. 'Klanten' stays as the one quick portfolio jump.
     { label: 'Klanten',  href: '/dashboard/clients/beheer' },
   ]
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+    // [HEADER-SYSTEM] Hidden on small screens (see .dash-nav-links in globals.css):
+    // on mobile the search + icons crowd this text link; Klanten is also reachable
+    // from the accountant home.
+    <div className="dash-nav-links" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
       {links.map(({ label, href }) => (
         <button
           key={href}
@@ -512,7 +515,9 @@ function ZzpNavLinks() {
   ]
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+    // [HEADER-SYSTEM] Hidden on small screens (see .dash-nav-links in globals.css)
+    // to declutter the mobile header; "Vandaag" stays reachable by route.
+    <div className="dash-nav-links" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
       {links.map(({ label, href }) => (
         <button
           key={href}

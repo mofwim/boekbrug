@@ -283,9 +283,34 @@ input::placeholder, textarea::placeholder {
 /* Onder 520px wordt de rij daarom tweelaags: alle tekst op de volle breedte, en  */
 /* het geld met zijn knoppen op een eigen strook eronder, rechts uitgelijnd —     */
 /* dezelfde leesrichting als op een breed scherm, alleen gekanteld.               */
+/* [ONE-LINE] Elke groep in een rij — nummer + naam, de statuschips, de datums —  */
+/* staat op precies één regel. Ze wikkelden voorheen, waardoor de rijhoogte per   */
+/* factuur verschilde en de lijst er rafelig uitzag. Een strook die niet past     */
+/* schuift horizontaal (geen zichtbare scrollbar): niets verdwijnt, alles blijft  */
+/* bereikbaar met een veeg, en de regel blijft één regel.                         */
+.inv-strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.inv-strip::-webkit-scrollbar { display: none; }
+.inv-strip > * { flex-shrink: 0; }
+
 @media (max-width: 520px) {
   .inv-row      { flex-wrap: wrap; row-gap: 10px; }
   .inv-row-main { flex: 1 1 100%; }
-  .inv-row-side { flex: 1 1 auto; flex-direction: row; align-items: center;
-                  justify-content: flex-end; }
+  /* Op de strook eronder gaan bedrag en knop uit elkaar, elk naar een rand. row-      */
+  /* reverse draait de leesrichting om zonder de DOM te verbouwen: "Heb je betaald?"   */
+  /* links, het bedrag helemaal rechts — waar het bedrag ook op een breed scherm       */
+  /* staat, zodat het oog dezelfde plek houdt bij het draaien van het toestel. Op een  */
+  /* breed scherm blijft de kolom rechts uitgelijnd; daar staan ze onder elkaar.       */
+  .inv-row-side { flex: 1 1 auto; flex-direction: row-reverse; align-items: center;
+                  justify-content: space-between; }
+}
+
+/* ── Dashboard header — mobile declutter ─────────────────────────────────────── */
+/* [HEADER-SYSTEM] The shared DashboardHeader packs logo + search + role nav links
+   (Klanten for accountants, Vandaag for owners) + message/notification/profile
+   icons into one row. On narrow phones the text nav links collide with the search
+   box. Hide them below 640px — every destination is reachable from the home. */
+@media (max-width: 640px) {
+  .dash-nav-links {
+    display: none !important;
+  }
 }
