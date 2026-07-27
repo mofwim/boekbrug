@@ -46,21 +46,30 @@ export interface BatchPaymentText {
 // invoice's own number against the full text with referenceMatches' whole-token rules recovers
 // it: the raw "2026-045" is still in the description, and normalizeRef makes the separator
 // irrelevant. The 4-char floor stays (a 3-digit "045" can never be identified safely).
-export function resolveBatchNumbers(
+/** How a number was recognised in the payment — the difference decides what may be booked
+ *  unattended. 'reference' = it IS one of the fragments the extractor carved out of the
+ *  remittance, compared whole to a whole invoice number (identity). 'text' = it was found inside
+ *  the free statement line by a whole-token scan (strong, but a scan). */
+export interface ResolvedBatchNumber {
+  number: string;
+  via: "reference" | "text";
+}
+
+export function resolveBatchNumbersDetailed(
   tx: BatchPaymentText,
   knownInvoiceNumbers: Array<string | null | undefined>,
-): string[] {
+): ResolvedBatchNumber[] {
   // The equality path splits the reference the way the extractor JOINED it ("num1, num2") and
   // applies NO length floor: comparing a whole fragment to a whole invoice number is exact
   // identity, so a short number like "501" is safe here (it is not a substring search). The
-  // 4-char floor belongs to the text scan below, and to the automatic booking path, which keeps
-  // its own bar — see planBatchAutoConfirm.
+  // 4-char floor belongs to the text scan below — see referenceMatches — and the automatic
+  // booking path applies its own rule on top, using the `via` this function reports.
   const refTokens = new Set(
     (tx.reference ?? "").split(",").map((part) => normalizeRef(part)).filter((t) => t.length > 0),
   );
   const scan = { reference: tx.reference ?? null, description: tx.description ?? "" };
   const seen = new Set<string>();
-  const found: string[] = [];
+  const found: ResolvedBatchNumber[] = [];
   for (const raw of knownInvoiceNumbers) {
     const number = (raw ?? "").trim();
     if (!number) continue;
@@ -68,12 +77,24 @@ export function resolveBatchNumbers(
     if (key.length === 0 || seen.has(key)) continue; // dedup: a doubled number isn't two invoices
     // Either the extracted reference lists this exact number (the classic case), or the number
     // is printed as a whole token somewhere in the payment text (the recovery case above).
-    if (refTokens.has(key) || referenceMatches(scan, number)) {
+    if (refTokens.has(key)) {
       seen.add(key);
-      found.push(number);
+      found.push({ number, via: "reference" });
+    } else if (referenceMatches(scan, number)) {
+      seen.add(key);
+      found.push({ number, via: "text" });
     }
   }
   return found;
+}
+
+/** The numbers alone — for callers that only need to know WHICH invoices a payment references
+ *  (the slot view, the batch/PSP distinction). */
+export function resolveBatchNumbers(
+  tx: BatchPaymentText,
+  knownInvoiceNumbers: Array<string | null | undefined>,
+): string[] {
+  return resolveBatchNumbersDetailed(tx, knownInvoiceNumbers).map((r) => r.number);
 }
 
 export interface BatchSlotInput {
@@ -243,16 +264,31 @@ export function planBatchAutoConfirm(args: {
 
   // Which of those numbers does this payment actually print? (One representative per number —
   // they normalize equal, and an ambiguous number is rejected right below.)
-  // [BANK-BATCH-SHORT-NUMBER] Booking money unattended keeps the 4-character identity floor the
-  // matcher uses everywhere else: "501" is a plausible order number, postcode fragment or line
-  // count, and no sum-tie makes that safe to act on without a human. The manual slot UI does
-  // resolve short numbers (exact fragment equality, a human confirms) — that asymmetry is the
-  // point. A batch containing one falls through to the unresolved-token guard below and stays
-  // for the owner.
-  const printed = resolveBatchNumbers(
+  //
+  // [BANK-BATCH-SHORT-NUMBER] What may be booked unattended depends on HOW the number was
+  // recognised, not only on its length:
+  //   · found by the free-text SCAN → the 4-character identity floor stands. "045" appearing
+  //     somewhere in a statement line is a plausible order number, postcode fragment or item
+  //     count, and no sum-tie makes acting on that safe without a human.
+  //   · found as a REFERENCE fragment → the extractor already carved that token out of the
+  //     remittance as a payment reference, and it is compared WHOLE to a whole invoice number.
+  //     That is identity, not a substring search. A supplier who numbers "045, 046" is ordinary
+  //     — their numbers are theirs, not ours — and refusing those meant the incoming bundles
+  //     this app generates could never auto-reconcile for them.
+  // Three characters remains the floor even there: "1, 2" as a reference is not identity, it is
+  // a coincidence waiting to happen. Everything else that makes a batch bookable still has to
+  // hold — ≥2 numbers, each resolving to exactly ONE unpaid invoice of the right direction, one
+  // supplier, every reference token accounted for, and the open amounts summing to the payment
+  // TO THE CENT. Those together are what make a short number safe here and nowhere else.
+  const printed = resolveBatchNumbersDetailed(
     { reference, description },
     [...byNum.values()].map((group) => group[0].invoice_number),
-  ).filter((number) => normalizeRef(number).length >= 4);
+  )
+    .filter((r) => {
+      const len = normalizeRef(r.number).length;
+      return r.via === "reference" ? len >= 3 : len >= 4;
+    })
+    .map((r) => r.number);
   if (printed.length < 2) return null; // 1:1 is handled by the single-invoice safe pass
 
   const picked: BatchCandidateInvoice[] = [];
