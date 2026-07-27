@@ -1018,7 +1018,9 @@ export default function IncomingManageClient({
                     onClick={() => selectMode
                       ? (inv.status === 'received' && toggleSelect(inv.id))
                       : setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: selectedIds[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: selectMode && inv.status !== 'received' ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && inv.status !== 'received' ? 0.4 : 1 }}
+                    // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
+                    // the stack-on-mobile media query can override them; only dynamic styles here.
+                    style={{ background: selectedIds[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && inv.status !== 'received' ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && inv.status !== 'received' ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETALING] selection indicator */}
                     {selectMode && inv.status === 'received' && (
@@ -1026,7 +1028,7 @@ export default function IncomingManageClient({
                         {selectedIds[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
-                    <div className="inv-row-main" style={{ flex: 1, minWidth: 0 }}>
+                    <div className="inv-row-main">
                       {/* ── [ROW-HEAD] Wie + welke factuur, op één kopregel ──────────────────
                           De "Ink."-badge is weg: op Inkoopfacturen is ELKE rij een inkoop, dus
                           hij herhaalde alleen de paginatitel — 336 keer.
@@ -1160,7 +1162,9 @@ export default function IncomingManageClient({
                       </div>
                     </div>
 
-                    <div className="inv-row-side" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)
+                        so the media query can flip it to a full-width strip on a phone. */}
+                    <div className="inv-row-side">
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>
