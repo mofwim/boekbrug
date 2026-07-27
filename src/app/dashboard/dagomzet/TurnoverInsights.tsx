@@ -43,8 +43,10 @@ export default function TurnoverInsights() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     ;(async () => {
+      // Reset binnen de async-functie, vóór de eerste await: zelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body.
+      setLoading(true)
       try {
         const qs = period ? `?year=${period.year}&quarter=${period.quarter}` : ''
         const res = await fetch(`/api/turnover/analytics${qs}`)

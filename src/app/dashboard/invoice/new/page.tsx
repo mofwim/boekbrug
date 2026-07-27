@@ -126,10 +126,14 @@ function LineInput({
   // Raw string while typing — allows "0." mid-entry
   const [raw, setRaw] = useState(value === 0 ? '' : String(value))
 
-  // Sync raw when value changes from outside (e.g. reset)
-  useEffect(() => {
+  // [REACT] Ruwe invoer bijstellen tijdens de render in plaats van via een effect: dit is
+  // afgeleide state (het tekstveld volgt de waarde van buiten zolang je er niet in typt).
+  // Via een effect zag de gebruiker één frame lang de oude tekst staan.
+  const [prevSync, setPrevSync] = useState<{ value: number; focused: boolean }>({ value, focused })
+  if (prevSync.value !== value || prevSync.focused !== focused) {
+    setPrevSync({ value, focused })
     if (!focused) setRaw(value === 0 ? '' : String(value))
-  }, [value, focused])
+  }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     let v = e.target.value
@@ -1079,7 +1083,7 @@ function NewInvoicePageContent() {
               <div style={{ backgroundColor: '#FEF7E0', borderLeft: '4px solid #FBBC04', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#EA8600', flexShrink: 0 }}>📋</span>
                 <p style={{ fontSize: 13, color: '#EA8600', margin: 0 }}>
-                  <strong>Offerte</strong> — geen factuurnummer. Gebruik "Omzetten naar factuur" als de klant akkoord gaat.
+                  <strong>Offerte</strong> — geen factuurnummer. Gebruik &ldquo;Omzetten naar factuur&rdquo; als de klant akkoord gaat.
                 </p>
               </div>
             )}

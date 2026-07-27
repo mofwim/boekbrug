@@ -182,7 +182,9 @@ export function parseMT940(content: string): ParseResult {
   const transactions: BankTransaction[] = [];
 
   let accountIban: string | null = null;
-  let accountName: string | null = null;
+  // MT940 kent geen veld met de tenaamstelling (:25: bevat alleen het rekeningnummer),
+  // dus dit blijft bewust null in plaats van dat we een naam uit de tekst raden.
+  const accountName: string | null = null;
   let currency = "EUR";
 
   // Normalize line endings
@@ -552,13 +554,30 @@ export function parseCamtStatementBalance(content: string, currency: string): St
   return opening !== null || closing !== null ? { opening, closing, currency } : null;
 }
 
+/**
+ * [BANK-CURRENCY] De valuta van het afschrift, gelezen uit het bestand zelf.
+ *
+ * Stond hier eerder hard op "EUR". Voor een rekening in een andere valuta labelde de
+ * import dan stilzwijgend het verkeerde teken op de begin- en eindstand — een fout die
+ * nergens opvalt omdat de bedragen zelf wél klopten. We lezen hem daarom uit het
+ * <Bal>-blok (de gezaghebbende plek), met de eerste transactie als terugval en EUR als
+ * laatste redmiddel; MT940 doet hetzelfde met :60F:.
+ */
+export function detectCamtCurrency(content: string): string {
+  const balCcy = content.match(/<Bal>[\s\S]*?<Amt[^>]*\bCcy="([A-Z]{3})"/)?.[1];
+  if (balCcy) return balCcy;
+  const entryCcy = content.match(/<Ntry>[\s\S]*?<Amt[^>]*\bCcy="([A-Z]{3})"/)?.[1];
+  if (entryCcy) return entryCcy;
+  return "EUR";
+}
+
 export function parseCAMT053(content: string): ParseResult {
   const errors: string[] = [];
   const transactions: BankTransaction[] = [];
 
   let accountIban: string | null = null;
   let accountName: string | null = null;
-  let currency = "EUR";
+  const currency = detectCamtCurrency(content);
 
   // Simple regex-based XML extraction — no DOM dependency needed server-side
   // For a full implementation, use fast-xml-parser (BOEK-016)

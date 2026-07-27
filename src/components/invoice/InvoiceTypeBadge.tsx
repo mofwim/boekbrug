@@ -2,7 +2,7 @@
 // [BoekBrug v1.2] — BOEK-031 — shared component — do not modify without reading SHARED_FILES_PROTOCOL.md
 // [BOEK-031] add InvoiceTypeBadge component — May 2026
 
-type InvoiceType = 'factuur' | 'creditnota' | 'pro_forma'
+export type InvoiceType = 'factuur' | 'creditnota' | 'pro_forma'
 
 interface InvoiceTypeBadgeProps {
   type: InvoiceType

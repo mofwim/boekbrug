@@ -34,8 +34,11 @@ export default function AangifteClient() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setData(null)
     ;(async () => {
+      // De reset staat binnen de async-functie maar vóór de eerste await: hij draait dus in
+      // dezelfde tick als voorheen. Het verschil is dat de compiler nu kan zien dat er geen
+      // synchrone setState in de effect-body zelf zit.
+      setLoading(true); setData(null)
       try {
         const res = await fetch(`/api/aangifte?year=${year}&quarter=${quarter}`)
         const json = await res.json()

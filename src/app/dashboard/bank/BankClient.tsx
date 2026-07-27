@@ -299,7 +299,7 @@ export default function BankClient() {
     })
     if (!hasSafe && !hasBatch) return
     autoRanRef.current = true
-    void autoConfirm()
+    void (async () => { await autoConfirm() })()
   }, [data, autoRunning, autoConfirm])
 
   // [BANK-PERSIST] Initial load — show stored pending transactions on refresh.
@@ -795,7 +795,7 @@ export default function BankClient() {
   // [BANK-IGNORE] Load ignored list the first time the Genegeerd tab is opened.
   useEffect(() => {
     if (bankTab === 'ignored' && ignoredList === null) {
-      loadIgnored()
+      void (async () => { await loadIgnored() })()
     }
   }, [bankTab, ignoredList, loadIgnored])
 

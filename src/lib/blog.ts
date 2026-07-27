@@ -12,9 +12,27 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import readingTime from 'reading-time'
 
-export type Locale = 'nl' | 'en'
-export const LOCALES: Locale[] = ['nl', 'en']
+export type Locale = 'nl' | 'en' | 'ar' | 'tr'
+export const LOCALES: Locale[] = ['nl', 'en', 'ar', 'tr']
 export const DEFAULT_LOCALE: Locale = 'nl'
+
+// Per-locale presentation + SEO metadata. `dir` drives RTL for Arabic; `intl`
+// is the BCP-47 tag for Intl date formatting (ar forces Latin digits so money
+// and dates read consistently); `label` is the language's own name for the
+// language switch; `hreflang`/`ogLocale` feed SEO.
+export interface LocaleMeta {
+  dir: 'ltr' | 'rtl'
+  label: string
+  hreflang: string
+  ogLocale: string
+  intl: string
+}
+export const LOCALE_META: Record<Locale, LocaleMeta> = {
+  nl: { dir: 'ltr', label: 'Nederlands', hreflang: 'nl-NL', ogLocale: 'nl_NL', intl: 'nl-NL' },
+  en: { dir: 'ltr', label: 'English', hreflang: 'en-GB', ogLocale: 'en_GB', intl: 'en-GB' },
+  ar: { dir: 'rtl', label: 'العربية', hreflang: 'ar', ogLocale: 'ar_AR', intl: 'ar-u-nu-latn' },
+  tr: { dir: 'ltr', label: 'Türkçe', hreflang: 'tr-TR', ogLocale: 'tr_TR', intl: 'tr-TR' },
+}
 
 // Frontmatter contract — mirrors the schema in the build spec. `alternateSlug`
 // is the slug of the SAME article in the other language; it drives the hreflang
@@ -31,7 +49,11 @@ export interface PostFrontmatter {
   relatedTool: string // path to the funnel tool, e.g. "/netto-inkomen-zzp"
   relatedToolLabel: string // button label for the tool CTA
   coverImage?: string
-  alternateSlug?: string // slug of this article in the other locale
+  alternateSlug?: string // slug of this article in the other locale (NL↔EN legacy pairing)
+  // Translation group key: the SAME value across every language version of one
+  // article (canonically the NL slug). Lets alternates/hreflang work across all
+  // 4 locales. Optional — falls back to slug (NL) / alternateSlug (others).
+  transKey?: string
   // Topic-cluster link: a supporting article points UP to its pillar/guide.
   // ArticleLayout renders "part of the guide: [pillarTitle]" from these two.
   pillarSlug?: string // slug (same locale) of the pillar this article belongs to
@@ -98,6 +120,7 @@ function readPost(locale: Locale, slug: string): Post | null {
     relatedToolLabel: String(data.relatedToolLabel ?? ''),
     coverImage: data.coverImage ? String(data.coverImage) : undefined,
     alternateSlug: data.alternateSlug ? String(data.alternateSlug) : undefined,
+    transKey: data.transKey ? String(data.transKey) : undefined,
     pillarSlug: data.pillarSlug ? String(data.pillarSlug) : undefined,
     pillarTitle: data.pillarTitle ? String(data.pillarTitle) : undefined,
     draft: data.draft === true,
@@ -143,15 +166,34 @@ export function getClusterSiblings(post: Post, limit = 4): Post[] {
     .slice(0, limit)
 }
 
-// The same article in the other language, if it exists and is published.
-// Returns { locale, slug, path } so callers can build hreflang + a switcher.
-export function getAlternate(
-  post: Post,
-): { locale: Locale; slug: string; path: string } | null {
-  const alt = post.frontmatter.alternateSlug
-  if (!alt) return null
-  const otherLocale: Locale = post.frontmatter.locale === 'nl' ? 'en' : 'nl'
-  const other = getPost(otherLocale, alt)
-  if (!other) return null
-  return { locale: otherLocale, slug: alt, path: articlePath(otherLocale, alt) }
+export interface AlternateRef {
+  locale: Locale
+  slug: string
+  path: string
+}
+
+// Canonical translation-group key: the value shared by every language version
+// of one article. Prefers explicit transKey; otherwise the NL slug (NL uses its
+// own slug; en/ar/tr use alternateSlug, which points at the NL slug).
+function canonicalKey(fm: PostFrontmatter): string {
+  if (fm.transKey) return fm.transKey
+  return fm.locale === DEFAULT_LOCALE ? fm.slug : fm.alternateSlug ?? fm.slug
+}
+
+// Every OTHER-language published version of this article, across all locales.
+// Powers hreflang (all languages) and the language switch.
+export function getAlternates(post: Post): AlternateRef[] {
+  const key = canonicalKey(post.frontmatter)
+  const out: AlternateRef[] = []
+  for (const loc of LOCALES) {
+    if (loc === post.frontmatter.locale) continue
+    const match = getPublishedPosts(loc).find((p) => canonicalKey(p.frontmatter) === key)
+    if (match) out.push({ locale: loc, slug: match.frontmatter.slug, path: articlePath(loc, match.frontmatter.slug) })
+  }
+  return out
+}
+
+// Back-compat single-alternate helper (first other-language version, if any).
+export function getAlternate(post: Post): AlternateRef | null {
+  return getAlternates(post)[0] ?? null
 }

@@ -259,8 +259,42 @@ export default function FactuurScanner() {
             <button style={s.primary} onClick={() => { setResult(null); setError(null); setFileName(null) }}>
               Nog een factuur scannen
             </button>
-            <Link href="/factuur-maken" style={{ ...s.primary, backgroundColor: '#fff', color: '#1a73e8', border: '1.5px solid #1a73e8' }}>
-              Zelf een factuur maken →
+            {/* [FUNNEL] This was a bare link, and the route's own comment
+                (api/tools/scan-invoice) claimed the extraction was returned "so
+                they can be dropped straight into /factuur-maken". It never was:
+                nothing wrote a handoff and nothing read one. The single
+                highest-intent moment in the whole funnel — fields already on
+                screen, user one click from an invoice — threw the work away and
+                made them retype it. Fixed here, at zero extra AI cost.
+
+                What is handed over: the LINE ITEMS, amounts and dates — the
+                tedious part. Deliberately NOT the counterparty: a scanned
+                invoice is one you RECEIVED, so its vendor is not your client,
+                and prefilling that would silently produce an invoice addressed
+                to the wrong party. In a financial app that is not a convenience,
+                it is a defect. */}
+            <Link
+              href="/factuur-maken"
+              onClick={() => {
+                try {
+                  sessionStorage.setItem(
+                    'boekbrug.scan-handoff',
+                    JSON.stringify({
+                      line_items: result.line_items ?? [],
+                      subtotal_excl_btw: result.subtotal_excl_btw ?? null,
+                      btw_total: result.btw_total ?? null,
+                      total_incl_btw: result.total_incl_btw ?? null,
+                      invoice_date: result.invoice_date ?? null,
+                    })
+                  )
+                } catch {
+                  // Private mode / storage disabled → the link still works, the
+                  // user just fills it in themselves. Never block navigation.
+                }
+              }}
+              style={{ ...s.primary, backgroundColor: '#fff', color: '#1a73e8', border: '1.5px solid #1a73e8' }}
+            >
+              Overnemen in een factuur →
             </Link>
           </div>
         </div>

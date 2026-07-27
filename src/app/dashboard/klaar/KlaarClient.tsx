@@ -61,12 +61,21 @@ export default function KlaarClient() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setError(false); setData(null)
-    fetch(`/api/readiness?year=${year}&quarter=${quarter}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((j) => { if (!cancelled) setData(j) })
-      .catch(() => { if (!cancelled) setError(true) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    ;(async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body (cascaderende renders).
+      setLoading(true); setError(false); setData(null)
+      try {
+        const r = await fetch(`/api/readiness?year=${year}&quarter=${quarter}`)
+        if (!r.ok) throw new Error('readiness')
+        const j = await r.json()
+        if (!cancelled) setData(j)
+      } catch {
+        if (!cancelled) setError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
   }, [year, quarter, reloadKey])
 

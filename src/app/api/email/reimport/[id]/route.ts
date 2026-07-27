@@ -18,6 +18,7 @@ import { classifyAttachment } from "@/lib/email-integration";
 import { evaluateArithmetic, deriveDueDate } from "@/lib/safecore";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { gateFairUse } from "@/lib/fair-use-gate";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -79,6 +80,12 @@ export async function POST(
   // separate 240/hr allowance from the upload path, both bounding per-user AI spend.
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/reimport", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
+  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
+  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   // Load + prove ownership. Keep the current values so a poorer re-read can't wipe metadata.
   const { data: invoice } = await supabase
@@ -174,6 +181,8 @@ export async function POST(
     });
   } catch (e) {
     console.error("[REIMPORT] classify failed", { invoiceId: id, e });
+    // [FAIR-USE] Niet gelezen, dus niet geteld.
+    await gate.release();
     return NextResponse.json({ error: "Kon de factuur nu niet opnieuw lezen — probeer het later opnieuw." }, { status: 502 });
   }
 
@@ -209,7 +218,10 @@ export async function POST(
   if (priorFc) {
     for (const k of Object.keys(priorFc)) {
       if (k.startsWith("_intake")) carried[k] = priorFc[k];
-      else if (!freshHasTotal && (k === "_safecore" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
+      // [BTW-SUM-FIX] _btw_derived explains the STORED amounts ("this BTW is ours, not the
+      // invoice's"). Keep it alongside _safecore when we keep those amounts — dropping it would
+      // leave a derived BTW sitting in the row with nothing left saying so.
+      else if (!freshHasTotal && (k === "_safecore" || k === "_btw_derived" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
     }
   }
   const aiConfidence = (c.fieldConfidence ?? null) as Record<string, unknown> | null;

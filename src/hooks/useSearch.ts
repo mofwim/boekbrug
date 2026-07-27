@@ -55,13 +55,15 @@ export function useSearch(opts: UseSearchOptions = {}): UseSearchReturn {
     if (timerRef.current) clearTimeout(timerRef.current);
 
     if (query.length < minLength) {
-      setGroups(EMPTY_GROUP);
-      setError(null);
-      setLoading(false);
+      void (async () => {
+        setGroups(EMPTY_GROUP);
+        setError(null);
+        setLoading(false);
+      })();
       return;
     }
 
-    setLoading(true);
+    void (async () => { setLoading(true); })();
 
     // [SEARCH] Per-run guard: a superseded/unmounted run must neither overwrite newer
     // state nor flip the spinner off while a newer request is still in flight.

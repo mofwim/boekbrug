@@ -373,63 +373,8 @@ export function calcBtwSummary(
 
 // ─── UBL/XML Stub (BOEK-020) ──────────────────────────────────────────────────
 
-/**
- * [BOEK-014] UBL/XML export stub — prepared for BOEK-020.
- * Returns a minimal valid UBL 2.1 XML string per invoice.
- * Full implementation: BOEK-020.
- *
- * Dutch UBL standard: https://www.logius.nl/diensten/digipoort/ubl
- */
-export function invoicesToUbl(rows: InvoiceExportRowFull[]): string {
-  const invoiceBlocks = rows.map((r) => {
-    const exBtw = fmtAmountNL(r.total_ex_btw);
-    const btwAmt = fmtAmountNL(r.btw_amount);
-    const incBtw = fmtAmountNL(r.total_inc_btw);
-    const isoDate = r.invoice_date.split("-").reverse().join("-");
 
-    return `  <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
-            xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
-            xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
-    <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
-    <cbc:ID>${escapeXml(r.invoice_number)}</cbc:ID>
-    <cbc:IssueDate>${escapeXml(isoDate)}</cbc:IssueDate>
-    <cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>
-    <cac:AccountingCustomerParty>
-      <cac:Party>
-        <cac:PartyName>
-          <cbc:Name>${escapeXml(r.client_name)}</cbc:Name>
-        </cac:PartyName>
-        <cac:PostalAddress>
-          <cbc:StreetName>${escapeXml(r.client_address)}</cbc:StreetName>
-          <cbc:PostalZone>${escapeXml(r.client_postal_code)}</cbc:PostalZone>
-          <cbc:CityName>${escapeXml(r.client_city)}</cbc:CityName>
-          <cac:Country><cbc:IdentificationCode>NL</cbc:IdentificationCode></cac:Country>
-        </cac:PostalAddress>
-      </cac:Party>
-    </cac:AccountingCustomerParty>
-    <cac:TaxTotal>
-      <cbc:TaxAmount currencyID="EUR">${btwAmt}</cbc:TaxAmount>
-    </cac:TaxTotal>
-    <cac:LegalMonetaryTotal>
-      <cbc:TaxExclusiveAmount currencyID="EUR">${exBtw}</cbc:TaxExclusiveAmount>
-      <cbc:TaxInclusiveAmount currencyID="EUR">${incBtw}</cbc:TaxInclusiveAmount>
-      <cbc:PayableAmount currencyID="EUR">${incBtw}</cbc:PayableAmount>
-    </cac:LegalMonetaryTotal>
-  </Invoice>`;
-  });
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Invoices>
-${invoiceBlocks.join("\n")}
-</Invoices>`;
-}
-
-/** Escape special XML characters */
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
+// [DODE CODE] invoicesToUbl is hier verwijderd. Hij had nul aanroepers in de hele app en
+// produceerde bovendien ongeldige UBL (geen CustomizationID, dus geen SI-UBL/Peppol — zie
+// de kop van ubl-export.ts, dat de ECHTE generator is). Twee generatoren voor hetzelfde
+// formaat waarvan er één stilletjes fout is, is erger dan één.

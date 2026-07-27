@@ -12,6 +12,7 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 // [BOEK-031] Navigation Strategy — May 2026
 import { useParentPath } from '@/lib/navigation-hooks'
 import type { Role } from '@/lib/navigation'
+import type { ProfileRow } from '@/types/rows'
 
 type InvoiceLine = {
   description: string
@@ -26,7 +27,7 @@ export default function InvoiceEditPage() {
   const invoiceId = params.id as string
   const supabase = createClient()
 
-  const [profile, setProfile] = useState<any>(null)
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)

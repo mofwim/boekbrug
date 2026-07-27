@@ -35,6 +35,13 @@ import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
 // agree on what "uncertain" means).
 const LOW_CONFIDENCE = 0.7
 
+/** Dutch money formatting for an owner-facing reason. Local so this module stays dependency-free. */
+function formatEuro(v: number): string {
+  const [whole, cents] = Math.abs(v).toFixed(2).split('.')
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${v < 0 ? '− ' : ''}€ ${grouped},${cents}`
+}
+
 export type HealthLevel = 'clean' | 'needs-review'
 
 export interface ImportHealth {
@@ -87,6 +94,11 @@ export interface FieldConfidence {
   amount?: number
   total?: number
   total_inc_btw?: number
+  // [BTW-SUM-FIX] Present when the printed BTW total could not be read from a mixed-rate summary
+  // block and was derived from excl + the paid total (see fixMisSummedBtw in @/lib/ai). The
+  // amounts add up again, so every other axis goes quiet — which is exactly why this needs its
+  // own reason: the figure is OUR arithmetic, and BTW is deductible money in the aangifte.
+  _btw_derived?: { read?: number | null; used?: number | null }
   _safecore?: {
     arithmetic_ok?: boolean
     reason?: string
@@ -185,6 +197,21 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
   // (If storedSafecore exists AND arithmetic_ok !== false, the email path held
   //  it for a dedup note only, not a math problem — not a health warning here.)
+
+  // [BTW-SUM-FIX] The reader could not sum the mixed-rate BTW block, so the BTW was derived from
+  // the two printed anchors (excl + the paid total). The identity holds again — which means the
+  // arithmetic gate above is now SILENT and nothing else would ever mention it. Say it out loud:
+  // the total is still the invoice's, but this BTW is ours, and it is the voorbelasting the owner
+  // will deduct. Always a human check, so a derived figure can never auto-book.
+  if (fc?._btw_derived) {
+    flags.arithmetic = true
+    const used = fc._btw_derived.used
+    reasons.push(
+      typeof used === 'number'
+        ? `de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal (${formatEuro(used)}); controleer dit bedrag`
+        : 'de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal; controleer dit bedrag'
+    )
+  }
 
   // ── Money-truth axis (the amounts themselves) ────────────────────────────
   // [TRUST-AMOUNTS] The arithmetic gate above only runs its consistency checks

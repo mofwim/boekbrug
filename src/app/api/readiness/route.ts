@@ -29,6 +29,10 @@ import { resolveSchemeSettlements } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt } from "@/lib/bad-debt-collect";
 
 export const dynamic = "force-dynamic";
+// [RUNTIME] Deze route doet ~22 databaseronden per klant en wordt door het werkbord één
+// keer per rij afgevuurd (MAX_PARALLEL = 4). Zonder plafond eindigt een trage rij als een
+// stille timeout die het bord als "onbekend" toont.
+export const maxDuration = 120;
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function shiftDays(iso: string, days: number): string {
@@ -397,7 +401,12 @@ export async function GET(req: NextRequest) {
     invoicesWithEvidence,
     unverifiedInvoiceCount,
     autoVerifiedCount,
-    missingEvidence: [], // exact COUNT drives the score; specific numbers aren't surfaced here
+    // [EVIDENCE] De exacte factuurnummers zonder PDF. summarizeClosingPackage bouwt deze
+    // lijst al (closing-package.ts:935) en gooide hem weg; readiness.ts:201-204 had de tak
+    // die hem afdrukt al geschreven, maar die was onbereikbaar achter een lege array.
+    // Gevolg: de eigenaar las "4 facturen missen het originele document" en kon alleen nog
+    // álle facturen openen om te vinden welke vier. Nu is het een zin die hij doorstuurt.
+    missingEvidence: summary.missingEvidence ?? [],
     bankTxCount: bank.length,
     undocumentedCount,
     unmatchedIncomeCount,

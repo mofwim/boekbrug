@@ -78,7 +78,7 @@ export default function WaarheidClient() {
     }
   }, []);
 
-  useEffect(() => { void load(lens); }, [lens, load]);
+  useEffect(() => { void (async () => { await load(lens); })(); }, [lens, load]);
 
   // [TRUTH-FILED] Mark this quarter as filed (freeze the snapshot) / un-file it (unlock).
   const setFiled = useCallback(async (mark: boolean) => {

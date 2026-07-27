@@ -19,6 +19,7 @@ import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { gateFairUse } from "@/lib/fair-use-gate";
 import { escapeLikeValue } from "@/lib/sanitize";
 
 export async function POST(req: NextRequest) {
@@ -35,6 +36,12 @@ export async function POST(req: NextRequest) {
   // [COST] Per-user ceiling on the AI/OCR upload pipeline (Claude calls).
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/upload", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
+  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
+  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   let formData: FormData;
   try {
@@ -154,6 +161,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (aiErr) {
     console.error("[AI-CONFIG-SAFE] upload AI read failed — filing nothing, asking for retry", aiErr);
+    // [FAIR-USE] Niet gelezen, dus niet geteld — anders kost een storing van ons de
+    // gebruiker een document van zijn maandtegoed.
+    await gate.release();
     return NextResponse.json(
       { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
       { status: 503 }

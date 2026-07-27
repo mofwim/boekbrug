@@ -12,6 +12,16 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import type { InvoiceRow, ProfileRow } from '@/types/rows'
+
+// De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
+// zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
+// database leeg mogen zijn, wat de rekenhulpen hieronder nu netjes afvangen.
+type KwartaalInvoice = Pick<InvoiceRow,
+  'id' | 'direction' | 'status' | 'due_date' | 'invoice_date' | 'invoice_number' |
+  'invoice_type' | 'client_name' | 'total_ex_btw' | 'btw_amount' | 'total_inc_btw' |
+  'marked_paid_at' | 'accountant_status' | 'accountant_note' | 'pdf_url' |
+  'client_btw_number' | 'replaced_by_number'>
 
 // ─────────────────────────────────────────────────────────
 // Types & constants
@@ -44,28 +54,29 @@ function fmt(d: string | null | undefined) {
 }
 
 // [BOEK-028] Amount: outgoing = positive, incoming = negative
-function getAmount(inv: any): number {
-  return inv.direction === 'outgoing' ? inv.total_inc_btw : -(inv.total_inc_btw)
+function getAmount(inv: KwartaalInvoice): number {
+  const total = inv.total_inc_btw ?? 0
+  return inv.direction === 'outgoing' ? total : -total
 }
 
 // btw_rate does not exist in DB — always calculate
-function getBtwRate(inv: any): number {
+function getBtwRate(inv: KwartaalInvoice): number {
   if (!inv.total_ex_btw || inv.total_ex_btw === 0) return 0
-  return Math.round((inv.btw_amount / inv.total_ex_btw) * 100)
+  return Math.round(((inv.btw_amount ?? 0) / inv.total_ex_btw) * 100)
 }
 
 // [BRIDGE-A] Accounting split — section definitions (accountant terminology)
 const SECTIONS = [
   { key: 'debiteuren',  title: 'Debiteuren',  sub: 'verzonden — nog te ontvangen',
-    filter: (i: any) => i.direction === 'outgoing' && i.status === 'sent' },
+    filter: (i: KwartaalInvoice) => i.direction === 'outgoing' && i.status === 'sent' },
   { key: 'crediteuren', title: 'Crediteuren', sub: 'ontvangen — nog te betalen',
-    filter: (i: any) => i.direction === 'incoming' && i.status === 'received' },
+    filter: (i: KwartaalInvoice) => i.direction === 'incoming' && i.status === 'received' },
   { key: 'voldaan',     title: 'Voldaan',     sub: 'betaald',
-    filter: (i: any) => i.status === 'paid' },
+    filter: (i: KwartaalInvoice) => i.status === 'paid' },
 ] as const
 
 // [BRIDGE-A] Verlopen is computed at display time — never stored in DB
-function isVerlopen(inv: any): boolean {
+function isVerlopen(inv: KwartaalInvoice): boolean {
   return inv.status === 'sent' && !!inv.due_date && new Date(inv.due_date) < new Date()
 }
 
@@ -104,8 +115,8 @@ export default function KwartaalPage() {
   const dateStart = `${year}${range.start}`
   const dateEnd   = `${year}${range.end}`
 
-  const [client, setClient] = useState<any>(null)
-  const [invoices, setInvoices] = useState<any[]>([])
+  const [client, setClient] = useState<ProfileRow | null>(null)
+  const [invoices, setInvoices] = useState<KwartaalInvoice[]>([])
   const [loading, setLoading] = useState(true)
   // [TRUST-ACCOUNTANT] The quarter tiles must show the SAME reconciled, turnover-aware
   // figures as the owner's /klaar, the Brug hub and the ZIP — not an invoices-only
@@ -223,8 +234,12 @@ export default function KwartaalPage() {
   useEffect(() => {
     if (!focusId || loading) return
     if (!invoices.some(i => i.id === focusId)) return
-    setExpandedId(focusId)
-    setHighlightId(focusId)
+    // De onthulling hoort bij dezelfde beweging als het scrollen: binnen de wikkel draait
+    // ze in dezelfde tick, maar telt ze niet als synchrone setState in de effect-body.
+    void (async () => {
+      setExpandedId(focusId)
+      setHighlightId(focusId)
+    })()
     const scrollTimer = setTimeout(() => {
       rowRefs.current[focusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 100)
@@ -235,8 +250,8 @@ export default function KwartaalPage() {
 
   // [BOEK-028] Sort by marked_paid_at DESC default
   const sorted = [...invoices].sort((a, b) => {
-    const da = new Date(a.marked_paid_at ?? a.invoice_date).getTime()
-    const db = new Date(b.marked_paid_at ?? b.invoice_date).getTime()
+    const da = new Date(a.marked_paid_at ?? a.invoice_date ?? 0).getTime()
+    const db = new Date(b.marked_paid_at ?? b.invoice_date ?? 0).getTime()
     return sortAsc ? da - db : db - da
   })
 
@@ -582,11 +597,11 @@ export default function KwartaalPage() {
                           {[
                             {
                               label: 'Excl. BTW',
-                              value: isOutgoing ? invoice.total_ex_btw : -(invoice.total_ex_btw),
+                              value: isOutgoing ? (invoice.total_ex_btw ?? 0) : -(invoice.total_ex_btw ?? 0),
                             },
                             {
                               label: `BTW ${getBtwRate(invoice)}%`,
-                              value: isOutgoing ? invoice.btw_amount : -(invoice.btw_amount),
+                              value: isOutgoing ? (invoice.btw_amount ?? 0) : -(invoice.btw_amount ?? 0),
                             },
                             {
                               label: 'Incl. BTW',

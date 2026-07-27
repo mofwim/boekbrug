@@ -8,7 +8,7 @@
 //     pulling it into invoice-pdf.tsx would drag it into the client
 //     bundle and risk a build break.
 // API routes import THIS file; client components never do.
-// Same separation pattern as lib/export-pdf.tsx (BOEK-014).
+// Same separation pattern the removed lib/export-pdf.tsx used (BOEK-014).
 // =====================================================
 
 import { renderToBuffer } from '@react-pdf/renderer'

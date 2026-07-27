@@ -15,6 +15,30 @@ export default async function OnboardingPage() {
     .eq("id", user.id)
     .single();
 
+  // [KLUIS] Een archiefaccount heeft hier niets te zoeken: deze wizard vraagt om
+  // bedrijfsgegevens, een mailboxkoppeling en een eerste factuur, en wie zijn gestopte zaak
+  // komt archiveren heeft geen van drieën. De trigger zet onboarding_done al op true bij
+  // registratie, dus normaal komt hij hier nooit — maar wie via een oude link of een
+  // bookmark toch binnenvalt hoort in zijn kluis te landen en niet in een vragenlijst.
+  //
+  // Apart gelezen zodat de select hierboven blijft werken als de kolom nog niet bestaat.
+  // ⚠️ En de redirect staat BUITEN de try: `redirect()` werkt door een NEXT_REDIRECT-fout te
+  // gooien, dus binnen de try zou de catch hem opvangen en stilzwijgend negeren — de
+  // gebruiker zag dan alsnog de wizard en niets verried waarom.
+  let isArchief = false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: doel } = await (supabase as any)
+      .from("profiles")
+      .select("account_purpose")
+      .eq("id", user.id)
+      .single();
+    isArchief = doel?.account_purpose === "archief";
+  } catch {
+    /* kolom bestaat nog niet → gewoon de wizard, zoals altijd */
+  }
+  if (isArchief) redirect("/dashboard/kluis");
+
   if (!profile) {
     await supabase.from("profiles").insert({
       id: user.id,

@@ -9,11 +9,24 @@
 //   - a linked accountant exports a client's quarter (accountant_clients link).
 // Auth on the SESSION client; the actual build uses the service_role pipeline
 // client scoped explicitly to ownerId (service_role bypasses RLS).
+//
+// [RUNTIME] Deze route had GEEN maxDuration en geen runtime-config, terwijl elke zware
+// buurman die wel heeft (snelstart/push:56, alle vijf crons op 300). Zij haalt élke
+// factuur-PDF uit Storage, herschrijft elke betaalde door pdf-lib en DEFLATE't de hele
+// stapel — zonder plafond. Bij een druk kwartaal loopt dat tegen de standaard-timeout van
+// het platform aan, en de gebruiker ziet een afgebroken download zonder uitleg.
+//
+// 300 seconden, gelijk aan de crons. Het CONTENT-plafond dat kluis/export hanteert
+// (MAX_FILES / MAX_TOTAL_BYTES) wordt hier bewust NIET overgenomen: vier gepubliceerde
+// zinnen beloven dat een export altijd compleet is (fair-use.ts ALWAYS_FREE, AV §5.2
+// belofte 3, AV §5.7.1, bewaarkluis.ts KLUIS_WEL). Begrens de looptijd, niet de inhoud.
+export const maxDuration = 300
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { buildClosingPackageZip, type Quarter } from "@/lib/closing-package";
+import { logAuditAction } from "@/lib/audit";
 
 function safe(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -65,6 +78,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Geen toegang tot deze klant" }, { status: 403 });
     }
     ownerId = clientId;
+
+    // [BEWIJS] Leg vast dát de boekhouder dit kwartaal heeft opgehaald.
+    //
+    // Deze route logde niets, net als /api/readiness, /api/export en /api/quarterly — alleen
+    // het verbreken van een koppeling werd bijgehouden. De klant kon dus nergens zien wat
+    // zijn boekhouder had gedownload, terwijl "een ontworpen overdracht in plaats van een
+    // gedeelde map" precies is wat dit product verkoopt. Een gedeelde map laat óók niets
+    // zien; het verschil bestaat pas als het aantoonbaar is.
+    //
+    // Best effort en NA de autorisatie: een logfout mag een geautoriseerde download nooit
+    // tegenhouden, en een geweigerde poging hoort hier niet als "opgehaald" te landen.
+    void logAuditAction({
+      userId: user.id,
+      action: 'accountant.package_downloaded',
+      entityType: 'quarter',
+      entityId: `${ownerId}:${year}-Q${quarter}`,
+    })
   }
 
   // ── Build (service_role, scoped to ownerId) ──

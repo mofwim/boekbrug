@@ -25,6 +25,7 @@ import Link from 'next/link'
 import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
+import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -35,6 +36,8 @@ import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-bet
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
 import { openAmount, interpretAmountEntry } from '@/lib/partial-payment'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
+import { overdueDays, daysUntilDue } from '@/lib/overdue'
 import { rowMatchesQuery } from '@/lib/search'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
@@ -73,8 +76,18 @@ const CHIP: Record<string, { bg: string; color: string; label: string }> = {
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short' })
+const NL_DATE_Y = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 const fmtEur  = (n: number | null) => NL_EUR.format(n ?? 0)
 const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
+// [DATE-VISIBLE] The row date, with the YEAR only when it isn't this year. "12 mrt" is fine for a
+// recent bill and ambiguous on a two-year-old one; printing 2026 on every row is noise. Guards an
+// unparseable date too — Intl.format THROWS on an Invalid Date, which would blank the whole list.
+const fmtDateSmart = (s: string | null) => {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.getFullYear() === new Date().getFullYear() ? NL_DATE.format(d) : NL_DATE_Y.format(d)
+}
 // [BOEK-029] btw_rate does not exist in DB — always compute
 const calcBtw = (btw: number | null, ex: number | null) =>
   ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : 21
@@ -134,6 +147,26 @@ interface PayCtx {
   openAmount?: number
 }
 
+// [MATCH-BUTTON] The report POST /api/reconcile/run hands back — what the engine actually did,
+// plus what it deliberately left for the owner. Shaped to be shown as-is; no client-side money math.
+interface MatchRunResult {
+  ok: boolean
+  /** Names the passes that failed ('bank' | 'kas' | 'categorize' | 'map') — shown honestly. */
+  failed: string[]
+  booked: { invoiceId: string; invoiceNumber: string | null; amount: number; tier: string; paymentDate: string | null }[]
+  bookedCount: number
+  /** Of the bookings, the ones matched on amount + name only (no invoice number) — worth a check. */
+  amountOnlyCount: number
+  cash: { ok: boolean; created: number; updated: number; deleted: number }
+  categorized: number
+  /** Bank lines still unconfirmed after the run. 0 with 0 bookings ⇒ no statement to match against. */
+  pendingTransactions: number
+  /** Payments FOUND but too ambiguous to book — these need the owner on /dashboard/bank. */
+  pendingMatchCount: number
+  /** The post-run badge map, from the same builder the badges normally fetch (see applyMap). */
+  byInvoice?: Record<string, InvoiceRecon>
+}
+
 type FilterTab = 'all' | 'received' | 'paid' | 'auto'
 const FILTERS: { id: FilterTab; label: string }[] = [
   { id: 'all',      label: 'Alle'                  },
@@ -150,11 +183,20 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 export default function IncomingManageClient({
   profile,
   initialInvoices,
-}: { profile: { id: string }; initialInvoices: IncomingRow[] }) {
+  totalCount = null,
+}: {
+  profile: { id: string }
+  initialInvoices: IncomingRow[]
+  // [INVOICE-COUNTER] How many confirmed inkoopfacturen the owner really has (server count).
+  // Only used to disclose that this list is capped — never as the counter itself, because it
+  // cannot move when the owner pays a factuur. Null when the count query failed.
+  totalCount?: number | null
+}) {
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
-  const { byInvoice: recon, confirmMatch } = useInvoiceReconciliation()
+  // [MATCH-BUTTON] applyMap installs the post-run map the matcher returns (no second fetch).
+  const { byInvoice: recon, confirmMatch, applyMap } = useInvoiceReconciliation()
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
   const [filter, setFilter]             = useState<FilterTab>('all')
   const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
@@ -179,6 +221,9 @@ export default function IncomingManageClient({
     match: { id?: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
   } | null>(null)
   const [checkingId, setCheckingId]     = useState<string | null>(null)
+  // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
+  const [matchBusy, setMatchBusy]       = useState(false)
+  const [matchResult, setMatchResult]   = useState<MatchRunResult | null>(null)
 
   // ── [BUNDEL-BETALING] Multi-select → pay several open inkoopfacturen of the
   // same leverancier in ONE transfer. Selection is a set of ids; the rows are
@@ -329,11 +374,84 @@ export default function IncomingManageClient({
   // [AUTO-ADVANCE] Count for the review nudge — how many invoices the app booked for you.
   const autoCount = invoices.filter(isAutoVerified).length
 
+  // ── [INVOICE-COUNTER] "Hoeveel facturen heb ik eigenlijk?" ───────────────────
+  // Derived from `invoices` on every render, NOT from a server number fetched once. That is the
+  // whole point: the moment a factuur is betaald, undone, matched by the bank-run or removed as a
+  // duplicate, this array changes and so do the counts. A server total could not move with those
+  // actions and would sit there contradicting the list.
+  //
+  // The trade-off is honest and disclosed: `invoices` is the fetched window (all open rows — the
+  // 1000-cap is unreachable by design — plus the 200 most recent paid ones), so on a long history
+  // these are the counts of THIS LIST. totalCount says what the owner really has, and the note
+  // below the counter names the difference instead of passing 200 off as "everything".
+  // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
+  // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
+  // clock itself). Local date, not toISOString(): near midnight UTC those are different days, and
+  // "te laat" must follow the owner's calendar, not UTC's.
+  const todayIso = (() => {
+    const n = new Date()
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
+  })()
+
+  const receivedCount = invoices.filter(i => i.status === 'received').length
+  const paidCount     = invoices.filter(i => i.status === 'paid').length
+  const listedCount   = invoices.length
+  const hiddenCount   = totalCount != null ? Math.max(0, totalCount - listedCount) : 0
+  const nFacturen = (n: number) => `${n} ${n === 1 ? 'factuur' : 'facturen'}`
+  // Per-tab counts, so choosing a filter already tells you how much is behind it.
+  const tabCount = (id: FilterTab) =>
+    id === 'all' ? listedCount : id === 'received' ? receivedCount : id === 'paid' ? paidCount : autoCount
+
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
   // Local optimistic patch (no hook — this surface owns its list)
   function patchLocal(id: string, patch: Partial<IncomingRow>) {
     setInvoices(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)))
+  }
+
+  // ── [MATCH-BUTTON] "Matchen met bank & kas" ──────────────────────────────────
+  // Turns the whole matching circle on demand instead of waiting for the hourly cron: the server
+  // books the near-certain bank↔factuur matches, syncs the kasboek against the cash-paid invoices,
+  // and codes the recognizable bank lines. It does NOT decide anything the automatic engine
+  // wouldn't decide by itself — same helpers, same guards, so an ambiguous payment still stops at
+  // the human (it comes back as pendingMatchCount, not as a booking).
+  //
+  // We patch the booked rows locally with the values the server actually wrote (incl. the bank
+  // line's date as payment date) and install the returned reconciliation map, so the badges and
+  // the report cannot disagree. No router.refresh(): this list is client-owned state seeded once,
+  // so a server re-render would not update it — the patch is the update.
+  async function runReconciliation() {
+    if (matchBusy) return
+    setMatchBusy(true)
+    try {
+      const res = await fetch('/api/reconcile/run', { method: 'POST' })
+      if (!res.ok) {
+        // Kept short on purpose — the toast is a single non-wrapping line. A 429 costs the owner
+        // nothing: the run is idempotent and the hourly cron does the same work anyway.
+        showToast(
+          res.status === 429 ? 'Te vaak gematcht — probeer het straks opnieuw'
+          : res.status === 401 ? 'Sessie verlopen — log opnieuw in'
+          : 'Matchen mislukt — probeer het opnieuw'
+        )
+        return
+      }
+      const json = (await res.json()) as MatchRunResult
+      for (const b of json.booked ?? []) {
+        patchLocal(b.invoiceId, {
+          status: 'paid',
+          payment_method: 'bank',
+          payment_date: b.paymentDate,
+          // The payment is settled — the "voorbereid, nog bevestigen" nudge is done.
+          payment_prepared_at: null,
+        })
+      }
+      if (json.byInvoice) applyMap(json.byInvoice)
+      setMatchResult(json)
+    } catch {
+      showToast('Matchen mislukt — probeer het opnieuw')
+    } finally {
+      setMatchBusy(false)
+    }
   }
 
   // ── [PAY-SAFE] No-double-pay gate — runs BEFORE the mark-paid dialog ──
@@ -671,6 +789,41 @@ export default function IncomingManageClient({
           </Link>
         </div>
 
+        {/* ── [MATCH-BUTTON] Matchen met bank & kas ──────────────────────────────
+            The one tap that turns the whole matching circle now instead of waiting
+            for the hourly automatic run: bankafschrift ↔ facturen, kasboek ↔ the
+            cash-paid invoices, plus categorization of the recognizable bank lines.
+            Sized EXACTLY like "Meerdere betalen" above it (same pill geometry, same
+            13px label) so the toolbar reads as one family, but kept solid primary
+            because it is the only ACTION here that moves the books forward —
+            everything else on this screen filters or decides one row. */}
+        <button
+          onClick={runReconciliation}
+          disabled={matchBusy}
+          title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginBottom: 12, padding: '8px 16px',
+            borderRadius: R.full, border: 'none',
+            background: matchBusy ? M3.surfaceVariant : M3.primary,
+            color: matchBusy ? '#9AA0A6' : M3.onPrimary,
+            fontSize: 13, fontWeight: 600, fontFamily: FONT,
+            cursor: matchBusy ? 'default' : 'pointer',
+            boxShadow: matchBusy ? 'none' : EL1,
+          }}
+        >
+          {/* Icons come from the SUBSET font in layout.tsx (icon_names=…) — 'link' (koppelen, the
+              exact verb this action performs) and a spinning 'refresh' are both already in it, so
+              no shared allowlist change is needed and nothing can render as raw ligature text. */}
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: 18, animation: matchBusy ? 'bbSpin 1s linear infinite' : undefined }}
+          >
+            {matchBusy ? 'refresh' : 'link'}
+          </span>
+          {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
+        </button>
+
         {/* Filter + Sort dropdowns (side by side) */}
         <div style={{ display: 'flex', gap: 8 }}>
           {/* Filter */}
@@ -679,8 +832,10 @@ export default function IncomingManageClient({
               onClick={() => { setShowFilterMenu(p => !p); setShowSortMenu(false) }}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
             >
+              {/* [INVOICE-COUNTER] The active filter carries its count, so the number is on
+                  screen even with the menu closed and the list scrolled away. */}
               <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'}
+                {FILTERS.find(f => f.id === filter)?.label ?? 'Alle'} · {tabCount(filter)}
               </span>
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }}>
                 {showFilterMenu ? 'expand_less' : 'expand_more'}
@@ -692,9 +847,14 @@ export default function IncomingManageClient({
                   <button
                     key={f.id}
                     onClick={() => { setFilter(f.id); setShowFilterMenu(false) }}
-                    style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'left', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: filter === f.id ? 600 : 400, background: filter === f.id ? M3.primaryContainer : '#fff', color: filter === f.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                   >
-                    {f.label}
+                    <span>{f.label}</span>
+                    {/* [INVOICE-COUNTER] How many rows this filter would show — so the owner
+                        sees the split without having to pick each tab to find out. */}
+                    <span style={{ fontSize: 12.5, fontWeight: 600, fontFamily: FONT_NUM, color: filter === f.id ? M3.onPrimaryContainer : '#5F6368', background: filter === f.id ? 'rgba(255,255,255,0.6)' : M3.surfaceVariant, borderRadius: R.full, padding: '1px 8px', flexShrink: 0 }}>
+                      {tabCount(f.id)}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -765,6 +925,36 @@ export default function IncomingManageClient({
           </div>
         )}
 
+        {/* ── [INVOICE-COUNTER] Hoeveel facturen heb ik? ──────────────────────────
+            One line, right above the list, that always answers it — and adapts to
+            what the owner is doing instead of repeating what the filter already says:
+              · zoeken        → how many rows the query found (his explicit ask)
+              · geen filter   → the total plus the te-betalen / betaald split
+              · wél een filter→ how many of the total this tab holds
+            All three counts come from the loaded rows, so they move the instant a
+            factuur is betaald, teruggedraaid, gematcht of als dubbel verwijderd.
+            aria-live so a screen reader hears the number change while typing.
+            Suppressed on a fruitless search — the empty message below already says
+            "geen facturen gevonden voor …" and "0 facturen gevonden" adds nothing. */}
+        {invoices.length > 0 && !(rawS && displayed.length === 0) && (
+          <div aria-live="polite" style={{ marginBottom: 10, padding: '0 2px' }}>
+            <p style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT, margin: 0, fontWeight: 500 }}>
+              {rawS
+                ? `${nFacturen(displayed.length)} gevonden`
+                : filter === 'all'
+                  ? `${nFacturen(listedCount)} · ${receivedCount} te betalen · ${paidCount} betaald`
+                  : `${displayed.length} van ${nFacturen(listedCount)}`}
+            </p>
+            {/* The list is a window, not the archive: the paid query stops at 200. Say so rather
+                than let the counter imply the owner owns fewer facturen than he does. */}
+            {hiddenCount > 0 && (
+              <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
+                Je hebt er {totalCount} in totaal. Deze lijst toont de {receivedCount} openstaande en de {paidCount} meest recente betaalde.
+              </p>
+            )}
+          </div>
+        )}
+
         {displayed.length === 0 ? (
           rawS ? (
             <p style={{ textAlign: 'center', color: '#8e8e93', fontSize: 14, padding: '40px 16px' }}>Geen facturen gevonden voor &ldquo;{rawS}&rdquo;.</p>
@@ -785,12 +975,36 @@ export default function IncomingManageClient({
               // [CROSS-QUARTER] Paid in a different quarter than booked → marker (accrual
               // unchanged). null for same-quarter / unpaid / undated.
               const xq = isPaid ? crossQuarterPayment(inv.invoice_date, inv.payment_date) : null
+              // [OVER-DATUM] Whole days past the stated vervaldatum — null when the bill is paid
+              // (a settled invoice cannot be late), when it isn't due yet, or when the invoice
+              // never stated a due date at all. `todayIso` is computed once per render below.
+              const daysLate = isPaid ? null : overdueDays(inv.due_date, todayIso)
+              // [DATE-LINE] The other half of the same timeline: how long is still LEFT. Same rule
+              // — null when paid (a settled bill has no deadline left to count), and null when the
+              // invoice stated no vervaldatum. daysLate and daysLeft can never both be set.
+              const daysLeft = isPaid ? null : daysUntilDue(inv.due_date, todayIso)
+              // [ROW-HEAD] Does this row have ANY status chip? The chip row sits between the
+              // header and the dates, so rendering it empty would push every plain row 5px taller
+              // for nothing — across a list this long that reads as sloppy spacing.
+              const hasChips = !!CHIP[inv.status] || !!recon[inv.id] || !!xq
+                || isAutoVerified(inv) || isVerwerkt || isPrepared
 
               return (
+                // [ROW-UNIT] De kaart en zijn prullenbak zijn nu buren, geen ouder en kind. De
+                // knop stond ín de kaart en concurreerde daar met de tekst om breedte; ernaast
+                // hoort hij zichtbaar bij deze rij (hij staat op zijn hoogte, beweegt met hem
+                // mee, en zijn aria-label noemt het factuurnummer) zonder een pixel van de
+                // inhoud af te snoepen. flex-start + marginTop houdt hem op de hoogte van de
+                // kopregel, ook wanneer de kaart uitklapt en meters hoog wordt.
                 <div
                   key={inv.id}
                   ref={el => { rowRefs.current[inv.id] = el }}
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}
+                >
+                <div
                   style={{
+                    flex: 1,
+                    minWidth: 0,
                     borderRadius: R.lg,
                     overflow: 'hidden',
                     boxShadow: highlightId === inv.id ? `0 0 0 2px ${M3.primary}, ${EL1}` : EL1,
@@ -800,6 +1014,7 @@ export default function IncomingManageClient({
                   {/* Main row — in select mode a tap toggles the bundle selection
                       (only for open 'received' rows); otherwise it expands. */}
                   <div
+                    className="inv-row"
                     onClick={() => selectMode
                       ? (inv.status === 'received' && toggleSelect(inv.id))
                       : setExpandedId(expanded ? null : inv.id)}
@@ -811,11 +1026,39 @@ export default function IncomingManageClient({
                         {selectedIds[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                        {/* [BRIDGE-POLISH 3a-1 parity] incoming direction marker */}
-                        <span style={{ fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '2px 8px', background: M3.errorContainer, color: M3.error }}>Ink.</span>
-                        <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
+                    <div className="inv-row-main" style={{ flex: 1, minWidth: 0 }}>
+                      {/* ── [ROW-HEAD] Wie + welke factuur, op één kopregel ──────────────────
+                          De "Ink."-badge is weg: op Inkoopfacturen is ELKE rij een inkoop, dus
+                          hij herhaalde alleen de paginatitel — 336 keer.
+                          Nummer en naam staan nu naast elkaar, met de statuschips op hun eigen
+                          regel eronder. Ze deelden die kopregel, dus bij meerdere chips brak de
+                          regel rommelig af (op een telefoon stond "Automatisch" ineens onder het
+                          nummer); nu is de rijhoogte voorspelbaar zonder er één regel bij.
+                          Geen van beide wordt afgekapt. Op een telefoon houdt de rechterkolom
+                          (bedrag + "Heb je betaald?" + prullenbak) zoveel breedte vast dat er voor
+                          de naam ~50px overbleef: "GROOTH…", "W.K…", "Enka Ho…". Een leverancier
+                          die je niet kunt lezen is geen rij, het is een raadsel. Dus wrapt de kop:
+                          past de naam ernaast, dan staat hij ernaast; past hij niet, dan zakt hij
+                          naar zijn eigen regel over de volle breedte en breekt daar netjes af —
+                          altijd volledig leesbaar. Het nummer blijft op één regel (flexShrink:0,
+                          nowrap): een half nummer is waardeloos, daar zoek je een bankregel mee op.
+                          overflowWrap:anywhere vangt het randgeval van één lange naam zonder
+                          spaties, zodat die nooit uit de kaart loopt. */}
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+                        <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 500, color: '#5F6368', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
+                          {inv.invoice_number ?? '—'}
+                        </span>
+                        <span
+                          title={inv.client_name ?? undefined}
+                          style={{ minWidth: 0, fontSize: 14, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                          {inv.client_name ?? '—'}
+                        </span>
+                      </div>
+                      {/* Statusregel — alleen gerenderd als er iets te tonen is, zodat een kale
+                          rij geen lege regel meesleept. */}
+                      {hasChips && (
+                      <div className="inv-strip" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                         {/* Status chip */}
                         {CHIP[inv.status] && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: CHIP[inv.status].bg, color: CHIP[inv.status].color }}>
@@ -867,12 +1110,57 @@ export default function IncomingManageClient({
                           </span>
                         )}
                       </div>
-                      <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {inv.client_name ?? '—'} · {fmtDate(inv.invoice_date)}
-                      </p>
+                      )}
+                      {/* ── [DATE-LINE] Alle datumfeiten op hun eigen regel ──────────────────
+                          [DATE-VISIBLE] had naam en factuurdatum op ÉÉN regel gezet, met de datum
+                          op flexShrink:0 zodat een lange naam hem niet meer opat. Dat werkte, maar
+                          de prijs stond op het scherm: de NAAM moest krimpen, dus las de lijst als
+                          "DHL FR…", "GROOTH…". En één regel had geen plaats meer voor waar het bij
+                          een openstaande rekening om draait — wanneer hij uiterlijk betaald moet
+                          zijn, en hoeveel dagen dat nog is.
+                          Nu staat dat hier: factuurdatum · vervaldatum · de aftelling. Die laatste
+                          plek is dezelfde plek die "te laat" toont zodra de datum voorbij is, zodat
+                          het oog voor beide maar één plek hoeft te leren. */}
+                      <div className="inv-strip" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12.5, color: '#5F6368' }}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{fmtDateSmart(inv.invoice_date)}</span>
+                        {/* [OVER-DATUM] The due date is only ever a FACT here — a printed
+                            vervaldatum, or invoice date + a printed term (see lib/safecore.ts).
+                            When the invoice stated neither we say so, rather than leaving a blank
+                            that reads as "no rush" or inventing the customary 30 days. */}
+                        {inv.due_date ? (
+                          <span style={{ whiteSpace: 'nowrap' }}>· uiterlijk {fmtDateSmart(inv.due_date)}</span>
+                        ) : (
+                          <span style={{ whiteSpace: 'nowrap', color: '#9AA0A6' }}>· geen vervaldatum</span>
+                        )}
+                        {/* Past the date — the loud half. Unpaid bills only; a settled invoice
+                            cannot be late. */}
+                        {daysLate !== null && (
+                          <span
+                            title={`Vervaldatum ${fmtDateSmart(inv.due_date)} — ${daysLate} ${daysLate === 1 ? 'dag' : 'dagen'} te laat`}
+                            style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px', background: M3.errorContainer, color: M3.error }}
+                          >
+                            {daysLate} {daysLate === 1 ? 'dag' : 'dagen'} te laat
+                          </span>
+                        )}
+                        {/* Still to come — the same spot, calm by default. Only the last week
+                            warms up, so a row that genuinely needs attention this week stands out
+                            instead of every open bill shouting at once. */}
+                        {daysLeft !== null && (
+                          <span
+                            title={`Vervaldatum ${fmtDateSmart(inv.due_date)}${daysLeft === 0 ? ' — vandaag te betalen' : ` — nog ${daysLeft} ${daysLeft === 1 ? 'dag' : 'dagen'}`}`}
+                            style={{
+                              whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px',
+                              background: daysLeft <= 7 ? M3.warningContainer : M3.surfaceVariant,
+                              color:      daysLeft <= 7 ? '#7C5800'           : '#5F6368',
+                            }}
+                          >
+                            {daysLeft === 0 ? 'vandaag' : `nog ${daysLeft} ${daysLeft === 1 ? 'dag' : 'dagen'}`}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    <div className="inv-row-side" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
                       </p>
@@ -883,6 +1171,13 @@ export default function IncomingManageClient({
                       {(() => {
                         const paid = Math.max(0, inv.amount_paid ?? 0)
                         const tot = Math.abs(inv.total_inc_btw ?? 0)
+                        // [MATCH-BUTTON] A settled invoice never offers "nog te betalen", whatever
+                        // amount_paid says. The arithmetic below expressed that only indirectly, so
+                        // any row whose amount_paid trails its status showed BOTH "Betaald" and a
+                        // tappable "Deels betaald · € X open" — an invitation to pay it twice. The
+                        // on-demand matcher can produce exactly that: a multi-invoice batch settles
+                        // a part-paid invoice in full, and the list is patched from the booking.
+                        if (isPaid) return null
                         if (!(paid > 0.005 && paid < tot - 0.005)) return null
                         const remaining = openAmount(inv)
                         return (
@@ -950,31 +1245,6 @@ export default function IncomingManageClient({
                       )}
                     </div>
 
-                    {/* [INVOICE-REMOVE] Verwijderen — visible on every row, mirroring the sales
-                        list. A purchase invoice that isn't yours (wrong supplier, a duplicate,
-                        a scan of nothing) should not need a support question to get rid of. It
-                        archives: out of kosten, voorbelasting and the accountant's workspace,
-                        kept 7 years, and back with one tap under Inkomend › Genegeerd. Hidden
-                        while selecting for a bundle payment. */}
-                    {!selectMode && (
-                      <button
-                        onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
-                        disabled={processingId === inv.id}
-                        aria-label={`Inkoopfactuur ${inv.invoice_number ?? ''} verwijderen`}
-                        title="Verwijderen"
-                        style={{
-                          flexShrink: 0, marginLeft: 2, width: 34, height: 34, borderRadius: R.full,
-                          border: 'none', background: 'transparent', color: '#9AA0A6',
-                          cursor: processingId === inv.id ? 'default' : 'pointer',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'background 0.15s, color 0.15s',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
-                      </button>
-                    )}
                   </div>
 
                   {/* Inline expand */}
@@ -982,6 +1252,12 @@ export default function IncomingManageClient({
                     <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 16 }}>
                         <InfoLine label="Leverancier" value={inv.client_name} />
+                        {/* [DATE-VISIBLE] The full dates live HERE, where there is room for them —
+                            the collapsed row keeps only the short factuurdatum. Vervaldatum is shown
+                            only when the invoice stated one; a missing due date is left out rather
+                            than printed as "—", which would read like a field we failed to fill. */}
+                        <InfoLine label="Factuurdatum" value={fmtDateSmart(inv.invoice_date)} />
+                        {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDateSmart(inv.due_date)} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
                         <InfoLine label={`BTW (${calcBtw(btwAmount, totalExBtw)}%)`} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
@@ -1013,6 +1289,33 @@ export default function IncomingManageClient({
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* [INVOICE-REMOVE] Verwijderen — naast de kaart, niet erin. Een inkoopfactuur die
+                    niet van jou is (verkeerde leverancier, een dubbele, een scan van niets) hoort
+                    weg te kunnen zonder een vraag aan support. Het archiveert: uit kosten,
+                    voorbelasting en de werkplek van de boekhouder, zeven jaar bewaard, en met één
+                    tik terug onder Inkomend › Genegeerd. Verborgen tijdens het selecteren voor een
+                    gebundelde betaling. */}
+                {!selectMode && (
+                  <button
+                    onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
+                    disabled={processingId === inv.id}
+                    aria-label={`Inkoopfactuur ${inv.invoice_number ?? ''} verwijderen`}
+                    title="Verwijderen"
+                    style={{
+                      flexShrink: 0, marginTop: 12, width: 36, height: 36, borderRadius: R.full,
+                      border: 'none', background: 'transparent', color: '#9AA0A6',
+                      cursor: processingId === inv.id ? 'default' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'background 0.15s, color 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
+                  </button>
+                )}
                 </div>
               )
             })}
@@ -1241,6 +1544,15 @@ export default function IncomingManageClient({
         </div>
       )}
 
+      {/* ── [MATCH-BUTTON] What the run actually did — including what it left alone ── */}
+      {matchResult && (
+        <MatchResultSheet
+          result={matchResult}
+          onClose={() => setMatchResult(null)}
+          onOpenBank={() => { setMatchResult(null); router.push('/dashboard/bank') }}
+        />
+      )}
+
       {/* ── Toast ── */}
       {toast && (
         <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
@@ -1250,6 +1562,7 @@ export default function IncomingManageClient({
 
       <style>{`
         @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+        @keyframes bbSpin { to { transform: rotate(360deg); } }
         ::-webkit-scrollbar { display: none }
       `}</style>
     </div>
@@ -1395,6 +1708,135 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── [MATCH-BUTTON] Result sheet — the honest report of one reconciliation run ──
+// Reports three things, in this order, and never rounds any of them up:
+//   1. what was BOOKED (and which bookings deserve a second look),
+//   2. what the KASBOEK did (created / healed / reversed — or that it could not run),
+//   3. what is LEFT for the owner (found-but-ambiguous payments → the Bank page).
+// A run that changed nothing says so plainly instead of implying work happened. A pass that
+// FAILED is named — a partial run must never read as a clean one.
+function MatchResultSheet({ result, onClose, onOpenBank }: {
+  result: MatchRunResult
+  onClose: () => void
+  onOpenBank: () => void
+}) {
+  const { bookedCount, amountOnlyCount, cash, categorized, pendingTransactions, pendingMatchCount, failed } = result
+  const cashTouched = cash.created + cash.updated + cash.deleted
+  const bankFailed = failed.includes('bank')
+  const kasFailed  = failed.includes('kas')
+  const changedNothing = bookedCount === 0 && cashTouched === 0 && categorized === 0
+  const nFact = (n: number) => (n === 1 ? '1 factuur' : `${n} facturen`)
+
+  const title = bookedCount > 0
+    ? `${nFact(bookedCount)} gekoppeld`
+    : changedNothing
+      ? (pendingTransactions === 0 ? 'Niets om te matchen' : 'Niets nieuws gevonden')
+      : 'Bijgewerkt'
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, maxHeight: '86vh', overflowY: 'auto', boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
+        {/* Both glyphs are in the layout.tsx icon subset — see the button's note. */}
+        <span className="material-symbols-outlined" style={{ fontSize: 40, color: bookedCount > 0 ? M3.success : M3.primary, display: 'block', textAlign: 'center', marginBottom: 8 }}>
+          {bookedCount > 0 ? 'task_alt' : 'link'}
+        </span>
+        <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 16, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+          {/* 1) Bank ↔ facturen */}
+          <ResultLine
+            icon="account_balance"
+            tone={bankFailed ? 'error' : bookedCount > 0 ? 'good' : 'neutral'}
+            text={
+              bankFailed
+                ? 'Het bankafschrift kon niet worden gematcht — probeer het straks opnieuw.'
+                : bookedCount > 0
+                  ? `${nFact(bookedCount)} herkend in je bankafschrift en op betaald gezet.`
+                  : pendingTransactions === 0
+                    ? 'Geen open banktransacties om tegen te matchen.'
+                    : 'Geen nieuwe betalingen herkend in je bankafschrift.'
+            }
+          />
+          {/* Booked on amount + name only — real bookings, but the ones worth checking. */}
+          {amountOnlyCount > 0 && (
+            <ResultLine
+              icon="error"
+              tone="warn"
+              text={`${amountOnlyCount === 1 ? '1 koppeling is' : `${amountOnlyCount} koppelingen zijn`} alleen op bedrag herkend (geen factuurnummer in de omschrijving) — controleer die even.`}
+            />
+          )}
+          {/* 2) Kas ↔ facturen */}
+          <ResultLine
+            icon="payments"
+            tone={kasFailed ? 'error' : cashTouched > 0 ? 'good' : 'neutral'}
+            text={
+              kasFailed
+                ? 'Het kasboek kon niet worden bijgewerkt — probeer het straks opnieuw.'
+                : cashTouched === 0
+                  ? 'Kasboek was al in balans met je contant betaalde facturen.'
+                  : [
+                      cash.created > 0 ? `${cash.created} kasboeking toegevoegd` : null,
+                      cash.updated > 0 ? `${cash.updated} bijgewerkt` : null,
+                      cash.deleted > 0 ? `${cash.deleted} teruggedraaid` : null,
+                    ].filter(Boolean).join(' · ')
+            }
+          />
+          {/* 3) Learned categorization — lands in the P&L immediately, so it stays reviewable. */}
+          {categorized > 0 && (
+            <ResultLine
+              icon="label"
+              tone="neutral"
+              text={`${categorized} banktransactie(s) automatisch gecategoriseerd — controleer ze op de Bank-pagina.`}
+            />
+          )}
+          {/* 4) What the engine deliberately did NOT decide. */}
+          {pendingMatchCount > 0 && (
+            <ResultLine
+              icon="help"
+              tone="warn"
+              text={`${pendingMatchCount === 1 ? '1 betaling is' : `${pendingMatchCount} betalingen zijn`} gevonden maar te onzeker om zelf te boeken — die bevestig je zelf.`}
+            />
+          )}
+          {/* Nothing to work with at all → say what to do about it. */}
+          {pendingTransactions === 0 && bookedCount === 0 && !bankFailed && (
+            <ResultLine
+              icon="upload_file"
+              tone="neutral"
+              text="Upload een bankafschrift op de Bank-pagina, dan kan de matching zijn werk doen."
+            />
+          )}
+          {/* A pass we could not run at all — never let a partial run read as a clean one. */}
+          {failed.includes('categorize') && (
+            <ResultLine icon="error" tone="error" text="Automatisch categoriseren is niet gelukt — de rest is wel bijgewerkt." />
+          )}
+        </div>
+
+        {pendingMatchCount > 0 ? (
+          <>
+            <button onClick={onOpenBank} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>
+              Bekijk op de Bank-pagina
+            </button>
+            <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: M3.primary, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Klaar</button>
+          </>
+        ) : (
+          <button onClick={onClose} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Klaar</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ResultLine({ icon, text, tone }: { icon: string; text: string; tone: 'good' | 'warn' | 'error' | 'neutral' }) {
+  const color = tone === 'good' ? '#137333' : tone === 'warn' ? '#B26A00' : tone === 'error' ? M3.error : '#5F6368'
+  const bg    = tone === 'good' ? M3.successContainer : tone === 'warn' ? '#FFF3E0' : tone === 'error' ? M3.errorContainer : M3.surfaceVariant
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: R.md, background: bg }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>{icon}</span>
+      <p style={{ fontSize: 13, color, lineHeight: 1.45, margin: 0, fontWeight: 500 }}>{text}</p>
     </div>
   )
 }

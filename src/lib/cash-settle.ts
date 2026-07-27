@@ -16,6 +16,11 @@
 // Best-effort: any failure is swallowed and logged — a reconcile hiccup must never break paying
 // an invoice or opening the kasboek. Requires the cash_settlement_invoice_link.sql migration
 // (cash_entries.invoice_id); until it is applied the inserts no-op via the catch.
+//
+// [MATCH-BUTTON] It now RETURNS what it changed (CashSettleSummary) instead of nothing. Still
+// best-effort — every existing caller ignores the value — but the on-demand "Matchen met bank &
+// kas" run has to tell the owner what happened to their drawer, and it can only report numbers
+// this function actually produced.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment } from "@/lib/cash";
@@ -48,8 +53,30 @@ export async function cashInstalmentsSupported(supabase: SupabaseClient<any>): P
   }
 }
 
+/**
+ * [MATCH-BUTTON] What this reconcile actually changed in the drawer. Every existing caller
+ * ignores the return value (the reconcile stays fire-and-forget), but the on-demand matcher
+ * has to REPORT its work to the owner — and "kasboek bijgewerkt" with no numbers behind it
+ * would be a claim we cannot back. `ok: false` means the pass bailed on a read error or threw:
+ * nothing was reconciled, and the caller must not present the cash side as done.
+ */
+export interface CashSettleSummary {
+  ok: boolean;
+  /** New 'betaling' entries written (a cash-paid invoice that had none). */
+  created: number;
+  /** Existing entries HEALED (invoice amount / date / direction changed after the payment). */
+  updated: number;
+  /** Orphans removed (their invoice is no longer paid-in-cash) — the reversal. */
+  deleted: number;
+}
+
+const CASH_SETTLE_BAILED: CashSettleSummary = { ok: false, created: 0, updated: 0, deleted: 0 };
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function reconcileCashSettlements(supabase: SupabaseClient<any>, userId: string): Promise<void> {
+export async function reconcileCashSettlements(supabase: SupabaseClient<any>, userId: string): Promise<CashSettleSummary> {
+  let created = 0;
+  let updated = 0;
+  let deleted = 0;
   try {
     // [DEPLOY-SAFE] Without the column, run the pre-instalment model unchanged (see above).
     const perInstalment = await cashInstalmentsSupported(supabase);
@@ -100,7 +127,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
       .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
       .eq("status", "paid")
       .eq("payment_method", "kas");
-    if (invErr) return;
+    if (invErr) return CASH_SETTLE_BAILED;
 
     // Invoices that hold cash but are not (yet) fully paid — invisible to the query above.
     const knownIds = new Set((invRows ?? []).map((r) => (r as { id: string }).id));
@@ -123,7 +150,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
       .eq("user_id", userId)
       .eq("category", "betaling")
       .not("invoice_id", "is", null);
-    if (entryErr) return;
+    if (entryErr) return CASH_SETTLE_BAILED;
 
     const paid = ([...(invRows ?? []), ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
       .map((r) => ({
@@ -161,10 +188,13 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         ...(row.entry_date ? { entry_date: row.entry_date } : {}),
       });
       if (error) {
-        // Unique-index conflict (a concurrent reconcile already created it) is benign.
+        // Unique-index conflict (a concurrent reconcile already created it) is benign. NOT counted
+        // as created either — the entry exists, but this run did not write it.
         if (!/duplicate key|unique/i.test(error.message)) {
           console.error("[CASH-SETTLE] settlement insert failed (non-fatal)", { invoice: row.invoice_id, error: error.message });
         }
+      } else {
+        created += 1;
       }
     }
 
@@ -182,6 +212,7 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         .eq("id", id)
         .eq("user_id", userId);
       if (error) console.error("[CASH-SETTLE] settlement update failed (non-fatal)", { entry: id, error: error.message });
+      else updated += 1;
     }
 
     // Delete the orphaned settlements (their invoice is no longer paid-in-cash) — the reversal.
@@ -192,8 +223,13 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
         .eq("user_id", userId)
         .in("id", toDeleteIds);
       if (error) console.error("[CASH-SETTLE] orphan cleanup failed (non-fatal)", error.message);
+      else deleted += toDeleteIds.length;
     }
   } catch (e) {
     console.error("[CASH-SETTLE] reconcile threw (non-fatal)", e);
+    // Partial work may already be committed (the passes are separate writes), so report what
+    // landed — but ok:false so the caller never claims the drawer is fully in sync.
+    return { ok: false, created, updated, deleted };
   }
+  return { ok: true, created, updated, deleted };
 }

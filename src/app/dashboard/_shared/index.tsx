@@ -11,11 +11,17 @@ import React from 'react'
 import Link from 'next/link'
 import { InfiniteList } from '@/components/ui/InfiniteList'
 import { StatusFilter } from '@/components/ui/StatusFilter'
-import { InvoiceRowItem, STATUS_LABEL } from '@/components/invoice/InvoiceRow'
+import { InvoiceRowItem, STATUS_LABEL, type InvoiceRow as InvoiceListRow } from '@/components/invoice/InvoiceRow'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { SearchBar } from '@/components/search/SearchBar'
 import { M3, FONT, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
+import type { ProfileRow, NotificationRow } from '@/types/rows'
+
+// De header toont alleen naam, bedrijf, e-mail en rol. Door dát te vragen in plaats van een
+// volledige ProfileRow mogen aanroepers een gerichte select doen zonder te liegen over wat
+// ze hebben opgehaald.
+type HeaderProfile = Pick<ProfileRow, 'id' | 'full_name' | 'company_name' | 'email' | 'role'>
 
 // ── NavButton ─────────────────────────────────────────────────────────────────
 
@@ -35,7 +41,7 @@ export function NavButton({ onClick, label }: { onClick: () => void; label: stri
 
 export interface ZzpInvoiceTableProps {
   mode: 'zzp'
-  invoices: any[]
+  invoices: InvoiceListRow[]
   loading: boolean
   hasMore: boolean
   refreshing: boolean
@@ -58,7 +64,7 @@ export interface ZzpInvoiceTableProps {
 
 export interface AccountantInvoiceTableProps {
   mode: 'accountant'
-  invoices: any[]
+  invoices: InvoiceListRow[]
   loading: boolean
   hasMore: boolean
   refreshing: boolean
@@ -220,7 +226,7 @@ export function InvoiceTable(props: InvoiceTableProps) {
 // [BOEK-028] Profile dropdown — May 2026
 // [INTEGRATION] Instellingen → /dashboard/settings — May 2026
 
-function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void }) {
+function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: () => void }) {
   const [open, setOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
   const router = useRouter()
@@ -317,7 +323,7 @@ function ProfileMenu({ profile, onLogout }: { profile: any; onLogout: () => void
 function NotificationsBell({
   notifications, unreadCount, showNotifications, onToggle, onMarkAllRead,
 }: {
-  notifications: any[]
+  notifications: NotificationRow[]
   unreadCount: number
   showNotifications: boolean
   onToggle: () => void
@@ -436,7 +442,7 @@ function NotificationsBell({
                   <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0 }}>{n.title}</p>
                   {n.body && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{n.body}</p>}
                   <p style={{ fontSize: 11, color: '#9AA0A6', margin: '4px 0 0' }}>
-                    {new Date(n.created_at).toLocaleDateString('nl-NL')}
+                    {n.created_at ? new Date(n.created_at).toLocaleDateString('nl-NL') : ''}
                   </p>
                 </div>
               ))}
@@ -455,14 +461,17 @@ function AccountantNavLinks() {
   const router = useRouter()
 
   const links = [
-    // [CONTROL] was '/dashboard/werkplek' — the ZZP werkplek, dropping accountants
-    // onto a wrong-role screen. Point at the real (role-guarded) accountant werkplek.
-    { label: 'Werkplek', href: '/dashboard/accountant/werkplek' },
+    // [ROLE-PARITY] 'Werkplek' link removed — the werkplek tools now live as a tile
+    // grid on the accountant home, and the logo already returns there, so a nav
+    // link to it was redundant. 'Klanten' stays as the one quick portfolio jump.
     { label: 'Klanten',  href: '/dashboard/clients/beheer' },
   ]
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+    // [HEADER-SYSTEM] Hidden on small screens (see .dash-nav-links in globals.css):
+    // on mobile the search + icons crowd this text link; Klanten is also reachable
+    // from the accountant home.
+    <div className="dash-nav-links" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
       {links.map(({ label, href }) => (
         <button
           key={href}
@@ -506,7 +515,9 @@ function ZzpNavLinks() {
   ]
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+    // [HEADER-SYSTEM] Hidden on small screens (see .dash-nav-links in globals.css)
+    // to declutter the mobile header; "Vandaag" stays reachable by route.
+    <div className="dash-nav-links" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
       {links.map(({ label, href }) => (
         <button
           key={href}
@@ -541,8 +552,8 @@ function ZzpNavLinks() {
 // [INTEGRATION] role-based nav + Logo Universal (next/link, role-aware) — May 2026
 
 interface DashboardHeaderProps {
-  profile: any
-  notifications: any[]
+  profile: HeaderProfile
+  notifications: NotificationRow[]
   showNotifications: boolean
   unreadNotifCount: number
   unreadMessages: number

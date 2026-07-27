@@ -1381,6 +1381,11 @@ export interface AttachmentClassification {
     vendor?: number
     invoice_number?: number
     invoice_date?: number
+    amount?: number
+    // [BTW-SUM-FIX] Note left by the extractor when the BTW had to be derived from excl + total
+    // because the mixed-rate summary block could not be summed. Carried through to
+    // field_confidence so import-health can ask the owner to confirm the figure.
+    _btw_derived?: { read: number | null; used: number | null }
   }
 }
 

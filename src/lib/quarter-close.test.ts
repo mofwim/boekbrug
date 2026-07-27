@@ -21,7 +21,18 @@ console.log("\n— notice copy is honest: clean vs gaps vs empty —");
   const clean = buildQuarterCloseNotice("Q2 2026", { warnings: [], outgoingCount: 3, incomingCount: 5 });
   check("clean → not empty, clean=true, gapCount 0", clean.empty === false && clean.clean === true && clean.gapCount === 0);
   check("clean owner body never claims a guaranteed 'klaar' — says controleer + dien in", /Controleer/.test(clean.ownerBody) && !/gegarandeerd/.test(clean.ownerBody));
-  check("clean accountant → 'klaar voor review'", /klaar voor review/.test(clean.accountantTitle));
+  // [BELOFTE §4.3] "staat klaar", nooit "is gedaan". De oude koppen zeiden "is afgesloten"
+  // en "Je klant heeft ... afgesloten" terwijl deze cron op de 5e vuurt en de klant niets
+  // heeft gedaan — wij hebben zijn stukken bij elkaar gezet. AV §4.3 maakt een uitkomst van
+  // het systeem een suggestie die de mens bevestigt; een melding die zegt dat het kwartaal
+  // áf is, is de zin waarop wij worden aangesproken als er iets ontbrak.
+  check("clean accountant → 'staat klaar'", /staat klaar/.test(clean.accountantTitle));
+  check(
+    "geen enkele kop beweert dat het kwartaal is afgesloten",
+    !/afgesloten/i.test(clean.accountantTitle) &&
+      !/afgesloten/i.test(clean.ownerTitle) &&
+      !/heeft .* afgesloten/i.test(clean.accountantBody)
+  );
 
   const gaps = buildQuarterCloseNotice("Q2 2026", { warnings: [{ message: "2 facturen nog te controleren" }, { message: "bankafschrift ontbreekt" }], outgoingCount: 1, incomingCount: 0 });
   check("gaps → clean=false, gapCount 2", gaps.clean === false && gaps.gapCount === 2);
