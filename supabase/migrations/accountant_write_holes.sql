@@ -194,36 +194,55 @@ CREATE INDEX IF NOT EXISTS idx_invoices_shared       ON public.invoices (shared)
 COMMIT;
 
 -- =====================================================================
--- CONTROLE (apart draaien na het toepassen):
+-- CONTROLE (apart draaien na het toepassen)
 --
---   -- 1. De policies staan er, en de FOR ALL zonder koppelingseis is weg.
---   select policyname, cmd from pg_policies
---    where schemaname='public' and tablename='accountant_subject_status'
+-- ⚠️ ALLE controles hieronder lezen de CATALOGUS. Ze werken dus gewoon in de Supabase
+-- SQL-editor, die als service_role draait.
+--
+-- Een eerdere versie van dit blok vroeg om de aanval zelf na te spelen met een INSERT. Dat
+-- is in de SQL-editor niet te doen: daar is auth.uid() NULL (service_role), en service_role
+-- gaat sowieso langs RLS heen — je toetst dan niets. De vorm van de policy toetsen bewijst
+-- precies hetzelfde en kan wél.
+--
+--   -- 1. HET SCHRIJFGAT. Draai dit VÓÓR en NÁ het toepassen; het verschil IS het bewijs.
+--   select policyname,
+--          cmd,
+--          qual ilike '%is_my_accountant_client%' as heeft_koppelingseis
+--     from pg_policies
+--    where schemaname = 'public' and tablename = 'accountant_subject_status'
 --    order by policyname;
---   -- Verwacht: acc_status_client_read_document (SELECT) · acc_status_owner_read (SELECT)
---   --           · acc_status_owner_write (ALL). GEEN acc_status_owner_all.
 --
---   -- 2. Het IBAN staat nu in de grens.
---   select pg_get_functiondef(oid) ilike '%vendor_iban%' as iban_beschermd
+--   VOORAF  → acc_status_client_read_document (SELECT, false)
+--             acc_status_owner_all            (ALL,    false)   ← het gat: FOR ALL zonder eis
+--   ACHTERAF→ acc_status_client_read_document (SELECT, false)
+--             acc_status_owner_read           (SELECT, false)   ← lezen blijft ruim, AV §7.4
+--             acc_status_owner_write          (ALL,    TRUE)    ← schrijven eist de koppeling
+--
+--   -- 2. HET IBAN-GAT.
+--   select pg_get_functiondef(oid) ilike '%vendor_iban%'       as iban_beschermd,
+--          pg_get_functiondef(oid) ilike '%payment_reference%' as kenmerk_beschermd
 --     from pg_proc where proname = 'prevent_accountant_amount_changes';
---   -- Verwacht: true
+--   -- VOORAF: false / false     ACHTERAF: true / true
 --
---   -- 3. De vier indexen.
---   select indexname from pg_indexes
---    where tablename='invoices'
+--   -- 3. DE VIER INDEXEN.
+--   select count(*) as van_vier from pg_indexes
+--    where tablename = 'invoices'
 --      and indexname in ('idx_invoices_sender_id','idx_invoices_receiver_id',
---                        'idx_invoices_invoice_date','idx_invoices_shared')
---    order by indexname;
---   -- Verwacht: 4 rijen
+--                        'idx_invoices_invoice_date','idx_invoices_shared');
+--   -- ACHTERAF: 4
 --
--- ── De injectie die dit dicht, met de hand nagespeeld ──
--- Als een INGELOGDE gebruiker (niet in de SQL-editor — die is service_role en gaat er
--- terecht doorheen), met een document-uuid van iemand met wie je GEEN koppeling hebt:
+-- ── Wil je de aanval TOCH naspelen? Dan met een geleende identiteit, in één transactie
+--    die je altijd terugdraait. Niet nodig voor het bewijs, wel overtuigend om te zien:
 --
---   insert into public.accountant_subject_status
---     (accountant_id, subject_type, subject_id, status, vraag_text)
---   values (auth.uid(), 'document', '<uuid van een vreemde>', 'vraag', 'test');
+--   begin;
+--   set local role authenticated;
+--   set local request.jwt.claims = '{"sub":"<uuid-van-gebruiker-A>","role":"authenticated"}';
+--   select auth.uid();  -- moet A tonen, niet null
+--   insert into public.accountant_subject_status (accountant_id, subject_type, subject_id, status, vraag_text) values (auth.uid(), 'document', '<uuid-van-een-document-van-B>', 'vraag', 'test');
+--   rollback;
 --
--- Verwacht NA deze migratie: new row violates row-level security policy.
--- Vóór deze migratie: de rij werd aangemaakt en verscheen in het dashboard van de eigenaar.
+--   VOORAF: de INSERT slaagt.  ACHTERAF: new row violates row-level security policy.
+--   (De INSERT op één regel — over meerdere regels geplakt splitst de editor hem soms,
+--    en dan krijg je 42601 "more target columns than expressions" in plaats van een
+--    antwoord op je vraag.)
 -- =====================================================================
