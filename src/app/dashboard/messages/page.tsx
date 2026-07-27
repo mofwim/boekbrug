@@ -3,7 +3,7 @@
 // src/app/dashboard/messages/page.tsx
 // BOEK-007: قائمة المحادثات — مع skeleton loading
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
@@ -85,10 +85,16 @@ export default function MessagesPage() {
 
   // [SMART-FILTER] In-page live filter over the fully-loaded conversation list
   // (naam / laatste bericht), accent-folded via de gedeelde matcher.
+  // [PERF] useMemo: alleen herberekenen als de zoekterm of de gesprekken wijzigen,
+  // niet bij elke render.
   const rawQ = search.trim()
-  const filtered = rawQ
-    ? conversations.filter(c => rowMatchesQuery(rawQ, [c.name, c.lastMessage]))
-    : conversations
+  const filtered = useMemo(
+    () =>
+      rawQ
+        ? conversations.filter(c => rowMatchesQuery(rawQ, [c.name, c.lastMessage]))
+        : conversations,
+    [rawQ, conversations]
+  )
 
   return (
     <div className="min-h-screen bg-[#f8f9fa]">

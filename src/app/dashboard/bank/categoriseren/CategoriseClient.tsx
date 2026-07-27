@@ -9,7 +9,7 @@
 // true DB-wide remaining count is 0 — not merely because this page is empty. A capped
 // page with more behind it says so, and offers a one-tap sweep of the confident ones.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
@@ -174,10 +174,16 @@ export default function CategoriseClient() {
   // [SMART-FILTER] live filter over the LOADED transactions (tegenpartij /
   // omschrijving / bedrag). The list is server-capped (PAGE_SIZE), so when
   // hasMore is set this narrows only what's on screen — the empty-state says so.
+  // [PERF] useMemo: alleen herberekenen als de zoekterm of de geladen transacties
+  // wijzigen — niet bij elke render (categorie-chips tikken raakt dit filter niet).
   const rawC = search.trim()
-  const displayItems = rawC
-    ? items.filter((it) => rowMatchesQuery(rawC, [it.counterpart_name, it.description], [it.amount]))
-    : items
+  const displayItems = useMemo(
+    () =>
+      rawC
+        ? items.filter((it) => rowMatchesQuery(rawC, [it.counterpart_name, it.description], [it.amount]))
+        : items,
+    [rawC, items]
+  )
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>

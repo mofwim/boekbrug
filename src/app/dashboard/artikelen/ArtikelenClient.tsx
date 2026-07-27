@@ -5,7 +5,8 @@
 // saved once and reused. Manage here; pick from it while making a factuur.
 
 import { useEffect, useMemo, useState } from 'react'
-import { type Article, foldText } from '@/lib/articles'
+import { type Article } from '@/lib/articles'
+import { rowMatchesQuery } from '@/lib/search'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
@@ -45,11 +46,12 @@ export default function ArtikelenClient() {
   }
 
   const shown = useMemo(() => {
-    // Reuse the same picker ranking the invoice uses, but include archived in the manage view.
-    const q = foldText(search.trim())
+    // [SMART-FILTER] Dezelfde matcher als elke andere lijst: code + omschrijving (accent-loos)
+    // én de prijs, zodat "45" ook op het bedrag zoekt. Gearchiveerde artikelen blijven zichtbaar
+    // in dit beheerscherm.
+    const q = search.trim()
     if (!q) return [...articles].sort((a, b) => Number(b.active) - Number(a.active) || b.usage_count - a.usage_count)
-    return articles.filter((a) =>
-      foldText(a.code ?? '').includes(q) || foldText(a.description).includes(q))
+    return articles.filter((a) => rowMatchesQuery(q, [a.code, a.description], [a.unit_price]))
   }, [articles, search])
 
   function openNew() { setForm(EMPTY); setEditingId(null); setError(null); setShowForm(true) }
@@ -109,8 +111,16 @@ export default function ArtikelenClient() {
         </header>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek op code of omschrijving…"
-            style={{ flex: 1, borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 16px', fontSize: 14, outline: 'none', fontFamily: FONT, background: M3.surface, color: M3.onSurface }} />
+          {/* [SMART-FILTER] Zoekveld met label voor schermlezers en een wis-knop, net als bij facturen/categoriseren. */}
+          <div style={{ flex: 1, position: 'relative' }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek op code, omschrijving of bedrag…"
+              aria-label="Artikelen zoeken"
+              style={{ width: '100%', boxSizing: 'border-box', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 36px 10px 16px', fontSize: 14, outline: 'none', fontFamily: FONT, background: M3.surface, color: M3.onSurface }} />
+            {search && (
+              <button onClick={() => setSearch('')} aria-label="Wissen"
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: M3.surfaceVariant, color: M3.neutral, cursor: 'pointer', fontSize: 13, lineHeight: 1, fontFamily: FONT }}>×</button>
+            )}
+          </div>
           <button onClick={openNew} style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: R.full, padding: '10px 18px', cursor: 'pointer', fontSize: 14, fontWeight: 600, fontFamily: FONT, whiteSpace: 'nowrap' }}>+ Nieuw</button>
         </div>
 

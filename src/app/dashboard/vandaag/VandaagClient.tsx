@@ -22,7 +22,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
@@ -197,13 +197,26 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   const rawV = search.trim();
   // [SMART-FILTER] shared matcher — klant / factuurnummer / bedrag
   // (decimaal- én duizendtal-bewust, zie src/lib/search.ts)
-  const matchV = (inv: VandaagInvoice) =>
-    rowMatchesQuery(rawV, [inv.client_name, inv.invoice_number], [inv.total_inc_btw]);
+  // [PERF] useCallback houdt de matcher stabiel per zoekterm, zodat de memo's hieronder
+  // niet bij elke render opnieuw filteren.
+  const matchV = useCallback(
+    (inv: VandaagInvoice) =>
+      rowMatchesQuery(rawV, [inv.client_name, inv.invoice_number], [inv.total_inc_btw]),
+    [rawV]
+  );
   const searching = rawV.length > 0;
   const canSearch = payable.length > 0 || remind.length > 0;
   // [SORT] Search results honour the chosen order too.
-  const displayPayable = searching ? sortRows(payable.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visiblePayable;
-  const displayRemind = searching ? sortRows(remind.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visibleRemind;
+  // [PERF] useMemo: alleen herberekenen als de zoekterm, de lijsten, de verborgen items,
+  // de sortering of het 3-daagse venster wijzigen.
+  const displayPayable = useMemo(
+    () => (searching ? sortRows(payable.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visiblePayable),
+    [searching, payable, dismissed, matchV, sortBy, visiblePayable]
+  );
+  const displayRemind = useMemo(
+    () => (searching ? sortRows(remind.filter((i) => !dismissed.has(i.id) && matchV(i)), sortBy) : visibleRemind),
+    [searching, remind, dismissed, matchV, sortBy, visibleRemind]
+  );
   const noneShown = displayPayable.length === 0 && displayRemind.length === 0;
 
   return (

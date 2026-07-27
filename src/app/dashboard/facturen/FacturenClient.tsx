@@ -294,23 +294,35 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       return () => clearTimeout(t0)
     }
     let active = true
+    // [PERF] One AbortController per run: a superseded query (the next keystroke) is now
+    // really CANCELLED instead of merely ignored — it stops occupying a connection and
+    // stops the server finishing work nobody reads. `active` stays as the second guard.
+    const controller = new AbortController()
     const tLoad = setTimeout(() => setSearchLoading(true), 0)
     const t = setTimeout(async () => {
-      const { data } = await supabase
-        .from('invoices')
-        // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
-        // chip (and feed the same bundle open-amount) as a row from the infinite list.
-        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
-        .eq('sender_id', profile.id)
-        .neq('status', 'archived')
-        .or(orParts.join(','))
-        .order('created_at', { ascending: false })
-        .limit(50)
-      if (!active) return
-      setSearchResults((data ?? []) as unknown as InvoiceRow[])
-      setSearchLoading(false)
+      try {
+        const { data } = await supabase
+          .from('invoices')
+          // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
+          // chip (and feed the same bundle open-amount) as a row from the infinite list.
+          .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
+          .eq('sender_id', profile.id)
+          .neq('status', 'archived')
+          .or(orParts.join(','))
+          .order('created_at', { ascending: false })
+          .limit(50)
+          .abortSignal(controller.signal)
+        if (!active) return
+        setSearchResults((data ?? []) as unknown as InvoiceRow[])
+        setSearchLoading(false)
+      } catch (e) {
+        // [PERF] An abort is the NORMAL outcome of typing on — swallow it silently so it
+        // can never surface as an unhandled rejection. Anything else keeps behaving as before.
+        if (controller.signal.aborted || (e as Error)?.name === 'AbortError') return
+        throw e
+      }
     }, 250)
-    return () => { active = false; clearTimeout(tLoad); clearTimeout(t) }
+    return () => { active = false; controller.abort(); clearTimeout(tLoad); clearTimeout(t) }
   }, [search, profile.id])
 
   const statusMap: Record<FilterTab, InvoiceStatusFilter> = {
@@ -616,13 +628,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           </div>
         </div>
 
-        {/* [SEARCH] Quick text-filter (invoice number / client name) */}
+        {/* [SEARCH] Quick text-filter (invoice number / client name)
+            [SMART-FILTER] …and the amount: the server query below also matches
+            total_inc_btw, so the placeholder names "bedrag" too. */}
         <div style={{ position: 'relative', marginBottom: 10 }}>
           <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Zoek op factuurnummer of klant..."
+            placeholder="Zoek op factuurnummer, klant of bedrag…"
             aria-label="Facturen zoeken"
             style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
           />

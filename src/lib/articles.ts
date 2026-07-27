@@ -3,6 +3,11 @@
 // the picker match/rank. No I/O — the API routes and the invoice UI call these, so the
 // rules live in one tested place. Run: npx tsx src/lib/articles.test.ts
 
+// [SMART-FILTER] foldText lives in one place (src/lib/search.ts) so every search box
+// folds accents identically; re-exported here because consumers import it from this module.
+import { foldText } from "./search";
+export { foldText };
+
 export interface Article {
   id: string;
   code: string | null;
@@ -55,11 +60,6 @@ export function normalizeArticleInput(raw: unknown): NormalizeResult {
     ok: true,
     value: { code: codeRaw || null, description, unit_price, btw_rate: rateNum, unit: unitRaw || null },
   };
-}
-
-// [SEARCH] Case- AND accent-insensitive fold so "café"/"cafe" and "José"/"jose" match.
-export function foldText(s: string): string {
-  return (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 }
 
 /**

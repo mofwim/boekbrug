@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { amountOrConditions } from "@/lib/search";
+import { amountOrConditions, foldText } from "@/lib/search";
 import type { SearchResult, SearchResultGroup, SearchTarget } from "@/lib/search";
 
 // ─── [SEARCH] Term sanitation ────────────────────────────────────────────────
@@ -82,8 +82,8 @@ function dedup(arr: SearchResult[]): SearchResult[] {
 
 // ─── [SEARCH] Relevance ranking ──────────────────────────────────────────────
 // Accent-insensitive fold so "café" ranks like "cafe".
-const fold = (s: string | null | undefined) =>
-  (s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+// [SMART-FILTER] Uses the shared foldText from src/lib/search.ts (single source of
+// truth), so ranking folds exactly like every in-page filter.
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -96,9 +96,9 @@ function escapeRegex(s: string): string {
 // "2026-004 moha" — we fall back to how many query TOKENS appear across the fields,
 // so ranking still engages instead of degrading to pure recency.
 function rankScore(query: string, fields: Array<string | null | undefined>): number {
-  const needle = fold(query).trim();
+  const needle = foldText(query).trim();
   if (!needle) return 0;
-  const folded = fields.map(fold).filter(Boolean);
+  const folded = fields.map((f) => foldText(f)).filter(Boolean);
   if (folded.length === 0) return 0;
 
   const wb = new RegExp(`\\b${escapeRegex(needle)}`);
@@ -173,6 +173,24 @@ export async function GET(req: NextRequest) {
   const fmt = (n: number) =>
     new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(n);
 
+  // invoice_lines pre-query — find invoice IDs matching on line descriptions.
+  // No explicit tenant column exists on invoice_lines; RLS scopes SELECT to the
+  // owner/receiver/accountant, and the final invoices query re-filters by
+  // sender/receiver ∈ senderIds, so this is safe (defence in depth).
+  // [PERF] This query depends ONLY on `terms`, never on the role/accountant
+  // lookups below — so fire it NOW (Promise.resolve() forces the lazy PostgREST
+  // builder to execute) and await it further down. Saves one serial round-trip.
+  const linesPromise =
+    target === "all" || target === "invoices"
+      ? Promise.resolve(
+          supabase
+            .from("invoice_lines")
+            .select("invoice_id")
+            .or(buildOr(["description"], terms))
+            .limit(30)
+        )
+      : null;
+
   // Role check
   const { data: profile } = await supabase
     .from("profiles")
@@ -195,26 +213,17 @@ export async function GET(req: NextRequest) {
     senderIds = [user.id, ...clientIds];
   }
 
-  // invoice_lines pre-query — find invoice IDs matching on line descriptions.
-  // No explicit tenant column exists on invoice_lines; RLS scopes SELECT to the
-  // owner/receiver/accountant, and the final invoices query re-filters by
-  // sender/receiver ∈ senderIds, so this is safe (defence in depth).
-  let invoiceIdsFromLines: string[] = [];
-  if (target === "all" || target === "invoices") {
-    const { data: lineMatches } = await supabase
-      .from("invoice_lines")
-      .select("invoice_id")
-      .or(buildOr(["description"], terms))
-      .limit(30);
-    // [BOEK-FOUNDATION-TYPES] invoice_id is nullable — filter out nulls
-    invoiceIdsFromLines = [
-      ...new Set(
-        (lineMatches ?? [])
-          .map((l) => l.invoice_id)
-          .filter((id): id is string => id !== null)
-      ),
-    ];
-  }
+  // [PERF] Collect the invoice_lines result kicked off above (already in flight
+  // while the role/accountant queries ran). Gate unchanged: no promise → [].
+  const lineMatches = linesPromise ? (await linesPromise).data : null;
+  // [BOEK-FOUNDATION-TYPES] invoice_id is nullable — filter out nulls
+  const invoiceIdsFromLines: string[] = [
+    ...new Set(
+      (lineMatches ?? [])
+        .map((l) => l.invoice_id)
+        .filter((id): id is string => id !== null)
+    ),
+  ];
 
   const idList = senderIds.join(",");
 
