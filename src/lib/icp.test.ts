@@ -1,7 +1,7 @@
 // [ICP] Pure node test — run: npx tsx src/lib/icp.test.ts
 import {
   classifyVatNumber, normalizeVatNumber, buildIcp, icpNote, buildIcpCsv, ICP_MIN_EUR,
-  buildForeignPurchases, foreignPurchaseNote, buildForeignPurchaseCsv,
+  buildForeignPurchases, foreignPurchaseNote, buildForeignPurchaseCsv, reverseChargeNotice,
   type IcpInvoice,
 } from "./icp";
 
@@ -152,6 +152,32 @@ console.log("\n— the purchase mirror: EU-inkopen listed, never computed —");
   check("it warns that 4b and 5b are NOT in the concept", /NIET in het concept/.test(csv));
   check("each row carries the supplier, the invoice and the amount", /DE;DE987654321;Hansen GmbH;LEV-9;800,00;nee/.test(csv));
   check("a supplier that charged BTW is marked for checking", /LEV-10;800,00;ja — controleer/.test(csv));
+}
+
+console.log("\n— the sentence that has to be ON the invoice (art. 226 punt 11a) —");
+{
+  const rc = (over: Parameters<typeof reverseChargeNotice>[0] extends infer T ? Partial<T> : never = {}) =>
+    reverseChargeNotice({ clientVatNumber: "DE123456789", btwAmount: 0, invoiceType: "factuur", ...over });
+
+  const n = rc()!;
+  check("an intra-EU sale gets the mandatory sentence", n !== null);
+  check("…in the exact words the directive asks for", /^Btw verlegd/.test(n));
+  check("…covering goods AND services, without guessing which", /intracommunautaire prestatie/.test(n));
+  check("…and it repeats the customer's number, which the statement rests on", /DE123456789/.test(n));
+
+  check("BTW on the invoice means it was NOT shifted — no claim is made", rc({ btwAmount: 210 }) === null);
+  check("a Dutch customer never gets it", rc({ clientVatNumber: "NL123456789B01" }) === null);
+  check("a customer with no VAT number never gets it", rc({ clientVatNumber: null }) === null);
+  check("a number that cannot be right is not a basis for the claim", rc({ clientVatNumber: "DE12345678" }) === null);
+  check("an offerte is not a legal invoice and says nothing about BTW", rc({ invoiceType: "offerte" }) === null);
+  check("a pro forma neither", rc({ invoiceType: "pro_forma" }) === null);
+  check("a creditnota reverses a real invoice, so it carries it too", rc({ invoiceType: "creditnota" }) !== null);
+  check("under KOR nothing is charged for another reason entirely", rc({ korActive: true }) === null);
+
+  check("if the owner already wrote it, it is not said twice",
+    rc({ lineTexts: ["Advies Q3 — BTW verlegd"] }) === null);
+  check("…however they spelled it", rc({ lineTexts: ["reverse charge applies"] }) === null);
+  check("…and an unrelated line does not suppress it", rc({ lineTexts: ["Advies Q3"] }) !== null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

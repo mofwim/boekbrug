@@ -317,6 +317,45 @@ export function buildForeignPurchaseCsv(r: ForeignPurchaseResult, periodLabel: s
   return L.join("\r\n");
 }
 
+// ── The sentence that has to be ON the invoice ────────────────────────────────────────────────
+//
+// Art. 226 punt 11a van richtlijn 2006/112/EG (art. 35a Wet OB): when the CUSTOMER owes the BTW,
+// the invoice must carry the words "Btw verlegd". Not a recommendation — an invoice without it is
+// formally deficient, and that is the ground on which the 0% gets challenged and the customer's
+// own deduction gets refused. Until now the only way it appeared was if the owner happened to
+// type it into a line description.
+//
+// The app already knows exactly when it applies — the same rule the ICP-opgaaf runs on — so it
+// can simply say it. Deliberately generic wording: "Btw verlegd" is what the directive asks for
+// verbatim, and "intracommunautaire prestatie" covers goods and services alike. Naming a specific
+// article (138 for goods, 44/196 for services) would be a guess about which of the two this
+// invoice is, and a wrong citation is worse than none.
+
+/** The mandatory reverse-charge sentence for this invoice, or null when it does not apply. */
+export function reverseChargeNotice(args: {
+  clientVatNumber: string | null | undefined;
+  btwAmount: number | null | undefined;
+  invoiceType: string | null | undefined;
+  korActive?: boolean;
+  /** The invoice's own line texts — if the owner already wrote it, we do not say it twice. */
+  lineTexts?: Array<string | null | undefined>;
+}): string | null {
+  // An offerte or pro forma is not a legal invoice and may not carry a BTW statement at all.
+  const type = args.invoiceType ?? "factuur";
+  if (type !== "factuur" && type !== "creditnota") return null;
+  // Under KOR nothing is charged for a different reason entirely; claiming verlegging there
+  // would be a statement about a regime the owner is not in.
+  if (args.korActive === true) return null;
+  // BTW on the invoice means it was NOT shifted to the customer, whatever the VAT number says.
+  if (Math.abs(Number(args.btwAmount) || 0) >= 0.005) return null;
+  const shape = classifyVatNumber(args.clientVatNumber);
+  if (shape.kind !== "eu") return null;
+  for (const t of args.lineTexts ?? []) {
+    if (/btw\s*verlegd|reverse\s*charge|verleggingsregeling/i.test(String(t ?? ""))) return null;
+  }
+  return `Btw verlegd — intracommunautaire prestatie. BTW-nummer afnemer: ${shape.vat}.`;
+}
+
 /** Below this, rubriek 3b rounds to €0 and there is nothing to state. */
 export const ICP_MIN_EUR = 0.5;
 

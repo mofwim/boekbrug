@@ -445,6 +445,11 @@ function NewInvoicePageContent() {
   // classifyVatNumber is deliberately conservative — it only says "suspect" when the length is
   // impossible for that country, so a valid number is never called wrong.
   const euVatSuspect = classifyVatNumber(clientBtw).kind === 'eu_suspect'
+  // [ICP] A customer in another member state. Stated, never decided: whether THIS supply is an
+  // intracommunautaire prestatie depends on what is being supplied and on the customer acting as
+  // a business — a judgement the app must not make. What it can do is say it here, where the
+  // rate is still being chosen, instead of leaving the owner to find out at the aangifte.
+  const euVatCustomer = classifyVatNumber(clientBtw).kind === 'eu'
 
   // ── Dates ────────────────────────────────────────────────────────────────────
   const today = new Date().toISOString().split('T')[0]
@@ -1171,6 +1176,12 @@ function NewInvoicePageContent() {
                 {euVatSuspect && (
                   <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>
                     Deze lengte klopt niet voor dat EU-land — controleer via VIES. Het bepaalt de BTW-verlegging én de ICP-opgaaf.
+                  </p>
+                )}
+                {euVatCustomer && (
+                  <p style={{ fontSize: 11, color: '#5F6368', margin: '4px 0 0', lineHeight: 1.45 }}>
+                    Klant in een ander EU-land. Bij een intracommunautaire prestatie zet je 0% BTW — &ldquo;Btw verlegd&rdquo;
+                    komt dan automatisch op de factuur, en de klant komt in je ICP-opgaaf.
                   </p>
                 )}
               </div>
