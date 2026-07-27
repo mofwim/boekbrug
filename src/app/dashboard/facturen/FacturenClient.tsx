@@ -130,6 +130,25 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const [expandedId, setExpandedId]     = useState<string | null>(null)
   const [toast, setToast]               = useState<string | null>(null)
   const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
+  // [HERHAAL] The invoice the owner is about to start (or stop) repeating.
+  const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string } | null>(null)
+  // [HERHAAL] Which invoices are currently being repeated, keyed by the invoice they repeat. The
+  // schedule lives ON the invoice — that is what the dialog promises ("stoppen kan altijd"), so
+  // the list has to show it there and let the owner stop it there.
+  const [schedules, setSchedules] = useState<Record<string, { id: string; cadence: string; next_run_date: string }>>({})
+
+  async function loadSchedules() {
+    try {
+      const res = await fetch('/api/invoice/schedules')
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.schedules) return
+      const map: Record<string, { id: string; cadence: string; next_run_date: string }> = {}
+      for (const sc of json.schedules as Array<{ id: string; source_invoice_id: string; cadence: string; next_run_date: string; active: boolean }>) {
+        if (sc.active) map[sc.source_invoice_id] = { id: sc.id, cadence: sc.cadence, next_run_date: sc.next_run_date }
+      }
+      setSchedules(map)
+    } catch { /* silent — the feature is simply not shown */ }
+  }
   const [payCtx, setPayCtx]             = useState<ConfirmPayCtx | null>(null)
   const [sendCtx, setSendCtx]           = useState<SendCtx | null>(null)  // [BOEK-029] Versturen confirm
   const [processingId, setProcessingId] = useState<string | null>(null)
@@ -251,6 +270,26 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   // has to be current the moment an invoice lands in it — otherwise the owner removes something
   // and the "terug te zetten onderaan de lijst" the toast just promised isn't there yet.
   const [archivedTick, setArchivedTick] = useState(0)
+
+  // [HERHAAL] Silent on failure and on a not-yet-migrated database: an absent feature shows
+  // nothing, it never breaks the list. Inline async IIFE, matching the other loaders here, so no
+  // setState runs synchronously inside the effect body.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/invoice/schedules')
+        const json = await res.json().catch(() => ({}))
+        if (cancelled || !res.ok || !json?.schedules) return
+        const map: Record<string, { id: string; cadence: string; next_run_date: string }> = {}
+        for (const sc of json.schedules as Array<{ id: string; source_invoice_id: string; cadence: string; next_run_date: string; active: boolean }>) {
+          if (sc.active) map[sc.source_invoice_id] = { id: sc.id, cadence: sc.cadence, next_run_date: sc.next_run_date }
+        }
+        setSchedules(map)
+      } catch { /* silent */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     if (!profile?.id) return
@@ -489,6 +528,53 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     } else {
       showToast('Versturen mislukt')
     }
+  }
+
+  // ── [HERHAAL] Repeat this invoice every week / month / quarter / year ──────────────────────
+  // The invoice they already sent IS the definition of what is billed, so starting a repeat is
+  // one tap on a row that already exists — no template to fill in, no second copy of the client
+  // and the lines to keep in sync. Each occurrence arrives as a CONCEPT; sending stays the
+  // owner's act, because that is where the invoice number is minted and where a document goes to
+  // a third party for real.
+  async function startRepeat(cadence: 'weekly' | 'monthly' | 'quarterly' | 'yearly') {
+    if (!repeatCtx) return
+    const ctx = repeatCtx
+    setRepeatCtx(null)
+    setProcessingId(ctx.id)
+    try {
+      const res = await fetch('/api/invoice/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: ctx.id, cadence }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        const label = cadence === 'weekly' ? 'elke week' : cadence === 'monthly' ? 'elke maand'
+          : cadence === 'quarterly' ? 'elk kwartaal' : 'elk jaar'
+        showToast(`Herhaalt ${label} — het volgende concept staat klaar op ${fmtDate(json?.schedule?.next_run_date ?? null)}`)
+        await loadSchedules()
+      } else {
+        showToast(json?.detail || 'Herhalen instellen mislukt')
+      }
+    } catch {
+      showToast('Herhalen instellen mislukt')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  async function stopRepeat(scheduleId: string) {
+    setRepeatCtx(null)
+    try {
+      const res = await fetch(`/api/invoice/schedules?id=${encodeURIComponent(scheduleId)}`, { method: 'DELETE' })
+      if (res.ok) {
+        showToast('Herhalen gestopt — klaarstaande concepten blijven staan')
+        await loadSchedules()
+      } else {
+        const j = await res.json().catch(() => ({}))
+        showToast(j?.detail || 'Stoppen mislukt')
+      }
+    } catch { showToast('Stoppen mislukt') }
   }
 
   // ── [INVOICE-REMOVE] "Verwijderen" — one button, four honest outcomes ──────────────────────
@@ -1086,6 +1172,32 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                             Verwijderen
                           </button>
                         )}
+                        {/* [HERHAAL] Only on a real, already-sent verkoopfactuur: a concept has
+                            nothing to repeat yet, and an offerte or creditnota is not something
+                            you bill again every month. */}
+                        {!isCredit && !isOfferte && inv.status !== 'draft' && (() => {
+                          const sc = schedules[inv.id]
+                          const label = sc
+                            ? sc.cadence === 'weekly' ? 'Herhaalt elke week'
+                              : sc.cadence === 'monthly' ? 'Herhaalt elke maand'
+                              : sc.cadence === 'quarterly' ? 'Herhaalt elk kwartaal'
+                              : 'Herhaalt elk jaar'
+                            : 'Herhalen'
+                          return (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                setRepeatCtx({
+                                  id: inv.id, number: inv.invoice_number ?? '', client: inv.client_name ?? 'deze klant',
+                                  ...(sc ? { scheduleId: sc.id, cadence: sc.cadence, nextRun: sc.next_run_date } : {}),
+                                })
+                              }}
+                              style={{ fontSize: 13, color: sc ? '#137333' : M3.onPrimaryContainer, background: sc ? M3.successContainer : M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>autorenew</span>
+                              {label}
+                            </button>
+                          )
+                        })()}
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1314,6 +1426,73 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           onConfirm={() => executeSend(sendCtx)}
           onCancel={() => setSendCtx(null)}
         />
+      )}
+
+      {/* ── [HERHAAL] Kies hoe vaak ── One question, four answers. The dialog says what will
+           happen in full: a CONCEPT arrives each period and the owner sends it — the app never
+           sends an invoice by itself, because that is the act that mints a number and reaches a
+           customer. */}
+      {repeatCtx && (
+        <div
+          onClick={() => setRepeatCtx(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}
+          >
+            <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>
+              {repeatCtx.scheduleId ? 'Deze factuur herhaalt' : 'Hoe vaak herhalen?'}
+            </p>
+            <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: 20, lineHeight: 1.5 }}>
+              {repeatCtx.scheduleId ? (
+                <>Het volgende concept voor {repeatCtx.client} staat klaar op <strong>{fmtDate(repeatCtx.nextRun ?? null)}</strong>.</>
+              ) : (
+                <>We maken deze factuur voor {repeatCtx.client} telkens opnieuw klaar — met dezelfde regels en hetzelfde
+                betaaltermijn. Je krijgt een <strong>concept</strong> dat je zelf verstuurt.</>
+              )}
+            </p>
+            {/* [HERHAAL] Stopping is the promise the dialog makes when it starts, so it lives in
+                the same place. It removes only the schedule: every concept it already produced is
+                an ordinary invoice and stays exactly where it is. */}
+            {repeatCtx.scheduleId ? (
+              <button
+                onClick={() => stopRepeat(repeatCtx.scheduleId as string)}
+                style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.errorContainer, color: M3.error, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
+              >
+                Stoppen met herhalen
+              </button>
+            ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              {([
+                ['weekly', 'Elke week'],
+                ['monthly', 'Elke maand'],
+                ['quarterly', 'Elk kwartaal'],
+                ['yearly', 'Elk jaar'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => startRepeat(value)}
+                  style={{ padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            )}
+            <p style={{ fontSize: 12, color: '#9AA0A6', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
+              {repeatCtx.scheduleId
+                ? 'Concepten die al klaarstaan blijven staan — stoppen raakt alleen de herhaling zelf.'
+                : 'Stoppen kan altijd — het herhalen staat bij deze factuur en raakt de facturen die al klaarstaan nooit.'}
+            </p>
+            <button
+              onClick={() => setRepeatCtx(null)}
+              style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── [INVOICE-REMOVE] Remove dialog — the decision, rendered ──
