@@ -160,9 +160,43 @@ console.log("\n— [ICP] rubriek 3b: stated correctly, and it can never change w
     over.rows.find((r) => r.code === "3b")!.omzet === 3000);
   check("…and 1e can never go negative", !over.rows.some((r) => r.code === "1e" && r.omzet < 0));
 
-  check("a negative intra-EU figure is refused, not subtracted from 1e",
+  // A quarter whose EU turnover nets NEGATIVE (a creditnota for a sale invoiced earlier) has a
+  // genuinely negative 3b. Clamping it to zero would leave the credit in 1e while the ICP-opgaaf
+  // beside it reports the negative — two documents for one accountant, contradicting each other.
+  const negSales: AangifteInput["salesByRate"] = [
+    { rate: 21, omzet: 5000, btw: 1050 },
+    { rate: 0, omzet: -800, btw: 0 },
+  ];
+  const neg = buildAangifte({ salesByRate: negSales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: -500 }, compl(), "Q3 2026");
+  check("a net-negative EU quarter gets a negative 3b, not a hidden one",
+    neg.rows.find((r) => r.code === "3b")!.omzet === -500);
+  check("…and the rest of the negative 0%-bucket stays in 1e",
+    neg.rows.find((r) => r.code === "1e")!.omzet === -300);
+  check("…while 5g still does not move",
+    neg.saldo === buildAangifte({ salesByRate: negSales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0 }, compl(), "Q3 2026").saldo);
+  const negCapped = buildAangifte({ salesByRate: negSales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: -9999 }, compl(), "Q3 2026");
+  check("a negative bigger than the bucket is capped too, and 1e never flips sign",
+    negCapped.rows.find((r) => r.code === "3b")!.omzet === -800 && !negCapped.rows.some((r) => r.code === "1e"));
+
+  // Mixed signs are not an amount anyone can honestly move.
+  check("positive EU turnover against a negative 0%-bucket moves nothing",
+    buildAangifte({ salesByRate: negSales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: 500 }, compl(), "Q3 2026")
+      .rows.find((r) => r.code === "1e")!.omzet === -800);
+  check("…and neither does the reverse",
     buildAangifte({ salesByRate: sales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: -500 }, compl(), "Q3 2026")
       .rows.find((r) => r.code === "1e")!.omzet === 3000);
+
+  // When 3b could not take the whole figure, the concept and the ICP-opgaaf beside it disagree —
+  // and both go to the same accountant, so the difference is stated instead of discovered.
+  const capped = buildAangifte({ salesByRate: sales, btwVoorbelasting: 0, cashOmzetZonderBtw: 0, intraEuOmzet: 9999 }, compl(), "Q3 2026");
+  check("a capped 3b says so, naming both amounts",
+    capped.notes.some((n) => /intracommunautaire leveringen/.test(n) && /9\.999/.test(n) && /3\.000/.test(n)));
+  check("…and points at the two likely causes", capped.notes.some((n) => /tóch BTW is berekend/.test(n) && /creditnota/.test(n)));
+  check("…and warns that the two figures get compared", capped.notes.some((n) => /naast elkaar gelegd/.test(n)));
+  check("a 3b that took the whole figure says nothing extra",
+    !met.notes.some((n) => /naast elkaar gelegd/.test(n)));
+  check("no intra-EU turnover at all says nothing either",
+    !zonder.notes.some((n) => /naast elkaar gelegd/.test(n)));
 
   check("the CSV carries 3b with its Belastingdienst label",
     /3b;Leveringen naar landen binnen de EU;1200,00/.test(buildAangifteCsv(met)));

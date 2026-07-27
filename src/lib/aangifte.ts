@@ -103,9 +103,21 @@ export function buildAangifte(
   // the ICP-opgaaf. Capped at what 1e actually holds: 1e can never go negative, and turnover that
   // is not there is not invented. Both rubrieken carry €0 BTW, which is the whole safety of this
   // step — 5a, and therefore 5g, is identical with or without it.
-  const intraEu = Math.max(0, Math.round(input.intraEuOmzet ?? 0));
-  const om3b = Math.min(intraEu, euro(om1e));
-  const rest1e = euro(om1e) - om3b;
+  //
+  // It moves in EITHER direction. A quarter whose EU turnover nets negative — a creditnota for a
+  // sale invoiced earlier — has a genuinely negative 3b, and clamping that to zero would leave
+  // the credit sitting in 1e while the ICP-opgaaf beside it reports the negative. The two are
+  // handed to the same accountant; they may not contradict each other.
+  const intraEu = Math.round(input.intraEuOmzet ?? 0);
+  const e1 = euro(om1e);
+  // Only ever move what 1e actually holds, in the direction it holds it. Mixed signs (positive
+  // EU turnover against a negative 0%-bucket, or the reverse) move nothing: there is no honest
+  // amount to shift, and the note still names the ICP lines.
+  const om3b =
+    intraEu > 0 && e1 > 0 ? Math.min(intraEu, e1)
+    : intraEu < 0 && e1 < 0 ? Math.max(intraEu, e1)
+    : 0;
+  const rest1e = e1 - om3b;
   if (rest1e !== 0) rows.push({ code: "1e", label: RATE_LABEL["1e"], omzet: rest1e, btw: 0 });
   if (om3b !== 0) rows.push({ code: "3b", label: RATE_LABEL["3b"], omzet: om3b, btw: 0 });
 
@@ -143,6 +155,19 @@ export function buildAangifte(
   // wins: it names the invoices instead of merely announcing that some exist, which is the
   // difference between a warning and something the accountant can act on. The bare sentence
   // stays as the fallback for callers that do not build the listing.
+  // [ICP] When 3b could NOT take the whole intra-EU figure — capped by what the 0%-bucket held,
+  // or signs that do not match — the concept and the ICP-opgaaf beside it disagree. They go to
+  // the same accountant, so the difference is stated rather than left to be discovered.
+  if (intraEu !== 0 && om3b !== intraEu) {
+    notes.push(
+      `Let op: de intracommunautaire leveringen tellen op tot €${Math.abs(intraEu).toLocaleString("nl-NL")}` +
+      `${intraEu < 0 ? " negatief" : ""}, maar rubriek 3b kon er €${Math.abs(om3b).toLocaleString("nl-NL")}` +
+      `${om3b < 0 ? " negatief" : ""} van opnemen — de 0%-omzet in dit kwartaal is niet groot genoeg (of heeft ` +
+      "een ander teken). Dat wijst op een verkoop aan een EU-ondernemer waarop tóch BTW is berekend, of op een " +
+      "creditnota uit een ander tijdvak. Controleer dit vóór je de ICP-opgaaf doet: die twee bedragen worden " +
+      "naast elkaar gelegd.",
+    );
+  }
   if (completeness.euPurchaseNote) {
     notes.push(completeness.euPurchaseNote);
   } else if (completeness.hasEuPurchase) {
