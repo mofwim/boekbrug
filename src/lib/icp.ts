@@ -217,6 +217,106 @@ export function buildIcp(args: { invoices: IcpInvoice[]; korActive?: boolean }):
   return { lines, totalExBtw, problems };
 }
 
+// ── The purchase mirror: rubriek 4a/4b ────────────────────────────────────────────────────────
+//
+// Buying from a business in another EU country shifts the BTW to YOU: the supplier invoices 0%
+// and you declare the Dutch BTW in rubriek 4b, then deduct the same amount in 5b. For a fully
+// deductible entrepreneur those two cancel and 5g does not move — which is exactly why this app
+// does NOT compute them. Deciding WHICH Dutch rate applies to a foreign purchase is a judgement,
+// and for a KOR or partly-exempt owner the deduction is not available, so the two would stop
+// cancelling and the app would have invented a bill.
+//
+// What the app CAN do is stop making the accountant hunt. Until now the concept said only "there
+// are EU purchases" — true, unhelpful, and the accountant still had to page through the invoices
+// to find them. This lists them: supplier, VAT number, amount. No figure is claimed; the work is
+// simply laid out for the person who does it.
+
+/** One foreign purchase the accountant must place in 4a/4b. */
+export interface ForeignPurchase {
+  invoiceNumber: string | null;
+  supplierName: string | null;
+  vatNumber: string;
+  country: string;
+  amountExBtw: number;
+  /** true when the supplier already charged BTW — then it is probably NOT a verlegde inkoop. */
+  btwCharged: boolean;
+}
+
+export interface ForeignPurchaseResult {
+  purchases: ForeignPurchase[];
+  totalExBtw: number;
+}
+
+// Purchase statuses the ledger counts — the same allow-list as everywhere else, so this listing
+// can never name an invoice the quarter's figures do not include.
+const DECLARED_INCOMING = new Set(["received", "paid"]);
+
+/**
+ * List the period's purchases from suppliers in other EU member states. Pure, and deliberately
+ * a LISTING rather than a calculation — see the note above for why 4a/4b is not computed.
+ */
+export function buildForeignPurchases(args: { invoices: IcpInvoice[] }): ForeignPurchaseResult {
+  const purchases: ForeignPurchase[] = [];
+  for (const i of args.invoices) {
+    if (i.direction !== "incoming") continue;
+    if (!DECLARED_INCOMING.has(i.status ?? "")) continue;
+    const shape = classifyVatNumber(i.clientVatNumber);
+    // A suspect number still names a foreign supplier — the accountant needs the invoice either
+    // way, and a listing (unlike the ICP-opgaaf) is not something that can be rejected.
+    if (shape.kind !== "eu" && shape.kind !== "eu_suspect") continue;
+    purchases.push({
+      invoiceNumber: i.invoiceNumber,
+      supplierName: i.clientName,
+      vatNumber: shape.vat,
+      country: shape.country,
+      amountExBtw: Number(i.totalExBtw) || 0,
+      btwCharged: Math.abs(Number(i.btwAmount) || 0) >= 0.005,
+    });
+  }
+  purchases.sort((a, b) => Math.abs(b.amountExBtw) - Math.abs(a.amountExBtw));
+  return { purchases, totalExBtw: purchases.reduce((s, p) => s + p.amountExBtw, 0) };
+}
+
+/** The honest Dutch note, naming what the accountant has to place. */
+export function foreignPurchaseNote(r: ForeignPurchaseResult): string | null {
+  if (r.purchases.length === 0) return null;
+  const n = r.purchases.length;
+  const eur = `€${Math.round(r.totalExBtw).toLocaleString("nl-NL")}`;
+  const labels = r.purchases.slice(0, 5).map((p) => p.invoiceNumber ?? p.supplierName ?? "?").filter(Boolean).join(", ");
+  const more = n > 5 ? ` (+${n - 5} meer)` : "";
+  const charged = r.purchases.filter((p) => p.btwCharged).length;
+  return (
+    `Inkopen uit de EU: ${n === 1 ? "1 inkoopfactuur" : `${n} inkoopfacturen`} van ${eur} van een leverancier ` +
+    `in een andere lidstaat${labels ? ` (${labels}${more})` : ""}. Hierbij is de BTW naar jou verlegd: die hoort in ` +
+    "rubriek 4b, met dezelfde BTW als aftrek in 5b. Dit concept berekent die verlegging NIET — welk Nederlands " +
+    "tarief geldt is een beoordeling, en bij KOR of vrijgestelde omzet vallen de twee niet tegen elkaar weg. " +
+    (charged > 0
+      ? `Let op: op ${charged === 1 ? "1 van deze facturen" : `${charged} van deze facturen`} is al BTW berekend — dan is het waarschijnlijk geen verlegde inkoop. `
+      : "") +
+    "Je boekhouder plaatst dit."
+  );
+}
+
+/** [ICP] The foreign-purchase listing as a CSV for the accountant's package. */
+export function buildForeignPurchaseCsv(r: ForeignPurchaseResult, periodLabel: string): string {
+  const EUR = (n: number) => n.toFixed(2).replace(".", ",");
+  const esc = (v: string | number) => {
+    const s = String(v ?? "");
+    return /[;\n"]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const L: string[] = [];
+  L.push(`BoekBrug — EU-inkopen ${periodLabel} (rubriek 4a/4b)`);
+  L.push("LET OP: dit is een LIJST, geen berekening. De verlegde BTW (4b) en de bijbehorende aftrek (5b) staan NIET in het concept — je boekhouder plaatst ze.");
+  L.push("");
+  L.push(["Land", "BTW-nummer", "Leverancier", "Factuur", "Bedrag (excl. BTW)", "BTW op factuur?"].map(esc).join(";"));
+  for (const p of r.purchases) {
+    L.push([p.country, p.vatNumber, p.supplierName ?? "", p.invoiceNumber ?? "", EUR(p.amountExBtw), p.btwCharged ? "ja — controleer" : "nee"].map(esc).join(";"));
+  }
+  L.push("");
+  L.push(["", "", "", "Totaal", EUR(r.totalExBtw), ""].map(esc).join(";"));
+  return L.join("\r\n");
+}
+
 /** Below this, rubriek 3b rounds to €0 and there is nothing to state. */
 export const ICP_MIN_EUR = 0.5;
 
