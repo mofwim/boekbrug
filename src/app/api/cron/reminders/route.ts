@@ -38,6 +38,17 @@ import {
 // [CREDITNOTA-NO-CHASE] shared helper for the credited-ids set
 import { creditedIdsFrom } from "@/lib/credited-invoices";
 import { sendInvoiceReminder } from "@/lib/email";
+// [WIK] The final reminder is not a firmer nudge — it is the statutory aanmaning that gives the
+// owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
+import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
+
+const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
+const DAY_NL = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long" });
+const formatEuroNL = (n: number) => EUR_NL.format(n);
+const formatDayNL = (iso: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
+  return m ? DAY_NL.format(new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))) : iso;
+};
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -64,6 +75,8 @@ type CandidateInvoice = {
   pdf_url: string | null;
   invoice_type: string | null;
   status: string | null;
+  /** [WIK] Present → a business debtor; absent → treated as a consumer (the stricter regime). */
+  client_btw_number: string | null;
 };
 
 export async function GET(req: NextRequest) {
@@ -114,7 +127,9 @@ export async function GET(req: NextRequest) {
     pipeline
       .from("invoices")
       .select(
-        "id, sender_id, client_name, client_email, invoice_number, due_date, total_inc_btw, amount_paid, pdf_url, invoice_type, status",
+        // [WIK] client_btw_number decides consumer vs business — which decides whether the final
+        // reminder must be the statutory fourteen-day aanmaning.
+        "id, sender_id, client_name, client_email, invoice_number, due_date, total_inc_btw, amount_paid, pdf_url, invoice_type, status, client_btw_number",
       )
       .in("sender_id", ownerIds)
       .eq("direction", "outgoing")
@@ -289,6 +304,19 @@ export async function GET(req: NextRequest) {
       }
 
       try {
+        // [WIK] On the LAST tier the letter becomes the legally effective one: it grants the
+        // statutory fourteen days and names the exact incassokosten. Without those two elements
+        // a consumer can never be charged those costs — so every polite reminder this app sent
+        // before was helpful and legally worth nothing once the customer kept ignoring it. The
+        // debtor type comes from the invoice itself (a BTW number means a business), defaulting
+        // to consumer, which is the only mistake of the two that stays recoverable.
+        const wik = isFinalTier(tier, offsets)
+          ? buildWikNotice({
+              openstaand,
+              sentIso: new Date().toISOString().slice(0, 10),
+              debtorType: debtorTypeOf({ client_btw_number: inv.client_btw_number }),
+            })
+          : null;
         await sendInvoiceReminder({
           toEmail: inv.client_email as string, // guaranteed non-empty by reminderTierDue
           clientName: inv.client_name?.trim() || "klant",
@@ -297,6 +325,7 @@ export async function GET(req: NextRequest) {
           openstaand,
           dueDate: inv.due_date as string,
           firm: offsets.length > 1 && tier === maxTier,
+          wik,
           pdfBuffer,
         });
         sent += 1;
@@ -307,10 +336,16 @@ export async function GET(req: NextRequest) {
 
         // Notify the owner (best-effort) — visible proof the app acted for them.
         try {
+          // [WIK] After the statutory letter the owner has something they did not have before:
+          // the RIGHT to charge collection costs once the term passes. That right is invisible
+          // unless it is said — and unsaid, the letter's whole purpose is lost on them.
           await pipeline.from("notifications").insert({
             user_id: ownerId,
-            title: "Herinnering verstuurd",
-            body: `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
+            title: wik ? "Laatste aanmaning verstuurd" : "Herinnering verstuurd",
+            body: wik
+              ? `We hebben de laatste aanmaning gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}. ` +
+                `Betaalt ${inv.client_name?.trim() || "je klant"} niet vóór ${formatDayNL(wik.deadline)}, dan mag je ${formatEuroNL(wik.costs)} aan incassokosten in rekening brengen.`
+              : `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
             type: "invoice",
             read: false,
             link: `/dashboard/invoice/${inv.id}`,
