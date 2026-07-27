@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useParentPath } from '@/lib/navigation-hooks'
+import { rowMatchesQuery } from '@/lib/search'
 import { getAangifteDeadline, daysUntil } from '../accountant.service'
 import {
   summarizeBoard,
@@ -81,6 +82,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
   const [year, setYear] = useState(initYear)
   const [quarter, setQuarter] = useState(initQuarter)
   const [onlyAction, setOnlyAction] = useState(false)
+  const [query, setQuery] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   const [rows, setRows] = useState<BoardRow[]>(
     () => clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })),
@@ -137,7 +139,13 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
   }, [clients, year, quarter, reloadKey, loadOne])
 
   const summary = useMemo(() => summarizeBoard(rows), [rows])
-  const visible = useMemo(() => (onlyAction ? rows.filter(needsAction) : rows), [rows, onlyAction])
+  // [SMART-FILTER] status toggle (bestaand) + naam-zoeken (nieuw) samen.
+  const visible = useMemo(() => {
+    const q = query.trim()
+    let list = onlyAction ? rows.filter(needsAction) : rows
+    if (q) list = list.filter((r) => rowMatchesQuery(q, [r.name]))
+    return list
+  }, [rows, onlyAction, query])
 
   function openClient(clientId: string) {
     router.push(`/dashboard/clients/${clientId}/kwartaal?q=${quarter}&year=${year}`)
@@ -254,11 +262,24 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
 
         {/* ── Filter ── */}
         {clients.length > 0 && (
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button onClick={() => setOnlyAction(false)} style={tabStyle(!onlyAction)}>Alle klanten</button>
             <button onClick={() => setOnlyAction(true)} style={tabStyle(onlyAction)}>
               Actie nodig{summary.actionNeeded > 0 ? ` (${summary.actionNeeded})` : ''}
             </button>
+            <div style={{ position: 'relative', flex: 1, minWidth: 160 }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Zoek klant…"
+                aria-label="Klanten zoeken"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '8px 30px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124', background: '#FFFFFF' }}
+              />
+              {query && (
+                <button onClick={() => setQuery('')} aria-label="Wissen" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+              )}
+            </div>
           </div>
         )}
 
@@ -267,7 +288,9 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
           {clients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>Nog geen klanten gekoppeld</p>
           ) : visible.length === 0 ? (
-            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>Alle klanten zijn klaar 🎉</p>
+            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
+              {query.trim() ? `Geen klanten gevonden voor “${query.trim()}”` : 'Alle klanten zijn klaar 🎉'}
+            </p>
           ) : (
             visible.map((row, idx) => {
               const meta = row.state === 'ok' && row.status ? STATUS_META[row.status] : null

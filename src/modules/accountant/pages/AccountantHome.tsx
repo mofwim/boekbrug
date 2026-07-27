@@ -13,9 +13,10 @@
 //   - Draft Queue floating panel (writes to draft_queue table — client-side, intentional)
 //   - DashboardHeader
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { rowMatchesQuery } from '@/lib/search'
 import { DashboardHeader } from '@/app/dashboard/_shared'
 import { composeDraftEmail } from '@/lib/ai'
 // [DRAFT-QUEUE-HIDDEN] Draft Queue is hidden from the UI for now (decision deferred).
@@ -98,6 +99,14 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
   // ── Last client shortcut (localStorage) ──
   const [lastClientId, setLastClientId] = useState<string | null>(null)
   const [lastClientName, setLastClientName] = useState<string | null>(null)
+
+  // [SMART-FILTER] Client-roster search (bedrijfsnaam / naam / e-mail). Memoized —
+  // the roster is unbounded (grows with the accountant's client count).
+  const [clientSearch, setClientSearch] = useState('')
+  const shownClients = useMemo(() => {
+    const q = clientSearch.trim()
+    return q ? clients.filter((c) => rowMatchesQuery(q, [c.company_name, c.full_name, c.email])) : clients
+  }, [clients, clientSearch])
 
   // ── AI assistant panel ──
   const [showAiPanel, setShowAiPanel] = useState(false)
@@ -307,13 +316,33 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             </button>
           </div>
 
+          {clients.length > 0 && (
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid #E0E0E0', position: 'relative' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 27, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+              <input
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+                placeholder="Zoek klant op naam of e-mail…"
+                aria-label="Klanten zoeken"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '8px 32px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124' }}
+              />
+              {clientSearch && (
+                <button onClick={() => setClientSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+              )}
+            </div>
+          )}
+
           {clients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
               Nog geen klanten — voeg je eerste klant toe
             </p>
+          ) : shownClients.length === 0 ? (
+            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
+              Geen klanten gevonden voor &ldquo;{clientSearch.trim()}&rdquo;
+            </p>
           ) : (
             <div>
-              {clients.map((client, idx) => (
+              {shownClients.map((client, idx) => (
                 <button
                   key={client.id}
                   onClick={() => openClient(client.id)}
@@ -325,7 +354,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                     padding: '12px 16px',
                     background: 'none',
                     border: 'none',
-                    borderBottom: idx < clients.length - 1 ? '1px solid #F1F3F4' : 'none',
+                    borderBottom: idx < shownClients.length - 1 ? '1px solid #F1F3F4' : 'none',
                     cursor: 'pointer',
                     textAlign: 'left',
                     transition: 'background 0.1s',
