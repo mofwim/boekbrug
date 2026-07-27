@@ -229,6 +229,44 @@ export async function POST(req: NextRequest) {
       await repay();
       return NextResponse.json({ error: "transaction_delete_failed", detail: delTxErr.message }, { status: 500 });
     }
+
+    // [PARTIAL-PAY] Re-derive amount_paid now that this statement's link rows are gone.
+    //
+    // Deleting the transactions cascades bank_tx_invoices away (FK ON DELETE CASCADE), but
+    // amount_paid lives on the invoice and does NOT follow. Without this it keeps the figure the
+    // deleted payment put there, while no link supports it any more — and amount_paid is what
+    // "openstaand" is computed from. A €1.210 invoice restored to 'sent' with amount_paid still
+    // 1210 reports €0 open: it drops out of the debtor list, out of the aging, out of the art. 29
+    // bad-debt reclaim, and out of dunning entirely (reminderTierDue bails when paid >= total).
+    // Re-importing the corrected statement cannot heal it either — apply_bank_payment sees
+    // remaining = 0 and raises "already covered", and auto-confirm only books rows at
+    // amount_paid = 0. Every other reversal path already does this; this one did not.
+    //
+    // Over idSet, not over `restored`: an invoice that was only PARTLY paid by this statement is
+    // never in the restore set (that query filters status='paid'), yet its links cascade away just
+    // the same — so it is precisely the row that would be left claiming money nobody paid.
+    // Invoices paid across two statements converge on the surviving links' true sum, because the
+    // RPC re-derives from the join table rather than subtracting.
+    const affected = new Set<string>(idSet);
+    for (const r of restored) affected.add(r.id);
+    let driftUnhealed = 0;
+    for (const invoiceId of affected) {
+      const { error: recErr } = await pipeline.rpc("recompute_invoice_amount_paid", {
+        p_user_id: user.id,
+        p_invoice_id: invoiceId,
+      });
+      if (recErr) {
+        driftUnhealed += 1;
+        console.error("[PARTIAL-PAY] recompute after statement delete failed", { invoiceId, error: recErr.message });
+      }
+    }
+    if (driftUnhealed > 0) {
+      // The statement is gone and cannot come back, so this is not a rollback situation — but the
+      // owner must not be told everything is in order while an invoice still claims paid money.
+      console.error("[PARTIAL-PAY] statement deleted with unhealed amount_paid drift", {
+        documentId, unhealed: driftUnhealed, affected: affected.size,
+      });
+    }
   }
 
   // 4. Delete the documents row FIRST (removes it from the closing package at once).
