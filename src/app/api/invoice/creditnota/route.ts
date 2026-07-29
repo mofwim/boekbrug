@@ -245,7 +245,19 @@ export async function POST(request: NextRequest) {
 
     let pdfBuffer: Buffer | null = null
     try {
-      pdfBuffer = await renderInvoicePdf(creditnota, creditLines ?? [], profile ?? {})
+      // [CREDITNOTA-REF] The original's number and date travel INTO the render (not into the
+      // row): art. 219 requires the document to name the invoice it corrects, and `original` is
+      // already loaded above. Nothing is stored — the number of an issued invoice never changes,
+      // so resolving it at render time is stable.
+      pdfBuffer = await renderInvoicePdf(
+        {
+          ...creditnota,
+          original_invoice_number: original.invoice_number,
+          original_invoice_date: original.invoice_date,
+        },
+        creditLines ?? [],
+        profile ?? {},
+      )
     } catch (pdfErr) {
       console.error('[FACTUUR-A] Creditnota PDF render failed', {
         creditnota_id: creditnota.id,
