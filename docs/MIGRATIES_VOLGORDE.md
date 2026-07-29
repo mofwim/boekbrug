@@ -24,10 +24,11 @@
 > OPEN-regels staan bovenaan, met per regel waarom die migratie bestaat. Dat antwoord klopt
 > altijd; dit document niet noodzakelijk.
 >
-> ### Wat op 29 juli 2026 met zekerheid is toegepast
+> ### De stand op 29 juli 2026 — GELEZEN UIT DE DATABASE, niet gemeld
 >
-> Elk hiervan is toegepast **mét** zijn CONTROLE-blok — gemeld door de eigenaar of door de
-> tak die het draaide:
+> Dit is de uitkomst van `WELKE_MIGRATIES_STAAN_ER.sql` tegen de productiedatabase. Dat is een
+> ander soort zekerheid dan de rest van dit document: geen bewering van een tak, maar wat er
+> daadwerkelijk staat.
 >
 > | # | Bestand | Wat het dichtte |
 > |---|---------|-----------------|
@@ -37,12 +38,20 @@
 > | 13 | `invoice_archive_reason.sql` | `archive_reason` + `archived_at` + CHECK + partiële index |
 > | 14 | `email_sender_rules.sql` | Tabel + unieke index + RLS met vier policies |
 > | 15 | `snelstart_claim_before_push.sql` | Twee gelijktijdige verzoeken konden dezelfde factuur twee keer in het wettelijke inkoopboek zetten |
+> | 16 | `cash_settlement_per_instalment.sql` | Kasboekregels per termijn in plaats van één per factuur |
+> | 17 | `invoice_schedules.sql` | Terugkerende facturen |
 >
-> ### Wat dit document NIET weet
+> ### Nog open: één, en die mag wachten
 >
-> De migraties die uit andere takken bij kwamen: `cash_settlement_per_instalment.sql`,
-> `invoice_schedules.sql`, `search_engine_clients_kvk_city.sql`. Geen van die drie is urgent —
-> de code werkt er zonder ook — maar raad er niet naar. Draai de query.
+> **18 · `search_engine_clients_kvk_city.sql`** — twee trigram-indexen op `clients.kvk_number`
+> en `clients.city`, plus `CREATE EXTENSION IF NOT EXISTS pg_trgm`.
+>
+> Dit is de enige in de hele reeks die je met een gerust hart kunt laten liggen, en dat is geen
+> inschatting maar wat het bestand over zichzelf zegt: *"Geen schema-, data- of
+> gedragswijziging — puur snelheid."* Zoeken op KVK-nummer en plaats **werkt vandaag al**; het
+> doet een scan die door `.eq(user_id)` per gebruiker begrensd blijft. Bij een handvol klanten
+> is dat microseconden; bij een groot klantenregister loont de index. Twee CREATE INDEX-regels,
+> vijf seconden, geen risico — dus draai hem gerust, maar er is niets stuk tot je dat doet.
 >
 > ### De terugvalpaden blijven staan
 >

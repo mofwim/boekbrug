@@ -10,21 +10,20 @@ is de rest.*
 
 ---
 
-## 1. Nu — geen migratie meer open die je kent
+## 1. Nu — de migraties zijn af
 
-**☑ De scherpe migraties zijn toegepast en gecontroleerd**
-`kluis_subscriptions.sql` · `accountant_write_holes.sql` ·
-`invoice_lines_accountant_gate.sql` · `invoice_archive_reason.sql` ·
-`email_sender_rules.sql` · `snelstart_claim_before_push.sql`.
-Daarmee zijn de twee gaten met een echte scherpe kant dicht: het IBAN-schrijfgat in de
-boekhoudersgrens, en het gat waarin twee gelijktijdige verzoeken dezelfde factuur twee keer in
-het wettelijke inkoopboek van je boekhouder konden zetten.
+**☑ Alles wat de veiligheid van je boekhouding raakt, staat erin**
+Op 29 juli 2026 gelezen uit je eigen database met `docs/WELKE_MIGRATIES_STAAN_ER.sql` (niet
+gemeld, maar gemeten): 10 t/m 17 zijn toegepast. Daarmee zijn beide gaten met een echte
+scherpe kant dicht — het IBAN-schrijfgat in de boekhoudersgrens, en het gat waarin twee
+gelijktijdige verzoeken dezelfde factuur twee keer in het wettelijke inkoopboek van je
+boekhouder konden zetten.
 
-**☐ Draai één keer `docs/WELKE_MIGRATIES_STAAN_ER.sql`**
-Er kwamen tijdens deze ronde migraties uit andere takken bij, en van die vind je in geen enkel
-document een betrouwbaar antwoord. Deze query vraagt het aan je eigen database (leest alleen de
-catalogus, verandert niets) en zet de OPEN-regels bovenaan. Geen van de resterende is urgent —
-de code werkt er zonder ook — maar raden is hier geen methode.
+**☐ Eén staat nog open, en die mag wachten: `search_engine_clients_kvk_city.sql`**
+Twee trigram-indexen zodat zoeken op KVK-nummer en plaats van een klant een index gebruikt in
+plaats van een scan. Het bestand zegt het zelf: *"puur snelheid"* — geen schema-, data- of
+gedragswijziging. Zoeken werkt vandaag al. Twee regels, vijf seconden, geen risico; doe het
+wanneer je klantenregister groeit, of nu omdat het niets kost.
 
 **☐ `AI_DAILY_BUDGET_EUR=0` in Vercel**
 Nul betekent: **wél tellen, niet begrenzen**. Dat is de juiste stand voor je eerste weken —
