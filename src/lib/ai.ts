@@ -25,6 +25,12 @@
 // Rule: AI prepares + presents. Human confirms. System executes.
 // ─────────────────────────────────────────────────────────
 
+// [COST-GUARD] The global daily spend fuse. Every path to Anthropic goes through
+// one of the three transports below, and each of them reserves budget first —
+// so there is no way to reach the paid API that skips the ceiling. See
+// src/lib/ai-budget.ts for why a GLOBAL ceiling and not a better per-user quota.
+import { reserveAiBudget, TOKEN_ESTIMATE } from './ai-budget'
+
 // [BOEK-018] constants — May 2026
 // [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
 // hard-coded switch to 'claude-sonnet-4-5-20251001' returned HTTP 404 (that exact id is not
@@ -195,6 +201,52 @@ export function fixExInclConfusion(
   return ex;
 }
 
+// [BTW-SUM-FIX] On a MIXED-RATE invoice the BTW total is the one figure that is NOT printed as a
+// single number. The summary block prints one ROW PER RATE — each with its own grondslag on the
+// left and its own BTW on the right:
+//     € 2.591,71   BTW 9% excl.    €  233,20
+// so the reader must pick the right column and add it up itself. That is where it slips. The Enka
+// Horeca case read btw = 995,90 over a printed excl of 3.413,92 and a printed total of 3.819,82:
+// a 29% rate (impossible in NL) and excl + BTW ≠ totaal, so SAFECORE held it with a reason the
+// owner could do nothing with. The two numbers it did NOT have to compute are both printed verbatim
+// ("Totaal exclusief BTW" and "Totaal te voldoen"), and their difference is exactly the true BTW:
+// 3.819,82 − 3.413,92 = 405,90, a legal 12% blend of 9% and 21%.
+//
+// So when the STATED BTW is PROVABLY impossible (implied rate outside 0–21%, which no NL rate or
+// blend of them can reach) while the difference between the two printed anchors IS a legal rate,
+// the mis-summed figure is the one to replace. Deliberately narrow: it never fires when the stated
+// BTW is merely inconsistent but plausible, because then we cannot tell WHICH of the three numbers
+// is wrong and SAFECORE must keep holding it for the human.
+//
+// `derived` is reported back so the caller can mark the invoice: the repaired BTW makes the sum
+// add up, but it is OUR arithmetic rather than the invoice's, and BTW is deductible money in the
+// aangifte. A derived BTW therefore stays in the verify queue and never auto-books.
+export function fixMisSummedBtw(
+  ex: number | undefined,
+  btw: number | undefined,
+  incl: number | undefined,
+): { btw: number | undefined; derived: boolean } {
+  const keep = { btw, derived: false };
+  if (ex === undefined || btw === undefined || incl === undefined) return keep;
+  if (!isFinite(ex) || !isFinite(btw) || !isFinite(incl)) return keep;
+  // Without a base there is no rate to reason about — and no way to tell right from wrong.
+  if (Math.abs(ex) < 0.005) return keep;
+  // Only a genuine contradiction is repairable; a consistent invoice is never touched.
+  if (Math.abs(ex + btw - incl) <= 0.02) return keep;
+
+  const rateOver = (v: number) => Math.round(Math.abs(v / ex) * 100);
+  // The stated BTW must be provably wrong — not merely surprising.
+  if (rateOver(btw) <= 21) return keep;
+
+  const derivedBtw = Math.round((incl - ex) * 100) / 100;
+  // ...and the replacement must be provably plausible: a legal blended rate, charged in the same
+  // direction as the base it sits on (a sign flip means a different document, not a bad sum).
+  if (rateOver(derivedBtw) > 21) return keep;
+  if (derivedBtw !== 0 && Math.sign(derivedBtw) !== Math.sign(ex)) return keep;
+
+  return { btw: derivedBtw, derived: true };
+}
+
 // [VISUAL-REREAD] Decide whether a cheap TEXT read is weak enough to justify one re-read of the
 // same PDF on the same Haiku model but via the raw VISUAL layout (which preserves the table
 // columns the flattened text loses). Only fires on something the model already called an invoice
@@ -356,6 +408,11 @@ export interface VerifyInvoiceResult {
     // money-truth. Only set when the model actually reports it; absent means "no
     // signal", NOT "certain" (import-health only flags a low score that is present).
     amount?: number;
+    // [BTW-SUM-FIX] Set ONLY when the printed BTW total could not be read from a mixed-rate
+    // summary block and had to be derived from the two printed anchors (excl + the paid total).
+    // Carries both figures so the owner sees exactly what changed; its presence keeps the
+    // invoice in the verify queue (a derived BTW is never auto-booked).
+    _btw_derived?: { read: number | null; used: number | null };
   };
 }
 
@@ -496,6 +553,15 @@ async function callClaude(
   systemPrompt: string,
   model: string = CLAUDE_MODEL
 ): Promise<string> {
+  // [COST-GUARD] Reserve before spending. A refusal throws, which every caller
+  // already handles as "AI unavailable" and degrades to manual entry.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.shortText + Math.ceil((prompt.length + systemPrompt.length) / 4),
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaude',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
+
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
@@ -638,6 +704,14 @@ async function callClaudeWithPdf(
 ): Promise<string> {
   // [BOEK-011] Fix: clean base64 before sending — removes prefix and normalizes encoding
   const cleanData = cleanBase64(pdfBase64)
+
+  // [COST-GUARD] A raw PDF is the most expensive shape we send.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.rawPdfDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaudeWithPdf',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -797,6 +871,16 @@ async function callClaudeWithImage(
     cleanData,
     mimeType
   )
+
+  // [COST-GUARD] Reserved AFTER the downscale, so the fuse is charged the real
+  // (reduced) size rather than the raw photo — the cost lever above is worth
+  // ~13× on image tokens and the ceiling should reflect that, not punish it.
+  const budget = await reserveAiBudget({
+    inputTokens: TOKEN_ESTIMATE.imageDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'callClaudeWithImage',
+  })
+  if (!budget.allowed) throw new Error('[COST-GUARD] daily AI budget exhausted')
 
   const response = await fetchWithRetry(ANTHROPIC_API_URL, {
     method: 'POST',
@@ -1278,6 +1362,23 @@ STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees th
   and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
   total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
 
+MIXED-RATE BTW SUMMARY BLOCK (the most common mis-read on wholesale/horeca invoices):
+- Dutch invoices often close with a summary printing ONE ROW PER RATE, for example:
+    €  2.591,71    BTW 9% excl.     €   233,20
+    €    822,21    BTW 21% excl.    €   172,70
+  The number on the LEFT of such a row is the GRONDSLAG (the base taxed at that rate); the
+  number on the RIGHT is the BTW charged over it. Those are two DIFFERENT columns — never add
+  a grondslag and a BTW amount together, and never take one row's figure as the whole BTW.
+- btw_amount = the sum of the BTW column ONLY (233,20 + 172,70 = 405,90 in the example).
+- total_ex_btw = the printed "Totaal exclusief BTW" / "Ex. BTW" line, which equals the sum of
+  the grondslag column (2.591,71 + 822,21 = 3.413,92).
+- CHECK YOURSELF before answering: btw_amount MUST equal total_inc_btw − total_ex_btw
+  (3.819,82 − 3.413,92 = 405,90 ✓). If your sum does not match that difference, you added the
+  wrong column or missed a rate row — recount the BTW column. Never return a btw_amount that
+  makes total_ex_btw + btw_amount differ from the printed "Totaal te voldoen".
+- A blended rate between the rates present (e.g. 12% across 9% and 21% lines) is NORMAL. A
+  computed rate ABOVE 21% is impossible in the Netherlands and always means a mis-read.
+
 Per-field confidence rules:
 - field_confidence.vendor: how certain you are the vendor (sender) is correct.
   LOW (< 0.7) if sender/receiver were ambiguous, names were close, or the layout was unclear.
@@ -1749,6 +1850,32 @@ Return JSON only.`;
     parsed.total_ex_btw = fixExInclConfusion(
       parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw,
     );
+
+    // [BTW-SUM-FIX] Recover a BTW total mis-summed from a MIXED-RATE summary block, using the two
+    // figures the reader did NOT have to compute (printed excl + printed paid total). Runs AFTER
+    // fixExInclConfusion by design: that one repairs the base from incl + BTW and only fires when
+    // ex ≈ incl, which leaves the identity exact — so the two can never fight over the same row.
+    {
+      const fixed = fixMisSummedBtw(parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw);
+      if (fixed.derived) {
+        // Mark it: the amounts now add up, so no other signal would flag this invoice — but the
+        // BTW is our arithmetic, not the invoice's, and it is deductible money. The owner confirms.
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _btw_derived: { read: parsed.btw_amount ?? null, used: fixed.btw ?? null },
+        };
+        parsed.btw_amount = fixed.btw;
+        // A blend has no single rate. Drop a stated btw_rate that no longer matches what the
+        // repaired BTW actually implies, rather than persisting a rate the amounts contradict.
+        const ex = parsed.total_ex_btw ?? 0;
+        const impliedRate = Math.abs(ex) > 0.005
+          ? Math.round(Math.abs((fixed.btw ?? 0) / ex) * 100)
+          : undefined;
+        if (parsed.btw_rate !== undefined && parsed.btw_rate !== impliedRate) {
+          parsed.btw_rate = undefined;
+        }
+      }
+    }
 
     // amount = total incl. BTW (kept for backward compatibility)
     parsed.amount = parsed.total_inc_btw ?? parsed.amount;

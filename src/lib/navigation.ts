@@ -156,12 +156,26 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard',
   },
 
-  // ── incoming/manage → incoming ───────────────────────────────────────────
-  // [CONTROL] without this it fell through to home, so the primary "Terug"
-  // jumped past the verification list to the dashboard.
+  // ── incoming/manage → where you actually came from ───────────────────────
+  // [CONTROL] without a rule it fell through to home, so the primary "Terug"
+  // jumped past the verification list to the dashboard. Hence the default below.
+  //
+  // [NAV-FROM] But the verification list is NOT the only door into this page: the
+  // dashboard tiles and Vandaag link STRAIGHT to /incoming/manage, skipping
+  // /incoming entirely. For those visitors a fixed parent of '/dashboard/incoming'
+  // sent them "back" to a screen they had never seen. So the entry point says where
+  // it came from (?from=), exactly like /invoice/[id] does with ?from=client, and
+  // Terug honours it. Unmarked links keep the documented default, so nothing that
+  // relied on it changes. Every branch is still an explicit ancestor href — never
+  // history — so it stays loop-safe.
   {
     match: /^\/dashboard\/incoming\/manage$/,
-    parent: () => '/dashboard/incoming',
+    parent: (_, role, search) => {
+      const from = search?.get('from')
+      if (from === 'home') return getHomePath(role)
+      if (from === 'vandaag') return '/dashboard/vandaag'
+      return '/dashboard/incoming'
+    },
   },
 
   // ── bank/categoriseren → bank ────────────────────────────────────────────

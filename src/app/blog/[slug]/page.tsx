@@ -7,7 +7,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import ArticleLayout from '@/components/blog/ArticleLayout'
-import { getPost, getPublishedSlugs, getAlternate } from '@/lib/blog'
+import { getPost, getPublishedSlugs, getAlternates } from '@/lib/blog'
 import { buildArticleMetadata, buildArticleJsonLd } from '@/lib/blog-seo'
 
 const LOCALE = 'nl' as const
@@ -38,13 +38,13 @@ export default async function BlogArticlePageNL({
   const post = getPost(LOCALE, slug)
   if (!post) notFound()
 
-  const alternate = getAlternate(post)
+  const alternates = getAlternates(post)
   const jsonLd = buildArticleJsonLd(post, LOCALE)
 
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <ArticleLayout post={post} locale={LOCALE} alternatePath={alternate?.path} />
+      <ArticleLayout post={post} locale={LOCALE} alternates={alternates} />
     </>
   )
 }

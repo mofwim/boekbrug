@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
+import { FONT } from "@/lib/design/tokens";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
 import { rowMatchesQuery } from "@/lib/search";
@@ -1304,12 +1305,14 @@ function InvoiceCard({
     >
       {/* Header — always visible, tappable */}
       <button
+        className="inv-row"
         onClick={selectMode ? onSelect : onToggle}
+        // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so the
+        // stack-on-mobile media query can override them; the flex:1 main pushes the side
+        // cluster right, so justify-content:space-between is no longer needed here.
         style={{
           width: "100%", padding: "16px", border: "none",
           background: "transparent", cursor: "pointer", textAlign: "left",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          gap: 12,
         }}
       >
         {/* [INTAKE-VERIFY-BULK] selection checkbox — only in pending select mode */}
@@ -1326,7 +1329,7 @@ function InvoiceCard({
             {selected ? "✓" : ""}
           </span>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="inv-row-main">
           <div
             style={{
               fontWeight: 700, fontSize: 16, color: "#202124", marginBottom: 3,
@@ -1390,7 +1393,10 @@ function InvoiceCard({
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* [ROW-LAYOUT] .inv-row-side-h (globals.css) keeps amount + badge + chevron in one
+            horizontal cluster on a wide screen, and drops it to a full-width, right-aligned
+            strip below 520px so the deelbetaling badge stops squeezing the afzender name. */}
+        <div className="inv-row-side-h">
           <span style={{ fontWeight: 700, fontSize: 18, color: "#202124", whiteSpace: "nowrap" }}>
             {formatSignedAmount(invoice.total_inc_btw)}
           </span>
@@ -2534,15 +2540,15 @@ export default function IncomingInvoicesClient({
     <div
       style={{
         maxWidth: 430, margin: "0 auto", padding: "0 0 100px",
-        fontFamily: 'var(--font-sans)',
+        // [HEADER-SYSTEM] Was var(--font-sans) (could resolve to a non-Roboto
+        // face); now the shared Roboto FONT token, matching the shared bar above.
+        fontFamily: FONT,
       }}
     >
-      {/* [BOEK-011] Header — Logo Universal Click + Terug via <Link>
-          Implements Navigation Strategy v1.0:
-          - Logo always → home (dynamic by role)
-          - Terug uses <Link>, never router.back()
-          - Logo + Terug are separate concerns: Logo = escape hatch from anywhere,
-            Terug = explicit parent (/dashboard for /dashboard/incoming) */}
+      {/* [HEADER-SYSTEM] The title "Inkomend" + back live in the shared sub-page
+          bar (DashboardChrome/STATIC_TITLES). This block is now just the status
+          subtitle. (Removed a stale comment describing a Logo/Terug header that no
+          longer exists here.) */}
       <div style={{ padding: "20px 20px 0", marginBottom: 16 }}>
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}

@@ -38,12 +38,63 @@ export function totalAmount(invoice: PartialPayInvoice): number {
 }
 
 /**
+ * The still-owed balance derived from the MONEY alone, ignoring the status. Only for write
+ * paths that have already established the invoice is open (the confirm route rejects a 'paid'
+ * invoice long before it asks this) and now need the figure a payment has to reach.
+ * Screens must use openAmount() — a legacy row marked paid before amount_paid existed would
+ * otherwise report a phantom balance.
+ */
+export function openBalanceFromAmounts(invoice: PartialPayInvoice): number {
+  return toCents(Math.max(0, totalAmount(invoice) - paidAmount(invoice)));
+}
+
+/**
  * Openstaand: what is still owed on this invoice. 0 once the status says paid — the status
  * is the authority on completion, amount_paid only describes the road there.
  */
 export function openAmount(invoice: PartialPayInvoice): number {
   if (invoice.status === "paid") return 0;
-  return toCents(Math.max(0, totalAmount(invoice) - paidAmount(invoice)));
+  return openBalanceFromAmounts(invoice);
+}
+
+/**
+ * Money left over that is too small to be another invoice. A customer who rounds €99,95 up to
+ * €100 has not paid two invoices — keeping their bank line open "for the rest" would leave five
+ * cents haunting the te-bevestigen list forever. Above this, a leftover is treated as money that
+ * still belongs to someone: the bank line stays open until it is assigned.
+ */
+export const PAYMENT_DUST = 1;
+
+/**
+ * [PARTIAL-PAY-GUARD] Does this payment have MORE to give than this invoice can absorb?
+ *
+ * The single question that decides how a bank booking is written, and it is deliberately asked
+ * in money. The alternative — "does the reference list several invoice numbers?" — is not a
+ * fact about the payment at all, and it was wrong in both directions:
+ *
+ *   false positive: "Klantnr 884512 factuur 20260041" tokenises as two numbers, so a €500
+ *     instalment on a €1.815 invoice took the amount-blind batch path and was booked as fully
+ *     paid — €1.315 of revenue that never arrived, the debtor off the aging list, and under
+ *     kasstelsel the whole sum declared in the wrong BTW quarter.
+ *   false negative: a real bundle whose numbers the extractor mutilated ("2026-045, 2026-046"
+ *     is stored as "045, 046") looked single, so the €1.100 that paid two invoices was
+ *     swallowed by the first one — the second stayed open with its money already spent.
+ *
+ * NO → one invoice absorbs everything this payment has (in full, or as an honest deelbetaling)
+ *      and the bank line is finished.
+ * YES → settle this invoice and keep the bank line open for the rest of the money.
+ *
+ * An invoice with nothing left open returns false: it cannot absorb anything, and the caller's
+ * own already-paid checks own that case.
+ */
+export function paymentExceedsOpenBalance(
+  payAmount: number | null | undefined,
+  invoice: PartialPayInvoice,
+  dust: number = PAYMENT_DUST,
+): boolean {
+  const open = openBalanceFromAmounts(invoice);
+  if (open <= 0) return false;
+  return Math.abs(Number(payAmount ?? 0)) > open + Math.max(CENT_EPSILON * 2, dust);
 }
 
 /**

@@ -18,8 +18,9 @@
 //
 // The four groups (see the render for the mapping):
 //   1. Toevoegen         — the daily input actions (add bon/factuur, bulk upload)
-//   2. Mijn administratie — the six record screens as a 3-col tile grid
-//                           (Facturen · Inkomend · Bank · Kas · Dagomzet · Artikelen)
+//   2. Mijn administratie — the record screens as a 3-col tile grid
+//                           (Facturen · Inkomend · Inkoopfacturen · Bank · Kas ·
+//                            Dagomzet · Artikelen)
 //   3. Cijfers & aangifte — "Je waarheid" (primary) + two compact MiniCards
 //   4. Meer              — Mijn werkplek
 //
@@ -46,6 +47,10 @@ import IntakeButton from '@/components/intake/IntakeButton'
 // invoice totals + a task count), each linking to the action that resolves it. The
 // old version was disabled for showing inferred bank-derived numbers that were wrong.
 import DailyTruth from './DailyTruth'
+// [BRUG-RETOUR] De terugweg van de brug: een vraag van de boekhouder hoort op de home,
+// niet alleen in een notificatie die je één keer ziet.
+import { VRAAG_STATUS, vragenBannerTekst } from '@/lib/vragen'
+import type { ProfileRow, NotificationRow } from '@/types/rows'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
   primary:           '#1A73E8',
@@ -70,11 +75,11 @@ const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
 const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }) // reserved for future use
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export function ZzpDashboard({ profile }: { profile: any }) {
+export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
   const router   = useRouter()
   const supabase = createClient()
 
-  const [notifications, setNotifications]         = useState<any[]>([])
+  const [notifications, setNotifications]         = useState<NotificationRow[]>([])
   const [showNotifications, setShowNotifications] = useState(false)
   const [unreadMessages, setUnreadMessages]       = useState(0)
   const [accountantId, setAccountantId]           = useState<string | null>(null)
@@ -84,18 +89,23 @@ export function ZzpDashboard({ profile }: { profile: any }) {
   const [aiError, setAiError]                     = useState<string | null>(null)
   // [BOEK-029] BOEK-011 integration — pending incoming invoices count
   const [pendingCount, setPendingCount]           = useState<number>(0)
-
-  useEffect(() => { loadGlobal() }, [])
+  // [BRUG-RETOUR] Openstaande vragen van de boekhouder over eigen documenten.
+  const [vragenCount, setVragenCount]             = useState<number>(0)
 
   async function loadGlobal() {
-    const [{ data: link }, { data: notifData }, { count }] = await Promise.all([
+    const [{ data: link }, { data: notifData }, { count }, { count: vragen }] = await Promise.all([
       supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
       supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
+      // [BRUG-RETOUR] RLS (acc_status_client_read_document) beperkt dit al tot documenten
+      // van deze gebruiker; er is hier geen eigenaarskolom om op te filteren.
+      supabase.from('accountant_subject_status').select('subject_id', { count: 'exact', head: true })
+        .eq('subject_type', 'document').eq('status', VRAAG_STATUS),
     ])
     if (link?.accountant_id) setAccountantId(link.accountant_id)
     if (notifData) setNotifications(notifData)
     setUnreadMessages(count || 0)
+    setVragenCount(vragen || 0)
 
     // [BOEK-029] BOEK-011: fetch pending incoming invoices count
     try {
@@ -108,6 +118,11 @@ export function ZzpDashboard({ profile }: { profile: any }) {
       // silent — badge blijft 0
     }
   }
+
+  // Eén ophaalronde bij het openen. Staat bewust ná loadGlobal: een effect dat een functie
+  // aanroept die pas verderop gedeclareerd wordt, werkt door hoisting wel maar is voor de
+  // React-compiler niet te volgen (en breekt zodra iemand er een closure-waarde in gebruikt).
+  useEffect(() => { void (async () => { await loadGlobal() })() }, [])
 
   async function markAllRead() {
     await supabase.from('notifications').update({ read: true }).eq('user_id', profile.id).eq('read', false)
@@ -152,6 +167,32 @@ export function ZzpDashboard({ profile }: { profile: any }) {
         <h1 style={{ fontSize: 28, fontWeight: 700, color: M3.onSurface, marginBottom: 28, letterSpacing: -0.5 }}>
           {firstName} 👋
         </h1>
+        {/* [BRUG-RETOUR] Een mens wacht op je. Dit staat bewust bóven de cijfers: een vraag
+            van je boekhouder is het enige op deze pagina waar iemand anders op zit te
+            wachten. Verschijnt alleen als er echt iets openstaat — nooit als lege balk. */}
+        {vragenCount > 0 && (
+          <button
+            onClick={() => router.push('/dashboard/vragen')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
+              padding: '15px 16px', borderRadius: R.lg, cursor: 'pointer', fontFamily: 'inherit',
+              border: '1px solid #F0C36D', background: M3.warningContainer,
+              boxShadow: EL1, marginBottom: 18,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7a4f00' }}>help</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 15.5, fontWeight: 700, color: '#5a3e00' }}>
+                {vragenBannerTekst(vragenCount)}
+              </span>
+              <span style={{ display: 'block', fontSize: 12.5, color: '#7a4f00', marginTop: 2 }}>
+                Bekijk de vraag en antwoord hier
+              </span>
+            </span>
+            <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#7a4f00' }}>chevron_right</span>
+          </button>
+        )}
+
         {/* [HONEST-HOME] Snapshot: "waar sta ik?" answered with certain facts only,
             each a button to the action that resolves it. */}
         <DailyTruth />
@@ -202,9 +243,15 @@ export function ZzpDashboard({ profile }: { profile: any }) {
             </div>
           </section>
 
-          {/* ── 2. MIJN ADMINISTRATIE — the six record screens as a compact grid ── */}
+          {/* ── 2. MIJN ADMINISTRATIE — the record screens as a compact grid ────── */}
           {/* Each tile reuses its screen's original icon + colour so nothing feels
-              relocated, only regrouped. Inkomend carries the pending-verify badge. */}
+              relocated, only regrouped. The two purchase surfaces sit adjacent:
+              "Inkomend" is the verify QUEUE (/incoming, carries the pending-verify
+              badge); "Inkoopfacturen" is the CONFIRMED crediteuren-management
+              (/incoming/manage — mark paid, betaalstatus), which titles itself
+              "Inkoopfacturen" and was previously only reachable from inside the
+              queue. Surfaced here so the owner reaches their te-betalen bills
+              straight from home. */}
           <section>
             <SectionLabel>Mijn administratie</SectionLabel>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
@@ -212,6 +259,11 @@ export function ZzpDashboard({ profile }: { profile: any }) {
                 onClick={() => router.push('/dashboard/facturen')} />
               <AdminTile icon="mark_email_unread" tint="#0288D1" label="Inkomend" badge={pendingCount}
                 onClick={() => router.push('/dashboard/incoming')} />
+              {/* [NAV-FROM] ?from=home so Terug on Inkoopfacturen returns HERE. Without it the
+                  canonical parent is /dashboard/incoming — a verification list this visitor never
+                  passed through, since this tile jumps straight to the manage surface. */}
+              <AdminTile icon="request_quote" tint="#E37400" label="Inkoopfacturen"
+                onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
               <AdminTile icon="account_balance" tint="#1A73E8" label="Bank"
                 onClick={() => router.push('/dashboard/bank')} />
               <AdminTile icon="payments" tint="#00897B" label="Kas"

@@ -27,6 +27,7 @@ import { useRouter } from "next/navigation";
 // [TODAY-UX-FIELDS] Display-only formatters (single source of truth). formatEuroNL
 // simply RENDERS a stored number; no arithmetic happens in "Vandaag".
 import { formatEuroNL, formatDateNL } from "@/lib/format-nl";
+import { FONT } from "@/lib/design/tokens";
 import { rowMatchesQuery } from "@/lib/search";
 // [SORT] Same ordering module as Inkoopfacturen (IncomingManageClient) — one
 // implementation, no drifting copies. Vandaag offers the subset of keys whose
@@ -171,8 +172,10 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
   // mark-as-paid dialog (?action=pay), so the owner lands directly on Bank/Contant
   // + date. The write itself still happens only in IncomingManageClient (one
   // source of truth) — Vandaag merely passes the intent via the URL.
+  // [NAV-FROM] &from=vandaag so Terug on the manage surface returns to Vandaag, not to the
+  // verification list this visitor never opened.
   const confirmPaid = (id: string) =>
-    router.push(`/dashboard/incoming/manage?focus=${id}&action=pay`);
+    router.push(`/dashboard/incoming/manage?focus=${id}&action=pay&from=vandaag`);
 
   // [SORT] Owner-chosen order, applied inside each list.
   const [sortBy, setSortBy] = useState<SortKey>("due_asc");
@@ -225,21 +228,14 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
         maxWidth: 640,
         margin: "0 auto",
         padding: "24px 16px 64px",
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        // [HEADER-SYSTEM] Was a bespoke system-ui font stack (the only one in the
+        // app); now the shared Roboto FONT token.
+        fontFamily: FONT,
       }}
     >
+      {/* [HEADER-SYSTEM] Title "Vandaag" + back live in the shared sub-page bar;
+          the in-body h1 was removed. The one-line subtitle stays. */}
       <header style={{ marginBottom: 24 }}>
-        <h1
-          style={{
-            fontSize: 28,
-            fontWeight: 700,
-            color: M3.onSurface,
-            margin: "0 0 4px",
-          }}
-        >
-          Vandaag
-        </h1>
         <p style={{ fontSize: 15, color: M3.onSurfaceVariant, margin: 0 }}>
           Dit heeft vandaag je aandacht nodig.
         </p>
@@ -277,7 +273,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
           the owner still owes can never be silently forgotten behind an empty "all clear". */}
       {!loadFailed && datelessPayableCount > 0 && (
         <button
-          onClick={() => router.push("/dashboard/incoming/manage")}
+          onClick={() => router.push("/dashboard/incoming/manage?from=vandaag")}
           style={{
             width: "100%", textAlign: "left", cursor: "pointer",
             display: "flex", alignItems: "center", gap: 12,

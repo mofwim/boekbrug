@@ -29,6 +29,7 @@ import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { gateFairUse } from "@/lib/fair-use-gate";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
@@ -51,6 +52,12 @@ export async function POST(req: NextRequest) {
   // [COST] Per-user ceiling — this route runs an AI/OCR vision call (verifyInvoiceFromPdf).
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/bank/attach-invoice", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
+  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
+  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   // 2. Read form: the file + the target transaction id.
   let formData: FormData;
@@ -162,7 +169,15 @@ export async function POST(req: NextRequest) {
   //    receipt or a bank confirmation is a legitimate expense document even if
   //    the AI isn't confident it's a "factuur". We still store it and link it;
   //    BTW simply stays 0 when the AI can't find it (correct for rent).
-  const verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName);
+  // [FAIR-USE] Ingepakt zodat een mislukte leesbeurt de gebruiker geen document van zijn
+  // maandtegoed kost — dezelfde belofte als op de andere vijf AI-routes.
+  let verification: Awaited<ReturnType<typeof verifyInvoiceFromPdf>>;
+  try {
+    verification = await verifyInvoiceFromPdf(base64, file.type, file.name, receiverName);
+  } catch (aiErr) {
+    await gate.release();
+    throw aiErr;
+  }
 
   // Money side: the BANK is the source of truth for the paid amount/date.
   const bankAmount = Math.abs(tx.amount ?? 0);
@@ -459,7 +474,14 @@ export async function POST(req: NextRequest) {
   // on one pending tx, but tx.invoice_id only ever holds the LAST one — so without the join row a
   // later unlink would restore only the last-attached invoice, stranding the earlier ones paid with
   // no bank line. Recording every attached invoice here makes the whole set reversible by id.
-  await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id]);
+  // [PARTIAL-PAY] Write the applied amount with it: recompute_invoice_amount_paid re-derives
+  // invoices.amount_paid as SUM(amount_applied) over the surviving links on every unlink/undo, so a
+  // link with a NULL amount makes this invoice — created 'paid' by this very payment — recompute to
+  // amount_paid 0 and re-open at its full total. The invoice is created fully settled by this
+  // transaction, so the applied amount is its own total.
+  await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id], {
+    [invoice.id]: Math.abs(totalIncBtw),
+  });
 
   // 11. Notification (non-blocking) — service_role by rule.
   try {

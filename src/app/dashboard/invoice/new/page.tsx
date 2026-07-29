@@ -15,6 +15,9 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
 import { formatDateNL } from '@/lib/format-nl'
+// [ICP] Same classifier the aangifte and the ICP-opgaaf use, so the invoice screen and the
+// quarter can never disagree about which customer counts as intra-EU.
+import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
@@ -126,10 +129,14 @@ function LineInput({
   // Raw string while typing — allows "0." mid-entry
   const [raw, setRaw] = useState(value === 0 ? '' : String(value))
 
-  // Sync raw when value changes from outside (e.g. reset)
-  useEffect(() => {
+  // [REACT] Ruwe invoer bijstellen tijdens de render in plaats van via een effect: dit is
+  // afgeleide state (het tekstveld volgt de waarde van buiten zolang je er niet in typt).
+  // Via een effect zag de gebruiker één frame lang de oude tekst staan.
+  const [prevSync, setPrevSync] = useState<{ value: number; focused: boolean }>({ value, focused })
+  if (prevSync.value !== value || prevSync.focused !== focused) {
+    setPrevSync({ value, focused })
     if (!focused) setRaw(value === 0 ? '' : String(value))
-  }, [value, focused])
+  }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     let v = e.target.value
@@ -434,6 +441,15 @@ function NewInvoicePageContent() {
   const [clientPostal, setClientPostal]   = useState(aiClientPostal)
   const [clientCity, setClientCity]       = useState(aiClientCity)
   const [clientBtw, setClientBtw]         = useState(aiClientBtw)
+  // [ICP] A customer number that names another EU member state but cannot have that length.
+  // classifyVatNumber is deliberately conservative — it only says "suspect" when the length is
+  // impossible for that country, so a valid number is never called wrong.
+  const euVatSuspect = classifyVatNumber(clientBtw).kind === 'eu_suspect'
+  // [ICP] A customer in another member state. Stated, never decided: whether THIS supply is an
+  // intracommunautaire prestatie depends on what is being supplied and on the customer acting as
+  // a business — a judgement the app must not make. What it can do is say it here, where the
+  // rate is still being chosen, instead of leaving the owner to find out at the aangifte.
+  const euVatCustomer = classifyVatNumber(clientBtw).kind === 'eu'
 
   // ── Dates ────────────────────────────────────────────────────────────────────
   const today = new Date().toISOString().split('T')[0]
@@ -832,6 +848,14 @@ function NewInvoicePageContent() {
       setError('Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)')
       return
     }
+    // [ICP] A number that names another EU member state but cannot have that length is caught
+    // HERE, not three months later. This one invoice decides two things at once: whether the
+    // BTW may be verlegd, and whether the customer can go on the ICP-opgaaf — and a rejected
+    // opgaaf counts as never filed. Blocking here costs a retype; not blocking costs a quarter.
+    if (euVatSuspect) {
+      setError(`Het BTW-nummer ${clientBtw.trim()} heeft niet de lengte die dat EU-land gebruikt. Controleer het bij de klant (of via VIES) — het bepaalt of de BTW verlegd mag worden en of de klant in de ICP-opgaaf komt.`)
+      return
+    }
 
     const lineErrs = lines.map(l => ({
       description: !l.description.trim(),
@@ -1079,7 +1103,7 @@ function NewInvoicePageContent() {
               <div style={{ backgroundColor: '#FEF7E0', borderLeft: '4px solid #FBBC04', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#EA8600', flexShrink: 0 }}>📋</span>
                 <p style={{ fontSize: 13, color: '#EA8600', margin: 0 }}>
-                  <strong>Offerte</strong> — geen factuurnummer. Gebruik "Omzetten naar factuur" als de klant akkoord gaat.
+                  <strong>Offerte</strong> — geen factuurnummer. Gebruik &ldquo;Omzetten naar factuur&rdquo; als de klant akkoord gaat.
                 </p>
               </div>
             )}
@@ -1144,9 +1168,21 @@ function NewInvoicePageContent() {
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />
               </div>
               <div>
-                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)} />
+                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
                 {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
                   <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
+                )}
+                {/* [ICP] Said while the number is still on screen and still fixable. */}
+                {euVatSuspect && (
+                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>
+                    Deze lengte klopt niet voor dat EU-land — controleer via VIES. Het bepaalt de BTW-verlegging én de ICP-opgaaf.
+                  </p>
+                )}
+                {euVatCustomer && (
+                  <p style={{ fontSize: 11, color: '#5F6368', margin: '4px 0 0', lineHeight: 1.45 }}>
+                    Klant in een ander EU-land. Bij een intracommunautaire prestatie zet je 0% BTW — &ldquo;Btw verlegd&rdquo;
+                    komt dan automatisch op de factuur, en de klant komt in je ICP-opgaaf.
+                  </p>
                 )}
               </div>
             </div>

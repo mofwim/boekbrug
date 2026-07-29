@@ -113,5 +113,23 @@ console.log('\n— [DEDUP-SOFT] a POSSIBLE duplicate is flagged for a human glan
   check('possible-dup + math error → BOTH reasons', both.flags.possibleDuplicate === true && both.flags.arithmetic === true)
 }
 
+console.log('\n— [BTW-SUM-FIX] a DERIVED BTW is never presented as clean (it is our arithmetic) —')
+{
+  // The Enka Horeca shape AFTER the repair: 3413.92 + 405.90 = 3819.82, a legal 12% blend, so
+  // every existing axis is silent. Without its own reason the owner would see a green "klaar"
+  // over a BTW figure the invoice never printed — and auto-advance would book the voorbelasting.
+  const derived = classifyImportHealth(inv({
+    total_ex_btw: 3413.92, btw_amount: 405.90, total_inc_btw: 3819.82,
+    field_confidence: { _btw_derived: { read: 995.90, used: 405.90 } },
+  }))
+  check('derived BTW → needs-review', derived.level === 'needs-review' && derived.flags.arithmetic === true)
+  check('reason names the derivation + the amount', derived.reasons.some((r) => /afgeleid uit excl\. en totaal/.test(r) && r.includes('405,90')))
+  check('the same amounts WITHOUT the note stay clean (the note is the cause)',
+    classifyImportHealth(inv({ total_ex_btw: 3413.92, btw_amount: 405.90, total_inc_btw: 3819.82 })).level === 'clean')
+  // A note with no usable figure still warns, just without naming an amount.
+  const noAmount = classifyImportHealth(inv({ field_confidence: { _btw_derived: { read: null, used: null } } }))
+  check('note without an amount still warns', noAmount.level === 'needs-review' && noAmount.reasons.some((r) => /afgeleid uit excl\. en totaal/.test(r)))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

@@ -315,6 +315,47 @@ console.log("\n— [KASSTELSEL] undated paid money blocks 'klaar' —");
   const none = buildReadiness(perfect({ badDebt: { count: 0, reclaimableBtw: 0 } }));
   check("no eligible bad debt → no risk", !none.risks.some((x) => /terugvraagbaar/.test(x.title)));
 }
+{
+  // [BAD-DEBT] Art. 29 lid 7 — voorbelasting to REPAY on >1yr-unpaid purchases. Money to give,
+  // so it is worded as a liability — but still a risk: the app cannot prove the invoice went
+  // unpaid in the world, and blocking a filing on that inference would trap the owner.
+  const r = buildReadiness(perfect({ vatClawback: { count: 2, repayableBtw: 420 } }));
+  check("clawback surfaces as a risk", r.risks.some((x) => /terugbetalen/.test(x.title)));
+  check("clawback names count + euros", r.risks.some((x) => /2 onbetaalde inkoopfacturen/.test(x.title) && /€420/.test(x.title)));
+  check("clawback is NOT a missing gap", !r.missing.some((x) => /terugbetalen/.test(x.title)));
+  check("clawback does not block ready", r.missing.length === 0 && r.status === "ready");
+  check("clawback points at the purchase page, not at Facturen",
+    r.risks.some((x) => /terugbetalen/.test(x.title) && x.fix?.href === "/dashboard/incoming/manage"));
+  check("clawback offers the other resolution (you did pay it)",
+    r.risks.some((x) => /terugbetalen/.test(x.title) && /op betaald/.test(x.detail ?? "")));
+  const none = buildReadiness(perfect({ vatClawback: { count: 0, repayableBtw: 0 } }));
+  check("nothing eligible → no clawback risk", !none.risks.some((x) => /terugbetalen/.test(x.title)));
+  const immaterial = buildReadiness(perfect({ vatClawback: { count: 1, repayableBtw: 0.2 } }));
+  check("a sub-euro clawback is not raised (it rounds to €0)", !immaterial.risks.some((x) => /terugbetalen/.test(x.title)));
+}
+{
+  // Both sides at once: they are separate lines, and the one that COSTS money comes first.
+  const r = buildReadiness(perfect({
+    badDebt: { count: 1, reclaimableBtw: 210 },
+    vatClawback: { count: 1, repayableBtw: 105 },
+  }));
+  const iClaw = r.risks.findIndex((x) => /terugbetalen/.test(x.title));
+  const iBad = r.risks.findIndex((x) => /terugvraagbaar/.test(x.title));
+  check("both art. 29 sides are reported, never netted into one figure", iClaw >= 0 && iBad >= 0);
+  check("the liability is listed before the reclaim", iClaw < iBad);
+}
+{
+  // [ICP] An opgaaf that will be rejected counts as not filed — so it is raised. But charging
+  // BTW to an EU customer is sometimes right, so it never blocks.
+  const r = buildReadiness(perfect({ icpProblems: 2 }));
+  check("an unfilable EU sale surfaces as a risk", r.risks.some((x) => /ICP-opgaaf/.test(x.title)));
+  check("…counted, so the owner knows how many to look at", r.risks.some((x) => /^2 EU-verkopen/.test(x.title)));
+  check("one problem reads in the singular", buildReadiness(perfect({ icpProblems: 1 })).risks.some((x) => /^1 EU-verkoop kan/.test(x.title)));
+  check("it explains BOTH ways to resolve it", r.risks.some((x) => /VIES/.test(x.detail ?? "") && /verleg je de BTW/.test(x.detail ?? "")));
+  check("it never blocks the quarter", r.missing.length === 0 && r.status === "ready");
+  check("no EU problems → no risk", !buildReadiness(perfect({ icpProblems: 0 })).risks.some((x) => /ICP-opgaaf/.test(x.title)));
+  check("a quarter with no EU sales at all is untouched", !buildReadiness(perfect()).risks.some((x) => /ICP-opgaaf/.test(x.title)));
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

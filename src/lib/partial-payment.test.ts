@@ -7,6 +7,8 @@ import {
   paidAmount,
   toCents,
   buildPaymentResult,
+  paymentExceedsOpenBalance,
+  openBalanceFromAmounts,
 } from "./partial-payment";
 
 let passed = 0, failed = 0;
@@ -132,6 +134,70 @@ console.log("\n— buildPaymentResult (the API contract both clients branch on) 
 {
   const r = buildPaymentResult({ applied: 0.1, amount_paid: 0.3, total: 1, is_paid: false }, "sent");
   check("remaining is rounded to cents", r.remaining === 0.7);
+}
+
+console.log("\n— [PARTIAL-PAY-GUARD] paymentExceedsOpenBalance (does this payment have more to give?) —");
+{
+  // The production incident: a €500 instalment on a €1.815 invoice whose reference happened to
+  // carry a second number token ("Klantnr 884512 factuur 20260041"). The reference count sent it
+  // down the amount-blind batch branch and it was booked as a full settlement.
+  const invoice = { status: "sent", total_inc_btw: 1815, amount_paid: 0 };
+  check("an instalment has nothing left over → deelbetaling path", paymentExceedsOpenBalance(500, invoice) === false);
+  check("...however many number tokens the reference has (the money decides)",
+    paymentExceedsOpenBalance(500, invoice) === false);
+  check("the exact amount has nothing left over either", paymentExceedsOpenBalance(1815, invoice) === false);
+  check("a genuinely bigger payment does have money left", paymentExceedsOpenBalance(2000, invoice) === true);
+}
+{
+  // A genuine bundle: €1.100 paying €605 + €495. Confirming EITHER invoice must leave the bank
+  // line open — that is the fix for a payment being swallowed by the first invoice it touches.
+  const a = { status: "sent", total_inc_btw: 605, amount_paid: 0 };
+  const b = { status: "sent", total_inc_btw: 495, amount_paid: 0 };
+  check("a bundle payment has money left after its first invoice", paymentExceedsOpenBalance(1100, a) === true);
+  check("...and after its second invoice too", paymentExceedsOpenBalance(1100, b) === true);
+  // The route subtracts what the line already spent, so the LAST invoice closes it.
+  check("what is left after the first invoice exactly fits the second",
+    paymentExceedsOpenBalance(1100 - 605, b) === false);
+}
+{
+  // Mid-instalment: the balance is what is LEFT, not the total.
+  const half = { status: "sent", total_inc_btw: 1000, amount_paid: 400 };
+  check("the remaining balance is what a payment is measured against", paymentExceedsOpenBalance(600, half) === false);
+  check("less than the remaining balance is a deelbetaling", paymentExceedsOpenBalance(599, half) === false);
+  check("more than the remaining balance has money left", paymentExceedsOpenBalance(1000, half) === true);
+}
+{
+  // [PAYMENT_DUST] A customer who rounds up has not paid a second invoice.
+  const invoice = { status: "sent", total_inc_btw: 99.95, amount_paid: 0 };
+  check("a rounding-up overpayment is dust, not a second invoice", paymentExceedsOpenBalance(100, invoice) === false);
+  check("one euro over is still dust (the floor itself)", paymentExceedsOpenBalance(100.95, invoice) === false);
+  check("more than a euro over is real money again", paymentExceedsOpenBalance(101.5, invoice) === true);
+}
+{
+  // Sign-blindness: a supplier payment is a DEBIT (negative) and a creditnota total is negative.
+  check("a negative (debit) payment is judged on magnitude",
+    paymentExceedsOpenBalance(-1000, { status: "received", total_inc_btw: 1000, amount_paid: 0 }) === false);
+  check("a bigger debit has money left for the next purchase invoice",
+    paymentExceedsOpenBalance(-2500, { status: "received", total_inc_btw: 1000, amount_paid: 0 }) === true);
+  check("a creditnota's negative total is a magnitude too",
+    paymentExceedsOpenBalance(500, { status: "sent", total_inc_btw: -500, amount_paid: 0 }) === false);
+}
+{
+  // Nothing left open ⇒ it can absorb nothing; the caller's already-paid checks own this.
+  check("a settled invoice never claims leftover money",
+    paymentExceedsOpenBalance(1000, { status: "sent", total_inc_btw: 100, amount_paid: 100 }) === false);
+  check("an invoice with no total claims nothing", paymentExceedsOpenBalance(500, { status: "sent" }) === false);
+  check("a zero payment has nothing left over", paymentExceedsOpenBalance(0, { status: "sent", total_inc_btw: 100 }) === false);
+  check("null/undefined payment has nothing left over",
+    paymentExceedsOpenBalance(null, { status: "sent", total_inc_btw: 100 }) === false);
+}
+{
+  // openBalanceFromAmounts is status-BLIND on purpose (write paths only); openAmount is not.
+  const legacyPaid = { status: "paid", total_inc_btw: 250, amount_paid: 0 };
+  check("openBalanceFromAmounts ignores the status", openBalanceFromAmounts(legacyPaid) === 250);
+  check("...while openAmount trusts it (no phantom balance on screen)", openAmount(legacyPaid) === 0);
+  check("openBalanceFromAmounts never goes negative", openBalanceFromAmounts({ total_inc_btw: 100, amount_paid: 250 }) === 0);
+  check("openBalanceFromAmounts rounds to cents", openBalanceFromAmounts({ total_inc_btw: 0.3, amount_paid: 0.1 }) === 0.2);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

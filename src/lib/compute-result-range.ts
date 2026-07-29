@@ -19,6 +19,17 @@ import type { EftSettlement } from "./eft-parser";
 import type { PipelineClient } from "./supabase-pipeline";
 import { fetchSettlementEvents, resolveOwnerScheme } from "./kas-payment-events-fetch";
 import type { VatScheme } from "./vat-scheme";
+// [RUBRIEK-SPLIT] Omzet per BTW rate, read from the invoice's own lines.
+import { fetchRateShares } from "./btw-rate-split-fetch";
+
+// [FIN-4] Infer a NULL direction from ownership (the owner is the receiver of an incoming
+// invoice) — the SAME rule effectiveDirection / aangifte / readiness use — so a null-direction
+// row is never dropped and the result never diverges from the concept.
+function effDirOf(i: { direction: string | null; receiver_id: string | null }, ownerId: string): "incoming" | "outgoing" {
+  return i.direction === "incoming" || i.direction === "outgoing"
+    ? i.direction
+    : i.receiver_id === ownerId ? "incoming" : "outgoing";
+}
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 
@@ -71,24 +82,31 @@ export async function computeResultForRange(args: {
   // Invoices for this owner (outgoing = sender, incoming = receiver) in the window.
   const invRows = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name")
+    .select("id, direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
     .order("id", { ascending: true }).range(from, to));
 
-  // [FIN-4] Infer a NULL direction from ownership (owner is the receiver of an incoming invoice)
-  // — the SAME rule effectiveDirection / aangifte / readiness use — so a null-direction row is
-  // never dropped and result never diverges from the concept.
-  const effDir = (i: { direction: string | null; receiver_id: string | null }): "incoming" | "outgoing" =>
-    i.direction === "incoming" || i.direction === "outgoing"
-      ? i.direction
-      : i.receiver_id === ownerId ? "incoming" : "outgoing";
+  // [RUBRIEK-SPLIT] The rate mix of the SALES invoices in this window, read from their own lines.
+  // The aangifte splits omzet across rubriek 1a/1b/1c, and an invoice header carries no rate — it
+  // is derived as btw ÷ ex, exact for the single-rate invoices that are almost all of them and
+  // wrong for the rest: €1.000 @ 21% + €1.000 @ 9% blends to 15%, snaps to 21%, and declares the
+  // whole €2.000 in 1a. Same helper /api/aangifte uses, so the two can never disagree.
+  const rateSharesByInvoice = await fetchRateShares(
+    pipeline,
+    (invRows as Array<{ id?: string; direction: string | null; receiver_id: string | null; total_ex_btw: number | null; btw_amount: number | null }>)
+      .filter((i) => effDirOf(i, ownerId) === "outgoing"),
+  );
+
   const invoices: ResultInvoice[] = invRows.map((i) => ({
-    direction: effDir(i),
+    direction: effDirOf(i, ownerId),
     status: i.status,
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
+    // [RUBRIEK-SPLIT] Present only on a mixed-rate sales invoice; everything else keeps the
+    // header-derived rate exactly as before.
+    rate_lines: (i as { id?: string }).id ? rateSharesByInvoice.get((i as { id: string }).id) ?? null : null,
   }));
 
   // Bank lines in the window (computeResult excludes invoice payments + uncategorized).
@@ -213,7 +231,7 @@ export async function computeResultForRange(args: {
   const INCOMING_OK = new Set(["paid", "received"]);
   const acquirerFeesBooked = (invRows ?? [])
     .filter((i) =>
-      effDir(i) === "incoming" &&
+      effDirOf(i, ownerId) === "incoming" &&
       INCOMING_OK.has(i.status ?? "") &&
       ACQUIRER_VENDOR_RE.test(i.client_name ?? ""))
     .reduce((s, i) => s + (i.total_ex_btw ?? 0) + (i.btw_amount ?? 0), 0);
@@ -241,7 +259,10 @@ export async function computeResultForRange(args: {
     const qs = await fetchSettlementEvents(pipeline, ownerId, start, end);
     undatedPaidCount = qs.undatedPaidCount;
     estimatedPortionCount = qs.estimatedCount;
-    kasOpts = { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice };
+    // [RUBRIEK-SPLIT] The rate mix travels into the cash-basis path too, so a payment on a
+    // mixed-rate invoice books a proportional share of each rubriek instead of one blended rate —
+    // otherwise the two VAT schemes would file the same sale under different rubrieken.
+    kasOpts = { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice, rateSharesByInvoice };
   }
   const result = computeResult(
     invoices, bankTx, cashEntries, turnover, coveredDates,
@@ -262,7 +283,7 @@ export async function computeResultForRange(args: {
       .is("invoice_date", null)
       .order("id", { ascending: true }).range(from, to));
     datelessVerifiedCount = datelessRows.filter((i) => {
-      const dir = effDir(i);
+      const dir = effDirOf(i, ownerId);
       return dir === "incoming" ? INCOMING_OK.has(i.status ?? "") : OUTGOING_OK.has(i.status ?? "");
     }).length;
   }

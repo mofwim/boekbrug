@@ -1,14 +1,26 @@
 // [Design System] Roboto via next/font/google + Material Symbols CDN
 import type { Metadata, Viewport } from "next";
-import { Roboto } from "next/font/google";
+import { Roboto, Noto_Sans_Arabic } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
 import { ServiceWorkerRegister } from "./ServiceWorkerRegister";
 import "./globals.css";
 
+// [Design System] "latin-ext" is added so Turkish glyphs (ş ğ ı İ) render in
+// Roboto instead of falling back to a mismatched system font.
 const roboto = Roboto({
   variable: "--font-sans",
-  subsets: ["latin"],
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "700"],
+  display: "swap",
+});
+
+// [Design System] Arabic reads in Noto Sans Arabic — Google's Arabic companion
+// to Roboto — so the RTL blog matches the Latin look instead of an inconsistent
+// per-device system font. Exposed as --font-arabic; applied on Arabic pages.
+const notoArabic = Noto_Sans_Arabic({
+  variable: "--font-arabic",
+  subsets: ["arabic"],
   weight: ["400", "500", "700"],
   display: "swap",
 });
@@ -16,7 +28,10 @@ const roboto = Roboto({
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "BoekBrug — Financieel Command Center",
-  description: "Eén plek voor al je facturen, documenten en klanten. Voor ZZP'ers en boekhouders.",
+  // [BELOFTE] Zie src/lib/belofte.ts — hier letterlijk, want Next verlangt in de
+  // metadata-export een statische waarde en geen import-expressie.
+  description:
+    "Je hoeft geen boekhouding te doen — alleen niets kwijt te raken. Fotografeer je bonnen of laat ze binnenkomen via je mail; aan het eind van het kwartaal staat alles klaar voor je boekhouder.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },
@@ -31,7 +46,8 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "BoekBrug — Financieel Command Center",
-    description: "Al je facturen, documenten en klanten op één plek. Voor ZZP'ers en boekhouders.",
+    description:
+      "Je hoeft geen boekhouding te doen — alleen niets kwijt te raken. Aan het eind van het kwartaal staat alles klaar voor je boekhouder.",
     images: ["/opengraph-image"],
   },
 };
@@ -50,12 +66,12 @@ export default function RootLayout({
   return (
     <html
       lang="nl"
-      className={`${roboto.variable} h-full antialiased`}
+      className={`${roboto.variable} ${notoArabic.variable} h-full antialiased`}
     >
       <head>
         {/* [Design System] Material Symbols — icon font, CDN.
             PERFORMANCE: icon_names= subsets the font to ONLY the glyphs the app
-            uses (88 icons), cutting the download from ~313 KB to ~9 KB (~97%).
+            uses (96 icons), cutting the download from ~313 KB to ~9 KB (~97%).
             display=block keeps the font invisible while loading then swaps in,
             so users never see the raw ligature text ("arrow_back") flash.
 
@@ -67,7 +83,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=account_balance,add,add_a_photo,arrow_back,arrow_downward,arrow_forward,arrow_upward,attach_file,auto_awesome,bar_chart,block,bolt,calculate,check,check_circle,checklist,chevron_left,chevron_right,close,content_copy,content_cut,create_new_folder,cut,delete,delete_forever,description,done_all,download,drive_file_move,drive_file_rename_outline,edit,error,error_outline,event,event_available,expand_less,expand_more,fact_check,folder,folder_open,folder_special,forward_to_inbox,grid_view,groups,help,home,hourglass_empty,inbox,info,insert_drive_file,inventory_2,link,link_off,mark_email_unread,more_vert,open_in_new,payments,pending,people,person,person_add,photo_camera,picture_as_pdf,point_of_sale,qr_code_2,radio_button_unchecked,receipt_long,refresh,restore,schedule,search,search_off,send,settings,share,shield,star,task_alt,undo,upload,upload_file,uppercase,verified,view_list,visibility,visibility_off,warning,work&display=block"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=account_balance,account_tree,add,add_a_photo,arrow_back,arrow_downward,arrow_forward,arrow_upward,attach_file,auto_awesome,bar_chart,block,bolt,calculate,check,check_circle,checklist,chevron_left,chevron_right,close,content_copy,content_cut,create_new_folder,cut,delete,delete_forever,description,done_all,download,drive_file_move,drive_file_rename_outline,edit,error,error_outline,event,event_available,expand_less,expand_more,fact_check,folder,folder_open,folder_special,forward_to_inbox,grid_view,group,groups,help,home,hourglass_empty,inbox,info,insert_drive_file,inventory_2,label,label_important,link,link_off,mark_email_unread,monitoring,more_vert,open_in_new,payments,pending,people,person,person_add,photo_camera,picture_as_pdf,point_of_sale,qr_code_2,radio_button_unchecked,receipt_long,refresh,request_quote,restore,rule,schedule,search,search_off,send,settings,share,shield,star,swap_vert,task_alt,undo,upload,upload_file,uppercase,verified,view_list,visibility,visibility_off,warning,work&display=block"
           rel="stylesheet"
         />
       </head>

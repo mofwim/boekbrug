@@ -106,7 +106,7 @@ export function reminderTierDue(input: ReminderDecisionInput): number | null {
 
   // ── Eligibility guards (any failure → no reminder) ──────────────────
   if (remindersPaused) return null;
-  // [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota → never chase it again. Checked FIRST
+  // [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota → never chase it again. Checked up here
   // with the other opt-outs: a credited invoice can still be 'sent', still have a positive
   // total and still be past due, so every guard below would happily let the mail go out.
   if (hasCreditnota) return null;

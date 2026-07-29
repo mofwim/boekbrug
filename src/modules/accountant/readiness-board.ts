@@ -15,6 +15,25 @@ export interface BoardRow {
   status?: BoardStatus    // readiness verdict (present when state === 'ok')
   missingCount?: number   // gaps to fix
   riskCount?: number      // reconciliation signals to eyeball
+  /**
+   * [REDEN] De KOPPEN van wat er ontbreekt — niet alleen hoeveel.
+   *
+   * /api/readiness stuurt al `missing[]` met leesbare Nederlandse koppen mee; het bord
+   * hield daar alleen `.length` van over. De boekhouder las dus "62% · 4 ontbreekt" en moest
+   * het bord verlaten om te leren dát het om een bankafschrift ging. Eén getal werd zo een
+   * navigatie; de koppen maken er een handeling van.
+   *
+   * ⚠️ ALLEEN DE KOPPEN. Bewust NIET `detail` en NIET `fix`:
+   *   · elke `fix`-href is een EIGENAARSROUTE (readiness.ts:139-145, bv. /dashboard/incoming)
+   *     en zou de boekhouder naar zijn eigen lege pagina's sturen;
+   *   · de `detail` van de verificatierij is letterlijk AV §7.3's "inkomende facturen die je
+   *     nog niet hebt gecontroleerd" — het AANTAL is verdedigbaar als "nog niet klaar", de
+   *     inhoud is voor de eigenaar.
+   * Verbreed dit niet zonder §7.3 er weer bij te pakken.
+   */
+  missingTitles?: string[]
+  /** Waarom de rij niet laadde, als de reden bekend is (bv. koppeling verbroken). */
+  errorReason?: 'unlinked' | 'unknown'
 }
 
 export interface BoardSummary {

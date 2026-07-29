@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { reconcileBatch, countResolvedReferences } from '@/lib/bank-batch-reconcile'
+import { reconcileBatch, resolveBatchNumbers } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint } from '@/lib/bank-matching'
@@ -102,6 +102,9 @@ interface Suggestion {
   // [BANK-SLOT-PERSIST] Server-computed reference numbers already paid against this tx,
   // so a paid slot shows "Betaald" after a reload (session confirm state is gone).
   coveredNumbers?: string[]
+  // [BANK-ONE-PAYMENT-MANY-INVOICES] Euros of this bank line already booked on invoices.
+  // null = nothing linked yet, or links older than amount_applied (then we say nothing).
+  appliedAmount?: number | null
   // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
   explainedByPaid?: boolean
   // [BANK-AMOUNT-ONLY] 'amount_only' when this line was auto-booked on amount+counterpart only
@@ -296,7 +299,7 @@ export default function BankClient() {
     })
     if (!hasSafe && !hasBatch) return
     autoRanRef.current = true
-    void autoConfirm()
+    void (async () => { await autoConfirm() })()
   }, [data, autoRunning, autoConfirm])
 
   // [BANK-PERSIST] Initial load — show stored pending transactions on refresh.
@@ -491,6 +494,11 @@ export default function BankClient() {
         if (!allCovered || isPartial) await runMatch()
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
+      } else if (res.status === 409 && json?.error === 'payment_fully_applied') {
+        // [BANK-ONE-PAYMENT-MANY-INVOICES] Every euro of this line is already on other invoices,
+        // so there is nothing left to book here. Not a failure — a full wallet, honestly reported.
+        showToast('Deze betaling is al volledig toegewezen aan facturen.')
+        await runMatch()
       } else if (res.status === 409 && (json?.error === 'invoice_already_paid' || json?.error === 'transaction_already_processed')) {
         // [BANK-409-BENIGN] Already booked — the auto-confirm on page-open (or another tab) got
         // there first. That IS the desired outcome, so mark it done + refresh so it leaves the
@@ -787,7 +795,7 @@ export default function BankClient() {
   // [BANK-IGNORE] Load ignored list the first time the Genegeerd tab is opened.
   useEffect(() => {
     if (bankTab === 'ignored' && ignoredList === null) {
-      loadIgnored()
+      void (async () => { await loadIgnored() })()
     }
   }, [bankTab, ignoredList, loadIgnored])
 
@@ -948,11 +956,9 @@ export default function BankClient() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }}>account_balance</span>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Bank</h1>
-      </div>
+      {/* [HEADER-SYSTEM] Title "Bank" + back live in the shared sub-page bar
+          (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
+          removed. The descriptive intro line stays. */}
       <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
         Upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.
       </p>
@@ -1565,17 +1571,7 @@ function TxCard({
   // [BANK-SLOT-DISMISS] Hide any number the owner removed with ✗ (view-only). The
   // raw reference is untouched; this only changes what THIS card shows this session.
   const refParts = allRefParts.filter((r) => !dismissedNumbers.has(normRef(r)))
-  // [BANK-R1] On the "Gekoppeld" tab a matched line may have a sparse bank reference (an auto 1:1
-  // match keyed on amount) — fall back to the actually-linked invoice number(s) so the owner still
-  // sees WHICH invoice was booked, not a bare payment with no clue what happened.
   const doneNumbers = s.coveredNumbers ?? []
-  const refLabel =
-    refParts.length === 0
-      ? (isDoneTab && doneNumbers.length > 0
-          ? (doneNumbers.length === 1 ? doneNumbers[0] : `${doneNumbers.length} facturen`)
-          : null)
-      : refParts.length === 1 ? refParts[0]
-      : `${refParts.length} facturen`
   const selectedCand =
     s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ?? (s.outcome === 'auto' ? s.best : null)
 
@@ -1601,10 +1597,17 @@ function TxCard({
   // not raw fragments (which forced the slot view on junk), and not any full-amount
   // candidate (which let an UNRELATED invoice equal to the whole debit collapse a real
   // batch and steer to the wrong pick — caught in adversarial review) — fixes both bugs.
-  const resolvedRefCount = countResolvedReferences(
-    allRefParts,
+  // [BUNDEL-REF-RECOVER] Resolve against the FULL payment text, not only the extracted
+  // reference. extractInvoiceReference cuts an invoice number at every separator and drops a
+  // leading year, so "2026-045, 2026-046" is stored as "045, 046" — two fragments that match
+  // nothing, which left the owner staring at two "Koppelen" rows for a bundle the app itself
+  // had asked them to pay. Every SUPPLIER invoice carries the supplier's own numbering, so this
+  // is the normal case on the incoming side, not an exotic one.
+  const resolvedNumbers = resolveBatchNumbers(
+    { reference: s.reference, description: s.description },
     [...s.candidates.map((c) => c.invoiceNumber), ...confirmedNumbers, ...(s.coveredNumbers ?? [])],
   )
+  const resolvedRefCount = resolvedNumbers.length
   const wasMulti = !isIgnoredTab && (resolvedRefCount >= 2 || s.partiallyLinked === true)
   // Equality — not substring — so "263" can't claim "26302050".
   // [BANK-SLOT-PERSIST] Merge the SESSION's just-confirmed numbers with the server's
@@ -1614,8 +1617,36 @@ function TxCard({
   // [BANK-SLOT-DISMISS] Build slots whenever the transaction STARTED multi, so a
   // single remaining number (after others were dismissed) still shows its own
   // linkable row — not just an empty banner. Driven by wasMulti, not isMulti.
+  // [BUNDEL-REF-RECOVER] Show the invoice's REAL number as the slot, and drop the fragment the
+  // extractor carved out of it ("045" ⊂ "2026045") so the same invoice never appears twice —
+  // once as a linkable row and once as a permanently-unlinkable one that would keep the batch
+  // "incomplete" forever. A reference number that resolves to nothing is kept: it is a real
+  // invoice we don't have yet, and hiding it would fake a complete batch.
+  const resolvedKeys = resolvedNumbers.map(normRef)
+  const leftoverRefParts = refParts.filter((r) => {
+    const key = normRef(r)
+    return !resolvedKeys.some((rk) => rk === key || rk.includes(key))
+  })
+  const slotNumbers = [
+    ...resolvedNumbers.filter((n) => !dismissedNumbers.has(normRef(n))),
+    ...leftoverRefParts,
+  ]
+  // [BANK-REF-DISPLAY] The compact label on the card. One number → show it; several → "N
+  // facturen" so the card stays clean and signals the multi-invoice case. Built from the
+  // resolved numbers, so a bundle shows the invoice numbers the owner recognises rather than
+  // the fragments the extractor left behind.
+  // [BANK-R1] On the "Gekoppeld" tab a matched line may have a sparse bank reference (an auto 1:1
+  // match keyed on amount) — fall back to the actually-linked invoice number(s) so the owner still
+  // sees WHICH invoice was booked, not a bare payment with no clue what happened.
+  const refLabel =
+    slotNumbers.length === 0
+      ? (isDoneTab && doneNumbers.length > 0
+          ? (doneNumbers.length === 1 ? doneNumbers[0] : `${doneNumbers.length} facturen`)
+          : null)
+      : slotNumbers.length === 1 ? slotNumbers[0]
+      : `${slotNumbers.length} facturen`
   const slots = wasMulti
-    ? refParts.map((refNum) => {
+    ? slotNumbers.map((refNum) => {
         const key = normRef(refNum)
         const cand = s.candidates.find((c) => normRef(c.invoiceNumber ?? '') === key) ?? null
         const isConfirmed = confirmedSet.has(key)
@@ -1623,6 +1654,13 @@ function TxCard({
       })
     : []
   const openCount = slots.filter((sl) => !sl.isConfirmed).length
+  // [BANK-ONE-PAYMENT-MANY-INVOICES] Euros of this bank line that no invoice has claimed yet.
+  // null when the server could not measure it (links written before amount_applied existed) —
+  // then the card says nothing rather than a wrong number.
+  const unassignedAmount =
+    s.appliedAmount == null
+      ? null
+      : Math.round((Math.abs(s.amount) - s.appliedAmount) * 100) / 100
   // [BANK-BATCH-RECONCILE] Sum the matched invoices and check the total equals the bank
   // debit. This is the honest proof a batch payment covers exactly these invoices — no
   // single invoice amount appears in the statement, only the sum was debited. Only shown
@@ -1631,7 +1669,13 @@ function TxCard({
   // the "X/Y bevestigd" progress banner tells the story from there.
   const batch = wasMulti
     ? reconcileBatch(
-        slots.map((sl) => ({ refNum: sl.refNum, amount: sl.cand?.amount ?? null, isConfirmed: sl.isConfirmed })),
+        // [PARTIAL-PAY] Reconcile on what each invoice still has OPEN, not its full total: that
+        // is what the bank line moved, and it is exactly what the app's own gebundeld
+        // betaalverzoek asked the customer for. Summing totals told the owner "de bedragen
+        // kloppen niet" about a payment that was precisely right. `remaining` is absent on
+        // candidates built outside matchTransactions → fall back to the total (open == total
+        // for a fully open invoice anyway).
+        slots.map((sl) => ({ refNum: sl.refNum, amount: sl.cand?.remaining ?? sl.cand?.amount ?? null, isConfirmed: sl.isConfirmed })),
         s.amount,
       )
     : null
@@ -1640,8 +1684,12 @@ function TxCard({
   return (
     <div style={{ borderRadius: R.lg, background: M3.surface, boxShadow: EL1, padding: 14, border: `1px solid #EEE` }}>
       {/* [BANK-UNLINK] On the Gekoppeld tab, one tap undoes the match — makes the app's
-          automatic booking safe: any auto-confirmed payment is reversible. */}
-      {isDoneTab && onUnlink && (
+          automatic booking safe: any auto-confirmed payment is reversible.
+          [BANK-ONE-PAYMENT-MANY-INVOICES] Also offered while a payment is only PARTLY assigned:
+          such a line stays in "Te bevestigen" (money of it has no invoice yet), and without the
+          button here a mis-tapped first confirmation would have no way back — the undo lived on
+          a tab the line no longer reaches. It reverses everything booked against this line. */}
+      {(isDoneTab || s.partiallyLinked === true) && onUnlink && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
           <button
             onClick={onUnlink}
@@ -1764,7 +1812,7 @@ function TxCard({
           UI (and Negeren) persists even after numbers are dismissed down to ≤1. */}
       {wasMulti && (
         <div style={{ marginTop: 12 }}>
-          {refParts.length === 0 ? (
+          {slots.length === 0 ? (
             /* Every number was dismissed as "not an invoice". Nothing left to link —
                offer the clean exit. The raw description stays under Details. */
             <div style={{
@@ -1794,6 +1842,14 @@ function TxCard({
             {openCount > 0 && (
               <span style={{ fontWeight: 500, opacity: 0.9 }}>
                 · Nog open: {slots.filter((sl) => !sl.isConfirmed).map((sl) => sl.refNum).join(', ')}
+              </span>
+            )}
+            {/* [BANK-ONE-PAYMENT-MANY-INVOICES] What is still UNASSIGNED of this payment. The
+                line stays here because money of it has no invoice yet — the euros say it
+                plainly, and they are what the owner is actually looking for. */}
+            {unassignedAmount != null && unassignedAmount > 0.01 && (
+              <span style={{ fontWeight: 500, opacity: 0.9, width: '100%' }}>
+                {eur.format(s.appliedAmount ?? 0)} van {eur.format(Math.abs(s.amount))} geboekt · nog {eur.format(unassignedAmount)} toe te wijzen
               </span>
             )}
           </div>
@@ -2031,7 +2087,7 @@ function TxCard({
                 </span>
                 {processing
                   ? 'Verwerken…'
-                  : refParts.length > 1 ? `Facturen koppelen (${refParts.length})` : 'Factuur koppelen'}
+                  : slotNumbers.length > 1 ? `Facturen koppelen (${slotNumbers.length})` : 'Factuur koppelen'}
               </label>
               {/* [BANK-IGNORE] Hide a transaction that needs no invoice (rent, a
                   loan instalment, a personal transfer). Goes to Genegeerd. */}

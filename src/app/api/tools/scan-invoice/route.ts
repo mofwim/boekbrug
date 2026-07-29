@@ -20,7 +20,8 @@
 // while the small output-token ceiling caps the worst case per request.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { reserveAiBudget, TOKEN_ESTIMATE, BUDGET_EXHAUSTED_MESSAGE } from '@/lib/ai-budget'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -205,11 +206,32 @@ export async function POST(req: NextRequest) {
   // attacker can rotate — so this bounds naive/single-source abuse, not a spoofing botnet; the
   // bounded max_tokens + Haiku model cap the worst case per surviving call. Fail-open only if the
   // limiter STORE itself errors (availability over a hard block).
-  try {
-    const durable = await checkRateLimit({ userId: `scan-ip:${ip}`, endpoint: '/api/tools/scan-invoice', ...RATE_LIMITS.PUBLIC_SCAN })
-    if (!durable.allowed) return rateLimitResponse(durable)
-  } catch (e) {
-    console.error('[SCAN-TOOL] durable rate-limit check failed (allowing)', e)
+  //
+  // [COST-GUARD] This block used to be a no-op. It called checkRateLimit() with
+  // `scan-ip:<ip>`, but that helper's RPC takes `p_user_id uuid` and writes into
+  // a uuid column with a FOREIGN KEY to profiles — so the cast failed on EVERY
+  // request, checkRateLimit failed open, and the "durable ceiling across
+  // instances" described above never executed once. The only real guard was the
+  // per-instance in-memory window, which this file already admits is bypassable.
+  // Now keyed by text and FAIL-CLOSED: on an unauthenticated path that spends
+  // money per request, "allow when unsure" is the absence of a limit.
+  const durable = await checkRateLimitByKey({
+    bucketKey: `scan-ip:${ip}`,
+    endpoint: '/api/tools/scan-invoice',
+    ...RATE_LIMITS.PUBLIC_SCAN,
+  })
+  if (!durable.allowed) return rateLimitResponse(durable)
+
+  // [COST-GUARD] Second, independent ceiling: the GLOBAL daily euro budget. The
+  // per-IP limit above bounds one visitor; this bounds the whole endpoint, which
+  // is what a front-page moment or a rotating-proxy attacker actually needs.
+  const budget = await reserveAiBudget({
+    inputTokens: mime === 'application/pdf' ? TOKEN_ESTIMATE.rawPdfDocument : TOKEN_ESTIMATE.imageDocument,
+    maxOutputTokens: MAX_TOKENS,
+    label: 'public-scan',
+  })
+  if (!budget.allowed) {
+    return NextResponse.json({ error: BUDGET_EXHAUSTED_MESSAGE }, { status: 503 })
   }
 
   let text: string

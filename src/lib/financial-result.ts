@@ -20,6 +20,8 @@ import { nearestLegalRate } from "./btw-rate";
 import { isPosPayoutDescription } from "./bank-identity";
 import { computeSettlementSlices, type SettlementEvent, type PriorSettled } from "./kas-payment-events";
 import type { VatScheme } from "./vat-scheme";
+// [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — see btw-rate-split.ts.
+import { splitSliceByShares, type RateShare } from "./btw-rate-split";
 
 // [KASSTELSEL] Optional cash-basis inputs. When scheme==='kas', the invoice leg books the
 // quarter's SETTLEMENT slices (BTW on the paid date) instead of the full invoice on its
@@ -29,6 +31,10 @@ export interface ComputeOpts {
   scheme?: VatScheme;
   settlements?: SettlementEvent[];
   priorByInvoice?: Map<string, PriorSettled>;
+  // [RUBRIEK-SPLIT] Per invoice: its omzet per BTW rate, for the mixed-rate sales invoices whose
+  // header cannot express it. Under kasstelsel each payment then books a proportional share of
+  // every rate instead of one blended one. Absent → the header-derived rate, as before.
+  rateSharesByInvoice?: Map<string, RateShare[]>;
 }
 
 export interface ResultInvoice {
@@ -36,6 +42,13 @@ export interface ResultInvoice {
   status: string | null;
   total_ex_btw: number | null;
   btw_amount: number | null;
+  // [RUBRIEK-SPLIT] The invoice's omzet per BTW rate, when its lines say more than its header
+  // can. Only for SALES: the aangifte splits omzet across rubriek 1a/1b/1c, and a header-derived
+  // blend puts a mixed-rate invoice (21% materials + 9% labour) entirely in one of them. The
+  // buckets are validated against the header before they get here (rateSharesFromLines), so
+  // using them can only move omzet BETWEEN rubrieken, never change a total. Absent → the
+  // header derivation below, unchanged, which is exact for a single-rate invoice.
+  rate_lines?: RateShare[] | null;
 }
 export interface ResultBankTx {
   amount: number | null;       // signed: + credit, − debit
@@ -305,7 +318,13 @@ export function computeResult(
       if (s.direction === "outgoing") {
         omzet += s.ex;
         btwVerschuldigd += s.btw;
-        addSale(s.rate, s.ex, s.btw);
+        // [RUBRIEK-SPLIT] A payment settles a FRACTION of the invoice, and that fraction carries
+        // a proportional share of every rate on it — a €500 instalment on a mixed 21%/9% invoice
+        // is not 21% money. Split it the same way the accrual branch does, so both schemes put
+        // the omzet in the same rubriek. The pieces re-sum to this slice exactly.
+        const mix = splitSliceByShares(opts.rateSharesByInvoice?.get(s.invoiceId), s.ex, s.btw);
+        if (mix) for (const part of mix) addSale(part.rate, part.ex, part.btw);
+        else addSale(s.rate, s.ex, s.btw);
       } else {
         kosten += s.ex;
         btwVoorbelasting += s.btw;
@@ -319,13 +338,22 @@ export function computeResult(
       if (inv.direction === "outgoing" && OUTGOING_OK.has(st)) {
         omzet += ex;
         btwVerschuldigd += btw;
-        // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
-        // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
-        // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
-        // instead of falling to rate-0 and over-declaring BTW.
-        // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
-        // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
-        addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
+        // [RUBRIEK-SPLIT] When the invoice's own lines carry more than one rate, book each rate
+        // where it belongs. The buckets were checked against this header before they arrived, so
+        // the omzet and BTW added above are untouched — only their rubriek changes. Without this
+        // a €1.000 @ 21% + €1.000 @ 9% invoice blends to 15%, snaps to 21%, and declares the
+        // whole €2.000 in rubriek 1a.
+        if (inv.rate_lines && inv.rate_lines.length > 1) {
+          for (const share of inv.rate_lines) addSale(share.rate, share.ex, share.btw);
+        } else {
+          // Rate derived exactly like calcBtwRate (export.ts) — the header stores no rate.
+          // Guard is `ex !== 0` (not `> 0`): a creditnota has NEGATIVE ex+btw, and
+          // round(-249/-1185*100)=21 buckets it to the same rate so it NETS the rubriek
+          // instead of falling to rate-0 and over-declaring BTW.
+          // [HUNT-A] Snap the blend to a legal NL rate so a 9%+0%-statiegeld sale lands in
+          // rubriek 1b, not 1c (a raw 8% blend would fall through to the 1c catch-all).
+          addSale(ex !== 0 ? nearestLegalRate(Math.round((btw / ex) * 100)) : 0, ex, btw);
+        }
       } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
         kosten += ex;
         btwVoorbelasting += btw;
@@ -403,8 +431,21 @@ export function computeResult(
   }
 
   // 3) Cash book.
+  //
+  // [CASH-DIRECTION] cash_entries.amount is ALWAYS POSITIVE — the sign lives in `direction`
+  // ('in' = money into the drawer, 'out' = money out of it). This loop used to read the magnitude
+  // and ignore the direction entirely, so a cash movement was booked with the sign of its
+  // category rather than its own:
+  //   · a REFUND paid to a customer from the till (omzet / out) ADDED omzet and BTW owed — the
+  //     owner declares and pays VAT on money he handed back;
+  //   · a refund RECEIVED from a supplier (kosten / in) ADDED cost, and with a bon and a rate it
+  //     also added voorbelasting — a deduction on money that came back, which is the direction
+  //     that ends in a naheffing.
+  // Refunds are the normal way a till goes the other way, so this is not an exotic case. The
+  // signed amount below flows through the same arithmetic; net, BTW and the per-rate bucket all
+  // carry the sign, exactly as a creditnota does on the invoice side.
   for (const c of cashEntries) {
-    const amt = c.amount ?? 0;
+    const magnitude = c.amount ?? 0;
     if (c.category === "omzet") {
       // [TURNOVER] cash omzet on a covered day is part of the till turnover already
       // counted — exclude it from omzet, BTW, AND the no-rate nudge (all three).
@@ -412,6 +453,8 @@ export function computeResult(
       // its cash sales inside the Z-report, so a dateless cash omzet is treated as covered
       // rather than double-counted; a ZZP (no turnover → covered empty) still counts it.
       if (c.date ? covered.has(c.date) : covered.size > 0) continue;
+      // Money IN is the sale; money OUT under 'omzet' is a refund OF a sale.
+      const amt = c.direction === "out" ? -magnitude : magnitude;
       if (c.btw_rate && c.btw_rate > 0) {
         const net = amt / (1 + c.btw_rate / 100);
         omzet += net;
@@ -426,6 +469,9 @@ export function computeResult(
       // voorbelasting (the reclaimable BTW), exactly like a purchase invoice. WITHOUT both a
       // document AND a rate it books at FULL GROSS with €0 voorbelasting — we never invent a
       // deduction from an undocumented cash line (the "no voorbelasting without a document" rule).
+      // Money OUT is the cost; money IN under 'kosten' is a refund OF a cost — and it takes its
+      // share of voorbelasting back with it.
+      const amt = c.direction === "in" ? -magnitude : magnitude;
       if (c.document_id && c.btw_rate && c.btw_rate > 0) {
         const net = amt / (1 + c.btw_rate / 100);
         kosten += net;
@@ -436,7 +482,8 @@ export function computeResult(
     } else if (c.category === "salaris") {
       // [CASH-COST-VAT] Wages paid in cash: a real business cost, but NEVER any BTW/voorbelasting
       // (wages carry no VAT). Rate-free by construction — a stray rate/document is ignored.
-      kosten += amt;
+      // Repaid wages (money back into the till) reduce the cost, same rule as above.
+      kosten += c.direction === "in" ? -magnitude : magnitude;
     }
     // transfer / prive → excluded
   }

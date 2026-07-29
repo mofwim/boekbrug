@@ -18,7 +18,13 @@ import type { FinancialResult } from "./financial-result";
 export type AangifteInput = Pick<
   FinancialResult,
   "salesByRate" | "btwVoorbelasting" | "cashOmzetZonderBtw"
->;
+> & {
+  // [ICP] Turnover supplied to businesses in other EU member states (ex BTW), read from the
+  // customers' VAT numbers — it belongs in rubriek 3b, not in 1e. Not part of FinancialResult
+  // because no RATE distinguishes it: 0% is 0% until you look at who the customer is. Both
+  // rubrieken carry €0 BTW, so stating it correctly can never move 5a, 5b or 5g.
+  intraEuOmzet?: number;
+};
 
 export interface AangifteCompleteness {
   turnoverDays: number;          // days of dagomzet imported for the period
@@ -26,13 +32,16 @@ export interface AangifteCompleteness {
   incomingInvoiceCount: number;  // purchase invoices feeding 5b (voorbelasting)
   outgoingInvoiceCount: number;  // sales invoices feeding 1a/1b
   hasEuPurchase: boolean;        // an incoming invoice from outside NL (rubriek 4b — not auto-computed)
+  // [ICP] The richer version of the line above: the EU purchases NAMED, built by
+  // foreignPurchaseNote(). When present it replaces the bare "there are EU purchases" sentence.
+  euPurchaseNote?: string | null;
   // Verified invoices with NO invoice_date. A date-range fetch silently drops them, so they
   // are NOT in the figures above — surfaced as a note so the concept isn't quietly too low.
   datelessVerifiedCount?: number;
 }
 
 export interface AangifteRow {
-  code: "1a" | "1b" | "1c" | "1e";
+  code: "1a" | "1b" | "1c" | "1e" | "3b";
   label: string;
   omzet: number;                 // whole euros
   btw: number;                   // whole euros (0 for 1e)
@@ -56,6 +65,7 @@ const RATE_LABEL: Record<string, string> = {
   "1b": "Leveringen/diensten belast met laag tarief (9%)",
   "1c": "Leveringen/diensten belast met overige tarieven, behalve 0%",
   "1e": "Leveringen/diensten belast met 0% of niet bij u belast",
+  "3b": "Leveringen naar landen binnen de EU",
 };
 
 /**
@@ -88,7 +98,28 @@ export function buildAangifte(
     { code: "1b", label: RATE_LABEL["1b"], omzet: euro(om1b), btw: euro(btw1b) },
   ];
   if (euro(om1c) !== 0 || euro(btw1c) !== 0) rows.push({ code: "1c", label: RATE_LABEL["1c"], omzet: euro(om1c), btw: euro(btw1c) });
-  if (euro(om1e) !== 0) rows.push({ code: "1e", label: RATE_LABEL["1e"], omzet: euro(om1e), btw: 0 });
+  // [ICP] Intra-EU supplies are 0%-turnover that the rate alone cannot distinguish, so they land
+  // in the 1e bucket above. Move them to 3b, where the Belastingdienst cross-checks them against
+  // the ICP-opgaaf. Capped at what 1e actually holds: 1e can never go negative, and turnover that
+  // is not there is not invented. Both rubrieken carry €0 BTW, which is the whole safety of this
+  // step — 5a, and therefore 5g, is identical with or without it.
+  //
+  // It moves in EITHER direction. A quarter whose EU turnover nets negative — a creditnota for a
+  // sale invoiced earlier — has a genuinely negative 3b, and clamping that to zero would leave
+  // the credit sitting in 1e while the ICP-opgaaf beside it reports the negative. The two are
+  // handed to the same accountant; they may not contradict each other.
+  const intraEu = Math.round(input.intraEuOmzet ?? 0);
+  const e1 = euro(om1e);
+  // Only ever move what 1e actually holds, in the direction it holds it. Mixed signs (positive
+  // EU turnover against a negative 0%-bucket, or the reverse) move nothing: there is no honest
+  // amount to shift, and the note still names the ICP lines.
+  const om3b =
+    intraEu > 0 && e1 > 0 ? Math.min(intraEu, e1)
+    : intraEu < 0 && e1 < 0 ? Math.max(intraEu, e1)
+    : 0;
+  const rest1e = e1 - om3b;
+  if (rest1e !== 0) rows.push({ code: "1e", label: RATE_LABEL["1e"], omzet: rest1e, btw: 0 });
+  if (om3b !== 0) rows.push({ code: "3b", label: RATE_LABEL["3b"], omzet: om3b, btw: 0 });
 
   const verschuldigd = rows.reduce((s, r) => s + r.btw, 0); // 5a — sum of rounded rubrieken
   const voorbelasting = euro(input.btwVoorbelasting);        // 5b
@@ -120,7 +151,26 @@ export function buildAangifte(
       "Ken een tarief toe voor een compleet beeld.",
     );
   }
-  if (completeness.hasEuPurchase) {
+  // [ICP] The EU-purchase note. When the caller supplies the LISTING (euPurchaseNote), that one
+  // wins: it names the invoices instead of merely announcing that some exist, which is the
+  // difference between a warning and something the accountant can act on. The bare sentence
+  // stays as the fallback for callers that do not build the listing.
+  // [ICP] When 3b could NOT take the whole intra-EU figure — capped by what the 0%-bucket held,
+  // or signs that do not match — the concept and the ICP-opgaaf beside it disagree. They go to
+  // the same accountant, so the difference is stated rather than left to be discovered.
+  if (intraEu !== 0 && om3b !== intraEu) {
+    notes.push(
+      `Let op: de intracommunautaire leveringen tellen op tot €${Math.abs(intraEu).toLocaleString("nl-NL")}` +
+      `${intraEu < 0 ? " negatief" : ""}, maar rubriek 3b kon er €${Math.abs(om3b).toLocaleString("nl-NL")}` +
+      `${om3b < 0 ? " negatief" : ""} van opnemen — de 0%-omzet in dit kwartaal is niet groot genoeg (of heeft ` +
+      "een ander teken). Dat wijst op een verkoop aan een EU-ondernemer waarop tóch BTW is berekend, of op een " +
+      "creditnota uit een ander tijdvak. Controleer dit vóór je de ICP-opgaaf doet: die twee bedragen worden " +
+      "naast elkaar gelegd.",
+    );
+  }
+  if (completeness.euPurchaseNote) {
+    notes.push(completeness.euPurchaseNote);
+  } else if (completeness.hasEuPurchase) {
     notes.push(
       "Er zijn inkopen uit het buitenland (EU). BTW-verlegging (rubriek 4b) en de bijbehorende voorbelasting " +
       "worden hier NIET automatisch berekend — je boekhouder verwerkt dit.",

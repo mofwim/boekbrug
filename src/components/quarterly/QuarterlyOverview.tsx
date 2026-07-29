@@ -73,9 +73,13 @@ function ZzpView({ role }: { role: Role }) {
   const [filingTick, setFilingTick] = useState(0);
 
   useEffect(() => {
-    setLoading(true);
-    setData(null);
-    setRecon(null);
+    void (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setLoading(true);
+      setData(null);
+      setRecon(null);
+    })();
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
@@ -118,9 +122,11 @@ function ZzpView({ role }: { role: Role }) {
 
   // [TRUTH-FILED] Load whether this quarter is marked ingediend + any divergence since.
   useEffect(() => {
-    setFiled(null);
     let cancelled = false;
     (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setFiled(null);
       try {
         const res = await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`);
         if (!res.ok) return;
@@ -475,12 +481,14 @@ function ZzpView({ role }: { role: Role }) {
               </div>
               <div className="grid grid-cols-2 divide-x divide-emerald-100">
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none">
+                  {/* [ROW-LAYOUT] text-xl on phone so a 6-figure amount fits on one line;
+                      at text-2xl the narrow grid-cols-2 cell wrapped "€" onto its own line. */}
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-emerald-700 leading-none">
                     {formatEur(data.totalIn)}
                   </p>
                 </div>
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none">
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-emerald-700 leading-none">
                     {formatEur(data.totalBtwIn)}
                   </p>
                 </div>
@@ -511,12 +519,12 @@ function ZzpView({ role }: { role: Role }) {
               </div>
               <div className="grid grid-cols-2 divide-x divide-red-100">
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-red-700 leading-none">
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-red-700 leading-none">
                     {formatEur(data.totalOut)}
                   </p>
                 </div>
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-red-700 leading-none">
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-red-700 leading-none">
                     {formatEur(data.totalBtwOut)}
                   </p>
                 </div>
@@ -557,7 +565,7 @@ function AccountantView({ role }: { role: Role }) {
   } | null>(null);
 
   useEffect(() => {
-    setClientsLoading(true);
+    void (async () => { setClientsLoading(true); })();
     // [BRIDGE-QUARTER-ACC] Honor ?clientId from the URL (e.g. the "Kwartaal"
     // button on the accountant dashboard) so we open the RIGHT client, not just
     // the first one. Falls back to the first client when no param is present.
@@ -579,9 +587,13 @@ function AccountantView({ role }: { role: Role }) {
 
   useEffect(() => {
     if (!selectedClientId) return;
-    setLoading(true);
-    setData(null);
-    setRecon(null);
+    void (async () => {
+      // Reset binnen de async-wikkel, vóór de eerste await: dezelfde tick als voorheen,
+      // zonder synchrone setState in de effect-body.
+      setLoading(true);
+      setData(null);
+      setRecon(null);
+    })();
     const params = new URLSearchParams({
       year: String(year),
       quarter: String(quarter),
@@ -673,12 +685,12 @@ function AccountantView({ role }: { role: Role }) {
         </div>
         <p className="text-sm font-medium mb-1">Geen klanten gekoppeld</p>
         <p className="text-xs text-muted-foreground mb-5">Nodig een klant uit om kwartaaloverzichten te bekijken</p>
-        <a href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
+        <Link href="/dashboard/clients/invite" className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl">
           Klant uitnodigen
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
-        </a>
+        </Link>
       </div>
     );
   }

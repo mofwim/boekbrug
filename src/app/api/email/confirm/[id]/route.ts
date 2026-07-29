@@ -14,6 +14,9 @@ import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 // [BRIDGE-B] legal trail for verify/pay state changes
 import { logAuditAction, getClientIP } from "@/lib/audit";
+// [MONEY-GUARD] The one predicate for "this invoice already holds money" — shared with the
+// dedicated archive route so the two doors to the same act cannot disagree.
+import { hasSettledMoney } from "@/lib/invoice-removal";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -365,6 +368,42 @@ export async function DELETE(
   // [CONFIRM-GUARD] Only from 'processing' (skip from the verify queue) or
   // 'received' (the manage page's archive-a-duplicate flow). Never from 'paid':
   // archiving a paid invoice would hide booked money from every ledger surface.
+  //
+  // [MONEY-GUARD] 'paid' is not the only state that holds money. An invoice PARTLY paid sits in
+  // 'received' with amount_paid > 0, and a bank-linked one can too — both slipped straight
+  // through the status filter. Archiving them is exactly the harm the comment above describes:
+  // 'archived' is outside INCOMING_OK, so the invoice stops counting, while the bank line that
+  // paid it is skipped by `if (t.invoice_id) continue` as "payment of an already-counted invoice"
+  // — the debit is then counted NOWHERE, and the quarter's kosten and voorbelasting are quietly
+  // too low. The dedicated archive route refuses both cases; this one is the same act by another
+  // door, so it applies the same two gates.
+  const { data: money } = await supabase
+    .from("invoices")
+    .select("status, amount_paid")
+    .eq("id", id)
+    .eq("receiver_id", user.id)
+    .maybeSingle();
+  if (money && hasSettledMoney(money)) {
+    return NextResponse.json(
+      { error: "money_settled", detail: "Er is al betaald op deze factuur — draai eerst de betaling terug." },
+      { status: 409 },
+    );
+  }
+  // A booked payment always leaves a join row. Refusing on its mere existence also covers rows
+  // written before amount_applied existed, whose amounts cannot be read back.
+  const { data: bankLinks } = await supabase
+    .from("bank_tx_invoices")
+    .select("transaction_id")
+    .eq("user_id", user.id)
+    .eq("invoice_id", id)
+    .limit(1);
+  if ((bankLinks ?? []).length > 0) {
+    return NextResponse.json(
+      { error: "bank_linked", detail: "Er is een banktransactie aan deze factuur gekoppeld — ontkoppel die eerst op de Bank-pagina." },
+      { status: 409 },
+    );
+  }
+
   const { data: archData, error } = await supabase
     .from("invoices")
     .update({
@@ -410,7 +449,11 @@ export async function PATCH(
   // [BRIDGE-B] Restore: archived → processing (re-enters the verification queue).
   // Must NOT go to 'received' — that would push an unverified invoice straight to
   // the accountant via the restore path (shared=true). The queue is 'processing'.
-  const { error } = await supabase
+  // [UI-HONESTY] .select() so "geen rij geraakt" is distinguishable from "teruggezet".
+  // Without it this returned ok:true when the WHERE matched nothing (already restored,
+  // wrong id, not archived) — and every caller that checks res.ok, including the
+  // "Terugzetten" knop on a geweigerde upload, would claim a success that never happened.
+  const { data: restored, error } = await supabase
     .from("invoices")
     .update({
       status: "processing",
@@ -419,10 +462,17 @@ export async function PATCH(
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .eq("status", "archived");
+    .eq("status", "archived")
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!restored || restored.length === 0) {
+    return NextResponse.json(
+      { error: "Deze factuur staat niet (meer) in Genegeerd — ververs de pagina." },
+      { status: 409 }
+    );
   }
 
   return NextResponse.json({ ok: true });

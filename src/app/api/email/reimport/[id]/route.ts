@@ -18,6 +18,9 @@ import { classifyAttachment } from "@/lib/email-integration";
 import { evaluateArithmetic, deriveDueDate } from "@/lib/safecore";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+// [SEC-STORAGE-PATH] Normalise a stored value AND decide whose bytes it names — one tested place.
+import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
+import { gateFairUse } from "@/lib/fair-use-gate";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -32,25 +35,6 @@ const REREAD_MODEL = "claude-sonnet-5";
 // [REREAD-STRONG] A raw-PDF (visual-layout) read is slower than the flattened-text path — give the
 // route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
 export const maxDuration = 120;
-
-// A stored value may be a relative path (new) or a legacy full signed/public URL. Normalise
-// to the bucket-relative path. (Mirror of the helper in api/email/file/[id].)
-function toStoragePath(stored: string): string {
-  if (stored.startsWith("http")) {
-    const signMarker = "/object/sign/documents/";
-    const publicMarker = "/object/public/documents/";
-    let idx = stored.indexOf(signMarker);
-    if (idx !== -1) {
-      idx += signMarker.length;
-    } else {
-      idx = stored.indexOf(publicMarker);
-      if (idx === -1) return stored;
-      idx += publicMarker.length;
-    }
-    return decodeURIComponent(stored.slice(idx).split("?")[0]);
-  }
-  return stored;
-}
 
 // [HUNT-Q4] Identify a file by its magic bytes — authoritative over a filename/extension
 // guess. Returns null when the header isn't one the classifier can read (leave the guess).
@@ -79,6 +63,12 @@ export async function POST(
   // separate 240/hr allowance from the upload path, both bounding per-user AI spend.
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/reimport", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
+  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
+  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   // Load + prove ownership. Keep the current values so a poorer re-read can't wipe metadata.
   const { data: invoice } = await supabase
@@ -147,8 +137,18 @@ export async function POST(
 
   // Download the stored bytes. Storage bucket RLS is separate from table RLS; ownership is
   // already proven above, so the pipeline client is used only to read this one proven file.
-  const pipeline = createPipelineClient();
   const storagePath = toStoragePath(invoice.pdf_url);
+  // [SEC-STORAGE-PATH] "Ownership is already proven above" was proven of the ROW, not of the path
+  // it points at — and pdf_url is writable by the very caller whose row this is. The pipeline
+  // client bypasses the bucket policy, so without this the caller could name another tenant's key
+  // and have its bytes read (and, worse, re-imported onto their own invoice). See storage-path.ts.
+  if (!pathBelongsToOwner(storagePath, invoice.receiver_id)) {
+    console.error("[SEC-STORAGE-PATH] refused to read a path outside the authorized owner", {
+      invoiceId: id, receiverId: invoice.receiver_id, storagePath, callerId: user.id,
+    });
+    return NextResponse.json({ error: "Kon het bestand niet lezen" }, { status: 403 });
+  }
+  const pipeline = createPipelineClient();
   const { data: blob, error: dlErr } = await pipeline.storage.from("documents").download(storagePath);
   if (dlErr || !blob) {
     console.error("[REIMPORT] download failed", { invoiceId: id, storagePath, dlErr });
@@ -174,6 +174,8 @@ export async function POST(
     });
   } catch (e) {
     console.error("[REIMPORT] classify failed", { invoiceId: id, e });
+    // [FAIR-USE] Niet gelezen, dus niet geteld.
+    await gate.release();
     return NextResponse.json({ error: "Kon de factuur nu niet opnieuw lezen — probeer het later opnieuw." }, { status: 502 });
   }
 
@@ -209,7 +211,10 @@ export async function POST(
   if (priorFc) {
     for (const k of Object.keys(priorFc)) {
       if (k.startsWith("_intake")) carried[k] = priorFc[k];
-      else if (!freshHasTotal && (k === "_safecore" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
+      // [BTW-SUM-FIX] _btw_derived explains the STORED amounts ("this BTW is ours, not the
+      // invoice's"). Keep it alongside _safecore when we keep those amounts — dropping it would
+      // leave a derived BTW sitting in the row with nothing left saying so.
+      else if (!freshHasTotal && (k === "_safecore" || k === "_btw_derived" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
     }
   }
   const aiConfidence = (c.fieldConfidence ?? null) as Record<string, unknown> | null;

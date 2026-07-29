@@ -102,6 +102,15 @@ export interface ReadinessSignals {
   // them is reclaimable (oninbare vordering). A helpful nudge (risk), never a block — it's money to
   // get back, not a gap. Optional (undefined → none).
   badDebt?: { count: number; reclaimableBtw: number };
+  // [BAD-DEBT] The mirror (art. 29 lid 7): purchase invoices >1 year past due and still unpaid, so
+  // the voorbelasting deducted on them has become payable again. A risk, not a block — the app
+  // knows the invoice is unpaid in its own records, which is not proof it is unpaid in the world.
+  // Optional (undefined → none).
+  vatClawback?: { count: number; repayableBtw: number };
+  // [ICP] Sales to EU businesses that cannot go on the ICP-opgaaf as they stand (BTW charged, or
+  // a VAT number that cannot be right). The opgaaf itself is not a readiness matter; one that
+  // will be REJECTED is, because a rejected opgaaf counts as not done. Optional (undefined → 0).
+  icpProblems?: number;
 }
 
 export interface ReconException {
@@ -526,6 +535,48 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       severity: "risk",
       title: f.title,
       detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
+  }
+
+  // [ICP] An EU sale that cannot go on the opgaaf as it stands. Either BTW was charged to a
+  // business you also listed as intra-EU, or the VAT number cannot be right — both make the
+  // opgaaf bounce, and a bounced opgaaf counts as never filed. A risk, not a gap: charging BTW
+  // to an EU customer is sometimes exactly correct (a service taxed in NL), so the app points
+  // at the invoice and lets the owner decide which of the two is wrong.
+  if ((s.icpProblems ?? 0) > 0) {
+    const n = s.icpProblems ?? 0;
+    risks.push({
+      severity: "risk",
+      title: n === 1
+        ? "1 EU-verkoop kan niet in de ICP-opgaaf"
+        : `${n} EU-verkopen kunnen niet in de ICP-opgaaf`,
+      detail:
+        "Op een verkoop aan een EU-ondernemer is BTW berekend, of het BTW-nummer heeft niet de lengte " +
+        "van dat land. Bij een intracommunautaire levering verleg je de BTW (0%) en geef je de klant op " +
+        "in de ICP-opgaaf — een aparte aangifte naast de BTW-aangifte. Een afgekeurde opgaaf telt als " +
+        "niet gedaan; controleer het nummer (VIES) of de BTW op de factuur.",
+      fix: FIX.facturen,
+    });
+  }
+
+  // [BAD-DEBT] Art. 29 lid 7 — purchase invoices >1 year past due and still unpaid, so the
+  // voorbelasting deducted on them becomes payable AGAIN. This is the only art. 29 side that
+  // costs money, and it grows belastingrente while nobody looks — so it is worded as a liability
+  // and stands BEFORE the reclaim below. Still a RISK, never a blocking gap: "unpaid in our
+  // records" is not proof of "unpaid in the world" (a bank that was never linked, cash at the
+  // counter, a payment arrangement), and blocking a filing on an inference the app cannot verify
+  // would trap the owner with no way out. So it names the amount and both ways to resolve it.
+  if (s.vatClawback && s.vatClawback.repayableBtw >= BAD_DEBT_MIN_EUR && s.vatClawback.count > 0) {
+    const n = s.vatClawback.count;
+    risks.push({
+      severity: "risk",
+      title: `${n} onbetaalde inkoopfactu${n === 1 ? "ur" : "ren"} >1 jaar — €${euro(s.vatClawback.repayableBtw)} voorbelasting terugbetalen`,
+      detail:
+        "Deze inkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open in je administratie. " +
+        "De BTW die je hierover in aftrek bracht wordt dan weer verschuldigd (art. 29 lid 7 Wet OB). " +
+        "Heb je ze wél betaald? Koppel de bankbetaling of zet ze op betaald. Zo niet, dan hoort dit bedrag " +
+        "terug in je aangifte — dit wordt NIET automatisch verrekend.",
+      fix: { label: "Naar Inkoop", href: "/dashboard/incoming/manage" },
     });
   }
 

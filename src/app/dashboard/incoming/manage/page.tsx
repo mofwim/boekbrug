@@ -71,6 +71,19 @@ export default async function Page({
 
   const rows = [...(receivedRows ?? []), ...(paidRows ?? [])] as unknown as IncomingRow[]
 
+  // [INVOICE-COUNTER] The TRUE number of confirmed inkoopfacturen — not the number the two
+  // queries above happened to return. The paid query stops at 200, so a real backlog is larger
+  // than the list; the counter in the client derives its breakdown from the loaded rows (so it
+  // stays live while the owner pays and matches), and uses this number to SAY that the list is
+  // capped instead of quietly presenting 200 as "all you have". head+exact = a count, no rows.
+  // Null on failure → the client simply omits the disclosure, never guesses a total.
+  const { count: totalCount } = await supabase
+    .from('invoices')
+    .select('id', { count: 'exact', head: true })
+    .eq('receiver_id', user.id)
+    .eq('direction', 'incoming')
+    .in('status', ['received', 'paid'])
+
   // [INBOX-CROWD-OUT] Deep-link guarantee: Vandaag routes here with ?focus={id}
   // (and ?action=pay). If that row still fell outside the fetched window (e.g. a
   // paid row beyond the 200 cap), fetch it by id so the focus/pay flow always
@@ -92,6 +105,7 @@ export default async function Page({
     <IncomingManageClient
       profile={profile}
       initialInvoices={rows}
+      totalCount={totalCount ?? null}
     />
   )
 }

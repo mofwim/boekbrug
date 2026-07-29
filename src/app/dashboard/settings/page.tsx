@@ -5,6 +5,8 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
+// [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
+import { SnelStartCard } from '@/components/settings/SnelStartCard'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 // [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
@@ -12,13 +14,14 @@ import {
   validateKvk, validateBtw, validateIban,
   normalizeBtw, normalizeIban,
 } from '@/lib/validation'
+import type { ProfileRow } from '@/types/rows'
 
 export default function SettingsPage() {
   const router = useRouter()
   const supabase = createClient()
-  const [accountant, setAccountant] = useState<any>(null)
+  const [accountant, setAccountant] = useState<ProfileRow | null>(null)
   // حالة الملف الشخصي
-  const [profile, setProfile] = useState<any>(null)
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
 
   // حقول تعديل الملف الشخصي
   const [fullName, setFullName] = useState('')
@@ -176,7 +179,7 @@ export default function SettingsPage() {
     const now = new Date()
     const qStart = `${now.getFullYear()}-${String(Math.floor(now.getMonth() / 3) * 3 + 1).padStart(2, '0')}-01`
     let since = vatSchemeSince
-    if (vatScheme === 'kas' && (profile.vat_scheme !== 'kas' || !since)) since = qStart
+    if (vatScheme === 'kas' && (profile?.vat_scheme !== 'kas' || !since)) since = qStart
 
     // [REMINDERS] Parse the cadence text into positive ints (unique, ascending).
     // Empty/garbage falls back to the default {14,30} so the schedule is never blank.
@@ -594,6 +597,9 @@ export default function SettingsPage() {
 
         {/* [PUSH] Meldingen (push notifications) — self-hides when unavailable */}
         <PushNotificationCard />
+
+        {/* [SNELSTART] Boekhoudkoppeling — self-hides when the server has no API key */}
+        <SnelStartCard />
 
         {/* [FACTUUR-B] Factuurnummering — ZZP'er only */}
         {profile.role === 'zzper' && (

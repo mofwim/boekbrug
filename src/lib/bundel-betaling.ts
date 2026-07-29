@@ -12,7 +12,7 @@
 // account — invoices whose vendor_iban differs (or is missing/invalid) never
 // share a bundle, so a batch can never silently pay the wrong party.
 
-import { buildEpcQrPayload, isValidIban, normalizeIban } from "./epc-qr";
+import { buildEpcQrPayload, isValidIban, normalizeIban, EPC_REMITTANCE_MAX } from "./epc-qr";
 
 /** The incoming-invoice fields the bundle logic reads. A subset of the row. */
 export interface BundelBetalingInvoice {
@@ -107,6 +107,25 @@ export function buildBundelBetaling(
     .map((inv) => (inv.payment_reference || inv.invoice_number || "").trim())
     .filter(Boolean)
     .join(", ");
+
+  // [BUNDEL-REFERENCE-FITS] Mirror of the outgoing rule: every kenmerk must reach the bank
+  // statement or the debit can never be reconciled to the invoices it paid. The EPC remittance
+  // is capped at 140 characters and the payload builder truncates SILENTLY, so a bundle whose
+  // references do not fit would produce a payment quoting only part of the set. Refuse up front.
+  if (reference.length > EPC_REMITTANCE_MAX) {
+    let used = 0, fits = 0;
+    for (const inv of invoices) {
+      const num = (inv.payment_reference || inv.invoice_number || "").trim();
+      if (!num) continue;
+      const add = fits === 0 ? num.length : num.length + 2;
+      if (used + add > EPC_REMITTANCE_MAX) break;
+      used += add; fits++;
+    }
+    return {
+      ok: false,
+      error: `Te veel facturen voor \u00e9\u00e9n betaling: de bank kan maar ${EPC_REMITTANCE_MAX} tekens aan kenmerk meesturen, dus niet alle factuurnummers passen erin. Selecteer er maximaal ${Math.max(1, fits)} en betaal de rest in een tweede overboeking.`,
+    };
+  }
 
   const qr = buildEpcQrPayload({ iban, name: beneficiaryName, amount, reference });
   if (!qr.ok || !qr.payload) {

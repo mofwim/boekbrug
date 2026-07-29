@@ -6,6 +6,7 @@
 // [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
 import { useState, useEffect, useRef } from 'react'
+import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
@@ -13,8 +14,9 @@ import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceReminders } from '@/components/invoice/InvoiceReminders'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
-import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
+import { InvoiceTypeBadge, type InvoiceType } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+import type { InvoiceRow, InvoiceLineRow, ProfileRow } from '@/types/rows'
 
 const PDFDownloadLink = dynamic(
   () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
@@ -46,13 +48,13 @@ export default function InvoiceDetailPage() {
   const invoiceId = params.id as string
   const supabase = createClient()
 
-  const [invoice, setInvoice] = useState<any>(null)
-  const [lines, setLines] = useState<any[]>([])
-  const [profile, setProfile] = useState<any>(null)
+  const [invoice, setInvoice] = useState<InvoiceRow | null>(null)
+  const [lines, setLines] = useState<InvoiceLineRow[]>([])
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
   // [ACC-INVOICE-VIEW] viewer's own profile — reliable "self" side for the
   // Van/Aan cards. On an incoming invoice the sender_id points at an external
   // party with no profiles row, so we cannot derive the ZZP'er from it.
-  const [viewerProfile, setViewerProfile] = useState<any>(null)
+  const [viewerProfile, setViewerProfile] = useState<ProfileRow | null>(null)
   // [ACC-INVOICE-VIEW] original-PDF fetch state — documents bucket is private,
   // so we fetch a fresh signed URL from the existing Wave 3 file route rather
   // than linking the raw (relative, expiring) pdf_url.
@@ -61,7 +63,9 @@ export default function InvoiceDetailPage() {
   const [notFoundState, setNotFoundState] = useState(false)
 
   // [BOEK-031] linked creditnota — toon als er al een bestaat
-  const [linkedCreditnota, setLinkedCreditnota] = useState<any>(null)
+  // Alleen de kolommen die de lookup ophaalt — geen volledige factuurrij beloven.
+  const [linkedCreditnota, setLinkedCreditnota] =
+    useState<Pick<InvoiceRow, 'id' | 'invoice_number' | 'status' | 'created_at'> | null>(null)
 
   // [COHERENCE-CREDITNOTA] The dedicated creditnota action. It POSTs to
   // /api/invoice/creditnota — the ONE route that copies the original's lines
@@ -84,14 +88,17 @@ export default function InvoiceDetailPage() {
   // [FACTUUR-A] Delivery recovery banner — read ?delivery= once on mount — June 2026
   const searchParams = useSearchParams()
   const pathname = usePathname()
-  const [deliveryWarning, setDeliveryWarning] = useState<'pdf_failed' | 'email_failed' | null>(null)
+  // [REACT] Afgeleid van de URL — geen effect nodig. Een effect zou een tweede renderronde
+  // kosten en de waarschuwing één frame later tonen dan de pagina eronder.
+  const deliveryParam = searchParams.get('delivery')
+  const deliveryFromUrl: 'pdf_failed' | 'email_failed' | null =
+    deliveryParam === 'pdf_failed' || deliveryParam === 'email_failed' ? deliveryParam : null
+  const [dismissedDelivery, setDismissedDelivery] = useState(false)
+  const deliveryWarning = dismissedDelivery ? null : deliveryFromUrl
   const [resending, setResending] = useState(false)
   const [resendSuccess, setResendSuccess] = useState(false)
 
-  useEffect(() => {
-    const d = searchParams.get('delivery')
-    if (d === 'pdf_failed' || d === 'email_failed') setDeliveryWarning(d)
-  }, [searchParams])
+
 
   // [COHERENCE-CREDITNOTA] ?action=credit (from the Facturen list's "credit a paid
   // invoice" flow) auto-opens the creditnota dialog once the invoice has loaded. Fires at
@@ -107,7 +114,7 @@ export default function InvoiceDetailPage() {
       searchParams.get('action') === 'credit' &&
       invoice.invoice_type !== 'creditnota' &&
       invoice.direction !== 'incoming' &&
-      CREDITABLE_STATUSES.includes(invoice.status)
+      !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status)
     ) {
       creditAutoOpenedRef.current = true
       setCreditReason('')
@@ -164,7 +171,7 @@ export default function InvoiceDetailPage() {
     }
 
     // Success — hide banner + clean ?delivery= from URL
-    setDeliveryWarning(null)
+    setDismissedDelivery(true)
     setResendSuccess(true)
     setResending(false)
     router.replace(pathname) // strips query params
@@ -252,7 +259,7 @@ export default function InvoiceDetailPage() {
     // Use API response data directly — avoids Supabase read-after-write lag
     // The API already committed the new number + status + type to DB
     const responseData = await res.json().catch(() => ({}))
-    setInvoice((prev: any) => ({
+    setInvoice((prev) => (prev === null ? prev : {
       ...prev,
       status: 'sent',
       invoice_number: responseData.invoice_number ?? prev.invoice_number,
@@ -303,7 +310,7 @@ export default function InvoiceDetailPage() {
 
   // [DS] STATUS_CONFIG — Material You chip tokens
   const statusCfg = invoice
-    ? STATUS_CONFIG[invoice.status] || { label: invoice.status, bg: '#F1F3F4', color: '#5F6368' }
+    ? STATUS_CONFIG[invoice.status ?? ''] ?? { label: invoice.status ?? 'Onbekend', bg: '#F1F3F4', color: '#5F6368' }
     : null
 
   // [ACC-INVOICE-DETAIL] Owner = the logged-in viewer whose id equals the
@@ -317,7 +324,7 @@ export default function InvoiceDetailPage() {
     isOwner && // [ACC-INVOICE-DETAIL] creditnota is an owner-only action, never the accountant
     invoice.invoice_type !== 'creditnota' &&
     invoice.direction !== 'incoming' && // [ACC-INVOICE-VIEW] creditnota only on own outgoing invoices
-    CREDITABLE_STATUSES.includes(invoice.status) &&
+    !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status) &&
     !linkedCreditnota
 
   // [ACC-INVOICE-VIEW] Direction is the single source of truth. Only an explicit
@@ -361,7 +368,7 @@ export default function InvoiceDetailPage() {
           (number + type badge + status chip + actions + PDF) and sticks directly
           below the shared bar. */}
       <div style={{
-        position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 10,
+        position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 10,
         backgroundColor: 'rgba(255,255,255,0.9)',
         backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
@@ -374,10 +381,10 @@ export default function InvoiceDetailPage() {
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <h1 style={{ fontSize: 16, fontWeight: 700, color: '#202124', margin: 0 }}>
-                  {invoice.invoice_number || 'Concept'}
+                  {invoice?.invoice_number || 'Concept'}
                 </h1>
-                {invoice.invoice_type && invoice.invoice_type !== 'factuur' && (
-                  <InvoiceTypeBadge type={invoice.invoice_type} size="xs" />
+                {invoice?.invoice_type && invoice?.invoice_type !== 'factuur' && (
+                  <InvoiceTypeBadge type={invoice.invoice_type as InvoiceType} size="xs" />
                 )}
               </div>
             )}
@@ -399,10 +406,10 @@ export default function InvoiceDetailPage() {
                 </span>
                 <InvoiceActions
                   invoiceId={invoiceId}
-                  invoiceNumber={invoice.invoice_number}
-                  status={invoice.status}
-                  direction={invoice.direction} /*[BOEK-020]*/
-                  invoiceType={invoice.invoice_type} /*[BETAALVERZOEK]*/
+                  invoiceNumber={invoice?.invoice_number ?? ''}
+                  status={invoice?.status ?? ''}
+                  direction={invoice?.direction ?? undefined} /*[BOEK-020]*/
+                  invoiceType={invoice?.invoice_type} /*[BETAALVERZOEK]*/
                 />
                 {/* [ACC-INVOICE-VIEW] Outgoing: generate the invoice PDF.
                     Incoming: InvoicePDF assumes outgoing (Van=profile/Aan=client)
@@ -500,13 +507,13 @@ export default function InvoiceDetailPage() {
           {/* [REMINDERS] Per-invoice reminder history + pause (outgoing sent/overdue only) */}
           <InvoiceReminders
             invoiceId={invoiceId}
-            direction={invoice.direction}
-            status={invoice.status}
-            remindersPaused={invoice.reminders_paused}
+            direction={invoice?.direction}
+            status={invoice?.status}
+            remindersPaused={invoice?.reminders_paused}
           />
 
           {/* [BOEK-031] Send banner — only for draft invoices — May 2026 */}
-          {invoice.status === 'draft' && (
+          {invoice?.status === 'draft' && (
             <div style={{ backgroundColor: '#D3E3FD', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ color: '#1967D2' }}>↗</span>
@@ -579,12 +586,12 @@ export default function InvoiceDetailPage() {
                 {
                   title: 'Details',
                   lines: [
-                    `Nummer: ${invoice.invoice_number || '—'}`,
-                    `Datum: ${invoice.invoice_date ? NL_DATE.format(new Date(invoice.invoice_date)) : '—'}`,
-                    `Vervaldatum: ${invoice.due_date ? NL_DATE.format(new Date(invoice.due_date)) : '—'}`,
+                    `Nummer: ${invoice?.invoice_number || '—'}`,
+                    `Datum: ${invoice?.invoice_date ? NL_DATE.format(new Date(invoice?.invoice_date)) : '—'}`,
+                    `Vervaldatum: ${invoice?.due_date ? NL_DATE.format(new Date(invoice?.due_date)) : '—'}`,
                     // [CROSS-QUARTER] Show the real settlement date when we recorded one, so
                     // "when did this get paid" is answered on the invoice itself.
-                    invoice.payment_date ? `Betaald op: ${NL_DATE.format(new Date(invoice.payment_date))}` : '',
+                    invoice?.payment_date ? `Betaald op: ${NL_DATE.format(new Date(invoice?.payment_date))}` : '',
                   ]
                 },
               ].map(section => (
@@ -599,8 +606,8 @@ export default function InvoiceDetailPage() {
             {/* [CROSS-QUARTER] When the money moved in a different quarter than the invoice
                 date, say so plainly — and make explicit that the btw quarter did NOT move,
                 so the owner is never confused into thinking their aangifte shifted. */}
-            {invoice.status === 'paid' && (() => {
-              const xq = crossQuarterPayment(invoice.invoice_date, invoice.payment_date)
+            {invoice?.status === 'paid' && (() => {
+              const xq = crossQuarterPayment(invoice?.invoice_date, invoice?.payment_date)
               if (!xq) return null
               return (
                 <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#FFF3E0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -628,9 +635,9 @@ export default function InvoiceDetailPage() {
               <div key={index} style={{ display: 'grid', gridTemplateColumns: '5fr 1fr 1fr 1fr 1fr', gap: 8, padding: '12px 20px', borderTop: '1px solid #F1F3F4' }}>
                 <p style={{ fontSize: 14, color: '#202124', margin: 0 }}>{line.description}</p>
                 <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.quantity}</p>
-                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.unit_price)}</p>
+                <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.unit_price ?? 0)}</p>
                 <p style={{ fontSize: 14, color: '#5F6368', margin: 0, textAlign: 'right' }}>{line.btw_rate}%</p>
-                <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total)}</p>
+                <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0, textAlign: 'right', fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(line.line_total ?? 0)}</p>
               </div>
             ))}
           </div>
@@ -640,15 +647,15 @@ export default function InvoiceDetailPage() {
             <div style={{ maxWidth: 280, marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                 <span>Subtotaal excl. BTW</span>
-                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.total_ex_btw)}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.total_ex_btw ?? 0)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#5F6368' }}>
                 <span>BTW</span>
-                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.btw_amount)}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.btw_amount ?? 0)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: invoice.invoice_type === 'creditnota' ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: invoice?.invoice_type === 'creditnota' ? '#B3261E' : '#202124', paddingTop: 8, borderTop: '1px solid #F1F3F4' }}>
                 <span>Totaal incl. BTW</span>
-                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice.total_inc_btw)}</span>
+                <span style={{ fontFamily: 'Roboto Mono, monospace' }}>{NL_NUMBER.format(invoice?.total_inc_btw ?? 0)}</span>
               </div>
             </div>
           </div>
@@ -656,13 +663,13 @@ export default function InvoiceDetailPage() {
           {/* [DS] Betalingsinformatie — [ACC-INVOICE-VIEW] outgoing only;
               on incoming the IBAN belongs to the supplier (in the original PDF),
               not the ZZP'er's own profile. */}
-          {!isIncoming && profile?.iban && invoice.invoice_type !== 'creditnota' && (
+          {!isIncoming && profile?.iban && invoice?.invoice_type !== 'creditnota' && (
             <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
               <p style={{ fontSize: 11, fontWeight: 600, color: '#9AA0A6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Betalingsinformatie</p>
               <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
                 Gelieve te betalen op{' '}
                 <strong style={{ color: '#202124', fontFamily: 'Roboto Mono, monospace' }}>{profile.iban}</strong>{' '}
-                o.v.v. <strong style={{ color: '#202124' }}>{invoice.invoice_number}</strong>
+                o.v.v. <strong style={{ color: '#202124' }}>{invoice?.invoice_number}</strong>
               </p>
             </div>
           )}

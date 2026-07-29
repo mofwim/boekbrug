@@ -9,6 +9,8 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [SEC-STORAGE-PATH] A row you may read is not a path you may sign — see storage-path.ts.
+import { pathBelongsToOwner } from '@/lib/storage-path'
 import { fetchAllRows } from '@/lib/supabase-paginate'
 import {
   buildBridgeTree,
@@ -132,11 +134,22 @@ export default async function BrugServerPage() {
     return data?.signedUrl ?? null
   }
 
+  // [SEC-STORAGE-PATH] "The rows already passed table RLS, so no unauthorized path is ever
+  // signed" — the first half is true and the second does not follow from it. pdf_url/file_url
+  // are plain text the ROW'S OWN OWNER may write, so an authorized row can still name another
+  // tenant's storage key, and service_role signs whatever it is handed. Each node carries the
+  // owner its bytes must belong to; a path outside that folder is dropped, not signed.
   const signedNodes = await Promise.all(
     nodes.map(async (n) => {
       if (!n.pdfUrl) return n
-      // Already a full URL → keep.
+      // Already a full URL → keep (not ours to sign).
       if (/^https?:\/\//i.test(n.pdfUrl)) return n
+      if (!pathBelongsToOwner(n.pdfUrl, n.ownerId)) {
+        console.error('[SEC-STORAGE-PATH] refused to sign a node path outside its owner', {
+          nodeId: n.id, source: n.source, ownerId: n.ownerId, path: n.pdfUrl,
+        })
+        return { ...n, pdfUrl: null }
+      }
       // Storage path → sign it (documents bucket) via service_role.
       const signed = await signUrl(n.pdfUrl)
       return { ...n, pdfUrl: signed }

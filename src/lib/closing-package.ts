@@ -57,10 +57,18 @@ import {
   type ConceptAangifte,
   type AangifteCompleteness,
 } from "./aangifte";
+// [ICP] Rubriek 3b + the separate ICP-opgaaf, keyed on the customers' EU VAT numbers.
+import {
+  buildIcp, buildIcpCsv, icpNote, buildForeignPurchases, buildForeignPurchaseCsv, foreignPurchaseNote,
+  type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
+} from "./icp";
 import { fetchAllRows } from "./supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
 import { resolveSchemeSettlements } from "./kas-payment-events-fetch";
+// [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — the same helper the aangifte
+// and the result engine use, so the accountant's package cannot show different rubrieken.
+import { fetchRateShares } from "./btw-rate-split-fetch";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -82,6 +90,10 @@ export interface PackageInvoice {
   document_id: string | null;        // link to documents (incoming original)
   client_btw_number: string | null;  // [AANGIFTE] EU-VAT signal for rubriek 4b (not auto-computed)
   marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
+  // [HERTIKKEN] factuur | creditnota. Zonder deze kolom is een creditnota in de inhoudslijst
+  // alleen aan een minteken te herkennen, en dat is precies het soort verschil waar een
+  // boekhouder een half uur aan kwijt is als hij het pas bij het inboeken ontdekt.
+  invoice_type: string | null;
   // [FIN-4] ownership — used to infer a NULL direction so a verified row is
   // never silently dropped from the package.
   sender_id: string | null;
@@ -122,6 +134,12 @@ export interface ClosingPackageSummary {
   // invoice-evidence count; filesIncluded also folds in bank-statement + shared files and must
   // NEVER be read as an invoice-evidence signal (that inflated readiness to a false 100%).
   invoicesWithPdf: number;
+  // [EVIDENCE] WELKE facturen de PDF missen — de nummers, niet alleen het aantal. Werd
+  // hierboven al berekend en daarna weggegooid; een telling stuurt de score, maar alleen
+  // de lijst maakt er een handeling van ("Zonder PDF: F-2026-014, F-2026-021").
+  // Begrensd op 50 namen: daarboven is het geen zin meer maar een muur tekst, en de
+  // telling in invoicesWithPdf blijft hoe dan ook exact.
+  missingEvidence: string[];
   bankStatementIncluded: boolean;
   warnings: ClosingPackageWarning[];
   generatedAt: string;               // ISO
@@ -352,19 +370,36 @@ export function buildOverviewCsv(
 
   // ── Content list ──
   lines.push("Inhoud van dit pakket");
-  lines.push(["Richting", "Factuurnummer", "Naam", "Datum factuur", "Datum betaling", "Bedrag incl. BTW", "Status"].map(esc).join(";"));
+  // [HERTIKKEN] De bedragen erbij die BoekBrug al heeft uitgelezen.
+  //
+  // Deze lijst droeg alleen het totaal incl. btw. De boekhouder moest daardoor 60 facturen
+  // openen en het bedrag exclusief, het btw-bedrag en het tarief met de hand overtikken —
+  // precies de cijfers die de AI bij binnenkomst al van de bon heeft gelezen. Zijn echte
+  // knelpunt is niet het ONTVANGEN van de stukken, het is het INTIKKEN ervan.
+  //
+  // Bewust in DEZE ene lijst en niet als tweede CSV ernaast: één bestand dat compleet is,
+  // leest beter dan twee bestanden waarvan je moet raden welke je nodig hebt.
+  //
+  // 'Type' scheidt een creditnota van een factuur — die was tot nu toe alleen aan een
+  // minteken te herkennen.
+  lines.push(["Richting", "Type", "Factuurnummer", "Naam", "Datum factuur", "Datum betaling", "Bedrag excl. BTW", "BTW bedrag", "BTW tarief %", "Bedrag incl. BTW", "Status"].map(esc).join(";"));
   for (const inv of [...outgoing, ...incoming]) {
     const pay = paymentDates.get(inv.id);
     const payCell =
       inv.status === "paid" && pay?.date
         ? `${formatNlDate(pay.date)}${pay.estimated ? " (geschat)" : ""}`
         : "—";
+    const rate = calcBtwRate(inv.btw_amount, inv.total_ex_btw);
     lines.push([
       inv.direction === "outgoing" ? "Uitgaand" : "Inkomend",
+      inv.invoice_type ?? "factuur",
       inv.invoice_number ?? "—",
       inv.client_name ?? "—",
       inv.invoice_date ?? "—",
       payCell,
+      EUR(inv.total_ex_btw ?? 0),
+      EUR(inv.btw_amount ?? 0),
+      rate === null ? "—" : String(rate),
       // [TRUST-NUMBER] Show the real total: fall back to excl + BTW when total_inc_btw
       // wasn't stored, so an invoice that carries real amounts doesn't print €0,00 next
       // to a non-zero BTW-overzicht (a contradiction the accountant would trip over).
@@ -467,6 +502,15 @@ interface AssembleInput {
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
    *  sales data at all (nothing to declare yet). Never an invented filing. */
   conceptAangifte?: ConceptAangifte | null;
+  /** [ICP] The concept ICP-opgaaf (intracommunautaire leveringen per BTW-nummer). A SEPARATE
+   *  declaration from the BTW-aangifte, so it becomes its own file in the ZIP — never a rubriek
+   *  of concept-btw-aangifte.csv, which is exactly how an owner would come to believe it was
+   *  filed along with the rest. null/absent when the quarter has nothing intra-EU. */
+  icp?: IcpResult | null;
+  /** [ICP] The quarter's EU purchases (rubriek 4a/4b). A LISTING, never a calculation: the
+   *  verlegde BTW and its matching deduction stay out of the concept on purpose. It becomes its
+   *  own file so the accountant has the invoices in front of them instead of hunting for them. */
+  euPurchases?: ForeignPurchaseResult | null;
   /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
    *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
    *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
@@ -476,7 +520,7 @@ interface AssembleInput {
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, kasboekXlsx } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -634,6 +678,28 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     zip.file("concept-btw-aangifte.csv", "﻿" + buildAangifteCsv(conceptAangifte));
   }
 
+  // ── concept-icp-opgaaf.csv (intracommunautaire leveringen, per BTW-nummer) ──
+  // Its OWN file, because the ICP is its own declaration: folding it into
+  // concept-btw-aangifte.csv is exactly how an owner comes to believe it went along with the
+  // rest. Written whenever there is anything intra-EU to say — including when there are only
+  // PROBLEMS and no listable lines, since "nothing in the ZIP" is how an unfilable opgaaf goes
+  // unnoticed until the boete.
+  if (icpForZip && (icpForZip.lines.length > 0 || icpForZip.problems.length > 0)) {
+    zip.file("concept-icp-opgaaf.csv", "﻿" + buildIcpCsv(icpForZip, quarterLabel));
+    filesIncluded++;
+  }
+
+  // ── eu-inkopen.csv (rubriek 4a/4b) ──
+  // The counterpart of the file above, and the one piece of quarter work this app deliberately
+  // leaves to a human: which Dutch rate applies to a foreign purchase is a judgement, and for a
+  // KOR or partly-exempt owner 4b and 5b stop cancelling. So it hands over the invoices instead
+  // of a number — which is still the whole difference between "there are EU purchases" and a
+  // list somebody can work from.
+  if (euPurchasesForZip && euPurchasesForZip.purchases.length > 0) {
+    zip.file("eu-inkopen.csv", "﻿" + buildForeignPurchaseCsv(euPurchasesForZip, quarterLabel));
+    filesIncluded++;
+  }
+
   // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
   const allQuarterly = [...outgoing, ...incoming].map(toQuarterly);
   const zzpSummary = buildZzpSummary(allQuarterly, year, quarter, "all");
@@ -649,6 +715,10 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     incomingCount: incoming.length,
     filesIncluded,
     invoicesWithPdf: invoicePdfCount, // [READINESS-EVIDENCE] invoice-evidence count only
+    // [EVIDENCE] Deze variant telt de bestanden die de ZIP daadwerkelijk inpakte en houdt
+    // geen factuurnummers bij; leeg is hier de eerlijke waarde, niet een vergeten veld.
+    // De readiness-tekst valt dan terug op zijn algemene zin (readiness.ts:201-204).
+    missingEvidence: [],
     bankStatementIncluded: bankFiles.length > 0,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -717,7 +787,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
@@ -1025,6 +1095,8 @@ export async function summarizeClosingPackage(args: {
     // + owner-shared docs for this quarter. (km is not a feature yet → 0.)
     filesIncluded: withPdf + bankFilePaths.length + shared.paths.length,
     invoicesWithPdf: withPdf, // [READINESS-EVIDENCE] invoice-evidence count only
+    // [EVIDENCE] Doorgeven in plaats van weggooien. Zie de toelichting bij het type.
+    missingEvidence: missingPdf.slice(0, 50),
     bankStatementIncluded,
     warnings,
     generatedAt: new Date().toISOString(),
@@ -1368,11 +1440,20 @@ export async function buildClosingPackageZip(args: {
   // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
   // package never double-counts a covered-day card settlement.
   const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map(toResultBankTx);
+  // [RUBRIEK-SPLIT] The accountant's package must show the same rubrieken as the aangifte the
+  // owner files, so a mixed-rate sales invoice is split by its own lines here too. Only invoices
+  // whose lines add up to their header are split; everything else keeps the header-derived rate.
+  const rateSharesByInvoice = await fetchRateShares(
+    supabase as unknown as Parameters<typeof fetchRateShares>[0],
+    (all as Array<{ id?: string; direction: string | null; total_ex_btw: number | null; btw_amount: number | null }>)
+      .filter((i) => i.direction !== "incoming"),
+  );
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
     status: i.status,
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
+    rate_lines: (i as { id?: string }).id ? rateSharesByInvoice.get((i as { id: string }).id) ?? null : null,
   }));
   // [COVERED-BUFFER] Build from the BUFFERED set (incl. up to 5 pre-quarter days) so a
   // settleExact card line paying a previous-quarter till day is suppressed — matching aangifte.
@@ -1387,7 +1468,7 @@ export async function buildClosingPackageZip(args: {
   // events to computeResult (the raw invoice-list evidence stays invoice-date — that's a list, not
   // a computed figure). Default factuur → byte-identical.
   const kasResolution = await resolveSchemeSettlements(supabase, ownerId, start, start, end);
-  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, kasResolution.opts);
+  const result = computeResult(invoicesForResult, bankForResult, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...kasResolution.opts, rateSharesByInvoice });
   const completeness: AangifteCompleteness = {
     turnoverDays: turnover.length,
     quarterDays: daysInQuarter(year, quarter),
@@ -1433,8 +1514,52 @@ export async function buildClosingPackageZip(args: {
   // or reclaimable voorbelasting. An empty quarter gets no invented filing.
   const hasDeclarable =
     result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
+  // [ICP] Sales to businesses in other EU member states belong in rubriek 3b, and carry a
+  // SEPARATE declaration (the ICP-opgaaf) that is no part of the BTW-aangifte. Built here from
+  // the same rows the rubrieken are, so the ZIP and the in-app concept can never disagree — the
+  // whole reason this package rebuilds the concept instead of importing it.
+  const icp = buildIcp({
+    korActive,
+    invoices: outgoing.map((i): IcpInvoice => ({
+      invoiceNumber: i.invoice_number,
+      clientName: i.client_name,
+      clientVatNumber: i.client_btw_number,
+      direction: "outgoing",
+      status: i.status,
+      totalExBtw: i.total_ex_btw,
+      btwAmount: i.btw_amount,
+    })),
+  });
+  const icNote = icpNote(icp);
+  if (icNote) regimeNotes.push(icNote);
+  if (icp.problems.length > 0) {
+    warnings.push({
+      code: "icp_problems",
+      message:
+        `ICP-opgaaf: ${icp.problems.length} verkoopfactu(u)r(en) aan EU-ondernemers kunnen zo niet worden opgegeven ` +
+        "(BTW berekend, of een BTW-nummer dat niet klopt) — zie concept-icp-opgaaf.csv.",
+    });
+  }
+
+  // [ICP] The purchase mirror: EU inkopen NAMED for the accountant, never computed.
+  const euPurchases = buildForeignPurchases({
+    invoices: incoming.map((i): IcpInvoice => ({
+      invoiceNumber: i.invoice_number,
+      clientName: i.client_name,
+      clientVatNumber: i.client_btw_number,
+      direction: "incoming",
+      status: i.status,
+      totalExBtw: i.total_ex_btw,
+      btwAmount: i.btw_amount,
+    })),
+  });
+
   const conceptAangifte = hasDeclarable
-    ? buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes)
+    ? buildAangifte(
+        { ...result, intraEuOmzet: icp.totalExBtw },
+        { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
+        `Q${quarter} ${year}`, regimeNotes,
+      )
     : null;
 
   // [KASBOEK] The cash book as the accountant's own running-balance sheet (Kiwi .xlsx layout),
@@ -1494,6 +1619,8 @@ export async function buildClosingPackageZip(args: {
     turnoverClosing,
     cardReconciliation,
     conceptAangifte,
+    icp,
+    euPurchases,
     kasboekXlsx,
     warnings,
   });

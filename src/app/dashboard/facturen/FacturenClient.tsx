@@ -5,7 +5,8 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter, InvoiceRow } from '@/hooks/useInfiniteInvoices'
@@ -26,6 +27,9 @@ import { crossQuarterPayment } from '@/lib/quarter'
 import { amountOrConditions } from '@/lib/search'
 // [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
 import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
+// [INVOICE-REMOVE] One rule decides what "Verwijderen" does to THIS invoice — the same rule the
+// API route re-checks before it writes. The dialog below is that decision, rendered.
+import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/invoice-removal"
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -69,7 +73,22 @@ const calcBtw = (btw: number | null, ex: number | null) =>
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SortOrder = 'desc' | 'asc'
 type FilterTab = 'all' | 'sent' | 'paid' | 'draft' | 'overdue' | 'offerte' | 'credit'
-interface DeleteCtx { id: string; number: string; status: string }
+// [HERHAAL] One recurring schedule, as /api/invoice/schedules returns it — including the invoice
+// it repeats, because an owner recognises a schedule by its customer, never by a uuid.
+interface ScheduleRow {
+  id: string
+  source_invoice_id: string
+  cadence: 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+  next_run_date: string
+  ends_on: string | null
+  active: boolean
+  source: { invoice_number: string | null; client_name: string | null; total_inc_btw: number | null } | null
+}
+const CADENCE_NL: Record<string, string> = {
+  weekly: 'elke week', monthly: 'elke maand', quarterly: 'elk kwartaal', yearly: 'elk jaar',
+}
+// [INVOICE-REMOVE] What the confirm dialog is about: the invoice, and the decision made for it.
+interface RemoveCtx { id: string; decision: RemovalDecision }
 // [BOEK-029] Fix 1+3: invoiceType distinguishes factuur vs creditnota dialogs
 interface ConfirmPayCtx {
   id: string
@@ -124,7 +143,37 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const [showFilterMenu, setShowFilterMenu] = useState(false)  // [BOEK-029] dropdown
   const [expandedId, setExpandedId]     = useState<string | null>(null)
   const [toast, setToast]               = useState<string | null>(null)
-  const [deleteCtx, setDeleteCtx]       = useState<DeleteCtx | null>(null)
+  const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
+  // [HERHAAL] The invoice the owner is about to start (or stop) repeating.
+  const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string; active?: boolean } | null>(null)
+  // [HERHAAL] Every schedule this owner has, in full — not just a lookup keyed by invoice.
+  //
+  // The per-row badge needs the map; the PANEL needs the list, and the panel is the part that
+  // makes the promise true. A schedule can only be reached from the invoice it repeats, and that
+  // invoice ages: after a year of monthly concepts the source sits hundreds of rows down, or
+  // behind a different filter tab. A feature that creates invoices by itself may never be harder
+  // to switch off than it was to switch on.
+  const [scheduleList, setScheduleList] = useState<ScheduleRow[]>([])
+  const schedules = useMemo(() => {
+    // PAUSED schedules belong in here too. Leaving them out made the row offer "Herhalen"
+    // again, which the server refuses (one schedule per invoice) — a dead end on a button the
+    // owner had every reason to press. The row now says what is actually true, and the dialog
+    // offers the way back.
+    const map: Record<string, { id: string; cadence: string; next_run_date: string; active: boolean }> = {}
+    for (const sc of scheduleList) {
+      map[sc.source_invoice_id] = { id: sc.id, cadence: sc.cadence, next_run_date: sc.next_run_date, active: sc.active }
+    }
+    return map
+  }, [scheduleList])
+
+  async function loadSchedules() {
+    try {
+      const res = await fetch('/api/invoice/schedules')
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.schedules) return
+      setScheduleList(json.schedules as ScheduleRow[])
+    } catch { /* silent — the feature is simply not shown */ }
+  }
   const [payCtx, setPayCtx]             = useState<ConfirmPayCtx | null>(null)
   const [sendCtx, setSendCtx]           = useState<SendCtx | null>(null)  // [BOEK-029] Versturen confirm
   const [processingId, setProcessingId] = useState<string | null>(null)
@@ -235,6 +284,26 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
 
   // [BOEK-029] Archived — separate fetch, shown at end of "Alle" only
   const [archivedInvoices, setArchivedInvoices] = useState<ArchivedRow[]>([])
+  // [INVOICE-REMOVE] …and re-fetched after every removal/restore. This list IS the undo, so it
+  // has to be current the moment an invoice lands in it — otherwise the owner removes something
+  // and the "terug te zetten onderaan de lijst" the toast just promised isn't there yet.
+  const [archivedTick, setArchivedTick] = useState(0)
+
+  // [HERHAAL] Silent on failure and on a not-yet-migrated database: an absent feature shows
+  // nothing, it never breaks the list. Inline async IIFE, matching the other loaders here, so no
+  // setState runs synchronously inside the effect body.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/invoice/schedules')
+        const json = await res.json().catch(() => ({}))
+        if (cancelled || !res.ok || !json?.schedules) return
+        setScheduleList(json.schedules as ScheduleRow[])
+      } catch { /* silent */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     if (!profile?.id) return
@@ -245,7 +314,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       .eq('status', 'archived')
       .order('created_at', { ascending: false })
       .then(({ data }) => setArchivedInvoices((data ?? []) as unknown as ArchivedRow[]))
-  }, [profile?.id])
+  }, [profile?.id, archivedTick])
 
   // [CREDITNOTA-NO-CHASE] Which invoices did the owner WITHDRAW with a creditnota? Such an
   // invoice deliberately keeps its 'sent' status and its positive total (the +omzet must stay
@@ -406,7 +475,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       }),
     })
     const json = await res.json().catch(() => ({} as { error?: string }))
-    const error = res.ok ? null : { message: json?.error || 'Bijwerken mislukt' }
+    // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
+    // payment refused because the kasboek cannot date it per instalment yet) — the bare
+    // error CODE would reach the owner as gibberish.
+    const error = res.ok ? null : { message: (json as { detail?: string })?.detail || json?.error || 'Bijwerken mislukt' }
     if (error) {
       const prev = ctx.newStatus === 'paid' ? 'sent' : 'paid'
       if (!isPartialIntent) updateOptimistic(ctx.id, { status: prev })
@@ -484,22 +556,132 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     }
   }
 
-  async function executeDelete(ctx: DeleteCtx) {
-    setDeleteCtx(null)
-    removeOptimistic(ctx.id)
-    await supabase.from('invoice_lines').delete().eq('invoice_id', ctx.id)
-    await supabase.from('invoices').delete().eq('id', ctx.id)
-    showToast('Factuur verwijderd')
+  // ── [HERHAAL] Repeat this invoice every week / month / quarter / year ──────────────────────
+  // The invoice they already sent IS the definition of what is billed, so starting a repeat is
+  // one tap on a row that already exists — no template to fill in, no second copy of the client
+  // and the lines to keep in sync. Each occurrence arrives as a CONCEPT; sending stays the
+  // owner's act, because that is where the invoice number is minted and where a document goes to
+  // a third party for real.
+  async function startRepeat(cadence: 'weekly' | 'monthly' | 'quarterly' | 'yearly') {
+    if (!repeatCtx) return
+    const ctx = repeatCtx
+    setRepeatCtx(null)
+    setProcessingId(ctx.id)
+    try {
+      const res = await fetch('/api/invoice/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: ctx.id, cadence }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        const label = cadence === 'weekly' ? 'elke week' : cadence === 'monthly' ? 'elke maand'
+          : cadence === 'quarterly' ? 'elk kwartaal' : 'elk jaar'
+        showToast(`Herhaalt ${label} — het volgende concept staat klaar op ${fmtDate(json?.schedule?.next_run_date ?? null)}`)
+        await loadSchedules()
+      } else {
+        showToast(json?.detail || 'Herhalen instellen mislukt')
+      }
+    } catch {
+      showToast('Herhalen instellen mislukt')
+    } finally {
+      setProcessingId(null)
+    }
   }
 
-  async function handleDeleteRequest(id: string, number: string, status: string) {
-    // [COHERENCE-CREDITNOTA] A paid invoice may never be deleted — it is corrected with
-    // a creditnota. Send the owner to the invoice detail with ?action=credit, which opens
-    // the creditnota dialog that calls /api/invoice/creditnota (copies lines, keeps the
-    // link). The old target (/invoice/new?type=creditnota) was a dead blank form that
-    // produced an orphan creditnota with original_invoice_id=null.
-    if (status === 'paid') { router.push(`/dashboard/invoice/${id}?action=credit`); return }
-    setDeleteCtx({ id, number, status })
+  async function stopRepeat(scheduleId: string) {
+    setRepeatCtx(null)
+    try {
+      const res = await fetch(`/api/invoice/schedules?id=${encodeURIComponent(scheduleId)}`, { method: 'DELETE' })
+      if (res.ok) {
+        showToast('Herhalen gestopt — klaarstaande concepten blijven staan')
+        await loadSchedules()
+      } else {
+        const j = await res.json().catch(() => ({}))
+        showToast(j?.detail || 'Stoppen mislukt')
+      }
+    } catch { showToast('Stoppen mislukt') }
+  }
+
+  // [HERHAAL] Pause is the button an owner actually reaches for. A customer goes quiet for a
+  // month, a project is on hold — stopping means losing the schedule and rebuilding it later
+  // from an invoice that has meanwhile scrolled away. Pausing keeps it, and the cron simply
+  // produces nothing while it is off.
+  async function toggleRepeat(scheduleId: string, active: boolean) {
+    try {
+      const res = await fetch('/api/invoice/schedules', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: scheduleId, active }),
+      })
+      if (res.ok) {
+        showToast(active ? 'Herhalen hervat' : 'Herhalen gepauzeerd — er wordt niets meer klaargezet')
+        await loadSchedules()
+      } else {
+        const j = await res.json().catch(() => ({}))
+        showToast(j?.detail || (active ? 'Hervatten mislukt' : 'Pauzeren mislukt'))
+      }
+    } catch { showToast(active ? 'Hervatten mislukt' : 'Pauzeren mislukt') }
+  }
+
+  // ── [INVOICE-REMOVE] "Verwijderen" — one button, four honest outcomes ──────────────────────
+  // The owner taps once; decideRemoval says what that means for THIS invoice, the dialog shows
+  // it in full, and only then does anything happen. Nothing here decides policy — that lives in
+  // invoice-removal.ts and is re-checked by the server, which never trusts this decision.
+  function handleRemoveRequest(inv: RemovalInvoice & { id: string }) {
+    setRemoveCtx({ id: inv.id, decision: decideRemoval(inv) })
+  }
+
+  async function executeRemoval(ctx: RemoveCtx) {
+    const { id, decision } = ctx
+    setRemoveCtx(null)
+
+    // A dead end (paid, verwerkt): the dialog has already explained it. The confirm button is
+    // just "Sluiten" — except for a paid sale, where the way forward IS the creditnota.
+    if (!decision.allowed) {
+      // [COHERENCE-CREDITNOTA] Open the real creditnota dialog on the invoice detail — it copies
+      // the lines and keeps original_invoice_id, unlike a blank new-invoice form.
+      if (decision.mode === 'creditnota') router.push(`/dashboard/invoice/${id}?action=credit`)
+      return
+    }
+
+    if (decision.mode === 'delete') {
+      // A concept / offerte was never a bookkeeping record — really gone, lines and all.
+      removeOptimistic(id)
+      await supabase.from('invoice_lines').delete().eq('invoice_id', id)
+      await supabase.from('invoices').delete().eq('id', id)
+      showToast('Verwijderd')
+      return
+    }
+
+    setProcessingId(id)
+    try {
+      const res = await fetch(`/api/invoice/${id}/archive`, {
+        method: decision.mode === 'restore' ? 'PATCH' : 'POST',
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The server checked the same rules against fresher data and said no. Show ITS reason.
+        showToast(json?.detail || 'Verwijderen mislukt — ververs de pagina')
+        await refresh()
+        return
+      }
+      setArchivedTick(t => t + 1) // the archief list is the undo — keep it current
+      if (decision.mode === 'restore') {
+        showToast('Teruggezet')
+      } else {
+        removeOptimistic(id)
+        // Consequences the row could not show: a filed BTW quarter that now differs, a bundled
+        // payment link that stopped working. Said out loud, once, instead of discovered later.
+        const notices: string[] = Array.isArray(json?.notices) ? json.notices : []
+        showToast(notices.length > 0 ? notices[0] : 'Verwijderd — terug te zetten onderaan de lijst')
+      }
+      await refresh()
+    } catch {
+      showToast('Verwijderen mislukt — probeer opnieuw')
+    } finally {
+      setProcessingId(null)
+    }
   }
 
   // [BOEK-029] Versturen flow — open modal with client details
@@ -604,7 +786,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       <div style={{
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)',
         borderBottom: '1px solid rgba(0,0,0,0.06)',
-        padding: '12px 16px', position: 'sticky', top: 'calc(56px + env(safe-area-inset-top))', zIndex: 40,
+        padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -701,6 +883,54 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
 
       {/* ── Invoice list ── */}
       <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 100px' }}>
+        {/* [HERHAAL] Everything that repeats, in one place at the top.
+            The per-row button can only be found by finding the invoice, and the invoice that
+            started a monthly series is a year older every twelve concepts. This panel is the
+            answer to "wat staat er eigenlijk aan?" and to "hoe zet ik het uit?", and it is
+            deliberately ABOVE the list: something the app does on its own belongs in sight.
+            Hidden entirely when nothing repeats, and while searching (the results are the
+            answer to a different question). */}
+        {!searching && scheduleList.length > 0 && (
+          <div style={{ background: '#fff', borderRadius: R.md, border: '1px solid #E8EAED', padding: '14px 16px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#137333' }}>autorenew</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, fontFamily: FONT }}>
+                Terugkerende facturen
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5, color: '#5F6368', lineHeight: 1.5, marginBottom: 10, fontFamily: FONT }}>
+              De app zet het concept klaar; versturen blijft aan jou.
+            </div>
+            {scheduleList.map(sc => (
+              <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderTop: '1px solid #F1F3F4' }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: sc.active ? M3.onSurface : '#5F6368', fontFamily: FONT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sc.source?.client_name ?? 'Onbekende klant'}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT }}>
+                    {sc.active
+                      ? `${CADENCE_NL[sc.cadence] ?? sc.cadence} · volgende ${fmtDate(sc.next_run_date)}`
+                      : `${CADENCE_NL[sc.cadence] ?? sc.cadence} · gepauzeerd`}
+                    {sc.source?.invoice_number ? ` · ${sc.source.invoice_number}` : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => toggleRepeat(sc.id, !sc.active)}
+                    style={{ fontSize: 12.5, color: M3.onPrimaryContainer, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
+                    {sc.active ? 'Pauzeer' : 'Hervat'}
+                  </button>
+                  <button
+                    onClick={() => stopRepeat(sc.id)}
+                    style={{ fontSize: 12.5, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
+                    Stop
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {(searching ? searchLoading : loading) && sorted.length === 0 ? (
           <SkeletonList />
         ) : sorted.length === 0 ? (
@@ -753,10 +983,13 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                   {/* Main row — in select mode a tap toggles the bundle selection
                       (only for open verkoopfacturen); otherwise it expands. */}
                   <div
+                    className="inv-row"
                     onClick={() => selectMode
                       ? (isBundelbaar(inv) && toggleSelect(inv))
                       : setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
+                    // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
+                    // the stack-on-mobile media query can override them; only dynamic styles here.
+                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETAALVERZOEK] selection indicator */}
                     {selectMode && isBundelbaar(inv) && (
@@ -764,8 +997,8 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         {selected[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div className="inv-row-main">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
                         <InvoiceTypeBadge type={invoiceType} />
                         {/* Status chip */}
@@ -799,7 +1032,9 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       </p>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)
+                        so the media query can flip it to a full-width strip on a phone. */}
+                    <div className="inv-row-side">
                       {/* [BOEK-029] Amount: always total_inc_btw — never total_ex_btw */}
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
@@ -985,6 +1220,34 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         </button>
                       )}
                     </div>
+
+                    {/* [INVOICE-REMOVE] Verwijderen — on the rows where it is a real option: a
+                        concept or an offerte (never issued, so really deletable). It never acts
+                        on the tap; the dialog says first exactly what will happen.
+                        [ISSUED-STAYS] A verstuurde verkoopfactuur shows NO button at all. Its
+                        number comes from our own doorlopende reeks and it is corrected with a
+                        creditnota, not removed — so a delete affordance there would only promise
+                        something the app must refuse. Hidden while selecting for a bundle too,
+                        where every tap belongs to the selection. */}
+                    {!selectMode && decideRemoval(inv as RemovalInvoice).allowed && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
+                        disabled={processingId === inv.id}
+                        aria-label={`Factuur ${inv.invoice_number ?? ''} verwijderen`}
+                        title="Verwijderen"
+                        style={{
+                          flexShrink: 0, marginLeft: 2, width: 34, height: 34, borderRadius: R.full,
+                          border: 'none', background: 'transparent', color: '#9AA0A6',
+                          cursor: processingId === inv.id ? 'default' : 'pointer',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          transition: 'background 0.15s, color 0.15s',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Inline expand — Material You surface variant */}
@@ -1000,19 +1263,44 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       </div>
 
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        {/* [BOEK-029] Delete rules: draft (not creditnota) + pro_forma only */}
-                        {(() => {
-                          const canDelete =
-                            (inv.status === 'draft' && inv.invoice_type !== 'creditnota') ||
-                            inv.invoice_type === 'pro_forma'
-                          return canDelete ? (
+                        {/* [INVOICE-REMOVE] The same action as the row's trash icon, spelled out
+                            for whoever opened the panel — and shown under the same rule, so the
+                            two can never disagree about what this invoice allows. */}
+                        {decideRemoval(inv as RemovalInvoice).allowed && (
+                          <button
+                            onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
+                            style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                            Verwijderen
+                          </button>
+                        )}
+                        {/* [HERHAAL] Only on a real, already-sent verkoopfactuur: a concept has
+                            nothing to repeat yet, and an offerte or creditnota is not something
+                            you bill again every month. */}
+                        {!isCredit && !isOfferte && inv.status !== 'draft' && (() => {
+                          const sc = schedules[inv.id]
+                          const label = !sc
+                            ? 'Herhalen'
+                            : !sc.active
+                              ? 'Herhalen gepauzeerd'
+                              : sc.cadence === 'weekly' ? 'Herhaalt elke week'
+                                : sc.cadence === 'monthly' ? 'Herhaalt elke maand'
+                                  : sc.cadence === 'quarterly' ? 'Herhaalt elk kwartaal'
+                                    : 'Herhaalt elk jaar'
+                          return (
                             <button
-                              onClick={e => { e.stopPropagation(); handleDeleteRequest(inv.id, inv.invoice_number ?? '', inv.status) }}
-                              style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                              Verwijderen
+                              onClick={e => {
+                                e.stopPropagation()
+                                setRepeatCtx({
+                                  id: inv.id, number: inv.invoice_number ?? '', client: inv.client_name ?? 'deze klant',
+                                  ...(sc ? { scheduleId: sc.id, cadence: sc.cadence, nextRun: sc.next_run_date, active: sc.active } : {}),
+                                })
+                              }}
+                              style={{ fontSize: 13, color: sc && sc.active ? '#137333' : M3.onPrimaryContainer, background: sc && sc.active ? M3.successContainer : M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>autorenew</span>
+                              {label}
                             </button>
-                          ) : null
+                          )
                         })()}
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
@@ -1040,7 +1328,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                   <p style={{ fontSize: 11, color: '#9AA0A6', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
                 </div>
                 {archivedInvoices.map(inv => (
-                  <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1, opacity: 0.4 }}>
+                  <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1, opacity: inv.replaced_by_number ? 0.4 : 0.6 }}>
                     <div style={{ background: '#fff', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'default' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
@@ -1049,6 +1337,11 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         )}
                       </div>
                       <p style={{ fontSize: 14, fontWeight: 700, color: '#5F6368', fontFamily: FONT_NUM }}>{fmtEur(inv.total_inc_btw)}</p>
+                      {/* [ISSUED-STAYS] Read-only, deliberately. These rows are sales invoices a
+                          creditnota replaced (or ones archived before this rule existed), and a
+                          sales invoice does not leave or re-enter the doorlopende nummering on a
+                          tap — putting one back would re-add omzet the creditnota already netted.
+                          Bringing one back is a per-case decision, not a button. */}
                     </div>
                   </div>
                 ))}
@@ -1239,17 +1532,101 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         />
       )}
 
-      {/* ── Delete dialog ── */}
-      {deleteCtx && (
+      {/* ── [HERHAAL] Kies hoe vaak ── One question, four answers. The dialog says what will
+           happen in full: a CONCEPT arrives each period and the owner sends it — the app never
+           sends an invoice by itself, because that is the act that mints a number and reaches a
+           customer. */}
+      {repeatCtx && (
+        <div
+          onClick={() => setRepeatCtx(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}
+          >
+            <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>
+              {!repeatCtx.scheduleId ? 'Hoe vaak herhalen?' : repeatCtx.active === false ? 'Herhalen staat op pauze' : 'Deze factuur herhaalt'}
+            </p>
+            <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: 20, lineHeight: 1.5 }}>
+              {repeatCtx.scheduleId ? (
+                repeatCtx.active === false ? (
+                  <>Er wordt niets klaargezet voor {repeatCtx.client} zolang dit op pauze staat. Het schema blijft bewaard.</>
+                ) : (
+                  <>Het volgende concept voor {repeatCtx.client} staat klaar op <strong>{fmtDate(repeatCtx.nextRun ?? null)}</strong>.</>
+                )
+              ) : (
+                <>We maken deze factuur voor {repeatCtx.client} telkens opnieuw klaar — met dezelfde regels en hetzelfde
+                betaaltermijn. Je krijgt een <strong>concept</strong> dat je zelf verstuurt.</>
+              )}
+            </p>
+            {/* [HERHAAL] Stopping is the promise the dialog makes when it starts, so it lives in
+                the same place. It removes only the schedule: every concept it already produced is
+                an ordinary invoice and stays exactly where it is. */}
+            {repeatCtx.scheduleId ? (
+              <>
+                {/* Pause first: it is the reversible one, and the one most owners actually want. */}
+                <button
+                  onClick={() => { const id = repeatCtx.scheduleId as string; const next = repeatCtx.active === false; setRepeatCtx(null); void toggleRepeat(id, next) }}
+                  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
+                >
+                  {repeatCtx.active === false ? 'Hervatten' : 'Pauzeren'}
+                </button>
+                <button
+                  onClick={() => stopRepeat(repeatCtx.scheduleId as string)}
+                  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.errorContainer, color: M3.error, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
+                >
+                  Stoppen met herhalen
+                </button>
+              </>
+            ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              {([
+                ['weekly', 'Elke week'],
+                ['monthly', 'Elke maand'],
+                ['quarterly', 'Elk kwartaal'],
+                ['yearly', 'Elk jaar'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => startRepeat(value)}
+                  style={{ padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            )}
+            <p style={{ fontSize: 12, color: '#9AA0A6', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
+              {repeatCtx.scheduleId
+                ? 'Concepten die al klaarstaan blijven staan — stoppen raakt alleen de herhaling zelf.'
+                : 'Stoppen kan altijd — het herhalen staat bij deze factuur en raakt de facturen die al klaarstaan nooit.'}
+            </p>
+            <button
+              onClick={() => setRepeatCtx(null)}
+              style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── [INVOICE-REMOVE] Remove dialog — the decision, rendered ──
+          One component for all four answers. The confirm button is green-lit only when the
+          decision allows it; for a paid sale it becomes "Creditnota maken" (the real way
+          forward) and for a locked one simply "Sluiten". */}
+      {removeCtx && (
         <BottomSheet
-          title={deleteCtx.status === 'sent' ? 'Factuur verwijderen?' : 'Concept verwijderen?'}
-          body={deleteCtx.status === 'sent'
-            ? `Factuur ${deleteCtx.number} is al verzonden naar de klant. Weet je zeker dat je deze wilt verwijderen?`
-            : `Factuur ${deleteCtx.number} wordt permanent verwijderd.`}
-          confirmLabel={deleteCtx.status === 'sent' ? 'Ja, toch verwijderen' : 'Verwijderen'}
-          confirmBg={M3.error}
-          onConfirm={() => executeDelete(deleteCtx)}
-          onCancel={() => setDeleteCtx(null)}
+          title={removeCtx.decision.title}
+          body={removeCtx.decision.body}
+          warning={removeCtx.decision.warning}
+          confirmLabel={removeCtx.decision.confirmLabel}
+          confirmBg={removeCtx.decision.allowed
+            ? (removeCtx.decision.mode === 'restore' ? M3.primary : M3.error)
+            : (removeCtx.decision.mode === 'creditnota' ? M3.primary : '#5F6368')}
+          onConfirm={() => executeRemoval(removeCtx)}
+          onCancel={() => setRemoveCtx(null)}
         />
       )}
 
@@ -1294,10 +1671,13 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       {/* ── Toast ── */}
       {toast && (
         <div style={{
+          // [TOAST-WRAP] Long sentences (e.g. "… maar de PDF kon niet worden gemaakt —
+          // verstuur opnieuw") were nowrap + centered, so on a phone they ran past both
+          // screen edges and were cut off. Cap the width and let them wrap instead.
           position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
           background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500,
           padding: '12px 20px', borderRadius: R.sm, zIndex: 300,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: 'calc(100vw - 32px)', textAlign: 'center',
           animation: 'fadeInUp 0.2s ease', fontFamily: FONT,
         }}>
           {toast}
@@ -1351,8 +1731,12 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   // before typing, and a formatted string is exactly what a naive parser chokes on.
   const [amountText, setAmountText] = useState('')
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
-  // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
-  const canPayCash = !entry || (entry.valid && entry.settlesFully)
+  // [CASH-INSTALMENT] Cash may now settle PART of an invoice too. It could not before: the
+  // kasboek held one settlement entry per invoice, so two cash handovers collapsed into one
+  // entry dated to the last — the drawer wrong in between, and money able to jump a filed
+  // quarter. Each cash payment is now its own dated drawer movement, so the only rule left is
+  // the ordinary one: the amount has to be valid.
+  const canPayCash = !entry || entry.valid
   // [BOEK-029] CenteredModal — replaces bottom sheet for all dialogs
   return (
     <div
@@ -1436,7 +1820,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                       ? `Leeg laten = alles betaald (${fmtEur(openBalance)})`
                       : entry.settlesFully
                         ? 'Hiermee is de factuur volledig betaald.'
-                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} · een deelbetaling noteer je via Bank`}
+                        : `Nog openstaand: ${fmtEur(entry.remainingAfter)} — kies hieronder hoe je dit deel betaalde`}
                 </p>
               </>
             )}
@@ -1450,16 +1834,15 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
               </button>
-              {/* [MANUAL-PARTIAL-PAY] Contant is disabled for a PARTIAL amount, on purpose. The
-                  kasboek holds exactly one settlement entry per invoice
-                  (cash_entries_one_settlement_per_invoice), so two cash instalments would collapse
-                  into one entry re-dated to the last — silently moving money out of an already
-                  filed quarter and making the daily drawer balance wrong in between. Partial via
-                  Bank has no such limit. Lift once the kasboek can hold one entry per instalment. */}
+              {/* [CASH-INSTALMENT] Contant accepts a PARTIAL amount now. It used to be refused
+                  because the kasboek held one settlement entry per invoice, so two cash handovers
+                  collapsed into a single entry re-dated to the last — the daily drawer balance
+                  wrong in between, and money able to move out of an already filed quarter. Each
+                  cash payment is now its own dated movement in the kasboek, so paying a supplier
+                  in two handovers from the till is simply recorded as what it was. */}
               <button
                 onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
                 disabled={!canPayCash}
-                title={!canPayCash && entry?.valid ? 'Een deelbetaling kan alleen via Bank worden genoteerd' : undefined}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>

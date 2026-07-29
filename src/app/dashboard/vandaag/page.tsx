@@ -22,6 +22,9 @@
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import VandaagClient, { type VandaagInvoice } from "./VandaagClient";
+// [CREDITNOTA-NO-CHASE] shared "is this still owed to me" rule — both sides of a credited pair
+// must leave the list together (see src/lib/credited-invoices.ts)
+import { creditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +34,9 @@ export const dynamic = "force-dynamic";
 // is the same trusted number shown on the invoices page, not an arithmetic claim.
 const SELECT =
   // [PARTIAL-PAY] amount_paid so a deelbetaling shows the REMAINING openstaand, not the full total.
-  "id, client_name, invoice_number, invoice_date, due_date, total_inc_btw, amount_paid, status, direction";
+  // [CREDITNOTA-NO-CHASE] invoice_type so a creditnota can be recognised: it is ALSO outgoing +
+  // 'sent' and would otherwise sit in "Herinner je klant" as a negative amount to chase.
+  "id, client_name, invoice_number, invoice_date, due_date, total_inc_btw, amount_paid, status, direction, invoice_type";
 
 export default async function VandaagPage() {
   const supabase = await createServerSupabaseClient();
@@ -98,7 +103,25 @@ export default async function VandaagPage() {
     .or("total_inc_btw.gte.0,total_inc_btw.is.null");
 
   const payable = (payableRaw ?? []) as unknown as VandaagInvoice[];
-  const remind = (remindRaw ?? []) as unknown as VandaagInvoice[];
+  // [CREDITNOTA-NO-CHASE] "Herinner je klant" must not list an invoice the owner WITHDREW with a
+  // creditnota — nor the creditnota itself, which is also outgoing + 'sent' and so comes back from
+  // the query above with a negative total. The home tile (/api/daily-truth) already filters both,
+  // and its own comment says this page shows the same to-do; without this they contradict each
+  // other, with the home saying "niets te doen" while this page shows a red "55 dagen te laat".
+  // Same shared rule and the same honest degradation: an errored lookup keeps the old list.
+  const remindAll = (remindRaw ?? []) as unknown as VandaagInvoice[];
+  const creditRows = remindAll.length > 0
+    ? await supabase
+        .from("invoices")
+        .select("original_invoice_id")
+        .eq("sender_id", user.id)
+        .eq("invoice_type", "creditnota")
+        .not("original_invoice_id", "is", null)
+        .then(({ data, error }) => (error ? null : (data ?? [])))
+    : [];
+  const remind = creditRows == null
+    ? remindAll
+    : filterOpenReceivables(remindAll, creditedIdsFrom(creditRows));
 
   // [COHERENCE-ERRSTATE] A failed load must NEVER masquerade as a calm "all clear".
   // Supabase returns { data: null, error } without throwing, so `?? []` silently

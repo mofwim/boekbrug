@@ -9,12 +9,56 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { summarizeVault, type VaultInvoice, type VaultDocument } from '@/lib/compliance-vault'
 import { fetchAllRows } from '@/lib/supabase-paginate'
+import { PURPOSE_PARAM, parsePurpose } from '@/lib/account-purpose'
 import KluisClient from './KluisClient'
 
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ doel?: string; bewaard?: string; geannuleerd?: string }>
+}) {
+  const params = await searchParams
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+
+  // [KLUIS] Waarvoor dit account is aangemaakt. Bepaalt alleen de begroeting hieronder —
+  // nooit wat iemand mag. Ontbreekt de kolom (migratie nog niet toegepast), dan is het
+  // antwoord 'boekhouden' en verandert er niets.
+  let purpose = 'boekhouden'
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from('profiles')
+      .select('account_purpose')
+      .eq('id', user.id)
+      .single()
+    purpose = parsePurpose(data?.account_purpose)
+  } catch {
+    /* kolom bestaat nog niet → 'boekhouden' */
+  }
+
+  // [KLUIS] Zelfherstel voor de Google-route. Wie zich via /bewaarplicht met Google
+  // registreert loopt langs Supabase's OAuth-callback en niet langs onze signUp(), dus de
+  // metadata met het doel gaat daar verloren. /register laat het doel daarom meereizen in
+  // de bestemmings-URL, en hier zetten wij het alsnog goed.
+  //
+  // Veilig omdat het strikt beperkt is: alleen de eigen rij, alleen de ene kolom, alleen in
+  // de richting boekhouden → archief, en alleen als de gebruiker zelf met ?doel=archief
+  // binnenkomt. Het kan dus nooit iemand rechten geven of afnemen — die hangen niet aan
+  // deze kolom en dat moet zo blijven.
+  if (purpose !== 'archief' && parsePurpose(params[PURPOSE_PARAM as 'doel']) === 'archief') {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any)
+        .from('profiles')
+        .update({ account_purpose: 'archief', onboarding_done: true })
+        .eq('id', user.id)
+      purpose = 'archief'
+    } catch {
+      /* lukt het niet, dan ziet hij de gewone begroeting — geen reden om iets te blokkeren */
+    }
+  }
 
   // Real records: the owner's own invoices (BOTH directions) and stored documents.
   // [KLUIS-INCOMING] Previously fetched only sender_id=user (OUTGOING) — so every INCOMING
@@ -62,5 +106,12 @@ export default async function Page() {
     documents as VaultDocument[],
   )
 
-  return <KluisClient summaries={summaries} currentYear={currentYear} />
+  return (
+    <KluisClient
+      summaries={summaries}
+      currentYear={currentYear}
+      purpose={purpose === 'archief' ? 'archief' : 'boekhouden'}
+      justPaid={params.bewaard === '1'}
+    />
+  )
 }

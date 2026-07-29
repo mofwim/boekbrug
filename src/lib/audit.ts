@@ -49,6 +49,8 @@ export type AuditAction =
   | 'invoice.partial_payment'         // ← [MANUAL-PARTIAL-PAY] owner recorded a deelbetaling by hand (invoice stays openstaand)
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)
   | 'creditnota.created'              // ← v2: matches historical data
+  | 'invoice.archived'                 // ← [INVOICE-REMOVE] owner removed an invoice from the books (kept 7 years, reversible)
+  | 'invoice.restored'                 // ← [INVOICE-REMOVE] owner put an archived invoice back
   | 'invoice.numbering_configured'     // ← [FACTUUR-B] start point set/changed
   | 'invoice.numbering_change_blocked' // ← [FACTUUR-B] locked change refused (Art. 35)
   | 'invoice.arithmetic_blocked'       // ← [BOEK-SAFECORE] auto-import held in 'processing': excl+BTW≠incl, illegal rate, or NaN/∞/≤0/bad-date
@@ -61,6 +63,17 @@ export type AuditAction =
   | 'accountant.client_linked'
   | 'accountant.client_unlinked'
   | 'accountant.invoice_status_set'
+  // [BEWIJS] Wat de boekhouder van zijn klant HEEFT OPGEHAALD.
+  //
+  // De vertrouwensgrens was afgedwongen maar niet aantoonbaar: de klant kon nergens zien
+  // wat zijn boekhouder had ingezien of gedownload. Precies dát is het verschil dat dit
+  // product verkoopt tegenover een gedeelde OneDrive-map — en het was een bewering, geen
+  // feit. Een gedeelde map laat ook niets zien; het verschil bestaat pas als het te tonen is.
+  //
+  // Alleen de OPHAALHANDELING wordt vastgelegd, nooit de inhoud: entity_id is de eigenaar
+  // plus het kwartaal, en sanitizeForAudit strijkt sowieso alles wat er niet in hoort.
+  | 'accountant.package_downloaded'   // ← het kwartaalpakket (ZIP) opgehaald
+  | 'accountant.export_downloaded'    // ← een CSV/UBL-export opgehaald
   // Level 3 — Files
   | 'document.uploaded'
   | 'document.duplicate_blocked'      // ← [BRIDGE-EXTRACT] byte-hash dedup: re-upload of identical file refused
@@ -74,8 +87,13 @@ export type AuditAction =
   | 'user.password_changed'
   | 'user.email_changed'
   | 'user.account_deletion_requested'
+  | 'user.data_purged'                // ← [A1] retention purge erased a deactivated account's files after the 7-year bewaarplicht ran out. IRREVERSIBLE — this is the only record that it happened.
   | 'email.connection_created'
   | 'email.connection_revoked'
+  // Level 5 — Boekhoudkoppelingen
+  | 'snelstart.connected'             // ← [SNELSTART] maatwerksleutel gekoppeld (of vervangen)
+  | 'snelstart.disconnected'          // ← [SNELSTART] koppeling verbroken, sleutel uit Vault
+  | 'snelstart.pushed'                // ← [SNELSTART] facturen als boeking naar de administratie gestuurd
 
 export interface AuditParams {
   /** Profile ID للمستخدم الذي فعل الـ action */

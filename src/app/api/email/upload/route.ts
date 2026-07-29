@@ -16,9 +16,13 @@ import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
 import { deriveDueDate, findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
 import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible-duplicate-collect";
+// [DUP-ARCHIVED] Dezelfde eerlijke melding als /api/intake — deze route blijft bereikbaar
+// (back-compat), dus hij mag niet iets anders beweren over dezelfde situatie.
+import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate";
 import { buildFolderBreadcrumb } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+import { gateFairUse } from "@/lib/fair-use-gate";
 import { escapeLikeValue } from "@/lib/sanitize";
 
 export async function POST(req: NextRequest) {
@@ -35,6 +39,12 @@ export async function POST(req: NextRequest) {
   // [COST] Per-user ceiling on the AI/OCR upload pipeline (Claude calls).
   const rl = await checkRateLimit({ userId: user.id, endpoint: "/api/email/upload", ...RATE_LIMITS.AI_OCR });
   if (!rl.allowed) return rateLimitResponse(rl);
+
+  // [FAIR-USE] Het tweede hek: de gepubliceerde maandgrens. Het hek hierboven gaat over
+  // snelheid, dit over hoeveel er gratis in een maand past. Faalt open, en een weigering
+  // pauzeert alleen dit ene automatische uitlezen — het bestand zelf wordt gewoon bewaard.
+  const gate = await gateFairUse({ client: supabase, userId: user.id, metric: "aiDocuments" });
+  if (!gate.allowed) return gate.response!;
 
   let formData: FormData;
   try {
@@ -84,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   const { data: existingDoc } = await supabase
     .from("documents")
-    .select("id, file_name, folder_id")
+    .select("id, file_name, folder_id, invoice_id")
     .eq("user_id", user.id)
     .eq("content_hash", contentHash)
     .limit(1)
@@ -109,13 +119,16 @@ export async function POST(req: NextRequest) {
       ipAddress: getClientIP(req),
     });
 
+    // [DUP-ARCHIVED] Botst dit bestand op een factuur die de eigenaar zelf genegeerd heeft?
+    // De blokkade blijft (identieke bytes, niet te forceren) — de melding wijst nu naar Genegeerd.
+    const archived = await archivedInvoiceForDocument(supabase, user.id, existingDoc);
     const where = folderPath.length
       ? `Dit bestand staat al in: ${folderPath.join(" / ")}`
       : "Dit bestand is al toegevoegd";
 
     return NextResponse.json(
       {
-        error: where,
+        error: archived ? archivedDuplicateMessage(archived) : where,
         duplicate: true,
         existing: {
           id: existingDoc.id,
@@ -123,6 +136,7 @@ export async function POST(req: NextRequest) {
           folder_name: folderName,
           folder_path: folderPath,
         },
+        ...(archived ? { archived } : {}),
       },
       { status: 409 }
     );
@@ -154,6 +168,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (aiErr) {
     console.error("[AI-CONFIG-SAFE] upload AI read failed — filing nothing, asking for retry", aiErr);
+    // [FAIR-USE] Niet gelezen, dus niet geteld — anders kost een storing van ons de
+    // gebruiker een document van zijn maandtegoed.
+    await gate.release();
     return NextResponse.json(
       { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
       { status: 503 }
@@ -208,13 +225,19 @@ export async function POST(req: NextRequest) {
     }
   );
   if (dup.duplicate && dup.match && !force) {
+    // [DUP-ARCHIVED] Wijst de match naar een genegeerde factuur? Zeg dat — anders zoekt de
+    // eigenaar zich suf in een lijst waar hij per definitie niet in staat.
+    const archived = await archivedInvoiceById(supabase, user.id, dup.match.id);
     return NextResponse.json(
       {
-        error: `Deze factuur (${verification.invoice_number ?? "onbekend nummer"}) lijkt al toegevoegd.`,
+        error: archived
+          ? archivedDuplicateMessage(archived)
+          : `Deze factuur (${verification.invoice_number ?? "onbekend nummer"}) lijkt al toegevoegd.`,
         duplicate: true,
         semantic: true,
         matchedOn: dup.tier,
         existing: { id: dup.match.id, invoice_number: dup.match.invoice_number },
+        ...(archived ? { archived } : {}),
       },
       { status: 409 }
     );

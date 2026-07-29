@@ -206,6 +206,20 @@ export async function importBankStatement(args: {
             content_hash: contentHash,
             year: stmtYear,
             period: stmtPeriod,
+            // [BRUG] Een bankafschrift is per definitie een stuk dat de boekhouder nodig
+            // heeft, en de eigenaar heeft het zelf geüpload — er is niets aan te
+            // "controleren" zoals bij een factuur (AV §7.3 gaat over concepten en
+            // ongecontroleerde inkoopfacturen, niet hierover).
+            //
+            // Zonder deze regel bleef `shared` false (NOT NULL DEFAULT false), en
+            // documents_accountant_read eist `shared = true AND trashed IS NOT TRUE`. De
+            // boekhouder zag dus op /brug NOOIT één bankafschrift, terwijl de
+            // closing-package-ZIP het wél meestuurde: één grens, twee antwoorden.
+            //
+            // De omgekeerde reparatie — een shared-filter op de ZIP-packer — zou de
+            // banksectie van élk pakket legen, en dat pakket is het enige artefact
+            // waarvoor dit product bestaat.
+            shared: true,
           })
           .select("id")
           .single();

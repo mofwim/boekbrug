@@ -37,8 +37,10 @@ export default function ResultaatClient() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setData(null)
     ;(async () => {
+      // Reset binnen de async-functie, vóór de eerste await: zelfde tick als voorheen,
+      // maar zonder synchrone setState in de effect-body.
+      setLoading(true); setData(null)
       try {
         const res = await fetch(`/api/result?year=${year}&quarter=${quarter}`)
         const json = await res.json()
@@ -49,10 +51,11 @@ export default function ResultaatClient() {
   }, [year, quarter])
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
+    <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 64px' }}>
+        {/* [HEADER-SYSTEM] Title "Resultaat" + back live in the shared sub-page bar;
+            the in-body h1 was removed. The period subtitle stays. */}
         <header style={{ margin: '16px 0 20px' }}>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: M3.onSurface, margin: '0 0 2px' }}>Resultaat</h1>
           <p style={{ fontSize: 15, color: M3.neutral, margin: 0 }}>
             {data ? data.label : 'Dit kwartaal'} · bank, facturen én kas samen
           </p>

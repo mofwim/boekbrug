@@ -8,6 +8,13 @@
 
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import {
+  BELOFTE_KOP,
+  BELOFTE_KOP_2,
+  BELOFTE_UITLEG,
+  BELOFTE_GERUST,
+  BELOFTE_STAPPEN,
+} from '@/lib/belofte'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { TOOLS } from '@/lib/tools'
@@ -68,19 +75,42 @@ export default async function Home() {
       {/* Hero */}
       <section style={{ ...wrap, textAlign: 'center', paddingTop: 72, paddingBottom: 48 }}>
         <div style={{ display: 'inline-block', background: '#eaf3ff', color: '#1a73e8', fontSize: 13, fontWeight: 600, padding: '6px 14px', borderRadius: 9999, marginBottom: 20 }}>
-          Voor ZZP’ers en hun boekhouder
+          Voor kleine ondernemers en hun boekhouder
         </div>
-        <h1 style={{ fontSize: 46, fontWeight: 800, color: '#202124', letterSpacing: -1, lineHeight: 1.1, margin: '0 auto 18px', maxWidth: 680 }}>
-          De brug tussen jou en je boekhouder
+        {/* [BELOFTE] Geen opsomming van functies meer — die plaatst BoekBrug in een
+            featurevergelijking met SnelStart en Moneybird die het verliest én niet hoeft te
+            voeren. De kop zegt nu wat de gebruiker NIET MEER HOEFT. Bron: src/lib/belofte.ts. */}
+        <h1 style={{ fontSize: 46, fontWeight: 800, color: '#202124', letterSpacing: -1, lineHeight: 1.1, margin: '0 auto 18px', maxWidth: 720 }}>
+          {BELOFTE_KOP}
+          <br />
+          <span style={{ color: '#1a73e8' }}>{BELOFTE_KOP_2}</span>
         </h1>
-        <p style={{ fontSize: 19, color: '#5f6368', lineHeight: 1.6, margin: '0 auto 32px', maxWidth: 560 }}>
-          Maak en scan facturen, houd je BTW makkelijk bij en werk samen met je boekhouder. Alles op één plek.
+        <p style={{ fontSize: 19, color: '#5f6368', lineHeight: 1.6, margin: '0 auto 32px', maxWidth: 600 }}>
+          {BELOFTE_UITLEG}
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Link href="/register" style={btnPrimary}>Gratis account maken</Link>
           <Link href="/factuur-maken" style={btnGhost}>Direct een factuur maken</Link>
         </div>
-        <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 16 }}>Geen creditcard nodig · Privacy-vriendelijk · Nederlandse facturen</div>
+        <div style={{ fontSize: 13, color: '#bdc1c6', marginTop: 16 }}>{BELOFTE_GERUST}</div>
+      </section>
+
+      {/* [BELOFTE] De enige taak die de gebruiker overhoudt, in drie stappen. Staat BOVEN de
+          functiekaarten: eerst wat hij moet doen, dan pas wat de app allemaal kan. */}
+      <section style={{ ...wrap, paddingBottom: 40 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+          {BELOFTE_STAPPEN.map((stap, i) => (
+            <div key={stap.kop} style={{ padding: '4px 2px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#1a73e8', color: '#fff', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+                  {i + 1}
+                </span>
+                <span style={{ fontSize: 16.5, fontWeight: 700, color: '#202124' }}>{stap.kop}</span>
+              </div>
+              <div style={{ fontSize: 14.5, lineHeight: 1.6, color: '#5f6368' }}>{stap.tekst}</div>
+            </div>
+          ))}
+        </div>
       </section>
 
       {/* Features */}

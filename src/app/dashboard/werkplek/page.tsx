@@ -21,7 +21,8 @@ export default async function WerkplekPage() {
     .single()
 
   if (!profile?.onboarding_done) redirect('/onboarding')
-  if (profile.role === 'accountant') redirect('/dashboard/accountant/werkplek')
+  // [ROLE-PARITY] accountant werkplek merged into the accountant home; send there.
+  if (profile.role === 'accountant') redirect('/dashboard/accountant')
 
   return <WerkplekClient />
 }

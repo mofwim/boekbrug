@@ -44,8 +44,17 @@ export function eligibleForDeletionISO(
 
 /**
  * Whether an account's data has passed its retention window.
- * Suggestion only — the actual deletion decision stays human + legal.
- * The deferred AI flag (brief §3.7) will build on this.
+ *
+ * [A1] This used to have NO CALLER: the timer was stamped at deactivation and
+ * nothing ever read it, so GDPR erasure never executed. It is now consumed by
+ * `decidePurge` in retention-purge.ts, which uses it as the SECOND of two
+ * independent checks — the stored eligible-date and this recomputation must
+ * BOTH say "expired" before anything is erased, so a corrupted stored date can
+ * only ever delay a purge, never bring one forward.
+ *
+ * Still a suggestion, not an executor: the purge job additionally requires a
+ * deliberate human switch (RETENTION_PURGE_ENABLED) before it deletes anything.
+ * The deferred per-record AI flag (brief §3.7) will build on this.
  */
 export function isEligibleForDeletion(
   baseDate: string | number | Date,

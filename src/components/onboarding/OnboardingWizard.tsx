@@ -28,6 +28,7 @@ import { previewInvoiceStart, reasonToDutch } from "@/lib/invoice-template";
 // was stored and later printed on a legal invoice. KvK stays the local KVK_REGEX.
 import { BTW_REGEX } from "@/lib/validation";
 import { isValidIban, normalizeIban } from "@/lib/epc-qr";
+import Link from 'next/link'
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -103,9 +104,13 @@ export function OnboardingWizard({
 
   // [BOEK-015] Reset saving state whenever step changes — safety net for all transitions
   // Placed after useState declaration to avoid hoisting confusion
-  useEffect(() => {
+  // [REACT] Afgeleid van de stap: bij elke stapwissel is een lopende opslag niet meer
+  // relevant. Tijdens de render bijstellen scheelt een tweede renderronde.
+  const [prevStep, setPrevStep] = useState(step);
+  if (prevStep !== step) {
+    setPrevStep(step);
     setSaving(false);
-  }, [step]);
+  }
 
   // [FACTUUR-B] invoice numbering start (step 3C)
   const [invoiceStart, setInvoiceStart] = useState("");
@@ -141,8 +146,11 @@ export function OnboardingWizard({
     const stepParam = searchParams.get("step");
 
     if (gmail === "connected") {
-      setGmailConnected(true);
-      if (stepParam === "4") setStep(4);
+      // In één wikkel: zelfde tick als voorheen, zonder synchrone setState in de effect-body.
+      void (async () => {
+        setGmailConnected(true);
+        if (stepParam === "4") setStep(4);
+      })();
 
       // [BOEK-015] Auto-advance after 2s — guarded so manual "Volgende" doesn't double-fire
       // setStep uses functional form: only advances if still on step 4
@@ -387,11 +395,11 @@ export function OnboardingWizard({
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "16px 20px 0",
       }}>
-        <a href="/" style={{ textDecoration: "none" }}>
+        <Link href="/" style={{ textDecoration: "none" }}>
           <span style={{ fontSize: "20px", fontWeight: 700, color: "#1a73e8", letterSpacing: "-0.5px" }}>
             BoekBrug
           </span>
-        </a>
+        </Link>
         <span style={{ fontSize: "13px", color: "#bdc1c6" }}>
           Stap {counter.n} van {counter.total}
         </span>
@@ -902,8 +910,21 @@ function StepAccountant({ accountantEmail, setAccountantEmail }: {
     <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>Heb je een boekhouder?</h2>
-        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368" }}>
-          Stuur een uitnodiging — hij kan dan al je facturen inzien.
+        {/* [BELOFTE] Dit is de afloop van de hele belofte: hier wordt "staat klaar voor je
+            boekhouder" iets echts. Daarom staat het resultaat er, niet de handeling.
+
+            En hier stond een ONJUISTHEID: "hij kan dan al je facturen inzien". Dat spreekt
+            voorwaarden §7.3 tegen — je boekhouder ziet NOOIT je concepten, alleen wat jij zelf
+            hebt verstuurd, ontvangen of als betaald gemarkeerd. Een belofte over privacy die
+            in de app ruimer klinkt dan in het contract is precies de verkeerde kant op fout. */}
+        <p style={{ margin: "8px 0 0", fontSize: "16px", color: "#5f6368", lineHeight: 1.55 }}>
+          Nodig hem uit, dan haalt hij aan het eind van het kwartaal alles in één keer op.
+          Hij ziet alleen wat jij zelf hebt verstuurd, ontvangen of als betaald hebt gemarkeerd —
+          je concepten blijven van jou alleen.
+        </p>
+        <p style={{ margin: "10px 0 0", fontSize: "14.5px", color: "#5f6368", lineHeight: 1.55 }}>
+          Nog geen boekhouder? Sla dit gerust over. Je kunt hem later in één klik koppelen, en
+          voor hem is BoekBrug altijd gratis.
         </p>
       </div>
       <Input label="E-mailadres boekhouder" placeholder="jan@boekhouder.nl"

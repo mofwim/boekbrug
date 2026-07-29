@@ -115,11 +115,30 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
       return NextResponse.json({ error: 'Koppelen mislukt' }, { status: 500 })
     }
 
-    // تحديث حالة الدعوة إلى مقبولة
-    await supabase
+    // [SEC-INVITE] De uitnodiging afvinken MOET op de pipeline-client.
+    //
+    // Dit stond op `supabase` (de RLS-sessieclient), en public.invitations heeft precies
+    // twee policies: SELECT en INSERT. Er is GEEN update-policy, dus dit was een stille
+    // 0-rij-write — geen fout, geen effect. Gevolgen, allebei bevestigd:
+    //   · de uitnodiging bleef 'pending' en het accepteertoken bleef zijn volle 14 dagen
+    //     herbruikbaar, óók na een unlink — waardoor AV §7.1/§7.4 ("je kunt de koppeling
+    //     op elk moment verbreken", "accountant verliest direct toegang") niet afdwingbaar
+    //     was;
+    //   · de dubbelcheck in accountant.repository.inviteClient blokkeert op status
+    //     'pending', dus hetzelfde adres opnieuw uitnodigen werd 14 dagen geweigerd.
+    //
+    // Voeg GEEN authenticated UPDATE-policy toe aan invitations: dan mag de uitgenodigde
+    // zijn eigen uitnodiging herschrijven. De service-role weg is de juiste.
+    const { error: acceptError } = await linkPipeline
       .from('invitations')
       .update({ status: 'accepted' })
       .eq('id', invitation.id)
+
+    if (acceptError) {
+      // Niet fataal: de koppeling staat er al en dát is wat de gebruiker wilde. Wel luid,
+      // want een token dat blijft leven is een beveiligingsfeit.
+      console.error('[SEC-INVITE] uitnodiging niet als geaccepteerd kunnen markeren — token blijft leven:', acceptError.message)
+    }
 
     // إشعار ZZP'er بأن المحاسب قبل الدعوة (via service role — bypasses RLS)
     try {

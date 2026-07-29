@@ -24,6 +24,7 @@ function invoice(over: Partial<PackageInvoice>): PackageInvoice {
     invoice_number: over.invoice_number ?? "2026-001",
     client_name: over.client_name ?? "Test Klant",
     status: over.status ?? "sent",
+    invoice_type: over.invoice_type ?? "factuur",
     direction: over.direction ?? "outgoing",
     total_ex_btw: over.total_ex_btw ?? 100,
     btw_amount: over.btw_amount ?? 21,

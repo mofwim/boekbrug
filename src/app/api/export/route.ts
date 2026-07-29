@@ -26,6 +26,7 @@ import {
   invoicesToCsvAccountant,
 } from "@/lib/export";
 import type { Database } from "@/types/database.types";
+import { logAuditAction } from "@/lib/audit";
 
 // [BOEK-FOUNDATION-TYPES] Valid invoice statuses from DB CHECK constraint
 type InvoiceStatus = NonNullable<Database["public"]["Tables"]["invoices"]["Row"]["status"]>;
@@ -110,6 +111,15 @@ export async function GET(req: NextRequest) {
     if (!clientLinks || clientLinks.length === 0) {
       return new NextResponse("Geen klanten gekoppeld", { status: 404 });
     }
+
+    // [BEWIJS] Ook deze export vastleggen — zie de toelichting in
+    // /api/closing-package. Best effort en na de autorisatie.
+    void logAuditAction({
+      userId: user.id,
+      action: 'accountant.export_downloaded',
+      entityType: 'quarter',
+      entityId: `alle-klanten:${periodLabel}`,
+    });
 
     const clientNames: Record<string, string> = {};
     const clientIds: string[] = [];

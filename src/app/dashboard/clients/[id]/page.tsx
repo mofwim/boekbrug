@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import type { ProfileRow } from '@/types/rows'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
@@ -17,7 +18,7 @@ export default function ClientDetailPage() {
   const clientId = params?.id as string
   const supabase = createClient()
 
-  const [client, setClient] = useState<any>(null)
+  const [client, setClient] = useState<ProfileRow | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(true)
   // [SEARCH-LANDING] A stale/unlinked client id (deleted, or an accountant not

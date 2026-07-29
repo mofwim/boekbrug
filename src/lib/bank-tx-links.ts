@@ -10,18 +10,41 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Client = SupabaseClient<any>;
 
-/** Record that `transactionId` paid each of `invoiceIds`. Idempotent (unique pair). Best-effort. */
+/**
+ * Record that `transactionId` paid each of `invoiceIds`. Idempotent (unique pair). Best-effort.
+ *
+ * [PARTIAL-PAY] `amountApplied` is NOT optional bookkeeping decoration. Since partial payments
+ * exist, recompute_invoice_amount_paid re-derives invoices.amount_paid as
+ * SUM(coalesce(amount_applied, 0)) over an invoice's surviving links, and it runs on every
+ * unlink and every undo. A link written WITHOUT the amount therefore counts as ZERO the moment
+ * anything else on that invoice is reversed: an invoice settled €600 by this payment silently
+ * drops to amount_paid 0 and re-opens at its full total, back into the reminder flow, while the
+ * bank line still says 'matched' and the €600 really did arrive. This was the only one of the
+ * three booking paths that omitted it (apply_bank_payment and book_bank_batch both write it).
+ *
+ * Pass the amount this transaction applied to each invoice, keyed by invoice id. An id with no
+ * entry writes NULL, which is exactly the pre-partial-pay behaviour — only use that for a link
+ * whose amount genuinely is not known.
+ */
 export async function recordPaymentLinks(
   client: Client,
   userId: string,
   transactionId: string,
   invoiceIds: string[],
+  amountApplied?: Record<string, number | null | undefined>,
 ): Promise<void> {
-  const rows = [...new Set(invoiceIds.filter(Boolean))].map((invoice_id) => ({
-    user_id: userId,
-    transaction_id: transactionId,
-    invoice_id,
-  }));
+  const rows = [...new Set(invoiceIds.filter(Boolean))].map((invoice_id) => {
+    const applied = amountApplied?.[invoice_id];
+    return {
+      user_id: userId,
+      transaction_id: transactionId,
+      invoice_id,
+      amount_applied:
+        typeof applied === "number" && Number.isFinite(applied) && applied > 0
+          ? Math.round(applied * 100) / 100
+          : null,
+    };
+  });
   if (rows.length === 0) return;
   try {
     await client.from("bank_tx_invoices").upsert(rows, { onConflict: "transaction_id,invoice_id" });

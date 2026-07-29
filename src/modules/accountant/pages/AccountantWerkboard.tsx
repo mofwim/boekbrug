@@ -15,9 +15,9 @@
 // UI language is identical to the other accountant tools (Google Workspace, Roboto).
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useParentPath } from '@/lib/navigation-hooks'
+import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
+import { M3, FONT } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
 import { getAangifteDeadline, daysUntil } from '../accountant.service'
 import {
@@ -76,7 +76,6 @@ interface Props {
 
 export default function AccountantWerkboard({ clients, year: initYear, quarter: initQuarter }: Props) {
   const router = useRouter()
-  const parentHref = useParentPath('accountant')
   const currentYear = new Date().getFullYear()
 
   const [year, setYear] = useState(initYear)
@@ -84,6 +83,25 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
   const [onlyAction, setOnlyAction] = useState(false)
   const [query, setQuery] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
+
+  // [HEADER-SYSTEM] This board is registered in the shared sub-page bar
+  // (DashboardChrome/STATIC_TITLES -> "Aangifte & status"). Instead of drawing a
+  // bespoke header, push the refresh control into the shared bar's actions slot.
+  useSubPageHeader(
+    {
+      actions: (
+        <button
+          onClick={() => setReloadKey(k => k + 1)}
+          title="Vernieuwen"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
+          Vernieuwen
+        </button>
+      ),
+    },
+    [],
+  )
   const [rows, setRows] = useState<BoardRow[]>(
     () => clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })),
   )
@@ -98,17 +116,25 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
     const base = clients.find(c => c.id === id)!
     try {
       const res = await fetch(`/api/readiness?clientId=${encodeURIComponent(id)}&year=${y}&quarter=${q}`)
-      if (!res.ok) return { ...base, state: 'error' }
+      // [REDEN] 403 = de koppeling is verbroken terwijl het bord openstond. Het antwoord
+      // weet dat; de rij gooide het weg en toonde "Kon status niet laden" — een storing waar
+      // de boekhouder op gaat klikken. Zeg wat er is.
+      if (!res.ok) return { ...base, state: 'error', errorReason: res.status === 403 ? 'unlinked' : 'unknown' }
       const json = await res.json()
       const report = json?.report
-      if (!report) return { ...base, state: 'error' }
+      if (!report) return { ...base, state: 'error', errorReason: 'unknown' }
+      const missing: unknown[] = Array.isArray(report.missing) ? report.missing : []
       return {
         ...base,
         state: 'ok',
         score: report.score,
         status: report.status as BoardStatus,
-        missingCount: Array.isArray(report.missing) ? report.missing.length : 0,
+        missingCount: missing.length,
         riskCount: Array.isArray(report.risks) ? report.risks.length : 0,
+        // [REDEN] Alleen de koppen — zie de toelichting bij BoardRow.missingTitles.
+        missingTitles: missing
+          .map(m => (m && typeof m === 'object' && 'title' in m ? String((m as { title: unknown }).title) : ''))
+          .filter(Boolean),
       }
     } catch {
       return { ...base, state: 'error' }
@@ -120,8 +146,11 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
   // can't write old-quarter rows. Resets any per-row nudge state too.
   useEffect(() => {
     let cancelled = false
-    setRows(clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })))
-    setNudge({})
+    // Reset in dezelfde tick, maar buiten de effect-body zelf.
+    void (async () => {
+      setRows(clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })))
+      setNudge({})
+    })()
 
     const queue = [...clients]
     async function worker() {
@@ -179,28 +208,11 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
     color: active ? '#041E49' : '#5F6368', fontFamily: "'Roboto', sans-serif",
   })
 
+  // [HEADER-SYSTEM] No bespoke header here — the shared sub-page bar renders the
+  // back + "Aangifte & status" title + the refresh action (registered above via
+  // useSubPageHeader).
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: "'Roboto', sans-serif" }}>
-
-      {/* Header — identical to the other accountant tools */}
-      <div style={{
-        backgroundColor: '#FFFFFF', borderBottom: '1px solid #E0E0E0', padding: '0 24px',
-        height: 64, display: 'flex', alignItems: 'center', gap: 16, position: 'sticky', top: 0, zIndex: 40,
-      }}>
-        <Link href={parentHref} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6, color: '#1A73E8', fontSize: 14, fontWeight: 500 }}>
-          ← Terug
-        </Link>
-        <h1 style={{ fontSize: 18, fontWeight: 600, color: '#202124', margin: 0 }}>Aangifte &amp; status</h1>
-        <button
-          onClick={() => setReloadKey(k => k + 1)}
-          title="Vernieuwen"
-          style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#1A73E8', display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: "'Roboto', sans-serif" }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
-          Vernieuwen
-        </button>
-      </div>
-
+    <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', fontFamily: FONT }}>
       <main style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* ── Deadline hero (from #1) — follows the selected quarter ── */}
@@ -280,6 +292,15 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                 <button onClick={() => setQuery('')} aria-label="Wissen" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
+            {/* [HERTIKKEN] De machineleesbare CSV over ALLE klanten van dit kwartaal.
+                Deze route (/api/export?accountant=true) was volledig afgebouwd en had nul
+                aanroepers in de hele app — af, en onbereikbaar. Eén link. */}
+            <a
+              href={`/api/export?year=${year}&quarter=${quarter}&accountant=true`}
+              style={{ fontSize: 12.5, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 8, padding: '6px 12px', whiteSpace: 'nowrap' }}
+            >
+              ⬇︎ Alle klanten (CSV)
+            </a>
           </div>
         )}
 
@@ -308,7 +329,9 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                       <span style={{ fontSize: 14, fontWeight: 500, color: '#202124', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
                       <span style={{ fontSize: 12, color: '#5F6368', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {row.state === 'loading' && 'Controleren…'}
-                        {row.state === 'error' && 'Kon status niet laden'}
+                        {row.state === 'error' && (row.errorReason === 'unlinked'
+                          ? 'Koppeling verbroken'
+                          : 'Kon status niet laden')}
                         {row.state === 'ok' && (
                           <>
                             {row.score}% compleet
@@ -339,6 +362,39 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                     {row.state === 'error' && <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: '#5F6368', backgroundColor: '#F1F3F4', padding: '3px 8px', borderRadius: 6 }}>—</span>}
                     {meta && <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: meta.color, backgroundColor: meta.bg, padding: '3px 8px', borderRadius: 6, whiteSpace: 'nowrap' }}>{meta.dot} {meta.label}</span>}
                   </div>
+
+                  {/* [REDEN + PAKKET] De twee dingen waarvoor de boekhouder anders het bord
+                      moest verlaten: WAT er ontbreekt, en HET BESTAND.
+
+                      Bewust alleen bij een geladen rij, en bewust geen extra knoppenrij als
+                      er niets te melden is — een bord dat altijd vol staat leest niemand. */}
+                  {row.state === 'ok' && ((row.missingTitles?.length ?? 0) > 0 || row.status === 'ready') && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '0 16px 12px', marginTop: -4 }}>
+                      {(row.missingTitles ?? []).slice(0, 3).map((titel) => (
+                        <span
+                          key={titel}
+                          title={titel}
+                          style={{ fontSize: 11.5, color: '#7C5800', backgroundColor: '#FEF7E0', border: '1px solid #FDE9B8', borderRadius: 6, padding: '3px 8px', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >
+                          {titel}
+                        </span>
+                      ))}
+                      {(row.missingTitles?.length ?? 0) > 3 && (
+                        <span style={{ fontSize: 11.5, color: '#5F6368' }}>+{(row.missingTitles?.length ?? 0) - 3} meer</span>
+                      )}
+
+                      {/* Het pakket, rechtstreeks. /api/closing-package is al dubbelpad-
+                          geautoriseerd (owner óf gekoppelde boekhouder), dus dit is dezelfde
+                          link die /brug al gebruikt — alleen nu zonder eerst weg te navigeren.
+                          Hij kwam voor het bestand; dat hoort niet drie klikken verderop. */}
+                      <a
+                        href={`/api/closing-package?year=${year}&quarter=${quarter}&clientId=${encodeURIComponent(row.id)}`}
+                        style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 6, padding: '5px 10px' }}
+                      >
+                        ⬇︎ Pakket
+                      </a>
+                    </div>
+                  )}
 
                   {/* Review-before-send: the exact message, then confirm. No blind send. */}
                   {nState === 'confirm' && (
