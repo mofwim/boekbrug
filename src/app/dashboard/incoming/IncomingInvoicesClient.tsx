@@ -39,6 +39,12 @@ interface ImportHealth {
     invoiceNumber: boolean;
     invoiceDate: boolean;
     reminder: boolean;
+    // [DEDUP-SOFT] stond al in ImportHealth maar ontbrak in deze spiegel.
+    possibleDuplicate: boolean;
+    // [IBAN-WISSEL] Bekende leverancier, ander rekeningnummer. Krijgt bewust een EIGEN,
+    // zwaardere badge: dit is geen leesfout maar een geldwaarschuwing, en de handeling
+    // erachter (bellen op een zelf opgezocht nummer) is een andere dan "controleer de cijfers".
+    ibanChanged: boolean;
   };
 }
 
@@ -1364,7 +1370,25 @@ function InvoiceCard({
               quiet "ready to confirm" hint (calm, never the alarming "review").
               The ignored tab shows nothing here — it must not nag. */}
           {mode === "pending" && (
-            invoice.health.level === "needs-review" ? (
+            /* [IBAN-WISSEL] Een gewisseld rekeningnummer krijgt de ROOD-badge, niet de amberen
+               "Aandacht nodig". Reden: bij factuurfraude klopt al het andere — bedrag, nummer,
+               btw, datum — dus de gewone amberen pil zou dit laten lezen als "de AI twijfelde
+               ergens over", terwijl dit het enige signaal is dat over GELD gaat. Eigen kleur,
+               eigen woorden, en de reden eronder noemt beide nummers. */
+            invoice.health.flags.ibanChanged ? (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  marginTop: 6, padding: "3px 9px", borderRadius: 8,
+                  background: "#fce8e6", border: "1px solid #f5b5ae",
+                }}
+              >
+                <span style={{ fontSize: 11 }}>🏦</span>
+                <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 700 }}>
+                  Ander rekeningnummer
+                </span>
+              </div>
+            ) : invoice.health.level === "needs-review" ? (
               <div
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 5,

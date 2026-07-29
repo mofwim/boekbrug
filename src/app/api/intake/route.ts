@@ -50,6 +50,8 @@ import { collectPossibleDuplicate, mergePossibleDuplicate } from "@/lib/possible
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
+// [IBAN-WISSEL] Bekende leverancier, ander rekeningnummer → needs-review (en dus nooit auto-boeken).
+import { detectIbanChange } from "@/lib/iban-change"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -700,6 +702,25 @@ export async function POST(req: NextRequest) {
   if (possibleDup) {
     const merged = mergePossibleDuplicate(fieldConfidence, possibleDup) as Record<string, unknown>
     fieldConfidence._safecore = merged._safecore
+  }
+  // [IBAN-WISSEL] Kennen we deze leverancier al onder een ander rekeningnummer? Ook hier VÓÓR de
+  // auto-advance check: een gewisseld IBAN maakt de health needs-review, en daarmee kan deze
+  // factuur nooit automatisch als kosten geboekt worden — precies wat je bij fraude wilt. Een
+  // doorgestuurde vervalste factuur komt net zo goed via dit pad binnen als via de mailsync.
+  {
+    const ibanChange = await detectIbanChange(supabase, user.id, {
+      name: v.vendor,
+      kvk: v.vendor_kvk ?? null,
+      iban: v.vendor_iban ?? null,
+    })
+    if (ibanChange) {
+      fieldConfidence._safecore = {
+        ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
+        iban_changed: true,
+        iban_changed_from: ibanChange.from,
+        iban_changed_to: ibanChange.to,
+      }
+    }
   }
 
   // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
