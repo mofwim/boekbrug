@@ -129,7 +129,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               // Clears the home indicator, and sits above the FABs (which are
               // at 24 + inset) so a confirmation never hides behind the button
               // that triggered it.
-              bottom: 'calc(88px + env(safe-area-inset-bottom))',
+              bottom: 'calc(88px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
               zIndex: 2400,
               display: 'flex',
               flexDirection: 'column',

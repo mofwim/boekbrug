@@ -8,6 +8,7 @@ import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 import { PageTransition } from '@/components/nav/PageTransition'
+import { BottomNav } from '@/components/nav/BottomNav'
 
 export default async function DashboardLayout({
   children,
@@ -51,12 +52,19 @@ export default async function DashboardLayout({
         {/* [INSTANT] Animates BETWEEN pages instead of cutting. Wraps only
             {children}, never the header — the bar has to stay put while the
             content slides, or the eye loses its one fixed reference point.
-            See components/nav/PageTransition. */}
-        <PageTransition>{children}</PageTransition>
+            See components/nav/PageTransition.
+            [MOBILE] .dash-content adds room for the bottom bar below 640px, so
+            the last row of a list is not left sitting behind it. */}
+        <div className="dash-content">
+          <PageTransition>{children}</PageTransition>
+        </div>
       </SubPageHeaderProvider>
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}
       {profile && <GlobalSearchLauncher />}
+      {/* [MOBILE] Phone-only global navigation — the counterpart to the top-bar
+          links that hide below 640px. Role-aware destinations; see the component. */}
+      {profile && <BottomNav role={subnavRole} />}
     </>
   )
 }

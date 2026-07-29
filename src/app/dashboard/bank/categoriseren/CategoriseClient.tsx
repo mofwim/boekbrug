@@ -301,7 +301,7 @@ export default function CategoriseClient() {
                 style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14.5, outline: 'none', background: M3.surface, color: M3.onSurface, fontFamily: FONT }}
               />
               {search && (
-                <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
               )}
             </div>
 

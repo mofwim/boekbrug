@@ -121,7 +121,7 @@ export default function MessagesPage() {
               className="w-full bg-white border border-gray-200 rounded-xl py-2.5 pl-10 pr-9 text-sm text-gray-900 outline-none focus:border-gray-300 shadow-sm"
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen" className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center">×</button>
+              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44 absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center">×</button>
             )}
           </div>
         )}

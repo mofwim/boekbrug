@@ -1036,7 +1036,7 @@ function NewInvoicePageContent() {
           "Omzetten naar factuur" action now come from the shared sub-page header
           (registered via useSubPageHeader above). */}
 
-      <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + env(safe-area-inset-bottom))' }}>
+      <div data-form style={{ maxWidth: 600, margin: '0 auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 'calc(160px + var(--bottom-nav-h) + env(safe-area-inset-bottom))' }}>
 
         {/* [DS] Segmented Button — Material You, één geheel */}
         <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
@@ -1399,7 +1399,7 @@ function NewInvoicePageContent() {
             )}
 
             {/* [DS] Fixed bottom bar — safe area — full-width pill — 48px min */}
-            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))', zIndex: 10 }}>
+            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', zIndex: 10 }}>
               <div style={{ maxWidth: 600, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <button onClick={() => {
                   // [FACTUUR-A] Factuur send is irreversible (number consumed

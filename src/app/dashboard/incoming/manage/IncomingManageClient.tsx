@@ -907,7 +907,7 @@ export default function IncomingManageClient({
               style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: '1px solid #d1d1d6', fontSize: 14, outline: 'none', background: '#fff', color: '#1c1c1e' }}
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen"
+              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
             )}
           </div>
@@ -1319,7 +1319,7 @@ export default function IncomingManageClient({
           Enabled when the pure builder approves (≥2 open rows, same IBAN). ── */}
       {selectMode && (
         <div style={{
-          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + env(safe-area-inset-bottom))`,
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           maxWidth: 648, margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,

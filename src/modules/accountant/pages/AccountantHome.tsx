@@ -324,7 +324,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 32px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124' }}
               />
               {clientSearch && (
-                <button onClick={() => setClientSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setClientSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}

@@ -746,7 +746,7 @@ function ConfirmPaidModal({
         style={{
           background: "#fff", borderRadius: "20px 20px 0 0",
           padding: "24px 20px",
-          paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+          paddingBottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
           width: "100%", maxWidth: 430,
         }}
       >
@@ -2175,7 +2175,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
             onClick={(e) => e.stopPropagation()}
             style={{
               background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
-              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+              paddingBottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
               width: "100%", maxWidth: 430, maxHeight: "80vh", overflowY: "auto",
             }}
           >
@@ -3101,7 +3101,7 @@ export default function IncomingInvoicesClient({
         <div
           style={{
             position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1500,
-            padding: "12px 16px calc(12px + env(safe-area-inset-bottom))",
+            padding: "12px 16px calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
             background: "rgba(255,255,255,0.96)", backdropFilter: "blur(8px)",
             borderTop: "1px solid #e0e0e0",
             display: "flex", justifyContent: "center",
@@ -3153,7 +3153,7 @@ export default function IncomingInvoicesClient({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px",
-              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
+              paddingBottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
               width: "100%", maxWidth: 430,
             }}
           >

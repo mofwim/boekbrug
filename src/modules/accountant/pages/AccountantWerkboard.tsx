@@ -289,7 +289,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 30px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124', background: '#FFFFFF' }}
               />
               {query && (
-                <button onClick={() => setQuery('')} aria-label="Wissen" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setQuery('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
             {/* [HERTIKKEN] De machineleesbare CSV over ALLE klanten van dit kwartaal.

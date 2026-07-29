@@ -1343,7 +1343,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           selecting. Enabled at ≥2 facturen of the same klant. ── */}
       {selectMode && (
         <div style={{
-          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + env(safe-area-inset-bottom))`,
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           maxWidth: 648, margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
@@ -1383,7 +1383,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         onClick={() => router.push('/dashboard/invoice/new')}
         style={{
           position: 'fixed',
-          bottom: `calc(24px + env(safe-area-inset-bottom))`,
+          bottom: `calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           right: 20,
           background: M3.primaryContainer,
           color: M3.onPrimaryContainer,

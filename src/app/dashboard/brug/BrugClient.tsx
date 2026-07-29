@@ -383,7 +383,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
             style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: R.lg, border: `1px solid ${M3.outline}`, fontSize: 14.5, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
           />
           {search && (
-            <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+            <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
           )}
         </div>
       )}

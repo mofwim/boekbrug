@@ -237,7 +237,7 @@ export default function IntakeButton({
         aria-label="Toevoegen"
         style={{
           position: 'fixed',
-          bottom: 'calc(88px + env(safe-area-inset-bottom))',
+          bottom: 'calc(88px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
           right: 20,
           background: M3.primary, color: M3.onPrimary,
           borderRadius: 16, padding: '16px 20px',
@@ -507,7 +507,7 @@ export default function IntakeButton({
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px',
-              paddingBottom: 'calc(24px + env(safe-area-inset-bottom))',
+              paddingBottom: 'calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
               width: '100%', maxWidth: 430,
             }}
           >

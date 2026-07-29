@@ -302,7 +302,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
             style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
           />
           {search && (
-            <button onClick={() => setSearch("")} aria-label="Wissen"
+            <button onClick={() => setSearch("")} aria-label="Wissen" className="tap-44"
               style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
           )}
         </div>

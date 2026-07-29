@@ -486,7 +486,7 @@ export default function KasClient() {
               style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, fontSize: 14, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen"
+              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
             )}
           </div>

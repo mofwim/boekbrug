@@ -20,7 +20,7 @@ export function BulkBar({ selectedCount, onShare, onMove, onDelete, onStar, onCl
   return (
     <div style={{
       // [SAFE-AREA] Clears the home indicator now that viewportFit:cover is on.
-      position: "fixed", bottom: "calc(24px + env(safe-area-inset-bottom))", left: "50%",
+      position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))", left: "50%",
       transform: "translateX(-50%)",
       zIndex: 100,
       display: "flex", alignItems: "center", gap: 4,

@@ -345,7 +345,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
         onClick={() => router.push('/dashboard/invoice/new')}
         style={{
           position: 'fixed',
-          bottom: `calc(24px + env(safe-area-inset-bottom))`,
+          bottom: `calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           right: 20,
           background: '#D3E3FD',
           color: '#041E49',
