@@ -2,6 +2,7 @@
 // BOEK-003: Invoice Duplicate (POST)
 
 import { NextRequest, NextResponse } from 'next/server'
+import { amsterdamToday } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { logAuditAction } from '@/lib/audit'
 
@@ -27,7 +28,7 @@ export async function POST(
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
-    const today = new Date().toISOString().split('T')[0]
+    const today = amsterdamToday()
     const dueDate = new Date()
     dueDate.setDate(dueDate.getDate() + 30)
 

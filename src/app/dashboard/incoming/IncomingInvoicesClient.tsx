@@ -13,6 +13,8 @@
 // - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback, useRef } from "react";
+// [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
+import { amsterdamToday } from '@/lib/format-nl'
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
 import { FONT } from "@/lib/design/tokens";
@@ -431,7 +433,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 <input
                   type="date"
                   value={backfillDate}
-                  max={new Date().toISOString().slice(0, 10)}
+                  max={amsterdamToday()}
                   onChange={(e) => setBackfillDate(e.target.value)}
                   disabled={syncing}
                   style={{
@@ -628,7 +630,7 @@ function ConfirmPaidModal({
   // [BRIDGE-QUARTER] real payment date (defaults to today) + confirmation amount.
   // confirmAmount is UI-only for now (NOT stored) — explicit defer per brief §2.
   const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().slice(0, 10)
+    amsterdamToday()
   );
   const [confirmAmount, setConfirmAmount] = useState("");
 
@@ -1062,7 +1064,7 @@ function ConfirmPaidModal({
             <input
               type="date"
               value={paymentDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={amsterdamToday()}
               onChange={(e) => setPaymentDate(e.target.value)}
               disabled={submitting}
               style={{

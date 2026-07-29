@@ -27,6 +27,7 @@
 //     this cron finds zero enabled owners and sends nothing.
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamToday } from "@/lib/format-nl";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
@@ -313,7 +314,7 @@ export async function GET(req: NextRequest) {
         const wik = isFinalTier(tier, offsets)
           ? buildWikNotice({
               openstaand,
-              sentIso: new Date().toISOString().slice(0, 10),
+              sentIso: amsterdamToday(),
               debtorType: debtorTypeOf({ client_btw_number: inv.client_btw_number }),
             })
           : null;

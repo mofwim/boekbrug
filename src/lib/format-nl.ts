@@ -85,3 +85,31 @@ export function deriveBtwRate(
   if (!ex) return 0
   return Math.round((Number(btwAmount ?? 0) / ex) * 100)
 }
+/**
+ * Today's date in Europe/Amsterdam as ISO 'YYYY-MM-DD'.
+ *
+ * [TZ] `new Date().toISOString().slice(0, 10)` is UTC, and the Netherlands is
+ * UTC+1/+2 — so between midnight and 01:00 (02:00 in summer) local time it
+ * returns YESTERDAY. In a bookkeeping app that is not cosmetic:
+ *
+ *   · an invoice created just after midnight on 1 January gets dated 31 December
+ *     — the previous FISCAL YEAR and the previous BTW-quarter, on a document
+ *     that already carries a number from the doorlopende reeks;
+ *   · a payment recorded just after midnight on 1 July gets dated 30 June, which
+ *     under KASSTELSEL puts its BTW in a quarter that may already be filed;
+ *   · used as an input `max`, it stops the owner picking today at all.
+ *
+ * The crons already work in Amsterdam time for exactly this reason. Client
+ * components must use the same clock, or the two disagree about what "today" is.
+ *
+ * `now` is injectable so this is testable without touching the system clock.
+ */
+export function amsterdamToday(now: Date = new Date()): string {
+  // en-CA renders ISO-ordered YYYY-MM-DD, so no reassembly is needed.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Amsterdam',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now)
+}

@@ -24,16 +24,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { planOccurrence, termDaysOf, addDays, CADENCE_LABEL, type Cadence } from "@/lib/recurring";
+// [TZ] One definition of "today in Amsterdam", shared with the screens — a cron and a form that
+// disagree about the date would put an invoice and its concept in different quarters.
+import { amsterdamToday } from "@/lib/format-nl";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-
-/** Amsterdam's today — the same clock the reminder cron bills by. */
-function amsterdamToday(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date());
-}
 
 type ScheduleRow = {
   id: string;

@@ -22,6 +22,8 @@
 // Defense in depth: the update touches ONLY payment fields — never amounts.
 
 import Link from 'next/link'
+// [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
+import { amsterdamToday } from '@/lib/format-nl'
 import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
@@ -630,7 +632,7 @@ export default function IncomingManageClient({
         invoiceId: ctx.id,
         action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
         paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        paymentDate: ctx.paymentDate ?? amsterdamToday(),
         ...(ctx.amount != null ? { amount: ctx.amount } : {}),
         ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
       }),
@@ -655,7 +657,7 @@ export default function IncomingManageClient({
     } else if (ctx.newStatus === 'paid') {
       const patch = {
         payment_method: (ctx.paymentMethod ?? 'bank') as 'kas' | 'bank',
-        payment_date: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        payment_date: ctx.paymentDate ?? amsterdamToday(),
       }
       // [MANUAL-PARTIAL-PAY] The server decides: the typed amount may have completed the
       // invoice after all (the last instalment).
@@ -1606,7 +1608,9 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
   // Absent → no field (a bundle payment stays all-or-nothing).
   openAmount?: number
 }) {
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  // [TZ] Amsterdam, not UTC — see format-nl.ts. A betaaldatum one day early can land in a
+  // kasstelsel quarter that is already filed.
+  const [paymentDate, setPaymentDate] = useState(amsterdamToday())
   // [MANUAL-PARTIAL-PAY] Empty means "all of it" — zero keystrokes for the ordinary case.
   const [amountText, setAmountText] = useState('')
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
@@ -1632,7 +1636,7 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
             <input
               type="date"
               value={paymentDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={amsterdamToday()}
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />

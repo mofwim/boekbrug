@@ -7,6 +7,7 @@
 // UX friction; the real cost/abuse guard is the per-IP rate limit on the API.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { amsterdamToday } from '@/lib/format-nl'
 import Link from 'next/link'
 import { formatEuroNL } from '@/lib/format-nl'
 
@@ -47,7 +48,7 @@ interface ScanResult {
 
 // localStorage usage: { day: 'YYYY-MM-DD', count: number }
 function today(): string {
-  return new Date().toISOString().slice(0, 10)
+  return amsterdamToday()
 }
 function readUsage(): number {
   try {
