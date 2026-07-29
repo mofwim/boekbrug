@@ -1383,7 +1383,13 @@ export async function buildClosingPackageZip(args: {
       .lte("entry_date", end)
       .order("id", { ascending: true })
       .range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] cash_entries read failed", { ownerId, error: String(e) }); return null; });
+  // [NO-EMPTY-LEDGER] Een mislukte lezing werd hier een LEGE la, en een lege la rekent gewoon
+  // door: de concept-aangifte kwam eruit alsof de ondernemer dat kwartaal geen cent contant had
+  // omgezet. De boekhouder kreeg een pakket dat er compleet uitzag. Dat is de gevaarlijkste vorm
+  // die dit product kent — niet een ontbrekend bestand (dat zie je), maar een compleet ogend
+  // bestand met een been eraf.
+  const cashReadFailed = cashAllRows == null;
   const cashEntries: ResultCashEntry[] = (cashAllRows ?? []).map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount,
@@ -1404,7 +1410,10 @@ export async function buildClosingPackageZip(args: {
       .lte("date", end)
       .order("id", { ascending: true })
       .range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] bank_transactions read failed", { ownerId, error: String(e) }); return null; });
+  // [NO-EMPTY-LEDGER] Zie hierboven: geen bankregels lezen is iets heel anders dan geen
+  // bankregels hebben, en het concept mag die twee niet door elkaar halen.
+  const bankReadFailed = bankAllRows == null;
   // [SETTLE] Shared mapper — identical card-settlement de-dup to /api/result, /api/aangifte and
   // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
   // package never double-counts a covered-day card settlement.
@@ -1457,11 +1466,17 @@ export async function buildClosingPackageZip(args: {
     direction: i.direction === "incoming" ? "incoming" : "outgoing",
     label: i.invoice_number,
   }));
+  // [NO-EMPTY-LEDGER] Bij een mislukte grootboeklezing is de omzet waarop de KOR-drempel wordt
+  // getoetst te laag, en zou een terechte drempelwaarschuwing juist ONDERDRUKT worden. Dan liever
+  // helemaal niet toetsen dan geruststellen op een half getal.
+  const ledgerReadFailed = cashReadFailed || bankReadFailed;
   const omzetForKorCheck =
     result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
-  const regimeFlags = await collectRegimeFlags({
-    client: supabase, korActive, omzetForKorCheck, invoices: regimeInvoices,
-  }).catch(() => []);
+  const regimeFlags = ledgerReadFailed
+    ? []
+    : await collectRegimeFlags({
+        client: supabase, korActive, omzetForKorCheck, invoices: regimeInvoices,
+      }).catch(() => []);
   const regimeNotes = regimeFlags.map(regimeFlagNote);
   for (const f of regimeFlags) {
     warnings.push({ code: `regime_${f.code}`, message: regimeFlagNote(f) });
@@ -1483,7 +1498,25 @@ export async function buildClosingPackageZip(args: {
   // or reclaimable voorbelasting. An empty quarter gets no invented filing.
   const hasDeclarable =
     result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
-  const conceptAangifte = hasDeclarable
+  // [NO-EMPTY-LEDGER] Kon een grootboek niet worden gelezen, dan komt er GEEN concept mee. Een
+  // concept-aangifte is een optelsom die pretendeert compleet te zijn; met een ontbrekend been is
+  // dat een onwaarheid met een bedrag eraan. De boekhouder krijgt in plaats daarvan de reden, en
+  // alle échte bewijsstukken — de factuur-PDF's, het bankafschrift, dagomzet.csv — blijven
+  // gewoon in het pakket zitten. Kijken en exporteren blijft altijd werken; alleen de PROJECTIE
+  // die niet klopt, ontbreekt.
+  if (cashReadFailed) {
+    warnings.push({
+      code: "cash_read_failed",
+      message: "De kasboekingen konden niet volledig worden gelezen. Daarom zit er geen concept-BTW-aangifte in dit pakket — die zou het contante deel missen. De facturen en bestanden zijn wel compleet. Genereer het pakket opnieuw.",
+    });
+  }
+  if (bankReadFailed) {
+    warnings.push({
+      code: "bank_read_failed",
+      message: "De bankregels konden niet volledig worden gelezen. Daarom zit er geen concept-BTW-aangifte in dit pakket — die zou bankmutaties missen. De facturen en bestanden zijn wel compleet. Genereer het pakket opnieuw.",
+    });
+  }
+  const conceptAangifte = hasDeclarable && !ledgerReadFailed
     ? buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes)
     : null;
 
@@ -1502,7 +1535,7 @@ export async function buildClosingPackageZip(args: {
     supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
       .eq("user_id", ownerId).lte("entry_date", end)
       .order("entry_date", { ascending: true }).range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] kasboek entries read failed", { ownerId, error: String(e) }); return null; });
   const kasEntries: KasEntry[] = (kasEntriesRaw ?? []).map((r) => ({
     entry_date: r.entry_date, direction: r.direction === "in" ? "in" : "out",
     amount: r.amount, category: r.category, description: r.description,
@@ -1511,8 +1544,13 @@ export async function buildClosingPackageZip(args: {
     supabase.from("daily_turnover").select("turnover_date, cash_amount")
       .eq("user_id", ownerId).lte("turnover_date", end)
       .order("turnover_date", { ascending: true }).range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] kasboek turnover read failed", { ownerId, error: String(e) }); return null; });
   const kasTurnover: KasTurnoverDay[] = (kasTurnoverRaw ?? []) as KasTurnoverDay[];
+  // [NO-EMPTY-LEDGER] Het kasboek is een LOPEND SALDO. Faalt één van de twee bronnen, dan telt
+  // het blad de ene kant wel en de andere niet, en komt er een eindsaldo uit dat niemand kan
+  // verklaren en dat niet strookt met de Kas-pagina — een blad met ontvangsten en zonder uitgaven
+  // ziet er bovendien uit als winst. Dan liever helemaal geen blad, met de reden erbij.
+  const kasboekReadFailed = kasEntriesRaw == null || kasTurnoverRaw == null;
 
   // [KAS-OPENING] Seed the first period with the drawer's starting float so the accountant's
   // Kasboek eindsaldo matches the app's headline saldo and reality.
@@ -1525,9 +1563,15 @@ export async function buildClosingPackageZip(args: {
     openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter, startingBalance: kasStartingBalance }),
   });
   const kasboekXlsx: Uint8Array | null =
-    kb.months.length > 0 || kb.openingBalance !== 0
+    !kasboekReadFailed && (kb.months.length > 0 || kb.openingBalance !== 0)
       ? matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`)
       : null;
+  if (kasboekReadFailed) {
+    warnings.push({
+      code: "kasboek_unavailable",
+      message: "Het kasboek kon niet volledig worden gelezen en zit daarom niet in dit pakket — een half kasboek zou een eindsaldo tonen dat nergens op slaat. De facturen en bestanden zijn wel compleet. Genereer het pakket opnieuw.",
+    });
+  }
 
   return assembleClosingPackageZip({
     year,

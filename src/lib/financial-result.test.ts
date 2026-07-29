@@ -588,5 +588,68 @@ console.log("\n— [RUBRIEK-SPLIT][KASSTELSEL] a payment carries a share of EVER
   check("…with the same totals", near(plain.omzet, r.omzet) && near(plain.btwVerschuldigd, r.btwVerschuldigd));
 }
 
+console.log("\n— [KAS-RICHTING] een tegenboeking telt de andere kant op —");
+{
+  // De kolom zegt het zelf: `amount ... CHECK (amount >= 0) -- always positive; direction gives
+  // the sign`. De lus las direction niet, dus een terugbetaling maakte de aangifte DUURDER.
+
+  // Een klant krijgt EUR 121 contant terug (out + omzet, 21%).
+  const refundToCustomer = computeResult([], [], [
+    { direction: "out", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-04" },
+  ]);
+  check("terugbetaling aan klant verlaagt de omzet", near(refundToCustomer.omzet, -100));
+  check("terugbetaling aan klant verlaagt de af te dragen BTW", near(refundToCustomer.btwVerschuldigd, -21));
+
+  // En de gewone kant blijft onveranderd.
+  const cashSale = computeResult([], [], [
+    { direction: "in", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-04" },
+  ]);
+  check("contante verkoop telt gewoon positief", near(cashSale.omzet, 100) && near(cashSale.btwVerschuldigd, 21));
+
+  // Verkoop + terugbetaling van hetzelfde bedrag = nul, niet het dubbele.
+  const both = computeResult([], [], [
+    { direction: "in", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-04" },
+    { direction: "out", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-04" },
+  ]);
+  check("verkoop + terugbetaling heffen elkaar op", near(both.omzet, 0) && near(both.btwVerschuldigd, 0));
+
+  // Een leverancier betaalt EUR 121 contant terug (in + kosten, met bon en tarief).
+  const refundFromSupplier = computeResult([], [], [
+    { direction: "in", amount: 121, category: "kosten", btw_rate: 21, document_id: "doc-1", date: "2026-05-04" },
+  ]);
+  check("terugbetaling van leverancier verlaagt de kosten", near(refundFromSupplier.kosten, -100));
+  check("terugbetaling van leverancier verlaagt de voorbelasting", near(refundFromSupplier.btwVoorbelasting, -21));
+
+  // Ongedocumenteerde contante kostenteruggave: vol bruto terug, nooit voorbelasting.
+  const refundNoDoc = computeResult([], [], [
+    { direction: "in", amount: 50, category: "kosten", btw_rate: null, date: "2026-05-04" },
+  ]);
+  check("teruggave zonder bon verlaagt kosten bruto, zonder BTW",
+    near(refundNoDoc.kosten, -50) && near(refundNoDoc.btwVoorbelasting, 0));
+
+  // Contant terugbetaald loon (zeldzaam, maar de richting moet kloppen).
+  const wageBack = computeResult([], [], [
+    { direction: "in", amount: 200, category: "salaris", btw_rate: null, date: "2026-05-04" },
+  ]);
+  check("teruggekregen loon verlaagt de kosten", near(wageBack.kosten, -200));
+
+  // De nudge mag zichzelf niet uitzetten: een ongetarifeerde terugbetaling mag het gemelde
+  // bedrag aan ongetarifeerde omzet niet verkleinen.
+  const nudge = computeResult([], [], [
+    { direction: "in", amount: 100, category: "omzet", btw_rate: null, date: "2026-05-04" },
+    { direction: "out", amount: 40, category: "omzet", btw_rate: null, date: "2026-05-04" },
+  ]);
+  check("nudge telt alleen positieve ongetarifeerde omzet", near(nudge.cashOmzetZonderBtw, 100));
+  check("de omzet zelf verrekent de terugbetaling wel", near(nudge.omzet, 60));
+
+  // prive/transfer blijven aan beide kanten buiten het resultaat.
+  const excluded = computeResult([], [], [
+    { direction: "out", amount: 500, category: "prive", btw_rate: null, date: "2026-05-04" },
+    { direction: "in", amount: 500, category: "transfer", btw_rate: null, date: "2026-05-04" },
+  ]);
+  check("prive en transfer raken omzet noch kosten",
+    excluded.omzet === 0 && excluded.kosten === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

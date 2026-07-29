@@ -431,8 +431,29 @@ export function computeResult(
   }
 
   // 3) Cash book.
-  for (const c of cashEntries) {
+  //
+  // [KAS-RICHTING] `amount` is ALTIJD positief — de kolom zegt het zelf:
+  //     amount numeric NOT NULL CHECK (amount >= 0)  -- always positive; direction gives the sign
+  // Deze lus las `direction` niet, en dus telde elke tegenboeking de verkeerde kant op:
+  //   · een KLANT die contant zijn geld terugkrijgt (out + omzet) VERHOOGDE de omzet én de af te
+  //     dragen BTW — een terugbetaling maakte de aangifte duurder in plaats van goedkoper;
+  //   · een LEVERANCIER die contant terugbetaalt (in + kosten) VERHOOGDE de kosten.
+  // /api/cash keurt beide combinaties gewoon goed (richting en categorie worden los gevalideerd,
+  // zie route.ts:90 en :96), dus dit is geen theoretisch pad. En het is volledig stil: het getal
+  // ziet er plausibel uit, staat nergens gemarkeerd, en loopt zo door naar de concept-aangifte.
+  //
+  // De bankregel hierboven doet dit al goed (debet/credit geeft daar het teken). Dit trekt het
+  // kasboek gelijk: één bedrag met een teken, precies zoals de kolom het bedoelt.
+  const signedCash = (c: ResultCashEntry): number => {
     const amt = c.amount ?? 0;
+    // Een verkoop komt binnen ('in'), een kostenpost gaat eruit ('out'). De andere richting is
+    // in beide gevallen de terugboeking, en die hoort het saldo te VERLAGEN.
+    const positiveDirection = c.category === "omzet" ? "in" : "out";
+    return c.direction === positiveDirection ? amt : -amt;
+  };
+
+  for (const c of cashEntries) {
+    const amt = signedCash(c);
     if (c.category === "omzet") {
       // [TURNOVER] cash omzet on a covered day is part of the till turnover already
       // counted — exclude it from omzet, BTW, AND the no-rate nudge (all three).
@@ -447,7 +468,10 @@ export function computeResult(
         addSale(c.btw_rate, net, amt - net);
       } else {
         omzet += amt;
-        cashOmzetZonderBtw += amt; // no rate → counted as revenue, flagged for BTW
+        // [KAS-RICHTING] Alleen een POSITIEVE ongetarifeerde verkoop voedt de nudge. Een
+        // terugbetaling erbij optellen zou het gemelde bedrag verkleinen en zo échte
+        // ongetarifeerde omzet verstoppen — de nudge zou zichzelf uitzetten.
+        if (amt > 0) cashOmzetZonderBtw += amt; // no rate → counted as revenue, flagged for BTW
       }
     } else if (c.category === "kosten") {
       // [CASH-COST-VAT] A cash expense with a LINKED BON and a rate → split gross into net cost +
