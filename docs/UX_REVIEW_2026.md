@@ -213,6 +213,65 @@ de browser. Ze staan nu in `:root`.
 
 ---
 
+## Navigatie-audit — heen en terug, alle 40 routes
+
+Op verzoek nagelopen met het ÉCHTE navigatiemodel: `getParentPath` uit
+`src/lib/navigation.ts` uitgevoerd over elke route in `src/app/dashboard`, per
+rol, met de rolwissels eruit gefilterd (die worden door een redirect
+afgevangen). 69 rolbewuste ouderketens.
+
+**Wat goed was.** Elke keten bereikt de eigen rol-home, geen enkele lus, geen
+enkele gestrande pagina, maximaal drie stappen diep. De history zelf ook: drie
+niveaus vooruit, drie keer terug, twee keer vooruit — allemaal correct nagemeten
+in Chromium. De cross-rol "lussen" die de eerste run meldde bleken vals alarm:
+`/dashboard` stuurt een boekhouder door naar `/dashboard/accountant` en
+omgekeerd, dus die combinaties bestaan niet.
+
+**Drie dingen die niet goed waren.**
+
+**1. De onderbalk loog over waar je stond.** Het Start-tabblad matchte op prefix,
+en `/dashboard` is een prefix van élke dashboardroute. Sta je op Kas, Waarheid,
+Berichten of Instellingen, dan lichtte "Start" op. Een tabbalk die je positie
+verkeerd weergeeft is erger dan een die toegeeft dat hij dit scherm niet dekt.
+Het home-tabblad matcht nu exact; staat je scherm in geen enkele bestemming, dan
+licht er niets op — en dat is het eerlijke antwoord.
+
+**2. `/dashboard/settings/facturering` was een doodlopende weg.** Geen ouderregel,
+geen titel in `DashboardChrome`, dus de gedeelde balk tekende er helemaal niets:
+een echt scherm zonder terugknop en zonder kop. En erger dan een ongelukkig
+terugdoel, want de pagina wordt geopend vanuit een facturatie-e-mail en vanuit de
+Stripe-retour-URL — een koude opening in een nieuw tabblad, zonder history om
+terug te gaan, en in standalone PWA-modus zonder browserknop. Je kwam er en je
+bleef er. Bovendien linkte niets in de app ernaartoe: wie zijn plan wilde zien
+kon er niet komen. Nu: een ouder (`/dashboard/settings`), een titel in de balk,
+en een rij in Instellingen die ernaartoe gaat. De in-body `<h1>` die de baltitel
+herhaalde is weg, en de verboden `system-ui`-stack ook.
+
+**3. Terug landde altijd bovenaan de pagina.** `html` én `body` stonden op
+`height: 100%`, dus het documentvak bleef exact één viewport hoog terwijl de
+inhoud doorliep tot 1837px. Op het moment dat de scrollpositie hersteld wordt is
+het document nog ~900px, dus de offset klapt naar 0; een frame later groeit de
+inhoud en is de positie weg. Nagemeten vóór: 1837px pagina, gescrold naar 600,
+terug → 0.
+
+Datzelfde `body { height: 100% }` overschreed trouwens stilzwijgend de
+`min-h-full`-klasse die de layout zelf al vroeg: gewone regels in `globals.css`
+staan buiten een laag, en ongelaagde CSS verslaat Tailwinds `@layer utilities`.
+De klasse had het goed; de regel overschreef hem.
+
+Dat is nu `min-height` (en `100dvh` op body, want een percentage zou tegen een
+auto-hoge `html` in elkaar zakken). Het documentvak is daarmee wél correct —
+1837px in plaats van 900px — maar **de scrollpositie wordt nog steeds niet
+hersteld.** De rest van de oorzaak zit in hoe de App Router bij een popstate
+herstelt, niet in CSS; het is geen terugval (de basis deed exact hetzelfde, 600 →
+0) maar het is ook niet opgelost. Zie "wat er nog ligt".
+
+De hoogtefix is wel bewezen veilig: twaalf publieke pagina's op 390 en 1280
+pixels, niets ingezakt, niets dat overloopt, de sticky kopbalk plakt nog, en de
+voettekst sluit nog op de onderrand aan.
+
+---
+
 ## Post-mortem — View Transitions, aangezet en weer uitgezet
 
 Fase 2 zette `experimental.viewTransition` aan, met een richtingsanimatie tussen
@@ -259,25 +318,30 @@ Op volgorde van wat het meeste oplevert:
 1. **View Transitions opnieuw, mét test.** Eén gedeeld balk-element (of twee
    namen), en een ingelogde navigatie heen en terug in beide rollen als bewijs.
    Zie de post-mortem hierboven.
-2. **Cache Components + `unstable_instant`** (Next 16). De skeletten dekken het
+2. **Scrollpositie herstellen bij terug.** De helft van de oorzaak is weg (het
+   documentvak is nu echt zo hoog als zijn inhoud); de rest zit in de App Router
+   bij popstate. Dit is de meest gevoelde overgebleven ruwheid: terug naar een
+   lange facturenlijst begint bovenaan. Meet met `window.scrollY` vóór en na een
+   `goBack()` — de test staat in de navigatie-audit hierboven beschreven.
+3. **Cache Components + `unstable_instant`** (Next 16). De skeletten dekken het
    wachten af; dit haalt het wachten wég. Raakt de datalaag, dus een eigen
    traject — `node_modules/next/dist/docs/01-app/02-guides/instant-navigation.md`
    is het startpunt.
-3. **Optimistische updates** (`useOptimistic`) op de handelingen die het vaakst
+4. **Optimistische updates** (`useOptimistic`) op de handelingen die het vaakst
    herhaald worden: een factuur op betaald zetten, een banktransactie
    bevestigen, een bon categoriseren. Nu wacht elk van die tikken op het netwerk
    voor er iets beweegt.
-4. **De onboarding-wizard** is 985 regels in één component met een handgebouwde
+5. **De onboarding-wizard** is 985 regels in één component met een handgebouwde
    stapmachine (inclusief sub-stappen `"3A"/"3B"/"3C"`) en wisselt van stap
    zonder enige overgang. Voor een meerstapsflow is dat de meest zichtbare
    gemiste beweging die er nog is.
-5. **Login en register zijn geen `<form>`.** Enter werkt alleen vanuit het
+6. **Login en register zijn geen `<form>`.** Enter werkt alleen vanuit het
    wachtwoordveld, mobiele toetsenborden krijgen geen "Ga"-toets
    (`enterKeyHint` staat nergens).
-6. **Nog vier of vijf zoekvelden, drie kwartaalkiezers en zes vormen van
+7. **Nog vier of vijf zoekvelden, drie kwartaalkiezers en zes vormen van
    "niets hier"** zijn nog per pagina gebouwd. Gedeelde componenten daarvoor
    zouden de laatste zichtbare inconsistenties opruimen.
-7. **Op 280px** (de buitenkant van een Fold) loopt de inhoud van de rekenhulpen
+8. **Op 280px** (de buitenkant van een Fold) loopt de inhoud van de rekenhulpen
    nog 5px over. De kopbalk past daar wel.
-8. **De `screenshots` in het manifest** ontbreken, waardoor het
+9. **De `screenshots` in het manifest** ontbreken, waardoor het
    installatiedialoog op Android minimaal blijft.

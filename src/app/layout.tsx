@@ -81,7 +81,9 @@ export default function RootLayout({
   return (
     <html
       lang="nl"
-      className={`${roboto.variable} ${notoArabic.variable} h-full antialiased`}
+      /* [SCROLL] No `h-full` here: height:100% on the root is half of what
+         broke scroll restoration — see the note on html/body in globals.css. */
+      className={`${roboto.variable} ${notoArabic.variable} antialiased`}
     >
       <head>
         {/* [Design System] Material Symbols — icon font, CDN.

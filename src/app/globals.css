@@ -122,10 +122,28 @@
   box-sizing: border-box;
 }
 
-html { height: 100%; }
+/* [SCROLL] min-height, NOT height. With `height: 100%` on both html and body the
+   document box stayed exactly one viewport tall while its content overflowed to
+   whatever it needed — and that broke scroll restoration on every back
+   navigation in the app. At the moment the browser (and Next's router) restores
+   the previous scrollY, the document is still only ~900px tall, so the offset
+   clamps to 0; the content grows a frame later and the scroll is already lost.
+   Measured before the fix: a 1837px page, scrolled to 600, back → 0.
+   That is what made going back always dump you at the top of a list.
+
+   NB: `body { height: 100% }` also silently beat the `min-h-full` class the
+   layout already asked for — plain rules in this file are unlayered, and
+   unlayered CSS outranks Tailwind's @layer utilities. The class was right; this
+   rule overrode it.
+
+   body uses dvh (with a vh fallback) rather than 100%: a percentage min-height
+   on body resolves against html's COMPUTED height, which is now auto, so it
+   would collapse instead of filling the screen. */
+html { min-height: 100%; }
 
 body {
-  height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   background-color: var(--color-bg);
   color: var(--color-text-primary);
   font-family: var(--font-sans);

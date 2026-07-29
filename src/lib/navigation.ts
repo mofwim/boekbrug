@@ -178,6 +178,18 @@ const PARENT_RULES: ParentRule[] = [
     },
   },
 
+  // ── settings/facturering → settings ──────────────────────────────────────
+  // [NAV] This page had NO parent rule and NO title in DashboardChrome, so the
+  // shared bar rendered nothing at all: a real screen with no back button and no
+  // heading. Worse than an awkward back target — it is reached from a billing
+  // e-mail and from the Stripe return URL, i.e. a cold open in a fresh tab with
+  // no history to go back to, and in standalone PWA mode there is no browser
+  // back button either. You landed there and stayed there.
+  {
+    match: /^\/dashboard\/settings\/facturering$/,
+    parent: () => '/dashboard/settings',
+  },
+
   // ── bank/categoriseren → bank ────────────────────────────────────────────
   // [NAV] Without this the categorise screen jumped past the bank overview
   // straight to home. Its real parent is the bank page it was opened from.

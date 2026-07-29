@@ -34,33 +34,49 @@ type Destination = {
   icon: string
   /** Extra paths that should light this tab up (children of the destination). */
   also?: string[]
+  /**
+   * Match this destination on the exact path only, never on its descendants.
+   * Set on the home tab: `/dashboard` is a prefix of EVERY dashboard route, so
+   * without this it claimed all of them — standing on Kas, Waarheid, Berichten
+   * or Instellingen lit up "Start", which tells the user they are somewhere they
+   * are not. A tab bar that misreports your position is worse than one that
+   * admits it does not cover this screen.
+   */
+  exact?: boolean
 }
 
 // Chosen from what each role's home screen puts first, so the bar shortcuts the
 // journeys people already take rather than inventing a new hierarchy.
 const OWNER: Destination[] = [
-  { href: '/dashboard', label: 'Start', icon: 'home' },
+  { href: '/dashboard', label: 'Start', icon: 'home', exact: true },
   { href: '/dashboard/facturen', label: 'Facturen', icon: 'receipt_long', also: ['/dashboard/invoice'] },
   { href: '/dashboard/incoming', label: 'Inkomend', icon: 'inbox', also: ['/dashboard/upload'] },
   { href: '/dashboard/bestanden', label: 'Bestanden', icon: 'folder_open' },
 ]
 
 const ACCOUNTANT: Destination[] = [
-  { href: '/dashboard/accountant', label: 'Start', icon: 'home' },
+  { href: '/dashboard/accountant', label: 'Start', icon: 'home', exact: true },
   { href: '/dashboard/clients/beheer', label: 'Klanten', icon: 'people', also: ['/dashboard/clients'] },
   { href: '/dashboard/quarterly', label: 'Kwartaal', icon: 'bar_chart' },
   { href: '/dashboard/bestanden', label: 'Bestanden', icon: 'folder_open' },
 ]
 
 /**
- * Which tab owns this path. Longest match wins, so /dashboard/facturen beats
- * the /dashboard "Start" tab instead of both lighting up.
+ * Which tab owns this path. Longest match wins, so /dashboard/facturen beats a
+ * shorter prefix instead of both lighting up.
+ *
+ * Returns null when the current screen belongs to no destination — Kas, Brug,
+ * Waarheid, Instellingen and the rest are reached from the home tiles, not from
+ * this bar. Nothing lit is the honest answer there; see `exact` above for the
+ * bug that made "Start" claim them all.
  */
 function activeHref(pathname: string, items: Destination[]): string | null {
   let best: { href: string; len: number } | null = null
   for (const item of items) {
     for (const prefix of [item.href, ...(item.also ?? [])]) {
-      const hit = pathname === prefix || pathname.startsWith(prefix + '/')
+      const hit = item.exact
+        ? pathname === prefix
+        : pathname === prefix || pathname.startsWith(prefix + '/')
       if (hit && (!best || prefix.length > best.len)) best = { href: item.href, len: prefix.length }
     }
   }
