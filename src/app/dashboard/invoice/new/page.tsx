@@ -950,15 +950,26 @@ function NewInvoicePageContent() {
       }))
     )
 
-    // [BOEK-031] Replace flow — markeer de oude factuur
-    // [FACTUUR-A] No browser-side number to stamp anymore; archive only.
-    if (replacesId) {
-      await supabase.from('invoices')
-        .update({ status: 'archived' })
-        .eq('id', replacesId)
-    }
+    // [BOEK-031] Replace flow — de LINK naar de oude factuur wordt hierboven vastgelegd
+    // (original_invoice_id). Wat hier stond, is weg:
+    //
+    //   await supabase.from('invoices').update({ status: 'archived' }).eq('id', replacesId)
+    //
+    // [ISSUED-STAYS] Dat was een rauwe browser-schrijfactie die de hele serverautoriteit
+    // oversloeg — geen refuseArchive, geen money_settled-controle, geen bank_tx_invoices-probe,
+    // geen audit-regel. Ze kon dus een VERSTUURDE, genummerde verkoopfactuur archiveren, precies
+    // wat de doorlopende nummering verbiedt: zo'n factuur wordt gecorrigeerd met een creditnota,
+    // niet uit de reeks gehaald. Geen enkel scherm linkt naar ?replaces= — dit was alleen te
+    // bereiken door de URL zelf te typen — dus er gaat geen werkende flow verloren.
+    //
+    // Wordt de vervang-flow ooit echt gebouwd, dan hoort hij door /api/invoice/[id]/archive te
+    // lopen, waar die grendels wél staan.
 
     // [BOEK-031] from_offerte flow — archiveer de originele offerte — May 2026
+    // Bewust WEL een directe schrijfactie: refuseArchive weigert per definitie alles wat niet
+    // 'incoming' is (regel [ISSUED-STAYS]), dus ook een offerte, en die route zou deze werkende
+    // flow dus breken. Een offerte draagt geen factuurnummer en geen geld — de twee dingen die
+    // die grendel beschermt — dus hier valt niets te omzeilen.
     if (offerteId) {
       await supabase.from('invoices')
         .update({ status: 'archived' })
