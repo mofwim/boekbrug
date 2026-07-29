@@ -50,11 +50,6 @@ export function BackLink({
     <Link
       href={target}
       aria-label={label}
-      // [INSTANT] Marks this navigation as a RETURN, so PageTransition
-      // slides the content right instead of left. Every "Terug" in the
-      // app funnels through this component and SubPageHeader, so tagging
-      // those two covers the whole app without touching each page.
-      transitionTypes={['nav-back']}
       className={className}
       style={{
         display: 'inline-flex',

@@ -117,10 +117,9 @@ precies de omgekeerde volgorde van wat snelheid laat voelen.
   geen JavaScript nodig om te verschijnen.
 - `src/components/ui/Skeletons.tsx` had zes exports en één importeur. De nieuwe
   `PageSkeleton` bouwstenen zijn wat de routes daadwerkelijk gebruiken.
-- **View Transitions** aan: terug schuift naar rechts, dieper naar links. De
-  richting wordt niet geraden — de gedeelde terugknop en `BackLink` markeren hun
-  navigatie als retour, en die twee zijn de enige bron van "terug" in de app. De
-  balk blijft stilstaan (`viewTransitionName: 'page-header'`).
+- **View Transitions zijn geprobeerd en weer verwijderd.** Zie de post-mortem
+  onderaan; kort: de twee balken deelden één `view-transition-name`, en dat
+  breekt zichtbaar.
 - **Vijf `window.location.reload()`** gooiden het hele document weg — bundle,
   scrollpositie, open tabblad, uitgeklapte kaart — voor data die
   `router.refresh()` ook ophaalt.
@@ -214,29 +213,71 @@ de browser. Ze staan nu in `:root`.
 
 ---
 
+## Post-mortem — View Transitions, aangezet en weer uitgezet
+
+Fase 2 zette `experimental.viewTransition` aan, met een richtingsanimatie tussen
+pagina's. Op de Vercel-preview bleek dat kapot, op
+`/dashboard/incoming/manage?from=home`: een **leeg wit vlak over de kopbalk**, de
+eerste factuurregel half eronder, en de sticky werkbalk gestrand halverwege de
+lijst.
+
+**Oorzaak.** Beide bovenbalken kregen `view-transition-name: 'page-header'` — de
+home-balk (`_shared/index.tsx`) en de sub-paginabalk (`SubPageHeader`). Op een
+navigatie van een startpagina naar een subpagina staan die twee even samen in de
+DOM. Een dubbele `view-transition-name` breekt de transitie af, en de
+afgebroken snapshot bleef staan: hij wordt getekend in de view-transition-laag,
+dus bóven alle pagina-inhoud, en `::view-transition-group(page-header)` had van
+mij `animation: none` meegekregen — er was dus niets wat hem nog opruimde.
+
+De `?from=home` in de URL van de screenshot is letterlijk die navigatie.
+
+**Wat er gebeurd is.** Alles weg: de vlag, de CSS, de `PageTransition`-component,
+de `transitionTypes` op de terugknoppen en de `viewTransitionName` op beide
+balken (die laatste ook, want `view-transition-name` maakt op zichzelf al een
+stacking context en een containing block, ook zonder de vlag). De navigatie is
+nu weer een directe wissel — precies zoals hij vóór dit werk was.
+
+**Waarom niet meteen repareren.** De echte fix is klein: één gedeeld element voor
+beide balken, of twee verschillende namen. Maar het bewijs dat het werkt vraagt
+een ingelogde navigatie heen én terug, in beide rollen — en dat kon in deze
+omgeving niet (geen Supabase-sessie). Een niet-verifieerbare reparatie op een
+experimentele vlag is precies hoe dit de eerste keer misging.
+
+**De les.** De twee gemeten fouten uit fase 1 en 4 gingen over de cascade; deze
+gaat over hetzelfde soort onzichtbaarheid, maar in de browser-API: een
+`view-transition-name` is een *unieke* sleutel, en twee elementen die hem tijdens
+één navigatie beide dragen is geen dubbele animatie maar geen animatie plus
+rommel. Van de vijf fases was dit de enige die niet lokaal te bewijzen was, en de
+enige die stukging.
+
+---
+
 ## Wat er nog ligt
 
 Op volgorde van wat het meeste oplevert:
 
-1. **Cache Components + `unstable_instant`** (Next 16). De skeletten dekken het
+1. **View Transitions opnieuw, mét test.** Eén gedeeld balk-element (of twee
+   namen), en een ingelogde navigatie heen en terug in beide rollen als bewijs.
+   Zie de post-mortem hierboven.
+2. **Cache Components + `unstable_instant`** (Next 16). De skeletten dekken het
    wachten af; dit haalt het wachten wég. Raakt de datalaag, dus een eigen
    traject — `node_modules/next/dist/docs/01-app/02-guides/instant-navigation.md`
    is het startpunt.
-2. **Optimistische updates** (`useOptimistic`) op de handelingen die het vaakst
+3. **Optimistische updates** (`useOptimistic`) op de handelingen die het vaakst
    herhaald worden: een factuur op betaald zetten, een banktransactie
    bevestigen, een bon categoriseren. Nu wacht elk van die tikken op het netwerk
    voor er iets beweegt.
-3. **De onboarding-wizard** is 985 regels in één component met een handgebouwde
+4. **De onboarding-wizard** is 985 regels in één component met een handgebouwde
    stapmachine (inclusief sub-stappen `"3A"/"3B"/"3C"`) en wisselt van stap
    zonder enige overgang. Voor een meerstapsflow is dat de meest zichtbare
    gemiste beweging die er nog is.
-4. **Login en register zijn geen `<form>`.** Enter werkt alleen vanuit het
+5. **Login en register zijn geen `<form>`.** Enter werkt alleen vanuit het
    wachtwoordveld, mobiele toetsenborden krijgen geen "Ga"-toets
    (`enterKeyHint` staat nergens).
-5. **Nog vier of vijf zoekvelden, drie kwartaalkiezers en zes vormen van
+6. **Nog vier of vijf zoekvelden, drie kwartaalkiezers en zes vormen van
    "niets hier"** zijn nog per pagina gebouwd. Gedeelde componenten daarvoor
    zouden de laatste zichtbare inconsistenties opruimen.
-6. **Op 280px** (de buitenkant van een Fold) loopt de inhoud van de rekenhulpen
+7. **Op 280px** (de buitenkant van een Fold) loopt de inhoud van de rekenhulpen
    nog 5px over. De kopbalk past daar wel.
-7. **De `screenshots` in het manifest** ontbreken, waardoor het
+8. **De `screenshots` in het manifest** ontbreken, waardoor het
    installatiedialoog op Android minimaal blijft.

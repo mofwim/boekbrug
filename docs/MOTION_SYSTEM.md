@@ -20,7 +20,7 @@ vandaan?". Alles wat langer duurt dan ~400 ms is per definitie te lang.
 Drie dingen bepalen of een scherm *vloeiend* aanvoelt, in deze volgorde:
 
 1. **Reageert het meteen op mijn vinger?** (druk-feedback — §3)
-2. **Zie ik dat er iets komt?** (skeletten en overgangen — fase 2)
+2. **Zie ik dat er iets komt?** (skeletten — `loading.tsx` per route)
 3. **Is het overal hetzelfde?** (deze tokens)
 
 ---
@@ -139,6 +139,17 @@ Deze stonden eerder in componenten: `spin` bestond **vijf keer onder vijf
 namen** (`spin` / `bb-spin` / `bbSpin` / `m3spin` / `bq-spin`), `shimmer` drie
 keer, de toast-stijging twee keer (`fadeInUp` / `m3fadeUp`). Elke kopie zat in
 een andere bundle en dreef weg van de rest.
+
+> ### ⚠️ Geen paginaovergangen
+> Er staan hier bewust **geen** overgangen tussen pagina's. Die zijn geprobeerd
+> (React `<ViewTransition>` + `experimental.viewTransition`) en weer verwijderd:
+> beide bovenbalken droegen `view-transition-name: 'page-header'`, en bij een
+> navigatie van een startpagina naar een subpagina staan die twee even samen in
+> de DOM. Een dubbele naam breekt de transitie af en de afgebroken snapshot
+> bleef als een leeg wit vlak over de kopbalk staan. Wil je het opnieuw
+> proberen: één gedeeld balk-element of twee verschillende namen, en bewijs het
+> met een ingelogde navigatie heen én terug in beide rollen.
+> Zie de post-mortem in `docs/UX_REVIEW_2026.md`.
 
 ---
 

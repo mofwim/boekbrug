@@ -10,19 +10,15 @@ const nextConfig: NextConfig = {
         ? { exclude: ["error", "warn"] }
         : false,
   },
-  // [INSTANT] React's <ViewTransition> — the browser animates between the old
-  // and new page instead of swapping them. Navigation used to be a hard cut:
-  // one screen vanished, another appeared, with nothing connecting them. That
-  // is the single biggest reason the app read as abrupt rather than fluid.
-  //
-  // Safe by construction: where the View Transitions API is unsupported the
-  // navigation simply happens without animation — nothing breaks. The actual
-  // animations are defined in src/app/globals.css under "View transitions",
-  // and the app opts in per-navigation via <Link transitionTypes>.
-  // See docs/MOTION_SYSTEM.md.
-  experimental: {
-    viewTransition: true,
-  },
+  // [INSTANT] View transitions were enabled here and have been REMOVED. Do not
+  // switch them back on without reading the post-mortem in
+  // docs/UX_REVIEW_2026.md first: the two top bars both carried
+  // view-transition-name: 'page-header', and during a navigation from a home to
+  // a sub-page BOTH bars exist in the DOM for a moment. A duplicate
+  // view-transition-name aborts the transition, and the aborted snapshot stayed
+  // painted — a blank white rectangle over the header, at z-index 100 in the
+  // view-transition layer, with the first list row clipped behind it. Seen on
+  // the Vercel preview at /dashboard/incoming/manage?from=home.
 
   // [BOEK-COST] sharp is a native, server-only image library used in src/lib/ai.ts
   // to downscale invoice photos before sending them to Claude. ai.ts is also

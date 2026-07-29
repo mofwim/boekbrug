@@ -7,7 +7,6 @@ import SentryUserProvider from '@/components/providers/SentryUserProvider'
 import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
-import { PageTransition } from '@/components/nav/PageTransition'
 import { BottomNav } from '@/components/nav/BottomNav'
 
 export default async function DashboardLayout({
@@ -49,15 +48,9 @@ export default async function DashboardLayout({
           The bar is placed before {children} so its sticky bar sits at top. */}
       <SubPageHeaderProvider>
         {profile && <DashboardChrome role={subnavRole} />}
-        {/* [INSTANT] Animates BETWEEN pages instead of cutting. Wraps only
-            {children}, never the header — the bar has to stay put while the
-            content slides, or the eye loses its one fixed reference point.
-            See components/nav/PageTransition.
-            [MOBILE] .dash-content adds room for the bottom bar below 640px, so
-            the last row of a list is not left sitting behind it. */}
-        <div className="dash-content">
-          <PageTransition>{children}</PageTransition>
-        </div>
+        {/* [MOBILE] .dash-content reserves room for the bottom bar below 640px,
+            so the last row of a list is not left sitting behind it. */}
+        <div className="dash-content">{children}</div>
       </SubPageHeaderProvider>
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}
