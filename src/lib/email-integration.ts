@@ -30,6 +30,9 @@ import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
 // van factuurfraude, en de enige as waarop élke andere poort hier groen geeft.
 import { detectIbanChange } from '@/lib/iban-change'
+// [AFZENDERREGEL] Adressen waarvan de eigenaar zelf zei "altijd negeren" — toegepast in PHASE 0,
+// dus vóór de AI-aanroep, en altijd verantwoord in de skip-registry.
+import { normalizeSenderEmail, senderIsBlocked, blockedSenderSkipReason } from '@/lib/sender-rules'
 import { createNotification } from '@/lib/notifications'
 import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
@@ -1989,8 +1992,59 @@ export async function syncUserEmails(
     }
   }
 
-  const freshAll = attachments
-    .filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
+  // [AFZENDERREGEL] De eigen regels van de eigenaar: adressen waarvan hij zelf heeft gezegd
+  // "altijd negeren". Hier, in PHASE 0, dus VÓÓR de AI-aanroep — dat is het hele punt: die post
+  // hoeft niet gelezen te worden en de wachtrij hoeft er niet mee vol te lopen.
+  //
+  // Eén query per sync. Faalt hij (tabel bestaat nog niet, netwerk), dan is de set leeg en
+  // importeert alles gewoon zoals voorheen: een kapotte regel mag nooit post tegenhouden.
+  const blockedSenders = new Set<string>()
+  try {
+    const { data: ruleRows } = await supabase
+      .from('email_sender_rules')
+      .select('sender_email')
+      .eq('user_id', userId)
+      .eq('action', 'ignore')
+      .limit(500)
+    for (const r of (ruleRows ?? []) as Array<{ sender_email: string | null }>) {
+      const e = normalizeSenderEmail(r.sender_email)
+      if (e) blockedSenders.add(e)
+    }
+  } catch {
+    // Geen regels toepasbaar → alles importeert. De veilige kant.
+  }
+
+  const notKnown = attachments.filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
+
+  // [AFZENDERREGEL] Overslaan is nooit ONZICHTBAAR. Elke overgeslagen bijlage krijgt een rij in
+  // dezelfde skip-registry die al elke niet-geïmporteerde bijlage verantwoordt, met de reden en
+  // met de regel erin genoemd — zodat "waar is die bijlage gebleven" altijd te beantwoorden is,
+  // en de eigenaar ziet wélke regel het deed. Het bestand zelf blijft gewoon in de mailbox staan.
+  const blockedBySender = blockedSenders.size
+    ? notKnown.filter((a) => senderIsBlocked(a.from, blockedSenders))
+    : []
+  if (blockedBySender.length > 0) {
+    try {
+      const skipPipeline = createPipelineClient()
+      await skipPipeline.from('email_skipped_attachments').upsert(
+        blockedBySender.map((a) => ({
+          user_id: userId,
+          source_message_id: `${a.messageId}:${a.filename}`,
+          filename: a.filename,
+          reason: blockedSenderSkipReason(normalizeSenderEmail(a.from) ?? a.from),
+        })),
+        { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+      )
+    } catch (e) {
+      // De registratie is de verantwoording, niet de blokkade zelf. Mislukt hij, dan wordt de
+      // bijlage nog steeds overgeslagen — maar we laten het niet in stilte gebeuren.
+      console.error('[AFZENDERREGEL] kon overgeslagen bijlage niet registreren', e)
+    }
+  }
+  const blockedKeys = new Set(blockedBySender.map((a) => `${a.messageId}:${a.filename}`))
+
+  const freshAll = notKnown
+    .filter((a) => !blockedKeys.has(`${a.messageId}:${a.filename}`))
     // [BOEK-011] Oldest email first → save order (created_at) follows real
     // chronology, so lists sorted on created_at read naturally. Graph returns
     // newest-first; Gmail is unordered — this sort normalizes both providers.

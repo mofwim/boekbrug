@@ -21,6 +21,8 @@ import { combineImagesToPdf } from "@/lib/combine-images-pdf";
 import { rowMatchesQuery } from "@/lib/search";
 // [NEGEER-REDEN] Eén lijst redenen, gedeeld met de API en met de CHECK-constraint.
 import { ARCHIVE_REASONS, ARCHIVE_REASON_LABELS, archiveReasonLabel, type ArchiveReason } from "@/lib/archive-reason";
+// [AFZENDERREGEL] Alleen bij "geen factuur" mag een blijvende regel voorgesteld worden.
+import { mayOfferSenderRule } from "@/lib/sender-rules";
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
@@ -2280,6 +2282,10 @@ export default function IncomingInvoicesClient({
   // [NEGEER-REDEN] De keuze in de negeer-dialoog. Altijd null bij het openen — nooit een
   // voorgeselecteerde reden, want dan legt het scherm de eigenaar een antwoord in de mond.
   const [ignoreReason, setIgnoreReason] = useState<ArchiveReason | null>(null);
+  // [AFZENDERREGEL] De factuur waarvoor we zojuist "altijd negeren van deze afzender" aanbieden,
+  // en de regels die al gelden (getoond bij Genegeerd, zodat ze op te heffen zijn).
+  const [ruleOfferFor, setRuleOfferFor] = useState<IncomingInvoice | null>(null);
+  const [senderRules, setSenderRules] = useState<{ id: string; sender_email: string }[]>([]);
 
   // [NEGEER-UNDO] Een toast met een handeling erin. De tijd staat bewust langer (7s) wanneer er
   // iets te ondoen valt: 3 seconden is genoeg om iets te LEZEN, niet om te beslissen dat je het
@@ -2548,10 +2554,19 @@ export default function IncomingInvoicesClient({
         // [NEGEER-UNDO] Negeren is één tik en het haalt een factuur uit beeld — dus hoort de weg
         // terug in dezelfde tik te zitten, niet in een tabblad dat je eerst moet vinden. Hergebruikt
         // exact het herstelpad van de Genegeerd-lijst (PATCH), dus er is geen tweede waarheid.
-        showToast("Factuur genegeerd", {
-          label: "Ongedaan maken",
-          run: () => { void handleRestore(invoice); },
-        });
+        // [AFZENDERREGEL] Alleen bij "geen factuur" bieden we de blijvende regel aan: dat is de
+        // enige reden die iets zegt over wat dit ADRES structureel stuurt. "Dubbel" en "niet van
+        // mij" gaan over deze ene factuur — daar een regel van maken zou echte post laten
+        // verdwijnen. Het aanbod is een tweede scherm, nooit iets dat vanzelf gebeurt.
+        if (mayOfferSenderRule(reason, invoice.client_email)) {
+          setRuleOfferFor(invoice);
+          showToast("Factuur genegeerd");
+        } else {
+          showToast("Factuur genegeerd", {
+            label: "Ongedaan maken",
+            run: () => { void handleRestore(invoice); },
+          });
+        }
       } else {
         rollback();
         showToast("Negeren mislukt — factuur staat nog in de wachtrij");
@@ -2561,6 +2576,58 @@ export default function IncomingInvoicesClient({
       showToast("Fout — factuur staat nog in de wachtrij");
     }
   }, [handleRestore]);
+
+  // ── [AFZENDERREGEL] De regels van de eigenaar: ophalen, aanzetten, opheffen ──
+  // Alleen geladen wanneer het Genegeerd-tabblad open staat: daar horen ze thuis (het is de plek
+  // waar je kijkt als je iets mist) en zo kost het de wachtrij niets.
+  const loadSenderRules = useCallback(async () => {
+    try {
+      const res = await fetch("/api/email/sender-rules");
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      setSenderRules(Array.isArray(data.rules) ? data.rules : []);
+    } catch {
+      // Geen regels tonen is beter dan een foutmelding op een tabblad dat verder gewoon werkt.
+    }
+  }, []);
+
+  const addSenderRule = useCallback(async (invoice: IncomingInvoice) => {
+    setRuleOfferFor(null);
+    try {
+      const res = await fetch("/api/email/sender-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: invoice.client_email, invoice_id: invoice.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showToast(`Post van ${data.sender_email ?? "deze afzender"} wordt voortaan overgeslagen`);
+        void loadSenderRules();
+      } else {
+        // [UI-HONESTY] Nooit "regel ingesteld" zeggen als er niets is ingesteld.
+        showToast(data.error || "Regel instellen mislukt — probeer het opnieuw");
+      }
+    } catch {
+      showToast("Regel instellen mislukt — controleer je verbinding");
+    }
+  }, [loadSenderRules]);
+
+  const removeSenderRule = useCallback(async (email: string) => {
+    // Optimistisch weg uit de lijst; bij een fout halen we de echte stand weer op.
+    setSenderRules((prev) => prev.filter((r) => r.sender_email !== email));
+    try {
+      const res = await fetch(`/api/email/sender-rules?email=${encodeURIComponent(email)}`, { method: "DELETE" });
+      if (res.ok) {
+        showToast(`Post van ${email} komt weer binnen`);
+      } else {
+        showToast("Regel opheffen mislukt — probeer het opnieuw");
+        void loadSenderRules();
+      }
+    } catch {
+      showToast("Regel opheffen mislukt — controleer je verbinding");
+      void loadSenderRules();
+    }
+  }, [loadSenderRules]);
 
   // ── [REIMPORT-ALL] Re-read every flagged invoice in one tap ──
   // Sequential (never hammer the AI): one reimport call per "Aandacht nodig" invoice.
@@ -2751,7 +2818,12 @@ export default function IncomingInvoicesClient({
           ] as const).map(([key, label]) => (
             <button
               key={key}
-              onClick={() => { setTab(key); setExpandedId(null); }}
+              onClick={() => {
+                setTab(key); setExpandedId(null);
+                // [AFZENDERREGEL] Regels pas ophalen als het tabblad waar ze staan open gaat —
+                // de wachtrij hoeft er niet op te wachten.
+                if (key === "ignored") void loadSenderRules();
+              }}
               style={{
                 flex: 1, padding: "9px 0", borderRadius: 9, border: "none",
                 background: tab === key ? "#fff" : "transparent",
@@ -2806,6 +2878,45 @@ export default function IncomingInvoicesClient({
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {/* [AFZENDERREGEL] De regels van de eigenaar staan bij Genegeerd, want dat is de plek waar
+            je kijkt als je iets mist. Elke regel met het adres erbij en één knop om hem op te
+            heffen — een mechanisme dat post ongezien tegenhoudt moet net zo makkelijk uit als aan. */}
+        {tab === "ignored" && senderRules.length > 0 && (
+          <div style={{
+            marginBottom: 16, padding: "12px 14px", borderRadius: 12,
+            background: "#f8f9fa", border: "1px solid #e8eaed",
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#3c4043", marginBottom: 8 }}>
+              Afzenders die je overslaat
+            </div>
+            <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 10, lineHeight: 1.45 }}>
+              Bijlagen van deze adressen worden niet geïmporteerd. De e-mails zelf blijven gewoon in
+              je mailbox staan, en wat overgeslagen is zie je terug bij “Overgeslagen bij import”.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {senderRules.map((r) => (
+                <div key={r.id} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                  padding: "8px 10px", borderRadius: 9, background: "#fff", border: "1px solid #e8eaed",
+                }}>
+                  <span style={{ fontSize: 13, color: "#202124", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {r.sender_email}
+                  </span>
+                  <button
+                    onClick={() => removeSenderRule(r.sender_email)}
+                    style={{
+                      background: "transparent", border: "none", color: "#1a73e8",
+                      fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", padding: 0,
+                    }}
+                  >
+                    Opheffen
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -2989,6 +3100,20 @@ export default function IncomingInvoicesClient({
             </button>
           </div>
         </div>
+      )}
+
+      {/* [AFZENDERREGEL] Het aanbod, ná het negeren. Bewust een apart schermpje en geen vinkje in
+          de negeer-dialoog: een blijvende regel die post tegenhoudt verdient een eigen ja, niet
+          een vakje dat je per ongeluk meeneemt terwijl je iets anders aan het doen was. */}
+      {ruleOfferFor && (
+        <ConfirmDialog
+          title="Altijd overslaan?"
+          message={`Je negeerde dit als “geen factuur”. Wil je bijlagen van ${ruleOfferFor.client_email} voortaan overslaan? De e-mails blijven in je mailbox, en je kunt de regel bij Genegeerd weer opheffen.`}
+          confirmLabel="Ja, altijd overslaan"
+          confirmColor="#1a73e8"
+          onConfirm={() => addSenderRule(ruleOfferFor)}
+          onCancel={() => setRuleOfferFor(null)}
+        />
       )}
 
       {/* Ignore confirmation */}
