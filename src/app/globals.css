@@ -49,6 +49,37 @@
 
   /* [Design System] Font variable — set by next/font/google Roboto */
   --font-sans: var(--font-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* ── Semantic aliases (shadcn-style names) ──────────────────────────────── */
+  /* [QUARTERLY-FIX] src/components/quarterly/QuarterlyOverview.tsx and
+     src/app/dashboard/quarterly/page.tsx were written against a shadcn/ui token
+     vocabulary (bg-background, bg-muted, text-muted-foreground, …) that this
+     project never defined. In Tailwind 4 a utility only exists if its
+     `--color-*` theme variable exists, so all 58 of those class names generated
+     NOTHING: card surfaces rendered transparent, "muted" text inherited the
+     body colour, and the loading skeletons (bg-muted) were invisible.
+     Rather than rewrite 58 call sites, the vocabulary is mapped here onto the
+     Material 3 palette above — one alias per name, same values, no new colours.
+     Prefer the M3 names in new code; these exist so the quarterly surface
+     renders on-palette. */
+  --color-background:         #ffffff;  /* = surface — panel/card fill        */
+  --color-foreground:         #202124;  /* = text-primary                     */
+  --color-muted:              #f1f3f4;  /* = surface-2 — subtle fill/track    */
+  --color-muted-foreground:   #5f6368;  /* = text-secondary                   */
+  --color-primary:            #1a73e8;  /* = blue — brand accent              */
+  --color-primary-foreground: #ffffff;  /* on-primary                         */
+}
+
+/* [QUARTERLY-FIX] Tailwind 4 changed the default border colour from v3's
+   gray-200 to `currentColor`. QuarterlyOverview uses the bare `border` utility
+   with no colour class (e.g. "bg-background border rounded-2xl"), so every one
+   of those hairlines was drawing in the inherited TEXT colour — near-black
+   boxes instead of the intended light rule. Restoring a light default here
+   fixes them without touching the markup. Elements that set their own border
+   colour (inline styles, `border-gray-200`, …) still win, so nothing else in
+   the app changes. */
+@layer base {
+  *, ::before, ::after { border-color: var(--color-separator); }
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────────── */

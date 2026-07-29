@@ -54,8 +54,21 @@ export const metadata: Metadata = {
 
 // [Design System] theme-color drives the browser UI tint (mobile address bar,
 // PWA chrome). Uses the BoekBrug blue accent.
+//
+// [SAFE-AREA] viewportFit: "cover" is what makes env(safe-area-inset-*) resolve
+// to a real value. Without it the browser letterboxes the page inside the safe
+// area and every inset reports 0 — which is what used to happen here: the app
+// already wrote `env(safe-area-inset-top)` into SubPageHeader, the invoice
+// action bars and several FABs, and every one of those calculations silently
+// evaluated to `+ 0px`. Turning it on activates the padding that was already
+// written, so on a notched phone in standalone PWA mode the sticky headers
+// clear the status bar and the bottom bars clear the home indicator.
+// NB: the home bar (app/dashboard/_shared DashboardHeader) had no inset padding
+// at all and was fixed in the same change — with cover enabled it would
+// otherwise be the one bar that slides under the notch.
 export const viewport: Viewport = {
   themeColor: "#1a73e8",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -83,7 +96,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=account_balance,account_tree,add,add_a_photo,arrow_back,arrow_downward,arrow_forward,arrow_upward,attach_file,auto_awesome,bar_chart,block,bolt,calculate,check,check_circle,checklist,chevron_left,chevron_right,close,content_copy,content_cut,create_new_folder,cut,delete,delete_forever,description,done_all,download,drive_file_move,drive_file_rename_outline,edit,error,error_outline,event,event_available,expand_less,expand_more,fact_check,folder,folder_open,folder_special,forward_to_inbox,grid_view,group,groups,help,home,hourglass_empty,inbox,info,insert_drive_file,inventory_2,label,label_important,link,link_off,mark_email_unread,monitoring,more_vert,open_in_new,payments,pending,people,person,person_add,photo_camera,picture_as_pdf,point_of_sale,qr_code_2,radio_button_unchecked,receipt_long,refresh,request_quote,restore,rule,schedule,search,search_off,send,settings,share,shield,star,swap_vert,task_alt,undo,upload,upload_file,uppercase,verified,view_list,visibility,visibility_off,warning,work&display=block"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=account_balance,account_tree,add,add_a_photo,arrow_back,arrow_downward,arrow_forward,arrow_upward,attach_file,auto_awesome,autorenew,bar_chart,block,bolt,calculate,check,check_circle,checklist,chevron_left,chevron_right,close,content_copy,content_cut,create_new_folder,cut,delete,delete_forever,description,done_all,download,drive_file_move,drive_file_rename_outline,edit,error,error_outline,event,event_available,expand_less,expand_more,fact_check,folder,folder_open,folder_special,forward_to_inbox,grid_view,group,groups,help,home,hourglass_empty,inbox,info,insert_drive_file,inventory_2,label,label_important,link,link_off,mark_email_unread,monitoring,more_vert,open_in_new,payments,pending,people,person,person_add,photo_camera,picture_as_pdf,point_of_sale,qr_code_2,radio_button_unchecked,receipt_long,refresh,request_quote,restore,rule,schedule,search,search_off,send,settings,share,shield,star,swap_vert,task_alt,undo,upload,upload_file,uppercase,verified,view_list,visibility,visibility_off,warning,work&display=block"
           rel="stylesheet"
         />
       </head>

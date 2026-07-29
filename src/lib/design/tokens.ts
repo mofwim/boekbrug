@@ -40,7 +40,7 @@ export const FONT_NUM = "'Roboto Mono', monospace"
 // (app/dashboard/_shared DashboardHeader) both use this, and any secondary
 // sticky toolbar that must sit BELOW the header offsets by it — so nobody
 // hardcodes a magic `56` again. If the header height ever changes, change it
-// here only. See docs/header-system.md.
+// here only. See docs/HEADER_SYSTEM.md.
 export const PAGE_HEADER_HEIGHT = 56
 
 // CSS `top:` value for a secondary sticky bar that must clear the page header,

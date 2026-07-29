@@ -581,7 +581,15 @@ export function DashboardHeader({
 
   // [HEADER-SYSTEM] Home top bar. Height + surface/border/font come from the
   // shared tokens so it stays in lockstep with the sub-page bar (SubPageHeader);
-  // see docs/header-system.md.
+  // see docs/HEADER_SYSTEM.md.
+  //
+  // [SAFE-AREA] The two bars must handle the notch identically. SubPageHeader
+  // already padded itself by env(safe-area-inset-top) and grew its height to
+  // match; this one did not — it just sat at top:0 with a fixed height. That
+  // difference was invisible while viewportFit was unset (every inset resolved
+  // to 0), but the moment cover is enabled in app/layout.tsx it becomes the one
+  // bar in the app that renders underneath the status bar. Same two lines as
+  // SubPageHeader, so the two homes and every sub-page now clear the notch.
   return (
     <header style={{
       position: 'sticky',
@@ -589,10 +597,13 @@ export function DashboardHeader({
       zIndex: 50,
       backgroundColor: M3.surface,
       borderBottom: `1px solid ${M3.outlineVariant}`,
-      height: PAGE_HEADER_HEIGHT,
+      height: `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area-inset-top))`,
       display: 'flex',
       alignItems: 'center',
+      // NB: the `padding` shorthand must stay ABOVE paddingTop — it resets all
+      // four sides, so listing it after would wipe the safe-area inset out.
       padding: '0 16px',
+      paddingTop: 'env(safe-area-inset-top)',
       gap: 8,
       fontFamily: FONT,
     }}>

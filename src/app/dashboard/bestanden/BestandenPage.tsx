@@ -1881,7 +1881,10 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
         onClick={() => fileInputRef.current?.click()}
         title="Bestand uploaden (of sleep een bestand hierheen)"
         style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 40,
+          // [SAFE-AREA] Matches every other FAB in the app (ZzpDashboard,
+          // WerkplekClient, KlantenClient). A flat `24` put it on top of the
+          // home indicator once viewportFit:cover was enabled in app/layout.tsx.
+          position: "fixed", bottom: "calc(24px + env(safe-area-inset-bottom))", right: 24, zIndex: 40,
           width: 56, height: 56, borderRadius: T.full,
           background: T.primary, border: "none", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
