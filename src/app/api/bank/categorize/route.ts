@@ -57,6 +57,17 @@ export async function GET(req: NextRequest) {
     // land on exactly the counted set (so the owner isn't hunting the flagged rows among omzet/kosten
     // ones), and keeps that set small enough that the 200-row page never truncates the oldest ones.
     const onlyExcluded = sp.get("only") === "excluded";
+    // Quarter date range computed ONCE so the page query and the head-count below
+    // filter identically (no drift between the shown rows and the reported total).
+    let qStart: string | null = null;
+    let qEnd: string | null = null;
+    if (quarterScoped) {
+      const sm = (q - 1) * 3;
+      qStart = `${y}-${String(sm + 1).padStart(2, "0")}-01`;
+      const endD = new Date(Date.UTC(y, sm + 3, 0));
+      qEnd = `${endD.getUTCFullYear()}-${String(endD.getUTCMonth() + 1).padStart(2, "0")}-${String(endD.getUTCDate()).padStart(2, "0")}`;
+    }
+
     let query = supabase
       .from("bank_transactions")
       .select("id, date, amount, counterpart_name, description, category, category_source, category_confirmed")
@@ -65,17 +76,25 @@ export async function GET(req: NextRequest) {
       .is("invoice_id", null)
       .not("category", "is", null);
     if (onlyExcluded) query = query.in("category", [...EXCLUDED_CATEGORIES]);
-    if (quarterScoped) {
-      const sm = (q - 1) * 3;
-      const start = `${y}-${String(sm + 1).padStart(2, "0")}-01`;
-      const endD = new Date(Date.UTC(y, sm + 3, 0));
-      const end = `${endD.getUTCFullYear()}-${String(endD.getUTCMonth() + 1).padStart(2, "0")}-${String(endD.getUTCDate()).padStart(2, "0")}`;
-      query = query.gte("date", start).lte("date", end);
-    }
+    if (qStart && qEnd) query = query.gte("date", qStart).lte("date", qEnd);
     const { data: rows } = await query
       .order("category_confirmed", { ascending: true })
       .order("date", { ascending: false })
       .limit(PAGE_SIZE);
+
+    // [HONEST-TRUNCATION] Exact head-count of the SAME set, so a >200 page never
+    // reads as complete — mirrors the todo branch's honesty. The client shows a
+    // "we tonen de eerste N" banner + wachtrij note when total > page.
+    let countQuery = supabase
+      .from("bank_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("status", "pending")
+      .is("invoice_id", null)
+      .not("category", "is", null);
+    if (onlyExcluded) countQuery = countQuery.in("category", [...EXCLUDED_CATEGORIES]);
+    if (qStart && qEnd) countQuery = countQuery.gte("date", qStart).lte("date", qEnd);
+    const { count: reviewTotal } = await countQuery;
 
     const items = (rows ?? []).map((t) => ({
       id: t.id,
@@ -89,7 +108,15 @@ export async function GET(req: NextRequest) {
       suggested_confident: t.category_confirmed === true,
       confirmed: t.category_confirmed === true,
     }));
-    return NextResponse.json({ ok: true, review: true, items, count: items.length });
+    const total = reviewTotal ?? items.length;
+    return NextResponse.json({
+      ok: true,
+      review: true,
+      items,
+      count: items.length,
+      total_remaining: total,
+      has_more: total > items.length,
+    });
   }
 
   // The TRUE remaining count — an exact head-count, independent of the page size.

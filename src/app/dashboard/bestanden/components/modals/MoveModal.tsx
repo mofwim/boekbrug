@@ -9,6 +9,11 @@ import { T } from "../../tokens";
 import { Icon } from "../ui/Icon";
 import { FolderRow } from "../../types";
 import { folderColor } from "../../helpers";
+import { foldText } from "@/lib/search";
+
+// [SMART-FILTER] Vanaf dit aantal mappen wordt scrollen vervelend en tonen we
+// het zoekveld. Daaronder is de lijst in één oogopslag te overzien.
+const FILTER_THRESHOLD = 6;
 
 interface MoveModalProps {
   folders: FolderRow[];
@@ -19,6 +24,7 @@ interface MoveModalProps {
 
 export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProps) {
   const [selected, setSelected] = useState<string | null | "__none__">("__none__");
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -44,6 +50,17 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
     }
     return folders.filter(f => !banned.has(f.id));
   })();
+
+  // [SMART-FILTER] Alleen zoeken bij een lange lijst; anders blijft de modal kaal.
+  // "Hoofdmap" is geen echte map en blijft dus altijd staan (zie hieronder).
+  const showFilter = available.length > FILTER_THRESHOLD;
+  const q = foldText(query.trim());
+  // De GEKOZEN map blijft altijd zichtbaar, ook als hij niet op de zoekterm matcht:
+  // anders verdwijnt de bestemming uit beeld terwijl "Hier verplaatsen" hem nog
+  // gebruikt — je zou bestanden verplaatsen naar een map die je niet ziet staan.
+  const visible = showFilter && q
+    ? available.filter(f => f.id === selected || foldText(f.name).includes(q))
+    : available;
 
   const rowStyle = (active: boolean): React.CSSProperties => ({
     width: "100%", display: "flex", alignItems: "center", gap: 12,
@@ -100,6 +117,26 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
           </button>
         </div>
 
+        {/* [SMART-FILTER] Zoekveld — alleen bij veel mappen */}
+        {showFilter && (
+          <div style={{ padding: "12px 20px 0" }}>
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              aria-label="Mappen zoeken"
+              placeholder="Zoek een map…"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                padding: "8px 14px",
+                border: `1px solid ${T.surfaceVariant}`, borderRadius: T.full,
+                fontFamily: "'Roboto',sans-serif", fontSize: 14,
+                color: T.onSurface, outline: "none", background: "white",
+              }}
+            />
+          </div>
+        )}
+
         {/* Folder list */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
           {/* Hoofdmap */}
@@ -113,7 +150,13 @@ export function MoveModal({ folders, excludeId, onMove, onClose }: MoveModalProp
             Hoofdmap
           </button>
 
-          {available.map(f => (
+          {showFilter && q && visible.length === 0 && (
+            <p style={{ fontSize: 13, color: T.outline, margin: "10px 16px" }}>
+              Geen mappen gevonden.
+            </p>
+          )}
+
+          {visible.map(f => (
             <button
               key={f.id}
               onClick={() => setSelected(f.id)}
