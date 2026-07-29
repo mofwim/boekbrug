@@ -20,6 +20,8 @@
 // factuurBedrag / boekingsregels / btw), zie docs/SNELSTART_INTEGRATION.md.
 
 import type { SnelStartBtwTarief, BoekingType } from "@/lib/snelstart-client";
+// [BON-NUMMER] Eén definitie van "dit nummer is verzonnen" — gedeeld met de verify-queue.
+import { isPlaceholderInvoiceNumber } from "@/lib/safecore";
 
 // ─── Invoer (ruwe DB-vormen, losgekoppeld van database.types voor testbaarheid) ────
 
@@ -110,7 +112,14 @@ export function isPushable(invoice: SnelStartInvoice): PushableCheck {
   }
 
   if (!invoice.invoice_date) return { ok: false, code: "MISSING_DATE" };
-  if (!invoice.invoice_number?.trim()) return { ok: false, code: "MISSING_NUMBER" };
+  // [BON-NUMMER] Een LEEG nummer werd hier altijd al geweigerd, maar een VERZONNEN nummer
+  // ("CAMERA-1784373782895", "UPLOAD-…", "EMAIL-…") glipte erdoor en landde als factuurnummer
+  // op een inkoopboeking in het wettelijke inkoopboek — een kenmerk dat op geen enkel papier
+  // terug te vinden is, en dat na 'verwerkt' door prevent_verwerkt_invoice_changes bevroor.
+  // Intake schrijft zulke nummers niet meer, maar de rijen die er al zijn moeten hier stoppen.
+  if (!invoice.invoice_number?.trim() || isPlaceholderInvoiceNumber(invoice.invoice_number)) {
+    return { ok: false, code: "MISSING_NUMBER" };
+  }
   if (!invoice.client_name?.trim()) return { ok: false, code: "MISSING_RELATION" };
 
   const inc = invoice.total_inc_btw;

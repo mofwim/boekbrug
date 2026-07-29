@@ -28,6 +28,8 @@ import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
+// [BON-BETAALWIJZE] Eén normalisator voor elke weg waarlangs een betaalwijze binnenkomt.
+import { normaliseerBetaalwijze } from "@/lib/bon-betaalwijze"
 // [SHEET-INTAKE] Route an uploaded kassa Z-report / grootboek export into the EXISTING
 // turnover + ledger pipelines instead of filing it as an opaque document.
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
@@ -325,12 +327,17 @@ export async function POST(req: NextRequest) {
   // invoice→kasboek cash settlement — NOT a separate cash 'kosten' entry (which would drop the
   // voorbelasting and double-count). A file the AI does not recognise as an invoice is untouched
   // (stays in documents) — we never force-mark an unrecognised file as paid.
+  // [BON-BETAALWIJZE] Genormaliseerd naar bank|kas: de UI mag "pin" sturen, maar wat de
+  // beslissing in gaat is wat de rest van de app kan lezen — cash-settle zoekt letterlijk op
+  // payment_method = 'kas', bank/confirm schrijft 'bank'. Een derde waarde valt tussen wal en schip.
   const forcedMethodRaw = formData.get("paid_method");
   const forcedMethod =
-    forcedMethodRaw === "kas" || forcedMethodRaw === "bank" || forcedMethodRaw === "pin" ? forcedMethodRaw : null;
+    typeof forcedMethodRaw === "string" ? normaliseerBetaalwijze(forcedMethodRaw) : null;
   if (forcedMethod && (decision.destination === "invoice" || decision.destination === "receipt")) {
     decision.suggestPaid = true;
     decision.paidMethod = forcedMethod;
+    // De ondernemer koos dit zelf in de UI — dat is het stevigste bewijs dat er is.
+    decision.paidMethodZeker = true;
     const forcedDateRaw = formData.get("paid_date");
     if (typeof forcedDateRaw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(forcedDateRaw)) {
       decision.paidDate = forcedDateRaw;
@@ -676,6 +683,13 @@ export async function POST(req: NextRequest) {
     fieldConfidence._intake_suggest = "paid"
     if (decision.paidMethod) fieldConfidence._intake_paid_method = decision.paidMethod
     if (decision.paidDate) fieldConfidence._intake_paid_date = decision.paidDate
+    // [BON-BETAALWIJZE] Het bewijs waarop de gok rust, en de pascijfers. Bewaard zodat een
+    // geschil naleesbaar is ("waarom staat hier kas?") en zodat de latere bankmatch de vier
+    // cijfers kan gebruiken die ook op het rekeningafschrift staan.
+    if (decision.paidEvidence) fieldConfidence._intake_paid_evidence = decision.paidEvidence
+    if (decision.paidCardLast4) fieldConfidence._intake_paid_card4 = decision.paidCardLast4
+    // Alleen als het PAPIER het zei mag het zonder vraag worden weggeschreven (zie hieronder).
+    if (decision.paidMethodZeker) fieldConfidence._intake_paid_method_zeker = true
   }
   // [DEDUP-SOFT] Merge the possible-duplicate signal into _safecore BEFORE the auto-advance check
   // below, so classifyImportHealth reads it → needs-review → the invoice can NEVER auto-book as a
@@ -734,7 +748,14 @@ export async function POST(req: NextRequest) {
       // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null. The
       // backbone of the "Vandaag" screen; null is honest when nothing is stated.
       due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
-      invoice_number: v.invoice_number || `CAMERA-${Date.now()}`,
+      // [BON-NUMMER] Leeg blijft leeg. Vroeger stond hier `|| \`CAMERA-${Date.now()}\`` — een
+      // VERZONNEN documentkenmerk, en dat is erger dan een leeg veld: snelstart-mapping weigert
+      // een LEEG nummer aan de grens (MISSING_NUMBER), maar "CAMERA-1784373782895" glipt erdoor
+      // en landt als factuurnummer op een inkoopboeking in het wettelijke inkoopboek van de
+      // boekhouder — een kenmerk dat op geen enkel papier terug te vinden is. De audit-regels
+      // van deze zelfde upload noteerden intussen invoice_number: null, dus het spoor en het
+      // record spraken elkaar tegen over de identiteit van hetzelfde document.
+      invoice_number: v.invoice_number?.trim() || null,
       // [BRIDGE-CREDITNOTA-SIGN] mark the type; amounts stay NEGATIVE as
       // extracted for a creditnota (one sign convention with [BOEK-031]).
       // The read-time health classifier (import-health) applies the
@@ -747,6 +768,19 @@ export async function POST(req: NextRequest) {
       document_id: documentId,
       vendor_iban: v.vendor_iban ?? null,
       payment_reference: v.payment_reference ?? null,
+      // [BON-BETAALWIJZE] HOE er is betaald — de eerste vraag van de boekhouder over een bon, en
+      // de enige die hij niet zelf kan afleiden: een contante aankoop laat geen bankregel na.
+      // Het antwoord staat op het papier ("Bankpas", "Kontant", "Wisselgeld") en werd tot nu toe
+      // gelezen, in field_confidence gezet — een jsonb die geen enkele voorwaarde in de app leest
+      // — en vervolgens vergeten, terwijl deze kolom leeg bleef.
+      //
+      // Alleen wegschrijven als het PAPIER het zei (paidMethodZeker). Zei het niets, dan blijft
+      // dit null en vraagt het scherm het: gok slim, vraag alleen als we het niet weten.
+      //
+      // Dit beweert GEEN betaling — status blijft 'processing'. Elke lezer van deze kolom
+      // (cash-settle, bank/unlink, bank/delete-statement, cron/reconcile) filtert óók op
+      // status='paid', dus deze rij is voor allemaal onzichtbaar tot de mens bevestigt.
+      payment_method: decision.paidMethodZeker ? (decision.paidMethod ?? null) : null,
       // Cast to the jsonb column type (Json | null) — sanitized, JSON-compatible
       // content. Same pattern as email-integration.ts / audit.ts.
       field_confidence: fieldConfidence as InvoiceFieldConfidence,

@@ -85,6 +85,24 @@ test("ontbrekende kerngegevens geven een gerichte reden", () => {
   const noNumber = isPushable(invoice({ invoice_number: "  " }));
   assert.equal(noNumber.ok === false && noNumber.code, "MISSING_NUMBER");
 
+  // [BON-NUMMER] Een VERZONNEN nummer moet hier net zo hard stoppen als een leeg nummer.
+  // Dit was het lek: een leeg veld werd geweigerd, maar "CAMERA-1784373782895" glipte erdoor
+  // en landde als factuurnummer op een inkoopboeking in het wettelijke inkoopboek — een
+  // kenmerk dat op geen enkel papier terug te vinden is, en dat na 'verwerkt' bevroor.
+  for (const verzonnen of [
+    "CAMERA-1784373782895",
+    "UPLOAD-1700000000000",
+    "EMAIL-1699999999999",
+  ]) {
+    const p = isPushable(invoice({ invoice_number: verzonnen }));
+    assert.equal(p.ok === false && p.code, "MISSING_NUMBER", `${verzonnen} mag niet doorgaan`);
+  }
+
+  // En een ECHT nummer gaat gewoon door — ook een bonnummer met een schuine streep erin.
+  assert.equal(isPushable(invoice({ invoice_number: "2/667957" })).ok, true);
+  assert.equal(isPushable(invoice({ invoice_number: "CAMERA-OPNAME-7" })).ok, true,
+    "alleen prefix + puur tijdstempel is een plaatshouder, niet elk nummer met 'CAMERA' erin");
+
   const noDate = isPushable(invoice({ invoice_date: null }));
   assert.equal(noDate.ok === false && noDate.code, "MISSING_DATE");
 

@@ -20,7 +20,10 @@ console.log("\n— receipt → verify queue, paid suggestion carries method + da
 {
   const d = decideFromAi({ is_invoice: true, document_kind: "receipt", is_paid: true, paid_method: "pin", paid_date: "2026-04-03" });
   check("paid receipt → receipt + suggestPaid", d.destination === "receipt" && d.suggestPaid === true);
-  check("receipt carries method + date", d.paidMethod === "pin" && d.paidDate === "2026-04-03");
+  // [BON-BETAALWIJZE] 'pin' wordt hier 'bank': een pinbetaling landt op de bankrekening, en
+  // "pin" is een waarde die cash-settle noch bank/confirm herkent.
+  check("receipt carries method + date", d.paidMethod === "bank" && d.paidDate === "2026-04-03");
+  check("model-only method is niet 'zeker' — het papier zei niets", d.paidMethodZeker === false);
   const u = decideFromAi({ is_invoice: true, document_kind: "receipt", is_paid: false });
   check("unpaid receipt → no paid suggestion, no method leaked", u.suggestPaid === false && (u.paidMethod ?? null) === null);
 }

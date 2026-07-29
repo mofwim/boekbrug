@@ -99,6 +99,12 @@ export interface FieldConfidence {
   // amounts add up again, so every other axis goes quiet — which is exactly why this needs its
   // own reason: the figure is OUR arithmetic, and BTW is deductible money in the aangifte.
   _btw_derived?: { read?: number | null; used?: number | null }
+  // [BON-NUMMER] Wat voor document dit is, gezet door /api/intake. 'receipt' = kassabon.
+  // Een kassabon draagt geen factuurnummer en hoeft dat ook niet: hij is een vereenvoudigde
+  // factuur, geen art. 35-factuur. De nummer-as hieronder wordt daarom voor een bon
+  // overgeslagen — anders krijgt élke bon een amberen "Aandacht nodig" voor iets wat er niet
+  // hoort te staan, en verdrinkt het echte signaal in ruis waar niemand meer naar kijkt.
+  _intake_kind?: string
   _safecore?: {
     arithmetic_ok?: boolean
     reason?: string
@@ -125,6 +131,22 @@ export interface FieldConfidence {
  * Pure: no DB, no I/O. Reads stored signals; recomputes arithmetic only when the
  * stored _safecore is absent (the upload-path compensation). Never mutates input.
  */
+/**
+ * [BON-NUMMER] Is dit een kassabon?
+ *
+ * Alleen de nummer-as hangt hiervan af — een bon draagt geen factuurnummer en hoeft dat niet.
+ * Alle andere assen (rekenwerk, bedragen, datum, dubbel) blijven onverkort gelden: die gaan
+ * over geld, en geld is op een bon net zo hard als op een factuur.
+ *
+ * De bron is _intake_kind uit field_confidence, gezet door /api/intake. Dat is een jsonb-veld
+ * en dus niet als SQL te bevragen; voor een WEERGAVE-beslissing als deze is dat aanvaardbaar.
+ * Zou er ooit een FISCALE regel aan bonnen worden opgehangen, dan hoort daar eerst een echte
+ * kolom bij (invoice_type = 'bon'), niet dit veld.
+ */
+function isKassabon(fc: FieldConfidence | null | undefined): boolean {
+  return fc?._intake_kind === 'receipt'
+}
+
 export function classifyImportHealth(inv: HealthInput): ImportHealth {
   const reasons: string[] = []
   const flags = {
@@ -255,7 +277,8 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // EMAIL-<ts> placeholder is a fabricated identifier (defeats duplicate detection
   // and is not a real Art. 35 number). Only evaluate when the caller supplied the
   // field, so legacy call sites that don't pass it keep their old behaviour.
-  if (inv.invoice_number !== undefined) {
+  // [BON-NUMMER] Een KASSABON is hiervan uitgezonderd — zie isKassabon().
+  if (inv.invoice_number !== undefined && !isKassabon(fc)) {
     const num = inv.invoice_number
     if (!num || !String(num).trim() || isPlaceholderInvoiceNumber(num)) {
       flags.invoiceNumber = true
@@ -271,7 +294,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       flags.vendor = true
       reasons.push('de leverancier is onzeker')
     }
-    if ((fc.invoice_number ?? 1) < LOW_CONFIDENCE) {
+    if ((fc.invoice_number ?? 1) < LOW_CONFIDENCE && !isKassabon(fc)) {
       flags.invoiceNumber = true
       reasons.push('het factuurnummer is onzeker')
     }

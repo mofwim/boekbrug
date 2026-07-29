@@ -750,8 +750,13 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
+// [BON-BETAALWIJZE] payment_method + payment_date + source horen hier thuis. Zonder die drie
+// ontving de boekhouder een contante bon van 112,92 zonder te weten HOE er is betaald — zijn
+// eerste vraag over elke bon, en juist bij contant de enige die hij niet zelf kan afleiden
+// (geen bankregel om tegenaan te leggen). Precies de vraag die het gesprek naar WhatsApp
+// terugstuurde, terwijl het antwoord al op het papier stond.
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, sender_id, receiver_id" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
