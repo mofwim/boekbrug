@@ -6,9 +6,9 @@
 > fout boven die alleen door het draaien van de CONTROLE zichtbaar werd — zie de noot bij
 > stap 7.
 >
-> ## ⏳ DRIE MIGRATIES STAAN OPEN — dit is de hele lijst voor morgen
+> ## ⏳ VIER MIGRATIES STAAN OPEN — dit is de hele lijst voor morgen
 >
-> Draai ze in deze volgorde. Alle drie idempotent, alle drie met een CONTROLE-blok onderaan
+> Draai ze in deze volgorde. Alle vier idempotent, alle vier met een CONTROLE-blok onderaan
 > het bestand. Samen ongeveer tien minuten.
 >
 > | # | Bestand | Waarom |
@@ -16,6 +16,7 @@
 > | 10 | `kluis_subscriptions.sql` | Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast. Ook het hek dat `RETENTION_PURGE_ENABLED` aan mag laten. |
 > | 11 | `accountant_write_holes.sql` | **Twee schrijfgaten** in de boekhoudersgrens + de vier ontbrekende invoices-indexen. |
 > | 12 | `invoice_lines_accountant_gate.sql` | De regelspolicy stond strenger dan de factuurkop: een verstuurde factuur toonde een lege regelset. |
+> | 13 | `bank_statement_periods.sql` | Onthoudt per bankafschrift welke periode het beslaat en met welke saldi. Zonder deze tabel kan niemand zien dat er een MAAND ontbreekt: de bestanden die je wél hebt kloppen allebei. Niet urgent (de app draait er zonder, de controle vervalt dan stil), maar zonder hem doet [STATEMENT-CONTINUITY] niets. |
 >
 > ### Over de urgentie van 11 — eerlijk bijgesteld
 >

@@ -45,7 +45,7 @@ interface Item {
   id: string
   file: File
   status: Status
-  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'turnover' | 'ledger'
+  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'turnover' | 'ledger' | 'statement'
   // [AUTO-ADVANCE-HONESTY] The app verified AND booked this invoice itself
   // ([AUTO-ADVANCE] in /api/intake) — status 'received'. It is therefore NOT in the
   // verify queue this page links to, but on Inkoopfacturen. Kept separate from
@@ -72,6 +72,9 @@ const DEST: Record<string, { label: string; icon: string; color: string }> = {
   turnover: { label: 'Kassa-omzet',   icon: '🛒', color: '#0B8043' },
   ledger:   { label: 'Controle-check', icon: '🔗', color: '#7B1FA2' },
   document: { label: 'Bestand',       icon: '📁', color: M3.neutral },
+  // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt (dat zou de losse
+  // facturen dubbel tellen) maar gebruikt als volledigheidscontrole: welke factuur mis ik?
+  statement: { label: 'Overzicht gecontroleerd', icon: '🔎', color: M3.warn },
 }
 
 let idc = 0
@@ -530,6 +533,7 @@ export default function UploadClient() {
               {countBy('turnover') > 0 && <>{countBy('turnover')} kassa-omzet · </>}
               {countBy('ledger') > 0 && <>{countBy('ledger')} controle-check · </>}
               {countBy('document') > 0 && <>{countBy('document')} bestand · </>}
+              {countBy('statement') > 0 && <>{countBy('statement')} rekeningoverzicht · </>}
               {dups.length > 0 && <>{dups.length} dubbel · </>}
               {errs.length > 0 && <span style={{ color: M3.error }}>{errs.length} mislukt</span>}
             </p>

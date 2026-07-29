@@ -2353,3 +2353,165 @@ export async function transcribeEftReceipt(
     : 'image/jpeg';
   return callClaudeWithImage(fileBase64, mt, prompt, systemPrompt);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [STATEMENT-RECONCILE] Het rekeningoverzicht LEZEN in plaats van alleen weigeren
+// ─────────────────────────────────────────────────────────────────────────────
+// Een rekeningoverzicht ("openstaande posten", "saldo-overzicht") is nooit een boekbare
+// factuur — dat blijft zo, en de guards hierboven zorgen daarvoor. Maar het is wél de enige
+// bron die van BUITEN vertelt welke facturen je zou moeten hebben. Deze lezer haalt de REGELS
+// eruit (nummer, datum, bedrag, soort), zodat statement-reconcile.ts kan zeggen welke factuur
+// de eigenaar mist. Er wordt hiermee niets geboekt: de uitkomst is een aanwijzing, en de
+// eigenaar haalt daarna de echte factuur op.
+//
+// Waarom een aparte call en niet de gewone extractor: die geeft één factuurkop terug (één
+// nummer, één bedrag). Een overzicht is per definitie een LIJST. Een overzicht komt zelden
+// binnen, dus de extra call is goedkoop; hij loopt via dezelfde budget-/retryplumbing.
+
+/** Eén regel zoals de leverancier hem afdrukt. Spiegelt StatementLine in statement-reconcile.ts. */
+export interface StatementLineRead {
+  invoice_number: string | null;
+  date: string | null;
+  amount: number | null;
+  kind: 'invoice' | 'credit' | 'payment' | 'other';
+  description: string | null;
+}
+
+export interface StatementRead {
+  /** Wie het overzicht stuurde — de leverancier, nooit wijzelf. */
+  vendor: string | null;
+  /** De periode die het overzicht noemt, als hij in de kop staat. */
+  period_from: string | null;
+  period_to: string | null;
+  /** Het saldo dat het overzicht zelf noemt (alleen ter controle — nooit geboekt). */
+  total_open: number | null;
+  lines: StatementLineRead[];
+  /** False wanneer we er niets bruikbaars uit kregen; de aanroeper claimt dan niets. */
+  ok: boolean;
+}
+
+const STATEMENT_FALLBACK: StatementRead = {
+  vendor: null, period_from: null, period_to: null, total_open: null, lines: [], ok: false,
+};
+
+export async function readSupplierStatement(
+  fileBase64: string,
+  mimeType: string,
+  filename: string,
+  /** Onze eigen naam — het overzicht is AAN ons gericht; die naam is dus nooit de leverancier. */
+  receiverName?: string | null,
+): Promise<StatementRead> {
+  const systemPrompt = `${SYSTEM_BASE}
+
+Je leest een REKENINGOVERZICHT van een leverancier (een "statement of account": openstaande
+posten, saldo-overzicht, openstaande facturen). Dit is GEEN factuur. Je taak is uitsluitend:
+haal de REGELS eruit zoals ze gedrukt staan.
+
+Geef ALLEEN een JSON-object terug (geen markdown, geen uitleg):
+{
+  "vendor": string or null,
+  "period_from": "YYYY-MM-DD" or null,
+  "period_to": "YYYY-MM-DD" or null,
+  "total_open": number or null,
+  "lines": [
+    { "invoice_number": string or null,
+      "date": "YYYY-MM-DD" or null,
+      "amount": number or null,
+      "kind": "invoice" | "credit" | "payment" | "other",
+      "description": string or null }
+  ],
+  "ok": boolean
+}
+
+Regels:
+- vendor: de AFZENDER van het overzicht (de leverancier), nooit de geadresseerde.
+- Eén JSON-regel per gedrukte regel. Verzin NOOIT een regel en vul NOOIT een nummer, datum of
+  bedrag aan dat er niet staat — laat het dan null. Een onvolledige regel is bruikbaar; een
+  verzonnen regel maakt de hele controle onbetrouwbaar.
+- kind: "invoice" voor een factuurregel, "credit" voor een creditnota, "payment" voor een
+  ontvangen betaling van ons, "other" voor subtotalen, saldoregels, aanmaningskosten, rente.
+- amount: het bedrag van de regel zoals gedrukt, als getal. Creditnota's en betalingen negatief.
+  Punt als decimaalteken, geen duizendtalscheiding, geen valutateken.
+- date: de FACTUURdatum van de regel (niet de vervaldatum) in YYYY-MM-DD. Onbekend ⇒ null.
+- period_from/period_to: alleen als de kop een periode of peildatum noemt. Anders null.
+- ok: true zodra je minstens één regel hebt kunnen lezen.
+- Als dit document TOCH een gewone factuur blijkt (één factuur, geen lijst): geef ok=false en
+  een lege lines-array. Dan is dit de verkeerde lezer en pakt de normale extractor het op.`;
+
+  const who = receiverName ? `\nWij zijn de ONTVANGER van dit overzicht: "${receiverName}". Die naam is dus nooit de vendor.` : '';
+  const prompt = `Lees dit rekeningoverzicht en geef de regels terug.
+Bestandsnaam: ${filename}${who}
+
+Let op: elke regel die de leverancier afdrukt is een factuur die WIJ zouden moeten hebben.
+Neem ze allemaal mee, ook de regels die al betaald lijken.`;
+
+  try {
+    let result: string;
+    if (mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf')) {
+      // Een overzicht is bijna altijd een TEKST-pdf (uit een boekhoudpakket). De tekstweg is
+      // goedkoper én leest een tabel met veel regels beter dan een pagina-afbeelding; lukt de
+      // extractie niet (gescand), dan gaat de ruwe PDF alsnog naar het model.
+      const text = await extractPdfTextIfTextLayer(fileBase64);
+      result = text
+        ? await callClaude(`${prompt}\n\n--- OVERZICHT TEKST (uit PDF) ---\n${text}`, systemPrompt)
+        : await callClaudeWithPdf(fileBase64, prompt, systemPrompt);
+    } else if (mimeType.startsWith('image/')) {
+      const mt: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' =
+        mimeType === 'image/png' ? 'image/png'
+        : mimeType === 'image/webp' ? 'image/webp'
+        : mimeType === 'image/gif' ? 'image/gif'
+        : 'image/jpeg';
+      result = await callClaudeWithImage(fileBase64, mt, prompt, systemPrompt);
+    } else {
+      return STATEMENT_FALLBACK;
+    }
+
+    const parsed = safeParseJSON<StatementRead>(result);
+    if (!parsed || parsed.ok === false || !Array.isArray(parsed.lines)) return STATEMENT_FALLBACK;
+
+    // Normaliseren + opschonen. Alles wat we niet vertrouwen wordt null — nooit een gok die
+    // later als "ontbrekende factuur" op het scherm van de eigenaar belandt.
+    const iso = (d: unknown): string | null =>
+      typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim()) ? d.trim() : null;
+    const num = (n: unknown): number | null =>
+      typeof n === 'number' && Number.isFinite(n) ? n : null;
+    const str = (s: unknown): string | null => {
+      const t = typeof s === 'string' ? s.trim() : '';
+      return t ? t.slice(0, 120) : null;
+    };
+
+    const lines: StatementLineRead[] = parsed.lines
+      // Een overzicht met honderden regels is een import, geen controle — begrens het.
+      .slice(0, 400)
+      .map((l) => ({
+        invoice_number: str(l?.invoice_number),
+        date: iso(l?.date),
+        amount: num(l?.amount),
+        kind:
+          l?.kind === 'credit' || l?.kind === 'payment' || l?.kind === 'other'
+            ? l.kind
+            : 'invoice',
+        description: str(l?.description),
+      }));
+
+    const vendorRaw = str(parsed.vendor);
+    // Onze eigen naam als leverancier is per definitie fout (het overzicht is AAN ons).
+    const vendor =
+      vendorRaw && receiverName && vendorRaw.toLowerCase() === receiverName.trim().toLowerCase()
+        ? null
+        : vendorRaw;
+
+    return {
+      vendor,
+      period_from: iso(parsed.period_from),
+      period_to: iso(parsed.period_to),
+      total_open: num(parsed.total_open),
+      lines,
+      ok: lines.length > 0,
+    };
+  } catch (err) {
+    // Nooit fataal: het bestand zelf is al veilig opgeslagen. Geen uitkomst = geen claim.
+    console.warn('[STATEMENT-RECONCILE] kon het overzicht niet lezen', err);
+    return STATEMENT_FALLBACK;
+  }
+}

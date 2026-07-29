@@ -180,6 +180,18 @@ export default function IntakeButton({
       } else if (data.destination === 'bank') {
         showToast(data.message || 'Toegevoegd ✓')
         setTimeout(() => router.push('/dashboard/bank'), 600)
+      } else if (data.destination === 'statement') {
+        // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt maar vergeleken:
+        // de uitkomst ("2 van de 9 facturen heb je niet") is het hele punt en mag niet in een
+        // toast van drie seconden verdwijnen. Zelfde blijvende modal als een gewoon bestand —
+        // die toont de boodschap én de link naar het bestand in Mijn bestanden.
+        setDestModal({
+          fileName: file.name,
+          message: data.message || 'Rekeningoverzicht gecontroleerd',
+          folderName: data.folder_name ?? null,
+          folderId: data.folder_id ?? null,
+          documentId: data.document_id ?? null,
+        })
       } else if (data.destination === 'document') {
         // [INTAKE-DEST-MODAL] Not an invoice → the owner can't guess where it
         // went. Show a persistent modal with the destination + a deep-link that
@@ -537,7 +549,9 @@ export default function IntakeButton({
 // Result shape from /api/intake
 export interface IntakeResult {
   ok?: boolean
-  destination?: 'invoice' | 'receipt' | 'bank' | 'document'
+  // [STATEMENT-RECONCILE] 'statement' = een leveranciersoverzicht: niet geboekt, maar vergeleken
+  // met wat we van die leverancier hebben (welke factuur mis ik?).
+  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'statement'
   message?: string
   error?: string
   duplicate?: boolean

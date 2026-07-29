@@ -67,5 +67,9 @@ export async function POST(req: NextRequest) {
     // a Dutch "afschrift sluit niet aan — €X ontbreekt" message when a line is missing/dropped.
     balanceWarning: result.balanceWarning,
     balanceReconciliation: result.balanceReconciliation,
+    // [STATEMENT-CONTINUITY] Sluit dit afschrift aan op het vorige? Een ontbrekende maand is
+    // onzichtbaar in de bestanden die je WEL hebt — dit is het enige moment waarop de eigenaar
+    // hem er zonder zoeken bij kan halen: hij heeft het bankportaal nu open.
+    continuityWarning: result.continuityWarning,
   });
 }

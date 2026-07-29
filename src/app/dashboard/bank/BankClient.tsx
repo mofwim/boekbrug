@@ -121,7 +121,7 @@ export default function BankClient() {
   const [busy, setBusy] = useState(false)
   // [BANK-DND] true while a file is being dragged over the upload zone.
   const [dragActive, setDragActive] = useState(false)
-  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number; unreadable: number; autoBooked?: number; balanceWarning?: string | null } | null>(null)
+  const [uploadInfo, setUploadInfo] = useState<{ format: string; parsed: number; inserted: number; skipped: number; unreadable: number; autoBooked?: number; balanceWarning?: string | null; continuityWarning?: string | null } | null>(null)
   // [BANK-STATEMENTS] Uploaded statements (filename + upload time) and the
   // "refresh names" action that upgrades older rows' names from their description.
   const [statements, setStatements] = useState<{ id: string; name: string; uploadedAt: string; size: number }[] | null>(null)
@@ -379,11 +379,15 @@ export default function BankClient() {
       // [R2] parseWarnings = statement lines the parser could not read. Each one is a
       // transaction that is NOT in the overview (the raw file still reaches the accountant).
       // The UI dropped this field, so the owner was never told a line went missing.
-      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped, unreadable: Array.isArray(upJson.parseWarnings) ? upJson.parseWarnings.length : 0, autoBooked: upJson.autoBooked ?? 0, balanceWarning: upJson.balanceWarning ?? null })
+      setUploadInfo({ format: upJson.format, parsed: upJson.parsed, inserted: upJson.inserted, skipped: upJson.skipped, unreadable: Array.isArray(upJson.parseWarnings) ? upJson.parseWarnings.length : 0, autoBooked: upJson.autoBooked ?? 0, balanceWarning: upJson.balanceWarning ?? null, continuityWarning: upJson.continuityWarning ?? null })
       // [BANK-BALANCE §2.6] A statement that doesn't tie out to its own begin/eindsaldo is INCOMPLETE
       // — a bank line is missing/dropped. This is a money-truth gap; make it loud (toast now, banner
       // below), never buried, so the owner re-uploads the full afschrift before trusting the figures.
       if (upJson.balanceWarning) showToast('⚠️ Bankafschrift sluit niet aan — mogelijk ontbreekt een transactie. Zie de melding.')
+      // [STATEMENT-CONTINUITY] …en of er een heel AFSCHRIFT ontbreekt tussen dit bestand en het
+      // vorige. Dat is precies het gat dat je in de bestanden die je WEL hebt nooit ziet: die
+      // kloppen allebei. Nu melden, want de eigenaar heeft zijn bankportaal op dit moment open.
+      else if (upJson.continuityWarning) showToast('⚠️ Er ontbreekt een stuk bankgeschiedenis — zie de melding.')
       // [BANK-AUTO-FEEDBACK] Tell the owner right away when the import already booked payments for
       // them — the money moved silently on the server; a toast makes the automatic work visible.
       if ((upJson.autoBooked ?? 0) > 0) {
@@ -1044,6 +1048,15 @@ export default function BankClient() {
           {uploadInfo.balanceWarning && (
             <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: R.sm, background: '#FCE8E6', color: '#B3261E', fontSize: 12.5, fontWeight: 600 }}>
               ⚠ {uploadInfo.balanceWarning}
+            </div>
+          )}
+          {/* [STATEMENT-CONTINUITY] Het gat TUSSEN twee afschriften: een ontbrekende periode of
+              een saldobreuk. Onzichtbaar in de bestanden zelf (die kloppen allebei), dus dit is
+              de enige plek waar het gezegd kan worden — en het moment waarop de eigenaar het
+              ontbrekende bestand met één handeling bij zijn bank kan ophalen. */}
+          {uploadInfo.continuityWarning && (
+            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: R.sm, background: '#FEF7E0', color: '#B06000', fontSize: 12.5, fontWeight: 600, lineHeight: 1.45 }}>
+              ⚠ {uploadInfo.continuityWarning}
             </div>
           )}
         </div>

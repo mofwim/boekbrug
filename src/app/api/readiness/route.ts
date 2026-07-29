@@ -8,6 +8,8 @@
 // Owner-scoped (self). Read-only.
 
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [STATEMENT-CONTINUITY] gaten TUSSEN de ingelezen bankafschriften (pure vergelijking).
+import { findStatementGaps } from "@/lib/bank-statement-continuity";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
@@ -142,6 +144,50 @@ export async function GET(req: NextRequest) {
           : t.category === "kosten";
       if (stillOpen) undocumentedCount++;
     }
+  }
+
+  // ── 2b) [STATEMENT-CONTINUITY] Ontbreekt er een STUK bankgeschiedenis in dit kwartaal? ──
+  // De controle hierboven kijkt naar de transacties die er ZIJN. Deze kijkt naar het afschrift dat
+  // er NIET is: januari en maart geüpload, februari vergeten — beide bestanden kloppen intern, er
+  // zijn transacties genoeg, en toch mist er een maand aan betalingen. We halen de periodes op met
+  // een marge van een maand rond het kwartaal (het gat zit vaak op de grens) en melden alleen de
+  // gaten die het kwartaal zelf raken. Fail-soft: bestaat de tabel nog niet (migratie niet
+  // gedraaid) of gaat de query mis, dan vervalt alleen deze extra controle.
+  let bankGapMessages: string[] = [];
+  try {
+    const marginStart = new Date(Date.parse(`${start}T00:00:00Z`) - 45 * 86_400_000).toISOString().slice(0, 10);
+    const marginEnd = new Date(Date.parse(`${end}T00:00:00Z`) + 45 * 86_400_000).toISOString().slice(0, 10);
+    const { data: periods } = await pipeline
+      .from("bank_statement_periods")
+      .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
+      .eq("user_id", ownerId)
+      .gte("period_start", marginStart)
+      .lte("period_start", marginEnd)
+      .order("period_start", { ascending: true });
+
+    const rows = (periods ?? []).filter((p) => p.period_start && p.period_end);
+    if (rows.length >= 2) {
+      const { issues } = findStatementGaps(
+        rows.map((p) => ({
+          documentId: p.document_id,
+          iban: p.iban,
+          from: p.period_start as string,
+          to: p.period_end as string,
+          opening: p.opening_balance,
+          closing: p.closing_balance,
+        })),
+      );
+      // Alleen gaten die dit kwartaal raken — een gat in een ander kwartaal is daar een gat,
+      // niet hier. (Een overlap is geen ontbrekend stuk; die hoort op het bankscherm thuis,
+      // niet als blokkade van de afsluiting.)
+      bankGapMessages = issues
+        .filter((i) => i.kind !== "overlap")
+        .filter((i) => i.before.to <= end && i.after.from >= start)
+        .map((i) => i.message)
+        .slice(0, 5);
+    }
+  } catch {
+    /* fail-soft — zonder deze controle blijft de rest van de readiness precies zoals hij was */
   }
 
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──
@@ -439,6 +485,8 @@ export async function GET(req: NextRequest) {
     unmatchedIncomeCount,
     probablePaymentAsOmzetCount,
     unreviewedExcludedCount, // [AUTO-EXCLUDE-REVIEW] auto-coded privé/overboeking/belasting, unreviewed
+    // [STATEMENT-CONTINUITY] ontbrekende periode / saldobreuk tussen de ingelezen afschriften
+    bankGapMessages,
 
     usesTurnover: turnover.length > 0,
     turnoverDays: turnover.length,

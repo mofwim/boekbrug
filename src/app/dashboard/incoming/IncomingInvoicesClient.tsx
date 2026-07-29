@@ -1849,11 +1849,26 @@ type IntakeStatus =
   | "invoice"   // invoice read → waits for one confirming tap in this queue
   | "receipt"   // bon read → waits here too (probably already paid)
   | "document"  // no invoice/bon recognised → kept in Mijn bestanden
+  | "statement" // [STATEMENT-RECONCILE] leveranciersoverzicht → volledigheidscontrole
   | "bank"      // bank statement → transactions imported
   | "turnover"  // kassa/dagomzet sheet → booked in Dagomzet
   | "ledger"    // grootboek sheet → reconciliation witness
   | "duplicate" // already added earlier
   | "error";
+
+// [STATEMENT-RECONCILE] Wat een rekeningoverzicht oplevert: niet een geboekt stuk, maar het
+// antwoord op "welke factuur van deze leverancier heb ik niet?". De ontbrekende regels staan
+// hier met nummer/datum/bedrag, zodat de eigenaar precies weet wat hij moet gaan ophalen.
+type StatementOutcome = {
+  vendor: string | null;
+  period: { from: string; to: string } | null;
+  compared: number;
+  missing: Array<{ invoice_number: string | null; date: string | null; amount: number | null }>;
+  missingAmount: number;
+  archived: Array<{ invoice_number: string | null; invoice_id: string }>;
+  notOnStatement: Array<{ invoice_number: string | null; invoice_id: string }>;
+  unreadable: number;
+};
 
 type IntakeResult = {
   name: string;
@@ -1882,6 +1897,8 @@ type IntakeResult = {
   // [TRUST-INTAKE] The file was stored but could NOT be read — never dressed up as
   // a confident "geen factuur herkend".
   couldNotRead?: boolean;
+  // [STATEMENT-RECONCILE] alleen op een 'statement'-rij: de volledigheidsuitkomst.
+  statement?: StatementOutcome;
 };
 
 // Per-outcome presentation: icon (Material Symbols subset), accent colour and the
@@ -1894,6 +1911,7 @@ const RESULT_META: Record<
   invoice:   { icon: "receipt_long",  color: C.primary, bg: C.primaryContainer,  label: "Wacht op je controle" },
   receipt:   { icon: "receipt_long",  color: C.primary, bg: C.primaryContainer,  label: "Bon — wacht op je controle" },
   document:  { icon: "folder",        color: C.muted,   bg: "#F1F3F4",           label: "In je bestanden" },
+  statement: { icon: "rule",          color: C.warn,    bg: C.warnContainer,     label: "Rekeningoverzicht gecontroleerd" },
   bank:      { icon: "account_balance", color: C.primary, bg: C.primaryContainer, label: "Bankafschrift" },
   turnover:  { icon: "point_of_sale", color: C.success, bg: C.successContainer,  label: "Omzet geboekt" },
   ledger:    { icon: "link",          color: "#7B1FA2", bg: "#F3E5F5",           label: "Controle-check" },
@@ -1963,9 +1981,38 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
           invoice_number?: string | null;
           total_inc_btw?: number | null;
           possibleDuplicate?: { invoice_number?: string | null; client_name?: string | null; reason?: string };
+          // [STATEMENT-RECONCILE] velden van de volledigheidscontrole op een leveranciersoverzicht
+          // (de leveranciersnaam komt uit hetzelfde `vendor`-veld als bij een factuur)
+          period?: { from: string; to: string } | null;
+          compared?: number;
+          missing?: Array<{ invoice_number: string | null; date: string | null; amount: number | null }>;
+          missing_amount?: number;
+          archived?: Array<{ invoice_number: string | null; invoice_id: string }>;
+          not_on_statement?: Array<{ invoice_number: string | null; invoice_id: string }>;
+          unreadable?: number;
         };
         const dest = d.destination;
         const message = d.message || "Toegevoegd";
+        // [STATEMENT-RECONCILE] Geen boeking maar een controle-uitkomst: welke facturen van
+        // deze leverancier we NIET hebben. Eigen rij-type, want "opgeslagen in je bestanden"
+        // zou het belangrijkste wat we net ontdekten verzwijgen.
+        if (dest === "statement") {
+          return {
+            name: file.name, status: "statement", message,
+            folderName: d.folder_name ?? null,
+            link: d.document_id ? { folderId: d.folder_id ?? null, focusId: d.document_id } : undefined,
+            statement: {
+              vendor: d.vendor ?? null,
+              period: d.period ?? null,
+              compared: d.compared ?? 0,
+              missing: d.missing ?? [],
+              missingAmount: d.missing_amount ?? 0,
+              archived: d.archived ?? [],
+              notOnStatement: d.not_on_statement ?? [],
+              unreadable: d.unreadable ?? 0,
+            },
+          };
+        }
         if (dest === "document") {
           const docId = d.document_id;
           return {
@@ -2155,6 +2202,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const fileCount = results.filter(
     (r) => r.status === "document" || r.status === "bank" || r.status === "turnover" || r.status === "ledger"
   ).length;
+  // [STATEMENT-RECONCILE] Een overzicht is geen toevoeging aan de boeken maar een CONTROLE.
+  // Het telt dus niet mee in "toegevoegd"; wat het oplevert — ontbrekende facturen — krijgt
+  // een eigen regel, want dat is het enige wat de eigenaar daarna moet doen.
+  const statementRows = results.filter((r) => r.status === "statement");
+  const statementMissing = statementRows.reduce((n, r) => n + (r.statement?.missing.length ?? 0), 0);
   const errorCount = results.filter((r) => r.status === "error").length;
   const duplicateCount = results.filter((r) => r.status === "duplicate").length;
   const addedCount = autoCount + queueCount + fileCount;
@@ -2163,7 +2215,13 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     addedCount === 0
       ? errorCount > 0
         ? "Er ging iets mis"
-        : "Klaar"
+        : statementMissing > 0
+          ? statementMissing === 1
+            ? "1 factuur ontbreekt"
+            : `${statementMissing} facturen ontbreken`
+          : statementRows.length > 0
+            ? "Overzicht gecontroleerd"
+            : "Klaar"
       : autoCount === addedCount
         ? autoCount === 1
           ? "Factuur automatisch verwerkt"
@@ -2174,6 +2232,9 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     autoCount > 0 ? `${autoCount} automatisch geboekt` : null,
     queueCount > 0 ? `${queueCount} wacht${queueCount > 1 ? "en" : ""} op je controle` : null,
     fileCount > 0 ? `${fileCount} in je administratie` : null,
+    statementRows.length > 0
+      ? `${statementRows.length} rekeningoverzicht${statementRows.length > 1 ? "en" : ""} gecontroleerd`
+      : null,
     duplicateCount > 0 ? `${duplicateCount} al aanwezig` : null,
     errorCount > 0 ? `${errorCount} niet gelukt` : null,
   ].filter(Boolean) as string[];
@@ -2443,6 +2504,64 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                         {r.name}
                         {r.folderName ? ` · opgeslagen in ${r.folderName}` : ""}
                       </p>
+                      {/* [STATEMENT-RECONCILE] De uitkomst van de volledigheidscontrole:
+                          precies welke facturen van deze leverancier we niet hebben, met
+                          nummer/datum/bedrag zodat de eigenaar ze kan opvragen. Alleen
+                          feiten uit het overzicht — we boeken hier niets. */}
+                      {r.statement && r.statement.missing.length > 0 && (
+                        <div style={{
+                          marginTop: 8, padding: "10px 12px", borderRadius: R.sm,
+                          background: "#fff", border: `1px solid ${C.warnLine}`,
+                        }}>
+                          <p style={{ fontSize: 12, fontWeight: 700, color: C.warn, margin: "0 0 6px" }}>
+                            Deze facturen heb je niet
+                            {r.statement.missingAmount > 0 && (
+                              <span style={{ fontWeight: 500 }}> · samen {formatSignedAmount(r.statement.missingAmount)}</span>
+                            )}
+                          </p>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {r.statement.missing.slice(0, 15).map((m, k) => (
+                              <div key={k} style={{ display: "flex", gap: 8, fontSize: 12, color: C.onSurface }}>
+                                <span style={{ fontWeight: 600, minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {m.invoice_number || "zonder nummer"}
+                                </span>
+                                {m.date && <span style={{ color: C.muted, flexShrink: 0 }}>{formatDate(m.date)}</span>}
+                                {typeof m.amount === "number" && (
+                                  <span style={{ color: C.muted, flexShrink: 0 }}>{formatSignedAmount(m.amount)}</span>
+                                )}
+                              </div>
+                            ))}
+                            {r.statement.missing.length > 15 && (
+                              <div style={{ fontSize: 11.5, color: C.faint }}>
+                                en nog {r.statement.missing.length - 15}…
+                              </div>
+                            )}
+                          </div>
+                          <p style={{ fontSize: 11.5, color: C.muted, margin: "8px 0 0", lineHeight: 1.45 }}>
+                            Vraag ze op bij {r.statement.vendor || "de leverancier"} en voeg ze hier toe. We boeken
+                            niets van dit overzicht zelf — een overzicht is geen factuur.
+                          </p>
+                        </div>
+                      )}
+                      {/* Genegeerd, maar de leverancier ziet hem nog open. De zin hierboven telt ze;
+                          deze regel NOEMT ze, want zonder nummer kan de eigenaar er niets mee. */}
+                      {r.statement && r.statement.archived.length > 0 && (
+                        <p style={{ fontSize: 12, color: C.warn, margin: "6px 0 0", lineHeight: 1.45 }}>
+                          Genegeerd, maar nog open bij de leverancier:{" "}
+                          {r.statement.archived
+                            .map((a) => a.invoice_number || "zonder nummer")
+                            .slice(0, 8)
+                            .join(", ")}
+                          .
+                        </p>
+                      )}
+                      {/* We hebben iets dat er niet op staat: geen fout, wel een vraag. */}
+                      {r.statement && r.statement.notOnStatement.length > 0 && (
+                        <p style={{ fontSize: 11.5, color: C.faint, margin: "6px 0 0", lineHeight: 1.45 }}>
+                          {r.statement.notOnStatement.length === 1 ? "1 factuur in je boeken staat" : `${r.statement.notOnStatement.length} facturen in je boeken staan`}
+                          {" "}niet op dit overzicht — meestal al betaald, soms dubbel geboekt.
+                        </p>
+                      )}
                       {/* [DEDUP-SOFT] Soft heads-up — never blocks. Only when the
                           server's own sentence doesn't already carry it, so the row
                           never says "mogelijk dubbel" twice. */}
