@@ -3,7 +3,7 @@
 //
 // GET /api/snelstart/status
 //   → { configured, connected, status, administrationLabel, grootboekenIngesteld,
-//       lastPushAt, lastError, counts: { klaar, doorgestuurd, mislukt } }
+//       lastPushAt, lastError, counts: { klaar, doorgestuurd, onbekend, mislukt } }
 //
 // `configured` zegt of de SERVER de koppeling aankan (subscription key aanwezig).
 // Zonder die sleutel heeft het geen zin de gebruiker om zijn maatwerksleutel te vragen —
@@ -12,7 +12,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { getSnelStartConnectionMeta } from "@/lib/snelstart-connection";
-import { loadPushCandidates, loadPushedInvoiceIds } from "@/lib/snelstart-queue";
+import { loadPushCandidates, loadExportIdsByStatus } from "@/lib/snelstart-queue";
 
 export async function GET() {
   const supabase = await createServerSupabaseClient();
@@ -28,17 +28,22 @@ export async function GET() {
     return NextResponse.json({
       configured,
       connected: false,
-      counts: { klaar: 0, doorgestuurd: 0, mislukt: 0 },
+      counts: { klaar: 0, doorgestuurd: 0, onbekend: 0, mislukt: 0 },
     });
   }
 
   // Tellers: exact dezelfde selectie als de push-route, anders belooft het scherm iets
   // anders dan de knop doet.
-  const [candidates, pushedIds] = await Promise.all([
+  // [SNELSTART-EERLIJK] pushed en unknown APART opgehaald. De wachtrij-filter mag ze samen
+  // nemen — een onbekende afloop moet de factuur blijven claimen — maar een TELLER mag dat niet:
+  // "doorgestuurd" over een factuur waarvan wij niet weten of hij geboekt is, klapt precies het
+  // onderscheid in dat de hele claim-vóór-de-POST-machinerie bestaat om te bewaren.
+  const [candidates, ids] = await Promise.all([
     loadPushCandidates(supabase, user.id),
-    loadPushedInvoiceIds(supabase, user.id),
+    loadExportIdsByStatus(supabase, user.id),
   ]);
-  const klaar = candidates.filter((c) => !pushedIds.has(c.id)).length;
+  const geclaimd = new Set([...ids.pushed, ...ids.unknown]);
+  const klaar = candidates.filter((c) => !geclaimd.has(c.id)).length;
 
   const { count: mislukt } = await supabase
     .from("snelstart_exports")
@@ -59,7 +64,10 @@ export async function GET() {
     lastError: meta.lastError,
     counts: {
       klaar,
-      doorgestuurd: pushedIds.size,
+      doorgestuurd: ids.pushed.size,
+      // Niet "doorgestuurd" en niet "mislukt": verstuurd, maar zonder bevestiging. Een mens
+      // controleert het in SnelStart; de app boekt hem niet vanzelf opnieuw.
+      onbekend: ids.unknown.size,
       mislukt: mislukt ?? 0,
     },
   });

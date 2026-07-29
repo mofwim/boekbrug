@@ -135,15 +135,45 @@ export async function loadInvoiceLines(
  * 'failed' blijft er bewust buiten: dat is bewezen niet-geboekt en mag gewoon opnieuw mee.
  */
 export async function loadPushedInvoiceIds(supabase: Client, userId: string): Promise<Set<string>> {
-  const rows = await fetchAllRows<{ invoice_id: string }>((from, to) =>
+  return loadClaimedInvoiceIds(supabase, userId);
+}
+
+/**
+ * Factuur-id's per claimende status APART.
+ *
+ * [SNELSTART-EERLIJK] Waarom dit los moet van de filter hierboven: die filter mag 'unknown'
+ * meerekenen — dat is precies zijn taak. Maar een TELLER op het scherm mag dat niet. Toen de
+ * statuspagina dezelfde verzameling gebruikte om "doorgestuurd" te tellen, kreeg een factuur
+ * waarvan wij niet WETEN of hij geboekt is het label "doorgestuurd" — de ene onderscheiding die
+ * de hele claim-vóór-de-POST-machinerie bestaat om te bewaren, ingeklapt naar valse voorspoed.
+ * Dat is dezelfde stille onwaarheid die deze hele ronde eruit haalde, en hij is er per ongeluk
+ * mee ingekomen. Vandaar: één query, twee verzamelingen, en de teller kiest zelf.
+ */
+export async function loadExportIdsByStatus(
+  supabase: Client,
+  userId: string,
+): Promise<{ pushed: Set<string>; unknown: Set<string> }> {
+  const rows = await fetchAllRows<{ invoice_id: string; status: string }>((from, to) =>
     supabase
       .from("snelstart_exports")
-      .select("invoice_id")
+      .select("invoice_id, status")
       .eq("user_id", userId)
       .in("status", CLAIMING_STATUSES as string[])
       .order("invoice_id", { ascending: true })
       .range(from, to),
   );
 
-  return new Set(rows.map((r) => r.invoice_id));
+  const pushed = new Set<string>();
+  const unknown = new Set<string>();
+  for (const r of rows) {
+    if (r.status === "unknown") unknown.add(r.invoice_id);
+    else pushed.add(r.invoice_id);
+  }
+  return { pushed, unknown };
+}
+
+/** Alles wat de factuur claimt — pushed én unknown. De idempotentie-filter. */
+export async function loadClaimedInvoiceIds(supabase: Client, userId: string): Promise<Set<string>> {
+  const { pushed, unknown } = await loadExportIdsByStatus(supabase, userId);
+  return new Set([...pushed, ...unknown]);
 }
