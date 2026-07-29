@@ -20,16 +20,13 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
 import { useToast } from '@/components/ui/Toast'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#FFFFFF',
-  primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#ffffff', onSurface: '#202124',
-  surfaceVariant: '#f1f3f4',
-  success: '#34A853', error: '#B3261E',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
-const R = { md: 12, lg: 16, full: 9999 }
 
 type Variant = 'card' | 'fab' | 'compact'
 

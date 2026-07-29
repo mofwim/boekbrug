@@ -12,13 +12,12 @@ import { rowMatchesQuery } from '@/lib/search'
 // an "unsupported type" and be filed unreadable — the contant-betaald flow then never books. Convert
 // to a bounded JPEG before upload (a PDF/normal JPG/PNG passes through untouched).
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3 } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
-  surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
-  warning: '#E37400', // [COHERENCE-KAS-UPLOAD] calm amber for "couldn't read — check bestanden"
-  primaryContainer: '#D3E3FD',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })

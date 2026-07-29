@@ -294,7 +294,8 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F8F9FA')}
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
           >
-            ⚙️ Instellingen
+            <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: -4, marginRight: 8, color: M3.onSurfaceVariant }} aria-hidden>settings</span>
+            Instellingen
           </button>
 
           {/* Uitloggen */}
@@ -367,7 +368,14 @@ function NotificationsBell({
         onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F1F3F4')}
         onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
       >
-        🔔
+        {/* [DESIGN] Was an emoji. The app ships a subsetted Material Symbols
+            font and uses it for every other icon; an emoji here is drawn by the
+            operating system, so its weight, colour and shape changed per device
+            and could not be tinted to match the bar it sits in. These three sat
+            in the chrome of every single page. */}
+        <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.onSurfaceVariant }} aria-hidden>
+          notifications
+        </span>
         {(() => {
           const effectiveUnread = notifications.filter(n => !(readOverride[n.id] ?? n.read)).length
           return effectiveUnread > 0 ? (
@@ -663,7 +671,9 @@ export function DashboardHeader({
             onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F1F3F4')}
             onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
           >
-            💬
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.onSurfaceVariant }} aria-hidden>
+              forum
+            </span>
           </button>
           {unreadMessages > 0 && (
             <span style={{

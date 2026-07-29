@@ -51,23 +51,12 @@ import DailyTruth from './DailyTruth'
 // niet alleen in een notificatie die je één keer ziet.
 import { VRAAG_STATUS, vragenBannerTekst } from '@/lib/vragen'
 import type { ProfileRow, NotificationRow } from '@/types/rows'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
-const M3 = {
-  primary:           '#1A73E8',
-  onPrimary:         '#FFFFFF',
-  primaryContainer:  '#D3E3FD',
-  onPrimaryContainer:'#041E49',
-  tertiary:          '#7B1FA2',
-  tertiaryContainer: '#E1BEE7',
-  surface:           '#ffffff',
-  onSurface:         '#202124',
-  success:           '#34A853',
-  successContainer:  '#CEEAD6',
-  warning:           '#E37400',
-  warningContainer:  '#FEE8C4',
-  outline:           '#80868b',
-  error:             '#B3261E',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
@@ -373,7 +362,6 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
 }
 
 // ─── Design system constants ──────────────────────────────────────────────────
-const R = { sm: 8, md: 12, lg: 16, xl: 24, full: 9999 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 

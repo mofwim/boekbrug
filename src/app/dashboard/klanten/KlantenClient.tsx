@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import type { ProfileRow } from '@/types/rows'
@@ -16,20 +16,7 @@ import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
-const M3 = {
-  primary:           '#1A73E8',
-  onPrimary:         '#FFFFFF',
-  primaryContainer:  '#D3E3FD',
-  onPrimaryContainer:'#041E49',
-  surface:           '#ffffff',
-  onSurface:         '#202124',
-  surfaceVariant:    '#f1f3f4',
-  outline:           '#80868b',
-  error:             '#B3261E',
-  errorContainer:    '#F9DEDC',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 interface Client {

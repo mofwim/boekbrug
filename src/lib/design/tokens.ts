@@ -1,9 +1,27 @@
 // src/lib/design/tokens.ts
 // [DESIGN] Shared Material design tokens — single source of truth.
-// Superset of the per-surface M3 palettes that were previously copy-pasted into
-// each dashboard client. Values are the agreed (majority) tokens; surfaces whose
-// local palette used a DIFFERENT value for a shared key keep their own local M3
-// (importing this would change their color), so they are intentionally NOT migrated.
+//
+// This used to be a superset that nobody imported: thirteen dashboard screens
+// each declared their own `const M3 = {…}`, and the note here said surfaces
+// whose local palette disagreed were "intentionally NOT migrated" because
+// importing this would change their colour. Changing their colour turned out to
+// be the entire point — the disagreement was not a matter of taste:
+//
+//   success   local #34A853 (Google green 500)  →  3.06:1 on white   FAILS AA
+//             here  #137333 (Google green 800)  →  5.95:1 on white   passes
+//   warning   local #E37400 (Google amber 600)  →  3.10:1 on white   FAILS AA
+//             here  #7C5800 (Google amber 900)  →  6.46:1 on white   passes
+//
+// Six screens used the bright green and seven the bright amber, and several used
+// them for TEXT: a received amount in the Kas ledger, the match confirmations in
+// Bank, a button label in Inkoopfacturen. Money and status, printed below the
+// legibility floor. Tellingly, the same files hardcoded '#137333' and '#7C5800'
+// literally inches away, wherever the author happened to notice.
+//
+// So: `success` / `warning` / `error` are the TEXT-SAFE tones and are what you
+// want almost always. The bright brand versions live on as *Fill — legitimate
+// for a solid fill, a status dot or a progress bar, where the 3:1 non-text
+// threshold applies, and never for a glyph or a word.
 export const M3 = {
   primary: '#1A73E8',
   onPrimary: '#FFFFFF',
@@ -31,7 +49,51 @@ export const M3 = {
   tertiaryContainer: '#E1BEE7',
   warn: '#B26A00',
   warnContainer: '#FEEFC3',
+
+  // ── Fill-only tones ───────────────────────────────────────────────────────
+  // The bright Google brand colours. Use for a solid fill, a status dot, a bar,
+  // an icon on a dark ground — anything covered by the 3:1 non-text contrast
+  // rule. NEVER for text or a glyph on a light surface: they sit around 3:1,
+  // which is below the 4.5:1 an ordinary word needs. Reach for `success` /
+  // `warning` / `error` instead, which are the same hues taken darker.
+  successFill: '#34A853',
+  warningFill: '#E37400',
+  errorFill: '#EA4335',
 } as const
+
+// ── Radius ──────────────────────────────────────────────────────────────────
+// [DESIGN] One radius scale. Eleven files declared their own `const R`, mostly
+// agreeing but not always ({sm:8,md:12,lg:16,full:9999} vs one with xl:24 vs one
+// with full:999), and the accountant screens ignored the idea entirely and used
+// a flat 8 everywhere while the owner screens used 16. That single difference is
+// most of why the two halves of the app do not look like one product.
+//
+// Mirrors --radius-* in globals.css. `full` is a pill; use it for chips and
+// anything capsule-shaped.
+export const R = {
+  /** 8px — a chip, a small inline control. */
+  sm: 8,
+  /** 12px — a button, a nested panel. Matches --radius-button. */
+  md: 12,
+  /** 16px — a card. Matches --radius-card. The app's default surface radius. */
+  lg: 16,
+  /** 24px — a sheet or a large modal. */
+  xl: 24,
+  /** 28px — a dialog. Rounder than a card on purpose, so a dialog reads as a
+   *  separate object rather than a panel of the page. */
+  dialog: 28,
+  /** A pill. */
+  full: 9999,
+} as const
+
+// ── Elevation ───────────────────────────────────────────────────────────────
+// [DESIGN] Card shadows. The two sides of the app disagreed here too: the
+// accountant screens drew a 1px grey border and no shadow, the owner screens a
+// shadow and no border. EL1 is the shared answer — the same value as
+// --shadow-card in globals.css.
+export const EL1 = '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)'
+export const EL2 = '0 4px 12px rgba(0,0,0,0.12)'
+export const EL3 = '0 8px 32px rgba(0,0,0,0.16)'
 export const FONT = "'Roboto', -apple-system, sans-serif"
 export const FONT_NUM = "'Roboto Mono', monospace"
 

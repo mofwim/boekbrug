@@ -16,6 +16,7 @@ import { rowMatchesQuery } from '@/lib/search'
 import type { InvoiceRow, ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+import { EL1, M3, R } from '@/lib/design/tokens'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -388,7 +389,7 @@ export default function KwartaalPage() {
             pre-pivot idea, never wired). Documenten now opens the Brug — the hub. */}
         <button
           onClick={() => router.push('/dashboard/brug')}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, cursor: 'pointer', transition: 'background 0.1s ease', width: '100%' }}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, cursor: 'pointer', transition: 'background 0.1s ease', width: '100%' }}
         >
           <span className="text-xl">📂</span>
           <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>Documenten — bekijk in Brug</span>
@@ -436,11 +437,11 @@ export default function KwartaalPage() {
           {[
             // [TRUST-ACCOUNTANT] Reconciled, turnover-aware figures (same as the ZIP +
             // owner). While they load, show "…" rather than a wrong invoices-only sum.
-            { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: '#34A853' },
-            { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: '#EA4335' },
+            { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: M3.success },
+            { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: M3.error },
             { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#7b1fa2' },
           ].map(s => (
-            <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+            <div key={s.label} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 12, textAlign: 'center' }}>
               <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>
               <p style={{ fontSize: 14, fontWeight: 600, color: s.color, margin: 0 }}>{s.value}</p>
             </div>
@@ -448,7 +449,7 @@ export default function KwartaalPage() {
         </div>
 
         {/* [BOEK-028] Invoice table — outgoing + incoming merged */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
 
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>
@@ -637,7 +638,7 @@ export default function KwartaalPage() {
                             {invoice.invoice_type === 'creditnota' && invoice.replaced_by_number && (
                               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                                 <span style={{ color: '#5F6368' }}>Vervangt</span>
-                                <span className="font-medium" style={{ color: '#EA4335' }}>
+                                <span className="font-medium" style={{ color: M3.error }}>
                                   {invoice.replaced_by_number}
                                 </span>
                               </div>

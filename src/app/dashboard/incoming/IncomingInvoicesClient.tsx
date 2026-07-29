@@ -60,6 +60,7 @@ interface ImportHealth {
 import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
+import { M3 } from '@/lib/design/tokens'
 
 function friendlySkipReason(reason: string): string {
   const r = (reason || "").toLowerCase();
@@ -427,7 +428,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             onClick={handleDisconnect}
             style={{
               background: "transparent", border: "1.5px solid #ea4335",
-              color: "#ea4335", borderRadius: 10, padding: "10px 16px",
+              color: M3.error, borderRadius: 10, padding: "10px 16px",
               fontWeight: 600, fontSize: 14, cursor: "pointer",
             }}
           >
@@ -963,7 +964,7 @@ function ConfirmPaidModal({
                 )}
               </div>
               {dateMissing && (
-                <div style={{ fontSize: 12.5, color: "#EA4335", textAlign: "right", marginTop: 6 }}>
+                <div style={{ fontSize: 12.5, color: M3.error, textAlign: "right", marginTop: 6 }}>
                   Factuurdatum ontbreekt — verplicht om te bevestigen.
                 </div>
               )}
@@ -1496,7 +1497,7 @@ function InvoiceCard({
                   marginTop: 6,
                 }}
               >
-                <span style={{ fontSize: 11, color: "#34a853" }}>✓</span>
+                <span style={{ fontSize: 11, color: M3.success }}>✓</span>
                 <span style={{ fontSize: 12, color: "#5f6368" }}>
                   Klaar om te bevestigen
                 </span>
@@ -1769,7 +1770,7 @@ type IntakeResult = {
 };
 
 const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string }> = {
-  invoice:   { icon: "✓",  color: "#34a853" },
+  invoice:   { icon: "✓",  color: M3.success },
   document:  { icon: "📁", color: "#1a73e8" },
   bank:      { icon: "🏦", color: "#1a73e8" },
   duplicate: { icon: "ℹ️", color: "#5f6368" },
@@ -2799,7 +2800,7 @@ export default function IncomingInvoicesClient({
           </p>
         ) : (
           <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
-            <span style={{ color: "#34a853", fontWeight: 600 }}>
+            <span style={{ color: M3.success, fontWeight: 600 }}>
               Niets om te corrigeren
             </span>{" "}
             · {readyToConfirmCount}{" "}

@@ -19,6 +19,7 @@ import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
+import { M3 } from '@/lib/design/tokens'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -269,7 +270,7 @@ function OutlinedInput({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
-        {label}{required && <span style={{ color: '#EA4335', marginLeft: 2 }}>*</span>}
+        {label}{required && <span style={{ color: M3.error, marginLeft: 2 }}>*</span>}
       </label>
       <input
         type={type}
@@ -324,7 +325,7 @@ function DateField({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 14, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>
-        {label}{required && <span style={{ color: '#EA4335', marginLeft: 2 }}>*</span>}
+        {label}{required && <span style={{ color: M3.error, marginLeft: 2 }}>*</span>}
       </label>
       <input
         type="date"
@@ -1186,11 +1187,11 @@ function NewInvoicePageContent() {
               <div>
                 <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
                 {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
-                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
+                  <p style={{ fontSize: 11, color: M3.error, margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
                 )}
                 {/* [ICP] Said while the number is still on screen and still fixable. */}
                 {euVatSuspect && (
-                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>
+                  <p style={{ fontSize: 11, color: M3.error, margin: '4px 0 0' }}>
                     Deze lengte klopt niet voor dat EU-land — controleer via VIES. Het bepaalt de BTW-verlegging én de ICP-opgaaf.
                   </p>
                 )}

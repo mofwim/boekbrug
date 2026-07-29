@@ -9,15 +9,14 @@ import { type Article } from '@/lib/articles'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface: '#ffffff', onSurface: '#202124', surfaceVariant: '#f1f3f4', outline: '#80868b',
-  error: '#B3261E', neutral: '#5F6368',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const RATES = [21, 9, 0]

@@ -13,6 +13,11 @@ import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
 import { lastCompletedQuarter } from '@/lib/quarter'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -38,20 +43,7 @@ const DOC_STATUS_META: Record<string, { label: string; tone: NodeBadge['tone'] }
 }
 
 // ─── Design tokens — Material You (BoekBrug Design System v1.0) ───────────────
-const M3 = {
-  primary:          '#1A73E8',
-  onPrimary:        '#FFFFFF',
-  primaryContainer: '#D3E3FD',
-  surface:          '#ffffff',
-  onSurface:        '#202124',
-  surfaceVariant:   '#f1f3f4',
-  outline:          '#80868b',
-  success:          '#34A853',
-  error:            '#B3261E',
-  warning:          '#E37400',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 const NL_EUR = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })

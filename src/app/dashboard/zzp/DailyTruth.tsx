@@ -16,8 +16,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
+// [DESIGN] Radius from the shared scale (src/lib/design/tokens.ts).
+import { R } from '@/lib/design/tokens'
 
-const R = { lg: 16, full: 999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })

@@ -33,18 +33,14 @@ import { rowMatchesQuery } from "@/lib/search";
 // implementation, no drifting copies. Vandaag offers the subset of keys whose
 // columns it actually selects (no created_at / payment_date here).
 import { sortRows, SORTS, type SortKey } from "@/lib/invoice-sort";
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3 } from '@/lib/design/tokens'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
-const M3 = {
-  primary: "#1A73E8",
-  onSurface: "#202124",
-  onSurfaceVariant: "#5F6368",
-  warning: "#E37400", // soon-due (calm amber)
-  error: "#B3261E", // recently overdue (real attention)
-  hairline: "#E0E0E0",
-  hover: "#F1F3F4",
-};
 
 // [OWNER-DECISION] The old 30-day "Al langer open" tier (separate calm-amber
 // group rendered BELOW the active items) is gone: with real day counts on the

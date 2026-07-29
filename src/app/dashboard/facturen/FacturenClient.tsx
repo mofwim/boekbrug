@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -35,25 +35,8 @@ import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/
 import { useToast } from "@/components/ui/Toast"
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
-const M3 = {
-  primary:           '#1A73E8',
-  onPrimary:         '#FFFFFF',
-  primaryContainer:  '#D3E3FD',
-  onPrimaryContainer:'#041E49',
-  surface:           '#ffffff',
-  onSurface:         '#202124',
-  surfaceVariant:    '#f1f3f4',
-  outline:           '#80868b',
-  error:             '#B3261E',
-  errorContainer:    '#F9DEDC',
-  success:           '#34A853',
-  successContainer:  '#CEEAD6',
-  warning:           '#E37400',
-  warningContainer:  '#FEE8C4',
-}
 const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 // Status chip colors — Material You

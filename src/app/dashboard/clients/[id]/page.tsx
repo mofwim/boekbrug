@@ -11,6 +11,7 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+import { EL1, M3, R } from '@/lib/design/tokens'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
@@ -84,7 +85,7 @@ export default function ClientDetailPage() {
       actions: (
         <button
           onClick={removeClient}
-          style={{ fontSize: 13, fontWeight: 500, color: '#EA4335', background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          style={{ fontSize: 13, fontWeight: 500, color: M3.error, background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
           Ontkoppelen
         </button>
       ),
@@ -109,7 +110,7 @@ export default function ClientDetailPage() {
 
         {/* ── Sectie 1: Klantgegevens ── */}
         {/* [BOEK-028] Design System — Workspace card — May 2026 */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1 }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
             <p style={{ fontSize: 11, fontWeight: 600, color: '#5F6368', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
               Klantgegevens
@@ -164,7 +165,7 @@ export default function ClientDetailPage() {
               onClick={() => router.push(`/dashboard/messages/${clientId}`)}
               style={{
                 flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                padding: '12px', fontSize: 14, fontWeight: 500, color: '#34A853',
+                padding: '12px', fontSize: 14, fontWeight: 500, color: M3.success,
                 background: 'none', border: 'none', cursor: 'pointer',
                 transition: 'background 0.1s ease',
               }}
@@ -188,7 +189,7 @@ export default function ClientDetailPage() {
 
         {/* ── Sectie 2: Working Place ── */}
         {/* [BOEK-028] Design System — Workspace card + Q buttons — May 2026 */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8 }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1 }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>Working Place</h2>
             <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>Selecteer een kwartaal</p>
