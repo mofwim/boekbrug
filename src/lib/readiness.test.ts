@@ -316,5 +316,26 @@ console.log("\n— [KASSTELSEL] undated paid money blocks 'klaar' —");
   check("no eligible bad debt → no risk", !none.risks.some((x) => /terugvraagbaar/.test(x.title)));
 }
 
+console.log("\n— [DATE-GAP] een factuur zonder datum maakt 'stil 100% klaar' onmogelijk —");
+{
+  // Een geverifieerde factuur zonder invoice_date valt uit ELK bereikfilter (.gte/.lte laat
+  // NULL stil vallen): geen kwartaalpakket, geen concept-aangifte, haar BTW telt nergens. Het
+  // pakket waarschuwde er al over; dit scherm — dat het eindoordeel uitspreekt — wist er niets
+  // van en kon dus 100% klaar melden terwijl er geld buiten beeld lag.
+  const r = buildReadiness(perfect({ datelessInvoiceCount: 1 }));
+  check("een dateloze factuur is een risico", r.risks.some((x) => /geen datum/i.test(x.title)));
+  check("het risico legt uit wat er misgaat", r.risks.some((x) => /geen enkel kwartaal/i.test(x.detail ?? "")));
+  check("de score kan geen 100 meer zijn", r.score < 100);
+
+  // Maar het is bewust GEEN blokkade: de telling is all-time, dus een harde stop zou al
+  // ingediende kwartalen voorgoed rood zetten — ook op het werkbord van de boekhouder.
+  check("het blokkeert 'klaar' niet", !r.missing.some((x) => /geen datum/i.test(x.title)));
+
+  // En zonder dateloze facturen verandert er niets aan het schone kwartaal.
+  const schoon = buildReadiness(perfect({ datelessInvoiceCount: 0 }));
+  check("nul dateloos → geen risico", !schoon.risks.some((x) => /geen datum/i.test(x.title)));
+  check("nul dateloos → gewoon 100", schoon.score === 100);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

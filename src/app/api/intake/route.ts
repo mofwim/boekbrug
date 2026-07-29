@@ -30,6 +30,9 @@ import { logAuditAction, getClientIP } from "@/lib/audit"
 import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 // [BON-BETAALWIJZE] Eén normalisator voor elke weg waarlangs een betaalwijze binnenkomt.
 import { normaliseerBetaalwijze } from "@/lib/bon-betaalwijze"
+// [OBSERVABILITY] Eén bron voor "dit bestand is bewaard maar niet gelezen" — gedeeld met het
+// overgeslagen-paneel, dat vroeger op een andere waarde las dan hier werd geschreven.
+import { docTypeForStoredFile, DOC_TYPE_UNSUPPORTED } from "@/lib/skipped-import"
 // [SHEET-INTAKE] Route an uploaded kassa Z-report / grootboek export into the EXISTING
 // turnover + ledger pipelines instead of filing it as an opaque document.
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
@@ -201,7 +204,7 @@ export async function POST(req: NextRequest) {
         user_id: user.id, file_name: file.name, file_url: storagePath,
         file_size: buffer.length, file_type: contentType,
         doc_type: "overig", folder_id: folderId, source: "camera",
-        ai_processed: false, ai_doc_type: "unsupported_type", content_hash: hash,
+        ai_processed: false, ai_doc_type: DOC_TYPE_UNSUPPORTED, content_hash: hash,
       })
       .select("id").single()
     if (docErr || !doc) {
@@ -582,7 +585,14 @@ export async function POST(req: NextRequest) {
         source: "camera",
         // Only claim we processed it when we actually read it.
         ai_processed: !couldNotRead,
-        ai_doc_type: v.document_kind ?? "other",
+        // [OBSERVABILITY] En schrijf de REDEN weg, niet de gok. Hier stond
+        // `v.document_kind ?? "other"`, óók wanneer couldNotRead waar was — precies de vlag
+        // ernaast. Een gefotografeerde bon die niet te lezen was, kwam dus als "other" in
+        // bestanden, en /api/email/skipped telt op 'could_not_read'. Het bestand was daarmee
+        // nergens geteld en het overgeslagen-paneel meldde "Niets overgeslagen — alles wat
+        // binnenkwam is verwerkt". Dat is de zin die een ondernemer laat ophouden met zoeken
+        // naar de bon die zijn boekhouder mist.
+        ai_doc_type: docTypeForStoredFile(couldNotRead, v.document_kind),
         content_hash: contentHash,
       })
       .select("id")
