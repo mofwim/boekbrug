@@ -29,6 +29,8 @@
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
+// [IBAN-WISSEL] Eén formulering voor "dit rekeningnummer is veranderd", gedeeld met het importpad.
+import { ibanChangeReason } from '@/lib/iban-change'
 
 // Confidence below this → ask the owner to confirm the field (BRIDGE-EXTRACT's
 // modal uses the same 0.7 threshold; kept identical so the surface and the modal
@@ -56,6 +58,9 @@ export interface ImportHealth {
     invoiceDate: boolean // AI unsure about the date
     reminder: boolean // [REMINDER] a payment reminder — check the original isn't already booked
     possibleDuplicate: boolean // [DEDUP-SOFT] a look-alike of an invoice already imported — human glance
+    // [IBAN-WISSEL] A supplier we already know arrived with a DIFFERENT bank account. The
+    // signature of invoice fraud — and the one axis every other gate here reads as clean.
+    ibanChanged: boolean
   }
 }
 
@@ -116,6 +121,12 @@ export interface FieldConfidence {
     possible_duplicate?: boolean
     possible_duplicate_of?: string
     possible_duplicate_reason?: string
+    // [IBAN-WISSEL] Written at import time when a supplier we already hold under one bank account
+    // sends an invoice with another one. `_from` / `_to` carry both numbers so the read-time reason
+    // can show them side by side — comparing them IS the check the owner has to make.
+    iban_changed?: boolean
+    iban_changed_from?: string
+    iban_changed_to?: string
   }
 }
 
@@ -134,6 +145,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     invoiceDate: false,
     reminder: false,
     possibleDuplicate: false,
+    ibanChanged: false,
   }
 
   const fc = inv.field_confidence
@@ -165,6 +177,20 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     const why = storedSafecore.possible_duplicate_reason
     reasons.push(
       `mogelijk dubbel${of ? ` met factuur ${of}` : ''}${why ? ` (${why})` : ''} — controleer of dit geen dubbele boeking is`
+    )
+  }
+  // [IBAN-WISSEL] Een bekende leverancier met een ander rekeningnummer. Dit staat bewust boven de
+  // rekenkundige as: bij factuurfraude klopt de rekensom juist wél — het bedrag is overgenomen van
+  // een echte factuur. Elke andere poort hier geeft groen, dus als deze zwijgt, zwijgt alles.
+  if (storedSafecore?.iban_changed === true) {
+    flags.ibanChanged = true
+    const from = storedSafecore.iban_changed_from
+    const to = storedSafecore.iban_changed_to
+    reasons.push(
+      from && to
+        ? ibanChangeReason({ from, to })
+        : 'het rekeningnummer van deze leverancier is veranderd — controleer dit vóór je betaalt, ' +
+          'en bel de leverancier op een nummer dat je zelf opzoekt (niet het nummer op deze factuur)'
     )
   }
   if (storedSafecore && storedSafecore.arithmetic_ok === false) {
@@ -282,7 +308,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   }
 
   const level: HealthLevel =
-    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate
+    flags.arithmetic || flags.vendor || flags.invoiceNumber || flags.invoiceDate || flags.reminder || flags.possibleDuplicate || flags.ibanChanged
       ? 'needs-review'
       : 'clean'
 

@@ -18,6 +18,9 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 // [MONEY-GUARD] The one predicate for "this invoice already holds money" — shared with the
 // dedicated archive route so the two doors to the same act cannot disagree.
 import { hasSettledMoney } from "@/lib/invoice-removal";
+// [NEGEER-REDEN] De toegestane redenen staan in één lijst — gedeeld met het scherm en met de
+// CHECK-constraint in invoice_archive_reason.sql, zodat die drie niet uit elkaar kunnen lopen.
+import { normalizeArchiveReason } from "@/lib/archive-reason";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -351,11 +354,22 @@ export async function POST(
 // ── DELETE — ignore (archive) ─────────────────────────────────────────────────
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
+
+  // [NEGEER-REDEN] Optioneel: waarom wordt hij genegeerd. Een NOTITIE, geen besluit — hij
+  // verandert niets aan wat er gebeurt. Onbekende of ontbrekende waarde → null; een oude client
+  // die niets stuurt werkt dus precies als voorheen.
+  let reason: ReturnType<typeof normalizeArchiveReason> = null;
+  try {
+    const body = await req.json();
+    reason = normalizeArchiveReason((body as { reason?: unknown })?.reason);
+  } catch {
+    // Geen body — dat mag. De vraag is vrijwillig.
+  }
 
   const {
     data: { user },
@@ -405,17 +419,35 @@ export async function DELETE(
     );
   }
 
-  const { data: archData, error } = await supabase
-    .from("invoices")
-    .update({
-      status: "archived",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .in("status", ["processing", "received"])
-    .select("id");
+  // [NEGEER-REDEN] De reden en het archiveringsmoment gaan mee in DEZELFDE update — één schrijf,
+  // dus de notitie kan nooit los komen te staan van de archivering.
+  //
+  // De migratie invoice_archive_reason.sql wordt in dit project met de hand toegepast, dus er is
+  // een venster waarin deze code al draait en de kolommen nog niet bestaan. Dan mag de ARCHIVERING
+  // niet sneuvelen op een notitie: bij een ontbrekende-kolom-fout (PostgREST PGRST204 / Postgres
+  // 42703) schrijven we hem opnieuw zonder de nieuwe velden. De eigenaar merkt alleen dat het
+  // label ontbreekt — niet dat de knop stuk is.
+  const archiveNow = new Date().toISOString();
+  const basePatch: InvoiceUpdate = { status: "archived", updated_at: archiveNow };
+  const archiveInvoice = (patch: InvoiceUpdate) =>
+    supabase
+      .from("invoices")
+      .update(patch)
+      .eq("id", id)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .in("status", ["processing", "received"])
+      .select("id");
+
+  let { data: archData, error } = await archiveInvoice({
+    ...basePatch,
+    archive_reason: reason,
+    archived_at: archiveNow,
+  });
+  if (error && (error.code === "PGRST204" || error.code === "42703")) {
+    console.warn("[NEGEER-REDEN] archive_reason/archived_at ontbreken nog — migratie niet toegepast; archiveer zonder notitie");
+    ({ data: archData, error } = await archiveInvoice(basePatch));
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

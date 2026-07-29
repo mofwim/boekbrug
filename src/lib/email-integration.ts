@@ -27,6 +27,12 @@ import {
 import { collectPossibleDuplicate } from '@/lib/possible-duplicate-collect'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 import { resolveSupplierForImport } from '@/lib/supplier-registry'
+// [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
+// van factuurfraude, en de enige as waarop élke andere poort hier groen geeft.
+import { detectIbanChange } from '@/lib/iban-change'
+// [AFZENDERREGEL] Adressen waarvan de eigenaar zelf zei "altijd negeren" — toegepast in PHASE 0,
+// dus vóór de AI-aanroep, en altijd verantwoord in de skip-registry.
+import { normalizeSenderEmail, senderIsBlocked, blockedSenderSkipReason } from '@/lib/sender-rules'
 import { createNotification } from '@/lib/notifications'
 import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
@@ -1986,8 +1992,59 @@ export async function syncUserEmails(
     }
   }
 
-  const freshAll = attachments
-    .filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
+  // [AFZENDERREGEL] De eigen regels van de eigenaar: adressen waarvan hij zelf heeft gezegd
+  // "altijd negeren". Hier, in PHASE 0, dus VÓÓR de AI-aanroep — dat is het hele punt: die post
+  // hoeft niet gelezen te worden en de wachtrij hoeft er niet mee vol te lopen.
+  //
+  // Eén query per sync. Faalt hij (tabel bestaat nog niet, netwerk), dan is de set leeg en
+  // importeert alles gewoon zoals voorheen: een kapotte regel mag nooit post tegenhouden.
+  const blockedSenders = new Set<string>()
+  try {
+    const { data: ruleRows } = await supabase
+      .from('email_sender_rules')
+      .select('sender_email')
+      .eq('user_id', userId)
+      .eq('action', 'ignore')
+      .limit(500)
+    for (const r of (ruleRows ?? []) as Array<{ sender_email: string | null }>) {
+      const e = normalizeSenderEmail(r.sender_email)
+      if (e) blockedSenders.add(e)
+    }
+  } catch {
+    // Geen regels toepasbaar → alles importeert. De veilige kant.
+  }
+
+  const notKnown = attachments.filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
+
+  // [AFZENDERREGEL] Overslaan is nooit ONZICHTBAAR. Elke overgeslagen bijlage krijgt een rij in
+  // dezelfde skip-registry die al elke niet-geïmporteerde bijlage verantwoordt, met de reden en
+  // met de regel erin genoemd — zodat "waar is die bijlage gebleven" altijd te beantwoorden is,
+  // en de eigenaar ziet wélke regel het deed. Het bestand zelf blijft gewoon in de mailbox staan.
+  const blockedBySender = blockedSenders.size
+    ? notKnown.filter((a) => senderIsBlocked(a.from, blockedSenders))
+    : []
+  if (blockedBySender.length > 0) {
+    try {
+      const skipPipeline = createPipelineClient()
+      await skipPipeline.from('email_skipped_attachments').upsert(
+        blockedBySender.map((a) => ({
+          user_id: userId,
+          source_message_id: `${a.messageId}:${a.filename}`,
+          filename: a.filename,
+          reason: blockedSenderSkipReason(normalizeSenderEmail(a.from) ?? a.from),
+        })),
+        { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+      )
+    } catch (e) {
+      // De registratie is de verantwoording, niet de blokkade zelf. Mislukt hij, dan wordt de
+      // bijlage nog steeds overgeslagen — maar we laten het niet in stilte gebeuren.
+      console.error('[AFZENDERREGEL] kon overgeslagen bijlage niet registreren', e)
+    }
+  }
+  const blockedKeys = new Set(blockedBySender.map((a) => `${a.messageId}:${a.filename}`))
+
+  const freshAll = notKnown
+    .filter((a) => !blockedKeys.has(`${a.messageId}:${a.filename}`))
     // [BOEK-011] Oldest email first → save order (created_at) follows real
     // chronology, so lists sorted on created_at read naturally. Graph returns
     // newest-first; Gmail is unordered — this sort normalizes both providers.
@@ -2479,6 +2536,17 @@ export async function syncUserEmails(
       // vendor regardless of spelling. Best-effort (null on any error) → falls back to the raw
       // name + the pre-existing name comparison, exactly as before. Reused at the insert below.
       const rawVendorName = classification.vendor || extractSenderName(attachment.from)
+
+      // [IBAN-WISSEL] Kennen we deze leverancier al onder een ANDER rekeningnummer? Dit moet
+      // VÓÓR resolveSupplierForImport, want die kan zo meteen een rij aanmaken of bijwerken met
+      // precies het IBAN dat we hier verdacht vinden — dan zouden we de vraag met onszelf
+      // beantwoorden. Eén indexed query op een sleutel die niet meeverandert (KVK / naamsleutel).
+      const ibanChange = await detectIbanChange(supabase, userId, {
+        name: classification.vendor,
+        kvk: classification.vendorKvk ?? null,
+        iban: classification.vendorIban ?? null,
+      })
+
       const supplier = await resolveSupplierForImport(supabase, userId, {
         name: classification.vendor,
         iban: classification.vendorIban ?? null,
@@ -2828,7 +2896,7 @@ export async function syncUserEmails(
       const isReminder = classification.isReminder === true
       // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) and the reminder
       // flag so the audit/human-review trail records WHY this invoice needs a human look.
-      if (!verdict.ok || dedupNote || isReminder || possibleDup) {
+      if (!verdict.ok || dedupNote || isReminder || possibleDup || ibanChange) {
         const safecore: Record<string, unknown> = {}
         if (!verdict.ok) {
           safecore.arithmetic_ok = false
@@ -2852,6 +2920,13 @@ export async function syncUserEmails(
           safecore.possible_duplicate = true
           safecore.possible_duplicate_of = possibleDup.match.invoice_number || possibleDup.match.client_name || possibleDup.match.id
           safecore.possible_duplicate_reason = possibleDup.reason
+        }
+        // [IBAN-WISSEL] Beide nummers mee, zodat de wachtrij ze naast elkaar kan tonen — dat
+        // vergelijken IS de controle die de eigenaar moet doen. → needs-review + geen auto-boeking.
+        if (ibanChange) {
+          safecore.iban_changed = true
+          safecore.iban_changed_from = ibanChange.from
+          safecore.iban_changed_to = ibanChange.to
         }
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),
