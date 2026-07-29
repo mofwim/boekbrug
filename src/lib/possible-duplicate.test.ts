@@ -116,5 +116,106 @@ console.log("\n— cent-precision total match (float-safe) —");
   check("121.10 != 121.11", r2 === null);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [ABONNEMENT] Een leverancier die ELKE WEEK hetzelfde bedrag factureert.
+//
+// Het venster is 14 dagen, dus een tussenpoos van 7 dagen viel er precies binnen: zo'n abonnement
+// werd ELKE WEEK opnieuw als "mogelijk dubbel" gevlagd, met een ander factuurnummer erop. Dat is
+// geen dubbele boeking, dat is de volgende termijn.
+//
+// Onderdrukken is de GEVAARLIJKE richting, dus de helft van deze tests gaat over wanneer het NIET
+// mag: dat is wat het verschil bewaakt tussen "abonnement" en "iemand stuurde het per ongeluk twee
+// keer".
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Wekelijkse reeks van dezelfde leverancier, zelfde bedrag, elk met een EIGEN nummer. */
+const weekly = (n: number): PossibleDupCandidate[] =>
+  Array.from({ length: n }, (_, i) => cand({
+    id: `w${i}`,
+    invoice_number: `W-${100 + i}`,
+    client_name: "Atapack B.V.",
+    // 2026-03-02, -03-09, -03-16, ... telkens 7 dagen
+    invoice_date: `2026-03-${String(2 + i * 7).padStart(2, "0")}`,
+  }));
+
+console.log("\n— [ABONNEMENT] wekelijkse reeks → GEEN vlag meer —");
+{
+  // Vier eerdere weken; de nieuwe komt exact een week na de laatste (2026-03-23 + 7 = 03-30).
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "W-104", invoiceDate: "2026-03-30" }),
+    weekly(4),
+  );
+  check("wekelijks abonnement wordt niet meer gevlagd", r === null);
+}
+
+console.log("\n— [ABONNEMENT] maar zonder aantoonbaar ritme blijft de vlag staan —");
+{
+  // Slechts TWEE eerdere facturen: te weinig voor een reeks. Dit kan net zo goed een per ongeluk
+  // dubbel verstuurde factuur zijn, en dan moet de eigenaar er juist naar kijken.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "W-102", invoiceDate: "2026-03-16" }),
+    weekly(2),
+  );
+  check("twee eerdere facturen → nog steeds gevlagd", r?.reason === "zelfde bedrag en afzender, datum dichtbij");
+}
+{
+  // Onregelmatige datums: 2 dagen, dan 9, dan 1. Geen ritme → geen onderdrukking.
+  const rommel: PossibleDupCandidate[] = [
+    cand({ id: "a", invoice_number: "A-1", invoice_date: "2026-03-01" }),
+    cand({ id: "b", invoice_number: "A-2", invoice_date: "2026-03-03" }),
+    cand({ id: "c", invoice_number: "A-3", invoice_date: "2026-03-12" }),
+  ];
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "A-4", invoiceDate: "2026-03-13" }), rommel);
+  check("onregelmatige reeks → nog steeds gevlagd", !!r);
+}
+
+console.log("\n— [ABONNEMENT] de hekken die een echte dubbele boeking beschermen —");
+{
+  // Zelfde NUMMER als een van de reeks → dit is hetzelfde stuk, nooit onderdrukken.
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "W-101", invoiceDate: "2026-03-30" }), weekly(4));
+  check("nieuw stuk deelt een nummer met de reeks → gevlagd", !!r);
+}
+{
+  // Geen eigen factuurnummer → we kunnen niet zeggen dat het een ander stuk is.
+  const r = assessPossibleDuplicate(input({ invoiceNumber: null, invoiceDate: "2026-03-30" }), weekly(4));
+  check("nieuw stuk zonder nummer → gevlagd", !!r);
+}
+{
+  // Een reeks waarin een NUMMER dubbel voorkomt is juist bewijs van iets dubbels, geen ritme.
+  const metDubbelNummer = [...weekly(3), cand({ id: "dup", invoice_number: "W-100", invoice_date: "2026-03-23" })];
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "W-200", invoiceDate: "2026-03-30" }), metDubbelNummer);
+  check("herhaald nummer in de reeks → gevlagd", !!r);
+}
+{
+  // Een uitbarsting (elke dag hetzelfde bedrag) is geen factureerritme.
+  const burst = Array.from({ length: 4 }, (_, i) => cand({
+    id: `b${i}`, invoice_number: `B-${i}`, invoice_date: `2026-03-0${1 + i}`,
+  }));
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "B-9", invoiceDate: "2026-03-05" }), burst);
+  check("dagelijkse burst → gevlagd, geen abonnement", !!r);
+}
+{
+  // ZELFDE DATUM blijft altijd een signaal: een weekabonnement factureert niet twee keer op
+  // dezelfde dag. Rang 4 mag nooit onderdrukt worden.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "W-104", invoiceDate: "2026-03-23" }),
+    weekly(4),
+  );
+  check("zelfde datum als een reekslid → gevlagd (rang 4 blijft)", r?.reason === "zelfde bedrag, datum en afzender");
+}
+{
+  // Een reeks van een ANDERE leverancier mag nooit als bewijs dienen.
+  const anderLeverancier = weekly(4).map((c) => ({ ...c, client_name: "Jansen Bouw" }));
+  // Jansen is aantoonbaar een andere leverancier dan Atapack, dus die kandidaten worden hoe dan ook
+  // afgewezen (de vendor-veto) — er valt niets te vlaggen en niets te onderdrukken.
+  const r = assessPossibleDuplicate(input({ invoiceNumber: "W-104", invoiceDate: "2026-03-30" }), anderLeverancier);
+  check("kandidaten van een andere leverancier leveren geen match", r === null);
+  // Het echte hek: de reeks van Jansen mag Atapack niet vrijpleiten. Een Atapack-kandidaat dichtbij
+  // moet dan nog steeds gevlagd worden.
+  const gemengd = [...anderLeverancier, cand({ id: "at", invoice_number: "AT-1", client_name: "Atapack B.V.", invoice_date: "2026-03-28" })];
+  const r2 = assessPossibleDuplicate(input({ invoiceNumber: "W-104", invoiceDate: "2026-03-30" }), gemengd);
+  check("vreemde reeks pleit deze leverancier niet vrij", !!r2);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
