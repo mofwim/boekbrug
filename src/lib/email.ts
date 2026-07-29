@@ -503,8 +503,14 @@ export async function sendInvoiceReminder({
         }
       : {})
   })
-  // Best-effort: a reminder that fails to send must never break the cron run.
+  // Best-effort: a reminder that fails to send must never break the cron run — but the caller
+  // has to be ABLE to know. [REMINDER-TRUTH] This used to return void, so a Resend rejection was
+  // logged and swallowed: the cron counted the reminder as sent, kept the claimed tier, and told
+  // the owner the letter went out. On the final tier that letter is the statutory WIK aanmaning,
+  // the one that grants the right to charge incassokosten at all — believing it was sent when it
+  // was not is the worst version of this bug.
   await deliverEmail(__sendResult, { label: 'invoice-reminder', critical: false })
+  return { delivered: !__sendResult?.error }
 }
 
 // ── [BILLING] Eén mail over betalen, en bewust maar één ───────────────────────
