@@ -23,6 +23,9 @@ import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 import { gateFairUse } from "@/lib/fair-use-gate";
 // [REIMPORT-CARRY] De regel over wat een herlezing bewaart en wat zij opnieuw bepaalt.
 import { buildReimportFieldConfidence } from "@/lib/reimport-carry";
+// [HERLEES-ARCHIVEER] Blijkt het geen factuur, dan archiveren we hem zelf — maar nooit als er geld
+// op staat. Dezelfde predicaat als de negeer-route, zodat de twee niet uit elkaar kunnen lopen.
+import { hasSettledMoney } from "@/lib/invoice-removal";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -75,7 +78,9 @@ export async function POST(
   // Load + prove ownership. Keep the current values so a poorer re-read can't wipe metadata.
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, receiver_id, direction, status, pdf_url, document_id, client_name, invoice_number, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, field_confidence")
+    // [HERLEES-ARCHIVEER] amount_paid meegenomen: het auto-archiveren hieronder mag nooit een
+    // factuur wegzetten waarop al (deels) betaald is.
+    .select("id, receiver_id, direction, status, pdf_url, document_id, client_name, invoice_number, invoice_date, due_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, field_confidence")
     .eq("id", id)
     .single();
 
@@ -181,13 +186,82 @@ export async function POST(
     return NextResponse.json({ error: "Kon de factuur nu niet opnieuw lezen — probeer het later opnieuw." }, { status: 502 });
   }
 
-  // If the fresh read now says this is NOT a bookable invoice (e.g. it's a statement of
-  // account, or it could not be read), do NOT wipe the row — report so the human decides
-  // whether to keep or ignore it. Nothing is changed.
+  // [HERLEES-ARCHIVEER] De verse lezing zegt: dit is geen boekbaar stuk — een rekeningoverzicht,
+  // een herinnering, een reclamemail. Voorheen bleef de rij dan staan en vertelde een melding de
+  // eigenaar dat hij hem zelf maar moest negeren. Dat is werk verschuiven, niet werk wegnemen: hij
+  // heeft net op "opnieuw inlezen" gedrukt precies om dit te laten uitzoeken.
+  //
+  // Dus archiveren we hem nu zelf, met reden 'geen_factuur' erbij, zodat het Genegeerd-tabblad
+  // meteen uitlegt waarom hij daar staat. Dat mag, want archiveren in deze app is omkeerbaar: de
+  // rij, het bestand en het nummer blijven zeven jaar staan en één tik zet hem terug. Als de verse
+  // lezing het mis had, kost dat de eigenaar één tik — geen document.
+  //
+  // Twee hekken blijven: GUARD 1 hierboven heeft al vastgesteld dat de factuur nog in de
+  // controlewachtrij staat ('processing'), en hasSettledMoney weigert alles waarop al geld is
+  // afgeboekt. Geen van beide zou hier mogen voorkomen, maar geld verdwijnt niet op een aanname.
   if (!c.isInvoice) {
+    if (hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid })) {
+      return NextResponse.json({
+        ok: false,
+        notInvoice: true,
+        archived: false,
+        reason: c.reason ?? null,
+        detail: "Er is al betaald op deze factuur, dus hij is niet automatisch verwijderd — draai eerst de betaling terug.",
+      });
+    }
+
+    const archiveNow = new Date().toISOString();
+    const archivePatch: InvoiceUpdate = {
+      status: "archived",
+      archive_reason: "geen_factuur",
+      archived_at: archiveNow,
+      updated_at: archiveNow,
+    };
+    const archive = (patch: InvoiceUpdate) =>
+      supabase
+        .from("invoices")
+        .update(patch)
+        .eq("id", id)
+        .eq("receiver_id", user.id)
+        .eq("status", "processing")
+        .select("id");
+
+    // Zelfde terugval als de negeer-route: bestaan archive_reason/archived_at nog niet op deze
+    // database, dan archiveren we zonder notitie in plaats van de hele actie te laten mislukken.
+    let { data: archived, error: archErr } = await archive(archivePatch);
+    if (archErr && (archErr.code === "PGRST204" || archErr.code === "42703")) {
+      ({ data: archived, error: archErr } = await archive({ status: "archived", updated_at: archiveNow }));
+    }
+
+    if (archErr || !archived || archived.length === 0) {
+      // Niet gelukt → eerlijk zeggen dat er niets is veranderd, zoals voorheen.
+      return NextResponse.json({
+        ok: false,
+        notInvoice: true,
+        archived: false,
+        reason: c.reason ?? null,
+      });
+    }
+
+    await logAuditAction({
+      userId: user.id,
+      action: "invoice.status_changed",
+      entityType: "invoice",
+      entityId: id,
+      oldValue: { status: invoice.status },
+      newValue: {
+        status: "archived",
+        archive_reason: "geen_factuur",
+        via: "reimport_not_invoice",
+        detail: c.reason ?? null,
+      },
+      ipAddress: getClientIP(req),
+    });
+
     return NextResponse.json({
       ok: false,
       notInvoice: true,
+      archived: true,
       reason: c.reason ?? null,
     });
   }

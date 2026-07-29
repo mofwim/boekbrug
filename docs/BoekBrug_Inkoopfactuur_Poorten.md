@@ -60,6 +60,47 @@ Deze vier draaien in deze volgorde. Ze kijken **bewust niet naar de status** van
 
 ---
 
+## 1b. Geen factuur? — overzichten en de incassoladder
+
+`src/lib/ai.ts` (woordenlijsten) · `src/lib/reminder-original.ts`
+
+Twee soorten post die op een factuur lijken maar er geen zijn. Ze worden **verschillend** behandeld, en dat verschil is het punt.
+
+### Overzichten — nooit importeren
+
+Een `rekeningoverzicht`, `saldo-overzicht`, `debiteurenoverzicht`, `betalingsoverzicht`, `openstaande posten` of `overzicht openstaande facturen` somt **meerdere** facturen op onder één totaal. Dat totaal boeken telt de facturen dubbel die het samenvat, en er zit geen geldige btw-splitsing op. Dus: `is_invoice=false`, skip-registry, klaar.
+
+Drie backstops boven de modellezing, omdat een klein model hier kan wankelen: de **bestandsnaam** (`isStatementFilename`), de **PDF-tekst** (`looksLikeStatementText` — vereist meervoudsvocabulaire *plus* een gesommeerd saldo of meerdere factuurregels) en de **afwijsreden** van het model zelf (`looksLikeStatementReason`).
+
+> Bewust **niet** in de lijst: `maandoverzicht` en `jaaroverzicht`. Dat is vaak juist een **verzamelfactuur** — één factuurnummer over meerdere leverregels — en die *is* boekbaar. Eén factuur met veel regels is geen overzicht van veel facturen.
+
+### De incassoladder — importeren hangt af van één vraag
+
+De Nederlandse keten, nagelopen tegen deurwaarders- en incassobronnen:
+
+```
+betalingsherinnering → aanmaning → sommatie → ingebrekestelling
+                                   └─ WIK-brief / 14-dagenbrief / aanzegging
+```
+
+Alle treden worden nu herkend (`isReminderFilename` + de prompt). Eerder stonden er alleen `herinnering` en `aanmaning` in — een `sommatie.pdf` gleed er dus langs en kon als gewone factuur landen.
+
+Maar herkennen is niet hetzelfde als weggooien, en hier zit de enige echt subtiele beslissing van dit document. Een Nederlandse betalingsherinnering **herhaalt de hele factuur**: nummer, datum, bedragen, btw. Dus:
+
+| Staat de originele factuur al in de boeken? | Wat er gebeurt |
+|---|---|
+| **Ja** | **Niet importeren.** Geen tweede kost, en de eigenaar heeft er niets aan in zijn wachtrij. Wél een rij in de skip-registry, mét het factuurnummer. |
+| **Nee** | **Importeren, gevlagd.** Als de originele mail in de spam belandde, is deze herinnering het *enige* bewijs van een aftrekbare kost. Weggooien = voorbelasting kwijt, stil. |
+| **Herinnering zegt niet waarover** | **Importeren, gevlagd.** Nooit overslaan op een vermoeden. |
+
+Het antwoord hangt aan `reminder_of_invoice_number` — dat de uitlezer altijd al teruggaf, maar dat tot nu toe alleen in een melding belandde en nooit ergens tegen werd nagekeken.
+
+De verzameling bekende nummers wordt **lui** geladen (de meeste syncs bevatten geen herinnering, dan draait er geen query) en **groeit tijdens de sync mee**, zodat een origineel en zijn herinnering die in dezelfde batch aankomen elkaar nog vinden. Genegeerde facturen tellen niet mee: heeft de eigenaar het origineel weggezet, dan is de herinnering misschien juist wat hij wil houden.
+
+**Grens, bewust zo:** `normalizeInvoiceNumber` haalt alleen witruimte weg, geen scheidingstekens. `2026-0041` ≡ `2026 - 0041`, maar niet ≡ `20260041`. Ook streepjes strippen zou in het hóófd-dedup-pad `2026-1` en `20261` laten samenvallen en echte, verschillende facturen kunnen blokkeren. Een herinnering herhaalt in de praktijk hetzelfde gedrukte nummer, en de uitkomst bij niet-matchen is de veilige kant: importeren.
+
+---
+
 ## 2. IBAN-wissel — de enige as waarop fraude niet groen geeft
 
 `src/lib/iban-change.ts` · `supabase/migrations/supplier_registry.sql`
@@ -80,6 +121,8 @@ De melding noemt **beide nummers naast elkaar** en zegt erbij: bel de leverancie
 `src/lib/archive-reason.ts` · `supabase/migrations/invoice_archive_reason.sql`
 
 Negeren is **archiveren, nooit verwijderen** (bewaarplicht art. 52 AWR, zeven jaar). De rij, het bestand en het nummer blijven staan; alleen telt de factuur nergens meer mee.
+
+**Opnieuw inlezen archiveert zelf.** Blijkt een factuur bij *"Opnieuw inlezen"* geen boekbaar stuk (een overzicht, een reclamemail), dan wordt hij nu automatisch weggezet met reden **Geen factuur** — voorheen vertelde een melding de eigenaar dat hij het zelf maar moest negeren, en dat is werk verschuiven terwijl hij net op die knop drukte om dit te laten uitzoeken. Dat mag omdat archiveren omkeerbaar is: één tik zet hem terug, en had de verse lezing het mis, dan kost dat een tik — geen document. Twee hekken blijven: de factuur moet nog in de controlewachtrij staan, en `hasSettledMoney` weigert alles waarop al (deels) betaald is.
 
 **De reden** is een notitie, geen besluit — vier keuzes, bewust kort:
 
@@ -173,6 +216,7 @@ Alles hierboven is puur getest, zonder database. Draai ze los met `npx tsx <best
 | Bestand | Bewaakt |
 |---------|---------|
 | `src/lib/archived-duplicate.test.ts` | de melding noemt altijd Genegeerd én terugzetten |
+| `src/lib/reminder-original.test.ts` | de volledige incassoladder, en dat overslaan *alleen* mag als het origineel er echt is |
 | `src/lib/iban-change.test.ts` | een wissel is nooit "clean", een eerste IBAN is geen wissel |
 | `src/lib/archive-reason.test.ts` | scherm ≡ API ≡ `CHECK`-constraint |
 | `src/lib/sender-rules.test.ts` | per adres, nooit per domein |

@@ -33,6 +33,8 @@ import { detectIbanChange } from '@/lib/iban-change'
 // [AFZENDERREGEL] Adressen waarvan de eigenaar zelf zei "altijd negeren" — toegepast in PHASE 0,
 // dus vóór de AI-aanroep, en altijd verantwoord in de skip-registry.
 import { normalizeSenderEmail, senderIsBlocked, blockedSenderSkipReason } from '@/lib/sender-rules'
+// [HERINNERING-ORIGINEEL] Een herinnering waarvan het origineel al geboekt is, is geen kost.
+import { decideReminder } from '@/lib/reminder-original'
 import { createNotification } from '@/lib/notifications'
 import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
@@ -2136,6 +2138,42 @@ export async function syncUserEmails(
     // Geen regels toepasbaar → alles importeert. De veilige kant.
   }
 
+  // [HERINNERING-ORIGINEEL] De factuurnummers die deze gebruiker al heeft, genormaliseerd — de
+  // verzameling waartegen een herinnering wordt nagekeken. LUI geladen: verreweg de meeste syncs
+  // bevatten geen enkele herinnering, en dan hoort er ook geen query te draaien. Eén keer per sync
+  // en daarna gecached; de set groeit tijdens de sync mee, zodat een origineel en zijn herinnering
+  // in dezelfde batch elkaar nog steeds vinden.
+  const knownNumbers = new Set<string>()
+  let knownNumbersLoaded = false
+  const knownInvoiceNumbers = async (): Promise<Set<string>> => {
+    if (knownNumbersLoaded) return knownNumbers
+    const set = knownNumbers
+    try {
+      // Alleen facturen die ECHT tellen. Een genegeerde factuur mag een herinnering niet
+      // wegdrukken: als de eigenaar het origineel heeft weggezet, is de herinnering misschien
+      // juist het stuk dat hij wél wil houden.
+      const { data } = await supabase
+        .from('invoices')
+        .select('invoice_number')
+        .eq('receiver_id', userId)
+        .eq('direction', 'incoming')
+        .in('status', ['processing', 'received', 'paid'])
+        .not('invoice_number', 'is', null)
+        .order('invoice_date', { ascending: false })
+        .limit(5000)
+      for (const r of (data ?? []) as Array<{ invoice_number: string | null }>) {
+        const key = normalizeInvoiceNumber(r.invoice_number)
+        if (key) set.add(key)
+      }
+    } catch {
+      // Kan de lijst niet gelezen worden, dan blijft de set leeg → elke herinnering wordt
+      // geïmporteerd-met-vlag. De veilige kant: liever een extra rij in de wachtrij dan een
+      // weggegooid bewijsstuk.
+    }
+    knownNumbersLoaded = true
+    return set
+  }
+
   const notKnown = attachments.filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
 
   // [AFZENDERREGEL] Overslaan is nooit ONZICHTBAAR. Elke overgeslagen bijlage krijgt een rij in
@@ -3007,6 +3045,52 @@ export async function syncUserEmails(
         isCreditNote: classification.isCreditNote === true,
       })
 
+      // [HERINNERING-ORIGINEEL] Gaat deze herinnering over een factuur die AL in de boeken staat?
+      // Dan is het geen tweede kost en heeft de eigenaar er niets aan in zijn wachtrij: overslaan,
+      // mét een rij in de skip-registry zodat "waar is die herinnering gebleven" te beantwoorden
+      // blijft. Staat het origineel er NIET, dan importeren we hem juist wél (gevlagd): een
+      // Nederlandse betalingsherinnering herhaalt de hele factuur, en als de originele mail in de
+      // spam belandde is dit het enige bewijs van een aftrekbare kost.
+      {
+        const reminderDecision = decideReminder(
+          {
+            isReminder: classification.isReminder,
+            reminderOfInvoiceNumber: classification.reminderOfInvoiceNumber,
+          },
+          await knownInvoiceNumbers()
+        )
+        if (reminderDecision.action === 'skip') {
+          try {
+            const skipPipeline = createPipelineClient()
+            await skipPipeline.from('email_skipped_attachments').upsert(
+              {
+                user_id: userId,
+                source_message_id: `${attachment.messageId}:${attachment.filename}`,
+                filename: attachment.filename,
+                reason: reminderDecision.reason,
+              },
+              { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
+            )
+          } catch (e) {
+            console.error('[HERINNERING-ORIGINEEL] kon overgeslagen herinnering niet registreren', e)
+          }
+          await logAuditAction({
+            userId,
+            action: 'invoice.duplicated',
+            entityType: 'invoice',
+            entityId: reminderDecision.originalNumber,
+            newValue: {
+              reason: 'reminder_original_already_booked',
+              original_invoice_number: reminderDecision.originalNumber,
+              path: 'email',
+            },
+          })
+          skipped++
+          completedKeys.add(wmKey)
+          continue
+        }
+      }
+
       // Merge, don't overwrite: keep the AI's fieldConfidence, add _safecore
       // only when held. When there's nothing at all, keep null (parity with the
       // pre-SAFECORE behaviour for clean invoices — no empty {} churn).
@@ -3208,6 +3292,15 @@ export async function syncUserEmails(
       } else {
         saved++
         completedKeys.add(wmKey) // [watermark] saved = complete
+        // [HERINNERING-ORIGINEEL] Dit nummer hoort nu bij "wat we al hebben". Zonder deze regel
+        // zou een origineel en zijn herinnering die in DEZELFDE batch aankomen elkaar missen: de
+        // set is aan het begin van de sync geladen, dus het net-geïmporteerde origineel zat er nog
+        // niet in en de herinnering zou als tweede kost in de wachtrij landen. Alleen bijwerken als
+        // de set al geladen is — anders zou dit de luie query juist uitlokken.
+        if (knownNumbersLoaded) {
+          const savedKey = normalizeInvoiceNumber(classification.invoiceNumber)
+          if (savedKey) knownNumbers.add(savedKey)
+        }
         // [BANK-LINK] Remember that a matchable ('received') invoice landed this run, so we can
         // run the safe bank linker ONCE after the loop (not per-invoice — the engine scans the
         // whole statement each call). Only auto-advanced invoices are eligible: a held/processing
