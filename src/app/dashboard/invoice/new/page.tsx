@@ -14,7 +14,7 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
-import { formatDateNL } from '@/lib/format-nl'
+import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // [ICP] Same classifier the aangifte and the ICP-opgaaf use, so the invoice screen and the
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
@@ -452,7 +452,12 @@ function NewInvoicePageContent() {
   const euVatCustomer = classifyVatNumber(clientBtw).kind === 'eu'
 
   // ── Dates ────────────────────────────────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0]
+  // [TZ] The owner's Amsterdam day, not the UTC one. This value seeds BOTH the
+  // factuurdatum and the leverdatum of a document that carries a number from the
+  // doorlopende reeks — and toISOString() is still on yesterday until 01:00 (02:00
+  // in summer). An invoice typed just after midnight on 1 January would be dated
+  // into the previous fiscal year and the previous BTW-quarter.
+  const today = amsterdamToday()
   const [invoiceDate, setInvoiceDate] = useState(today)
   const [dueDate, setDueDate]         = useState('')
   // [FACTUUR-A] Leverdatum (Art. 35a sub f) — defaults to invoice date until

@@ -6,6 +6,7 @@
 // PATCH  → restore an ignored invoice back to the verification queue (→processing)
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamToday } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
 import { createPipelineClient } from "@/lib/supabase-pipeline";
@@ -182,7 +183,7 @@ export async function POST(
     updatePatch.payment_date =
       typeof body.payment_date === "string" && isoRe.test(body.payment_date)
         ? body.payment_date
-        : reviewedDate ?? invDate ?? new Date().toISOString().slice(0, 10);
+        : reviewedDate ?? invDate ?? amsterdamToday();
   } else {
     // verify → enters the accountant's world as a Crediteur (unpaid, shared)
     updatePatch.status = "received";

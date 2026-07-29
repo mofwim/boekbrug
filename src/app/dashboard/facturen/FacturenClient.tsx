@@ -24,6 +24,8 @@ import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [TZ] 'Today' must be the owner's Amsterdam day, never the UTC one — see format-nl.ts.
+import { amsterdamToday } from '@/lib/format-nl'
 import { amountOrConditions } from '@/lib/search'
 // [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
 import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
@@ -467,7 +469,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         invoiceId: ctx.id,
         action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
         paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        paymentDate: ctx.paymentDate ?? amsterdamToday(),
         // null / absent = settle the whole open balance (unchanged behaviour).
         ...(ctx.amount != null ? { amount: ctx.amount } : {}),
         // Idempotency: a double tap or a retried POST must not book twice.
@@ -1724,7 +1726,9 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
 }) {
   // [BRIDGE-QUARTER] real payment date — only relevant when paymentChoice is set
   // (marking as paid). Defaults to today; user corrects if they paid earlier.
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  // [TZ] Amsterdam, not UTC: just after midnight the UTC day is still yesterday, and under
+  // kasstelsel a betaaldatum one day early can land in a quarter that is already filed.
+  const [paymentDate, setPaymentDate] = useState(amsterdamToday())
   // [MANUAL-PARTIAL-PAY] The optional amount. EMPTY MEANS EVERYTHING — the common case costs
   // zero keystrokes and nobody has to know the word "deelbetaling". Deliberately a placeholder
   // and not a pre-filled value: pre-filling would force a phone user to wipe "€ 1.000,00"
@@ -1786,7 +1790,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             <input
               type="date"
               value={paymentDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={amsterdamToday()}
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />

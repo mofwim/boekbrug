@@ -22,6 +22,7 @@
 // =====================================================
 
 import { NextRequest, NextResponse } from 'next/server'
+import { amsterdamToday } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
@@ -126,7 +127,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Kon creditnotanummer niet genereren' }, { status: 500 })
     }
 
-    const today = new Date().toISOString().split('T')[0]
+    const today = amsterdamToday()
 
     // [BOEK-031] Maak de creditnota aan
     // Bedragen zijn NEGATIEF — creditnota annuleert de originele factuur
