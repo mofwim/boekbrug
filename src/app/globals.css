@@ -429,6 +429,67 @@ input::placeholder, textarea::placeholder {
   to   { background-position: -200% 0; }
 }
 
+/* ── View transitions ────────────────────────────────────────────────────────── */
+/* [INSTANT] What the browser plays BETWEEN two pages. Enabled by
+   experimental.viewTransition in next.config.ts; opted into per navigation with
+   <Link transitionTypes={['nav-forward'|'nav-back']}> (see components/nav).
+
+   Direction carries meaning: content leaving to the left means you went deeper,
+   content leaving to the right means you came back. It is the same convention a
+   phone OS uses, and violating it is disorienting — which is why the type is
+   set explicitly per link rather than guessed.
+
+   Timing is asymmetric on purpose: the old page leaves fast (it should stop
+   competing for attention) while the new one arrives more gently (it needs to
+   be read). The 60px offset is enough to read as direction without asking the
+   eye to track something across the screen. */
+
+::view-transition-old(.nav-forward) {
+  --slide: -60px;
+  animation: var(--dur-fast) var(--ease-accelerate) both bb-vt-fade reverse,
+             var(--dur-slower) var(--ease-standard) both bb-vt-slide reverse;
+}
+::view-transition-new(.nav-forward) {
+  --slide: 60px;
+  animation: var(--dur-slow) var(--ease-decelerate) var(--dur-fast) both bb-vt-fade,
+             var(--dur-slower) var(--ease-standard) both bb-vt-slide;
+}
+
+::view-transition-old(.nav-back) {
+  --slide: 60px;
+  animation: var(--dur-fast) var(--ease-accelerate) both bb-vt-fade reverse,
+             var(--dur-slower) var(--ease-standard) both bb-vt-slide reverse;
+}
+::view-transition-new(.nav-back) {
+  --slide: -60px;
+  animation: var(--dur-slow) var(--ease-decelerate) var(--dur-fast) both bb-vt-fade,
+             var(--dur-slower) var(--ease-standard) both bb-vt-slide;
+}
+
+@keyframes bb-vt-fade  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bb-vt-slide { from { translate: var(--slide); } to { translate: 0; } }
+
+/* [HEADER-SYSTEM] The top bar must NOT slide with the content. A moving header
+   removes the one fixed point the eye uses to understand that the CONTENT
+   moved rather than the whole viewport. `display: none` on the old snapshot
+   prevents the flash of two headers overlapping mid-transition. */
+::view-transition-group(page-header) { animation: none; z-index: 100; }
+::view-transition-old(page-header)   { display: none; }
+::view-transition-new(page-header)   { animation: none; }
+
+/* [A11Y] A directional slide simulates movement across the viewport, which is
+   the most common trigger for motion sensitivity — so this reset matters more
+   here than anywhere else in the file. Without a duration the browser falls
+   back to its default instant swap, which is exactly what is wanted. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}
+
 /* ── Material Symbols ────────────────────────────────────────────────────────── */
 /* [Design System] Icon font — loaded via CDN in layout.tsx                     */
 
@@ -526,5 +587,64 @@ input::placeholder, textarea::placeholder {
 @media (max-width: 640px) {
   .dash-nav-links {
     display: none !important;
+  }
+}
+
+/* ── Public header — mobile declutter ────────────────────────────────────────── */
+/* [PUBLIC-NAV] Same treatment for the public top bar (components/public-header).
+   Its five links did not wrap and did not collapse, so at 390px the nav ran 99px
+   past the right edge of every landing, calculator and blog page — taking the
+   signup button, the only conversion CTA on the site, off-screen with it.
+   The three browsing links step aside below 640px; Inloggen and the CTA stay.
+   Everything hidden here is also in the page footer. */
+@media (max-width: 640px) {
+  .public-nav-wide {
+    display: none !important;
+  }
+  /* Tighter side padding and no wrapping, so the button stays on one line
+     inside a 60px-high bar on the narrowest phones. */
+  .public-nav-cta {
+    padding: 9px 14px;
+    white-space: nowrap;
+  }
+}
+
+/* Narrow phones (iPhone SE, the Fold's outer screen). Three links fitting is
+   not enough — the button's own LABEL is 165px, which alone overruns a 320px
+   viewport once the wordmark and Inloggen have had their share. So the row
+   gives up what it can afford to: the page gutter halves, Inloggen loses its
+   padding, and the CTA drops its final word. Both destinations survive. */
+@media (max-width: 480px) {
+  .public-nav-cta {
+    font-size: 13.5px;
+    padding: 9px 12px;
+  }
+
+  .public-nav-cta-tail {
+    display: none;
+  }
+
+  .public-nav-login {
+    font-size: 14px;
+    padding: 8px 4px !important;
+  }
+
+  .public-header-wrap {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+}
+
+/* The narrowest screens still shipping — the Galaxy Fold's outer display is
+   280px. The wordmark gives up three points of type so both destinations stay
+   on screen; shrinking the brand is cheaper than dropping a link. */
+@media (max-width: 360px) {
+  .public-nav-brand {
+    font-size: 17px !important;
+  }
+
+  .public-nav-cta {
+    font-size: 13px;
+    padding: 9px 10px;
   }
 }

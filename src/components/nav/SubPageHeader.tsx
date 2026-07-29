@@ -47,6 +47,10 @@ export default function SubPageHeader({
         position: "sticky",
         top: 0,
         zIndex: 50,
+        // [INSTANT] Anchors the bar during a view transition: globals.css gives
+        // ::view-transition-group(page-header) `animation: none`, so the header
+        // holds still while the content slides underneath it.
+        viewTransitionName: "page-header",
         backgroundColor: M3.surface,
         borderBottom: `1px solid ${M3.outlineVariant}`,
         // Clear the device status bar in standalone PWA mode.
@@ -71,6 +75,11 @@ export default function SubPageHeader({
       <Link
         href={backHref}
         aria-label="Terug"
+        // [INSTANT] Marks this navigation as a RETURN, so PageTransition
+        // slides the content right instead of left. Every "Terug" in the
+        // app funnels through this component and SubPageHeader, so tagging
+        // those two covers the whole app without touching each page.
+        transitionTypes={['nav-back']}
         className="pressable nav-icon-btn"
         style={{
           background: "none",

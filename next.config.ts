@@ -10,6 +10,20 @@ const nextConfig: NextConfig = {
         ? { exclude: ["error", "warn"] }
         : false,
   },
+  // [INSTANT] React's <ViewTransition> — the browser animates between the old
+  // and new page instead of swapping them. Navigation used to be a hard cut:
+  // one screen vanished, another appeared, with nothing connecting them. That
+  // is the single biggest reason the app read as abrupt rather than fluid.
+  //
+  // Safe by construction: where the View Transitions API is unsupported the
+  // navigation simply happens without animation — nothing breaks. The actual
+  // animations are defined in src/app/globals.css under "View transitions",
+  // and the app opts in per-navigation via <Link transitionTypes>.
+  // See docs/MOTION_SYSTEM.md.
+  experimental: {
+    viewTransition: true,
+  },
+
   // [BOEK-COST] sharp is a native, server-only image library used in src/lib/ai.ts
   // to downscale invoice photos before sending them to Claude. ai.ts is also
   // pulled into some client components, so without this Next.js tries to bundle

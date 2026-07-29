@@ -3,6 +3,7 @@
 // [BOEK-033] Multi-file upload — sequential, silent AI, user-visible errors
 
 import { useState, useRef, useEffect, useCallback, DragEvent } from "react";
+import { useRouter } from "next/navigation";
 import { T } from "../tokens";
 import { Icon } from "./ui/Icon";
 import { Spinner } from "./ui/Spinner";
@@ -28,6 +29,7 @@ interface FailedFile {
 }
 
 export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   // [F#8] Guard against setState after unmount (navigating away mid-upload). React 19
   // swallows the warning, but this keeps the batch-completion updates from firing into
@@ -145,12 +147,18 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
   // [BESTANDEN-DUP] Open the FOLDER that contains the existing file (not the
   // file itself) and FOCUS it — BestandenPage reads ?folder={id}&focus={docId}
   // from the URL on load: opens the folder, scrolls to + highlights the file.
+  // [INSTANT] router.push, not window.location.href — this is a navigation
+  // WITHIN the page that is already open, so a full document reload threw away
+  // everything just to change two query parameters. BestandenPage already
+  // handles the soft case: it re-reads ?folder=/?focus= from an effect
+  // precisely because a client navigation does not re-run its useState
+  // initializers (see the comment above that effect).
   const openExistingFolder = useCallback((folderId: string | null, docId: string) => {
     const base = folderId
       ? `/dashboard/bestanden?folder=${folderId}`
       : `/dashboard/bestanden?folder=`;
-    window.location.href = `${base}&focus=${docId}`;
-  }, []);
+    router.push(`${base}&focus=${docId}`);
+  }, [router]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

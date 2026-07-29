@@ -603,6 +603,9 @@ export function DashboardHeader({
       position: 'sticky',
       top: 0,
       zIndex: 50,
+      // [INSTANT] See SubPageHeader — same anchor name, so whichever bar is on
+      // screen stays still while the page content slides.
+      viewTransitionName: 'page-header',
       backgroundColor: M3.surface,
       borderBottom: `1px solid ${M3.outlineVariant}`,
       height: `calc(${PAGE_HEADER_HEIGHT}px + env(safe-area-inset-top))`,

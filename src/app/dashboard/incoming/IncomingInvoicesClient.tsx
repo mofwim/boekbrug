@@ -57,6 +57,7 @@ interface ImportHealth {
 // [OBSERVABILITY] Map a stored skip reason to a short, owner-facing line. Known codes get a
 // friendly phrase; a Dutch reason the AI already wrote (e.g. "rekeningoverzicht — …") is shown
 // as-is (trimmed). Never a raw technical token the owner can't understand.
+import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 
@@ -172,6 +173,11 @@ function formatSignedAmount(amount: number): string {
 
 function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
   const dialog = useDialog();
+  // [INSTANT] router.refresh() re-runs this route's server component and
+  // streams fresh props in; window.location.reload() threw away the whole
+  // document — bundle, scroll position, which tab was open, which card was
+  // expanded — and rebuilt it from nothing. Same data, a fraction of the wait.
+  const router = useRouter();
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   // [BACKFILL] Re-scan control — an owner-triggered re-pull over a chosen start date, for
@@ -298,7 +304,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
               : ` ${totalCouldNotRead} bestanden konden we niet lezen — ze staan in je bestanden, controleer ze even.`;
         }
         setSyncResult(message);
-        setTimeout(() => window.location.reload(), 1500);
+        setTimeout(() => router.refresh(), 1500);
         return;
       }
 
@@ -326,7 +332,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     });
     if (!ok) return;
     await fetch("/api/email/sync", { method: "DELETE" });
-    window.location.reload();
+    router.refresh();
   };
 
   // [OBSERVABILITY] Load the "overgeslagen bij import" list the first time it's opened.
@@ -1309,6 +1315,7 @@ function InvoiceCard({
 }) {
   const dialog = useDialog();
   const toast = useToast();
+  const router = useRouter();
   const [loadingPdf, setLoadingPdf] = useState(false);
 
   // [REIMPORT] Re-read this invoice's stored PDF with the current extractor. Only offered on
@@ -1321,7 +1328,7 @@ function InvoiceCard({
       const res = await fetch(`/api/email/reimport/${invoice.id}`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
-        window.location.reload(); // pick up the refreshed amounts + health
+        router.refresh(); // pick up the refreshed amounts + health
         return;
       }
       if (data.notInvoice) {
@@ -1771,6 +1778,7 @@ const RESULT_META: Record<IntakeResult["status"], { icon: string; color: string 
 
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   const toast = useToast();
+  const router = useRouter();
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   // [SMART-INTAKE-B] separate camera input (capture) alongside the file input
@@ -1964,11 +1972,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // [INTAKE-FEEDBACK] Close the modal AND refresh so new invoices show in the queue.
   const closeResults = () => {
     setShowResults(false);
-    window.location.reload();
+    router.refresh();
   };
 
   const openInBestanden = (link: { folderId: string | null; focusId: string }) => {
-    window.location.assign(`/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`);
+    router.push(`/dashboard/bestanden?folder=${link.folderId ?? ""}&focus=${link.focusId}`);
   };
 
   // [INTAKE-FOCUS] "Naar controle →" — same full-navigation pattern as
@@ -2244,6 +2252,7 @@ export default function IncomingInvoicesClient({
 }: Props) {
   const dialog = useDialog();
   const toast = useToast();
+  const router = useRouter();
   // [BOEK-011] Navigation paths — resolved through the central navigation helper
   // [SUBNAV] Logo (home) + Terug (canonical parent) now come from the shared
   // sub-page header (DashboardChrome), so this page no longer computes them.
@@ -2724,8 +2733,8 @@ export default function IncomingInvoicesClient({
           (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw` : ""),
       });
     }
-    window.location.reload();
-  }, [pending, reimportAllRunning]);
+    router.refresh();
+  }, [pending, reimportAllRunning, dialog, router]);
 
   const list = tab === "pending" ? pending : tab === "confirmed" ? confirmed : ignored;
 
