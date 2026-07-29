@@ -2286,6 +2286,10 @@ export default function IncomingInvoicesClient({
   // en de regels die al gelden (getoond bij Genegeerd, zodat ze op te heffen zijn).
   const [ruleOfferFor, setRuleOfferFor] = useState<IncomingInvoice | null>(null);
   const [senderRules, setSenderRules] = useState<{ id: string; sender_email: string }[]>([]);
+  // [RITME] Leveranciers met een vast ritme waarvan de verwachte factuur uitblijft. Verreweg
+  // meestal leeg — dan is er ook geen banner. Zie de drie zwijg-regels in supplier-cadence.ts.
+  const [missing, setMissing] = useState<{ supplier: string; reason: string; lastSeen: string }[]>([]);
+  const [missingDismissed, setMissingDismissed] = useState(false);
 
   // [NEGEER-UNDO] Een toast met een handeling erin. De tijd staat bewust langer (7s) wanneer er
   // iets te ondoen valt: 3 seconden is genoeg om iets te LEZEN, niet om te beslissen dat je het
@@ -2576,6 +2580,23 @@ export default function IncomingInvoicesClient({
       showToast("Fout — factuur staat nog in de wachtrij");
     }
   }, [handleRestore]);
+
+  // [RITME] Eén keer per paginabezoek ophalen. Het is een read-only rekensom over bestaande
+  // facturen — geen AI, geen kosten — en het antwoord is meestal een lege lijst.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/incoming/missing");
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && Array.isArray(data.missing)) setMissing(data.missing);
+      } catch {
+        // Stil falen: dit is een extra oog, nooit iets waar de pagina op mag stukgaan.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ── [AFZENDERREGEL] De regels van de eigenaar: ophalen, aanzetten, opheffen ──
   // Alleen geladen wanneer het Genegeerd-tabblad open staat: daar horen ze thuis (het is de plek
@@ -2878,6 +2899,42 @@ export default function IncomingInvoicesClient({
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {/* [RITME] De factuur die NIET kwam. Alleen op het tabblad "Te bevestigen", want daar
+            komt de eigenaar om zijn inkomende post af te handelen — en dit is het enige dat hij
+            daar NIET kan zien staan. Blauw en rustig, geen alarm: er is niets stuk, er is iets
+            afwezig. Wegklikbaar, want een banner die je niet weg kunt krijgen wordt meubilair. */}
+        {tab === "pending" && missing.length > 0 && !missingDismissed && (
+          <div style={{
+            marginBottom: 16, padding: "13px 15px", borderRadius: 12,
+            background: "#e8f0fe", border: "1px solid #c6dafc",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#174ea6", marginBottom: 6 }}>
+                {missing.length === 1
+                  ? "Er lijkt een factuur te ontbreken"
+                  : `Er lijken ${missing.length} facturen te ontbreken`}
+              </div>
+              <button
+                onClick={() => setMissingDismissed(true)}
+                aria-label="Melding sluiten"
+                style={{
+                  background: "transparent", border: "none", color: "#174ea6",
+                  fontSize: 16, lineHeight: 1, cursor: "pointer", padding: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {missing.map((m) => (
+                <div key={`${m.supplier}-${m.lastSeen}`} style={{ fontSize: 13, color: "#1f3d68", lineHeight: 1.5 }}>
+                  {m.reason}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
