@@ -6,8 +6,10 @@ import {
   suggestIdentity,
   isPosPayoutDescription,
   bestSimilarMemory,
+  isMissingReceipt,
   type TxIdentity,
   type MemoryEntry,
+  type MissingReceiptTx,
 } from "./bank-identity";
 
 let passed = 0;
@@ -196,6 +198,28 @@ console.log("\n— suggestIdentity with a similar hit (review-only, never confid
   // No similar hit → the plain sign fallback is unchanged.
   const s4 = suggestIdentity("Bol.com", "iDEAL", -49.99, null, null);
   check("no similar → sign fallback unchanged", s4.category === "kosten" && s4.confident === false && s4.source === "ai");
+}
+
+console.log("\n— isMissingReceipt (ontbrekende bon) —");
+{
+  const base: MissingReceiptTx = {
+    status: "pending", invoice_id: null, amount: -100,
+    category: null, counterpart_name: "Bol.com", description: "iDEAL",
+  };
+  check("pending, unlinked, unknown debit → missing", isMissingReceipt(base) === true);
+  check("explicitly 'kosten' → missing", isMissingReceipt({ ...base, category: "kosten" }) === true);
+  // Resolved / not-a-gap paths
+  check("linked (invoice_id set) → not missing", isMissingReceipt({ ...base, invoice_id: "inv-1" }) === false);
+  check("matched status → not missing", isMissingReceipt({ ...base, status: "matched" }) === false);
+  check("ignored (not_found) → not missing", isMissingReceipt({ ...base, status: "not_found" }) === false);
+  check("credit (income) → not missing", isMissingReceipt({ ...base, amount: 250 }) === false);
+  // Categorised as a non-cost identity → geen bon nodig
+  for (const cat of ["fee", "prive", "transfer", "tax", "pos_income"]) {
+    check(`category '${cat}' → not missing`, isMissingReceipt({ ...base, category: cat }) === false);
+  }
+  // Uncategorised but the classifier can explain it (tax/transfer) → not missing
+  check("uncategorised tax debit → not missing", isMissingReceipt({ ...base, counterpart_name: "Belastingdienst", description: "BTW Q1" }) === false);
+  check("uncategorised savings transfer → not missing", isMissingReceipt({ ...base, counterpart_name: "Oranje Spaarrekening", description: "naar mijn spaarrekening" }) === false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

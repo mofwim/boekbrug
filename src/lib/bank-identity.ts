@@ -103,6 +103,44 @@ export function needsDocument(
   return classifyBankTransaction(counterpartName, description, amount) === 'unknown';
 }
 
+// ─── Ontbrekende bon (missing receipt) ─────────────────────────────────────────
+// The ONE definition of "this bank payment still needs a purchase document (bon)".
+// It was copy-pasted in three places (the readiness score, the daily-truth counter,
+// and the bank page's list); a single pure predicate keeps them from drifting apart.
+//
+// A row is a missing receipt when ALL hold:
+//   - status === 'pending'  → not yet linked (matched) and not owner-ignored (not_found);
+//   - invoice_id is empty   → no receipt/invoice attached yet (attach keeps status
+//     'pending' on purpose, since one payment can settle several invoices, so the
+//     linked test MUST be invoice_id, not status);
+//   - amount < 0            → a debit; income never needs a purchase document;
+//   - it is a business cost → either not categorized yet AND the classifier can't
+//     explain it away (needsDocument), or the owner already called it 'kosten'.
+// Categorizing it as fee / prive / transfer / tax / pos_income answers "geen bon nodig"
+// and drops it from the list.
+
+export interface MissingReceiptTx {
+  status: string | null;
+  invoice_id: string | null;
+  amount: number;
+  category: string | null;
+  counterpart_name: string | null;
+  description: string | null;
+}
+
+export function isMissingReceipt(tx: MissingReceiptTx): boolean {
+  if (tx.status !== 'pending') return false; // matched (linked) or not_found (ignored)
+  if (tx.invoice_id) return false;           // a receipt/invoice is already attached
+  if (tx.amount >= 0) return false;          // income / payouts never need a bon
+  if (tx.category == null) {
+    // Not categorized yet — only an unexplained outgoing payment still needs one.
+    return needsDocument(tx.counterpart_name, tx.description, tx.amount);
+  }
+  // Categorized: only a business cost still needs a bon; the non-cost identities
+  // (fee / prive / transfer / tax / pos_income) mean "geen bon nodig".
+  return tx.category === 'kosten';
+}
+
 // ─── Counterpart memory ───────────────────────────────────────────────────────
 // Normalized key so the SAME shop is recognised across statements regardless of the
 // processor prefix / punctuation the bank attaches ("SUMUP *JANSEN", "Jansen B.V.",

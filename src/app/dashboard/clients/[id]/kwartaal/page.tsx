@@ -36,6 +36,16 @@ const ACCOUNTANT_ACTIONS = [
 
 type ActionValue = 'verwerkt' | 'in_behandeling' | 'vraag'
 
+// [ONTBREKENDE-BONNEN] One bank payment without a bon (from /api/bank/missing-receipts).
+type MissingReceiptItem = {
+  id: string
+  date: string
+  amount: number
+  counterpart_name: string | null
+  description: string | null
+  reference: string | null
+}
+
 // Quarter date ranges
 const QUARTER_RANGES: Record<number, { start: string; end: string; label: string }> = {
   1: { start: '-01-01', end: '-03-31', label: 'jan – mrt' },
@@ -132,6 +142,13 @@ export default function KwartaalPage() {
   // the quarter — no need to go back to /dashboard/quarterly and re-pick the same client.
   const [packaging, setPackaging] = useState(false)
   const [packageError, setPackageError] = useState<string | null>(null)
+  // [ONTBREKENDE-BONNEN] Read-only list of this client's bank payments with no bon yet
+  // (same predicate + endpoint as the owner's bank page), plus a one-tap nudge that drops
+  // a task in the client's app asking them to add the missing bonnen. Resolving stays the
+  // client's job (the owner-only attach/ignore routes); the accountant only sees + reminds.
+  const [missing, setMissing] = useState<{ count: number; items: MissingReceiptItem[] } | null>(null)
+  const [nudging, setNudging] = useState(false)
+  const [nudged, setNudged] = useState(false)
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // The accountant clicks an enriched notification and lands on the exact row:
@@ -205,10 +222,19 @@ export default function KwartaalPage() {
       // [TRUST-ACCOUNTANT] Reconciled quarter figures — same source as the ZIP + owner.
       try {
         const params = new URLSearchParams({ year: String(year), quarter: String(q), clientId })
-        const [rRes, aRes] = await Promise.all([
+        const [rRes, aRes, mRes] = await Promise.all([
           fetch(`/api/result?${params}`),
           fetch(`/api/aangifte?${params}`),
+          // [ONTBREKENDE-BONNEN] Same clientId-scoped, service-role endpoint the owner's
+          // bank page uses; 403-safe (resolveQuarterOwner). Non-fatal on failure.
+          fetch(`/api/bank/missing-receipts?${params}`),
         ])
+        if (mRes.ok) {
+          const m = await mRes.json()
+          if (typeof m?.count === 'number' && Array.isArray(m?.items)) {
+            setMissing({ count: m.count, items: m.items as MissingReceiptItem[] })
+          }
+        }
         if (rRes.ok && aRes.ok) {
           const pnl = await rRes.json()
           const btw = await aRes.json()
@@ -417,6 +443,88 @@ export default function KwartaalPage() {
             </div>
           ))}
         </div>
+
+        {/* [ONTBREKENDE-BONNEN] Bank payments this client made with no bon yet — the
+            voorbelasting (deductible BTW) on them is unclaimed. Read-only for the
+            accountant; one tap drops a task in the client's app to add the bonnen. */}
+        {missing && missing.count > 0 && (
+          <div style={{ backgroundColor: '#FFF8E1', border: '1px solid #FBBC04', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #F5D76E' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#B06000' }}>receipt_long</span>
+                <h2 style={{ fontSize: 16, fontWeight: 600, color: '#7A4B00', margin: 0 }}>
+                  Ontbrekende bonnen
+                  <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 6, color: '#B06000' }}>({missing.count})</span>
+                </h2>
+              </div>
+              <p style={{ fontSize: 12.5, color: '#7A4B00', margin: '6px 0 0', lineHeight: 1.5 }}>
+                Betalingen zonder inkoopfactuur. Zonder bon mist je klant de BTW-aftrek. Herinner de klant om ze toe te voegen.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {missing.items.slice(0, 8).map((it, i) => (
+                <div key={it.id} className="inv-row" style={{ padding: '10px 16px', borderTop: i > 0 ? '1px solid #F5E6B8' : 'none' }}>
+                  <div className="inv-row-main">
+                    <p style={{ fontSize: 13.5, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {it.counterpart_name || it.description || 'Onbekende betaling'}
+                    </p>
+                    <p style={{ fontSize: 12, color: '#7A4B00', margin: '2px 0 0' }}>{fmt(it.date)}</p>
+                  </div>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: '#202124', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    {NL_NUMBER.format(Math.abs(it.amount))}
+                  </span>
+                </div>
+              ))}
+              {missing.count > 8 && (
+                <p style={{ fontSize: 12, color: '#7A4B00', margin: 0, padding: '8px 16px', borderTop: '1px solid #F5E6B8' }}>
+                  + {missing.count - 8} meer
+                </p>
+              )}
+            </div>
+
+            <div style={{ padding: '12px 16px', borderTop: '1px solid #F5D76E' }}>
+              {nudged ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13.5, fontWeight: 600, color: '#137333' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>check_circle</span>
+                  Herinnering verstuurd
+                </span>
+              ) : (
+                <button
+                  onClick={async () => {
+                    if (nudging) return
+                    setNudging(true)
+                    try {
+                      const res = await fetch('/api/notifications/notify-client', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          clientId,
+                          type: 'status',
+                          title: 'Ontbrekende bonnen',
+                          body: `Er ${missing.count === 1 ? 'is 1 betaling' : `zijn ${missing.count} betalingen`} zonder bon in Q${q} ${year}. Voeg de bonnen toe zodat je de BTW-aftrek niet misloopt.`,
+                          link: '/dashboard/bank',
+                        }),
+                      })
+                      if (res.ok) setNudged(true)
+                    } finally {
+                      setNudging(false)
+                    }
+                  }}
+                  disabled={nudging}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 16px',
+                    borderRadius: 9999, border: 'none', background: nudging ? '#DADCE0' : '#B06000',
+                    color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: nudging ? 'default' : 'pointer',
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 17 }}>notifications_active</span>
+                  {nudging ? 'Versturen…' : 'Herinner klant'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* [BOEK-028] Invoice table — outgoing + incoming merged */}
         <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>

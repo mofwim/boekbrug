@@ -16,7 +16,7 @@ import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, typ
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
 import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
-import { needsDocument } from "@/lib/bank-identity";
+import { isMissingReceipt } from "@/lib/bank-identity";
 import { pnlRole } from "@/lib/bank-categories";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import type { EftSettlement } from "@/lib/eft-parser";
@@ -134,14 +134,16 @@ export async function GET(req: NextRequest) {
       unmatchedIncomeCount++;
       continue;
     }
-    // Cost side stays pending-scoped: a categorised/confirmed debit is already resolved.
-    if (t.status === "pending" && !t.invoice_id && !credit) {
-      const stillOpen =
-        t.category == null
-          ? needsDocument(t.counterpart_name, t.description, t.amount ?? 0)
-          : t.category === "kosten";
-      if (stillOpen) undocumentedCount++;
-    }
+    // Cost side — the ONE shared predicate (bank-identity.isMissingReceipt): a pending,
+    // unlinked, uncovered business debit. A categorised/confirmed non-cost line is resolved.
+    if (isMissingReceipt({
+      status: t.status,
+      invoice_id: t.invoice_id,
+      amount: t.amount ?? 0,
+      category: t.category,
+      counterpart_name: t.counterpart_name,
+      description: t.description,
+    })) undocumentedCount++;
   }
 
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──

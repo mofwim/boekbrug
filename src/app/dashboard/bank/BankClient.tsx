@@ -183,7 +183,7 @@ export default function BankClient() {
   // component state and vanished on reload.
   const [initialLoading, setInitialLoading] = useState(true)
   // [BANK-TABS] Active tab — defaults to the one the owner acts on.
-  const [bankTab, setBankTab] = useState<'confirm' | 'none' | 'pin' | 'ignored' | 'done'>('confirm')
+  const [bankTab, setBankTab] = useState<'confirm' | 'missing' | 'none' | 'pin' | 'ignored' | 'done'>('confirm')
   // [BANK-QUARTER] Which quarter's transactions to show. 'auto' resolves to the newest
   // quarter that has data, so an owner working on Q2 lands on Q2 instead of an all-quarters
   // pile (old Q1 uploads inflated "Geen factuur" to 335). 'all' shows every quarter.
@@ -904,6 +904,10 @@ export default function BankClient() {
 
   const tabs = [
     { key: 'confirm' as const, label: 'Te bevestigen', icon: 'fact_check', count: toConfirm.length },
+    // [ONTBREKENDE-BONNEN] The sharp, actionable subset of "Geen factuur": debits you
+    // paid but hold no bon for. Its own tab so the owner has a worklist to clear, not a
+    // banner that scrolls away. Same rows/actions as elsewhere (attach a bon / negeren).
+    { key: 'missing' as const, label: 'Ontbrekende bonnen', icon: 'receipt_long', count: missingPurchaseDebits.length },
     { key: 'none' as const, label: 'Geen factuur', icon: 'help', count: noMatch.length },
     { key: 'pin' as const, label: 'Pinontvangsten', icon: 'point_of_sale', count: posList.length },
     { key: 'ignored' as const, label: 'Genegeerd', icon: 'visibility_off', count: ignoredInQ.length },
@@ -911,6 +915,7 @@ export default function BankClient() {
   ]
   const activeListRaw =
     bankTab === 'confirm' ? toConfirm
+    : bankTab === 'missing' ? missingPurchaseDebits
     : bankTab === 'none' ? noMatch
     : bankTab === 'pin' ? posList
     : bankTab === 'ignored' ? ignoredInQ
@@ -939,8 +944,8 @@ export default function BankClient() {
     if (findJumpedRef.current) return
     const raw = findParam.trim()
     if (!raw || !data) return
-    const order: Array<['confirm' | 'none' | 'pin' | 'ignored' | 'done', Suggestion[]]> = [
-      ['confirm', toConfirm], ['none', noMatch], ['pin', posList], ['done', confirmedList], ['ignored', ignoredInQ],
+    const order: Array<['confirm' | 'missing' | 'none' | 'pin' | 'ignored' | 'done', Suggestion[]]> = [
+      ['confirm', toConfirm], ['missing', missingPurchaseDebits], ['none', noMatch], ['pin', posList], ['done', confirmedList], ['ignored', ignoredInQ],
     ]
     const here = order.find(([k]) => k === bankTab)
     if (here && here[1].some((s) => matchesFilter(s, raw))) { findJumpedRef.current = true; return }
@@ -952,7 +957,7 @@ export default function BankClient() {
     const t = setTimeout(() => setBankTab(target[0]), 0)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findParam, data, bankTab, toConfirm, noMatch, posList, confirmedList, ignoredInQ])
+  }, [findParam, data, bankTab, toConfirm, missingPurchaseDebits, noMatch, posList, confirmedList, ignoredInQ])
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
@@ -1234,6 +1239,13 @@ export default function BankClient() {
             </div>
           )}
 
+          {/* [ONTBREKENDE-BONNEN] Tab explainer — why these matter and the two ways out. */}
+          {bankTab === 'missing' && missingPurchaseDebits.length > 0 && (
+            <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
+              Betalingen waarvoor we nog geen inkoopfactuur hebben. Zonder factuur mis je de BTW-aftrek (voorbelasting). Voeg per regel de bon toe, of negeer de regel als er geen bon bij hoort (zoals huur of een lening).
+            </p>
+          )}
+
           {/* "Geen factuur" context — POS receipts naturally have no invoice */}
           {bankTab === 'none' && noMatch.length > 0 && (
             <p style={{ fontSize: 12.5, color: '#5F6368', margin: '12px 2px 0', lineHeight: 1.5 }}>
@@ -1374,6 +1386,7 @@ export default function BankClient() {
             {activeList.length === 0 && (
               <div style={{ textAlign: 'center', padding: '32px 20px', color: '#9aa0a6', fontSize: 13.5 }}>
                 {bankTab === 'confirm' ? 'Niets te bevestigen.'
+                  : bankTab === 'missing' ? 'Geen ontbrekende bonnen — elke betaling heeft een factuur. ✓'
                   : bankTab === 'none' ? 'Geen openstaande transacties zonder factuur.'
                   : bankTab === 'pin' ? 'Geen pinontvangsten.'
                   : bankTab === 'ignored' ? 'Niets genegeerd.'
