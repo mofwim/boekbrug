@@ -12,6 +12,7 @@ import { reconcileBatch, resolveBatchNumbers } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint } from '@/lib/bank-matching'
+import { classifyPaymentFit } from '@/lib/partial-payment'
 import { rowMatchesQuery } from '@/lib/search'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
@@ -1575,6 +1576,27 @@ function TxCard({
   const selectedCand =
     s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ?? (s.outcome === 'auto' ? s.best : null)
 
+  // [PARTIAL-PAY-SHORTFALL] What confirming would ACTUALLY book on the selected invoice, decided
+  // once by the shared rule so the notice, its colour, the button label and the acknowledgement
+  // gate can never disagree with each other. `amount_paid`/`total_inc_btw` are enough to derive
+  // the open balance — candidates built outside matchTransactions (batch reconcile) simply have
+  // no amountPaid, which reads as a fully-open invoice, exactly the old fallback behaviour.
+  const instalmentHint = isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)
+  const fit =
+    selectedCand && selectedCand.amount != null
+      ? classifyPaymentFit(
+          s.amount,
+          { total_inc_btw: selectedCand.amount, amount_paid: selectedCand.amountPaid ?? 0 },
+          { instalmentHint },
+        )
+      : null
+  // [PARTIAL-PAY-SHORTFALL] The owner's explicit "yes, this really is a deelbetaling", stored as
+  // the invoice it was given for — so picking a DIFFERENT candidate drops the acknowledgement
+  // instead of carrying it over to an invoice nobody agreed to.
+  const [ackedInvoiceId, setAckedInvoiceId] = useState<string | null>(null)
+  const needsAck = fit?.needsAcknowledgement === true
+  const acked = !!selectedCand && ackedInvoiceId === selectedCand.invoiceId
+
   // [BANK-MULTI-CONFIRM] A transaction whose reference lists more than one invoice
   // number covers several invoices. Instead of "pick ONE" (which silently drops the
   // others), show a row PER reference number with its own state. Mirrors the
@@ -2118,9 +2140,26 @@ function TxCard({
           {/* [BANK-CHOICE-CLARITY] Say WHY we're asking. The bank payment had no single
               invoice number to match on (e.g. a recurring incasso), so several invoices
               fit. Comparing bedrag + datum is how the owner picks the right one — the old
-              bare "Factuur VHF…" list gave nothing to compare and read as a guess. */}
+              bare "Factuur VHF…" list gave nothing to compare and read as a guess.
+
+              [BANK-CHOICE-HONEST] …but only say "meerdere facturen" when there ARE several.
+              A 'choice' with ONE candidate is a different situation with a different cause:
+              the matcher found the invoice NUMBER in the statement yet the amount does not
+              match (reference-without-amount scores 0.65 — under autoConfidence on purpose),
+              so it refuses to pre-select it. Telling the owner to "vergelijk bedrag en datum
+              en kies de juiste" when there is nothing to choose between hid the only fact that
+              mattered — €30,49 paid against a €140,07 bill — behind an instruction to compare.
+              Name the actual reason instead; the owner can only check what we point at. */}
           <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, lineHeight: 1.45 }}>
-            Meerdere facturen passen bij deze betaling. Vergelijk <strong>bedrag</strong> en <strong>datum</strong> en kies de juiste.
+            {s.candidates.length > 1 ? (
+              <>Meerdere facturen passen bij deze betaling. Vergelijk <strong>bedrag</strong> en <strong>datum</strong> en kies de juiste.</>
+            ) : s.candidates[0]?.signals?.includes('amount') ? (
+              <>Deze factuur past bij deze betaling. Controleer <strong>bedrag</strong> en <strong>datum</strong> en bevestig.</>
+            ) : s.candidates[0]?.signals?.includes('reference') ? (
+              <>Het <strong>factuurnummer</strong> staat in de omschrijving, maar het <strong>bedrag</strong> komt niet overeen. Controleer of dit de juiste factuur is.</>
+            ) : (
+              <>Deze factuur lijkt erop, maar het <strong>bedrag</strong> komt niet overeen. Controleer <strong>bedrag</strong> en <strong>datum</strong> voordat je bevestigt.</>
+            )}
           </div>
           {s.candidates.map((c) => {
             const isSel = selectedInvoiceId === c.invoiceId
@@ -2150,66 +2189,104 @@ function TxCard({
           applies LEAST(payment, remaining) and flips to 'paid' only when fully covered. So the
           comparison is against the REMAINING balance, never the full total — otherwise the very
           instalment that COMPLETES a half-paid invoice got warned about as a "deelbetaling".
-          Three honest outcomes: pays part of what's left, pays exactly what's left (no warning,
-          just context when something was already paid), or exceeds it (the excess is NOT booked). */}
-      {!wasMulti && s.outcome !== 'none' && selectedCand && selectedCand.amount != null && (() => {
-        const txAbs = Math.abs(s.amount)
-        const invAbs = Math.abs(selectedCand.amount ?? 0)
-        // Fall back to the full total for candidates built outside matchTransactions
-        // (batch reconcile omits these fields) — same behaviour as before for those.
-        const paidAlready = Math.max(0, selectedCand.amountPaid ?? 0)
-        const remaining = selectedCand.remaining ?? invAbs
-        const hasPartial = paidAlready > 0.005
-        const under = remaining - txAbs > 0.01
-        const over = txAbs - remaining > 0.01
-        // Exactly settles a fully-open invoice → nothing to say.
-        if (!under && !over && !hasPartial) return null
-        // Neutral (blue) context when the payment fits what's left; amber only for a real surprise.
-        const neutral = !over
+          [PARTIAL-PAY-SHORTFALL] Four honest outcomes (classifyPaymentFit): it exceeds what the
+          invoice can absorb, it falls short with nothing explaining that, it falls short as a real
+          instalment, or it settles the balance — the last saying nothing unless earlier instalments
+          are worth naming. Only the first two are a surprise, so only those go amber. */}
+      {!wasMulti && s.outcome !== 'none' && fit && (fit.kind !== 'exact' || fit.paid > 0.005) && (() => {
+        // [PARTIAL-PAY-SHORTFALL] An unexplained shortfall is the ONE case here that is more
+        // likely a wrong invoice than a real instalment, so it gets the amber treatment and says
+        // so out loud. Before this, every non-'over' case rendered in calm blue with an 'info'
+        // icon and the flat assertion "Deelbetaling: € 30,49 wordt geboekt" — the app stating as
+        // fact the very thing it could not know, on the one screen where being wrong is expensive:
+        // one tap wrote a false € 109,58 openstaand and took the invoice off exact-amount matching
+        // for the real payment. Blue is now reserved for a shortfall something explains.
+        const alarm = fit.kind === 'over' || fit.kind === 'unexplained_short'
+        const pct = Math.round(fit.coverage * 100)
         return (
           <div style={{
             marginTop: 12, padding: '10px 12px', borderRadius: R.md,
-            background: neutral ? M3.primaryContainer : '#FEEFC3',
-            color: neutral ? M3.onPrimaryContainer : '#7A4F00',
+            background: alarm ? '#FEEFC3' : M3.primaryContainer,
+            color: alarm ? '#7A4F00' : M3.onPrimaryContainer,
             fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start',
           }}>
             <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>
-              {neutral ? 'info' : 'warning'}
+              {alarm ? 'warning' : 'info'}
             </span>
             <span>
-              {over ? (
-                <>Er wordt maximaal <strong>{eur.format(remaining)}</strong> op deze factuur geboekt.{' '}
-                  <strong>{eur.format(txAbs - remaining)}</strong> blijft over en wordt niet geboekt — controleer of dit de juiste factuur is.</>
-              ) : under ? (
-                <>Deelbetaling: <strong>{eur.format(txAbs)}</strong> wordt geboekt.{' '}
-                  {hasPartial && <>Er was al {eur.format(paidAlready)} betaald. </>}
-                  Daarna staat nog <strong>{eur.format(remaining - txAbs)}</strong> open.</>
+              {fit.kind === 'over' ? (
+                <>Er wordt maximaal <strong>{eur.format(fit.open)}</strong> op deze factuur geboekt.{' '}
+                  <strong>{eur.format(fit.excess)}</strong> blijft over en wordt niet geboekt — controleer of dit de juiste factuur is.</>
+              ) : fit.kind === 'unexplained_short' ? (
+                <>Deze betaling is <strong>{eur.format(fit.applied)}</strong> van de <strong>{eur.format(fit.open)}</strong> die
+                  openstaat — {pct}%. Er is nog niets op deze factuur betaald en de betaling noemt geen termijn of
+                  deelbetaling, dus dit is vaker een <strong>andere factuur</strong> dan een deelbetaling.{' '}
+                  Bevestigen boekt <strong>{eur.format(fit.applied)}</strong> en laat <strong>{eur.format(fit.remainingAfter)}</strong> openstaan.</>
+              ) : fit.kind === 'explained_partial' ? (
+                <>Deelbetaling: <strong>{eur.format(fit.applied)}</strong> wordt geboekt.{' '}
+                  {fit.paid > 0.005 && <>Er was al {eur.format(fit.paid)} betaald. </>}
+                  Daarna staat nog <strong>{eur.format(fit.remainingAfter)}</strong> open.</>
               ) : (
-                <><strong>{eur.format(paidAlready)}</strong> al betaald · <strong>{eur.format(remaining)}</strong> restant — hiermee is de factuur volledig betaald.</>
+                // 'exact' — only reached when earlier instalments exist: the payment that closes a
+                // half-paid invoice, which deserves the arithmetic said out loud, not silence.
+                <><strong>{eur.format(fit.paid)}</strong> al betaald · <strong>{eur.format(fit.open)}</strong> restant — hiermee is de factuur volledig betaald.</>
               )}
             </span>
           </div>
         )
       })()}
 
+      {/* [PARTIAL-PAY-SHORTFALL] The gate. An unexplained shortfall must cost a deliberate act,
+          because the failure mode here is not misunderstanding — it is a reflex tap on a button
+          that looked identical to the one on a perfect match. A tick box is enough: it is one
+          extra move for someone who really is booking an instalment, and it makes the wrong
+          booking impossible to make by accident. */}
+      {!wasMulti && s.outcome !== 'none' && needsAck && selectedCand && (
+        <label style={{
+          marginTop: 8, display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer',
+          fontSize: 12.5, lineHeight: 1.45, color: M3.onSurface, fontFamily: FONT,
+        }}>
+          <input
+            type="checkbox"
+            checked={acked}
+            disabled={processing}
+            onChange={(e) => setAckedInvoiceId(e.target.checked ? selectedCand.invoiceId : null)}
+            style={{ marginTop: 2, width: 16, height: 16, accentColor: M3.primary, flexShrink: 0 }}
+          />
+          <span>
+            Ja, dit is een deelbetaling van factuur <strong>{selectedCand.invoiceNumber ?? '—'}</strong> —
+            de rest staat nog open.
+          </span>
+        </label>
+      )}
+
       {/* Confirm */}
-      {!wasMulti && s.outcome !== 'none' && (
+      {/* [PARTIAL-PAY-SHORTFALL] "Bevestig betaling" is the right words for a payment that
+          settles its invoice. On a shortfall it is a promise the booking does not keep — the
+          invoice stays open — so the button names the deelbetaling and its amount, and stays
+          disabled until the tick box above is set. The label IS the last line of defence: it is
+          the thing an owner reads while their thumb is already moving. */}
+      {!wasMulti && s.outcome !== 'none' && (() => {
+        const blocked = !selectedInvoiceId || processing || (needsAck && !acked)
+        return (
         <button
-          disabled={!selectedInvoiceId || processing}
+          disabled={blocked}
           onClick={() => onConfirm(selectedCand?.invoiceNumber ?? null)}
           style={{
             marginTop: 12, width: '100%', padding: '11px', borderRadius: R.full, border: 'none',
-            cursor: !selectedInvoiceId || processing ? 'default' : 'pointer',
-            background: !selectedInvoiceId ? M3.surfaceVariant : M3.primary,
-            color: !selectedInvoiceId ? '#9aa0a6' : '#fff', fontSize: 14, fontWeight: 600, fontFamily: FONT,
+            cursor: blocked ? 'default' : 'pointer',
+            background: blocked ? M3.surfaceVariant : M3.primary,
+            color: blocked ? '#9aa0a6' : '#fff', fontSize: 14, fontWeight: 600, fontFamily: FONT,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           }}
         >
           {processing
             ? <span className="material-symbols-outlined" style={{ fontSize: 18 }}>hourglass_empty</span>
-            : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>check</span> Bevestig betaling</>}
+            : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>check</span>
+                {needsAck && fit ? `Boek deelbetaling van ${eur.format(fit.applied)}` : 'Bevestig betaling'}</>}
         </button>
-      )}
+        )
+      })()}
     </div>
   )
 }
@@ -2236,9 +2313,14 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
   // [BANK-CHOICE-CLARITY] In the choice list, the engine's amount signal means this
   // invoice's total equals the bank amount — the strongest hint, so highlight it.
   const amountMatches = Array.isArray(cand.signals) && cand.signals.includes('amount')
+  // [BANK-CHOICE-HONEST] The "why" line listed only what SUPPORTS the match, so a
+  // reference-only candidate read as a plain endorsement ("nummer in omschrijving") with its
+  // one disqualifying fact nowhere in the sentence. Say the counter-signal in the same breath:
+  // the amount is the money-truth, and its absence is the most informative thing on the row.
   const why = Array.isArray(cand.signals)
     ? cand.signals.map((s) => WHY_LABEL[s]).filter(Boolean)
     : []
+  if (!amountMatches && cand.amount != null) why.push('bedrag wijkt af')
   return (
     <div style={{ marginTop: emphasis ? 12 : 0, padding: emphasis ? '10px 12px' : 0, borderRadius: R.md, background: emphasis ? M3.successContainer : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -2247,14 +2329,20 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile }: { cand: 
           Factuur {cand.invoiceNumber ?? '—'}
         </span>
         {/* [BANK-CHOICE-CLARITY] The amount, on the right — the first thing to compare
-            when picking between candidates. Green + check when it equals the debit. */}
+            when picking between candidates. Green + check when it equals the debit.
+            [BANK-CHOICE-HONEST] And amber + ≠ when it does NOT. Rendering a mismatching total
+            in the same neutral ink as the invoice number left the single most important fact on
+            this card — €140,07 against a €30,49 debit — as something the owner had to notice and
+            subtract for themselves. The comparison is the app's job; it already knows the answer. */}
         {inline && cand.amount != null && (
           <span style={{
             fontFamily: FONT_NUM, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
-            color: amountMatches ? M3.success : M3.onSurface,
+            color: amountMatches ? M3.success : M3.warning,
             display: 'inline-flex', alignItems: 'center', gap: 3,
           }}>
-            {amountMatches && <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span>}
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+              {amountMatches ? 'check' : 'do_not_disturb_on'}
+            </span>
             {eur.format(Math.abs(cand.amount))}
           </span>
         )}

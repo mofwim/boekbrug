@@ -9,6 +9,7 @@ import {
   buildPaymentResult,
   paymentExceedsOpenBalance,
   openBalanceFromAmounts,
+  classifyPaymentFit,
 } from "./partial-payment";
 
 let passed = 0, failed = 0;
@@ -227,6 +228,65 @@ console.log("\n— [PARTIAL-PAY] een teruggedraaide betaling laat geen spookbeta
   // Een ECHTE deelbetaling blijft gewoon een deelbetaling — de reparatie mag die niet wissen.
   check("een deelbetaling blijft staan", openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === 300);
   check("en telt als gedeeltelijk betaald", isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === true);
+}
+
+console.log("\n— classifyPaymentFit: wat een bevestiging ECHT boekt —");
+{
+  // De zaak uit de meldig (Altena): een debet van EUR 30,49 met factuurnummer 26701293 in de
+  // omschrijving, tegen een VOLLEDIG openstaande factuur van EUR 140,07. Het nummer klopt, het
+  // bedrag niet — en niets in de betaling noemt een termijn. Dit is geen deelbetaling maar
+  // waarschijnlijk een ANDERE factuur van dezelfde leverancier, en de UI presenteerde het als
+  // rustige blauwe informatie met een gewone bevestigknop: één tik en er stond EUR 109,58 valselijk
+  // open. Vanaf nu is dit de amber-melding EN moet de eigenaar er expliciet ja tegen zeggen.
+  const altena = classifyPaymentFit(-30.49, { status: "received", total_inc_btw: 140.07, amount_paid: 0 });
+  check("Altena: onverklaarde onderbetaling", altena.kind === "unexplained_short");
+  check("Altena: vraagt een expliciete bevestiging", altena.needsAcknowledgement === true);
+  check("Altena: EUR 30,49 wordt geboekt", altena.applied === 30.49);
+  check("Altena: EUR 109,58 blijft open", altena.remainingAfter === 109.58);
+  check("Altena: dekt 22% van het openstaande", Math.round(altena.coverage * 100) === 22);
+
+  // Dezelfde betaling, maar de omschrijving noemt het zelf een termijn → een eerlijke
+  // deelbetaling. Verklaard, dus gewone blauwe context zonder extra drempel.
+  const metHint = classifyPaymentFit(-30.49, { status: "received", total_inc_btw: 140.07, amount_paid: 0 }, { instalmentHint: true });
+  check("termijn in de omschrijving → verklaarde deelbetaling", metHint.kind === "explained_partial");
+  check("termijn in de omschrijving → geen extra drempel", metHint.needsAcknowledgement === false);
+
+  // En: er is al eerder een termijn geboekt → ook verklaard. Dit is de tweede termijn van EUR 600
+  // op een factuur van EUR 1000 waarvan EUR 400 al betaald is: die betaalt het restant PRECIES af,
+  // dus 'exact' — nooit een waarschuwing op de termijn die de factuur juist afmaakt.
+  const laatsteTermijn = classifyPaymentFit(600, { status: "sent", total_inc_btw: 1000, amount_paid: 400 });
+  check("laatste termijn dekt het restant → exact", laatsteTermijn.kind === "exact");
+  check("laatste termijn: geen drempel", laatsteTermijn.needsAcknowledgement === false);
+
+  // Een EERSTE termijn van EUR 400 op EUR 1000 zonder enige aanwijzing: precies het geval uit de
+  // comment bij paymentExceedsOpenBalance dat als 'volledig betaald' werd geboekt. Onverklaard,
+  // dus de eigenaar bevestigt het bewust — de kosten daarvan zijn één vinkje.
+  const eersteTermijn = classifyPaymentFit(400, { status: "sent", total_inc_btw: 1000, amount_paid: 0 });
+  check("onverklaarde eerste termijn vraagt bevestiging", eersteTermijn.kind === "unexplained_short");
+  check("eerste termijn: EUR 600 blijft open", eersteTermijn.remainingAfter === 600);
+
+  // Afrondingsverschil: EUR 99,00 op EUR 99,95. Niemand koos hier de verkeerde factuur, dus dit
+  // blijft rustige context — anders zou elke afgeronde betaling een waarschuwing worden.
+  const afronding = classifyPaymentFit(99, { status: "sent", total_inc_btw: 99.95, amount_paid: 0 });
+  check("verschil binnen PAYMENT_DUST → geen waarschuwing", afronding.kind === "explained_partial");
+  check("afronding: geen drempel", afronding.needsAcknowledgement === false);
+
+  // Exacte betaling van een volledig openstaande factuur → niets te melden.
+  const exact = classifyPaymentFit(-140.07, { status: "received", total_inc_btw: 140.07, amount_paid: 0 });
+  check("exacte betaling → exact", exact.kind === "exact");
+  check("exacte betaling: niets te melden", exact.needsAcknowledgement === false);
+
+  // Meer dan de factuur kan opnemen: het overschot wordt niet geboekt (bestaand gedrag).
+  const over = classifyPaymentFit(-200, { status: "received", total_inc_btw: 140.07, amount_paid: 0 });
+  check("teveel betaald → over", over.kind === "over");
+  check("over: er wordt maximaal het openstaande geboekt", over.applied === 140.07);
+  check("over: het overschot is benoemd", over.excess === 59.93);
+  check("over: geen vinkje, wel amber", over.needsAcknowledgement === false);
+
+  // Creditnota (negatief totaal): magnitudes, net als de rest van de vocabulaire.
+  const credit = classifyPaymentFit(20, { status: "received", total_inc_btw: -50, amount_paid: 0 });
+  check("creditnota: onverklaarde onderbetaling op de magnitude", credit.kind === "unexplained_short");
+  check("creditnota: EUR 30 blijft open", credit.remainingAfter === 30);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

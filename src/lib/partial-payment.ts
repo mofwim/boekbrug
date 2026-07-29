@@ -98,6 +98,78 @@ export function paymentExceedsOpenBalance(
 }
 
 /**
+ * [PARTIAL-PAY-SHORTFALL] How a bank payment relates to the balance of the invoice it is
+ * about to be booked on. The four cases a confirm screen must tell apart:
+ *
+ *   'exact'              settles what is open, to the cent. Nothing to warn about.
+ *   'explained_partial'  short, and something EXPLAINS the shortfall: earlier instalments are
+ *                        already booked, or the payment text itself says termijn/deelbetaling.
+ *                        An honest instalment → plain context, no friction.
+ *   'unexplained_short'  short by real money on a FULLY-OPEN invoice, with nothing in the
+ *                        payment calling itself an instalment. The likeliest explanation is
+ *                        not "deelbetaling" — it is the WRONG INVOICE. €30,49 quoting the
+ *                        number of a €140,07 bill is one payment out of a supplier's stream,
+ *                        not 22% of this one. Booking it writes a false €109,58 openstaand,
+ *                        moves the invoice off exact-amount matching for its REAL payment, and
+ *                        under kasstelsel declares the wrong sum. Never a one-tap confirm.
+ *   'over'               more than the invoice can absorb; the excess is not booked.
+ *
+ * The 'unexplained' bar is deliberately a shortfall in MONEY, not a percentage: a customer who
+ * rounds €99,95 down to €99,00 has not picked the wrong invoice, so anything within PAYMENT_DUST
+ * stays plain context. Above that, an unexplained gap is a question worth asking — whatever its
+ * size, because the size is exactly what nobody can judge for someone else's books.
+ */
+export type PaymentFitKind = "exact" | "explained_partial" | "unexplained_short" | "over";
+
+export interface PaymentFit {
+  kind: PaymentFitKind;
+  /** Already settled by earlier instalments (magnitude, 0 when fully open). */
+  paid: number;
+  /** The balance this payment is measured against (|total| − paid). */
+  open: number;
+  /** What will actually be booked — clamped to `open`, as apply_bank_payment clamps it. */
+  applied: number;
+  /** What stays open on the invoice after booking. */
+  remainingAfter: number;
+  /** Money this payment leaves unbooked because the invoice cannot absorb it (only when 'over'). */
+  excess: number;
+  /** Fraction of the open balance this payment covers (0..1) — the "22%" the owner judges on. */
+  coverage: number;
+  /** Booking this must cost an explicit human acknowledgement, never a single tap. */
+  needsAcknowledgement: boolean;
+}
+
+export function classifyPaymentFit(
+  payAmount: number | null | undefined,
+  invoice: PartialPayInvoice,
+  opts?: { instalmentHint?: boolean; dust?: number },
+): PaymentFit {
+  const dust = opts?.dust ?? PAYMENT_DUST;
+  const paid = toCents(paidAmount(invoice));
+  const open = openBalanceFromAmounts(invoice);
+  const pay = toCents(Math.abs(Number(payAmount ?? 0)));
+  const applied = toCents(Math.min(pay, open));
+  const remainingAfter = toCents(Math.max(0, open - applied));
+  const excess = toCents(Math.max(0, pay - open));
+  const coverage = open > 0 ? applied / open : 0;
+
+  const base = { paid, open, applied, remainingAfter, excess, coverage };
+
+  if (excess > Math.max(CENT_EPSILON * 2, dust)) {
+    return { ...base, kind: "over", needsAcknowledgement: false };
+  }
+  if (remainingAfter <= CENT_EPSILON * 2) {
+    return { ...base, kind: "exact", needsAcknowledgement: false };
+  }
+  // Short. Is there anything to explain it besides "this may be the wrong invoice"?
+  const explained = paid > CENT_EPSILON || opts?.instalmentHint === true;
+  if (explained || remainingAfter <= dust) {
+    return { ...base, kind: "explained_partial", needsAcknowledgement: false };
+  }
+  return { ...base, kind: "unexplained_short", needsAcknowledgement: true };
+}
+
+/**
  * True only for the genuinely in-between state: still open, but part of it is already
  * settled. A fully-open invoice (nothing paid) and a completed one are both false — they
  * have their own, clearer UI (the plain amount, and the 'Betaald' chip).
