@@ -98,6 +98,17 @@ export interface ReadinessSignals {
   // optional (undefined → 0 → no block) so factuur callers/tests are unchanged.
   undatedPaidCount?: number;
   estimatedPaidCount?: number;
+  // [DATE-GAP] Geverifieerde facturen ZONDER factuurdatum. Postgres-bereikfilters
+  // (.gte/.lte op invoice_date) laten NULL-rijen stil vallen, dus zo'n factuur hoort bij deze
+  // eigenaar, is gecontroleerd, en zit tóch in GEEN enkel kwartaalpakket en in GEEN enkele
+  // concept-aangifte — haar BTW verdwijnt gewoon. Elke andere plek in de app rekent er al mee
+  // (het pakket waarschuwt erover); alleen dit scherm, dat het eindoordeel "ben ik klaar?"
+  // uitspreekt, wist er niets van en kon dus 100% klaar melden terwijl er geld buiten beeld lag.
+  //
+  // Bewust een RISICO en geen ontbrekend item: de telling is ALL-TIME, dus een harde blokkade
+  // zou al ingediende kwartalen voorgoed rood zetten — ook op het werkbord van de boekhouder.
+  // Als risico trekt hij de eerlijkheidsgrens hieronder (100 → 99) en is "stil klaar" onmogelijk.
+  datelessInvoiceCount?: number;
   // [BAD-DEBT] Sales invoices > 1 year past due and still unpaid (factuur only): the BTW paid on
   // them is reclaimable (oninbare vordering). A helpful nudge (risk), never a block — it's money to
   // get back, not a gap. Optional (undefined → none).
@@ -415,6 +426,20 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         : `${undatedPaid} betaalde facturen zonder betaaldatum`,
       detail: "Je administratie staat op kasstelsel: de BTW telt op de betaaldatum. Deze betaalde factu(u)r(en) hebben geen datum, dus de BTW kan niet in het juiste kwartaal — koppel de bankbetaling of vul de betaaldatum in.",
       fix: FIX.bank,
+    });
+  }
+  const dateless = s.datelessInvoiceCount ?? 0;
+  if (dateless > 0) {
+    risks.push({
+      severity: "risk",
+      title: dateless === 1
+        ? "1 gecontroleerde factuur heeft geen datum"
+        : `${dateless} gecontroleerde facturen hebben geen datum`,
+      detail:
+        "Zonder factuurdatum valt een factuur buiten elk kwartaal: ze komt in geen enkel " +
+        "kwartaalpakket en in geen enkele concept-aangifte, dus haar BTW telt nergens mee. " +
+        "Vul de datum aan, dan telt ze weer gewoon mee.",
+      fix: FIX.facturen,
     });
   }
   const estimatedPaid = s.estimatedPaidCount ?? 0;

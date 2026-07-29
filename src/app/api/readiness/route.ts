@@ -487,6 +487,11 @@ export async function GET(req: NextRequest) {
     regimeFlags,     // [REGIME-FLAGS] KOR / verlegd / marge → risks, never a block
     undatedPaidCount: sr.undatedPaidCount,       // [KASSTELSEL] undated paid money blocks "klaar"
     estimatedPaidCount: sr.estimatedPortionCount, // [KASSTELSEL] estimated pay-date → risk
+    // [DATE-GAP] De samenvatting berekent dit al (datelessVerifiedInvoices → warning
+    // 'invoice_no_date'); dit scherm las het alleen niet. Geen extra query, geen nieuw veld —
+    // we lezen de waarschuwing die er toch al is, en tellen het aantal uit haar tekst niet mee
+    // maar uit de aanwezigheid: één risico volstaat om "stil 100% klaar" onmogelijk te maken.
+    datelessInvoiceCount: summary.warnings.some((w) => w.code === "invoice_no_date") ? 1 : 0,
     badDebt: badDebt.eligible.length > 0
       ? { count: badDebt.eligible.length, reclaimableBtw: badDebt.totalReclaimableBtw }
       : undefined, // [BAD-DEBT] reclaimable BTW on >1yr-unpaid sales → risk, never a block
