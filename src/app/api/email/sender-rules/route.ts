@@ -31,9 +31,25 @@ export async function GET() {
     .order("created_at", { ascending: false })
     .limit(200);
 
-  // De migratie wordt met de hand toegepast. Zolang de tabel niet bestaat is het eerlijke
-  // antwoord "geen regels" — niet een foutscherm op een tabblad dat verder prima werkt.
-  if (error) return NextResponse.json({ rules: [] });
+  if (error) {
+    // Twee heel verschillende situaties, en ze mogen NIET hetzelfde antwoord krijgen.
+    //
+    // (a) De tabel bestaat niet — een omgeving waar email_sender_rules.sql nog niet gedraaid is.
+    //     Dan zijn er ook echt geen regels, want er kunnen er geen bestaan. "Geen regels" is dan
+    //     het eerlijke antwoord, en een foutscherm op een verder werkend tabblad zou onzin zijn.
+    //
+    // (b) Iets anders ging mis (RLS, verbinding, time-out). Er zijn dan mogelijk WÉL regels, die
+    //     op dit moment post tegenhouden — en als dit scherm dan "geen regels" toont, kan de
+    //     eigenaar ze niet opheffen terwijl ze wel werken. Dat is precies het scenario waar dit
+    //     hele beheerscherm tegen bedoeld is. Dus: eerlijk falen, zodat de client het zegt.
+    const missingTable = error.code === "42P01" || error.code === "PGRST205";
+    if (missingTable) return NextResponse.json({ rules: [] });
+    console.error("[AFZENDERREGEL] regels ophalen mislukt", error);
+    return NextResponse.json(
+      { error: "De afzenderregels konden niet worden geladen — ververs de pagina. Let op: regels die je eerder instelde werken gewoon door." },
+      { status: 500 }
+    );
+  }
   return NextResponse.json({ rules: data ?? [] });
 }
 

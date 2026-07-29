@@ -14,7 +14,8 @@ is de rest.*
 
 **☑ De scherpe migraties zijn toegepast en gecontroleerd**
 `kluis_subscriptions.sql` · `accountant_write_holes.sql` ·
-`invoice_lines_accountant_gate.sql` · `snelstart_claim_before_push.sql`.
+`invoice_lines_accountant_gate.sql` · `invoice_archive_reason.sql` ·
+`email_sender_rules.sql` · `snelstart_claim_before_push.sql`.
 Daarmee zijn de twee gaten met een echte scherpe kant dicht: het IBAN-schrijfgat in de
 boekhoudersgrens, en het gat waarin twee gelijktijdige verzoeken dezelfde factuur twee keer in
 het wettelijke inkoopboek van je boekhouder konden zetten.

@@ -6,9 +6,13 @@
 >
 > Een handmatig bijgehouden "wat staat er nog open" is een BEWERING over een database die
 > niemand meer heeft bekeken. Hij loopt achter zodra iemand een migratie draait zonder deze
-> markdown bij te werken, of zodra een tweede tak er een migratie bij zet — en dat is
-> inmiddels beide gebeurd. Een lijst die het mis heeft over de veiligheid van je boekhouding
-> is erger dan geen lijst.
+> markdown bij te werken, of zodra een tweede tak er een migratie bij zet.
+>
+> **En dat is precies wat er is gebeurd.** Twee takken werkten tegelijk aan deze lijst. De ene
+> meldde 13 en 14 als toegepast en noemde 10, 11 en 12 nog open; de eigenaar had 10, 11 en 12
+> op 26–28 juli juist wél toegepast, mét CONTROLE. Beide lijsten hadden het dus deels mis, en
+> geen van beide kon dat zelf weten. Een lijst die het mis heeft over de veiligheid van iemands
+> boekhouding is erger dan geen lijst.
 >
 > **Vraag het daarom aan de database zelf:**
 >
@@ -20,11 +24,48 @@
 > OPEN-regels staan bovenaan, met per regel waarom die migratie bestaat. Dat antwoord klopt
 > altijd; dit document niet noodzakelijk.
 >
-> ### Wat ik met zekerheid weet (jij hebt het gemeld)
+> ### Wat op 29 juli 2026 met zekerheid is toegepast
 >
-> Toegepast **mét** hun CONTROLE-blok: `kluis_subscriptions.sql` ·
-> `accountant_write_holes.sql` · `invoice_lines_accountant_gate.sql` (26–28 juli) en
-> `snelstart_claim_before_push.sql` (29 juli).
+> Elk hiervan is toegepast **mét** zijn CONTROLE-blok — gemeld door de eigenaar of door de
+> tak die het draaide:
+>
+> | # | Bestand | Wat het dichtte |
+> |---|---------|-----------------|
+> | 10 | `kluis_subscriptions.sql` | Geld aannemen zonder de bewaarverplichting ergens vast te leggen |
+> | 11 | `accountant_write_holes.sql` | Het IBAN-schrijfgat in de boekhoudersgrens + vier ontbrekende indexen |
+> | 12 | `invoice_lines_accountant_gate.sql` | Een verstuurde factuur toonde de boekhouder een lege regelset |
+> | 13 | `invoice_archive_reason.sql` | `archive_reason` + `archived_at` + CHECK + partiële index |
+> | 14 | `email_sender_rules.sql` | Tabel + unieke index + RLS met vier policies |
+> | 15 | `snelstart_claim_before_push.sql` | Twee gelijktijdige verzoeken konden dezelfde factuur twee keer in het wettelijke inkoopboek zetten |
+>
+> ### Wat dit document NIET weet
+>
+> De migraties die uit andere takken bij kwamen: `cash_settlement_per_instalment.sql`,
+> `invoice_schedules.sql`, `search_engine_clients_kvk_city.sql`. Geen van die drie is urgent —
+> de code werkt er zonder ook — maar raad er niet naar. Draai de query.
+>
+> ### De terugvalpaden blijven staan
+>
+> Ze kosten niets (ze vuren alleen op een fout) en ze houden een verse dev- of
+> staging-database werkend zolang die migraties daar nog niet gedraaid zijn. Elke migratie in
+> dit project is zo geschreven dat de code er ZONDER ook werkt: de negeer-API archiveert dan
+> zonder notitie, het kasboek maakt één regel per factuur in plaats van per termijn, de
+> SnelStart-push valt terug op het oude pad. De eigenaar mist dan een label of een verbetering
+> — nooit een functie die stukgaat, en nooit stille schade.
+>
+> Eén terugvalpad is bij het toepassen wél aangescherpt: het regels-eindpunt slikte vóórdien
+> élke fout en antwoordde "geen regels". Dat was verdedigbaar toen de tabel nog niet bestond,
+> maar nu gevaarlijk — bij een RLS- of verbindingsfout zou het beheerscherm "geen regels"
+> tonen terwijl er regels zijn die post tegenhouden, en dan kan de eigenaar ze niet opheffen.
+> Het onderscheidt nu "tabel bestaat niet" (stille lege lijst) van een echte fout (die wordt
+> gezegd).
+>
+> ### En draai altijd het CONTROLE-blok
+>
+> Onderaan elk migratiebestand staat er één. Dat is het verschil tussen "toegepast" en
+> "toegepast en gecontroleerd", en het heeft in deze codebase al twee echte fouten opgeleverd
+> die op geen andere manier zichtbaar waren: een 42P10 op een partiële index, en een functie
+> die vijf kolommen noemde die niet bestonden.
 >
 > ### Wat ik NIET weet
 >

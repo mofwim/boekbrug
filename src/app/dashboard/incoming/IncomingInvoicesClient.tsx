@@ -1313,10 +1313,24 @@ function InvoiceCard({
         return;
       }
       if (data.notInvoice) {
+        // [HERLEES-ARCHIVEER] De server archiveert zo'n stuk nu zelf, met reden "Geen factuur".
+        // Dan is de eerlijke melding "hij is weggezet, en zo haal je hem terug" — niet "doe het
+        // zelf maar". Als het archiveren niet lukte (bijv. er staat al geld op), zeggen we dat.
+        if (data.archived) {
+          alert(
+            "Bij het opnieuw inlezen bleek dit geen boekbare factuur te zijn" +
+              (data.reason ? ` (${data.reason})` : "") +
+              ". Hij is verplaatst naar Genegeerd met reden “Geen factuur”. " +
+              "Klopt dat niet? Zet hem daar met één tik terug."
+          );
+          window.location.reload(); // de kaart hoort nu bij Genegeerd, niet meer in de wachtrij
+          return;
+        }
         alert(
           "Bij het opnieuw inlezen bleek dit geen boekbare factuur te zijn" +
             (data.reason ? ` (${data.reason})` : "") +
-            ". De gegevens zijn niet gewijzigd — je kunt hem negeren als hij niet klopt."
+            ". " +
+            (data.detail ?? "De gegevens zijn niet gewijzigd — je kunt hem zelf negeren.")
         );
       } else {
         alert(data.error || "Opnieuw inlezen is niet gelukt — probeer het later opnieuw.");
@@ -2606,11 +2620,19 @@ export default function IncomingInvoicesClient({
   const loadSenderRules = useCallback(async () => {
     try {
       const res = await fetch("/api/email/sender-rules");
-      if (!res.ok) return;
+      if (!res.ok) {
+        // [UI-HONESTY] Een lege lijst tonen zou hier LIEGEN: er kunnen regels zijn die op dit
+        // moment post tegenhouden, en dan denkt de eigenaar dat er niets staat terwijl hij ze
+        // niet kan opheffen. De server maakt onderscheid tussen "tabel bestaat niet" (echt geen
+        // regels, stille lege lijst) en een echte fout; die laatste zeggen we hardop.
+        const data = await res.json().catch(() => ({}));
+        if (data?.error) showToast(data.error);
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       setSenderRules(Array.isArray(data.rules) ? data.rules : []);
     } catch {
-      // Geen regels tonen is beter dan een foutmelding op een tabblad dat verder gewoon werkt.
+      showToast("Afzenderregels konden niet worden geladen — ververs de pagina");
     }
   }, []);
 
@@ -2677,6 +2699,10 @@ export default function IncomingInvoicesClient({
 
     let reread = 0;
     let notInvoice = 0;
+    // [HERLEES-ARCHIVEER] Hoeveel daarvan de server ook echt heeft weggezet. Apart geteld, want
+    // "bleek geen factuur" en "is verplaatst naar Genegeerd" zijn twee verschillende beweringen en
+    // de samenvatting mag alleen het tweede zeggen als het ook gebeurd is.
+    let archivedNotInvoice = 0;
     let skipped = 0;
     let failed = 0;
     for (const inv of targets) {
@@ -2684,7 +2710,7 @@ export default function IncomingInvoicesClient({
         const res = await fetch(`/api/email/reimport/${inv.id}`, { method: "POST" });
         const data = await res.json().catch(() => ({}));
         if (res.ok && data.ok) reread++;
-        else if (data.notInvoice) notInvoice++;
+        else if (data.notInvoice) { notInvoice++; if (data.archived) archivedNotInvoice++; }
         // 409 = the card is no longer 'processing' (e.g. the owner verified it just before this
         // reached it). That is not a failure — count it as skipped so the summary stays honest.
         else if (res.status === 409) skipped++;
@@ -2703,7 +2729,12 @@ export default function IncomingInvoicesClient({
       alert(
         "Opnieuw inlezen klaar:\n" +
           `• ${reread} opnieuw ingelezen\n` +
-          (notInvoice ? `• ${notInvoice} bleek geen boekbare factuur — je kunt die negeren\n` : "") +
+          (archivedNotInvoice
+            ? `• ${archivedNotInvoice} bleek geen boekbare factuur — verplaatst naar Genegeerd (reden: geen factuur)\n`
+            : "") +
+          (notInvoice - archivedNotInvoice > 0
+            ? `• ${notInvoice - archivedNotInvoice} bleek geen boekbare factuur, maar kon niet worden weggezet — bekijk die zelf\n`
+            : "") +
           (skipped ? `• ${skipped} overgeslagen (al bevestigd)\n` : "") +
           (failed ? `• ${failed} niet gelukt — probeer die later los opnieuw\n` : "")
       );
