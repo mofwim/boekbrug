@@ -289,7 +289,7 @@ export async function GET(req: NextRequest) {
       }
 
       try {
-        await sendInvoiceReminder({
+        const delivered = await sendInvoiceReminder({
           toEmail: inv.client_email as string, // guaranteed non-empty by reminderTierDue
           clientName: inv.client_name?.trim() || "klant",
           zzperName,
@@ -299,6 +299,42 @@ export async function GET(req: NextRequest) {
           firm: offsets.length > 1 && tier === maxTier,
           pdfBuffer,
         });
+
+        // [TRUST-DELIVERY-RETURN] Resend gooit niet bij een weigering — het lost op met { error }.
+        // Voorheen werd hier onvoorwaardelijk doorgeteld: de rij bleef 'sent', de tier was
+        // permanent verbruikt, en de ondernemer kreeg de melding "Herinnering verstuurd" voor een
+        // mail die nooit vertrok. Zijn klant werd daarna nooit meer aangemaand — geen foutmelding,
+        // geen tweede poging, en niets op zijn scherm dat anders was dan bij een geslaagde mail.
+        if (!delivered) {
+          failed += 1;
+          console.error("[CRON-REMINDERS] reminder rejected by the mail provider", {
+            invoiceId: inv.id, tier, ownerId,
+          });
+          // De claim vrijgeven zou een dubbele verzending riskeren zodra de mail tóch aankwam;
+          // 'failed' houdt hem tegen én maakt hem vindbaar. De tier blijft dus verbruikt — maar
+          // nu weet iemand het.
+          try {
+            await pipeline.from("invoice_reminders").update({ status: "failed" }).eq("id", claimId);
+          } catch {
+            /* best-effort */
+          }
+          // En de ondernemer krijgt de waarheid in plaats van niets. Zwijgen zou een leugen
+          // inruilen voor stilte, en hij moet dit weten: het is zijn geld dat blijft staan.
+          try {
+            await pipeline.from("notifications").insert({
+              user_id: ownerId,
+              title: "Herinnering niet verstuurd",
+              body: `De herinnering voor factuur ${inv.invoice_number ?? ""} kon niet worden verstuurd aan ${inv.client_name ?? "je klant"}. Controleer het e-mailadres.`,
+              type: "invoice",
+              read: false,
+              link: `/dashboard/invoice/${inv.id}`,
+            });
+          } catch {
+            /* best-effort */
+          }
+          continue;
+        }
+
         sent += 1;
         // Reflect the send in the pre-read map so a later pass in THIS run can't re-pick it.
         const arr = sentByInvoice.get(inv.id) ?? [];
