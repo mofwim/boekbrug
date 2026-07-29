@@ -1,34 +1,58 @@
 # Migraties — de volgorde waarin je ze toepast
 
-*Stand van tak `claude/snelstart-integration-opix9l`, 26 juli 2026.*
+*Stand van tak `claude/snelstart-integration-opix9l`, 29 juli 2026.*
 
-> **Stap 1 t/m 9 zijn toegepast en gecontroleerd op 26 juli 2026.** Daarbij kwam één echte
-> fout boven die alleen door het draaien van de CONTROLE zichtbaar werd — zie de noot bij
-> stap 7.
+> ## ⚠️ LEES DIT EERST: DEZE LIJST IS NIET DE WAARHEID
 >
-> ## ⏳ VIJF MIGRATIES STAAN OPEN
+> Een handmatig bijgehouden "wat staat er nog open" is een BEWERING over een database die
+> niemand meer heeft bekeken. Hij loopt achter zodra iemand een migratie draait zonder deze
+> markdown bij te werken, of zodra een tweede tak er een migratie bij zet — en dat is
+> inmiddels beide gebeurd. Een lijst die het mis heeft over de veiligheid van je boekhouding
+> is erger dan geen lijst.
 >
-> Draai ze in deze volgorde. Alle vijf idempotent, alle vijf met een CONTROLE-blok onderaan
-> het bestand. Samen ongeveer een kwartier.
+> **Vraag het daarom aan de database zelf:**
 >
-> | # | Bestand | Waarom |
-> |---|---------|--------|
-> | 10 | `kluis_subscriptions.sql` | Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast. Ook het hek dat `RETENTION_PURGE_ENABLED` aan mag laten. |
-> | 11 | `accountant_write_holes.sql` | **Twee schrijfgaten** in de boekhoudersgrens + de vier ontbrekende invoices-indexen. |
-> | 12 | `invoice_lines_accountant_gate.sql` | De regelspolicy stond strenger dan de factuurkop: een verstuurde factuur toonde een lege regelset. |
-> | 13 | `invoice_archive_reason.sql` | `invoices.archive_reason` + `archived_at`: het Genegeerd-tabblad kan de reden pas tonen als deze kolommen er staan. |
-> | 14 | `email_sender_rules.sql` | De tabel voor "altijd negeren van deze afzender". Zonder deze migratie doet de knop niets. |
+> ```
+> docs/WELKE_MIGRATIES_STAAN_ER.sql
+> ```
 >
-> ### 13 en 14 zijn niet urgent — en dat is met opzet
+> Één query in de Supabase SQL-editor, leest alleen de catalogus, verandert niets. De
+> OPEN-regels staan bovenaan, met per regel waarom die migratie bestaat. Dat antwoord klopt
+> altijd; dit document niet noodzakelijk.
 >
-> De code voor allebei draait al zonder dat de migratie is toegepast, en gaat niet stuk:
-> de negeer-API valt bij een ontbrekende-kolom-fout terug op archiveren *zonder* notitie,
-> de Genegeerd-query valt terug op de kale kolomlijst (geen leeg tabblad), het regels-
-> eindpunt antwoordt "geen regels", en de mailsync past er simpelweg geen toe. De eigenaar
-> mist tot die tijd een label en een knop die niets doet — nooit een knop die stukgaat.
+> ### Wat ik met zekerheid weet (jij hebt het gemeld)
 >
-> Toelichting op wat deze twee dragen: `docs/BoekBrug_Inkoopfactuur_Poorten.md`.
+> Toegepast **mét** hun CONTROLE-blok: `kluis_subscriptions.sql` ·
+> `accountant_write_holes.sql` · `invoice_lines_accountant_gate.sql` (26–28 juli) en
+> `snelstart_claim_before_push.sql` (29 juli).
 >
+> ### Wat ik NIET weet
+>
+> `invoice_archive_reason.sql`, `email_sender_rules.sql`, en de drie die uit andere takken
+> bij kwamen (`cash_settlement_per_instalment.sql`, `invoice_schedules.sql`,
+> `search_engine_clients_kvk_city.sql`). Geen van deze is urgent — de code werkt er zonder
+> ook, zie de noot hieronder — maar raad er niet naar: draai de query.
+>
+> ### Waarom "niet urgent" hier echt niet urgent betekent
+>
+> Elke migratie in dit project is zo geschreven dat de code er ZONDER ook werkt. De
+> negeer-API valt bij een ontbrekende kolom terug op archiveren *zonder* notitie, de
+> Genegeerd-query op de kale kolomlijst (geen leeg tabblad), het regels-eindpunt antwoordt
+> "geen regels", het kasboek maakt één regel per factuur in plaats van per termijn, en de
+> SnelStart-push valt terug op het oude pad. De eigenaar mist tot die tijd een label of een
+> verbetering — nooit een functie die stukgaat, en nooit stille schade.
+>
+> De twee met een échte scherpe kant waren 11 (een gekoppelde boekhouder kon het IBAN op een
+> openstaande inkoopfactuur herschrijven) en 15 (twee gelijktijdige verzoeken konden dezelfde
+> factuur twee keer in het wettelijke inkoopboek zetten). **Beide zijn toegepast.**
+>
+> ### En draai altijd het CONTROLE-blok
+>
+> Onderaan elk migratiebestand staat er één. Dat is het verschil tussen "toegepast" en
+> "toegepast en gecontroleerd", en het heeft in deze codebase al twee echte fouten
+> opgeleverd die op geen andere manier zichtbaar waren: een 42P10 op een partiële index, en
+> een functie die vijf kolommen noemde die niet bestonden.
+
 > ### Over de urgentie van 11 — eerlijk bijgesteld
 >
 > Bij het overbrengen is dit gat te scherp gerapporteerd. De correctie, zelf geverifieerd:

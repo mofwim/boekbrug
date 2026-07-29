@@ -1,6 +1,6 @@
 # Jouw lijst — alles wat alleen jij kunt doen
 
-*Bijgewerkt 26 juli 2026. Elk codepunt op deze tak is af, getest en gepusht; wat hier staat
+*Bijgewerkt 29 juli 2026. Elk codepunt op deze tak is af, getest en gepusht; wat hier staat
 is de rest.*
 
 > **Lees dit als één ding:** de app is vandaag veilig live te zetten. Er wordt niemand
@@ -10,21 +10,20 @@ is de rest.*
 
 ---
 
-## 1. Nu — één migratie en één instelling
+## 1. Nu — geen migratie meer open die je kent
 
-**☐ Drie migraties, in deze volgorde — samen ~10 minuten**
+**☑ De scherpe migraties zijn toegepast en gecontroleerd**
+`kluis_subscriptions.sql` · `accountant_write_holes.sql` ·
+`invoice_lines_accountant_gate.sql` · `snelstart_claim_before_push.sql`.
+Daarmee zijn de twee gaten met een echte scherpe kant dicht: het IBAN-schrijfgat in de
+boekhoudersgrens, en het gat waarin twee gelijktijdige verzoeken dezelfde factuur twee keer in
+het wettelijke inkoopboek van je boekhouder konden zetten.
 
-1. `kluis_subscriptions.sql` — vóór de eerste Bewaarkluis-betaling: anders neemt de webhook
-   het geld aan en legt de verplichting van zeven jaar nergens vast.
-2. `accountant_write_holes.sql` — twee schrijfgaten in de boekhoudersgrens plus de vier
-   ontbrekende invoices-indexen. Het IBAN-gat hierin is het meest urgente van alles: een
-   gekoppelde boekhouder kan het rekeningnummer op een openstaande inkoopfactuur
-   herschrijven, en de klant tikt dat over in zijn bank.
-3. `invoice_lines_accountant_gate.sql` — de regelspolicy stond strenger dan de factuurkop.
-
-Elk bestand heeft onderaan een CONTROLE-blok. Draai het; het is per migratie één query en
-het is het verschil tussen "toegepast" en "toegepast en gecontroleerd". Zie
-`docs/MIGRATIES_VOLGORDE.md` voor de bijgestelde urgentie van nummer 2.
+**☐ Draai één keer `docs/WELKE_MIGRATIES_STAAN_ER.sql`**
+Er kwamen tijdens deze ronde migraties uit andere takken bij, en van die vind je in geen enkel
+document een betrouwbaar antwoord. Deze query vraagt het aan je eigen database (leest alleen de
+catalogus, verandert niets) en zet de OPEN-regels bovenaan. Geen van de resterende is urgent —
+de code werkt er zonder ook — maar raden is hier geen methode.
 
 **☐ `AI_DAILY_BUDGET_EUR=0` in Vercel**
 Nul betekent: **wél tellen, niet begrenzen**. Dat is de juiste stand voor je eerste weken —
@@ -38,8 +37,6 @@ Meekijken: `select * from ai_spend_daily order by day desc limit 7;`
 Dit is de enige schakelaar in de app die data vernietigt. Leeg = dry run. Er kan niets vóór
 2033 aan de beurt zijn; meldt een dry run nu al een kandidaat, dan is er een datum verkeerd
 gezet — uitzoeken, niet aanzetten.
-
----
 
 ## 2. Voordat je geld kunt aannemen
 
@@ -154,6 +151,34 @@ dit product zich van onderscheidt. Zie `docs/PORT_VAN_BILLING_TAK.md` §3.
 
 ---
 
-*Verwant: `docs/MIGRATIES_VOLGORDE.md` (de negen + één migraties) ·
+## 8. Wat de stille-foutenjacht heeft veranderd (juli 2026)
+
+Een volledige doorloop van de brug — opname bij jou, aflevering bij de boekhouder — met tien
+lenzen en per bevinding twee sceptici. Negen fouten van het gevaarlijkste soort zijn gerepareerd:
+een verkeerd of ontbrekend antwoord **zonder** foutmelding, logregel of enig spoor.
+
+Wat je ervan merkt:
+
+| Vroeger | Nu |
+|---|---|
+| Een contante terugbetaling aan een klant *verhoogde* je omzet en je af te dragen BTW | De la beweegt de kant op die hij echt op ging |
+| Eén databasehapering en je zag het groene "Alles is bij" met € 12.000 openstaand | Een eerlijk paneel met een opnieuw-knop |
+| Het kwartaalpakket kon een concept-aangifte meesturen waarin je hele kasboek ontbrak | Geen concept, wél de reden — en alle bewijsstukken gaan onverkort mee |
+| Een verwijderd bankafschrift liet de factuur onbetaald staan met € 0 openstaand: nooit meer een herinnering | De omkering zet ook `amount_paid` terug |
+| Élke klant op het werkbord van je boekhouder droeg het label "zonder bank" | De telling mag nu lezen wat ze moet lezen |
+| "Herinnering verstuurd" voor een mail die de provider had geweigerd | Je hoort het als hij niet aankwam |
+| "Niets overgeslagen" terwijl een onleesbare bon of een bijlage van 12 MB stil verdween | Beide staan in het overgeslagen-paneel, met de reden |
+| "100% klaar" terwijl een factuur zonder datum buiten elk kwartaal viel | Een risico dat 100% onmogelijk maakt — geen blokkade, want al ingediende kwartalen mogen niet rood worden |
+| "Opnieuw inlezen" wiste de dubbel-waarschuwing die het kwam hercontroleren | Het rekenoordeel wordt vernieuwd, de dubbel-signalen blijven |
+
+Wat de jacht **niet** heeft gedekt, en waar dus geen uitspraak over is: OAuth-tokenvernieuwing,
+de Storage-bucketpolicies en de levensduur van ondertekende URL's, push-aflevering, Stripe buiten
+de webhook, en de kwaliteit van de AI-extractie zelf (de audit keek naar wat de code met een
+gelezen bedrag doet, niet of dat bedrag klopte).
+
+---
+
+*Verwant: `docs/WELKE_MIGRATIES_STAAN_ER.sql` (wat er écht in je database staat) ·
+`docs/MIGRATIES_VOLGORDE.md` (de volgorde en het waarom) ·
 `docs/PORT_VAN_BILLING_TAK.md` (wat er uit de andere tak is overgenomen en wat niet) ·
 `docs/BEWAARKLUIS_BUSINESS_CASE.md` (waarom de bewaarplicht een voordeur is).*

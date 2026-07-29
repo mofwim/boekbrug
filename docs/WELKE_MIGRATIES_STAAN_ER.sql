@@ -1,0 +1,106 @@
+-- =====================================================================
+-- WELKE MIGRATIES STAAN ER ÉCHT? — één query, het echte antwoord.
+-- BoekBrug · juli 2026
+-- =====================================================================
+-- WAAROM DIT BESTAAT
+--
+-- docs/MIGRATIES_VOLGORDE.md was een handmatig bijgehouden lijst van "wat staat er nog open".
+-- Zo'n lijst is per definitie een BEWERING over een database die niemand meer had bekeken, en hij
+-- loopt achter zodra iemand een migratie draait zonder de markdown bij te werken — of zodra een
+-- tweede tak er een migratie bij zet. Een lijst die het mis heeft over de veiligheid van je
+-- boekhouding is erger dan geen lijst.
+--
+-- Dit bestand vraagt het gewoon aan de database. Draai het in de Supabase SQL-editor (het leest
+-- alleen de catalogus, dus het werkt als service_role en verandert niets).
+--
+-- TOEGEPAST = het object dat de migratie aanmaakt, bestaat. Dat is geen bewijs dat de migratie
+-- FOUTLOOS liep — daarvoor is het CONTROLE-blok onderaan het migratiebestand zelf — maar het is
+-- wel het verschil tussen "ik denk het" en "ik zie het".
+-- =====================================================================
+
+with verwacht(nr, bestand, waarom, soort, object) as (values
+  -- ── De grens tussen eigenaar en boekhouder ──────────────────────────────────────────────
+  (11, 'accountant_write_holes.sql',
+       'Twee schrijfgaten in de boekhoudersgrens + de vier ontbrekende invoices-indexen',
+       'policy', 'acc_status_owner_write'),
+  (12, 'invoice_lines_accountant_gate.sql',
+       'De regelspolicy stond strenger dan de factuurkop: een verstuurde factuur toonde een lege regelset',
+       'policy', 'invoice_lines_select_accountant'),
+
+  -- ── Geld dat binnenkomt, en de bewaarplicht ─────────────────────────────────────────────
+  (10, 'kluis_subscriptions.sql',
+       'Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast',
+       'table', 'kluis_subscriptions'),
+
+  -- ── De inkoop-poorten ───────────────────────────────────────────────────────────────────
+  (13, 'invoice_archive_reason.sql',
+       'Het Genegeerd-tabblad kan de reden pas tonen als archive_reason bestaat (code valt nu terug op archiveren zonder notitie)',
+       'column', 'invoices.archive_reason'),
+  (14, 'email_sender_rules.sql',
+       'De tabel voor "altijd negeren van deze afzender" — zonder deze migratie doet die knop niets',
+       'table', 'email_sender_rules'),
+
+  -- ── SnelStart: het slot vóór de onomkeerbare boeking ────────────────────────────────────
+  (15, 'snelstart_claim_before_push.sql',
+       'Het idempotentie-slot moest VÓÓR de POST kunnen sluiten; zonder dit kan een tweede tabblad dezelfde factuur dubbel boeken',
+       'index', 'snelstart_exports_user_invoice_claim_uidx'),
+
+  -- ── Uit andere takken bij gekomen ───────────────────────────────────────────────────────
+  (16, 'cash_settlement_per_instalment.sql',
+       'Kasboek-regels per termijn (cash_entries.settlement_id). Code probeert de kolom eerst en valt zonder terug op één regel per factuur',
+       'column', 'cash_entries.settlement_id'),
+  (17, 'invoice_schedules.sql',
+       'Terugkerende facturen',
+       'table', 'invoice_schedules'),
+  (18, 'search_engine_clients_kvk_city.sql',
+       'Zoeken op KVK-nummer en plaats van een klant',
+       'index', 'clients_kvk_number_trgm')
+)
+select
+  nr                                                        as "#",
+  bestand,
+  case when aanwezig then '✅ toegepast' else '⏳ OPEN' end   as status,
+  waarom
+from (
+  select
+    v.nr, v.bestand, v.waarom,
+    case v.soort
+      when 'table'  then to_regclass('public.' || v.object) is not null
+      when 'index'  then exists (
+                          select 1 from pg_indexes
+                           where schemaname = 'public' and indexname = v.object)
+      when 'policy' then exists (
+                          select 1 from pg_policies
+                           where schemaname = 'public' and policyname = v.object)
+      when 'column' then exists (
+                          select 1 from information_schema.columns
+                           where table_schema = 'public'
+                             and table_name   = split_part(v.object, '.', 1)
+                             and column_name  = split_part(v.object, '.', 2))
+    end as aanwezig
+  from verwacht v
+) t
+order by aanwezig, nr;
+
+-- =====================================================================
+-- HOE JE DIT LEEST
+--
+-- De OPEN-regels staan bovenaan. Voor elke daarvan: open het bestand in
+-- supabase/migrations/, draai het, en draai daarna het CONTROLE-blok onderaan datzelfde
+-- bestand. Dat blok is het verschil tussen "toegepast" en "toegepast en gecontroleerd" —
+-- en het heeft in deze codebase al twee echte fouten opgeleverd die op geen andere manier
+-- zichtbaar waren (een 42P10 op een partiële index, en een functie die vijf kolommen noemde
+-- die niet bestonden).
+--
+-- STAAT ER IETS OPEN DAT URGENT LIJKT? Bijna nooit. Elke migratie in deze lijst is zo
+-- geschreven dat de code er ZONDER ook werkt: de negeer-knop archiveert dan zonder notitie,
+-- het kasboek maakt één regel per factuur in plaats van per termijn, de SnelStart-push valt
+-- terug op het oude pad (claim ná de POST). De eigenaar mist tot die tijd een label of een
+-- verbetering — nooit een functie die stukgaat, en nooit stille schade.
+--
+-- De enige twee met een échte scherpe kant zijn 11 en 15:
+--   · 11 dicht een schrijfgat in de boekhoudersgrens (een gekoppelde boekhouder kon het IBAN
+--     op een openstaande inkoopfactuur herschrijven);
+--   · 15 dicht het gat waarin twee gelijktijdige verzoeken dezelfde factuur twee keer in het
+--     wettelijke inkoopboek van de boekhouder kunnen zetten.
+-- =====================================================================
