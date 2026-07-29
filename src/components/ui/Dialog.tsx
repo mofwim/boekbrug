@@ -83,10 +83,13 @@ type DialogApi = {
   prompt: (options: PromptOptions) => Promise<string | null>
 }
 
-type Request =
+// `id` exists so the exit timer can tell whether the dialog it was scheduled to
+// tear down is still the one on screen. See the note on `close` below.
+type Request = { id: number } & (
   | { kind: 'alert'; options: AlertOptions; resolve: (v: void) => void }
   | { kind: 'confirm'; options: ConfirmOptions; resolve: (v: boolean) => void }
   | { kind: 'prompt'; options: PromptOptions; resolve: (v: string | null) => void }
+)
 
 const DialogContext = createContext<DialogApi | null>(null)
 
@@ -109,24 +112,48 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const [leaving, setLeaving] = useState(false)
   const mounted = useIsMounted()
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const nextId = useRef(1)
   useEffect(() => () => { if (exitTimer.current) clearTimeout(exitTimer.current) }, [])
 
   // Close plays the exit animation first, then drops the node. The promise is
   // settled immediately rather than after the animation, so a caller that
   // navigates on confirm does not sit through 140ms of fade.
-  const close = useCallback(() => {
+  //
+  // The `id` guard is not defensive tidiness — without it two dialogs in a row
+  // hung the caller permanently. The sequence: dialog A resolves, close()
+  // schedules a teardown 140ms out; the awaiting code continues and immediately
+  // opens dialog B; A's timer then fires and clears the request, so B vanishes
+  // from the screen while its promise is left un-settled — and the `await`
+  // behind it never returns. Verified in Chromium, and the reachable shape is
+  // ordinary: any two sequential prompts with no network call between them.
+  const close = useCallback((id: number) => {
     setLeaving(true)
     exitTimer.current = setTimeout(() => {
-      setRequest(null)
-      setLeaving(false)
+      // Only tear down if the dialog on screen is still the one this timer was
+      // scheduled for.
+      setRequest((current) => (current && current.id === id ? null : current))
+      setLeaving((wasLeaving) => (wasLeaving ? false : wasLeaving))
     }, EXIT_MS)
   }, [])
 
+  // Opening a dialog cancels any pending exit animation, so a queued teardown
+  // from the previous one cannot land on this one.
+  const open = useCallback(<T,>(build: (id: number, resolve: (v: T) => void) => Request) => {
+    return new Promise<T>((resolve) => {
+      if (exitTimer.current) {
+        clearTimeout(exitTimer.current)
+        exitTimer.current = null
+      }
+      setLeaving(false)
+      setRequest(build(nextId.current++, resolve))
+    })
+  }, [])
+
   const api = useMemo<DialogApi>(() => ({
-    alert: (options) => new Promise<void>((resolve) => setRequest({ kind: 'alert', options, resolve })),
-    confirm: (options) => new Promise<boolean>((resolve) => setRequest({ kind: 'confirm', options, resolve })),
-    prompt: (options) => new Promise<string | null>((resolve) => setRequest({ kind: 'prompt', options, resolve })),
-  }), [])
+    alert: (options) => open<void>((id, resolve) => ({ id, kind: 'alert', options, resolve })),
+    confirm: (options) => open<boolean>((id, resolve) => ({ id, kind: 'confirm', options, resolve })),
+    prompt: (options) => open<string | null>((id, resolve) => ({ id, kind: 'prompt', options, resolve })),
+  }), [open])
 
   return (
     <DialogContext.Provider value={api}>
@@ -134,6 +161,9 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       {mounted && request &&
         createPortal(
           <DialogSurface
+            // Remounts per request, so a second dialog gets fresh focus
+            // handling and a fresh input value instead of inheriting the first's.
+            key={request.id}
             request={request}
             leaving={leaving}
             onSettle={(value) => {
@@ -141,7 +171,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
               if (request.kind === 'alert') request.resolve(undefined)
               else if (request.kind === 'confirm') request.resolve(value as boolean)
               else request.resolve(value as string | null)
-              close()
+              close(request.id)
             }}
           />,
           document.body,
