@@ -137,7 +137,15 @@ export async function GET(req: NextRequest) {
   // stays factuur) and, under kas, gather the settlement inputs. Default factuur → accrual path
   // byte-identical. The concept aangifte then declares BTW on the PAID date, not the invoice date.
   const sr = await resolveSchemeSettlements(pipeline, ownerId, start, start, end);
-  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...sr.opts, rateSharesByInvoice });
+  // [RUBRIEK-SPLIT] MERGE, never overwrite. `rateSharesByInvoice` covers the invoices DATED in
+  // this quarter (the accrual path needs those); sr.opts carries the ones its SETTLEMENTS point
+  // at, which under kas includes invoices from earlier quarters that were paid in this one.
+  // Spreading the local map last used to drop exactly those.
+  const mergedRateShares = new Map([
+    ...(sr.opts.rateSharesByInvoice ?? new Map()),
+    ...rateSharesByInvoice,
+  ]);
+  const result = computeResult(invoices, bankTx, cashEntries, turnover, coveredDates, 0, coveredBudget, { ...sr.opts, rateSharesByInvoice: mergedRateShares });
 
   // Honest completeness — counts of the ACTUAL data behind each figure.
   const OUT_OK = new Set(["paid", "sent", "overdue"]);
