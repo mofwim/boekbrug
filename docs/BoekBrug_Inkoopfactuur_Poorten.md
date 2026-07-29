@@ -52,6 +52,25 @@ Deze vier draaien in deze volgorde. Ze kijken **bewust niet naar de status** van
 | B | **Semantisch** (nummer/leverancier + totaal + datum) | dezelfde factuur als ánder bestand | ja, "toch toevoegen" |
 | C | **Mogelijk dubbel** (zacht) | gelijkende factuur, te onzeker om te blokkeren | blokkeert niet — vlagt |
 
+### Het abonnement dat elke week "mogelijk dubbel" was
+
+Poort C kent vier rangen. Rang 2 — *zelfde bedrag, zelfde leverancier, datum dichtbij, ander factuurnummer* — hoort bij een re-import die net buiten de harde sleutel valt. Maar een leverancier die **elke week** hetzelfde bedrag factureert valt met een tussenpoos van 7 dagen precies binnen het 14-daagse venster, en werd dus **elke week opnieuw** gevlagd. Dat kostte de eigenaar wekelijks een beoordeling van iets dat geen dubbele boeking is maar de volgende termijn — en het hield de factuur ook buiten het automatisch boeken.
+
+Het venster blijft 14 dagen (dat hek is goed). Wat erbij komt is `looksLikeRecurringSeries`: factureert deze leverancier hetzelfde bedrag op een **aantoonbaar ritme**, met steeds een **ander** nummer? Dan geen vlag.
+
+Onderdrukken is de gevaarlijke richting, dus elk hek staat streng:
+
+1. De nieuwe factuur heeft een **echt** nummer dat in de reeks nog niet voorkomt.
+2. Minstens **drie** eerdere facturen, allemaal met een eigen, onderling verschillend nummer.
+3. Alle tussenpozen — de nieuwe meegerekend — liggen dicht bij de mediaan.
+4. Het ritme is minstens **drie dagen**: een dagelijkse burst is geen abonnement.
+
+En het geldt **alleen voor rang 2**. Rang 4 (zelfde *datum* én leverancier) blijft staan — een weekabonnement factureert niet twee keer op dezelfde dag. Rang 5 (zelfde factuurnummer) al helemaal: dat is per definitie hetzelfde stuk.
+
+Gevolg naast de rust: zonder die vlag is zo'n factuur weer `clean`, dus een schone termijn kan gewoon **automatisch boeken** in plaats van op een tik te wachten.
+
+> De harde poort raakte dit nooit: bij echte, verschillende factuurnummers kiest `findSemanticDuplicate` de nummer-tier, en die matcht niet. De vendor-tier komt alleen in beeld als het nummer een placeholder is.
+
 **Waarom de byte-hash niet te forceren is.** Identieke bytes zijn hetzelfde bestand. Er valt niets te overrulen, dus de 409 draagt bewust geen `canForce`. Poort B kan wél een vals positief zijn (twee echte bonnen, zelfde bedrag, zelfde dag, geen nummer) en heeft daarom een uitweg — met een `invoice.dedup_override` in het auditspoor.
 
 **Waar dit strenger is dan de markt.** Xero vergelijkt contact + referentie + bedrag exact, en verliest daardoor elke match zodra een nummer als `26 / 3958` in plaats van `26/3958` wordt gelezen. Moneybird zegt zelf dat twee foto's van dezelfde factuur niet herkend worden, en controleert factuurnummers helemaal niet. Deze app normaliseert het nummer (`normalizeInvoiceNumber`) én de leveranciersnaam (`vendorCoreKey`, wettelijke achtervoegsels eraf) en heeft daarnaast de byte-hash die geen van beide heeft.
@@ -222,4 +241,5 @@ Alles hierboven is puur getest, zonder database. Draai ze los met `npx tsx <best
 | `src/lib/sender-rules.test.ts` | per adres, nooit per domein |
 | `src/lib/supplier-cadence.test.ts` | wanneer er gezwégen moet worden |
 | `src/lib/email-dedup.test.ts` | de nummer-tier duplicaatcheck |
+| `src/lib/possible-duplicate.test.ts` | het zachte signaal, en wanneer een abonnement er juist géén is |
 | `src/lib/import-health.test.ts` | het read-time gezondheidsoordeel |
