@@ -111,6 +111,10 @@ export interface ReadinessSignals {
   // a VAT number that cannot be right). The opgaaf itself is not a readiness matter; one that
   // will be REJECTED is, because a rejected opgaaf counts as not done. Optional (undefined → 0).
   icpProblems?: number;
+  // [DATE-GAP] Verified invoices with NO invoice_date. A date-range fetch drops them, so they are
+  // in NONE of this quarter's figures — omzet, kosten and voorbelasting are all quietly too low.
+  // /api/aangifte already warns about exactly this; readiness said nothing. Optional (→ 0).
+  datelessVerifiedCount?: number;
 }
 
 export interface ReconException {
@@ -535,6 +539,27 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       severity: "risk",
       title: f.title,
       detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
+  }
+
+  // [DATE-GAP] A verified invoice with no date is counted NOWHERE — not in omzet, not in kosten,
+  // not in voorbelasting — because the quarter is fetched by date range. That makes every figure
+  // on this page too low, so it is a blocking GAP, not a risk: "klaar" may not be reachable while
+  // a counted document is missing from the count. The aangifte screen already says so; this is
+  // the same sentence on the surface that decides whether the quarter is done.
+  // It is also entirely fixable by the owner — enter the date — which is what a gap should be.
+  if ((s.datelessVerifiedCount ?? 0) > 0) {
+    const n = s.datelessVerifiedCount ?? 0;
+    missing.push({
+      severity: "missing",
+      title: n === 1
+        ? "1 factuur heeft geen factuurdatum"
+        : `${n} facturen hebben geen factuurdatum`,
+      detail:
+        `${n === 1 ? "Deze factuur telt" : "Deze facturen tellen"} in GEEN enkel kwartaal mee — ` +
+        "omzet, kosten en voorbelasting zijn daardoor te laag. Vul de factuurdatum in, dan valt " +
+        `${n === 1 ? "hij" : "ze"} vanzelf in het juiste kwartaal.`,
+      fix: FIX.facturen,
     });
   }
 
