@@ -136,21 +136,23 @@ Genegeerde facturen tellen niet mee in het ritme — die heeft de eigenaar juist
 
 ## Migraties
 
-In volgorde. Allebei idempotent, allebei met een `CONTROLE`-blok onderaan.
+**Allebei toegepast en gecontroleerd op 29 juli 2026** — elk `CONTROLE`-blok gaf `true` op elke kolom.
 
 | Bestand | Wat |
 |---------|-----|
 | `invoice_archive_reason.sql` | `invoices.archive_reason` (+ `CHECK`) en `archived_at`, plus een partiële index |
 | `email_sender_rules.sql` | tabel `email_sender_rules` + RLS (vier policies) + unieke index |
 
-**De code draait vóór de migratie zonder stuk te gaan.** Dat is geen toeval maar ontwerp, omdat migraties in dit project met de hand worden toegepast:
+**De code draaide vóór de migratie zonder stuk te gaan**, en dat was geen toeval maar ontwerp, omdat migraties in dit project met de hand worden toegepast. Die terugvalpaden blijven staan — ze kosten niets (ze vuren alleen op een fout) en houden een verse dev- of staging-database werkend:
 
 - de negeer-API valt bij een ontbrekende-kolom-fout terug op archiveren *zonder* notitie;
 - de Genegeerd-query valt terug op de kale kolomlijst in plaats van een leeg tabblad te tonen;
-- het regels-eindpunt antwoordt "geen regels" als de tabel nog niet bestaat;
+- het regels-eindpunt antwoordt "geen regels" als de **tabel** niet bestaat;
 - de mailsync past geen regels toe en importeert alles gewoon.
 
 De eigenaar mist dan hooguit een label. Nooit een knop die stukgaat.
+
+**Eén ding veranderde toen de tabel er eenmaal was.** Het regels-eindpunt slikte vóórdien élke fout en antwoordde "geen regels". Dat was verdedigbaar zolang "tabel bestaat niet" de enige realistische oorzaak was. Nu de tabel bestaat is het gevaarlijk: bij een RLS- of verbindingsfout zou het beheerscherm "geen regels" tonen terwijl er regels zijn die op dat moment post tegenhouden — en dan kan de eigenaar ze niet opheffen. Precies het scenario waar dit beheerscherm tegen bedoeld is. Het onderscheidt nu `42P01`/`PGRST205` (stille lege lijst) van een echte fout, die hardop gezegd wordt.
 
 ---
 
