@@ -15,8 +15,12 @@ import {
   normalizeBtw, normalizeIban,
 } from '@/lib/validation'
 import type { ProfileRow } from '@/types/rows'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
 
 export default function SettingsPage() {
+  const dialog = useDialog()
+  const toast = useToast()
   const router = useRouter()
   const supabase = createClient()
   const [accountant, setAccountant] = useState<ProfileRow | null>(null)
@@ -296,9 +300,12 @@ export default function SettingsPage() {
   }
   // إزالة ربط المحاسب مع تأكيد
   async function unlinkAccountant() {
-    const confirmed = window.confirm(
-      'Weet je zeker dat je de koppeling met je boekhouder wilt verwijderen?'
-    )
+    const confirmed = await dialog.confirm({
+      title: 'Koppeling met je boekhouder verwijderen?',
+      message: `${accountant?.full_name || accountant?.email || 'Je boekhouder'} kan je administratie daarna niet meer inzien. Je kunt later opnieuw uitnodigen.`,
+      confirmLabel: 'Ontkoppelen',
+      danger: true,
+    })
     if (!confirmed) return
 
     // Call API — handles email notification + audit log server-side
@@ -307,7 +314,7 @@ export default function SettingsPage() {
       setAccountant(null)
     } else {
       const data = await res.json().catch(() => ({}))
-      alert(data.error || 'Ontkoppelen mislukt')
+      toast(data.error || 'Ontkoppelen mislukt', { tone: 'error' })
     }
   }
 

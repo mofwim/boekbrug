@@ -35,6 +35,61 @@ export const M3 = {
 export const FONT = "'Roboto', -apple-system, sans-serif"
 export const FONT_NUM = "'Roboto Mono', monospace"
 
+// ── Motion ──────────────────────────────────────────────────────────────────
+// [MOTION] Single source of truth for how long things take and how they ease.
+// Before this existed every transition in the app was a hand-written magic
+// number — 113 inline `transition:` declarations across 41 files, no two the
+// same — so nothing felt like it belonged to one product. The mirror of this
+// table lives in globals.css as --dur-* / --ease-* custom properties; change a
+// value in BOTH or they drift. See docs/MOTION_SYSTEM.md.
+//
+// Durations are tuned for a financial app: quick and matter-of-fact, never
+// showy. The rule of thumb is that the user should never *wait* on an
+// animation — motion explains what moved where, then gets out of the way.
+export const DUR = {
+  /** 80ms — a press, a hover tint. Below ~100ms reads as instant. */
+  instant: 80,
+  /** 140ms — the default for colour/opacity on a control. */
+  fast: 140,
+  /** 200ms — the default for anything that moves or resizes. */
+  base: 200,
+  /** 280ms — a dialog or sheet arriving. */
+  slow: 280,
+  /** 400ms — a full-surface change; the longest we ever use. */
+  slower: 400,
+} as const
+
+// Material 3 easing set. `standard` covers almost everything. `decelerate` is
+// for things ENTERING the screen (fast at first, settles gently — the single
+// biggest contributor to a "fluid" feel), `accelerate` for things LEAVING
+// (content on its way out should not linger), `spring` adds a small overshoot
+// and is reserved for a press release or a FAB — never for data.
+export const EASE = {
+  standard: 'cubic-bezier(0.2, 0, 0, 1)',
+  decelerate: 'cubic-bezier(0.05, 0.7, 0.1, 1)',
+  accelerate: 'cubic-bezier(0.3, 0, 0.8, 0.15)',
+  spring: 'cubic-bezier(0.34, 1.3, 0.64, 1)',
+} as const
+
+/**
+ * Build a CSS `transition` value from the tokens above.
+ *
+ *   transition('opacity', 'fast')                → "opacity 140ms cubic-bezier(…)"
+ *   transition(['opacity', 'transform'], 'base') → both properties, same timing
+ *
+ * Prefer this over a literal so timings stay in step across the app. Avoid
+ * `all` — it animates properties you did not mean to (notably `height`, which
+ * is what makes a list feel like it is swimming).
+ */
+export function transition(
+  property: string | readonly string[],
+  duration: keyof typeof DUR = 'base',
+  easing: keyof typeof EASE = 'standard',
+): string {
+  const props = typeof property === 'string' ? [property] : property
+  return props.map((p) => `${p} ${DUR[duration]}ms ${EASE[easing]}`).join(', ')
+}
+
 // [HEADER-SYSTEM] Single source of truth for the sticky-header height.
 // The shared sub-page bar (components/nav/SubPageHeader) and the home bar
 // (app/dashboard/_shared DashboardHeader) both use this, and any secondary

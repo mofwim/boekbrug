@@ -152,7 +152,10 @@ export default function MessagesPage() {
                 <div
                   key={conv.otherId}
                   onClick={() => router.push(`/dashboard/messages/${conv.otherId}`)}
-                  className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/dashboard/messages/${conv.otherId}`) } }}
+                  className="pressable-row flex items-center justify-between px-5 py-4 hover:bg-gray-50"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-sm flex-shrink-0">

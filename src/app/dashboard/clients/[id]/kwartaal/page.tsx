@@ -14,6 +14,8 @@ import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { rowMatchesQuery } from '@/lib/search'
 import type { InvoiceRow, ProfileRow } from '@/types/rows'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -102,6 +104,8 @@ function ActionBadge({ value }: { value: string | null }) {
 // ─────────────────────────────────────────────────────────
 
 export default function KwartaalPage() {
+  const dialog = useDialog()
+  const toast = useToast()
   const router       = useRouter()
   const params       = useParams()
   const searchParams = useSearchParams()
@@ -290,6 +294,11 @@ export default function KwartaalPage() {
       setInvoices(prev => prev.map(i =>
         i.id === invoiceId ? { ...i, accountant_status: invoices.find(x => x.id === invoiceId)?.accountant_status ?? null } : i
       ))
+      // [HONESTY] The revert used to happen in silence: the chip you had just
+      // set slid back to its old value and nothing said why. On a screen whose
+      // whole job is asserting what has been checked, a status that undoes
+      // itself without a word is the one thing that must never happen.
+      toast('Status niet opgeslagen — probeer het opnieuw.', { tone: 'error' })
     } else if (action === 'verwerkt' || action === 'vraag') {
       // [READINESS-P3] Close the trust loop with the client — for BOTH 'verwerkt'
       // AND 'vraag'. Previously only 'verwerkt' notified, so a 'vraag' silently
@@ -317,9 +326,19 @@ export default function KwartaalPage() {
         body = `Je boekhouder heeft ${nrLabel}${party}${amount} verwerkt.`
       } else {
         // 'vraag' — capture an optional free-text question to send to the client.
-        const q = typeof window !== 'undefined'
-          ? window.prompt('Vraag aan de klant (optioneel):')?.trim()
-          : ''
+        // This text lands on the client's own screen as a notification, so it is
+        // written in the app's dialog: a textarea with the 200-character limit
+        // shown as you type, rather than a one-line browser prompt that silently
+        // truncated whatever did not fit.
+        const q = (await dialog.prompt({
+          title: 'Vraag aan de klant',
+          message: `Je klant krijgt dit te zien bij ${nrLabel}${party}. Laat je het leeg, dan melden we alleen dát je een vraag hebt.`,
+          placeholder: 'Waar gaat deze factuur over?',
+          multiline: true,
+          maxLength: 200,
+          confirmLabel: 'Vraag versturen',
+          required: false,
+        }))?.trim()
         title = 'Vraag van je boekhouder'
         body = q
           ? q.slice(0, 200)

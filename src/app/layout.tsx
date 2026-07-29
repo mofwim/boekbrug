@@ -4,6 +4,8 @@ import { Roboto, Noto_Sans_Arabic } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SITE_URL } from "@/lib/site";
 import { ServiceWorkerRegister } from "./ServiceWorkerRegister";
+import { ToastProvider } from "@/components/ui/Toast";
+import { DialogProvider } from "@/components/ui/Dialog";
 import "./globals.css";
 
 // [Design System] "latin-ext" is added so Turkish glyphs (ş ğ ı İ) render in
@@ -102,7 +104,15 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <ServiceWorkerRegister />
-        {children}
+        {/* [MOTION] The app's snackbar and its alert/confirm/prompt replacements.
+            Mounted at the root, not in the dashboard layout, so the public
+            pages (calculators, /pay, invite acceptance) can use them too, and
+            so a toast survives a navigation between dashboard sections.
+            Both are client components taking {children} as a prop, which keeps
+            everything below them server-rendered. */}
+        <ToastProvider>
+          <DialogProvider>{children}</DialogProvider>
+        </ToastProvider>
         {/* [ANALYTICS] Vercel Web Analytics — cookieless & privacy-friendly, so
             no consent banner is required. Only reports on Vercel deploys. */}
         <Analytics />

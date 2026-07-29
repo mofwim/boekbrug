@@ -68,6 +68,32 @@
   --color-muted-foreground:   #5f6368;  /* = text-secondary                   */
   --color-primary:            #1a73e8;  /* = blue — brand accent              */
   --color-primary-foreground: #ffffff;  /* on-primary                         */
+
+}
+
+/* ── Motion ─────────────────────────────────────────────────────────────────── */
+/* [MOTION] Mirror of DUR/EASE in src/lib/design/tokens.ts — the TS side is for
+   inline styles, this side is for stylesheets. Keep the two in step.
+   See docs/MOTION_SYSTEM.md for what each step is for.
+
+   These live in :root and NOT in @theme on purpose. Tailwind 4 tree-shakes
+   theme variables that no generated utility references, and `--dur-*` /
+   `--ease-*` map to no Tailwind namespace, so the ones this stylesheet did not
+   itself consume were dropped from the output entirely: --dur-instant,
+   --dur-slower and --ease-spring all resolved to the empty string in the
+   browser (verified). A component reaching for var(--ease-spring) would have
+   got nothing. A plain :root rule is always emitted. */
+:root {
+  --dur-instant: 80ms;
+  --dur-fast:    140ms;
+  --dur-base:    200ms;
+  --dur-slow:    280ms;
+  --dur-slower:  400ms;
+
+  --ease-standard:   cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --ease-spring:     cubic-bezier(0.34, 1.3, 0.64, 1);
 }
 
 /* [QUARTERLY-FIX] Tailwind 4 changed the default border colour from v3's
@@ -120,23 +146,92 @@ body {
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────────── */
+/* [MOTION] These are DEFAULTS, not decrees — note the absence of !important.
+   They used to carry it, and the cost was invisible but large: an author
+   `!important` outranks a normal inline style, so `border-radius: 12px
+   !important` silently reshaped every button that asked for something else.
+   About 350 of them did — 95 pill buttons (R.full), 19 more at 999px, 17 at
+   9999px, 14 circular icon buttons at 50% — and all of them rendered as the
+   same 12px rounded rectangle. The `transition` line did the same to motion:
+   every hand-written cubic-bezier on a button, including the springy tile
+   presses on the two home screens, was replaced by `opacity .15s ease` before
+   it ever ran. Without !important a button that specifies nothing still gets
+   these values (verified in Chromium), and one that specifies its own finally
+   keeps it. */
 
 button {
-  border-radius: var(--radius-button) !important;
-  font-weight: 600 !important;
-  transition: opacity 0.15s ease, transform 0.1s ease !important;
+  border-radius: var(--radius-button);
+  font-weight: 600;
+  transition: scale var(--dur-fast) var(--ease-standard),
+              opacity var(--dur-fast) var(--ease-standard);
   cursor: pointer;
+  /* [MOTION] Kill the grey flash Android/iOS paint over a tapped element. It
+     fires ~100ms late and lasts longer than our own press feedback, so it read
+     as lag on exactly the interactions that should feel most immediate. */
+  -webkit-tap-highlight-color: transparent;
+  /* Opt out of double-tap-to-zoom on controls: removes the browser's wait-and-
+     see delay before it commits to treating a tap as a tap. */
+  touch-action: manipulation;
 }
 
+/* [MOTION] Press feedback uses the independent `scale` property, NOT `transform`.
+   That is deliberate: `scale` composes with whatever `transform` an element
+   already carries, so a FAB that sits at `transform: scale(1.08)` on hover, or
+   a toast at `translateX(-50%)`, still visibly presses instead of being yanked
+   back to the origin. It also means no !important is needed to win — nothing
+   else in the app sets `scale`. */
 button:active:not(:disabled) {
-  transform: scale(0.97) !important;
-  opacity: 0.85 !important;
+  scale: 0.97;
+  opacity: 0.85;
 }
 
 button:disabled {
-  opacity: 0.4 !important;
+  opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* [MOTION] The same press feedback for things that are not <button>: link
+   cards, list rows, tiles. The app leans heavily on clickable <div>s and
+   <Link>s, and all of them used JS onMouseEnter/onMouseLeave for feedback —
+   which a finger never fires. On a phone, tapping a row did nothing at all
+   until the next screen arrived. Add `pressable` to any interactive element
+   that is not a button. */
+.pressable {
+  transition: scale var(--dur-fast) var(--ease-standard),
+              background-color var(--dur-fast) var(--ease-standard);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.pressable:active {
+  scale: 0.97;
+}
+
+/* Rows and wide cards should not shrink like a small control — at full width a
+   0.97 scale reads as the whole page flexing. They tint instead. */
+.pressable-row {
+  transition: background-color var(--dur-fast) var(--ease-standard);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.pressable-row:active {
+  background-color: var(--color-surface-2);
+}
+
+/* An icon button in a top bar: hover tint on a mouse, press-scale on a finger.
+   Pair with `pressable`, which supplies the :active scale and the transition. */
+.nav-icon-btn:hover {
+  background-color: var(--color-surface-2);
+}
+
+/* A notification row carries its own read/unread background as an inline style,
+   which outranks .pressable-row's :active tint. Darkening what is already there
+   works for both states, so unread rows stay blue while being pressed. */
+.notification-row:hover  { filter: brightness(0.97); }
+.notification-row:active { filter: brightness(0.93); }
 
 /* ── Inputs ─────────────────────────────────────────────────────────────────── */
 
@@ -269,16 +364,70 @@ input::placeholder, textarea::placeholder {
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ── Animations ──────────────────────────────────────────────────────────────── */
+/* [MOTION] The canonical keyframe set. Everything below used to be redeclared
+   inside components in a <style> tag: `spin` existed five times under five
+   names (spin / bb-spin / bbSpin / m3spin / bq-spin), `shimmer` three times,
+   the toast rise twice (fadeInUp / m3fadeUp). Each copy shipped in a different
+   bundle and drifted from the others. Import nothing — these are global. */
 
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-
-.animate-fade-in { animation: fade-in 0.2s ease both; }
+.animate-fade-in { animation: fade-in var(--dur-base) var(--ease-decelerate) both; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 0.7s linear infinite; }
+
+/* Entrance for a surface that arrives in place (dialog, menu, popover): a small
+   scale-up under a decelerating curve, so it settles rather than snaps. */
+@keyframes bb-scale-in {
+  from { opacity: 0; scale: 0.94; }
+  to   { opacity: 1; scale: 1; }
+}
+.animate-scale-in { animation: bb-scale-in var(--dur-slow) var(--ease-decelerate) both; }
+
+/* Entrance for something that rises from the bottom edge: snackbar, bottom
+   sheet. Uses `translate`, not `transform`, so it composes with a centring
+   `transform: translateX(-50%)` already on the element. */
+@keyframes bb-rise-in {
+  from { opacity: 0; translate: 0 12px; }
+  to   { opacity: 1; translate: 0 0; }
+}
+.animate-rise-in { animation: bb-rise-in var(--dur-slow) var(--ease-decelerate) both; }
+
+@keyframes bb-rise-out {
+  from { opacity: 1; translate: 0 0; }
+  to   { opacity: 0; translate: 0 12px; }
+}
+.animate-rise-out { animation: bb-rise-out var(--dur-fast) var(--ease-accelerate) both; }
+
+/* A full-height sheet sliding in from the bottom edge of the viewport. */
+@keyframes bb-sheet-in {
+  from { translate: 0 100%; }
+  to   { translate: 0 0; }
+}
+.animate-sheet-in { animation: bb-sheet-in var(--dur-slow) var(--ease-decelerate) both; }
+
+@keyframes bb-sheet-out {
+  from { translate: 0 0; }
+  to   { translate: 0 100%; }
+}
+.animate-sheet-out { animation: bb-sheet-out var(--dur-base) var(--ease-accelerate) both; }
+
+/* The dimmed backdrop behind a dialog or sheet. Fading it rather than snapping
+   it on is most of what stops a modal from feeling like a page swap. */
+@keyframes bb-backdrop-in  { from { opacity: 0; } to   { opacity: 1; } }
+@keyframes bb-backdrop-out { from { opacity: 1; } to   { opacity: 0; } }
+.animate-backdrop-in  { animation: bb-backdrop-in  var(--dur-base) var(--ease-standard) both; }
+.animate-backdrop-out { animation: bb-backdrop-out var(--dur-fast) var(--ease-standard) both; }
+
+/* Skeleton shimmer. Pair with a background-image gradient sized 200% wide;
+   see src/components/ui/Skeletons.tsx for the canonical usage. */
+@keyframes bb-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
 
 /* ── Material Symbols ────────────────────────────────────────────────────────── */
 /* [Design System] Icon font — loaded via CDN in layout.tsx                     */
@@ -300,9 +449,23 @@ input::placeholder, textarea::placeholder {
     scroll-behavior: auto !important;
   }
 
-  /* Neutralize the global button press transform */
-  button:active:not(:disabled) {
-    transform: none !important;
+  /* Neutralize every press-scale. These set the independent `scale` property,
+     which the blanket transition/animation reset above does not cover, so each
+     one has to be named. */
+  button:active:not(:disabled),
+  .pressable:active {
+    scale: none !important;
+  }
+
+  /* Entrances still run, but instantly — the element appears in its final
+     position instead of sliding or scaling into it. */
+  .animate-scale-in,
+  .animate-rise-in,
+  .animate-rise-out,
+  .animate-sheet-in,
+  .animate-sheet-out,
+  .animate-fade-in {
+    animation: none !important;
   }
 }
 /* ── [ROW-STACK] Inkoopfactuur-rij op een smal scherm ────────────────────────── */

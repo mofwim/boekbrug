@@ -9,12 +9,16 @@ import { Icon } from "./ui/Icon";
 import { Spinner } from "./ui/Spinner";
 import { BestandRow } from "../types";
 import { fileEmoji, formatDate, formatSize } from "../helpers";
+import { useDialog } from "@/components/ui/Dialog";
+import { useToast } from "@/components/ui/Toast";
 
 interface TrashProps {
   onBack: () => void;
 }
 
 export function Trash({ onBack }: TrashProps) {
+  const dialog = useDialog();
+  const toast = useToast();
   const [items, setItems] = useState<BestandRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -48,7 +52,16 @@ export function Trash({ onBack }: TrashProps) {
   };
 
   const permanentDelete = async (ids: string[]) => {
-    if (!confirm(`${ids.length} bestand(en) permanent verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
+    // Permanently destroying a document in a bookkeeping app is the single
+    // most irreversible thing a user can do here — it deserves the app's own
+    // dialog rather than the browser's, with the consequence spelled out.
+    const ok = await dialog.confirm({
+      title: ids.length === 1 ? 'Bestand permanent verwijderen?' : `${ids.length} bestanden permanent verwijderen?`,
+      message: 'Dit kan niet ongedaan worden gemaakt. Denk aan de bewaarplicht: de Belastingdienst verwacht dat je administratie zeven jaar bewaard blijft.',
+      confirmLabel: 'Permanent verwijderen',
+      danger: true,
+    });
+    if (!ok) return;
     // [COHERENCE-TRASH] Call the REAL purge endpoint and only remove rows that actually
     // deleted. The old code hit the deprecated DELETE /api/files/[id] (410 Gone) and
     // filtered items unconditionally, so files silently stayed trashed and reappeared on
@@ -66,7 +79,7 @@ export function Trash({ onBack }: TrashProps) {
     if (deletedIds.length > 0) setItems(p => p.filter(d => !deletedIds.includes(d.id)));
     setSelected(new Set());
     if (failed > 0) {
-      alert(`${failed} bestand(en) konden niet worden verwijderd. Ze staan nog in de prullenbak — probeer het opnieuw.`);
+      toast(`${failed} bestand(en) konden niet worden verwijderd. Ze staan nog in de prullenbak.`, { tone: 'error' });
     }
   };
 

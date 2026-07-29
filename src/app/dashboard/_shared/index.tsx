@@ -427,17 +427,25 @@ function NotificationsBell({
               {notifications.map(n => (
                 <div
                   key={n.id}
+                  // [MOTION] A notification row is a link in everything but tag
+                  // name. It now presses like one (pressable-row tints on
+                  // :active, which touch fires — the old JS hover never did),
+                  // and can be reached and opened from the keyboard.
+                  role={n.link ? 'button' : undefined}
+                  tabIndex={n.link ? 0 : undefined}
+                  className={n.link ? 'pressable-row notification-row' : undefined}
                   onClick={() => {
                     if (n.link) { router.push(n.link); onToggle(); if (!n.read) markAsRead(n.id) }
                   }}
+                  onKeyDown={e => {
+                    if (!n.link || (e.key !== 'Enter' && e.key !== ' ')) return
+                    e.preventDefault()
+                    router.push(n.link); onToggle(); if (!n.read) markAsRead(n.id)
+                  }}
                   style={{
                     padding: '12px 16px', borderBottom: '1px solid #F1F3F4',
-                    cursor: n.link ? 'pointer' : 'default',
                     backgroundColor: !(readOverride[n.id] ?? n.read) ? '#E8F0FE' : 'transparent',
-                    transition: 'background 0.1s',
                   }}
-                  onMouseEnter={e => { if (n.link) (e.currentTarget as HTMLDivElement).style.backgroundColor = !(readOverride[n.id] ?? n.read) ? '#D2E3FC' : '#F8F9FA' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.backgroundColor = !(readOverride[n.id] ?? n.read) ? '#E8F0FE' : 'transparent' }}
                 >
                   <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0 }}>{n.title}</p>
                   {n.body && <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{n.body}</p>}

@@ -41,6 +41,7 @@ import { crossQuarterPayment } from '@/lib/quarter'
 // [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
 import { overdueDays, daysUntilDue } from '@/lib/overdue'
 import { rowMatchesQuery } from '@/lib/search'
+import { useToast } from '@/components/ui/Toast'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
@@ -194,6 +195,10 @@ export default function IncomingManageClient({
   // cannot move when the owner pays a factuur. Null when the count query failed.
   totalCount?: number | null
 }) {
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -206,7 +211,6 @@ export default function IncomingManageClient({
   const [sortBy, setSortBy]             = useState<SortKey>('added_desc')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [expandedId, setExpandedId]     = useState<string | null>(null)
-  const [toast, setToast]               = useState<string | null>(null)
   const [payCtx, setPayCtx]             = useState<PayCtx | null>(null)
   // [INVOICE-REMOVE] The confirm dialog for "Verwijderen": the invoice + what removing it means.
   const [removeCtx, setRemoveCtx]       = useState<{ id: string; decision: RemovalDecision } | null>(null)
@@ -404,7 +408,6 @@ export default function IncomingManageClient({
   const tabCount = (id: FilterTab) =>
     id === 'all' ? listedCount : id === 'received' ? receivedCount : id === 'paid' ? paidCount : autoCount
 
-  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
   // Local optimistic patch (no hook — this surface owns its list)
   function patchLocal(id: string, patch: Partial<IncomingRow>) {
@@ -819,7 +822,7 @@ export default function IncomingManageClient({
               no shared allowlist change is needed and nothing can render as raw ligature text. */}
           <span
             className="material-symbols-outlined"
-            style={{ fontSize: 18, animation: matchBusy ? 'bbSpin 1s linear infinite' : undefined }}
+            style={{ fontSize: 18, animation: matchBusy ? 'spin 1s linear infinite' : undefined }}
           >
             {matchBusy ? 'refresh' : 'link'}
           </span>
@@ -1559,16 +1562,7 @@ export default function IncomingManageClient({
         />
       )}
 
-      {/* ── Toast ── */}
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
-          {toast}
-        </div>
-      )}
-
       <style>{`
-        @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
-        @keyframes bbSpin { to { transform: rotate(360deg); } }
         ::-webkit-scrollbar { display: none }
       `}</style>
     </div>

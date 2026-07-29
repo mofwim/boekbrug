@@ -529,8 +529,6 @@ function ToolTile({ icon, tint, label, onClick }: {
         border: 'none', boxShadow: EL1, cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.96)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         width: 46, height: 46, borderRadius: R.md,

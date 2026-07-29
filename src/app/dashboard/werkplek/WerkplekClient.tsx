@@ -46,8 +46,6 @@ export default function WerkplekClient() {
                 transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
                 WebkitTapHighlightColor: 'transparent',
               }}
-              onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-              onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
             >
               <div style={{
                 width: 50, height: 50, borderRadius: R.md,
@@ -82,8 +80,6 @@ export default function WerkplekClient() {
           fontFamily: "'Roboto', sans-serif", zIndex: 50,
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
-        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
-        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
         Nieuwe factuur

@@ -19,6 +19,7 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // "unsupported type" and is filed as unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload. A PDF (incl. the multi-page combine's output) passes through untouched.
 import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-normalize-client'
+import { useToast } from '@/components/ui/Toast'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF',
@@ -40,9 +41,12 @@ export default function IntakeButton({
   onDone?: (result: IntakeResult) => void
 }) {
   const router = useRouter()
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
   // [DUP-ARCHIVED] `archived` = de bestaande factuur staat in Genegeerd. Dan is "bestaat al" waar
@@ -73,10 +77,6 @@ export default function IntakeButton({
   const mpFileRef = useRef<HTMLInputElement>(null)
   const MAX_PAGES = 20
 
-  function showToast(msg: string) {
-    setToast(msg)
-    setTimeout(() => setToast(null), 3500)
-  }
 
   // [DUP-ARCHIVED] "Terugzetten" — de upload botste op een factuur die de eigenaar zelf genegeerd
   // heeft. Opnieuw uploaden lost dat niet op (bij identieke bytes kán het niet eens); de bestaande
@@ -567,11 +567,6 @@ export default function IntakeButton({
         </div>
       )}
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.md, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90%', textAlign: 'center', fontFamily: FONT }}>
-          {toast}
-        </div>
-      )}
     </>
   )
 }

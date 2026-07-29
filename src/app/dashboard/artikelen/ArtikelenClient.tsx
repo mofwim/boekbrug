@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { type Article } from '@/lib/articles'
 import { rowMatchesQuery } from '@/lib/search'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
 
 const M3 = {
   primary: '#1A73E8', onPrimary: '#FFFFFF', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
@@ -24,6 +26,11 @@ type Form = { code: string; description: string; unit_price: string; btw_rate: n
 const EMPTY: Form = { code: '', description: '', unit_price: '', btw_rate: 21, unit: '' }
 
 export default function ArtikelenClient() {
+  const dialog = useDialog()
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const setToast = useToast()
   const [articles, setArticles] = useState<Article[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -32,7 +39,6 @@ export default function ArtikelenClient() {
   const [form, setForm] = useState<Form>(EMPTY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -91,7 +97,13 @@ export default function ArtikelenClient() {
   }
 
   async function remove(id: string) {
-    if (!confirm('Dit artikel verwijderen? Bestaande facturen blijven ongewijzigd.')) return
+    const ok = await dialog.confirm({
+      title: 'Dit artikel verwijderen?',
+      message: 'Facturen waarop dit artikel al staat, blijven ongewijzigd.',
+      confirmLabel: 'Verwijderen',
+      danger: true,
+    })
+    if (!ok) return
     try {
       const res = await fetch(`/api/articles/${id}`, { method: 'DELETE' })
       if (!res.ok) { setToast('Verwijderen mislukt — probeer opnieuw.'); return }
@@ -100,7 +112,6 @@ export default function ArtikelenClient() {
     finally { await load() }
   }
 
-  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 2200); return () => clearTimeout(t) } }, [toast])
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -180,9 +191,6 @@ export default function ArtikelenClient() {
         )}
       </div>
 
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', padding: '10px 18px', borderRadius: R.full, fontSize: 13.5, fontFamily: FONT, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>{toast}</div>
-      )}
     </div>
   )
 }

@@ -32,6 +32,7 @@ import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial
 // [INVOICE-REMOVE] One rule decides what "Verwijderen" does to THIS invoice — the same rule the
 // API route re-checks before it writes. The dialog below is that decision, rendered.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/invoice-removal"
+import { useToast } from "@/components/ui/Toast"
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -135,6 +136,10 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function FacturenClient({ profile }: { profile: { id: string } }) {
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -144,7 +149,6 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const [sort, setSort]                 = useState<SortOrder>('desc')
   const [showFilterMenu, setShowFilterMenu] = useState(false)  // [BOEK-029] dropdown
   const [expandedId, setExpandedId]     = useState<string | null>(null)
-  const [toast, setToast]               = useState<string | null>(null)
   const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
   // [HERHAAL] The invoice the owner is about to start (or stop) repeating.
   const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string; active?: boolean } | null>(null)
@@ -451,7 +455,6 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     loadMore()
   }, [typeFiltered, searching, loading, hasMore, displayed.length, loadMore])
 
-  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
   async function executePay(ctx: ConfirmPayCtx) {
     setPayCtx(null); setProcessingId(ctx.id)
@@ -1410,8 +1413,6 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           fontFamily: FONT, zIndex: 50,
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
-        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
-        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
         Nieuwe factuur
@@ -1670,24 +1671,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         </div>
       )}
 
-      {/* ── Toast ── */}
-      {toast && (
-        <div style={{
-          // [TOAST-WRAP] Long sentences (e.g. "… maar de PDF kon niet worden gemaakt —
-          // verstuur opnieuw") were nowrap + centered, so on a phone they ran past both
-          // screen edges and were cut off. Cap the width and let them wrap instead.
-          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
-          background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500,
-          padding: '12px 20px', borderRadius: R.sm, zIndex: 300,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: 'calc(100vw - 32px)', textAlign: 'center',
-          animation: 'fadeInUp 0.2s ease', fontFamily: FONT,
-        }}>
-          {toast}
-        </div>
-      )}
-
       <style>{`
-        @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
         @keyframes shimmer  { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }
         ::-webkit-scrollbar { display: none }
       `}</style>

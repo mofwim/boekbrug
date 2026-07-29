@@ -122,7 +122,8 @@ export default function CategoriseClient() {
     await load(next)
   }
 
-  async function confirm(id: string) {
+  // [SHADOW] See BankClient: a local `confirm` shadows window.confirm module-wide.
+  async function confirmCategory(id: string) {
     const category = choice[id]
     if (!category) return
     setBusy(id)
@@ -357,7 +358,7 @@ export default function CategoriseClient() {
                 </div>
 
                 <button
-                  onClick={() => confirm(it.id)}
+                  onClick={() => confirmCategory(it.id)}
                   disabled={busy === it.id}
                   style={{
                     marginTop: 12, width: '100%', padding: '11px', borderRadius: 12, border: 'none',

@@ -12,6 +12,7 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
 import { lastCompletedQuarter } from '@/lib/quarter'
 import { rowMatchesQuery } from '@/lib/search'
+import { useDialog } from '@/components/ui/Dialog'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -456,6 +457,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
 
 // ─── File / invoice row ────────────────────────────────────────────────────────
 function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: boolean; docStatus: DocStatusMap }) {
+  const dialog = useDialog()
   const icon = node.source === 'invoice' ? 'receipt_long' : 'description'
 
   // [READINESS-P3] Document processing status (accountant assertion). Only meaningful
@@ -474,9 +476,22 @@ function FileRow({ node, isClient, docStatus }: { node: TreeNode; isClient: bool
       // [BRUG-RETOUR] De klant ziet deze tekst nu écht — op /dashboard/vragen, met het
       // document erbij en een antwoordveld. Zeg dat erbij: een boekhouder die denkt dat
       // hij in het niets typt, schrijft "?" en pakt daarna de telefoon.
-      const answer = window.prompt(
-        'Vraag over dit document. Je klant ziet deze tekst op zijn scherm en kan er direct op antwoorden.',
-      )
+      // The browser's prompt gave one unstyled line for a message another
+      // person reads on their own screen: no room, no wrapping, no sense of how
+      // much you had written. A textarea in the app's own dialog says, by its
+      // shape, that this is something to write rather than something to fill in.
+      const answer = await dialog.prompt({
+        title: 'Vraag over dit document',
+        message: 'Je klant ziet deze tekst op zijn scherm en kan er direct op antwoorden.',
+        placeholder: 'Waar gaat deze bon over?',
+        multiline: true,
+        maxLength: 500,
+        confirmLabel: 'Vraag versturen',
+        // Optional by design: sending the status with no text still tells the
+        // client there is a question, which is what the old prompt allowed by
+        // accepting an empty string.
+        required: false,
+      })
       if (answer === null) return // cancelled — assert nothing
       vraagText = answer.trim() || undefined
     }

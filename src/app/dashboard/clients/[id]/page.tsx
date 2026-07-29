@@ -9,10 +9,14 @@ import { useRouter, useParams } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { ProfileRow } from '@/types/rows'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
 export default function ClientDetailPage() {
+  const dialog = useDialog()
+  const toast = useToast()
   const router = useRouter()
   const params = useParams()
   const clientId = params?.id as string
@@ -48,7 +52,12 @@ export default function ClientDetailPage() {
   }, [clientId])
 
   async function removeClient() {
-    const confirmed = window.confirm(`Weet je zeker dat je ${client?.company_name || client?.full_name} wilt ontkoppelen?`)
+    const confirmed = await dialog.confirm({
+      title: 'Klant ontkoppelen?',
+      message: `Je verliest daarmee de toegang tot de administratie van ${client?.company_name || client?.full_name || 'deze klant'}. De klant houdt alles zelf; jullie kunnen later opnieuw koppelen.`,
+      confirmLabel: 'Ontkoppelen',
+      danger: true,
+    })
     if (!confirmed) return
 
     // Call API — handles email + audit + notification server-side
@@ -62,7 +71,7 @@ export default function ClientDetailPage() {
       router.push('/dashboard')
     } else {
       const data = await res.json().catch(() => ({}))
-      alert(data.error || 'Ontkoppelen mislukt')
+      toast(data.error || 'Ontkoppelen mislukt', { tone: 'error' })
     }
   }
 

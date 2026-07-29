@@ -356,8 +356,6 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
                   color: aiLoading || !aiPrompt.trim() ? '#80868b' : '#fff',
                   fontSize: 15, fontWeight: 600, transition: 'all 0.15s',
                 }}
-                onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-                onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
               >
                 {aiLoading ? 'AI denkt na...' : 'Factuur aanmaken →'}
               </button>
@@ -396,8 +394,6 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         width: 48, height: 48, borderRadius: R.md,
@@ -449,8 +445,6 @@ function AdminTile({ icon, tint, label, badge, onClick }: {
         border: 'none', boxShadow: EL1, cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.96)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         position: 'relative', width: 46, height: 46, borderRadius: R.md,
@@ -488,8 +482,6 @@ function MiniCard({ icon, tint, label, sub, onClick }: {
         border: 'none', boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         width: 38, height: 38, borderRadius: R.sm, background: tint,
@@ -526,8 +518,6 @@ function Fab({ onClick }: { onClick: () => void }) {
         zIndex: 50,
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
       Nieuwe factuur

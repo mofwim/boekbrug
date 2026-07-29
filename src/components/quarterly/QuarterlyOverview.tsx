@@ -11,6 +11,8 @@ import { downloadCsv } from "@/lib/export";
 import { useParentPath } from "@/lib/navigation-hooks";
 import type { Role } from "@/lib/navigation";
 import { lastCompletedQuarter } from "@/lib/quarter";
+import { useDialog } from "@/components/ui/Dialog";
+import { useToast } from "@/components/ui/Toast";
 
 const QUARTERS = [1, 2, 3, 4] as const;
 const CURRENT_YEAR = new Date().getFullYear();
@@ -43,6 +45,8 @@ export function QuarterlyOverview({ isAccountant, role }: Props) {
 // ZZP View
 // ─────────────────────────────────────────────────────────
 function ZzpView({ role }: { role: Role }) {
+  const dialog = useDialog();
+  const toast = useToast();
   const parentHref = useParentPath(role);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
   const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
@@ -151,18 +155,24 @@ function ZzpView({ role }: { role: Role }) {
         });
         if (res.status === 409) {
           const j = await res.json().catch(() => ({}));
-          const proceed = window.confirm(
-            `${j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd."}\n\nToch als ingediend markeren?`,
-          );
+          // [FILING-GATE] The owner is declaring a quarter finished while the
+          // server says it is not — the app's own dialog, with the server's
+          // reason as the body instead of glued on with \n\n.
+          const proceed = await dialog.confirm({
+            title: "Toch als ingediend markeren?",
+            message: j?.reason ?? "Dit kwartaal is nog niet volledig gecontroleerd.",
+            confirmLabel: "Ja, markeer als ingediend",
+            danger: true,
+          });
           if (!proceed) return;
           const res2 = await fetch("/api/btw/file", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ year, quarter, acknowledge: true }),
           });
-          if (!res2.ok) { window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return; }
+          if (!res2.ok) { toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return; }
         } else if (!res.ok) {
           // Never leave a failed freeze looking successful.
-          window.alert("Markeren als ingediend is niet gelukt — probeer het opnieuw."); return;
+          toast("Markeren als ingediend is niet gelukt — probeer het opnieuw.", { tone: "error" }); return;
         }
       } else {
         await fetch(`/api/btw/file?year=${year}&quarter=${quarter}`, { method: "DELETE" });
@@ -180,7 +190,7 @@ function ZzpView({ role }: { role: Role }) {
       const params = new URLSearchParams({ year: String(year), quarter: String(quarter) });
       const res = await fetch(`/api/closing-package?${params}`);
       if (!res.ok) {
-        alert("Pakket genereren mislukt — probeer opnieuw");
+        toast("Pakket genereren mislukt — probeer opnieuw", { tone: "error" });
         return;
       }
       const blob = await res.blob();
@@ -191,7 +201,7 @@ function ZzpView({ role }: { role: Role }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      alert("Pakket genereren mislukt — controleer je verbinding");
+      toast("Pakket genereren mislukt — controleer je verbinding", { tone: "error" });
     } finally {
       setPackaging(false);
     }
@@ -542,6 +552,7 @@ function ZzpView({ role }: { role: Role }) {
 // Accountant View — unchanged
 // ─────────────────────────────────────────────────────────
 function AccountantView({ role }: { role: Role }) {
+  const toast = useToast();
   const parentHref = useParentPath(role);
   const [year, setYear] = useState(CURRENT_YEAR_DEFAULT);
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(CURRENT_QUARTER);
@@ -658,7 +669,7 @@ function AccountantView({ role }: { role: Role }) {
       });
       const res = await fetch(`/api/closing-package?${params}`);
       if (!res.ok) {
-        alert("Pakket genereren mislukt — probeer opnieuw");
+        toast("Pakket genereren mislukt — probeer opnieuw", { tone: "error" });
         return;
       }
       const blob = await res.blob();
@@ -669,7 +680,7 @@ function AccountantView({ role }: { role: Role }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      alert("Pakket genereren mislukt — controleer je verbinding");
+      toast("Pakket genereren mislukt — controleer je verbinding", { tone: "error" });
     } finally {
       setPackaging(false);
     }
