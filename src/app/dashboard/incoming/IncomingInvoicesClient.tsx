@@ -1305,12 +1305,14 @@ function InvoiceCard({
     >
       {/* Header — always visible, tappable */}
       <button
+        className="inv-row"
         onClick={selectMode ? onSelect : onToggle}
+        // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so the
+        // stack-on-mobile media query can override them; the flex:1 main pushes the side
+        // cluster right, so justify-content:space-between is no longer needed here.
         style={{
           width: "100%", padding: "16px", border: "none",
           background: "transparent", cursor: "pointer", textAlign: "left",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          gap: 12,
         }}
       >
         {/* [INTAKE-VERIFY-BULK] selection checkbox — only in pending select mode */}
@@ -1327,7 +1329,7 @@ function InvoiceCard({
             {selected ? "✓" : ""}
           </span>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="inv-row-main">
           <div
             style={{
               fontWeight: 700, fontSize: 16, color: "#202124", marginBottom: 3,
@@ -1391,7 +1393,10 @@ function InvoiceCard({
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* [ROW-LAYOUT] .inv-row-side-h (globals.css) keeps amount + badge + chevron in one
+            horizontal cluster on a wide screen, and drops it to a full-width, right-aligned
+            strip below 520px so the deelbetaling badge stops squeezing the afzender name. */}
+        <div className="inv-row-side-h">
           <span style={{ fontWeight: 700, fontSize: 18, color: "#202124", whiteSpace: "nowrap" }}>
             {formatSignedAmount(invoice.total_inc_btw)}
           </span>

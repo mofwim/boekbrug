@@ -18,6 +18,8 @@ import { classifyAttachment } from "@/lib/email-integration";
 import { evaluateArithmetic, deriveDueDate } from "@/lib/safecore";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
+// [SEC-STORAGE-PATH] Normalise a stored value AND decide whose bytes it names — one tested place.
+import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 import { gateFairUse } from "@/lib/fair-use-gate";
 import type { Database } from "@/types/database.types";
 
@@ -33,25 +35,6 @@ const REREAD_MODEL = "claude-sonnet-5";
 // [REREAD-STRONG] A raw-PDF (visual-layout) read is slower than the flattened-text path — give the
 // route headroom so a heavy invoice doesn't get killed mid-read. Cap still depends on the plan.
 export const maxDuration = 120;
-
-// A stored value may be a relative path (new) or a legacy full signed/public URL. Normalise
-// to the bucket-relative path. (Mirror of the helper in api/email/file/[id].)
-function toStoragePath(stored: string): string {
-  if (stored.startsWith("http")) {
-    const signMarker = "/object/sign/documents/";
-    const publicMarker = "/object/public/documents/";
-    let idx = stored.indexOf(signMarker);
-    if (idx !== -1) {
-      idx += signMarker.length;
-    } else {
-      idx = stored.indexOf(publicMarker);
-      if (idx === -1) return stored;
-      idx += publicMarker.length;
-    }
-    return decodeURIComponent(stored.slice(idx).split("?")[0]);
-  }
-  return stored;
-}
 
 // [HUNT-Q4] Identify a file by its magic bytes — authoritative over a filename/extension
 // guess. Returns null when the header isn't one the classifier can read (leave the guess).
@@ -154,8 +137,18 @@ export async function POST(
 
   // Download the stored bytes. Storage bucket RLS is separate from table RLS; ownership is
   // already proven above, so the pipeline client is used only to read this one proven file.
-  const pipeline = createPipelineClient();
   const storagePath = toStoragePath(invoice.pdf_url);
+  // [SEC-STORAGE-PATH] "Ownership is already proven above" was proven of the ROW, not of the path
+  // it points at — and pdf_url is writable by the very caller whose row this is. The pipeline
+  // client bypasses the bucket policy, so without this the caller could name another tenant's key
+  // and have its bytes read (and, worse, re-imported onto their own invoice). See storage-path.ts.
+  if (!pathBelongsToOwner(storagePath, invoice.receiver_id)) {
+    console.error("[SEC-STORAGE-PATH] refused to read a path outside the authorized owner", {
+      invoiceId: id, receiverId: invoice.receiver_id, storagePath, callerId: user.id,
+    });
+    return NextResponse.json({ error: "Kon het bestand niet lezen" }, { status: 403 });
+  }
+  const pipeline = createPipelineClient();
   const { data: blob, error: dlErr } = await pipeline.storage.from("documents").download(storagePath);
   if (dlErr || !blob) {
     console.error("[REIMPORT] download failed", { invoiceId: id, storagePath, dlErr });

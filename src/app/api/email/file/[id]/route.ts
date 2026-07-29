@@ -6,28 +6,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-
-// [BOEK-011] Normalize a stored value to a relative storage path.
-// Older invoices may have stored a full signed URL instead of a path.
-// New invoices store the raw relative path. This handles both safely.
-function toStoragePath(stored: string): string {
-  if (stored.startsWith("http")) {
-    const signMarker = "/object/sign/documents/";
-    const publicMarker = "/object/public/documents/";
-    let idx = stored.indexOf(signMarker);
-    if (idx !== -1) {
-      idx += signMarker.length;
-    } else {
-      idx = stored.indexOf(publicMarker);
-      if (idx === -1) return stored; // unknown shape — return as-is
-      idx += publicMarker.length;
-    }
-    // Strip query string (?token=...) and decode %20 etc.
-    return decodeURIComponent(stored.slice(idx).split("?")[0]);
-  }
-  // Already a relative path
-  return stored;
-}
+// [SEC-STORAGE-PATH] Normalising a stored value and deciding WHOSE bytes it names are the same
+// question, so they live in one tested place — see the header of storage-path.ts for the hole
+// this closes.
+import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 
 export async function GET(
   _req: NextRequest,
@@ -86,6 +68,20 @@ export async function GET(
   // [BOEK-011] Normalize — handles both relative paths and legacy full URLs
   const storagePath = toStoragePath(invoice.pdf_url);
 
+  // [SEC-STORAGE-PATH] The authorization above proved the caller may read this ROW. It did NOT
+  // prove anything about where the row POINTS — and pdf_url is plain text on a row the caller is
+  // allowed to write (invoices_receiver_update / invoices_zzp_insert). Without this check a caller
+  // could put another tenant's storage key on their own invoice and have the service-role client,
+  // which bypasses the bucket policy, sign it for them. Every file this app writes is keyed
+  // `<owner-uuid>/…`, and the owner covered by the check above is the invoice's receiver — so the
+  // path must sit in THAT folder. Fails closed: an unattributable path is never signed.
+  if (!pathBelongsToOwner(storagePath, invoice.receiver_id)) {
+    console.error("[SEC-STORAGE-PATH] refused to sign a path outside the authorized owner", {
+      invoiceId: id, receiverId: invoice.receiver_id, storagePath, callerId: user.id,
+    });
+    return NextResponse.json({ error: "Kon bestand niet openen" }, { status: 403 });
+  }
+
   // [BOEK-011 + ACC-INVOICE-VIEW] Sign with service_role — same reasoning as
   // /dashboard/brug/page.tsx documents:
   //
@@ -97,10 +93,10 @@ export async function GET(
   // accountant_clients above), but is NOT the storage owner — so a session
   // client createSignedUrl returns an error and we crashed with 500.
   //
-  // Switching to the pipeline client here bypasses Storage RLS *only* —
-  // it does NOT widen which rows are accessible, because authorization for
-  // this specific invoice already passed the dual-path check above using the
-  // session client. No path is ever signed without prior ownership/link proof.
+  // Switching to the pipeline client here bypasses Storage RLS *only*. Two separate proofs are
+  // required before we get here, and BOTH matter: the dual-path row check (session client), and
+  // the owner-segment check on the path itself. The row proof alone was the bug — it says the
+  // caller may see the record, not that the record points at their own bytes.
   const pipeline = createPipelineClient();
   const { data: signed, error } = await pipeline.storage
     .from("documents")

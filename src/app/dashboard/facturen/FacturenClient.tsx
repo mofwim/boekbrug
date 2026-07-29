@@ -976,10 +976,13 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                   {/* Main row — in select mode a tap toggles the bundle selection
                       (only for open verkoopfacturen); otherwise it expands. */}
                   <div
+                    className="inv-row"
                     onClick={() => selectMode
                       ? (isBundelbaar(inv) && toggleSelect(inv))
                       : setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
+                    // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
+                    // the stack-on-mobile media query can override them; only dynamic styles here.
+                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETAALVERZOEK] selection indicator */}
                     {selectMode && isBundelbaar(inv) && (
@@ -987,8 +990,8 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         {selected[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div className="inv-row-main">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
                         <InvoiceTypeBadge type={invoiceType} />
                         {/* Status chip */}
@@ -1022,7 +1025,9 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       </p>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)
+                        so the media query can flip it to a full-width strip on a phone. */}
+                    <div className="inv-row-side">
                       {/* [BOEK-029] Amount: always total_inc_btw — never total_ex_btw */}
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
@@ -1659,10 +1664,13 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       {/* ── Toast ── */}
       {toast && (
         <div style={{
+          // [TOAST-WRAP] Long sentences (e.g. "… maar de PDF kon niet worden gemaakt —
+          // verstuur opnieuw") were nowrap + centered, so on a phone they ran past both
+          // screen edges and were cut off. Cap the width and let them wrap instead.
           position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
           background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500,
           padding: '12px 20px', borderRadius: R.sm, zIndex: 300,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: 'calc(100vw - 32px)', textAlign: 'center',
           animation: 'fadeInUp 0.2s ease', fontFamily: FONT,
         }}>
           {toast}

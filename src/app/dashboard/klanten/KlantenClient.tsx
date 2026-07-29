@@ -372,7 +372,9 @@ function InfoLine({ label, value }: { label: string; value: string | null | unde
   return (
     <div>
       <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2, fontWeight: 500 }}>{label}</p>
-      <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT }}>{value}</p>
+      {/* [ROW-LAYOUT] overflowWrap so an unbroken IBAN / BTW-nummer wraps inside its
+          grid cell instead of overflowing and being clipped by the card. */}
+      <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', fontFamily: FONT, overflowWrap: 'anywhere' }}>{value}</p>
     </div>
   )
 }
