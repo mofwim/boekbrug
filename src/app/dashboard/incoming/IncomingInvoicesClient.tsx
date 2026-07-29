@@ -2606,11 +2606,19 @@ export default function IncomingInvoicesClient({
   const loadSenderRules = useCallback(async () => {
     try {
       const res = await fetch("/api/email/sender-rules");
-      if (!res.ok) return;
+      if (!res.ok) {
+        // [UI-HONESTY] Een lege lijst tonen zou hier LIEGEN: er kunnen regels zijn die op dit
+        // moment post tegenhouden, en dan denkt de eigenaar dat er niets staat terwijl hij ze
+        // niet kan opheffen. De server maakt onderscheid tussen "tabel bestaat niet" (echt geen
+        // regels, stille lege lijst) en een echte fout; die laatste zeggen we hardop.
+        const data = await res.json().catch(() => ({}));
+        if (data?.error) showToast(data.error);
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       setSenderRules(Array.isArray(data.rules) ? data.rules : []);
     } catch {
-      // Geen regels tonen is beter dan een foutmelding op een tabblad dat verder gewoon werkt.
+      showToast("Afzenderregels konden niet worden geladen — ververs de pagina");
     }
   }, []);
 

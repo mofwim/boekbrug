@@ -6,28 +6,37 @@
 > fout boven die alleen door het draaien van de CONTROLE zichtbaar werd — zie de noot bij
 > stap 7.
 >
-> ## ⏳ VIJF MIGRATIES STAAN OPEN
+> ## ✅ 13 en 14 zijn toegepast en gecontroleerd op 29 juli 2026
 >
-> Draai ze in deze volgorde. Alle vijf idempotent, alle vijf met een CONTROLE-blok onderaan
-> het bestand. Samen ongeveer een kwartier.
+> Beide CONTROLE-blokken gaven `true` op elke kolom. Daarmee zijn de reden-bij-negeren en de
+> afzenderregels live; de terugvalpaden in de code (zie hieronder) vuren vanaf nu niet meer op
+> een productieomgeving.
+>
+> | # | Bestand | Status |
+> |---|---------|--------|
+> | 13 | `invoice_archive_reason.sql` | ✅ toegepast — `archive_reason` + `archived_at` + CHECK + partiële index |
+> | 14 | `email_sender_rules.sql` | ✅ toegepast — tabel + unieke index + RLS met vier policies |
+>
+> **De terugvalpaden blijven staan.** Ze kosten niets (ze vuren alleen op een fout) en ze houden
+> een verse dev- of staging-database werkend zolang die migraties daar nog niet gedraaid zijn.
+> Eén ding is bij het toepassen wél aangepast: het regels-eindpunt slikte vóórdien élke fout en
+> antwoordde "geen regels". Dat was verdedigbaar toen de tabel nog niet bestond, maar nu is het
+> gevaarlijk — bij een RLS- of verbindingsfout zou het beheerscherm "geen regels" tonen terwijl
+> er regels zijn die post tegenhouden, en dan kan de eigenaar ze niet opheffen. Het onderscheidt
+> nu "tabel bestaat niet" (stille lege lijst) van een echte fout (die wordt gezegd).
+>
+> ## ⏳ DRIE MIGRATIES STAAN NOG OPEN
+>
+> Draai ze in deze volgorde. Alle drie idempotent, alle drie met een CONTROLE-blok onderaan
+> het bestand. Samen ongeveer tien minuten.
 >
 > | # | Bestand | Waarom |
 > |---|---------|--------|
 > | 10 | `kluis_subscriptions.sql` | Vóór de eerste Bewaarkluis-betaling: anders neemt de webhook geld aan en legt de verplichting nergens vast. Ook het hek dat `RETENTION_PURGE_ENABLED` aan mag laten. |
 > | 11 | `accountant_write_holes.sql` | **Twee schrijfgaten** in de boekhoudersgrens + de vier ontbrekende invoices-indexen. |
 > | 12 | `invoice_lines_accountant_gate.sql` | De regelspolicy stond strenger dan de factuurkop: een verstuurde factuur toonde een lege regelset. |
-> | 13 | `invoice_archive_reason.sql` | `invoices.archive_reason` + `archived_at`: het Genegeerd-tabblad kan de reden pas tonen als deze kolommen er staan. |
-> | 14 | `email_sender_rules.sql` | De tabel voor "altijd negeren van deze afzender". Zonder deze migratie doet de knop niets. |
 >
-> ### 13 en 14 zijn niet urgent — en dat is met opzet
->
-> De code voor allebei draait al zonder dat de migratie is toegepast, en gaat niet stuk:
-> de negeer-API valt bij een ontbrekende-kolom-fout terug op archiveren *zonder* notitie,
-> de Genegeerd-query valt terug op de kale kolomlijst (geen leeg tabblad), het regels-
-> eindpunt antwoordt "geen regels", en de mailsync past er simpelweg geen toe. De eigenaar
-> mist tot die tijd een label en een knop die niets doet — nooit een knop die stukgaat.
->
-> Toelichting op wat deze twee dragen: `docs/BoekBrug_Inkoopfactuur_Poorten.md`.
+> Toelichting op wat 13 en 14 dragen: `docs/BoekBrug_Inkoopfactuur_Poorten.md`.
 >
 > ### Over de urgentie van 11 — eerlijk bijgesteld
 >
