@@ -90,6 +90,11 @@ export type AuditAction =
   | 'user.data_purged'                // ← [A1] retention purge erased a deactivated account's files after the 7-year bewaarplicht ran out. IRREVERSIBLE — this is the only record that it happened.
   | 'email.connection_created'
   | 'email.connection_revoked'
+  // [AFZENDERREGEL] Een regel die post ONGEZIEN tegenhoudt is een besluit met gevolgen —
+  // aanmaken én opheffen horen allebei in het spoor, zodat achteraf te zien is sinds wanneer
+  // er niets meer van een adres binnenkwam.
+  | 'email.sender_rule_created'
+  | 'email.sender_rule_deleted'
   // Level 5 — Boekhoudkoppelingen
   | 'snelstart.connected'             // ← [SNELSTART] maatwerksleutel gekoppeld (of vervangen)
   | 'snelstart.disconnected'          // ← [SNELSTART] koppeling verbroken, sleutel uit Vault

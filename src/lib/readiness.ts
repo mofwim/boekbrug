@@ -98,10 +98,34 @@ export interface ReadinessSignals {
   // optional (undefined → 0 → no block) so factuur callers/tests are unchanged.
   undatedPaidCount?: number;
   estimatedPaidCount?: number;
+  // [DATE-GAP] Geverifieerde facturen ZONDER factuurdatum. Postgres-bereikfilters
+  // (.gte/.lte op invoice_date) laten NULL-rijen stil vallen, dus zo'n factuur hoort bij deze
+  // eigenaar, is gecontroleerd, en zit tóch in GEEN enkel kwartaalpakket en in GEEN enkele
+  // concept-aangifte — haar BTW verdwijnt gewoon. Elke andere plek in de app rekent er al mee
+  // (het pakket waarschuwt erover); alleen dit scherm, dat het eindoordeel "ben ik klaar?"
+  // uitspreekt, wist er niets van en kon dus 100% klaar melden terwijl er geld buiten beeld lag.
+  //
+  // Bewust een RISICO en geen ontbrekend item: de telling is ALL-TIME, dus een harde blokkade
+  // zou al ingediende kwartalen voorgoed rood zetten — ook op het werkbord van de boekhouder.
+  // Als risico trekt hij de eerlijkheidsgrens hieronder (100 → 99) en is "stil klaar" onmogelijk.
+  datelessInvoiceCount?: number;
   // [BAD-DEBT] Sales invoices > 1 year past due and still unpaid (factuur only): the BTW paid on
   // them is reclaimable (oninbare vordering). A helpful nudge (risk), never a block — it's money to
   // get back, not a gap. Optional (undefined → none).
   badDebt?: { count: number; reclaimableBtw: number };
+  // [BAD-DEBT] The mirror (art. 29 lid 7): purchase invoices >1 year past due and still unpaid, so
+  // the voorbelasting deducted on them has become payable again. A risk, not a block — the app
+  // knows the invoice is unpaid in its own records, which is not proof it is unpaid in the world.
+  // Optional (undefined → none).
+  vatClawback?: { count: number; repayableBtw: number };
+  // [ICP] Sales to EU businesses that cannot go on the ICP-opgaaf as they stand (BTW charged, or
+  // a VAT number that cannot be right). The opgaaf itself is not a readiness matter; one that
+  // will be REJECTED is, because a rejected opgaaf counts as not done. Optional (undefined → 0).
+  icpProblems?: number;
+  // [DATE-GAP] Verified invoices with NO invoice_date. A date-range fetch drops them, so they are
+  // in NONE of this quarter's figures — omzet, kosten and voorbelasting are all quietly too low.
+  // /api/aangifte already warns about exactly this; readiness said nothing. Optional (→ 0).
+  datelessVerifiedCount?: number;
 }
 
 export interface ReconException {
@@ -404,6 +428,20 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       fix: FIX.bank,
     });
   }
+  const dateless = s.datelessInvoiceCount ?? 0;
+  if (dateless > 0) {
+    risks.push({
+      severity: "risk",
+      title: dateless === 1
+        ? "1 gecontroleerde factuur heeft geen datum"
+        : `${dateless} gecontroleerde facturen hebben geen datum`,
+      detail:
+        "Zonder factuurdatum valt een factuur buiten elk kwartaal: ze komt in geen enkel " +
+        "kwartaalpakket en in geen enkele concept-aangifte, dus haar BTW telt nergens mee. " +
+        "Vul de datum aan, dan telt ze weer gewoon mee.",
+      fix: FIX.facturen,
+    });
+  }
   const estimatedPaid = s.estimatedPaidCount ?? 0;
   if (estimatedPaid > 0) {
     risks.push({
@@ -526,6 +564,69 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       severity: "risk",
       title: f.title,
       detail: f.evidence ? `${f.detail} (bijv. factuur ${f.evidence})` : f.detail,
+    });
+  }
+
+  // [DATE-GAP] A verified invoice with no date is counted NOWHERE — not in omzet, not in kosten,
+  // not in voorbelasting — because the quarter is fetched by date range. That makes every figure
+  // on this page too low, so it is a blocking GAP, not a risk: "klaar" may not be reachable while
+  // a counted document is missing from the count. The aangifte screen already says so; this is
+  // the same sentence on the surface that decides whether the quarter is done.
+  // It is also entirely fixable by the owner — enter the date — which is what a gap should be.
+  if ((s.datelessVerifiedCount ?? 0) > 0) {
+    const n = s.datelessVerifiedCount ?? 0;
+    missing.push({
+      severity: "missing",
+      title: n === 1
+        ? "1 factuur heeft geen factuurdatum"
+        : `${n} facturen hebben geen factuurdatum`,
+      detail:
+        `${n === 1 ? "Deze factuur telt" : "Deze facturen tellen"} in GEEN enkel kwartaal mee — ` +
+        "omzet, kosten en voorbelasting zijn daardoor te laag. Vul de factuurdatum in, dan valt " +
+        `${n === 1 ? "hij" : "ze"} vanzelf in het juiste kwartaal.`,
+      fix: FIX.facturen,
+    });
+  }
+
+  // [ICP] An EU sale that cannot go on the opgaaf as it stands. Either BTW was charged to a
+  // business you also listed as intra-EU, or the VAT number cannot be right — both make the
+  // opgaaf bounce, and a bounced opgaaf counts as never filed. A risk, not a gap: charging BTW
+  // to an EU customer is sometimes exactly correct (a service taxed in NL), so the app points
+  // at the invoice and lets the owner decide which of the two is wrong.
+  if ((s.icpProblems ?? 0) > 0) {
+    const n = s.icpProblems ?? 0;
+    risks.push({
+      severity: "risk",
+      title: n === 1
+        ? "1 EU-verkoop kan niet in de ICP-opgaaf"
+        : `${n} EU-verkopen kunnen niet in de ICP-opgaaf`,
+      detail:
+        "Op een verkoop aan een EU-ondernemer is BTW berekend, of het BTW-nummer heeft niet de lengte " +
+        "van dat land. Bij een intracommunautaire levering verleg je de BTW (0%) en geef je de klant op " +
+        "in de ICP-opgaaf — een aparte aangifte naast de BTW-aangifte. Een afgekeurde opgaaf telt als " +
+        "niet gedaan; controleer het nummer (VIES) of de BTW op de factuur.",
+      fix: FIX.facturen,
+    });
+  }
+
+  // [BAD-DEBT] Art. 29 lid 7 — purchase invoices >1 year past due and still unpaid, so the
+  // voorbelasting deducted on them becomes payable AGAIN. This is the only art. 29 side that
+  // costs money, and it grows belastingrente while nobody looks — so it is worded as a liability
+  // and stands BEFORE the reclaim below. Still a RISK, never a blocking gap: "unpaid in our
+  // records" is not proof of "unpaid in the world" (a bank that was never linked, cash at the
+  // counter, a payment arrangement), and blocking a filing on an inference the app cannot verify
+  // would trap the owner with no way out. So it names the amount and both ways to resolve it.
+  if (s.vatClawback && s.vatClawback.repayableBtw >= BAD_DEBT_MIN_EUR && s.vatClawback.count > 0) {
+    const n = s.vatClawback.count;
+    risks.push({
+      severity: "risk",
+      title: `${n} onbetaalde inkoopfactu${n === 1 ? "ur" : "ren"} >1 jaar — €${euro(s.vatClawback.repayableBtw)} voorbelasting terugbetalen`,
+      detail:
+        "Deze inkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open in je administratie. " +
+        "De BTW die je hierover in aftrek bracht wordt dan weer verschuldigd (art. 29 lid 7 Wet OB). " +
+        "Heb je ze wél betaald? Koppel de bankbetaling of zet ze op betaald. Zo niet, dan hoort dit bedrag " +
+        "terug in je aangifte — dit wordt NIET automatisch verrekend.",
+      fix: { label: "Naar Inkoop", href: "/dashboard/incoming/manage" },
     });
   }
 

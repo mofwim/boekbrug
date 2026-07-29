@@ -115,6 +115,13 @@ export interface TreeNode {
   /** Klanten/[clientId] prefix dimension for accountant view (null for client). */
   clientId: string | null
   /**
+   * [SEC-STORAGE-PATH] The ZZP'er whose bytes `pdfUrl` should be — ALWAYS set, unlike clientId,
+   * which is nulled outside the accountant view. Whoever signs pdfUrl with a service-role client
+   * must check the path sits in THIS owner's folder: pdf_url/file_url are writable by the row's
+   * own owner, so a row the caller may legitimately read can still point at another tenant.
+   */
+  ownerId: string | null
+  /**
    * [BRIDGE-POLISH 3a-1] Counterparty name for display under the title.
    * Invoice nodes only; documents leave this null (they have no counterparty).
    */
@@ -471,6 +478,9 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
       pdfUrl,
       hidden: inv.status === 'archived',
       clientId: accountantView ? clientId : null,
+      // [SEC-STORAGE-PATH] outgoing → the sender owns the file; incoming → the receiver does.
+      // Same value clientId is derived from, but never nulled — signing needs it in both views.
+      ownerId: clientId,
       // [BRIDGE-POLISH 3a-1] counterparty + direction for the card UI
       partyName: inv.client_name?.trim() || null,
       direction: inv.direction,
@@ -506,6 +516,8 @@ export function buildBridgeTree(input: BuildBridgeTreeInput): TreeNode[] {
       pdfUrl: doc.file_url,
       hidden: false,
       clientId: accountantView ? doc.user_id : null,
+      // [SEC-STORAGE-PATH] a document's bytes belong to the user who uploaded it.
+      ownerId: doc.user_id,
       // [BRIDGE-POLISH 3a-1] documents have no counterparty/direction
       partyName: null,
       direction: null,

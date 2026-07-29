@@ -262,7 +262,24 @@ export async function computeResultForRange(args: {
     // [RUBRIEK-SPLIT] The rate mix travels into the cash-basis path too, so a payment on a
     // mixed-rate invoice books a proportional share of each rubriek instead of one blended rate —
     // otherwise the two VAT schemes would file the same sale under different rubrieken.
-    kasOpts = { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice, rateSharesByInvoice };
+    // [RUBRIEK-SPLIT] The window map alone is not enough here: fetchSettlementEvents has NO
+    // invoice_date filter (an older invoice paid this quarter must be reachable), so a mixed-rate
+    // invoice dated last quarter has no entry in a map built from THIS quarter's dates. Fetch the
+    // mix for the invoices the settlements actually reference and merge the two.
+    const settledSales = [
+      ...new Map(
+        qs.events
+          .filter((e) => e.direction === "outgoing")
+          .map((e) => [e.invoiceId, { id: e.invoiceId, total_ex_btw: e.headerEx, btw_amount: e.headerBtw }]),
+      ).values(),
+    ];
+    const settledShares = await fetchRateShares(pipeline, settledSales);
+    kasOpts = {
+      scheme: "kas",
+      settlements: qs.events,
+      priorByInvoice: qs.priorByInvoice,
+      rateSharesByInvoice: new Map([...settledShares, ...rateSharesByInvoice]),
+    };
   }
   const result = computeResult(
     invoices, bankTx, cashEntries, turnover, coveredDates,

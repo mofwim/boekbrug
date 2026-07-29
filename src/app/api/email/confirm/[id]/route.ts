@@ -6,6 +6,7 @@
 // PATCH  → restore an ignored invoice back to the verification queue (→processing)
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamToday } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY Phase 2.5] notifications writes must use service_role
 import { createPipelineClient } from "@/lib/supabase-pipeline";
@@ -14,6 +15,12 @@ import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 // [BRIDGE-B] legal trail for verify/pay state changes
 import { logAuditAction, getClientIP } from "@/lib/audit";
+// [MONEY-GUARD] The one predicate for "this invoice already holds money" — shared with the
+// dedicated archive route so the two doors to the same act cannot disagree.
+import { hasSettledMoney } from "@/lib/invoice-removal";
+// [NEGEER-REDEN] De toegestane redenen staan in één lijst — gedeeld met het scherm en met de
+// CHECK-constraint in invoice_archive_reason.sql, zodat die drie niet uit elkaar kunnen lopen.
+import { normalizeArchiveReason } from "@/lib/archive-reason";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -179,7 +186,7 @@ export async function POST(
     updatePatch.payment_date =
       typeof body.payment_date === "string" && isoRe.test(body.payment_date)
         ? body.payment_date
-        : reviewedDate ?? invDate ?? new Date().toISOString().slice(0, 10);
+        : reviewedDate ?? invDate ?? amsterdamToday();
   } else {
     // verify → enters the accountant's world as a Crediteur (unpaid, shared)
     updatePatch.status = "received";
@@ -347,11 +354,22 @@ export async function POST(
 // ── DELETE — ignore (archive) ─────────────────────────────────────────────────
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
+
+  // [NEGEER-REDEN] Optioneel: waarom wordt hij genegeerd. Een NOTITIE, geen besluit — hij
+  // verandert niets aan wat er gebeurt. Onbekende of ontbrekende waarde → null; een oude client
+  // die niets stuurt werkt dus precies als voorheen.
+  let reason: ReturnType<typeof normalizeArchiveReason> = null;
+  try {
+    const body = await req.json();
+    reason = normalizeArchiveReason((body as { reason?: unknown })?.reason);
+  } catch {
+    // Geen body — dat mag. De vraag is vrijwillig.
+  }
 
   const {
     data: { user },
@@ -365,17 +383,71 @@ export async function DELETE(
   // [CONFIRM-GUARD] Only from 'processing' (skip from the verify queue) or
   // 'received' (the manage page's archive-a-duplicate flow). Never from 'paid':
   // archiving a paid invoice would hide booked money from every ledger surface.
-  const { data: archData, error } = await supabase
+  //
+  // [MONEY-GUARD] 'paid' is not the only state that holds money. An invoice PARTLY paid sits in
+  // 'received' with amount_paid > 0, and a bank-linked one can too — both slipped straight
+  // through the status filter. Archiving them is exactly the harm the comment above describes:
+  // 'archived' is outside INCOMING_OK, so the invoice stops counting, while the bank line that
+  // paid it is skipped by `if (t.invoice_id) continue` as "payment of an already-counted invoice"
+  // — the debit is then counted NOWHERE, and the quarter's kosten and voorbelasting are quietly
+  // too low. The dedicated archive route refuses both cases; this one is the same act by another
+  // door, so it applies the same two gates.
+  const { data: money } = await supabase
     .from("invoices")
-    .update({
-      status: "archived",
-      updated_at: new Date().toISOString(),
-    })
+    .select("status, amount_paid")
     .eq("id", id)
     .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .in("status", ["processing", "received"])
-    .select("id");
+    .maybeSingle();
+  if (money && hasSettledMoney(money)) {
+    return NextResponse.json(
+      { error: "money_settled", detail: "Er is al betaald op deze factuur — draai eerst de betaling terug." },
+      { status: 409 },
+    );
+  }
+  // A booked payment always leaves a join row. Refusing on its mere existence also covers rows
+  // written before amount_applied existed, whose amounts cannot be read back.
+  const { data: bankLinks } = await supabase
+    .from("bank_tx_invoices")
+    .select("transaction_id")
+    .eq("user_id", user.id)
+    .eq("invoice_id", id)
+    .limit(1);
+  if ((bankLinks ?? []).length > 0) {
+    return NextResponse.json(
+      { error: "bank_linked", detail: "Er is een banktransactie aan deze factuur gekoppeld — ontkoppel die eerst op de Bank-pagina." },
+      { status: 409 },
+    );
+  }
+
+  // [NEGEER-REDEN] De reden en het archiveringsmoment gaan mee in DEZELFDE update — één schrijf,
+  // dus de notitie kan nooit los komen te staan van de archivering.
+  //
+  // De migratie invoice_archive_reason.sql wordt in dit project met de hand toegepast, dus er is
+  // een venster waarin deze code al draait en de kolommen nog niet bestaan. Dan mag de ARCHIVERING
+  // niet sneuvelen op een notitie: bij een ontbrekende-kolom-fout (PostgREST PGRST204 / Postgres
+  // 42703) schrijven we hem opnieuw zonder de nieuwe velden. De eigenaar merkt alleen dat het
+  // label ontbreekt — niet dat de knop stuk is.
+  const archiveNow = new Date().toISOString();
+  const basePatch: InvoiceUpdate = { status: "archived", updated_at: archiveNow };
+  const archiveInvoice = (patch: InvoiceUpdate) =>
+    supabase
+      .from("invoices")
+      .update(patch)
+      .eq("id", id)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .in("status", ["processing", "received"])
+      .select("id");
+
+  let { data: archData, error } = await archiveInvoice({
+    ...basePatch,
+    archive_reason: reason,
+    archived_at: archiveNow,
+  });
+  if (error && (error.code === "PGRST204" || error.code === "42703")) {
+    console.warn("[NEGEER-REDEN] archive_reason/archived_at ontbreken nog — migratie niet toegepast; archiveer zonder notitie");
+    ({ data: archData, error } = await archiveInvoice(basePatch));
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -410,7 +482,11 @@ export async function PATCH(
   // [BRIDGE-B] Restore: archived → processing (re-enters the verification queue).
   // Must NOT go to 'received' — that would push an unverified invoice straight to
   // the accountant via the restore path (shared=true). The queue is 'processing'.
-  const { error } = await supabase
+  // [UI-HONESTY] .select() so "geen rij geraakt" is distinguishable from "teruggezet".
+  // Without it this returned ok:true when the WHERE matched nothing (already restored,
+  // wrong id, not archived) — and every caller that checks res.ok, including the
+  // "Terugzetten" knop on a geweigerde upload, would claim a success that never happened.
+  const { data: restored, error } = await supabase
     .from("invoices")
     .update({
       status: "processing",
@@ -419,10 +495,17 @@ export async function PATCH(
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .eq("status", "archived");
+    .eq("status", "archived")
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!restored || restored.length === 0) {
+    return NextResponse.json(
+      { error: "Deze factuur staat niet (meer) in Genegeerd — ververs de pagina." },
+      { status: 409 }
+    );
   }
 
   return NextResponse.json({ ok: true });

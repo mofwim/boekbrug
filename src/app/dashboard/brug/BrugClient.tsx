@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
 import { lastCompletedQuarter } from '@/lib/quarter'
+import { rowMatchesQuery } from '@/lib/search'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -163,6 +164,27 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
 
   const level = useMemo(() => computeLevel(nodes, cwd, showHidden), [nodes, cwd, showHidden])
   const showToggle = useMemo(() => hasHidden(nodes), [nodes])
+
+  // [SMART-FILTER] Zoeken in de brug — de accountant zoekt een factuur/leverancier/
+  // bedrag zonder door mappen te klikken. Terwijl er getypt wordt, plat de boom af:
+  // ALLE bestanden onder het huidige pad (elke submap) die matchen, i.p.v. alleen
+  // het huidige niveau. Elke TreeNode is een bestand; mappen zijn virtueel (paden).
+  const [search, setSearch] = useState('')
+  const treeSearch = useMemo(() => {
+    const q = search.trim()
+    if (!q) return null
+    const out: TreeNode[] = []
+    for (const n of nodes) {
+      if (n.hidden && !showHidden) continue
+      if (n.path.length < cwd.length) continue
+      let under = true
+      for (let i = 0; i < cwd.length; i++) if (n.path[i] !== cwd[i]) { under = false; break }
+      if (!under) continue
+      if (rowMatchesQuery(q, [n.displayName, n.partyName], [n.amount])) out.push(n)
+    }
+    out.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
+    return out
+  }, [nodes, cwd, showHidden, search])
 
   const isEmpty = level.folders.length === 0 && level.files.length === 0
 
@@ -356,39 +378,75 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus }: 
         </button>
       )}
 
-      {/* Empty state */}
-      {isEmpty && (
-        <div style={{ textAlign: 'center', padding: '56px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }}>folder_open</span>
-          <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: 0 }}>Niets hier</p>
+      {/* [SMART-FILTER] Zoek binnen deze klant/map — plat over alle submappen. */}
+      {nodes.length > 0 && (
+        <div style={{ position: 'relative', marginBottom: 12 }}>
+          <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: M3.outline }}>search</span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Zoek op factuurnummer, leverancier of bedrag…"
+            aria-label="Documenten zoeken"
+            style={{ width: '100%', boxSizing: 'border-box', padding: '11px 38px', borderRadius: R.lg, border: `1px solid ${M3.outline}`, fontSize: 14.5, outline: 'none', background: '#fff', color: M3.onSurface, fontFamily: FONT }}
+          />
+          {search && (
+            <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: R.full, border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
+          )}
         </div>
       )}
 
-      {/* Folders */}
-      {level.folders.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: level.files.length > 0 ? 16 : 0 }}>
-          {level.folders.map(f => (
-            <button
-              key={f.name}
-              onClick={() => setCwd([...cwd, f.name])}
-              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, border: 'none', background: '#fff', boxShadow: EL1, cursor: 'pointer', fontFamily: FONT, textAlign: 'left', width: '100%' }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>folder</span>
-              <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: M3.onSurface }}>{f.name}</span>
-              <span style={{ fontSize: 12, color: M3.outline, fontWeight: 600 }}>{f.count}</span>
-              <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.outline }}>chevron_right</span>
-            </button>
-          ))}
-        </div>
-      )}
+      {treeSearch !== null ? (
+        treeSearch.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '48px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
+            <p style={{ fontSize: 14, color: M3.outline, margin: 0 }}>Geen documenten gevonden voor &ldquo;{search.trim()}&rdquo;</p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <p style={{ fontSize: 12.5, color: M3.outline, margin: '0 0 4px' }}>
+              {treeSearch.length} {treeSearch.length === 1 ? 'resultaat' : 'resultaten'} in alle mappen
+            </p>
+            {treeSearch.map(file => (
+              <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} />
+            ))}
+          </div>
+        )
+      ) : (
+        <>
+          {/* Empty state */}
+          {isEmpty && (
+            <div style={{ textAlign: 'center', padding: '56px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }}>folder_open</span>
+              <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: 0 }}>Niets hier</p>
+            </div>
+          )}
 
-      {/* Files at this level */}
-      {level.files.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {level.files.map(file => (
-            <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} />
-          ))}
-        </div>
+          {/* Folders */}
+          {level.folders.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: level.files.length > 0 ? 16 : 0 }}>
+              {level.folders.map(f => (
+                <button
+                  key={f.name}
+                  onClick={() => setCwd([...cwd, f.name])}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, border: 'none', background: '#fff', boxShadow: EL1, cursor: 'pointer', fontFamily: FONT, textAlign: 'left', width: '100%' }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>folder</span>
+                  <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: M3.onSurface }}>{f.name}</span>
+                  <span style={{ fontSize: 12, color: M3.outline, fontWeight: 600 }}>{f.count}</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.outline }}>chevron_right</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Files at this level */}
+          {level.files.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {level.files.map(file => (
+                <FileRow key={`${file.source}-${file.id}`} node={file} isClient={!isAccountant} docStatus={docStatus} />
+              ))}
+            </div>
+          )}
+        </>
       )}
       </>
       )}

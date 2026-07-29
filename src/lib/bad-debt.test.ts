@@ -1,5 +1,7 @@
 // [BAD-DEBT] Pure node test — run: npx tsx src/lib/bad-debt.test.ts
-import { detectBadDebt, badDebtNote, oneYearLater, type BadDebtInput } from "./bad-debt";
+import {
+  detectBadDebt, badDebtNote, oneYearLater, detectVatClawback, vatClawbackNote, type BadDebtInput,
+} from "./bad-debt";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -124,6 +126,72 @@ console.log("\n— badDebtNote —");
   check("note names the count + reclaimable euros", /2 verkoopfacturen/.test(note) && /€420/.test(note));
   check("note says NOT auto-verrekend", /NIET automatisch/.test(note));
   check("empty result → null note", badDebtNote(run([inv({ amountPaid: 1210 })])) === null);
+}
+
+// ── Art. 29 lid 7 — the purchase side: voorbelasting you must repay ──────────────────────────
+const pur = (over: Partial<BadDebtInput> = {}): BadDebtInput => ({
+  id: "pur-1", invoiceNumber: "LEV-77", clientName: "Leverancier BV", direction: "incoming", status: "received",
+  invoiceType: "factuur", originalInvoiceId: null,
+  invoiceDate: "2025-01-01", dueDate: "2025-01-31", totalExBtw: 1000, btwAmount: 210, totalIncBtw: 1210, amountPaid: 0, ...over,
+});
+const claw = (invoices: BadDebtInput[], asOf = "2026-07-19", extra: { scheme?: "factuur" | "kas"; korActive?: boolean } = {}) =>
+  detectVatClawback({ scheme: extra.scheme ?? "factuur", asOf, korActive: extra.korActive, invoices });
+
+console.log("\n— art. 29 lid 7: the clock —");
+{
+  check("a supplier invoice a year past due is repayable", claw([pur()]).eligible.length === 1);
+  check("…and it is the full deducted BTW", near(claw([pur()]).totalRepayableBtw, 210));
+  check("one day BEFORE the year is up: nothing yet", claw([pur()], "2026-01-30").eligible.length === 0);
+  check("exactly one year: it is due", claw([pur()], "2026-01-31").eligible.length === 1);
+  const noDue = claw([pur({ dueDate: null })]);
+  check("no due date → the clock runs from the invoice date", noDue.eligible.length === 1 && noDue.eligible[0].dueDate === "2025-01-01");
+  check("…and that fallback is reported, never silent", noDue.usedInvoiceDateFallback === true);
+  check("no date at all → cannot be aged, so it is not claimed", claw([pur({ dueDate: null, invoiceDate: null })]).eligible.length === 0);
+}
+
+console.log("\n— art. 29 lid 7: only what was actually deducted —");
+{
+  check("kasstelsel deducts on payment, so nothing is ever clawed back",
+    claw([pur()], "2026-07-19", { scheme: "kas" }).eligible.length === 0);
+  check("KOR deducts no voorbelasting at all → nothing to repay",
+    claw([pur()], "2026-07-19", { korActive: true }).eligible.length === 0);
+  check("a paid purchase keeps its deduction", claw([pur({ status: "paid", amountPaid: 1210 })]).eligible.length === 0);
+  check("a row still in the processing queue was never deducted", claw([pur({ status: "processing" })]).eligible.length === 0);
+  check("an archived row was never deducted either", claw([pur({ status: "archived" })]).eligible.length === 0);
+  check("a SALES invoice is not a purchase debt", claw([pur({ direction: "outgoing" })]).eligible.length === 0);
+  check("0%-inkoop / verlegde BTW carries no deduction to give back",
+    claw([pur({ btwAmount: 0, totalIncBtw: 1000 })]).eligible.length === 0);
+}
+
+console.log("\n— art. 29 lid 7: partly paid pays back only the unpaid share —");
+{
+  const half = claw([pur({ amountPaid: 605 })]);
+  check("half paid → half the BTW goes back", half.eligible.length === 1 && near(half.totalRepayableBtw, 105));
+  check("…and the unpaid ex-BTW is reported with it", near(half.eligible[0].unpaidEx, 500));
+  check("overpaid (amount_paid > total) is never a negative debt", claw([pur({ amountPaid: 2000 })]).eligible.length === 0);
+  const nearlyPaid = claw([pur({ amountPaid: 1209.99 })]);
+  check("a cent short is below materiality, so it is not raised", vatClawbackNote(nearlyPaid) === null);
+}
+
+console.log("\n— art. 29 lid 7: a supplier creditnota already put the deduction back —");
+{
+  const credited = claw([
+    pur({ id: "pur-1" }),
+    pur({ id: "cn-1", invoiceNumber: "LEV-77-C", invoiceType: "creditnota", originalInvoiceId: "pur-1" }),
+  ]);
+  check("the credited original is dropped", credited.eligible.length === 0);
+  check("…and the creditnota itself is never a debt of its own", credited.totalRepayableBtw === 0);
+}
+
+console.log("\n— vatClawbackNote —");
+{
+  const note = vatClawbackNote(claw([pur(), pur({ id: "pur-2", invoiceNumber: "LEV-78" })]))!;
+  check("it opens with LET OP — this one costs money", /^LET OP/.test(note));
+  check("it names the count and the euros", /2 inkoopfacturen/.test(note) && /€420/.test(note));
+  check("it cites the article that makes it payable", /art\. 29 lid 7/.test(note));
+  check("it offers the other resolution: you did pay, so record it", /koppel de betaling|op betaald/i.test(note));
+  check("it never claims the app booked it", /NIET automatisch/.test(note));
+  check("nothing eligible → no note", vatClawbackNote(claw([pur({ amountPaid: 1210 })])) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

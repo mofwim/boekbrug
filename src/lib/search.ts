@@ -161,24 +161,36 @@ export function amountMatchesQuery(
  *   column="total_inc_btw", "670"    → ["…ilike.670", "…ilike.670.%"]   (670.xx)
  *   column="total_inc_btw", "670,0"  → ["…ilike.670.0%"]                (670.09, not 670.50)
  *   column="total_inc_btw", "1.500"  → ["…ilike.1500", "…ilike.1500.%"] (thousands dot)
+ *
+ * `signed: true` — for a SIGNED money column (bank_transactions.amount stores a
+ * debit as negative), also emit the negated variants so "45" finds a "-45.50"
+ * debit as well as a "45.50" credit. Still prefix/exact (never a leading %), so
+ * "45" never spuriously matches "450" / "-450".
  */
-export function amountOrConditions(column: string, rawQuery: string): string[] {
+export function amountOrConditions(
+  column: string,
+  rawQuery: string,
+  opts: { signed?: boolean } = {}
+): string[] {
   const parts = amountQueryParts(rawQuery);
   if (!parts || !parts.intDigits || parts.intDigits.length > 15) return [];
 
+  // The value patterns (the part after `ilike.`), decimal/thousands-aware.
+  const values: string[] = [];
   if (parts.hasDecimalSep) {
-    const conds = [`${column}::text.ilike.${parts.intDigits}.${parts.decDigits}%`];
+    values.push(`${parts.intDigits}.${parts.decDigits}%`);
     // Mirror the client's dot ambiguity: a dot may be a thousands-in-progress
     // separator, so also match the digit run inside the euro part ("3.4" → 34xx).
-    if (!parts.decimalSepIsComma) {
-      conds.push(`${column}::text.ilike.${parts.intDigits}${parts.decDigits}%`);
-    }
-    return conds;
+    if (!parts.decimalSepIsComma) values.push(`${parts.intDigits}${parts.decDigits}%`);
+  } else {
+    values.push(`${parts.intDigits}`);    // integer-stored exact "670"
+    values.push(`${parts.intDigits}.%`);  // "670.09", "670.5"
   }
-  return [
-    `${column}::text.ilike.${parts.intDigits}`,     // integer-stored exact "670"
-    `${column}::text.ilike.${parts.intDigits}.%`,   // "670.09", "670.5"
-  ];
+
+  const signs = opts.signed ? ["", "-"] : [""];
+  const out: string[] = [];
+  for (const sign of signs) for (const v of values) out.push(`${column}::text.ilike.${sign}${v}`);
+  return out;
 }
 
 /**

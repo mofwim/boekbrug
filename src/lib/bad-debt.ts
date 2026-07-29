@@ -1,6 +1,15 @@
 // src/lib/bad-debt.ts
-// [BAD-DEBT] Oninbare vordering — reclaim the BTW you paid on a sales invoice the customer never
-// paid. Pure detector; no I/O. Run: npx tsx src/lib/bad-debt.test.ts
+// [BAD-DEBT] Artikel 29 Wet OB, both directions. Pure detectors; no I/O.
+// Run: npx tsx src/lib/bad-debt.test.ts
+//
+//   lid 1 (detectBadDebt)     — a SALES invoice your customer never paid: the BTW you declared on
+//                               it comes BACK to you. Money to get.
+//   lid 7 (detectVatClawback) — a PURCHASE invoice you never paid: the voorbelasting you deducted
+//                               goes BACK to the Belastingdienst. Money to give.
+//
+// They are the same rule read from two sides, so they live in one module and share the clock, the
+// creditnota reversal logic and the kasstelsel guard. Only the second one is a liability, and that
+// is the one an entrepreneur never hears about until the naheffing arrives.
 //
 // Dutch rule (Art. 29 Wet OB, sinds 2017): a receivable is presumed uncollectible ONE YEAR after
 // its payment due date if still unpaid. The BTW you earlier declared + paid on that invoice may
@@ -135,5 +144,125 @@ export function badDebtNote(r: BadDebtResult): string | null {
     `na de vervaldatum nog onbetaald. Je hebt hierover ${eur} BTW afgedragen die je kunt terugvragen ` +
     `(art. 29 Wet OB)${labels ? ` — bijv. ${labels}${more}` : ""}. Dit wordt NIET automatisch verrekend; ` +
     "bespreek met je boekhouder in welk tijdvak je het terugvraagt (en dien te corrigeren als de klant alsnog betaalt)."
+  );
+}
+
+// ── Art. 29 lid 7 — de andere kant: voorbelasting die je moet TERUGBETALEN ────────────────────
+//
+// Mirror of the rule above. If YOU have not paid a supplier within one year of the due date, the
+// BTW you deducted on that invoice becomes payable again (art. 29 lid 7 Wet OB) — it is corrected
+// in the aangifte of the period in which that year elapses. Miss it and it does not stay missed:
+// it surfaces as a naheffing with belastingrente, years later, on an invoice nobody remembers.
+//
+// This is the only art. 29 side that costs money, so it is also the only one the app must raise
+// on its own. It still never books anything: the app knows the invoice is unpaid IN ITS OWN
+// RECORDS, which is not the same as unpaid in the world (a bank account that was never linked,
+// cash over the counter, a payment arrangement). So it reports, names the invoices, and says what
+// resolves it either way — pay/record it, or put the BTW back.
+
+/** A purchase invoice whose deducted voorbelasting has become repayable. */
+export interface VatClawbackInvoice {
+  invoiceNumber: string | null;
+  supplierName: string | null;
+  dueDate: string;              // the (effective) due date that started the 1-year clock
+  unpaidEx: number;             // ex-BTW of the still-unpaid portion
+  repayableBtw: number;         // voorbelasting on the unpaid portion — what goes back
+}
+
+export interface VatClawbackResult {
+  eligible: VatClawbackInvoice[];
+  totalRepayableBtw: number;        // Σ repayableBtw (unrounded)
+  usedInvoiceDateFallback: boolean; // true if any invoice had no due_date (clock ran from invoice date)
+}
+
+// The purchase statuses whose voorbelasting the app ACTUALLY put in 5b. Deliberately identical to
+// financial-result's INCOMING_OK minus 'paid': you can only claw back what was deducted, and a
+// paid invoice has nothing to claw back. A row the ledger never counted (processing, unclear,
+// archived) is not clawed back either — the app must not demand money back on a deduction it
+// never took.
+const DEDUCTED_INCOMING = new Set(["received"]);
+
+const EMPTY_CLAWBACK: VatClawbackResult = { eligible: [], totalRepayableBtw: 0, usedInvoiceDateFallback: false };
+
+/**
+ * Detect purchase invoices whose deducted voorbelasting has become repayable as of `asOf`.
+ * Pure. Returns nothing under kasstelsel (you deduct on payment, so an unpaid purchase never got
+ * a deduction) and nothing under KOR (no voorbelasting is deducted at all — without this guard a
+ * KOR shop would be told to repay BTW it never claimed).
+ */
+export function detectVatClawback(args: {
+  scheme: VatScheme;
+  asOf: string;
+  korActive?: boolean;
+  invoices: BadDebtInput[];
+}): VatClawbackResult {
+  if (args.scheme === "kas" || args.korActive === true) return EMPTY_CLAWBACK;
+  const asOf = args.asOf.slice(0, 10);
+  const eligible: VatClawbackInvoice[] = [];
+  let usedInvoiceDateFallback = false;
+
+  // A supplier creditnota reverses its original: the deduction was already put back, so demanding
+  // it again would be a correction you do not owe. This only fires where the link exists — an
+  // unlinked supplier creditnota cannot be matched, which is why the note tells the owner to check
+  // rather than presenting a figure to copy.
+  const creditedOriginalIds = new Set<string>();
+  for (const i of args.invoices) {
+    if (i.invoiceType === "creditnota" && i.originalInvoiceId != null) {
+      creditedOriginalIds.add(String(i.originalInvoiceId));
+    }
+  }
+
+  for (const i of args.invoices) {
+    if (i.direction !== "incoming") continue;
+    if (i.invoiceType === "creditnota") continue;      // a creditnota is a reversal, not a debt
+    if (i.id != null && creditedOriginalIds.has(String(i.id))) continue;
+    if (!DEDUCTED_INCOMING.has(i.status ?? "")) continue;
+
+    const inc = i.totalIncBtw != null ? Number(i.totalIncBtw) : (Number(i.totalExBtw) || 0) + (Number(i.btwAmount) || 0);
+    if (!(inc > 0)) continue;
+    const paid = Math.max(0, Number(i.amountPaid) || 0);
+    const unpaidFraction = Math.max(0, Math.min(1, (inc - paid) / inc));
+    if (unpaidFraction <= 0) continue;                 // fully paid → the deduction stands
+
+    const clockStart = i.dueDate ?? i.invoiceDate;
+    if (!clockStart) continue;
+    if (!i.dueDate) usedInvoiceDateFallback = true;
+    const oneYear = oneYearLater(clockStart);
+    if (!oneYear || oneYear > asOf) continue;          // not yet a year overdue
+
+    // A 0%-purchase or a verlegde-BTW line carries no deducted BTW of its own, so it drops out
+    // here without a special case — there is nothing to give back.
+    const repayableBtw = (Number(i.btwAmount) || 0) * unpaidFraction;
+    if (repayableBtw < 0.005) continue;
+    eligible.push({
+      invoiceNumber: i.invoiceNumber,
+      supplierName: i.clientName,
+      dueDate: clockStart.slice(0, 10),
+      unpaidEx: (Number(i.totalExBtw) || 0) * unpaidFraction,
+      repayableBtw,
+    });
+  }
+
+  const totalRepayableBtw = eligible.reduce((s, e) => s + e.repayableBtw, 0);
+  return { eligible, totalRepayableBtw, usedInvoiceDateFallback };
+}
+
+/**
+ * An honest Dutch note for the concept aangifte / the accountant, or null when nothing (material)
+ * is repayable. Shares the materiality floor with the sales side: below it the figure rounds to
+ * €0 on every surface, and "1 factuur, €0 terug te betalen" is noise.
+ */
+export function vatClawbackNote(r: VatClawbackResult): string | null {
+  if (r.eligible.length === 0 || r.totalRepayableBtw < BAD_DEBT_MIN_EUR) return null;
+  const n = r.eligible.length;
+  const eur = `€${Math.round(r.totalRepayableBtw).toLocaleString("nl-NL")}`;
+  const labels = r.eligible.slice(0, 5).map((e) => e.invoiceNumber ?? "?").filter(Boolean).join(", ");
+  const more = n > 5 ? ` (+${n - 5} meer)` : "";
+  return (
+    `LET OP — terug te betalen voorbelasting: ${n === 1 ? "1 inkoopfactuur staat" : `${n} inkoopfacturen staan`} ` +
+    `meer dan een jaar na de vervaldatum open in je administratie. De BTW die je hierover in aftrek bracht ` +
+    `(${eur}) wordt dan weer verschuldigd (art. 29 lid 7 Wet OB)${labels ? ` — bijv. ${labels}${more}` : ""}. ` +
+    "Heb je ze wél betaald, koppel dan de betaling of zet ze op betaald; is dat niet zo, dan hoort dit bedrag " +
+    "terug in je aangifte. Dit wordt NIET automatisch verrekend — bespreek het tijdvak met je boekhouder."
   );
 }

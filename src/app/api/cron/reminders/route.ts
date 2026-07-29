@@ -27,6 +27,7 @@
 //     this cron finds zero enabled owners and sends nothing.
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamToday } from "@/lib/format-nl";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
@@ -38,6 +39,17 @@ import {
 // [CREDITNOTA-NO-CHASE] shared helper for the credited-ids set
 import { creditedIdsFrom } from "@/lib/credited-invoices";
 import { sendInvoiceReminder } from "@/lib/email";
+// [WIK] The final reminder is not a firmer nudge — it is the statutory aanmaning that gives the
+// owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
+import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
+
+const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
+const DAY_NL = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long" });
+const formatEuroNL = (n: number) => EUR_NL.format(n);
+const formatDayNL = (iso: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
+  return m ? DAY_NL.format(new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))) : iso;
+};
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -64,6 +76,8 @@ type CandidateInvoice = {
   pdf_url: string | null;
   invoice_type: string | null;
   status: string | null;
+  /** [WIK] Present → a business debtor; absent → treated as a consumer (the stricter regime). */
+  client_btw_number: string | null;
 };
 
 export async function GET(req: NextRequest) {
@@ -114,7 +128,9 @@ export async function GET(req: NextRequest) {
     pipeline
       .from("invoices")
       .select(
-        "id, sender_id, client_name, client_email, invoice_number, due_date, total_inc_btw, amount_paid, pdf_url, invoice_type, status",
+        // [WIK] client_btw_number decides consumer vs business — which decides whether the final
+        // reminder must be the statutory fourteen-day aanmaning.
+        "id, sender_id, client_name, client_email, invoice_number, due_date, total_inc_btw, amount_paid, pdf_url, invoice_type, status, client_btw_number",
       )
       .in("sender_id", ownerIds)
       .eq("direction", "outgoing")
@@ -275,6 +291,9 @@ export async function GET(req: NextRequest) {
 
       // The ONLY amount a reminder may show — remaining, never the full total.
       const openstaand = openstaandOf(inv.total_inc_btw, inv.amount_paid);
+      // [REMINDER-TRUTH] Hoisted out of the try: the catch has to know whether the letter that
+      // just failed was the statutory one, and `wik` itself is built inside.
+      const finalTier = isFinalTier(tier, offsets);
 
       // Best-effort PDF re-attach from the stored invoice PDF. Any failure →
       // send without attachment (the template renders fine without it).
@@ -289,7 +308,20 @@ export async function GET(req: NextRequest) {
       }
 
       try {
-        await sendInvoiceReminder({
+        // [WIK] On the LAST tier the letter becomes the legally effective one: it grants the
+        // statutory fourteen days and names the exact incassokosten. Without those two elements
+        // a consumer can never be charged those costs — so every polite reminder this app sent
+        // before was helpful and legally worth nothing once the customer kept ignoring it. The
+        // debtor type comes from the invoice itself (a BTW number means a business), defaulting
+        // to consumer, which is the only mistake of the two that stays recoverable.
+        const wik = finalTier
+          ? buildWikNotice({
+              openstaand,
+              sentIso: amsterdamToday(),
+              debtorType: debtorTypeOf({ client_btw_number: inv.client_btw_number }),
+            })
+          : null;
+        const delivery = await sendInvoiceReminder({
           toEmail: inv.client_email as string, // guaranteed non-empty by reminderTierDue
           clientName: inv.client_name?.trim() || "klant",
           zzperName,
@@ -297,8 +329,33 @@ export async function GET(req: NextRequest) {
           openstaand,
           dueDate: inv.due_date as string,
           firm: offsets.length > 1 && tier === maxTier,
+          wik,
           pdfBuffer,
         });
+        // [REMINDER-TRUTH] A Resend rejection does not throw — it comes back as an error on the
+        // send result. Until now that was logged and forgotten: the claimed tier stayed 'sent',
+        // the owner was told the letter went out, and the tier could never be tried again (the
+        // pre-read counts every invoice_reminders row, whatever its status). The customer simply
+        // never received it — including, on the last tier, the statutory WIK aanmaning that is
+        // the whole basis for charging incassokosten.
+        //
+        // Resend rejecting the message means it was NOT accepted, so retrying is safe here in a
+        // way it is not after a THROW (see the catch below, where the outcome is unknowable).
+        // Releasing the claim lets tomorrow's run try the same tier again.
+        if (!delivery.delivered) {
+          failed += 1;
+          try {
+            await pipeline.from("invoice_reminders").delete().eq("id", claimId);
+          } catch {
+            // Could not release it — then it stays claimed, which is the old behaviour. Say so.
+            console.error("[CRON-REMINDERS] could not release a rejected claim", { invoiceId: inv.id, tier });
+          }
+          console.error("[CRON-REMINDERS] reminder rejected by the mail provider — tier released for retry", {
+            invoiceId: inv.id, tier, wik: !!wik,
+          });
+          continue;
+        }
+
         sent += 1;
         // Reflect the send in the pre-read map so a later pass in THIS run can't re-pick it.
         const arr = sentByInvoice.get(inv.id) ?? [];
@@ -307,10 +364,16 @@ export async function GET(req: NextRequest) {
 
         // Notify the owner (best-effort) — visible proof the app acted for them.
         try {
+          // [WIK] After the statutory letter the owner has something they did not have before:
+          // the RIGHT to charge collection costs once the term passes. That right is invisible
+          // unless it is said — and unsaid, the letter's whole purpose is lost on them.
           await pipeline.from("notifications").insert({
             user_id: ownerId,
-            title: "Herinnering verstuurd",
-            body: `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
+            title: wik ? "Laatste aanmaning verstuurd" : "Herinnering verstuurd",
+            body: wik
+              ? `We hebben de laatste aanmaning gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}. ` +
+                `Betaalt ${inv.client_name?.trim() || "je klant"} niet vóór ${formatDayNL(wik.deadline)}, dan mag je ${formatEuroNL(wik.costs)} aan incassokosten in rekening brengen.`
+              : `We hebben een herinnering gestuurd voor factuur ${inv.invoice_number ?? ""} aan ${inv.client_name ?? "je klant"}.`,
             type: "invoice",
             read: false,
             link: `/dashboard/invoice/${inv.id}`,
@@ -319,13 +382,36 @@ export async function GET(req: NextRequest) {
           /* low severity — the reminder itself already succeeded */
         }
       } catch (sendErr) {
-        // sendInvoiceReminder is best-effort (won't throw on a Resend rejection),
-        // so a throw here is unexpected. Mark the claimed row 'failed' for
-        // visibility; we do NOT retry it (never risk a double-send).
+        // A THROW is the ambiguous case: the request may have reached the provider before the
+        // connection died, so we cannot know whether the customer got a demand. The claim STAYS
+        // (marked 'failed') and is never retried — a second dunning letter to someone who already
+        // received one is the harm this cron must never cause.
+        //
+        // [REMINDER-TRUTH] But silence is its own harm. The app cannot resolve this, so it hands
+        // it to the person who can: the owner is told the reminder may not have gone out, which
+        // matters most on the final tier, where the letter is what makes incassokosten claimable.
         failed += 1;
         console.error("[CRON-REMINDERS] reminder send threw (non-fatal)", { invoiceId: inv.id, tier, error: sendErr instanceof Error ? sendErr.message : String(sendErr) });
         try {
           await pipeline.from("invoice_reminders").update({ status: "failed" }).eq("id", claimId);
+        } catch {
+          /* best-effort */
+        }
+        try {
+          await pipeline.from("notifications").insert({
+            user_id: ownerId,
+            title: finalTier ? "Laatste aanmaning mogelijk NIET verstuurd" : "Herinnering mogelijk niet verstuurd",
+            body:
+              `Het versturen van ${finalTier ? "de laatste aanmaning" : "een herinnering"} voor factuur ${inv.invoice_number ?? ""} ` +
+              `aan ${inv.client_name ?? "je klant"} is misgegaan. We proberen het niet automatisch opnieuw — een dubbele ` +
+              `aanmaning naar iemand die er al een kreeg is erger. ` +
+              (finalTier
+                ? "Let op: zonder deze aanmaning mag je (nog) geen incassokosten in rekening brengen. Stuur hem zelf, of neem contact op."
+                : "Stuur hem zelf als je dat wilt."),
+            type: "invoice",
+            read: false,
+            link: `/dashboard/invoice/${inv.id}`,
+          });
         } catch {
           /* best-effort */
         }

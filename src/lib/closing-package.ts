@@ -57,6 +57,11 @@ import {
   type ConceptAangifte,
   type AangifteCompleteness,
 } from "./aangifte";
+// [ICP] Rubriek 3b + the separate ICP-opgaaf, keyed on the customers' EU VAT numbers.
+import {
+  buildIcp, buildIcpCsv, icpNote, buildForeignPurchases, buildForeignPurchaseCsv, foreignPurchaseNote,
+  type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
+} from "./icp";
 import { fetchAllRows } from "./supabase-paginate";
 import { collectRegimeFlags, type RegimeInvoiceRef } from "./regime-collect";
 import { regimeFlagNote } from "./regime-flags";
@@ -497,6 +502,15 @@ interface AssembleInput {
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
    *  sales data at all (nothing to declare yet). Never an invented filing. */
   conceptAangifte?: ConceptAangifte | null;
+  /** [ICP] The concept ICP-opgaaf (intracommunautaire leveringen per BTW-nummer). A SEPARATE
+   *  declaration from the BTW-aangifte, so it becomes its own file in the ZIP — never a rubriek
+   *  of concept-btw-aangifte.csv, which is exactly how an owner would come to believe it was
+   *  filed along with the rest. null/absent when the quarter has nothing intra-EU. */
+  icp?: IcpResult | null;
+  /** [ICP] The quarter's EU purchases (rubriek 4a/4b). A LISTING, never a calculation: the
+   *  verlegde BTW and its matching deduction stay out of the concept on purpose. It becomes its
+   *  own file so the accountant has the invoices in front of them instead of hunting for them. */
+  euPurchases?: ForeignPurchaseResult | null;
   /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
    *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
    *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
@@ -506,7 +520,7 @@ interface AssembleInput {
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, kasboekXlsx } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx } = input;
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
@@ -662,6 +676,28 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // "GEEN ingediende aangifte" — the accountant controleert en dient in.
   if (conceptAangifte) {
     zip.file("concept-btw-aangifte.csv", "﻿" + buildAangifteCsv(conceptAangifte));
+  }
+
+  // ── concept-icp-opgaaf.csv (intracommunautaire leveringen, per BTW-nummer) ──
+  // Its OWN file, because the ICP is its own declaration: folding it into
+  // concept-btw-aangifte.csv is exactly how an owner comes to believe it went along with the
+  // rest. Written whenever there is anything intra-EU to say — including when there are only
+  // PROBLEMS and no listable lines, since "nothing in the ZIP" is how an unfilable opgaaf goes
+  // unnoticed until the boete.
+  if (icpForZip && (icpForZip.lines.length > 0 || icpForZip.problems.length > 0)) {
+    zip.file("concept-icp-opgaaf.csv", "﻿" + buildIcpCsv(icpForZip, quarterLabel));
+    filesIncluded++;
+  }
+
+  // ── eu-inkopen.csv (rubriek 4a/4b) ──
+  // The counterpart of the file above, and the one piece of quarter work this app deliberately
+  // leaves to a human: which Dutch rate applies to a foreign purchase is a judgement, and for a
+  // KOR or partly-exempt owner 4b and 5b stop cancelling. So it hands over the invoices instead
+  // of a number — which is still the whole difference between "there are EU purchases" and a
+  // list somebody can work from.
+  if (euPurchasesForZip && euPurchasesForZip.purchases.length > 0) {
+    zip.file("eu-inkopen.csv", "﻿" + buildForeignPurchaseCsv(euPurchasesForZip, quarterLabel));
+    filesIncluded++;
   }
 
   // RAW summary numbers (reuse quarterly lib — same logic the owner sees).
@@ -1383,7 +1419,13 @@ export async function buildClosingPackageZip(args: {
       .lte("entry_date", end)
       .order("id", { ascending: true })
       .range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] cash_entries read failed", { ownerId, error: String(e) }); return null; });
+  // [NO-EMPTY-LEDGER] Een mislukte lezing werd hier een LEGE la, en een lege la rekent gewoon
+  // door: de concept-aangifte kwam eruit alsof de ondernemer dat kwartaal geen cent contant had
+  // omgezet. De boekhouder kreeg een pakket dat er compleet uitzag. Dat is de gevaarlijkste vorm
+  // die dit product kent — niet een ontbrekend bestand (dat zie je), maar een compleet ogend
+  // bestand met een been eraf.
+  const cashReadFailed = cashAllRows == null;
   const cashEntries: ResultCashEntry[] = (cashAllRows ?? []).map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
     amount: c.amount,
@@ -1404,7 +1446,10 @@ export async function buildClosingPackageZip(args: {
       .lte("date", end)
       .order("id", { ascending: true })
       .range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] bank_transactions read failed", { ownerId, error: String(e) }); return null; });
+  // [NO-EMPTY-LEDGER] Zie hierboven: geen bankregels lezen is iets heel anders dan geen
+  // bankregels hebben, en het concept mag die twee niet door elkaar halen.
+  const bankReadFailed = bankAllRows == null;
   // [SETTLE] Shared mapper — identical card-settlement de-dup to /api/result, /api/aangifte and
   // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
   // package never double-counts a covered-day card settlement.
@@ -1457,11 +1502,17 @@ export async function buildClosingPackageZip(args: {
     direction: i.direction === "incoming" ? "incoming" : "outgoing",
     label: i.invoice_number,
   }));
+  // [NO-EMPTY-LEDGER] Bij een mislukte grootboeklezing is de omzet waarop de KOR-drempel wordt
+  // getoetst te laag, en zou een terechte drempelwaarschuwing juist ONDERDRUKT worden. Dan liever
+  // helemaal niet toetsen dan geruststellen op een half getal.
+  const ledgerReadFailed = cashReadFailed || bankReadFailed;
   const omzetForKorCheck =
     result.salesByRate.reduce((sum, r) => sum + (r.omzet ?? 0), 0) + (result.cashOmzetZonderBtw ?? 0);
-  const regimeFlags = await collectRegimeFlags({
-    client: supabase, korActive, omzetForKorCheck, invoices: regimeInvoices,
-  }).catch(() => []);
+  const regimeFlags = ledgerReadFailed
+    ? []
+    : await collectRegimeFlags({
+        client: supabase, korActive, omzetForKorCheck, invoices: regimeInvoices,
+      }).catch(() => []);
   const regimeNotes = regimeFlags.map(regimeFlagNote);
   for (const f of regimeFlags) {
     warnings.push({ code: `regime_${f.code}`, message: regimeFlagNote(f) });
@@ -1483,8 +1534,70 @@ export async function buildClosingPackageZip(args: {
   // or reclaimable voorbelasting. An empty quarter gets no invented filing.
   const hasDeclarable =
     result.salesByRate.length > 0 || result.cashOmzetZonderBtw > 0 || result.btwVoorbelasting > 0;
-  const conceptAangifte = hasDeclarable
-    ? buildAangifte(result, completeness, `Q${quarter} ${year}`, regimeNotes)
+  // [ICP] Sales to businesses in other EU member states belong in rubriek 3b, and carry a
+  // SEPARATE declaration (the ICP-opgaaf) that is no part of the BTW-aangifte. Built here from
+  // the same rows the rubrieken are, so the ZIP and the in-app concept can never disagree — the
+  // whole reason this package rebuilds the concept instead of importing it.
+  const icp = buildIcp({
+    korActive,
+    invoices: outgoing.map((i): IcpInvoice => ({
+      invoiceNumber: i.invoice_number,
+      clientName: i.client_name,
+      clientVatNumber: i.client_btw_number,
+      direction: "outgoing",
+      status: i.status,
+      totalExBtw: i.total_ex_btw,
+      btwAmount: i.btw_amount,
+    })),
+  });
+  const icNote = icpNote(icp);
+  if (icNote) regimeNotes.push(icNote);
+  if (icp.problems.length > 0) {
+    warnings.push({
+      code: "icp_problems",
+      message:
+        `ICP-opgaaf: ${icp.problems.length} verkoopfactu(u)r(en) aan EU-ondernemers kunnen zo niet worden opgegeven ` +
+        "(BTW berekend, of een BTW-nummer dat niet klopt) — zie concept-icp-opgaaf.csv.",
+    });
+  }
+
+  // [ICP] The purchase mirror: EU inkopen NAMED for the accountant, never computed.
+  const euPurchases = buildForeignPurchases({
+    invoices: incoming.map((i): IcpInvoice => ({
+      invoiceNumber: i.invoice_number,
+      clientName: i.client_name,
+      clientVatNumber: i.client_btw_number,
+      direction: "incoming",
+      status: i.status,
+      totalExBtw: i.total_ex_btw,
+      btwAmount: i.btw_amount,
+    })),
+  });
+
+  // [NO-EMPTY-LEDGER] Kon een grootboek niet worden gelezen, dan komt er GEEN concept mee. Een
+  // concept-aangifte is een optelsom die pretendeert compleet te zijn; met een ontbrekend been is
+  // dat een onwaarheid met een bedrag eraan. De boekhouder krijgt in plaats daarvan de reden, en
+  // alle échte bewijsstukken — de factuur-PDF's, het bankafschrift, dagomzet.csv — blijven
+  // gewoon in het pakket zitten. Kijken en exporteren blijft altijd werken; alleen de PROJECTIE
+  // die niet klopt, ontbreekt.
+  if (cashReadFailed) {
+    warnings.push({
+      code: "cash_read_failed",
+      message: "De kasboekingen konden niet volledig worden gelezen. Daarom zit er geen concept-BTW-aangifte in dit pakket — die zou het contante deel missen. De facturen en bestanden zijn wel compleet. Genereer het pakket opnieuw.",
+    });
+  }
+  if (bankReadFailed) {
+    warnings.push({
+      code: "bank_read_failed",
+      message: "De bankregels konden niet volledig worden gelezen. Daarom zit er geen concept-BTW-aangifte in dit pakket — die zou bankmutaties missen. De facturen en bestanden zijn wel compleet. Genereer het pakket opnieuw.",
+    });
+  }
+  const conceptAangifte = hasDeclarable && !ledgerReadFailed
+    ? buildAangifte(
+        { ...result, intraEuOmzet: icp.totalExBtw },
+        { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
+        `Q${quarter} ${year}`, regimeNotes,
+      )
     : null;
 
   // [KASBOEK] The cash book as the accountant's own running-balance sheet (Kiwi .xlsx layout),
@@ -1502,7 +1615,7 @@ export async function buildClosingPackageZip(args: {
     supabase.from("cash_entries").select("entry_date, direction, amount, category, description")
       .eq("user_id", ownerId).lte("entry_date", end)
       .order("entry_date", { ascending: true }).range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] kasboek entries read failed", { ownerId, error: String(e) }); return null; });
   const kasEntries: KasEntry[] = (kasEntriesRaw ?? []).map((r) => ({
     entry_date: r.entry_date, direction: r.direction === "in" ? "in" : "out",
     amount: r.amount, category: r.category, description: r.description,
@@ -1511,8 +1624,13 @@ export async function buildClosingPackageZip(args: {
     supabase.from("daily_turnover").select("turnover_date, cash_amount")
       .eq("user_id", ownerId).lte("turnover_date", end)
       .order("turnover_date", { ascending: true }).range(from, to),
-  ).catch(() => []);
+  ).catch((e) => { console.error("[CLOSING-PACKAGE] kasboek turnover read failed", { ownerId, error: String(e) }); return null; });
   const kasTurnover: KasTurnoverDay[] = (kasTurnoverRaw ?? []) as KasTurnoverDay[];
+  // [NO-EMPTY-LEDGER] Het kasboek is een LOPEND SALDO. Faalt één van de twee bronnen, dan telt
+  // het blad de ene kant wel en de andere niet, en komt er een eindsaldo uit dat niemand kan
+  // verklaren en dat niet strookt met de Kas-pagina — een blad met ontvangsten en zonder uitgaven
+  // ziet er bovendien uit als winst. Dan liever helemaal geen blad, met de reden erbij.
+  const kasboekReadFailed = kasEntriesRaw == null || kasTurnoverRaw == null;
 
   // [KAS-OPENING] Seed the first period with the drawer's starting float so the accountant's
   // Kasboek eindsaldo matches the app's headline saldo and reality.
@@ -1525,9 +1643,15 @@ export async function buildClosingPackageZip(args: {
     openingBalance: openingBalanceForQuarter({ turnover: kasTurnover, entries: kasEntries, year, quarter: quarter as KasQuarter, startingBalance: kasStartingBalance }),
   });
   const kasboekXlsx: Uint8Array | null =
-    kb.months.length > 0 || kb.openingBalance !== 0
+    !kasboekReadFailed && (kb.months.length > 0 || kb.openingBalance !== 0)
       ? matrixToXlsxBytes(kasboekToMatrix(kb), `Kasboek Q${quarter} ${year}`)
       : null;
+  if (kasboekReadFailed) {
+    warnings.push({
+      code: "kasboek_unavailable",
+      message: "Het kasboek kon niet volledig worden gelezen en zit daarom niet in dit pakket — een half kasboek zou een eindsaldo tonen dat nergens op slaat. De facturen en bestanden zijn wel compleet. Genereer het pakket opnieuw.",
+    });
+  }
 
   return assembleClosingPackageZip({
     year,
@@ -1544,6 +1668,8 @@ export async function buildClosingPackageZip(args: {
     turnoverClosing,
     cardReconciliation,
     conceptAangifte,
+    icp,
+    euPurchases,
     kasboekXlsx,
     warnings,
   });

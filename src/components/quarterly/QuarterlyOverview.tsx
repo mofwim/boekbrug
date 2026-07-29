@@ -481,12 +481,14 @@ function ZzpView({ role }: { role: Role }) {
               </div>
               <div className="grid grid-cols-2 divide-x divide-emerald-100">
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none">
+                  {/* [ROW-LAYOUT] text-xl on phone so a 6-figure amount fits on one line;
+                      at text-2xl the narrow grid-cols-2 cell wrapped "€" onto its own line. */}
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-emerald-700 leading-none">
                     {formatEur(data.totalIn)}
                   </p>
                 </div>
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-emerald-700 leading-none">
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-emerald-700 leading-none">
                     {formatEur(data.totalBtwIn)}
                   </p>
                 </div>
@@ -517,12 +519,12 @@ function ZzpView({ role }: { role: Role }) {
               </div>
               <div className="grid grid-cols-2 divide-x divide-red-100">
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-red-700 leading-none">
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-red-700 leading-none">
                     {formatEur(data.totalOut)}
                   </p>
                 </div>
                 <div className="px-4 py-5">
-                  <p className="text-2xl font-bold tabular-nums text-red-700 leading-none">
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums text-red-700 leading-none">
                     {formatEur(data.totalBtwOut)}
                   </p>
                 </div>

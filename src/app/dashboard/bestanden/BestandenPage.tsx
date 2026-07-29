@@ -498,23 +498,39 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
 
   // ── Search ── (documents + folders)
   useEffect(() => {
+    // [PERF] Ook de spinner uitzetten: wordt het veld geleegd terwijl een query loopt,
+    // dan wordt die query afgebroken en raakt zijn catch geen state aan — zonder dit
+    // bleef searchLoading true en opende de VOLGENDE zoekopdracht op een oude spinner.
     if (!search.trim()) {
-      void (async () => { setSearchResults(null); setFolderResults([]); })();
+      void (async () => { setSearchResults(null); setFolderResults([]); setSearchLoading(false); })();
       return;
     }
     // [SEARCH] `active` guards against out-of-order responses: a superseded query's
     // in-flight fetch must not overwrite the newer query's results.
     let active = true;
+    // [PERF] The boolean only ignores the answer — the request itself kept running
+    // server-side. The AbortController actually cancels a superseded query.
+    const ctrl = new AbortController();
     const t = setTimeout(async () => {
       setSearchLoading(true);
-      const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`);
-      const json = await res.json() as { results?: SearchResult[]; folders?: { id: string; name: string; parent_id: string | null }[] };
-      if (!active) return;
-      setSearchResults(json.results ?? []);
-      setFolderResults(json.folders ?? []);
-      setSearchLoading(false);
+      try {
+        const res = await fetch(`/api/bestanden?search=${encodeURIComponent(search)}`, { signal: ctrl.signal });
+        const json = await res.json() as { results?: SearchResult[]; folders?: { id: string; name: string; parent_id: string | null }[] };
+        if (!active) return;
+        setSearchResults(json.results ?? []);
+        setFolderResults(json.folders ?? []);
+        setSearchLoading(false);
+      } catch (err) {
+        // [PERF] An aborted fetch REJECTS with an AbortError — swallow it silently so
+        // it never surfaces as an error or an unhandled rejection. No state is touched
+        // here: an abort is always followed by either a new run (which sets the spinner
+        // and clears it again) or an empty query (which hides the results pane), so the
+        // spinner can't stick. Real failures keep behaving exactly as before.
+        if (ctrl.signal.aborted || (err as Error)?.name === "AbortError") return;
+        throw err;
+      }
     }, 300);
-    return () => { active = false; clearTimeout(t); };
+    return () => { active = false; ctrl.abort(); clearTimeout(t); };
   }, [search]);
 
   useEffect(() => { if (newFolderInline) setTimeout(() => newFolderRef.current?.focus(), 50); }, [newFolderInline]);

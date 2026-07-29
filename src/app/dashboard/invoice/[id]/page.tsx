@@ -64,6 +64,9 @@ export default function InvoiceDetailPage() {
 
   // [BOEK-031] linked creditnota — toon als er al een bestaat
   // Alleen de kolommen die de lookup ophaalt — geen volledige factuurrij beloven.
+  // [CREDITNOTA-REF] The invoice THIS creditnota corrects (null unless this is a creditnota).
+  const [correctedInvoice, setCorrectedInvoice] =
+    useState<{ invoice_number: string | null; invoice_date: string | null } | null>(null)
   const [linkedCreditnota, setLinkedCreditnota] =
     useState<Pick<InvoiceRow, 'id' | 'invoice_number' | 'status' | 'created_at'> | null>(null)
 
@@ -229,6 +232,20 @@ export default function InvoiceDetailPage() {
           .maybeSingle()
 
         if (creditnota) setLinkedCreditnota(creditnota)
+      }
+
+      // [CREDITNOTA-REF] The other direction: when THIS invoice is a creditnota, resolve the
+      // invoice it corrects, so the downloadable PDF can name it. Art. 219 Richtlijn 2006/112/EG
+      // only equates a corrective document with an invoice when it refers specifically and
+      // unambiguously to the initial one — without this the page-rendered PDF named only itself,
+      // while the mailed one (rendered server-side) now does carry the reference.
+      if (invoiceData.invoice_type === 'creditnota' && invoiceData.original_invoice_id) {
+        const { data: corrected } = await supabase
+          .from('invoices')
+          .select('invoice_number, invoice_date')
+          .eq('id', invoiceData.original_invoice_id)
+          .maybeSingle()
+        if (corrected) setCorrectedInvoice(corrected)
       }
 
       setLoading(false)
@@ -417,7 +434,19 @@ export default function InvoiceDetailPage() {
                     PDF from pdf_url instead. */}
                 {!isIncoming && invoice && profile && (
                   <PDFDownloadLink
-                    document={<InvoicePDF invoice={invoice} lines={lines} profile={profile} />}
+                    document={
+                      <InvoicePDF
+                        invoice={{
+                          ...invoice,
+                          // [CREDITNOTA-REF] undefined on a normal factuur — the PDF prints the
+                          // reference line only for a creditnota that has one.
+                          original_invoice_number: correctedInvoice?.invoice_number,
+                          original_invoice_date: correctedInvoice?.invoice_date,
+                        }}
+                        lines={lines}
+                        profile={profile}
+                      />
+                    }
                     fileName={`${invoice.invoice_number || 'concept'}.pdf`}
                   >
                     {({ loading: pdfLoading }: { loading: boolean }) => (

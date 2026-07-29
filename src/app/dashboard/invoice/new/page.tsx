@@ -14,7 +14,10 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
-import { formatDateNL } from '@/lib/format-nl'
+import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
+// [ICP] Same classifier the aangifte and the ICP-opgaaf use, so the invoice screen and the
+// quarter can never disagree about which customer counts as intra-EU.
+import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
@@ -438,9 +441,23 @@ function NewInvoicePageContent() {
   const [clientPostal, setClientPostal]   = useState(aiClientPostal)
   const [clientCity, setClientCity]       = useState(aiClientCity)
   const [clientBtw, setClientBtw]         = useState(aiClientBtw)
+  // [ICP] A customer number that names another EU member state but cannot have that length.
+  // classifyVatNumber is deliberately conservative — it only says "suspect" when the length is
+  // impossible for that country, so a valid number is never called wrong.
+  const euVatSuspect = classifyVatNumber(clientBtw).kind === 'eu_suspect'
+  // [ICP] A customer in another member state. Stated, never decided: whether THIS supply is an
+  // intracommunautaire prestatie depends on what is being supplied and on the customer acting as
+  // a business — a judgement the app must not make. What it can do is say it here, where the
+  // rate is still being chosen, instead of leaving the owner to find out at the aangifte.
+  const euVatCustomer = classifyVatNumber(clientBtw).kind === 'eu'
 
   // ── Dates ────────────────────────────────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0]
+  // [TZ] The owner's Amsterdam day, not the UTC one. This value seeds BOTH the
+  // factuurdatum and the leverdatum of a document that carries a number from the
+  // doorlopende reeks — and toISOString() is still on yesterday until 01:00 (02:00
+  // in summer). An invoice typed just after midnight on 1 January would be dated
+  // into the previous fiscal year and the previous BTW-quarter.
+  const today = amsterdamToday()
   const [invoiceDate, setInvoiceDate] = useState(today)
   const [dueDate, setDueDate]         = useState('')
   // [FACTUUR-A] Leverdatum (Art. 35a sub f) — defaults to invoice date until
@@ -836,6 +853,14 @@ function NewInvoicePageContent() {
       setError('Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)')
       return
     }
+    // [ICP] A number that names another EU member state but cannot have that length is caught
+    // HERE, not three months later. This one invoice decides two things at once: whether the
+    // BTW may be verlegd, and whether the customer can go on the ICP-opgaaf — and a rejected
+    // opgaaf counts as never filed. Blocking here costs a retype; not blocking costs a quarter.
+    if (euVatSuspect) {
+      setError(`Het BTW-nummer ${clientBtw.trim()} heeft niet de lengte die dat EU-land gebruikt. Controleer het bij de klant (of via VIES) — het bepaalt of de BTW verlegd mag worden en of de klant in de ICP-opgaaf komt.`)
+      return
+    }
 
     const lineErrs = lines.map(l => ({
       description: !l.description.trim(),
@@ -925,15 +950,26 @@ function NewInvoicePageContent() {
       }))
     )
 
-    // [BOEK-031] Replace flow — markeer de oude factuur
-    // [FACTUUR-A] No browser-side number to stamp anymore; archive only.
-    if (replacesId) {
-      await supabase.from('invoices')
-        .update({ status: 'archived' })
-        .eq('id', replacesId)
-    }
+    // [BOEK-031] Replace flow — de LINK naar de oude factuur wordt hierboven vastgelegd
+    // (original_invoice_id). Wat hier stond, is weg:
+    //
+    //   await supabase.from('invoices').update({ status: 'archived' }).eq('id', replacesId)
+    //
+    // [ISSUED-STAYS] Dat was een rauwe browser-schrijfactie die de hele serverautoriteit
+    // oversloeg — geen refuseArchive, geen money_settled-controle, geen bank_tx_invoices-probe,
+    // geen audit-regel. Ze kon dus een VERSTUURDE, genummerde verkoopfactuur archiveren, precies
+    // wat de doorlopende nummering verbiedt: zo'n factuur wordt gecorrigeerd met een creditnota,
+    // niet uit de reeks gehaald. Geen enkel scherm linkt naar ?replaces= — dit was alleen te
+    // bereiken door de URL zelf te typen — dus er gaat geen werkende flow verloren.
+    //
+    // Wordt de vervang-flow ooit echt gebouwd, dan hoort hij door /api/invoice/[id]/archive te
+    // lopen, waar die grendels wél staan.
 
     // [BOEK-031] from_offerte flow — archiveer de originele offerte — May 2026
+    // Bewust WEL een directe schrijfactie: refuseArchive weigert per definitie alles wat niet
+    // 'incoming' is (regel [ISSUED-STAYS]), dus ook een offerte, en die route zou deze werkende
+    // flow dus breken. Een offerte draagt geen factuurnummer en geen geld — de twee dingen die
+    // die grendel beschermt — dus hier valt niets te omzeilen.
     if (offerteId) {
       await supabase.from('invoices')
         .update({ status: 'archived' })
@@ -1148,9 +1184,21 @@ function NewInvoicePageContent() {
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label="Stad" focusColor={cfg.focusColor} />
               </div>
               <div>
-                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)} />
+                <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label="BTW-nummer klant" focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
                 {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
                   <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>Verwacht formaat: NL123456789B01</p>
+                )}
+                {/* [ICP] Said while the number is still on screen and still fixable. */}
+                {euVatSuspect && (
+                  <p style={{ fontSize: 11, color: '#EA4335', margin: '4px 0 0' }}>
+                    Deze lengte klopt niet voor dat EU-land — controleer via VIES. Het bepaalt de BTW-verlegging én de ICP-opgaaf.
+                  </p>
+                )}
+                {euVatCustomer && (
+                  <p style={{ fontSize: 11, color: '#5F6368', margin: '4px 0 0', lineHeight: 1.45 }}>
+                    Klant in een ander EU-land. Bij een intracommunautaire prestatie zet je 0% BTW — &ldquo;Btw verlegd&rdquo;
+                    komt dan automatisch op de factuur, en de klant komt in je ICP-opgaaf.
+                  </p>
                 )}
               </div>
             </div>

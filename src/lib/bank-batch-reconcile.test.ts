@@ -1,5 +1,5 @@
 // [BANK-BATCH-RECONCILE] Pure node test — run: npx tsx src/lib/bank-batch-reconcile.test.ts
-import { reconcileBatch, resolveBatchNumbers, planBatchAutoConfirm, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
+import { reconcileBatch, resolveBatchNumbers, resolveBatchNumbersDetailed, planBatchAutoConfirm, type BatchSlotInput, type BatchCandidateInvoice } from "./bank-batch-reconcile";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -99,10 +99,11 @@ console.log("\n— an empty slot list is incomplete, not a tie —");
   check("allMatched = false on empty", r.allMatched === false);
 }
 
+const n = (reference: string | null, known: string[], description = "") =>
+  resolveBatchNumbers({ reference, description }, known).length;
+
 console.log("\n— resolveBatchNumbers: genuine batch vs PSP junk vs coincidental full-amount —");
 {
-  const n = (reference: string | null, known: string[], description = "") =>
-    resolveBatchNumbers({ reference, description }, known).length;
 
   // M.H. BAL: 3 reference numbers, all real invoices → a genuine batch (≥2).
   check("3 real invoice numbers → 3 resolved (genuine batch)",
@@ -150,14 +151,62 @@ console.log("\n— resolveBatchNumbers: genuine batch vs PSP junk vs coincidenta
   check("a 3-digit number resolves by exact fragment equality", n("045, 046", ["045", "046"]) === 2);
   check("…but never from free text alone (below the identity floor)",
     n(null, ["045", "046"], "facturen 045 en 046") === 0);
-  // …and it is never enough to book money unattended.
-  check("[BANK-BATCH-SHORT-NUMBER] a 3-digit batch is never auto-booked",
+  // …and the two routes are reported apart, because they are not equally strong evidence.
+  check("an exact reference fragment reports via 'reference'",
+    resolveBatchNumbersDetailed({ reference: "20260001", description: "" }, ["20260001"])[0]?.via === "reference");
+  check("a number recovered from the statement line reports via 'text'",
+    resolveBatchNumbersDetailed({ reference: "045", description: "factuur 2026-045" }, ["2026-045"])[0]?.via === "text");
+}
+
+console.log("\n— [BANK-BATCH-SHORT-NUMBER] a supplier's short numbers may batch — under every other guard —");
+{
+  const supplier = (id: string, num: string, amt: number, name = "Groothandel") =>
+    ({ id, invoice_number: num, total_inc_btw: amt, client_name: name, direction: "incoming" as const, status: "received" });
+
+  // The everyday case this used to refuse: a wholesaler numbering 045 / 046, one debit of €300.
+  const ok = planBatchAutoConfirm({
+    reference: "045, 046", bankAmount: -300,
+    invoices: [supplier("s1", "045", 100), supplier("s2", "046", 200)],
+  });
+  check("a 3-digit batch from the REFERENCE is auto-bookable", ok !== null && ok.invoiceIds.length === 2);
+
+  // …but only from the reference. The same numbers merely lying in the free text stay human.
+  check("the same numbers found only in free text are NOT auto-booked",
+    planBatchAutoConfirm({
+      reference: null, description: "bestelling 045 en 046 geleverd", bankAmount: -300,
+      invoices: [supplier("s1", "045", 100), supplier("s2", "046", 200)],
+    }) === null);
+
+  // Two characters is a coincidence waiting to happen, not an identity.
+  check("a 2-character number is refused even from the reference",
+    planBatchAutoConfirm({
+      reference: "45, 46", bankAmount: -300,
+      invoices: [supplier("s1", "45", 100), supplier("s2", "46", 200)],
+    }) === null);
+
+  // Every other guard still has to hold — the sum to the cent…
+  check("a short batch that does not tie to the cent is refused",
+    planBatchAutoConfirm({
+      reference: "045, 046", bankAmount: -299.99,
+      invoices: [supplier("s1", "045", 100), supplier("s2", "046", 200)],
+    }) === null);
+  // …one supplier…
+  check("a short batch across two suppliers is refused",
     planBatchAutoConfirm({
       reference: "045, 046", bankAmount: -300,
-      invoices: [
-        { id: "s1", invoice_number: "045", total_inc_btw: 100, client_name: "Groothandel", direction: "incoming", status: "received" },
-        { id: "s2", invoice_number: "046", total_inc_btw: 200, client_name: "Groothandel", direction: "incoming", status: "received" },
-      ],
+      invoices: [supplier("s1", "045", 100), supplier("s2", "046", 200, "Andere BV")],
+    }) === null);
+  // …and no unresolved token in the reference.
+  check("a short batch with an unresolved token is refused",
+    planBatchAutoConfirm({
+      reference: "045, 046, 884512", bankAmount: -300,
+      invoices: [supplier("s1", "045", 100), supplier("s2", "046", 200)],
+    }) === null);
+  // …an ambiguous number still blocks it.
+  check("two invoices sharing a short number block the batch",
+    planBatchAutoConfirm({
+      reference: "045, 046", bankAmount: -300,
+      invoices: [supplier("s1", "045", 100), supplier("s1b", "045", 100), supplier("s2", "046", 200)],
     }) === null);
   check("a bare year is never an identity",
     n("", ["2026"], "Huur juli 2026") === 0);

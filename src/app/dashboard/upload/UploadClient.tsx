@@ -49,6 +49,12 @@ interface Item {
   message?: string
   canForce?: boolean
   force?: boolean   // set on a "toch toevoegen" retry → sends force=true to override a semantic dup
+  // [DUP-ARCHIVED] De upload botste op een factuur die de eigenaar zelf genegeerd heeft. Die staat
+  // in Genegeerd en is dus in geen enkele gewone lijst te vinden — bied terugzetten aan, want bij
+  // een byte-hash-duplicaat (identiek bestand) is dat de ENIGE weg vooruit: die poort is met opzet
+  // niet te forceren, dus zonder deze knop zit de eigenaar klem.
+  archived?: { invoice_id: string; invoice_number: string | null; client_name: string | null }
+  restoring?: boolean
   preview?: string  // objectURL for an image → inline thumbnail so the owner verifies without opening
   vendor?: string | null      // extracted — shown inline so you see WHAT the file is at a glance
   total?: number | null
@@ -147,7 +153,11 @@ export default function UploadClient() {
               vendor: data.vendor ?? null, total: data.total_inc_btw ?? null, number: data.invoice_number ?? null,
             })
           } else if (res.status === 409 && data.duplicate) {
-            patch(item.id, { status: 'duplicate', message: data.error || 'Al toegevoegd', canForce: !!data.canForce })
+            patch(item.id, {
+              status: 'duplicate', message: data.error || 'Al toegevoegd', canForce: !!data.canForce,
+              // [DUP-ARCHIVED] alleen gezet als de bestaande factuur écht in Genegeerd staat
+              archived: data.archived ?? undefined,
+            })
           } else if (res.status === 429) {
             // Rate limit (240 documenten/uur, RATE_LIMITS.AI_OCR) — NOT a broken file. Say so honestly + offer a retry.
             patch(item.id, { status: 'error', rateLimited: true, message: data.error || 'Te veel tegelijk — probeer dit bestand zo opnieuw.' })
@@ -242,6 +252,31 @@ export default function UploadClient() {
     patch(item.id, { status: 'done', message: 'Toch toegevoegd — zie de nieuwe regel hieronder.', destination: item.destination })
     void kick()
   }, [kick, patch])
+
+  // [DUP-ARCHIVED] "Terugzetten" — de upload werd geweigerd omdat deze factuur al bestaat, maar
+  // in Genegeerd. Opnieuw uploaden lost dat niet op (en kan bij identieke bytes ook niet); de
+  // bestaande factuur terugzetten wél. Zet hem terug in de controlewachtrij, waar hij hoort.
+  const restoreIgnored = useCallback(async (item: Item) => {
+    const target = item.archived
+    if (!target || item.restoring) return
+    patch(item.id, { restoring: true })
+    try {
+      const res = await fetch(`/api/email/confirm/${target.invoice_id}`, { method: 'PATCH' })
+      if (res.ok) {
+        // Klaar: de knop verdwijnt (archived weg) en de regel vertelt wat er nu geldt.
+        patch(item.id, {
+          status: 'done', destination: 'invoice', restoring: false, archived: undefined, canForce: false,
+          message: 'Teruggezet — de factuur staat weer in je controlewachtrij op Inkomend.',
+        })
+      } else {
+        // [UI-HONESTY] Een 409 betekent dat hij niet (meer) in Genegeerd staat. Nooit "gelukt" zeggen.
+        const data = await res.json().catch(() => ({}))
+        patch(item.id, { restoring: false, message: data.error || 'Terugzetten mislukt — ververs de pagina en probeer het opnieuw.' })
+      }
+    } catch {
+      patch(item.id, { restoring: false, message: 'Terugzetten mislukt — controleer je verbinding en probeer het opnieuw.' })
+    }
+  }, [patch])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragActive(false)
@@ -476,6 +511,14 @@ export default function UploadClient() {
                       <button onClick={() => retry(it)}
                         style={{ marginTop: 8, background: 'transparent', color: M3.primary, border: `1px solid ${M3.primaryContainer}`, borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
                         ↻ Opnieuw proberen
+                      </button>
+                    )}
+                    {/* [DUP-ARCHIVED] De bestaande factuur staat in Genegeerd → terugzetten is de
+                        handeling die hier werkt. Eerst, want bij een identiek bestand is het de enige. */}
+                    {it.status === 'duplicate' && it.archived && (
+                      <button onClick={() => restoreIgnored(it)} disabled={it.restoring}
+                        style={{ marginTop: 8, background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: it.restoring ? 'default' : 'pointer', fontFamily: FONT, opacity: it.restoring ? 0.6 : 1 }}>
+                        {it.restoring ? 'Bezig…' : 'Terugzetten uit Genegeerd'}
                       </button>
                     )}
                     {it.status === 'duplicate' && it.canForce && (

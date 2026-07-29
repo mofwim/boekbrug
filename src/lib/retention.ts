@@ -6,12 +6,24 @@
 //     (deletion_requests.created_at). Pure, framework-free, node-testable.
 //   - Uses UTC methods so results are deterministic regardless of server TZ.
 //
-// ⚠️ Legal note (logged for the future, NOT implemented here):
-//   Strict Bewaarplicht counts 7 years from the END of the fiscal year of each
-//   record — not from a single account-level date. The per-record AI flag
-//   ("mag wettelijk verwijderd worden") is deferred (vision doc / brief §3.7).
-//   Until then this account-level approximation is intentionally conservative:
-//   it keeps data at least as long as required, never less.
+// ⚠️ Legal note — and the correction that had to be made here.
+//   Art. 52 AWR counts the seven years from the END of the FISCAL YEAR a record
+//   belongs to, not from a single account-level date. Records of boekjaar 2026
+//   must therefore be kept through 31 December 2033.
+//
+//   This module used to add seven years TO THE DAY and call that "intentionally
+//   conservative: it keeps data at least as long as required, never less." The
+//   opposite was true. An account deactivated on 15 January 2026 became eligible
+//   on 15 January 2033 — while its own 2026 records were still under the
+//   bewaarplicht for another eleven and a half months. Every January closure was
+//   short by most of a year, and the shortfall shrinks only as the closure date
+//   approaches December.
+//
+//   So the window now rounds UP to the end of the fiscal year: eligible from
+//   1 January of (year(baseDate) + 7 + 1), i.e. the first instant after
+//   31 December of year+7. That is the account-level approximation actually
+//   being conservative — it can only ever keep data LONGER than the day-exact
+//   sum, never shorter. The per-record flag (brief §3.7) stays deferred.
 
 export const RETENTION_YEARS = 7;
 
@@ -21,16 +33,21 @@ function toDate(value: string | number | Date): Date {
 }
 
 /**
- * The date on which an account's data becomes eligible for deletion:
- * baseDate + RETENTION_YEARS. `baseDate` is the deactivation moment
- * (deletion_requests.created_at). Returns a new Date; never mutates the input.
+ * The instant from which an account's data becomes eligible for deletion: the
+ * first moment AFTER 31 December of (fiscal year of `baseDate` + RETENTION_YEARS).
+ * `baseDate` is the deactivation moment (deletion_requests.created_at).
+ * Returns a new Date; never mutates the input.
+ *
+ * Deliberately a year boundary, not baseDate + 7 years — see the legal note at
+ * the top of this file for the eleven-and-a-half months that cost.
  */
 export function computeEligibleForDeletion(
   baseDate: string | number | Date,
 ): Date {
   const d = toDate(baseDate);
-  d.setUTCFullYear(d.getUTCFullYear() + RETENTION_YEARS);
-  return d;
+  // 1 Jan of year+8 at 00:00:00.000Z == the instant 31 Dec of year+7 ends. Built
+  // from the year alone, so the month/day/time of the closure cannot leak in.
+  return new Date(Date.UTC(d.getUTCFullYear() + RETENTION_YEARS + 1, 0, 1, 0, 0, 0, 0));
 }
 
 /**

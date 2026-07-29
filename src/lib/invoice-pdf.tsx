@@ -25,6 +25,11 @@
 
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
+// [ICP] Art. 226 punt 11a: when the customer owes the BTW, the invoice must SAY so. Same rule
+// the ICP-opgaaf runs on, so the document and the aangifte can never disagree about this sale.
+import { reverseChargeNotice } from './icp'
+// [CREDITNOTA-REF] Art. 219: a corrective document must name the invoice it corrects.
+import { creditnotaReferenceLine } from './creditnota'
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 const NAVY = '#1a73e8'
@@ -269,6 +274,19 @@ export function InvoicePDF({
     profile.iban ? `op onze bankrekening ${profile.iban} ` : ''
   }te voldoen, onder vermelding van het factuurnummer ${invoice.invoice_number}.`
 
+  // [ICP] The mandatory reverse-charge line. Without it an intra-EU invoice is formally
+  // deficient — that is the ground on which the 0% gets challenged and the customer's own
+  // deduction gets refused. It is derived, never typed: the customer's EU BTW-number plus a
+  // zero BTW amount IS the condition. Suppressed when the owner already wrote it in a line.
+  const reverseCharge = reverseChargeNotice({
+    clientVatNumber: invoice.client_btw_number,
+    btwAmount: invoice.btw_amount,
+    invoiceType: type,
+    korActive: !!profile.kor_active,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    lineTexts: (lines ?? []).map((l: any) => l?.description as string | null),
+  })
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -380,11 +398,25 @@ export function InvoicePDF({
           </View>
         </View>
 
+        {/* [ICP] Above the closing note, because it is part of the INVOICE, not a courtesy:
+            art. 226 punt 11a requires the words "Btw verlegd" on a document whose BTW was
+            shifted to the customer. */}
+        {reverseCharge && <Text style={styles.payment}>{reverseCharge}</Text>}
+
         {/* Closing note — depends on the document type. A quote / pro forma
             must NOT demand payment or reference a "factuurnummer". */}
         {type === 'factuur' && <Text style={styles.payment}>{paymentText}</Text>}
         {isCreditnota && (
           <Text style={styles.payment}>
+            {/* [CREDITNOTA-REF] The reference comes FIRST: art. 219 Richtlijn 2006/112/EG only
+                equates a corrective document with an invoice when it refers specifically and
+                unambiguously to the initial one. Without it this page named only itself. The
+                caller resolves the original (the link lives in invoices.original_invoice_id);
+                when it cannot, nothing vague is printed in its place. */}
+            {creditnotaReferenceLine({
+              originalNumber: invoice.original_invoice_number,
+              originalDate: invoice.original_invoice_date,
+            })}{invoice.original_invoice_number ? ' ' : ''}
             Deze creditnota crediteert het bovenstaande bedrag. Er is geen betaling vereist.
           </Text>
         )}

@@ -110,7 +110,8 @@ export async function POST(req: NextRequest) {
     // can combine the exact id-links with the direction-guarded number gap-fill (below).
     const { data: paidInvs, error: invErr } = await pipeline
       .from("invoices")
-      .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date")
+      // [PARTIAL-PAY] amount_paid moet mee: de rollback hieronder zet hem terug zoals hij was.
+      .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date, amount_paid")
       .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .eq("status", "paid")
       .eq("payment_method", "bank");
@@ -170,12 +171,15 @@ export async function POST(req: NextRequest) {
     // paid invoice with its bank line deleted). All-or-nothing, mirroring unlink's discipline.
     // [MED-2] Re-pay restores the ORIGINAL marked_paid_at + payment_date so a rollback never loses
     // the settlement date (which attributes the payment to the correct quarter).
-    const restored: { id: string; marked_paid_at: string | null; payment_date: string | null }[] = [];
+    const restored: { id: string; marked_paid_at: string | null; payment_date: string | null; amount_paid: number | null }[] = [];
     const repay = async () => {
       for (const r of restored) {
         await supabase
           .from("invoices")
-          .update({ status: "paid", payment_method: "bank", marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
+          // [PARTIAL-PAY] amount_paid hoort bij de betaling die we terugdraaien, dus hij gaat mee
+          // terug. Zonder dit zou een mislukte reversal de factuur betaald terugzetten met een
+          // amount_paid van 0 — betaald én volledig openstaand tegelijk.
+          .update({ status: "paid", payment_method: "bank", amount_paid: r.amount_paid ?? undefined, marked_paid_at: r.marked_paid_at, payment_date: r.payment_date })
           .eq("id", r.id)
           .neq("status", "paid");
       }
@@ -183,7 +187,19 @@ export async function POST(req: NextRequest) {
     for (const inv of toRestore) {
       const { error: restoreErr } = await supabase
         .from("invoices")
-        .update({ status: inv.direction === "incoming" ? "received" : "sent", payment_method: null, marked_paid_at: null, payment_date: null })
+        // [PARTIAL-PAY] amount_paid MOET hier mee naar 0 — de zusterroute bank/unlink doet dat al
+        // (unlink/route.ts:308) en deze deed het niet, terwijl beide dezelfde omkering uitvoeren.
+        //
+        // Wat er zonder deze regel gebeurde, en waarom niemand het zag: de factuur ging netjes
+        // terug naar 'received'/'sent', maar hield amount_paid = het volle bedrag. Daarna
+        //   · openstaandOf() rekent total - paid = 0, dus het scherm toont EUR 0 openstaand
+        //     terwijl de factuur onbetaald is;
+        //   · invoice-reminders.ts (paid >= total - PAID_EPS -> null) stuurt nooit meer een
+        //     herinnering voor deze factuur — permanent, en zonder melding;
+        //   · de betaal-RPC ziet remaining = 0 en weigert de factuur opnieuw te boeken.
+        // Een ondernemer die een verkeerd afschrift verwijdert, verliest zo stil het innen van
+        // die factuur. Geen foutmelding, geen logregel, geen zichtbaar verschil.
+        .update({ status: inv.direction === "incoming" ? "received" : "sent", amount_paid: 0, payment_method: null, marked_paid_at: null, payment_date: null })
         .eq("id", inv.id)
         .eq("status", "paid");
       if (restoreErr) {
@@ -193,7 +209,7 @@ export async function POST(req: NextRequest) {
         }
         return NextResponse.json({ error: "reversal_failed", detail: restoreErr.message }, { status: 500 });
       }
-      restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date });
+      restored.push({ id: inv.id, marked_paid_at: inv.marked_paid_at, payment_date: inv.payment_date, amount_paid: inv.amount_paid ?? null });
     }
 
     // [MED-3] Audit snapshot BEFORE the destructive delete — record exactly which transactions
@@ -228,6 +244,44 @@ export async function POST(req: NextRequest) {
     if (delTxErr) {
       await repay();
       return NextResponse.json({ error: "transaction_delete_failed", detail: delTxErr.message }, { status: 500 });
+    }
+
+    // [PARTIAL-PAY] Re-derive amount_paid now that this statement's link rows are gone.
+    //
+    // Deleting the transactions cascades bank_tx_invoices away (FK ON DELETE CASCADE), but
+    // amount_paid lives on the invoice and does NOT follow. Without this it keeps the figure the
+    // deleted payment put there, while no link supports it any more — and amount_paid is what
+    // "openstaand" is computed from. A €1.210 invoice restored to 'sent' with amount_paid still
+    // 1210 reports €0 open: it drops out of the debtor list, out of the aging, out of the art. 29
+    // bad-debt reclaim, and out of dunning entirely (reminderTierDue bails when paid >= total).
+    // Re-importing the corrected statement cannot heal it either — apply_bank_payment sees
+    // remaining = 0 and raises "already covered", and auto-confirm only books rows at
+    // amount_paid = 0. Every other reversal path already does this; this one did not.
+    //
+    // Over idSet, not over `restored`: an invoice that was only PARTLY paid by this statement is
+    // never in the restore set (that query filters status='paid'), yet its links cascade away just
+    // the same — so it is precisely the row that would be left claiming money nobody paid.
+    // Invoices paid across two statements converge on the surviving links' true sum, because the
+    // RPC re-derives from the join table rather than subtracting.
+    const affected = new Set<string>(idSet);
+    for (const r of restored) affected.add(r.id);
+    let driftUnhealed = 0;
+    for (const invoiceId of affected) {
+      const { error: recErr } = await pipeline.rpc("recompute_invoice_amount_paid", {
+        p_user_id: user.id,
+        p_invoice_id: invoiceId,
+      });
+      if (recErr) {
+        driftUnhealed += 1;
+        console.error("[PARTIAL-PAY] recompute after statement delete failed", { invoiceId, error: recErr.message });
+      }
+    }
+    if (driftUnhealed > 0) {
+      // The statement is gone and cannot come back, so this is not a rollback situation — but the
+      // owner must not be told everything is in order while an invoice still claims paid money.
+      console.error("[PARTIAL-PAY] statement deleted with unhealed amount_paid drift", {
+        documentId, unhealed: driftUnhealed, affected: affected.size,
+      });
     }
   }
 

@@ -6,7 +6,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter, InvoiceRow } from '@/hooks/useInfiniteInvoices'
@@ -24,6 +24,8 @@ import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [TZ] 'Today' must be the owner's Amsterdam day, never the UTC one — see format-nl.ts.
+import { amsterdamToday } from '@/lib/format-nl'
 import { amountOrConditions } from '@/lib/search'
 // [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
 import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
@@ -73,6 +75,20 @@ const calcBtw = (btw: number | null, ex: number | null) =>
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SortOrder = 'desc' | 'asc'
 type FilterTab = 'all' | 'sent' | 'paid' | 'draft' | 'overdue' | 'offerte' | 'credit'
+// [HERHAAL] One recurring schedule, as /api/invoice/schedules returns it — including the invoice
+// it repeats, because an owner recognises a schedule by its customer, never by a uuid.
+interface ScheduleRow {
+  id: string
+  source_invoice_id: string
+  cadence: 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+  next_run_date: string
+  ends_on: string | null
+  active: boolean
+  source: { invoice_number: string | null; client_name: string | null; total_inc_btw: number | null } | null
+}
+const CADENCE_NL: Record<string, string> = {
+  weekly: 'elke week', monthly: 'elke maand', quarterly: 'elk kwartaal', yearly: 'elk jaar',
+}
 // [INVOICE-REMOVE] What the confirm dialog is about: the invoice, and the decision made for it.
 interface RemoveCtx { id: string; decision: RemovalDecision }
 // [BOEK-029] Fix 1+3: invoiceType distinguishes factuur vs creditnota dialogs
@@ -130,6 +146,36 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const [expandedId, setExpandedId]     = useState<string | null>(null)
   const [toast, setToast]               = useState<string | null>(null)
   const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
+  // [HERHAAL] The invoice the owner is about to start (or stop) repeating.
+  const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string; active?: boolean } | null>(null)
+  // [HERHAAL] Every schedule this owner has, in full — not just a lookup keyed by invoice.
+  //
+  // The per-row badge needs the map; the PANEL needs the list, and the panel is the part that
+  // makes the promise true. A schedule can only be reached from the invoice it repeats, and that
+  // invoice ages: after a year of monthly concepts the source sits hundreds of rows down, or
+  // behind a different filter tab. A feature that creates invoices by itself may never be harder
+  // to switch off than it was to switch on.
+  const [scheduleList, setScheduleList] = useState<ScheduleRow[]>([])
+  const schedules = useMemo(() => {
+    // PAUSED schedules belong in here too. Leaving them out made the row offer "Herhalen"
+    // again, which the server refuses (one schedule per invoice) — a dead end on a button the
+    // owner had every reason to press. The row now says what is actually true, and the dialog
+    // offers the way back.
+    const map: Record<string, { id: string; cadence: string; next_run_date: string; active: boolean }> = {}
+    for (const sc of scheduleList) {
+      map[sc.source_invoice_id] = { id: sc.id, cadence: sc.cadence, next_run_date: sc.next_run_date, active: sc.active }
+    }
+    return map
+  }, [scheduleList])
+
+  async function loadSchedules() {
+    try {
+      const res = await fetch('/api/invoice/schedules')
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.schedules) return
+      setScheduleList(json.schedules as ScheduleRow[])
+    } catch { /* silent — the feature is simply not shown */ }
+  }
   const [payCtx, setPayCtx]             = useState<ConfirmPayCtx | null>(null)
   const [sendCtx, setSendCtx]           = useState<SendCtx | null>(null)  // [BOEK-029] Versturen confirm
   const [processingId, setProcessingId] = useState<string | null>(null)
@@ -226,17 +272,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const focusId = searchParams.get('focus')
   const [highlightId, setHighlightId] = useState<string | null>(null)
 
-  // [SEARCH] Quick text-filter over the loaded invoices. Seeded from ?search= (set by
-  // the global search bar's Enter fallback). The global bar is now reachable on every
-  // page, so a ?search= push can arrive while we're already mounted on /dashboard/facturen
-  // (no remount) — sync on param change, not just at mount. Local typing doesn't change
-  // the param, so it never clobbers the user's input.
-  const searchParam = searchParams.get('search') ?? ''
-  const [search, setSearch] = useState(searchParam)
-  useEffect(() => {
-    const t = setTimeout(() => setSearch(searchParam), 0)
-    return () => clearTimeout(t)
-  }, [searchParam])
+  // [SEARCH] Quick text-filter over the loaded invoices. Starts empty; the global
+  // search bar now opens the dedicated results page (/dashboard/zoeken), so nothing
+  // deep-links a query into this page anymore — the old ?search= seeding was removed.
+  const [search, setSearch] = useState('')
 
   // [SEARCH] In-page live filter, SERVER-backed: finds ALL matching invoices (every
   // status, not only the loaded/paginated rows), in place — no navigation, no reload.
@@ -251,6 +290,22 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   // has to be current the moment an invoice lands in it — otherwise the owner removes something
   // and the "terug te zetten onderaan de lijst" the toast just promised isn't there yet.
   const [archivedTick, setArchivedTick] = useState(0)
+
+  // [HERHAAL] Silent on failure and on a not-yet-migrated database: an absent feature shows
+  // nothing, it never breaks the list. Inline async IIFE, matching the other loaders here, so no
+  // setState runs synchronously inside the effect body.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/invoice/schedules')
+        const json = await res.json().catch(() => ({}))
+        if (cancelled || !res.ok || !json?.schedules) return
+        setScheduleList(json.schedules as ScheduleRow[])
+      } catch { /* silent */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     if (!profile?.id) return
@@ -310,23 +365,35 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       return () => clearTimeout(t0)
     }
     let active = true
+    // [PERF] One AbortController per run: a superseded query (the next keystroke) is now
+    // really CANCELLED instead of merely ignored — it stops occupying a connection and
+    // stops the server finishing work nobody reads. `active` stays as the second guard.
+    const controller = new AbortController()
     const tLoad = setTimeout(() => setSearchLoading(true), 0)
     const t = setTimeout(async () => {
-      const { data } = await supabase
-        .from('invoices')
-        // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
-        // chip (and feed the same bundle open-amount) as a row from the infinite list.
-        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
-        .eq('sender_id', profile.id)
-        .neq('status', 'archived')
-        .or(orParts.join(','))
-        .order('created_at', { ascending: false })
-        .limit(50)
-      if (!active) return
-      setSearchResults((data ?? []) as unknown as InvoiceRow[])
-      setSearchLoading(false)
+      try {
+        const { data } = await supabase
+          .from('invoices')
+          // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
+          // chip (and feed the same bundle open-amount) as a row from the infinite list.
+          .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
+          .eq('sender_id', profile.id)
+          .neq('status', 'archived')
+          .or(orParts.join(','))
+          .order('created_at', { ascending: false })
+          .limit(50)
+          .abortSignal(controller.signal)
+        if (!active) return
+        setSearchResults((data ?? []) as unknown as InvoiceRow[])
+        setSearchLoading(false)
+      } catch (e) {
+        // [PERF] An abort is the NORMAL outcome of typing on — swallow it silently so it
+        // can never surface as an unhandled rejection. Anything else keeps behaving as before.
+        if (controller.signal.aborted || (e as Error)?.name === 'AbortError') return
+        throw e
+      }
     }, 250)
-    return () => { active = false; clearTimeout(tLoad); clearTimeout(t) }
+    return () => { active = false; controller.abort(); clearTimeout(tLoad); clearTimeout(t) }
   }, [search, profile.id])
 
   const statusMap: Record<FilterTab, InvoiceStatusFilter> = {
@@ -402,7 +469,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         invoiceId: ctx.id,
         action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
         paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        paymentDate: ctx.paymentDate ?? amsterdamToday(),
         // null / absent = settle the whole open balance (unchanged behaviour).
         ...(ctx.amount != null ? { amount: ctx.amount } : {}),
         // Idempotency: a double tap or a retried POST must not book twice.
@@ -489,6 +556,74 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     } else {
       showToast('Versturen mislukt')
     }
+  }
+
+  // ── [HERHAAL] Repeat this invoice every week / month / quarter / year ──────────────────────
+  // The invoice they already sent IS the definition of what is billed, so starting a repeat is
+  // one tap on a row that already exists — no template to fill in, no second copy of the client
+  // and the lines to keep in sync. Each occurrence arrives as a CONCEPT; sending stays the
+  // owner's act, because that is where the invoice number is minted and where a document goes to
+  // a third party for real.
+  async function startRepeat(cadence: 'weekly' | 'monthly' | 'quarterly' | 'yearly') {
+    if (!repeatCtx) return
+    const ctx = repeatCtx
+    setRepeatCtx(null)
+    setProcessingId(ctx.id)
+    try {
+      const res = await fetch('/api/invoice/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: ctx.id, cadence }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        const label = cadence === 'weekly' ? 'elke week' : cadence === 'monthly' ? 'elke maand'
+          : cadence === 'quarterly' ? 'elk kwartaal' : 'elk jaar'
+        showToast(`Herhaalt ${label} — het volgende concept staat klaar op ${fmtDate(json?.schedule?.next_run_date ?? null)}`)
+        await loadSchedules()
+      } else {
+        showToast(json?.detail || 'Herhalen instellen mislukt')
+      }
+    } catch {
+      showToast('Herhalen instellen mislukt')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  async function stopRepeat(scheduleId: string) {
+    setRepeatCtx(null)
+    try {
+      const res = await fetch(`/api/invoice/schedules?id=${encodeURIComponent(scheduleId)}`, { method: 'DELETE' })
+      if (res.ok) {
+        showToast('Herhalen gestopt — klaarstaande concepten blijven staan')
+        await loadSchedules()
+      } else {
+        const j = await res.json().catch(() => ({}))
+        showToast(j?.detail || 'Stoppen mislukt')
+      }
+    } catch { showToast('Stoppen mislukt') }
+  }
+
+  // [HERHAAL] Pause is the button an owner actually reaches for. A customer goes quiet for a
+  // month, a project is on hold — stopping means losing the schedule and rebuilding it later
+  // from an invoice that has meanwhile scrolled away. Pausing keeps it, and the cron simply
+  // produces nothing while it is off.
+  async function toggleRepeat(scheduleId: string, active: boolean) {
+    try {
+      const res = await fetch('/api/invoice/schedules', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: scheduleId, active }),
+      })
+      if (res.ok) {
+        showToast(active ? 'Herhalen hervat' : 'Herhalen gepauzeerd — er wordt niets meer klaargezet')
+        await loadSchedules()
+      } else {
+        const j = await res.json().catch(() => ({}))
+        showToast(j?.detail || (active ? 'Hervatten mislukt' : 'Pauzeren mislukt'))
+      }
+    } catch { showToast(active ? 'Hervatten mislukt' : 'Pauzeren mislukt') }
   }
 
   // ── [INVOICE-REMOVE] "Verwijderen" — one button, four honest outcomes ──────────────────────
@@ -677,13 +812,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           </div>
         </div>
 
-        {/* [SEARCH] Quick text-filter (invoice number / client name) */}
+        {/* [SEARCH] Quick text-filter (invoice number / client name)
+            [SMART-FILTER] …and the amount: the server query below also matches
+            total_inc_btw, so the placeholder names "bedrag" too. */}
         <div style={{ position: 'relative', marginBottom: 10 }}>
           <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Zoek op factuurnummer of klant..."
+            placeholder="Zoek op factuurnummer, klant of bedrag…"
             aria-label="Facturen zoeken"
             style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
           />
@@ -748,6 +885,54 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
 
       {/* ── Invoice list ── */}
       <main style={{ maxWidth: 680, margin: '0 auto', padding: '12px 16px 100px' }}>
+        {/* [HERHAAL] Everything that repeats, in one place at the top.
+            The per-row button can only be found by finding the invoice, and the invoice that
+            started a monthly series is a year older every twelve concepts. This panel is the
+            answer to "wat staat er eigenlijk aan?" and to "hoe zet ik het uit?", and it is
+            deliberately ABOVE the list: something the app does on its own belongs in sight.
+            Hidden entirely when nothing repeats, and while searching (the results are the
+            answer to a different question). */}
+        {!searching && scheduleList.length > 0 && (
+          <div style={{ background: '#fff', borderRadius: R.md, border: '1px solid #E8EAED', padding: '14px 16px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#137333' }}>autorenew</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, fontFamily: FONT }}>
+                Terugkerende facturen
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5, color: '#5F6368', lineHeight: 1.5, marginBottom: 10, fontFamily: FONT }}>
+              De app zet het concept klaar; versturen blijft aan jou.
+            </div>
+            {scheduleList.map(sc => (
+              <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderTop: '1px solid #F1F3F4' }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: sc.active ? M3.onSurface : '#5F6368', fontFamily: FONT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sc.source?.client_name ?? 'Onbekende klant'}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT }}>
+                    {sc.active
+                      ? `${CADENCE_NL[sc.cadence] ?? sc.cadence} · volgende ${fmtDate(sc.next_run_date)}`
+                      : `${CADENCE_NL[sc.cadence] ?? sc.cadence} · gepauzeerd`}
+                    {sc.source?.invoice_number ? ` · ${sc.source.invoice_number}` : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => toggleRepeat(sc.id, !sc.active)}
+                    style={{ fontSize: 12.5, color: M3.onPrimaryContainer, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
+                    {sc.active ? 'Pauzeer' : 'Hervat'}
+                  </button>
+                  <button
+                    onClick={() => stopRepeat(sc.id)}
+                    style={{ fontSize: 12.5, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT }}>
+                    Stop
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {(searching ? searchLoading : loading) && sorted.length === 0 ? (
           <SkeletonList />
         ) : sorted.length === 0 ? (
@@ -800,10 +985,13 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                   {/* Main row — in select mode a tap toggles the bundle selection
                       (only for open verkoopfacturen); otherwise it expands. */}
                   <div
+                    className="inv-row"
                     onClick={() => selectMode
                       ? (isBundelbaar(inv) && toggleSelect(inv))
                       : setExpandedId(expanded ? null : inv.id)}
-                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
+                    // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
+                    // the stack-on-mobile media query can override them; only dynamic styles here.
+                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETAALVERZOEK] selection indicator */}
                     {selectMode && isBundelbaar(inv) && (
@@ -811,8 +999,8 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         {selected[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div className="inv-row-main">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
                         <InvoiceTypeBadge type={invoiceType} />
                         {/* Status chip */}
@@ -846,7 +1034,9 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                       </p>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)
+                        so the media query can flip it to a full-width strip on a phone. */}
+                    <div className="inv-row-side">
                       {/* [BOEK-029] Amount: always total_inc_btw — never total_ex_btw */}
                       <p style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface, fontFamily: FONT_NUM }}>
                         {fmtEur(inv.total_inc_btw)}
@@ -1086,6 +1276,34 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                             Verwijderen
                           </button>
                         )}
+                        {/* [HERHAAL] Only on a real, already-sent verkoopfactuur: a concept has
+                            nothing to repeat yet, and an offerte or creditnota is not something
+                            you bill again every month. */}
+                        {!isCredit && !isOfferte && inv.status !== 'draft' && (() => {
+                          const sc = schedules[inv.id]
+                          const label = !sc
+                            ? 'Herhalen'
+                            : !sc.active
+                              ? 'Herhalen gepauzeerd'
+                              : sc.cadence === 'weekly' ? 'Herhaalt elke week'
+                                : sc.cadence === 'monthly' ? 'Herhaalt elke maand'
+                                  : sc.cadence === 'quarterly' ? 'Herhaalt elk kwartaal'
+                                    : 'Herhaalt elk jaar'
+                          return (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                setRepeatCtx({
+                                  id: inv.id, number: inv.invoice_number ?? '', client: inv.client_name ?? 'deze klant',
+                                  ...(sc ? { scheduleId: sc.id, cadence: sc.cadence, nextRun: sc.next_run_date, active: sc.active } : {}),
+                                })
+                              }}
+                              style={{ fontSize: 13, color: sc && sc.active ? '#137333' : M3.onPrimaryContainer, background: sc && sc.active ? M3.successContainer : M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>autorenew</span>
+                              {label}
+                            </button>
+                          )
+                        })()}
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1316,6 +1534,86 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         />
       )}
 
+      {/* ── [HERHAAL] Kies hoe vaak ── One question, four answers. The dialog says what will
+           happen in full: a CONCEPT arrives each period and the owner sends it — the app never
+           sends an invoice by itself, because that is the act that mints a number and reaches a
+           customer. */}
+      {repeatCtx && (
+        <div
+          onClick={() => setRepeatCtx(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}
+          >
+            <p style={{ fontSize: 20, fontWeight: 700, color: '#202124', marginBottom: 12, textAlign: 'center', letterSpacing: -0.3 }}>
+              {!repeatCtx.scheduleId ? 'Hoe vaak herhalen?' : repeatCtx.active === false ? 'Herhalen staat op pauze' : 'Deze factuur herhaalt'}
+            </p>
+            <p style={{ fontSize: 14, color: '#5f6368', textAlign: 'center', marginBottom: 20, lineHeight: 1.5 }}>
+              {repeatCtx.scheduleId ? (
+                repeatCtx.active === false ? (
+                  <>Er wordt niets klaargezet voor {repeatCtx.client} zolang dit op pauze staat. Het schema blijft bewaard.</>
+                ) : (
+                  <>Het volgende concept voor {repeatCtx.client} staat klaar op <strong>{fmtDate(repeatCtx.nextRun ?? null)}</strong>.</>
+                )
+              ) : (
+                <>We maken deze factuur voor {repeatCtx.client} telkens opnieuw klaar — met dezelfde regels en hetzelfde
+                betaaltermijn. Je krijgt een <strong>concept</strong> dat je zelf verstuurt.</>
+              )}
+            </p>
+            {/* [HERHAAL] Stopping is the promise the dialog makes when it starts, so it lives in
+                the same place. It removes only the schedule: every concept it already produced is
+                an ordinary invoice and stays exactly where it is. */}
+            {repeatCtx.scheduleId ? (
+              <>
+                {/* Pause first: it is the reversible one, and the one most owners actually want. */}
+                <button
+                  onClick={() => { const id = repeatCtx.scheduleId as string; const next = repeatCtx.active === false; setRepeatCtx(null); void toggleRepeat(id, next) }}
+                  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
+                >
+                  {repeatCtx.active === false ? 'Hervatten' : 'Pauzeren'}
+                </button>
+                <button
+                  onClick={() => stopRepeat(repeatCtx.scheduleId as string)}
+                  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: M3.errorContainer, color: M3.error, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}
+                >
+                  Stoppen met herhalen
+                </button>
+              </>
+            ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              {([
+                ['weekly', 'Elke week'],
+                ['monthly', 'Elke maand'],
+                ['quarterly', 'Elk kwartaal'],
+                ['yearly', 'Elk jaar'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => startRepeat(value)}
+                  style={{ padding: '14px', borderRadius: R.full, background: M3.primaryContainer, color: M3.onPrimaryContainer, fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            )}
+            <p style={{ fontSize: 12, color: '#9AA0A6', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
+              {repeatCtx.scheduleId
+                ? 'Concepten die al klaarstaan blijven staan — stoppen raakt alleen de herhaling zelf.'
+                : 'Stoppen kan altijd — het herhalen staat bij deze factuur en raakt de facturen die al klaarstaan nooit.'}
+            </p>
+            <button
+              onClick={() => setRepeatCtx(null)}
+              style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── [INVOICE-REMOVE] Remove dialog — the decision, rendered ──
           One component for all four answers. The confirm button is green-lit only when the
           decision allows it; for a paid sale it becomes "Creditnota maken" (the real way
@@ -1375,10 +1673,13 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       {/* ── Toast ── */}
       {toast && (
         <div style={{
+          // [TOAST-WRAP] Long sentences (e.g. "… maar de PDF kon niet worden gemaakt —
+          // verstuur opnieuw") were nowrap + centered, so on a phone they ran past both
+          // screen edges and were cut off. Cap the width and let them wrap instead.
           position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
           background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500,
           padding: '12px 20px', borderRadius: R.sm, zIndex: 300,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: 'calc(100vw - 32px)', textAlign: 'center',
           animation: 'fadeInUp 0.2s ease', fontFamily: FONT,
         }}>
           {toast}
@@ -1425,7 +1726,9 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
 }) {
   // [BRIDGE-QUARTER] real payment date — only relevant when paymentChoice is set
   // (marking as paid). Defaults to today; user corrects if they paid earlier.
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  // [TZ] Amsterdam, not UTC: just after midnight the UTC day is still yesterday, and under
+  // kasstelsel a betaaldatum one day early can land in a quarter that is already filed.
+  const [paymentDate, setPaymentDate] = useState(amsterdamToday())
   // [MANUAL-PARTIAL-PAY] The optional amount. EMPTY MEANS EVERYTHING — the common case costs
   // zero keystrokes and nobody has to know the word "deelbetaling". Deliberately a placeholder
   // and not a pre-filled value: pre-filling would force a phone user to wipe "€ 1.000,00"
@@ -1487,7 +1790,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             <input
               type="date"
               value={paymentDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={amsterdamToday()}
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />

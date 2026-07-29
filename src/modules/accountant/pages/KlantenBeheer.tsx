@@ -6,8 +6,9 @@
 // Receives clients as props (fetched server-side via repository).
 // Writes (unlink / invite) go through API routes.
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { rowMatchesQuery } from '@/lib/search'
 import type { ClientSummary, ClientReadiness } from '../accountant.types'
 
 // ─────────────────────────────────────────────────────────
@@ -45,6 +46,12 @@ export default function KlantenBeheer({ initialClients }: Props) {
   const router = useRouter()
 
   const [clients, setClients] = useState<ClientSummary[]>(initialClients)
+  // [SMART-FILTER] Roster search (bedrijfsnaam / naam / e-mail), memoized — unbounded list.
+  const [search, setSearch] = useState('')
+  const shownClients = useMemo(() => {
+    const q = search.trim()
+    return q ? clients.filter((c) => rowMatchesQuery(q, [c.company_name, c.full_name, c.email])) : clients
+  }, [clients, search])
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState<string | null>(null)
@@ -191,13 +198,33 @@ export default function KlantenBeheer({ initialClients }: Props) {
             <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Gekoppelde klanten</h2>
           </div>
 
+          {clients.length > 0 && (
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid #E0E0E0', position: 'relative' }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', left: 27, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Zoek klant op naam of e-mail…"
+                aria-label="Klanten zoeken"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '8px 32px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124' }}
+              />
+              {search && (
+                <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+              )}
+            </div>
+          )}
+
           {clients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
               Nog geen klanten gekoppeld
             </p>
+          ) : shownClients.length === 0 ? (
+            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
+              Geen klanten gevonden voor &ldquo;{search.trim()}&rdquo;
+            </p>
           ) : (
             <div>
-              {clients.map((client, idx) => (
+              {shownClients.map((client, idx) => (
                 <div
                   key={client.id}
                   style={{
@@ -205,7 +232,7 @@ export default function KlantenBeheer({ initialClients }: Props) {
                     alignItems: 'center',
                     gap: 12,
                     padding: '12px 16px',
-                    borderBottom: idx < clients.length - 1 ? '1px solid #F1F3F4' : 'none',
+                    borderBottom: idx < shownClients.length - 1 ? '1px solid #F1F3F4' : 'none',
                     minHeight: 60,
                   }}
                 >

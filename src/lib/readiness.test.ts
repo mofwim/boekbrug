@@ -315,6 +315,83 @@ console.log("\n— [KASSTELSEL] undated paid money blocks 'klaar' —");
   const none = buildReadiness(perfect({ badDebt: { count: 0, reclaimableBtw: 0 } }));
   check("no eligible bad debt → no risk", !none.risks.some((x) => /terugvraagbaar/.test(x.title)));
 }
+{
+  // [BAD-DEBT] Art. 29 lid 7 — voorbelasting to REPAY on >1yr-unpaid purchases. Money to give,
+  // so it is worded as a liability — but still a risk: the app cannot prove the invoice went
+  // unpaid in the world, and blocking a filing on that inference would trap the owner.
+  const r = buildReadiness(perfect({ vatClawback: { count: 2, repayableBtw: 420 } }));
+  check("clawback surfaces as a risk", r.risks.some((x) => /terugbetalen/.test(x.title)));
+  check("clawback names count + euros", r.risks.some((x) => /2 onbetaalde inkoopfacturen/.test(x.title) && /€420/.test(x.title)));
+  check("clawback is NOT a missing gap", !r.missing.some((x) => /terugbetalen/.test(x.title)));
+  check("clawback does not block ready", r.missing.length === 0 && r.status === "ready");
+  check("clawback points at the purchase page, not at Facturen",
+    r.risks.some((x) => /terugbetalen/.test(x.title) && x.fix?.href === "/dashboard/incoming/manage"));
+  check("clawback offers the other resolution (you did pay it)",
+    r.risks.some((x) => /terugbetalen/.test(x.title) && /op betaald/.test(x.detail ?? "")));
+  const none = buildReadiness(perfect({ vatClawback: { count: 0, repayableBtw: 0 } }));
+  check("nothing eligible → no clawback risk", !none.risks.some((x) => /terugbetalen/.test(x.title)));
+  const immaterial = buildReadiness(perfect({ vatClawback: { count: 1, repayableBtw: 0.2 } }));
+  check("a sub-euro clawback is not raised (it rounds to €0)", !immaterial.risks.some((x) => /terugbetalen/.test(x.title)));
+}
+{
+  // Both sides at once: they are separate lines, and the one that COSTS money comes first.
+  const r = buildReadiness(perfect({
+    badDebt: { count: 1, reclaimableBtw: 210 },
+    vatClawback: { count: 1, repayableBtw: 105 },
+  }));
+  const iClaw = r.risks.findIndex((x) => /terugbetalen/.test(x.title));
+  const iBad = r.risks.findIndex((x) => /terugvraagbaar/.test(x.title));
+  check("both art. 29 sides are reported, never netted into one figure", iClaw >= 0 && iBad >= 0);
+  check("the liability is listed before the reclaim", iClaw < iBad);
+}
+{
+  // [ICP] An opgaaf that will be rejected counts as not filed — so it is raised. But charging
+  // BTW to an EU customer is sometimes right, so it never blocks.
+  const r = buildReadiness(perfect({ icpProblems: 2 }));
+  check("an unfilable EU sale surfaces as a risk", r.risks.some((x) => /ICP-opgaaf/.test(x.title)));
+  check("…counted, so the owner knows how many to look at", r.risks.some((x) => /^2 EU-verkopen/.test(x.title)));
+  check("one problem reads in the singular", buildReadiness(perfect({ icpProblems: 1 })).risks.some((x) => /^1 EU-verkoop kan/.test(x.title)));
+  check("it explains BOTH ways to resolve it", r.risks.some((x) => /VIES/.test(x.detail ?? "") && /verleg je de BTW/.test(x.detail ?? "")));
+  check("it never blocks the quarter", r.missing.length === 0 && r.status === "ready");
+  check("no EU problems → no risk", !buildReadiness(perfect({ icpProblems: 0 })).risks.some((x) => /ICP-opgaaf/.test(x.title)));
+  check("a quarter with no EU sales at all is untouched", !buildReadiness(perfect()).risks.some((x) => /ICP-opgaaf/.test(x.title)));
+}
+
+{
+  // [DATE-GAP] A verified invoice with no date is in NO quarter's figures, so it must block.
+  const r = buildReadiness(perfect({ datelessVerifiedCount: 2 }));
+  check("a dateless verified invoice is a blocking GAP, not a risk",
+    r.missing.some((x) => /geen factuurdatum/.test(x.title)) && !r.risks.some((x) => /geen factuurdatum/.test(x.title)));
+  check("…so the quarter cannot be 'klaar' while it is missing from the count", r.status !== "ready");
+  check("it says the figures are too LOW, which is the actual harm",
+    r.missing.some((x) => /te laag/.test(x.detail ?? "")));
+  check("it names the one action that fixes it",
+    r.missing.some((x) => /Vul de factuurdatum in/.test(x.detail ?? "")));
+  check("one reads in the singular", buildReadiness(perfect({ datelessVerifiedCount: 1 })).missing.some((x) => /^1 factuur heeft geen factuurdatum$/.test(x.title)));
+  check("none → nothing said", !buildReadiness(perfect({ datelessVerifiedCount: 0 })).missing.some((x) => /factuurdatum/.test(x.title)));
+  check("absent → unchanged for older callers", !buildReadiness(perfect()).missing.some((x) => /factuurdatum/.test(x.title)));
+}
+
+console.log("\n— [DATE-GAP] een factuur zonder datum maakt 'stil 100% klaar' onmogelijk —");
+{
+  // Een geverifieerde factuur zonder invoice_date valt uit ELK bereikfilter (.gte/.lte laat
+  // NULL stil vallen): geen kwartaalpakket, geen concept-aangifte, haar BTW telt nergens. Het
+  // pakket waarschuwde er al over; dit scherm — dat het eindoordeel uitspreekt — wist er niets
+  // van en kon dus 100% klaar melden terwijl er geld buiten beeld lag.
+  const r = buildReadiness(perfect({ datelessInvoiceCount: 1 }));
+  check("een dateloze factuur is een risico", r.risks.some((x) => /geen datum/i.test(x.title)));
+  check("het risico legt uit wat er misgaat", r.risks.some((x) => /geen enkel kwartaal/i.test(x.detail ?? "")));
+  check("de score kan geen 100 meer zijn", r.score < 100);
+
+  // Maar het is bewust GEEN blokkade: de telling is all-time, dus een harde stop zou al
+  // ingediende kwartalen voorgoed rood zetten — ook op het werkbord van de boekhouder.
+  check("het blokkeert 'klaar' niet", !r.missing.some((x) => /geen datum/i.test(x.title)));
+
+  // En zonder dateloze facturen verandert er niets aan het schone kwartaal.
+  const schoon = buildReadiness(perfect({ datelessInvoiceCount: 0 }));
+  check("nul dateloos → geen risico", !schoon.risks.some((x) => /geen datum/i.test(x.title)));
+  check("nul dateloos → gewoon 100", schoon.score === 100);
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

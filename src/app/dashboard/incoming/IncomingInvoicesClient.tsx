@@ -13,12 +13,18 @@
 // - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback, useRef } from "react";
+// [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
+import { amsterdamToday } from '@/lib/format-nl'
 import Link from "next/link";
 // [BOEK-011] Centralized navigation — single source of truth across the app
 import { FONT } from "@/lib/design/tokens";
 import { triggerBankAutoConfirm } from "@/lib/bank-auto-confirm-trigger";
 import { combineImagesToPdf } from "@/lib/combine-images-pdf";
 import { rowMatchesQuery } from "@/lib/search";
+// [NEGEER-REDEN] Eén lijst redenen, gedeeld met de API en met de CHECK-constraint.
+import { ARCHIVE_REASONS, ARCHIVE_REASON_LABELS, archiveReasonLabel, type ArchiveReason } from "@/lib/archive-reason";
+// [AFZENDERREGEL] Alleen bij "geen factuur" mag een blijvende regel voorgesteld worden.
+import { mayOfferSenderRule } from "@/lib/sender-rules";
 // [INTAKE-IMG-NORMALIZE] A lone HEIC/HEIF/WebP/BMP/TIFF (an iPhone photo) reaches the reader as an
 // "unsupported type" and is filed unreadable — losing the invoice. Normalize to a bounded JPEG
 // before upload; a PDF (incl. the multi-page combine's output) passes through untouched.
@@ -39,6 +45,12 @@ interface ImportHealth {
     invoiceNumber: boolean;
     invoiceDate: boolean;
     reminder: boolean;
+    // [DEDUP-SOFT] stond al in ImportHealth maar ontbrak in deze spiegel.
+    possibleDuplicate: boolean;
+    // [IBAN-WISSEL] Bekende leverancier, ander rekeningnummer. Krijgt bewust een EIGEN,
+    // zwaardere badge: dit is geen leesfout maar een geldwaarschuwing, en de handeling
+    // erachter (bellen op een zelf opgezocht nummer) is een andere dan "controleer de cijfers".
+    ibanChanged: boolean;
   };
 }
 
@@ -93,6 +105,9 @@ interface IncomingInvoice {
   // [INCOMING-BEVESTIGD] 'received' (verified, te betalen) or 'paid' (settled) on the Bevestigd
   // tab; absent on pending ('processing') / ignored ('archived').
   status?: string | null;
+  // [NEGEER-REDEN] Waarom deze factuur genegeerd is. Alleen gevuld op de Genegeerd-lijst, en ook
+  // daar mag hij ontbreken: oude rijen weten het niet meer, en de vraag is vrijwillig.
+  archive_reason?: string | null;
 }
 
 interface ConnectionStatus {
@@ -431,7 +446,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                 <input
                   type="date"
                   value={backfillDate}
-                  max={new Date().toISOString().slice(0, 10)}
+                  max={amsterdamToday()}
                   onChange={(e) => setBackfillDate(e.target.value)}
                   disabled={syncing}
                   style={{
@@ -628,7 +643,7 @@ function ConfirmPaidModal({
   // [BRIDGE-QUARTER] real payment date (defaults to today) + confirmation amount.
   // confirmAmount is UI-only for now (NOT stored) — explicit defer per brief §2.
   const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().slice(0, 10)
+    amsterdamToday()
   );
   const [confirmAmount, setConfirmAmount] = useState("");
 
@@ -1062,7 +1077,7 @@ function ConfirmPaidModal({
             <input
               type="date"
               value={paymentDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={amsterdamToday()}
               onChange={(e) => setPaymentDate(e.target.value)}
               disabled={submitting}
               style={{
@@ -1149,6 +1164,9 @@ function ConfirmDialog({
   confirmColor,
   onConfirm,
   onCancel,
+  choices,
+  choiceValue,
+  onChoice,
 }: {
   title: string;
   message: string;
@@ -1156,6 +1174,11 @@ function ConfirmDialog({
   confirmColor: string;
   onConfirm: () => void;
   onCancel: () => void;
+  // [NEGEER-REDEN] Optioneel keuzelijstje boven de knoppen. Optioneel gehouden zodat elke
+  // bestaande aanroep van deze dialoog onveranderd blijft werken.
+  choices?: { value: string; label: string; hint: string }[];
+  choiceValue?: string | null;
+  onChoice?: (value: string | null) => void;
 }) {
   return (
     <div
@@ -1176,9 +1199,43 @@ function ConfirmDialog({
         <div style={{ fontWeight: 700, fontSize: 17, color: "#202124", marginBottom: 8 }}>
           {title}
         </div>
-        <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 14, color: "#5f6368", marginBottom: choices?.length ? 14 : 20, lineHeight: 1.5 }}>
           {message}
         </div>
+        {/* [NEGEER-REDEN] Vrijwillig. Nog een keer klikken op een gekozen reden zet hem weer uit,
+            zodat "ik weet het niet" een echte uitkomst is en niet iets wat je moet omzeilen. */}
+        {choices && choices.length > 0 && (
+          <div style={{ textAlign: "left", marginBottom: 18 }}>
+            <div style={{ fontSize: 12, color: "#80868b", marginBottom: 8, fontWeight: 600 }}>
+              Waarom? (optioneel)
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {choices.map((c) => {
+                const active = choiceValue === c.value;
+                return (
+                  <button
+                    key={c.value}
+                    type="button"
+                    onClick={() => onChoice?.(active ? null : c.value)}
+                    style={{
+                      display: "flex", alignItems: "baseline", gap: 8, width: "100%",
+                      padding: "9px 11px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                      background: active ? "#e8f0fe" : "#f8f9fa",
+                      border: `1px solid ${active ? "#1a73e8" : "#e8eaed"}`,
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 700, color: active ? "#1a73e8" : "#3c4043", whiteSpace: "nowrap" }}>
+                      {c.label}
+                    </span>
+                    <span style={{ fontSize: 12, color: "#80868b", lineHeight: 1.35 }}>
+                      {c.hint}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <button
           onClick={onConfirm}
           style={{
@@ -1305,12 +1362,14 @@ function InvoiceCard({
     >
       {/* Header — always visible, tappable */}
       <button
+        className="inv-row"
         onClick={selectMode ? onSelect : onToggle}
+        // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so the
+        // stack-on-mobile media query can override them; the flex:1 main pushes the side
+        // cluster right, so justify-content:space-between is no longer needed here.
         style={{
           width: "100%", padding: "16px", border: "none",
           background: "transparent", cursor: "pointer", textAlign: "left",
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          gap: 12,
         }}
       >
         {/* [INTAKE-VERIFY-BULK] selection checkbox — only in pending select mode */}
@@ -1327,7 +1386,7 @@ function InvoiceCard({
             {selected ? "✓" : ""}
           </span>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="inv-row-main">
           <div
             style={{
               fontWeight: 700, fontSize: 16, color: "#202124", marginBottom: 3,
@@ -1357,12 +1416,46 @@ function InvoiceCard({
               </span>
             </div>
           )}
+          {/* [NEGEER-REDEN] Op de Genegeerd-lijst: waarom staat hij hier? Neutraal grijs — dit is
+              een notitie, geen waarschuwing. Ontbreekt hij (oude rij, of de vraag overgeslagen),
+              dan staat er niets: liever geen label dan een verzonnen label. */}
+          {mode === "ignored" && archiveReasonLabel(invoice.archive_reason) && (
+            <div
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 5,
+                marginTop: 6, marginRight: 6, padding: "3px 9px", borderRadius: 8,
+                background: "#f1f3f4", border: "1px solid #e0e3e6",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "#5f6368", fontWeight: 600 }}>
+                {archiveReasonLabel(invoice.archive_reason)}
+              </span>
+            </div>
+          )}
           {/* [IMPORT-MONITOR] Health badge — only in the pending queue. Flagged
               invoices get a calm-but-clear attention pill; clean invoices get a
               quiet "ready to confirm" hint (calm, never the alarming "review").
               The ignored tab shows nothing here — it must not nag. */}
           {mode === "pending" && (
-            invoice.health.level === "needs-review" ? (
+            /* [IBAN-WISSEL] Een gewisseld rekeningnummer krijgt de ROOD-badge, niet de amberen
+               "Aandacht nodig". Reden: bij factuurfraude klopt al het andere — bedrag, nummer,
+               btw, datum — dus de gewone amberen pil zou dit laten lezen als "de AI twijfelde
+               ergens over", terwijl dit het enige signaal is dat over GELD gaat. Eigen kleur,
+               eigen woorden, en de reden eronder noemt beide nummers. */
+            invoice.health.flags.ibanChanged ? (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  marginTop: 6, padding: "3px 9px", borderRadius: 8,
+                  background: "#fce8e6", border: "1px solid #f5b5ae",
+                }}
+              >
+                <span style={{ fontSize: 11 }}>🏦</span>
+                <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 700 }}>
+                  Ander rekeningnummer
+                </span>
+              </div>
+            ) : invoice.health.level === "needs-review" ? (
               <div
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 5,
@@ -1391,7 +1484,10 @@ function InvoiceCard({
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* [ROW-LAYOUT] .inv-row-side-h (globals.css) keeps amount + badge + chevron in one
+            horizontal cluster on a wide screen, and drops it to a full-width, right-aligned
+            strip below 520px so the deelbetaling badge stops squeezing the afzender name. */}
+        <div className="inv-row-side-h">
           <span style={{ fontWeight: 700, fontSize: 18, color: "#202124", whiteSpace: "nowrap" }}>
             {formatSignedAmount(invoice.total_inc_btw)}
           </span>
@@ -2144,7 +2240,11 @@ export default function IncomingInvoicesClient({
   // incoming invoices (supplier / invoice number / amount) instantly, in place.
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  // [NEGEER-UNDO] De toast kan nu een handeling dragen ("Ongedaan maken"). De timer staat in een
+  // ref zodat een tweede toast de eerste niet stiekem laat aftellen op de oude tijd.
+  const [toast, setToast] = useState<{ msg: string; action?: { label: string; run: () => void } } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   // [INTAKE-FOCUS] Deep-link target from the upload results modal
   // ("Naar controle →" navigates to /dashboard/incoming?focus={invoiceId}).
@@ -2181,10 +2281,26 @@ export default function IncomingInvoicesClient({
   // [QUEUE-EDIT-UX] card "Bewerken" → same verify modal, edit fields pre-opened.
   const [editFor, setEditFor] = useState<IncomingInvoice | null>(null);
   const [ignoreFor, setIgnoreFor] = useState<IncomingInvoice | null>(null);
+  // [NEGEER-REDEN] De keuze in de negeer-dialoog. Altijd null bij het openen — nooit een
+  // voorgeselecteerde reden, want dan legt het scherm de eigenaar een antwoord in de mond.
+  const [ignoreReason, setIgnoreReason] = useState<ArchiveReason | null>(null);
+  // [AFZENDERREGEL] De factuur waarvoor we zojuist "altijd negeren van deze afzender" aanbieden,
+  // en de regels die al gelden (getoond bij Genegeerd, zodat ze op te heffen zijn).
+  const [ruleOfferFor, setRuleOfferFor] = useState<IncomingInvoice | null>(null);
+  const [senderRules, setSenderRules] = useState<{ id: string; sender_email: string }[]>([]);
+  // [RITME] Leveranciers met een vast ritme waarvan de verwachte factuur uitblijft. Verreweg
+  // meestal leeg — dan is er ook geen banner. Zie de drie zwijg-regels in supplier-cadence.ts.
+  const [missing, setMissing] = useState<{ supplier: string; reason: string; lastSeen: string }[]>([]);
+  const [missingDismissed, setMissingDismissed] = useState(false);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+  // [NEGEER-UNDO] Een toast met een handeling erin. De tijd staat bewust langer (7s) wanneer er
+  // iets te ondoen valt: 3 seconden is genoeg om iets te LEZEN, niet om te beslissen dat je het
+  // toch niet wilde. Zonder actie blijft het exact zoals het was.
+  const showToast = (msg: string, action?: { label: string; run: () => void }) => {
+    setToast({ msg, action });
+    const ms = action ? 7000 : 3000;
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), ms);
   };
 
   // OAuth result toast — shown on the next tick (never synchronously in the
@@ -2388,35 +2504,10 @@ export default function IncomingInvoicesClient({
     []
   );
 
-  // ── Ignore — archive ──
-  const handleIgnore = useCallback(async (invoice: IncomingInvoice) => {
-    setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
-    setIgnored((prev) => [invoice, ...prev]);
-    setIgnoreFor(null);
-    setExpandedId(null);
-
-    // [UI-HONESTY] A fetch that resolves is NOT proof of success — a 4xx/5xx (not found, RLS reject)
-    // resolves with res.ok=false. The old code showed "genegeerd" regardless, so a failed ignore
-    // looked done. Check res.ok and, on failure, roll back to the queue and say so.
-    const rollback = () => {
-      setIgnored((prev) => prev.filter((inv) => inv.id !== invoice.id));
-      setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
-    };
-    try {
-      const res = await fetch(`/api/email/confirm/${invoice.id}`, { method: "DELETE" });
-      if (res.ok) {
-        showToast("Factuur genegeerd");
-      } else {
-        rollback();
-        showToast("Negeren mislukt — factuur staat nog in de wachtrij");
-      }
-    } catch {
-      rollback();
-      showToast("Fout — factuur staat nog in de wachtrij");
-    }
-  }, []);
-
   // ── Restore ignored → pending ──
+  // [NEGEER-UNDO] Staat bewust VÓÓR handleIgnore: de "Ongedaan maken"-knop in de negeer-toast
+  // roept dit pad aan, en zo hoeft dat niet via een ref (die de React-compiler terecht weigert:
+  // een ref muteren rond de render is een side-effect). Eén herstelpad, één waarheid.
   const handleRestore = useCallback(async (invoice: IncomingInvoice) => {
     setIgnored((prev) => prev.filter((inv) => inv.id !== invoice.id));
     setPending((prev) => [invoice, ...prev]);
@@ -2441,6 +2532,125 @@ export default function IncomingInvoicesClient({
       showToast("Fout — probeer opnieuw");
     }
   }, []);
+
+  // ── Ignore — archive ──
+  const handleIgnore = useCallback(async (invoice: IncomingInvoice, reason: ArchiveReason | null) => {
+    setPending((prev) => prev.filter((inv) => inv.id !== invoice.id));
+    // [NEGEER-REDEN] Optimistisch mee in de lijst, zodat het label meteen klopt met wat er
+    // zojuist gekozen is — ook vóór de volgende paginalading.
+    setIgnored((prev) => [{ ...invoice, archive_reason: reason }, ...prev]);
+    setIgnoreFor(null);
+    setIgnoreReason(null);
+    setExpandedId(null);
+
+    // [UI-HONESTY] A fetch that resolves is NOT proof of success — a 4xx/5xx (not found, RLS reject)
+    // resolves with res.ok=false. The old code showed "genegeerd" regardless, so a failed ignore
+    // looked done. Check res.ok and, on failure, roll back to the queue and say so.
+    const rollback = () => {
+      setIgnored((prev) => prev.filter((inv) => inv.id !== invoice.id));
+      setPending((prev) => (prev.some((p) => p.id === invoice.id) ? prev : [invoice, ...prev]));
+    };
+    try {
+      const res = await fetch(`/api/email/confirm/${invoice.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (res.ok) {
+        // [NEGEER-UNDO] Negeren is één tik en het haalt een factuur uit beeld — dus hoort de weg
+        // terug in dezelfde tik te zitten, niet in een tabblad dat je eerst moet vinden. Hergebruikt
+        // exact het herstelpad van de Genegeerd-lijst (PATCH), dus er is geen tweede waarheid.
+        // [AFZENDERREGEL] Alleen bij "geen factuur" bieden we de blijvende regel aan: dat is de
+        // enige reden die iets zegt over wat dit ADRES structureel stuurt. "Dubbel" en "niet van
+        // mij" gaan over deze ene factuur — daar een regel van maken zou echte post laten
+        // verdwijnen. Het aanbod is een tweede scherm, nooit iets dat vanzelf gebeurt.
+        if (mayOfferSenderRule(reason, invoice.client_email)) {
+          setRuleOfferFor(invoice);
+          showToast("Factuur genegeerd");
+        } else {
+          showToast("Factuur genegeerd", {
+            label: "Ongedaan maken",
+            run: () => { void handleRestore(invoice); },
+          });
+        }
+      } else {
+        rollback();
+        showToast("Negeren mislukt — factuur staat nog in de wachtrij");
+      }
+    } catch {
+      rollback();
+      showToast("Fout — factuur staat nog in de wachtrij");
+    }
+  }, [handleRestore]);
+
+  // [RITME] Eén keer per paginabezoek ophalen. Het is een read-only rekensom over bestaande
+  // facturen — geen AI, geen kosten — en het antwoord is meestal een lege lijst.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/incoming/missing");
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && Array.isArray(data.missing)) setMissing(data.missing);
+      } catch {
+        // Stil falen: dit is een extra oog, nooit iets waar de pagina op mag stukgaan.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── [AFZENDERREGEL] De regels van de eigenaar: ophalen, aanzetten, opheffen ──
+  // Alleen geladen wanneer het Genegeerd-tabblad open staat: daar horen ze thuis (het is de plek
+  // waar je kijkt als je iets mist) en zo kost het de wachtrij niets.
+  const loadSenderRules = useCallback(async () => {
+    try {
+      const res = await fetch("/api/email/sender-rules");
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      setSenderRules(Array.isArray(data.rules) ? data.rules : []);
+    } catch {
+      // Geen regels tonen is beter dan een foutmelding op een tabblad dat verder gewoon werkt.
+    }
+  }, []);
+
+  const addSenderRule = useCallback(async (invoice: IncomingInvoice) => {
+    setRuleOfferFor(null);
+    try {
+      const res = await fetch("/api/email/sender-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: invoice.client_email, invoice_id: invoice.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showToast(`Post van ${data.sender_email ?? "deze afzender"} wordt voortaan overgeslagen`);
+        void loadSenderRules();
+      } else {
+        // [UI-HONESTY] Nooit "regel ingesteld" zeggen als er niets is ingesteld.
+        showToast(data.error || "Regel instellen mislukt — probeer het opnieuw");
+      }
+    } catch {
+      showToast("Regel instellen mislukt — controleer je verbinding");
+    }
+  }, [loadSenderRules]);
+
+  const removeSenderRule = useCallback(async (email: string) => {
+    // Optimistisch weg uit de lijst; bij een fout halen we de echte stand weer op.
+    setSenderRules((prev) => prev.filter((r) => r.sender_email !== email));
+    try {
+      const res = await fetch(`/api/email/sender-rules?email=${encodeURIComponent(email)}`, { method: "DELETE" });
+      if (res.ok) {
+        showToast(`Post van ${email} komt weer binnen`);
+      } else {
+        showToast("Regel opheffen mislukt — probeer het opnieuw");
+        void loadSenderRules();
+      }
+    } catch {
+      showToast("Regel opheffen mislukt — controleer je verbinding");
+      void loadSenderRules();
+    }
+  }, [loadSenderRules]);
 
   // ── [REIMPORT-ALL] Re-read every flagged invoice in one tap ──
   // Sequential (never hammer the AI): one reimport call per "Aandacht nodig" invoice.
@@ -2631,7 +2841,12 @@ export default function IncomingInvoicesClient({
           ] as const).map(([key, label]) => (
             <button
               key={key}
-              onClick={() => { setTab(key); setExpandedId(null); }}
+              onClick={() => {
+                setTab(key); setExpandedId(null);
+                // [AFZENDERREGEL] Regels pas ophalen als het tabblad waar ze staan open gaat —
+                // de wachtrij hoeft er niet op te wachten.
+                if (key === "ignored") void loadSenderRules();
+              }}
               style={{
                 flex: 1, padding: "9px 0", borderRadius: 9, border: "none",
                 background: tab === key ? "#fff" : "transparent",
@@ -2686,6 +2901,81 @@ export default function IncomingInvoicesClient({
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {/* [RITME] De factuur die NIET kwam. Alleen op het tabblad "Te bevestigen", want daar
+            komt de eigenaar om zijn inkomende post af te handelen — en dit is het enige dat hij
+            daar NIET kan zien staan. Blauw en rustig, geen alarm: er is niets stuk, er is iets
+            afwezig. Wegklikbaar, want een banner die je niet weg kunt krijgen wordt meubilair. */}
+        {tab === "pending" && missing.length > 0 && !missingDismissed && (
+          <div style={{
+            marginBottom: 16, padding: "13px 15px", borderRadius: 12,
+            background: "#e8f0fe", border: "1px solid #c6dafc",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#174ea6", marginBottom: 6 }}>
+                {missing.length === 1
+                  ? "Er lijkt een factuur te ontbreken"
+                  : `Er lijken ${missing.length} facturen te ontbreken`}
+              </div>
+              <button
+                onClick={() => setMissingDismissed(true)}
+                aria-label="Melding sluiten"
+                style={{
+                  background: "transparent", border: "none", color: "#174ea6",
+                  fontSize: 16, lineHeight: 1, cursor: "pointer", padding: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {missing.map((m) => (
+                <div key={`${m.supplier}-${m.lastSeen}`} style={{ fontSize: 13, color: "#1f3d68", lineHeight: 1.5 }}>
+                  {m.reason}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* [AFZENDERREGEL] De regels van de eigenaar staan bij Genegeerd, want dat is de plek waar
+            je kijkt als je iets mist. Elke regel met het adres erbij en één knop om hem op te
+            heffen — een mechanisme dat post ongezien tegenhoudt moet net zo makkelijk uit als aan. */}
+        {tab === "ignored" && senderRules.length > 0 && (
+          <div style={{
+            marginBottom: 16, padding: "12px 14px", borderRadius: 12,
+            background: "#f8f9fa", border: "1px solid #e8eaed",
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#3c4043", marginBottom: 8 }}>
+              Afzenders die je overslaat
+            </div>
+            <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 10, lineHeight: 1.45 }}>
+              Bijlagen van deze adressen worden niet geïmporteerd. De e-mails zelf blijven gewoon in
+              je mailbox staan, en wat overgeslagen is zie je terug bij “Overgeslagen bij import”.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {senderRules.map((r) => (
+                <div key={r.id} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                  padding: "8px 10px", borderRadius: 9, background: "#fff", border: "1px solid #e8eaed",
+                }}>
+                  <span style={{ fontSize: 13, color: "#202124", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {r.sender_email}
+                  </span>
+                  <button
+                    onClick={() => removeSenderRule(r.sender_email)}
+                    style={{
+                      background: "transparent", border: "none", color: "#1a73e8",
+                      fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", padding: 0,
+                    }}
+                  >
+                    Opheffen
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -2871,6 +3161,20 @@ export default function IncomingInvoicesClient({
         </div>
       )}
 
+      {/* [AFZENDERREGEL] Het aanbod, ná het negeren. Bewust een apart schermpje en geen vinkje in
+          de negeer-dialoog: een blijvende regel die post tegenhoudt verdient een eigen ja, niet
+          een vakje dat je per ongeluk meeneemt terwijl je iets anders aan het doen was. */}
+      {ruleOfferFor && (
+        <ConfirmDialog
+          title="Altijd overslaan?"
+          message={`Je negeerde dit als “geen factuur”. Wil je bijlagen van ${ruleOfferFor.client_email} voortaan overslaan? De e-mails blijven in je mailbox, en je kunt de regel bij Genegeerd weer opheffen.`}
+          confirmLabel="Ja, altijd overslaan"
+          confirmColor="#1a73e8"
+          onConfirm={() => addSenderRule(ruleOfferFor)}
+          onCancel={() => setRuleOfferFor(null)}
+        />
+      )}
+
       {/* Ignore confirmation */}
       {ignoreFor && (
         <ConfirmDialog
@@ -2878,8 +3182,15 @@ export default function IncomingInvoicesClient({
           message="De factuur wordt verplaatst naar Genegeerd. Je kunt hem later terugzetten."
           confirmLabel="Ja, negeer"
           confirmColor="#ea4335"
-          onConfirm={() => handleIgnore(ignoreFor)}
-          onCancel={() => setIgnoreFor(null)}
+          choices={ARCHIVE_REASONS.map((v) => ({
+            value: v,
+            label: ARCHIVE_REASON_LABELS[v].label,
+            hint: ARCHIVE_REASON_LABELS[v].hint,
+          }))}
+          choiceValue={ignoreReason}
+          onChoice={(v) => setIgnoreReason(v as ArchiveReason | null)}
+          onConfirm={() => handleIgnore(ignoreFor, ignoreReason)}
+          onCancel={() => { setIgnoreFor(null); setIgnoreReason(null); }}
         />
       )}
 
@@ -2893,9 +3204,28 @@ export default function IncomingInvoicesClient({
             padding: "12px 20px", borderRadius: 20, fontSize: 14, fontWeight: 600,
             backdropFilter: "blur(12px)", whiteSpace: "nowrap", zIndex: 3000,
             boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
+            display: "flex", alignItems: "center", gap: 14,
           }}
         >
-          {toast}
+          <span>{toast.msg}</span>
+          {/* [NEGEER-UNDO] De weg terug zit in dezelfde tik als de handeling zelf. */}
+          {toast.action && (
+            <button
+              onClick={() => {
+                const run = toast.action!.run;
+                if (toastTimer.current) clearTimeout(toastTimer.current);
+                setToast(null);
+                run();
+              }}
+              style={{
+                background: "transparent", border: "none", color: "#8ab4f8",
+                fontWeight: 700, fontSize: 14, cursor: "pointer", padding: 0,
+                textDecoration: "underline", whiteSpace: "nowrap",
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </div>

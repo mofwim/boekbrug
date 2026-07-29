@@ -96,6 +96,18 @@ check("'1.500,50' → decimal", eq(amountOrConditions("total_inc_btw", "1.500,50
 ]));
 check("comma-only → nothing", amountOrConditions("total_inc_btw", ",").length === 0);
 check("letters → nothing", amountOrConditions("total_inc_btw", "abc").length === 0);
+// signed column (bank debit stored negative): both + and - variants, decimal-aware
+check("signed '45' → both signs, exact + decimals", eq(amountOrConditions("amount", "45", { signed: true }), [
+  "amount::text.ilike.45", "amount::text.ilike.45.%",
+  "amount::text.ilike.-45", "amount::text.ilike.-45.%",
+]));
+check("signed '45,50' → both signs, decimal prefix", eq(amountOrConditions("amount", "45,50", { signed: true }), [
+  "amount::text.ilike.45.50%", "amount::text.ilike.-45.50%",
+]));
+check("signed matches a -45.50 debit via -45.% pattern",
+  amountOrConditions("amount", "45", { signed: true }).includes("amount::text.ilike.-45.%"));
+check("unsigned default unchanged (no negative variants)",
+  amountOrConditions("total_inc_btw", "45").every((c) => !c.includes("ilike.-")));
 check("digits are injection-safe (only [\\d.] interpolated)",
   amountOrConditions("total_inc_btw", "6%7);drop--").every((c) => /^total_inc_btw::text\.ilike\.[\d.%]+$/.test(c)));
 
