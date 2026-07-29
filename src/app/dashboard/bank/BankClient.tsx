@@ -1272,6 +1272,8 @@ export default function BankClient() {
                 type="text"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
+                /* [SMART-FILTER] Toegankelijk label — het icoon is puur decoratief. */
+                aria-label="Transacties zoeken"
                 placeholder="Zoek op naam, omschrijving, IBAN, bedrag of datum"
                 style={{
                   width: '100%', boxSizing: 'border-box', padding: '10px 36px 10px 38px',

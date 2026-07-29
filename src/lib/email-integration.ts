@@ -586,6 +586,18 @@ export interface GmailAttachment {
 // carried out of the fetcher so the sync loop can SURFACE it (skip-registry row with an
 // actionable "upload it at Bank" reason) instead of dropping it silently. Money data still
 // enters ONLY through the reviewed Bank upload flow. Bytes are deliberately absent here.
+/**
+ * [OVERSIZED-VISIBLE] Een bijlage die de app NOOIT heeft opgehaald omdat hij boven de 10 MB lag.
+ * Reist langs precies dezelfde weg als BankStatementRef: gezien tijdens het ophalen, gemeld in de
+ * skip-registratie, nooit ingelezen. De bytes worden ook nu niet gedownload.
+ */
+export interface OversizedAttachmentRef {
+  messageId: string
+  filename: string
+  /** De Nederlandse reden uit attachmentSkipReason(). */
+  reason: string
+}
+
 export interface BankStatementRef {
   messageId: string
   filename: string
@@ -662,6 +674,8 @@ export async function fetchGmailAttachments(
   windowNarrowed: boolean
   // [EMAIL→BANK] Bank statements seen this fetch (surfaced, never ingested).
   statements: BankStatementRef[]
+  // [OVERSIZED-VISIBLE] Attachments skipped for SIZE — surfaced, never downloaded.
+  oversized: OversizedAttachmentRef[]
 }> {
   const afterDate = Math.floor(syncAfterMs / 1000)
   // [OWN-SENT] Exclude the owner's OWN outbound mail. A ZZP'er emails invoices to
@@ -783,6 +797,8 @@ export async function fetchGmailAttachments(
 
   const results: GmailAttachment[] = []
   const statements: BankStatementRef[] = []
+  // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
+  const oversized: OversizedAttachmentRef[] = []
   let attachmentsOk = true
 
   // 2. Fetch each message in parallel (max 10 at a time)
@@ -792,6 +808,7 @@ export async function fetchGmailAttachments(
     for (const f of fetched) {
       results.push(...f.items)
       statements.push(...f.statements)
+      oversized.push(...f.oversized)
       if (!f.ok) attachmentsOk = false
     }
   }
@@ -808,13 +825,13 @@ export async function fetchGmailAttachments(
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements, oversized }
 }
 
 async function fetchMessageAttachments(
   messageId: string,
   accessToken: string
-): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[] }> {
+): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[]; oversized: OversizedAttachmentRef[] }> {
   const res = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -822,7 +839,7 @@ async function fetchMessageAttachments(
 
   // [BOEK-011 throttle×watermark] ok:false = this email wasn't fully read; the
   // caller marks the whole fetch incomplete so the watermark holds.
-  if (!res.ok) return { items: [], ok: false, statements: [] }
+  if (!res.ok) return { items: [], ok: false, statements: [], oversized: [] }
 
   const msg = await res.json()
   const headers: Array<{ name: string; value: string }> = msg.payload?.headers || []
@@ -851,6 +868,8 @@ async function fetchMessageAttachments(
   // [EMAIL→BANK] Machine-readable bank statements found while walking parts — surfaced,
   // never fetched or ingested (see BankStatementRef). Deduped by filename within a message.
   const statements: BankStatementRef[] = []
+  // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
+  const oversized: OversizedAttachmentRef[] = []
   const statementSeen = new Set<string>()
 
   // Recursively find attachment parts
@@ -898,6 +917,14 @@ async function fetchMessageAttachments(
       // has:attachment already hides most inline images, so this rarely fires
       // here — but keeping both paths identical means consistent behaviour and
       // no surprise if Gmail starts surfacing inline parts.
+      // [OVERSIZED-VISIBLE] Weigert de poort op OMVANG, dan is dat geen ruis maar een bestand dat
+      // wij nooit hebben bekeken — meld het. Weigert hij op VORM (logo/handtekening), dan blijft
+      // het stil, precies zoals het hoort.
+      const tooBig = attachmentSkipReason({ filename, mimeType, size })
+      if (tooBig) {
+        oversized.push({ messageId, filename, reason: tooBig })
+        continue
+      }
       if (!isLikelyInvoiceCandidate({ filename, mimeType, size })) continue
 
       // [BOEK-011] Store with explicit flag — never confuse ID with data. The
@@ -962,7 +989,7 @@ async function fetchMessageAttachments(
   // attachment fetch (filters already ran in walkParts) — one failure marks
   // this email incomplete so the watermark holds this round.
   const items = resolved.filter((a): a is GmailAttachment => a !== null)
-  return { items, ok: items.length === resolved.length, statements }
+  return { items, ok: items.length === resolved.length, statements, oversized }
 }
 
 // ─── Outlook token exchange ──────────────────────────────────────────────────
@@ -1074,6 +1101,8 @@ export async function fetchOutlookAttachments(
   windowNarrowed: boolean
   // [EMAIL→BANK] Bank statements seen this fetch (surfaced, never ingested).
   statements: BankStatementRef[]
+  // [OVERSIZED-VISIBLE] Attachments skipped for SIZE — surfaced, never downloaded.
+  oversized: OversizedAttachmentRef[]
 }> {
   // Graph wants an ISO 8601 timestamp for the date filter
   const afterIso = new Date(syncAfterMs).toISOString()
@@ -1191,6 +1220,8 @@ export async function fetchOutlookAttachments(
 
   const results: GmailAttachment[] = []
   const statements: BankStatementRef[] = []
+  // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
+  const oversized: OversizedAttachmentRef[] = []
 
   // [BOEK-011] Only messages that actually have attachments — the check moved
   // here from the $filter (see InefficientFilter note above).
@@ -1236,11 +1267,12 @@ export async function fetchOutlookAttachments(
     for (const f of fetched) {
       results.push(...f.items)
       statements.push(...f.statements)
+      oversized.push(...f.oversized)
       if (!f.ok) attachmentsOk = false
     }
   }
 
-  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements }
+  return { attachments: results, complete: listComplete && attachmentsOk, messageIndex, windowNarrowed, statements, oversized }
 }
 
 async function fetchOutlookMessageAttachments(
@@ -1252,7 +1284,7 @@ async function fetchOutlookMessageAttachments(
     hasAttachments?: boolean
   },
   accessToken: string
-): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[] }> {
+): Promise<{ items: GmailAttachment[]; ok: boolean; statements: BankStatementRef[]; oversized: OversizedAttachmentRef[] }> {
   const attRes = await graphFetch(
     `https://graph.microsoft.com/v1.0/me/messages/${message.id}/attachments`,
     accessToken
@@ -1267,7 +1299,7 @@ async function fetchOutlookMessageAttachments(
       messageId: message.id,
       status: attRes.status,
     })
-    return { items: [], ok: false, statements: [] }
+    return { items: [], ok: false, statements: [], oversized: [] }
   }
 
   const attData = await attRes.json()
@@ -1287,6 +1319,8 @@ async function fetchOutlookMessageAttachments(
   const out: GmailAttachment[] = []
   // [EMAIL→BANK] Bank statements seen on this message — surfaced, never fetched/ingested.
   const statements: BankStatementRef[] = []
+  // [OVERSIZED-VISIBLE] Te grote bijlagen: gezien tijdens het ophalen, nooit gedownload.
+  const oversized: OversizedAttachmentRef[] = []
   const statementSeen = new Set<string>()
 
   for (const att of attachments) {
@@ -1317,6 +1351,12 @@ async function fetchOutlookMessageAttachments(
 
     // [BOEK-011 PERF] Drop signature/logo images before they cost a Claude call.
     // Conservative: PDFs always pass, only tiny/chrome-named images are dropped.
+    // [OVERSIZED-VISIBLE] Zie de Gmail-tak: omvang wordt gemeld, vorm blijft stil.
+    const tooBigOutlook = attachmentSkipReason({ filename, mimeType, size: att.size || 0 })
+    if (tooBigOutlook) {
+      oversized.push({ messageId: message.id, filename, reason: tooBigOutlook })
+      continue
+    }
     if (!isLikelyInvoiceCandidate({ filename, mimeType, size: att.size || 0 })) {
       continue
     }
@@ -1333,7 +1373,7 @@ async function fetchOutlookMessageAttachments(
     })
   }
 
-  return { items: out, ok: true, statements }
+  return { items: out, ok: true, statements, oversized }
 }
 
 // ─── AI Classification ────────────────────────────────────────────────────────
@@ -1540,6 +1580,37 @@ export function normalizeAttachmentMime(mimeType: string, filename: string): str
   return null
 }
 
+/**
+ * [OVERSIZED-VISIBLE] Waarom is deze bijlage NIET meegenomen — en moet de eigenaar dat weten?
+ *
+ * De poort hieronder weigert om twee heel verschillende redenen, en die verdienen een heel
+ * verschillende behandeling:
+ *
+ *   · VORM ("dit is een handtekening, een logo, een tracking-pixel") — daar hoort niemand iets
+ *     van te horen. Het is ruis, en er elke keer een regel over schrijven maakt het
+ *     overgeslagen-paneel onleesbaar, waarna niemand er meer naar kijkt.
+ *   · OMVANG (> 10 MB) — daar hoort de eigenaar WÉL van te horen. Wij hebben het bestand nooit
+ *     opgehaald en nooit bekeken; het kan net zo goed zijn grootste inkoopfactuur van het
+ *     kwartaal zijn geweest. Toch verdween het met precies dezelfde stille `false` als een
+ *     logo, dus het overgeslagen-paneel — de enige plek waar de app toegeeft dat er iets
+ *     binnenkwam dat zij niet las — zweeg erover en meldde "Niets overgeslagen".
+ *
+ * Retourneert de reden (in het Nederlands, voor de skip-registratie) of null wanneer er niets
+ * te melden valt.
+ */
+export function attachmentSkipReason(att: {
+  filename: string
+  mimeType: string
+  size: number
+}): string | null {
+  if (att.size > MAX_EMAIL_ATTACHMENT_BYTES) {
+    // De boodschap noemt de uitweg die er echt is. "Voeg hem handmatig toe" zou de eigenaar
+    // tegen dezelfde 10 MB-muur bij Uploaden sturen.
+    return 'te groot om automatisch te lezen (max 10 MB) — splits de PDF of maak er een foto van'
+  }
+  return null
+}
+
 export function isLikelyInvoiceCandidate(att: {
   filename: string
   mimeType: string
@@ -1548,7 +1619,9 @@ export function isLikelyInvoiceCandidate(att: {
   // [M1] Upper ceiling first — applies to PDFs and images alike. A provider-reported
   // size over the cap is dropped BEFORE we fetch the bytes (no download, no Storage,
   // no AI). size===0 means "unknown" → enforced at the byte-length chokepoint below.
-  if (att.size > MAX_EMAIL_ATTACHMENT_BYTES) return false
+  // [OVERSIZED-VISIBLE] Zelfde grens, één definitie — zie attachmentSkipReason hierboven voor
+  // waarom deze weigering wél gemeld moet worden en de vorm-weigeringen eronder niet.
+  if (attachmentSkipReason(att) !== null) return false
 
   // PDFs always go through — the strongest invoice signal, never size/name filtered.
   if (att.mimeType === 'application/pdf') return true
@@ -1783,6 +1856,9 @@ export async function syncUserEmails(
   // (they were never invoice candidates): recorded in the skip registry so the owner is told
   // to upload them at Bank, never auto-ingested. See the statement-surface block after fetch.
   let statements: BankStatementRef[] = []
+  // [OVERSIZED-VISIBLE] Bijlagen die op OMVANG zijn geweigerd. Net als de afschriften hierboven
+  // buiten de facturen-balansrekening gehouden: ze zijn nooit een kandidaat geweest.
+  let oversized: OversizedAttachmentRef[] = []
   try {
     if (tokens.provider === 'gmail') {
       const r = await fetchGmailAttachments(accessToken, syncAfterMs)
@@ -1791,6 +1867,7 @@ export async function syncUserEmails(
       messageIndex = r.messageIndex
       windowNarrowed = r.windowNarrowed
       statements = r.statements
+      oversized = r.oversized
     } else if (tokens.provider === 'outlook') {
       // [BOEK-011] Outlook via Microsoft Graph — same GmailAttachment shape,
       // so the save loop below is unchanged and provider-agnostic.
@@ -1800,6 +1877,7 @@ export async function syncUserEmails(
       messageIndex = r.messageIndex
       windowNarrowed = r.windowNarrowed
       statements = r.statements
+      oversized = r.oversized
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
@@ -1818,6 +1896,50 @@ export async function syncUserEmails(
   // candidate (it never entered `attachments`), so it must not inflate `fetched` or the
   // balanced() reconciliation. The upsert is idempotent (unique user+message key), so a
   // re-sync of the same email neither duplicates the row nor re-notifies.
+  // [OVERSIZED-VISIBLE] Bijlagen die boven de 10 MB lagen. Die zijn NOOIT opgehaald en nooit
+  // bekeken — het kan de grootste inkoopfactuur van het kwartaal zijn geweest. Toch verdwenen ze
+  // met exact dezelfde stille `false` als een logo of een handtekening, waardoor het
+  // overgeslagen-paneel — de enige plek waar de app toegeeft dat er iets binnenkwam dat zij niet
+  // las — "Niets overgeslagen" meldde. Dat is de zin die een ondernemer laat ophouden met zoeken.
+  //
+  // Zelfde behandeling als de bankafschriften hierboven: idempotente upsert in de skip-registratie,
+  // buiten de facturen-balansrekening (ze waren nooit een kandidaat). De bytes blijven ongelezen.
+  if (oversized.length > 0) {
+    const oversizedSeen = new Set<string>()
+    for (const ov of oversized) {
+      const key = `${ov.messageId}:${ov.filename}`
+      if (oversizedSeen.has(key)) continue
+      oversizedSeen.add(key)
+      try {
+        const { data: inserted } = await supabase
+          .from('email_skipped_attachments')
+          .upsert(
+            { user_id: userId, source_message_id: key, filename: ov.filename, reason: ov.reason.slice(0, 200) },
+            { onConflict: 'user_id,source_message_id', ignoreDuplicates: true },
+          )
+          .select('id')
+        // Eén melding per nieuw bestand, en alleen voor een PDF: een 15 MB brochure of
+        // productfoto hoort niet te piepen, een te grote factuur wel. De registratieregel komt er
+        // hoe dan ook, dus in het paneel staat alles — de melding is alleen de duw.
+        if (inserted && inserted.length > 0 && /\.pdf$/i.test(ov.filename)) {
+          await createNotification({
+            userId,
+            title: 'Bijlage te groot om te lezen',
+            body: `"${ov.filename}" is groter dan 10 MB en is daarom niet automatisch ingelezen. Splits de PDF, of maak er een foto van en voeg die toe bij Uploaden.`,
+            type: 'status',
+            link: '/dashboard/upload',
+          })
+        }
+      } catch (e) {
+        // Non-fataal: het melden van een overgeslagen bijlage mag de facturen-sync nooit breken.
+        console.error('[OVERSIZED-VISIBLE] skip surface failed (non-fatal)', {
+          key,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+  }
+
   if (statements.length > 0) {
     const surfacedSeen = new Set<string>()
     for (const st of statements) {

@@ -3,6 +3,10 @@
 // [BOEK-FOUNDATION-TYPES] Null safety for DB-nullable fields — May 2026
 // Pure functions — no DB calls — easy to test
 
+// [LATE-ONE-RULE] The same day arithmetic the dunning engine uses, so "te laat" cannot mean two
+// different things on two screens.
+import { dayNumberFromIso, amsterdamTodayDayNumber } from "./invoice-reminders";
+
 export type BtwRate = number;
 
 // [BOEK-FOUNDATION-TYPES] Interface reflects actual DB schema (nullable fields)
@@ -136,7 +140,14 @@ export function buildQuarterlySummary(
   year: number,
   quarter: 1 | 2 | 3 | 4
 ): QuarterlySummary {
-  const now = new Date();
+  // [LATE-ONE-RULE] "Te laat" is a whole-day question in Amsterdam, not an instant comparison.
+  // `new Date('2026-07-27') < new Date()` parses the due date as UTC MIDNIGHT and compares it to
+  // the current moment, so an invoice due TODAY read as overdue from 00:00 UTC — all day. The
+  // dunning engine says the opposite in as many words ("not yet overdue (or due today)"), and it
+  // is the one that is legally right: verzuim starts the day AFTER the term expires (art. 6:83
+  // BW). Two surfaces disagreeing about the same invoice is the bug class this codebase treats as
+  // real, so both now use the same day arithmetic.
+  const todayDay = amsterdamTodayDayNumber();
 
   let totalExcl = 0;
   let totalBtw = 0;
@@ -168,7 +179,8 @@ export function buildQuarterlySummary(
       const remaining = incBtw - Math.sign(incBtw || 1) * settled;
       if (settled > 0.005) paid += Math.sign(incBtw || 1) * settled;
       if (Math.abs(remaining) > 0.005) {
-        if (inv.due_date && new Date(inv.due_date) < now) {
+        const dueDay = dayNumberFromIso(inv.due_date);
+        if (dueDay != null && todayDay - dueDay > 0) {
           overdue += remaining;
         } else {
           outstanding += remaining;

@@ -24,6 +24,8 @@ import {
 } from "./kas-payment-events";
 import { getVatScheme, resolveSchemeForQuarter, type VatScheme } from "./vat-scheme";
 import type { ComputeOpts } from "./financial-result";
+// [RUBRIEK-SPLIT] Same helper the accrual surfaces use — one definition of an invoice rate mix.
+import { fetchRateShares } from "./btw-rate-split-fetch";
 
 // [KASSTELSEL] Under cash basis an invoice counts ONLY when money moved: amount_paid > 0 (any
 // partial) OR status 'paid' (fully settled). NOT a bare 'sent'/'overdue' (unpaid sale) or
@@ -203,9 +205,26 @@ export async function resolveSchemeSettlements(
   const scheme = resolveSchemeForQuarter(getVatScheme(p?.vat_scheme), p?.vat_scheme_since ?? null, quarterStart);
   if (scheme !== "kas") return { scheme: "factuur", opts: {}, undatedPaidCount: 0, estimatedPortionCount: 0 };
   const qs = await fetchSettlementEvents(pipeline, ownerId, start, end);
+  // [RUBRIEK-SPLIT] The rate mix belongs to the invoices the SETTLEMENTS point at, not to the
+  // invoices DATED in this window — and under kas those are different sets on purpose: the
+  // settlement fetch deliberately applies no invoice_date filter, "a prior-year invoice paid this
+  // quarter must be reachable". Callers that built their own map from a date-range query
+  // therefore had nothing for exactly the normal case — payment lags the invoice date and often
+  // crosses a quarter — so a mixed-rate invoice (21% materials + 9% labour) paid one quarter
+  // later blended back to a single derived rate and landed wholly in one rubriek, which is the
+  // very thing the split exists to prevent. Built HERE so every consumer of this one entry point
+  // gets it and none of them can disagree.
+  const settledSales = [
+    ...new Map(
+      qs.events
+        .filter((e) => e.direction === "outgoing")
+        .map((e) => [e.invoiceId, { id: e.invoiceId, total_ex_btw: e.headerEx, btw_amount: e.headerBtw }]),
+    ).values(),
+  ];
+  const rateSharesByInvoice = await fetchRateShares(pipeline, settledSales);
   return {
     scheme: "kas",
-    opts: { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice },
+    opts: { scheme: "kas", settlements: qs.events, priorByInvoice: qs.priorByInvoice, rateSharesByInvoice },
     undatedPaidCount: qs.undatedPaidCount,
     estimatedPortionCount: qs.estimatedCount,
   };

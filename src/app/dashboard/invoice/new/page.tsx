@@ -14,7 +14,7 @@ import { useParentPath } from '@/lib/navigation-hooks'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { Role } from '@/lib/navigation'
 // [FACTUUR-A] Single Dutch formatting source — June 2026
-import { formatDateNL } from '@/lib/format-nl'
+import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
 // [ICP] Same classifier the aangifte and the ICP-opgaaf use, so the invoice screen and the
 // quarter can never disagree about which customer counts as intra-EU.
 import { classifyVatNumber } from '@/lib/icp'
@@ -452,7 +452,12 @@ function NewInvoicePageContent() {
   const euVatCustomer = classifyVatNumber(clientBtw).kind === 'eu'
 
   // ── Dates ────────────────────────────────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0]
+  // [TZ] The owner's Amsterdam day, not the UTC one. This value seeds BOTH the
+  // factuurdatum and the leverdatum of a document that carries a number from the
+  // doorlopende reeks — and toISOString() is still on yesterday until 01:00 (02:00
+  // in summer). An invoice typed just after midnight on 1 January would be dated
+  // into the previous fiscal year and the previous BTW-quarter.
+  const today = amsterdamToday()
   const [invoiceDate, setInvoiceDate] = useState(today)
   const [dueDate, setDueDate]         = useState('')
   // [FACTUUR-A] Leverdatum (Art. 35a sub f) — defaults to invoice date until
@@ -945,15 +950,26 @@ function NewInvoicePageContent() {
       }))
     )
 
-    // [BOEK-031] Replace flow — markeer de oude factuur
-    // [FACTUUR-A] No browser-side number to stamp anymore; archive only.
-    if (replacesId) {
-      await supabase.from('invoices')
-        .update({ status: 'archived' })
-        .eq('id', replacesId)
-    }
+    // [BOEK-031] Replace flow — de LINK naar de oude factuur wordt hierboven vastgelegd
+    // (original_invoice_id). Wat hier stond, is weg:
+    //
+    //   await supabase.from('invoices').update({ status: 'archived' }).eq('id', replacesId)
+    //
+    // [ISSUED-STAYS] Dat was een rauwe browser-schrijfactie die de hele serverautoriteit
+    // oversloeg — geen refuseArchive, geen money_settled-controle, geen bank_tx_invoices-probe,
+    // geen audit-regel. Ze kon dus een VERSTUURDE, genummerde verkoopfactuur archiveren, precies
+    // wat de doorlopende nummering verbiedt: zo'n factuur wordt gecorrigeerd met een creditnota,
+    // niet uit de reeks gehaald. Geen enkel scherm linkt naar ?replaces= — dit was alleen te
+    // bereiken door de URL zelf te typen — dus er gaat geen werkende flow verloren.
+    //
+    // Wordt de vervang-flow ooit echt gebouwd, dan hoort hij door /api/invoice/[id]/archive te
+    // lopen, waar die grendels wél staan.
 
     // [BOEK-031] from_offerte flow — archiveer de originele offerte — May 2026
+    // Bewust WEL een directe schrijfactie: refuseArchive weigert per definitie alles wat niet
+    // 'incoming' is (regel [ISSUED-STAYS]), dus ook een offerte, en die route zou deze werkende
+    // flow dus breken. Een offerte draagt geen factuurnummer en geen geld — de twee dingen die
+    // die grendel beschermt — dus hier valt niets te omzeilen.
     if (offerteId) {
       await supabase.from('invoices')
         .update({ status: 'archived' })

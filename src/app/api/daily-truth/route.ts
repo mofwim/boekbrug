@@ -94,6 +94,8 @@ export async function GET() {
     .range(from, to)
   ).catch(() => null);
 
+  // [NO-FALSE-CLEAR] Zie de bewaking onder de tweede lezing: een mislukte lezing mag hier nooit
+  // een lege lijst worden. Het antwoord wordt daar afgebroken, niet stilzwijgend nul.
   const pay = (payRows ?? []) as InvoiceRow[];
   const toPay = {
     count: pay.length,
@@ -121,6 +123,31 @@ export async function GET() {
   // src/lib/credited-invoices.ts and its tests.
   // [PAGINATION] fetchAllRows like every other read here: an unpaginated select silently caps at
   // ~1000 rows, and a truncated credited set would let a withdrawn invoice back into the total.
+  // [NO-FALSE-CLEAR] DE GRENS VAN DIT ANTWOORD.
+  //
+  // Beide lezingen hierboven eindigen op `.catch(() => null)`. Werd dat een lege lijst, dan
+  // rekende de rest van deze functie er gewoon mee door: toPay.count = 0, toReceive.count = 0.
+  // En DailyTruth.tsx leidt daar rechtstreeks `allClear` uit af en schildert het groene vlak
+  // "Alles is bij — niets openstaand". Eén databasehapering was dus genoeg om een ondernemer met
+  // EUR 12.000 aan onbetaalde inkoopfacturen te vertellen dat hij bij was. Geen foutmelding, geen
+  // logregel, geen enkel spoor — precies de stille onwaarheid waar dit product tegen bestaat.
+  //
+  // Het scherm KAN de waarheid al zeggen: DailyTruth.tsx rendert bij ok=false een eerlijk paneel
+  // ("Dit is geen 'alles is bij'") met een opnieuw-knop. Dat paneel werd alleen nooit bereikt.
+  //
+  // Alleen deze twee lezingen breken het antwoord af — zij dragen de bewering. De bank- en
+  // kaslezingen hieronder mogen wél degraderen (zie daar): die voeden een bijschrift en een tegel
+  // die zichzelf verbergen, en daarvoor een correct overzicht blanco maken zou een stil verkeerd
+  // antwoord inruilen voor een luid kapot scherm.
+  if (payRows == null || recvRows == null) {
+    console.error("[DAILY-TRUTH] invoice read failed — refusing to answer", {
+      userId: user.id,
+      payFailed: payRows == null,
+      recvFailed: recvRows == null,
+    });
+    return NextResponse.json({ ok: false, error: "read_failed" }, { status: 503 });
+  }
+
   const recvAll = (recvRows ?? []) as InvoiceRow[];
   const creditRows = recvAll.length > 0
     ? await fetchAllRows<{ original_invoice_id: string | null }>((from, to) => pipeline
@@ -163,6 +190,13 @@ export async function GET() {
     .range(from, to)
   ).catch(() => null);
 
+  // [NO-FALSE-CLEAR] Deze lezing MAG degraderen, en dat is een bewuste keuze: txRows voedt alleen
+  // `lastBankDate` (een bijschrift dat zichzelf verbergt als het null is) en `undocumented` (sinds
+  // [NO-CODEER] nergens meer gerenderd). Hiervoor een correct facturenoverzicht blanco maken zou
+  // een stil verkeerd antwoord inruilen voor een luid kapot scherm.
+  if (txRows == null) {
+    console.error("[DAILY-TRUTH] bank read failed — caption degrades, totals unaffected", { userId: user.id });
+  }
   const txs = txRows ?? [];
 
   let lastBankDate: string | null = null;
@@ -222,6 +256,17 @@ export async function GET() {
     ).catch(() => null),
     pipeline.from("profiles").select("kas_opening_balance").eq("id", user.id).maybeSingle(),
   ]);
+  // [NO-FALSE-CLEAR] Een half gelezen la is erger dan geen la. Faalt één van beide bronnen, dan
+  // zou het saldo kloppen noch met de Kas-pagina noch met de werkelijkheid — en het staat er als
+  // een hard bedrag. Dan liever de tegel helemaal niet tonen (kasUsed=false verderop).
+  const kasReadFailed = cashRows == null || tillRows == null;
+  if (kasReadFailed) {
+    console.error("[DAILY-TRUTH] kas read failed — suppressing the drawer tile", {
+      userId: user.id,
+      cashFailed: cashRows == null,
+      tillFailed: tillRows == null,
+    });
+  }
   const cash = cashRows ?? [];
   const till = (tillRows ?? []) as { cash_amount: number | null }[];
   const kasOpening = Number((kasProf as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
@@ -233,7 +278,7 @@ export async function GET() {
   });
   // A shop with till-cash takings (or an opening float) handles cash even without manual entries, so
   // the home surfaces the drawer whenever ANY of the three sources is present — matching the Kas page.
-  const kasUsed = cash.length > 0 || tillCashTotal !== 0 || kasOpening !== 0;
+  const kasUsed = !kasReadFailed && (cash.length > 0 || tillCashTotal !== 0 || kasOpening !== 0);
 
   return NextResponse.json({
     ok: true,

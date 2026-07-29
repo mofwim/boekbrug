@@ -24,6 +24,8 @@ import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
 import { InvoiceTypeBadge } from '@/components/invoice/InvoiceTypeBadge'
 import { crossQuarterPayment } from '@/lib/quarter'
+// [TZ] 'Today' must be the owner's Amsterdam day, never the UTC one — see format-nl.ts.
+import { amsterdamToday } from '@/lib/format-nl'
 import { amountOrConditions } from '@/lib/search'
 // [PARTIAL-PAY] one definition of openstaand, shared with the incoming side and the API
 import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial-payment"
@@ -270,17 +272,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const focusId = searchParams.get('focus')
   const [highlightId, setHighlightId] = useState<string | null>(null)
 
-  // [SEARCH] Quick text-filter over the loaded invoices. Seeded from ?search= (set by
-  // the global search bar's Enter fallback). The global bar is now reachable on every
-  // page, so a ?search= push can arrive while we're already mounted on /dashboard/facturen
-  // (no remount) — sync on param change, not just at mount. Local typing doesn't change
-  // the param, so it never clobbers the user's input.
-  const searchParam = searchParams.get('search') ?? ''
-  const [search, setSearch] = useState(searchParam)
-  useEffect(() => {
-    const t = setTimeout(() => setSearch(searchParam), 0)
-    return () => clearTimeout(t)
-  }, [searchParam])
+  // [SEARCH] Quick text-filter over the loaded invoices. Starts empty; the global
+  // search bar now opens the dedicated results page (/dashboard/zoeken), so nothing
+  // deep-links a query into this page anymore — the old ?search= seeding was removed.
+  const [search, setSearch] = useState('')
 
   // [SEARCH] In-page live filter, SERVER-backed: finds ALL matching invoices (every
   // status, not only the loaded/paginated rows), in place — no navigation, no reload.
@@ -370,23 +365,35 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
       return () => clearTimeout(t0)
     }
     let active = true
+    // [PERF] One AbortController per run: a superseded query (the next keystroke) is now
+    // really CANCELLED instead of merely ignored — it stops occupying a connection and
+    // stops the server finishing work nobody reads. `active` stays as the second guard.
+    const controller = new AbortController()
     const tLoad = setTimeout(() => setSearchLoading(true), 0)
     const t = setTimeout(async () => {
-      const { data } = await supabase
-        .from('invoices')
-        // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
-        // chip (and feed the same bundle open-amount) as a row from the infinite list.
-        .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
-        .eq('sender_id', profile.id)
-        .neq('status', 'archived')
-        .or(orParts.join(','))
-        .order('created_at', { ascending: false })
-        .limit(50)
-      if (!active) return
-      setSearchResults((data ?? []) as unknown as InvoiceRow[])
-      setSearchLoading(false)
+      try {
+        const { data } = await supabase
+          .from('invoices')
+          // [PARTIAL-PAY] amount_paid too — a searched row must show the same "Deels betaald"
+          // chip (and feed the same bundle open-amount) as a row from the infinite list.
+          .select('id, invoice_number, client_name, status, accountant_status, direction, total_inc_btw, amount_paid, total_ex_btw, btw_amount, invoice_date, due_date, created_at, replaced_by_number, invoice_type')
+          .eq('sender_id', profile.id)
+          .neq('status', 'archived')
+          .or(orParts.join(','))
+          .order('created_at', { ascending: false })
+          .limit(50)
+          .abortSignal(controller.signal)
+        if (!active) return
+        setSearchResults((data ?? []) as unknown as InvoiceRow[])
+        setSearchLoading(false)
+      } catch (e) {
+        // [PERF] An abort is the NORMAL outcome of typing on — swallow it silently so it
+        // can never surface as an unhandled rejection. Anything else keeps behaving as before.
+        if (controller.signal.aborted || (e as Error)?.name === 'AbortError') return
+        throw e
+      }
     }, 250)
-    return () => { active = false; clearTimeout(tLoad); clearTimeout(t) }
+    return () => { active = false; controller.abort(); clearTimeout(tLoad); clearTimeout(t) }
   }, [search, profile.id])
 
   const statusMap: Record<FilterTab, InvoiceStatusFilter> = {
@@ -462,7 +469,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         invoiceId: ctx.id,
         action: ctx.newStatus === 'paid' ? 'pay' : 'undo',
         paymentMethod: ctx.paymentMethod ?? 'bank',
-        paymentDate: ctx.paymentDate ?? new Date().toISOString().slice(0, 10),
+        paymentDate: ctx.paymentDate ?? amsterdamToday(),
         // null / absent = settle the whole open balance (unchanged behaviour).
         ...(ctx.amount != null ? { amount: ctx.amount } : {}),
         // Idempotency: a double tap or a retried POST must not book twice.
@@ -805,13 +812,15 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           </div>
         </div>
 
-        {/* [SEARCH] Quick text-filter (invoice number / client name) */}
+        {/* [SEARCH] Quick text-filter (invoice number / client name)
+            [SMART-FILTER] …and the amount: the server query below also matches
+            total_inc_btw, so the placeholder names "bedrag" too. */}
         <div style={{ position: 'relative', marginBottom: 10 }}>
           <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Zoek op factuurnummer of klant..."
+            placeholder="Zoek op factuurnummer, klant of bedrag…"
             aria-label="Facturen zoeken"
             style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
           />
@@ -1717,7 +1726,9 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
 }) {
   // [BRIDGE-QUARTER] real payment date — only relevant when paymentChoice is set
   // (marking as paid). Defaults to today; user corrects if they paid earlier.
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10))
+  // [TZ] Amsterdam, not UTC: just after midnight the UTC day is still yesterday, and under
+  // kasstelsel a betaaldatum one day early can land in a quarter that is already filed.
+  const [paymentDate, setPaymentDate] = useState(amsterdamToday())
   // [MANUAL-PARTIAL-PAY] The optional amount. EMPTY MEANS EVERYTHING — the common case costs
   // zero keystrokes and nobody has to know the word "deelbetaling". Deliberately a placeholder
   // and not a pre-filled value: pre-filling would force a phone user to wipe "€ 1.000,00"
@@ -1779,7 +1790,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
             <input
               type="date"
               value={paymentDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={amsterdamToday()}
               onChange={e => setPaymentDate(e.target.value)}
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid #DADCE0', fontSize: 15, marginBottom: 16, fontFamily: FONT, color: '#202124', background: '#fff', boxSizing: 'border-box' }}
             />

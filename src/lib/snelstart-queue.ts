@@ -14,6 +14,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database.types";
 import { isPushable, type SnelStartInvoice, type SnelStartInvoiceLine } from "@/lib/snelstart-mapping";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+// [SNELSTART-CLAIM] pushed | unknown — beide claimen de factuur; zie snelstart-claim.ts.
+import { CLAIMING_STATUSES } from "./snelstart-claim";
 
 type Client = SupabaseClient<Database>;
 
@@ -121,14 +123,24 @@ export async function loadInvoiceLines(
   return byInvoice;
 }
 
-/** Factuur-id's die al geslaagd geboekt zijn — de idempotentie-filter. */
+/**
+ * Factuur-id's die niet (opnieuw) geboekt mogen worden — de idempotentie-filter.
+ *
+ * [SNELSTART-CLAIM] Dit was `.eq("status", "pushed")`. Sinds de claim VÓÓR de POST wordt gezet,
+ * bestaat er een derde staat: 'unknown' — de boeking is verstuurd maar we kregen geen antwoord,
+ * dus hij kán geboekt zijn. Die MOET hier meetellen. Zou de wachtrij hem opnieuw aanbieden, dan
+ * boekt de volgende ronde dezelfde inkoopfactuur een tweede keer in het wettelijke inkoopboek van
+ * de boekhouder — precies wat de claim moest voorkomen.
+ *
+ * 'failed' blijft er bewust buiten: dat is bewezen niet-geboekt en mag gewoon opnieuw mee.
+ */
 export async function loadPushedInvoiceIds(supabase: Client, userId: string): Promise<Set<string>> {
   const rows = await fetchAllRows<{ invoice_id: string }>((from, to) =>
     supabase
       .from("snelstart_exports")
       .select("invoice_id")
       .eq("user_id", userId)
-      .eq("status", "pushed")
+      .in("status", CLAIMING_STATUSES as string[])
       .order("invoice_id", { ascending: true })
       .range(from, to),
   );

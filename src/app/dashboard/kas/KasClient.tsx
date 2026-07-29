@@ -5,7 +5,7 @@
 // Cash sales (in) and cash expenses (out); deposits/withdrawals to the bank are
 // 'transfer' so they change the drawer balance but never the revenue/cost picture.
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 // [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
@@ -267,20 +267,28 @@ export default function KasClient() {
   // payment on the invoice instead; the kasboek then reconciles it away).
   // A 'transfer' is disambiguated by DIRECTION so the accountant sees the real move: cash OUT of
   // the drawer to the bank = storting, cash INTO the drawer from the bank = opname.
-  const catLabel = (k: string, dir?: 'in' | 'out') => {
+  // [PERF] useCallback houdt catLabel stabiel (hij hangt alleen van de constante CATS af),
+  // zodat de gememoïseerde filter hieronder een vaste dependency heeft.
+  const catLabel = useCallback((k: string, dir?: 'in' | 'out') => {
     if (k === 'betaling') return 'Factuurbetaling (contant)'
     if (k === 'transfer') return dir === 'in' ? 'Opname (van bank)' : dir === 'out' ? 'Storting (naar bank)' : 'Naar/van bank'
     return CATS.find((c) => c.key === k)?.label ?? k
-  }
+  }, [])
 
   // [SEARCH] In-page live filter over the cash ledger (omschrijving / categorie / bedrag).
   // [SMART-FILTER] shared matcher — decimaal- én duizendtal-bewust (src/lib/search.ts)
+  // [PERF] useMemo: alleen herberekenen als de zoekterm of de boekingen wijzigen —
+  // niet bij elke render (typen in het add-formulier raakt dit filter niet).
   const rawK = search.trim()
-  const filteredEntries = rawK
-    ? entries.filter((e) =>
-        rowMatchesQuery(rawK, [e.description, catLabel(e.category, e.direction)], [e.amount])
-      )
-    : entries
+  const filteredEntries = useMemo(
+    () =>
+      rawK
+        ? entries.filter((e) =>
+            rowMatchesQuery(rawK, [e.description, catLabel(e.category, e.direction)], [e.amount])
+          )
+        : entries,
+    [rawK, entries, catLabel]
+  )
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>

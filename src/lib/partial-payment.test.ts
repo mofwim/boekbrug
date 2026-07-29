@@ -200,5 +200,34 @@ console.log("\n— [PARTIAL-PAY-GUARD] paymentExceedsOpenBalance (does this paym
   check("openBalanceFromAmounts rounds to cents", openBalanceFromAmounts({ total_inc_btw: 0.3, amount_paid: 0.1 }) === 0.2);
 }
 
+console.log("\n— [PARTIAL-PAY] een teruggedraaide betaling laat geen spookbetaling achter —");
+{
+  // De schade die dit invariant bewaakt (bank/delete-statement herstelde de status maar liet
+  // amount_paid staan): de factuur staat onbetaald én toont EUR 0 openstaand. Daarna stuurt
+  // invoice-reminders.ts nooit meer een herinnering (paid >= total - PAID_EPS -> null) en weigert
+  // de betaal-RPC de factuur opnieuw te boeken. Volledig stil, en permanent.
+  const spook = { status: "sent", total_inc_btw: 500, amount_paid: 500 };
+  check("de bug in beeld: onbetaald maar EUR 0 openstaand", openAmount(spook) === 0);
+
+  // Na de reparatie hoort de omkering amount_paid op 0 te zetten.
+  const hersteld = { status: "sent", total_inc_btw: 500, amount_paid: 0 };
+  check("na een correcte omkering staat het volle bedrag weer open", openAmount(hersteld) === 500);
+
+  // Het invariant zelf: is een factuur niet 'paid', dan mag amount_paid nooit het hele bedrag
+  // dekken. Faalt dit ooit, dan is er weer een omkeringspad dat amount_paid vergeet.
+  const omkeringsPaden = [
+    { naam: "bank/delete-statement", status: "received", total_inc_btw: 121, amount_paid: 0 },
+    { naam: "bank/unlink", status: "sent", total_inc_btw: 121, amount_paid: 0 },
+    { naam: "pay-toggle undo", status: "received", total_inc_btw: 80, amount_paid: 0 },
+  ];
+  for (const p of omkeringsPaden) {
+    check(`${p.naam}: openstaand = het volle bedrag`, openAmount(p) === p.total_inc_btw);
+  }
+
+  // Een ECHTE deelbetaling blijft gewoon een deelbetaling — de reparatie mag die niet wissen.
+  check("een deelbetaling blijft staan", openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === 300);
+  check("en telt als gedeeltelijk betaald", isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === true);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

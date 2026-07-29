@@ -131,5 +131,41 @@ console.log('\n— [BTW-SUM-FIX] a DERIVED BTW is never presented as clean (it i
   check('note without an amount still warns', noAmount.level === 'needs-review' && noAmount.reasons.some((r) => /afgeleid uit excl\. en totaal/.test(r)))
 }
 
+console.log('\n— [BON-NUMMER] een kassabon wordt niet beschuldigd van een ontbrekend factuurnummer —')
+{
+  // Echte bon: Nettorama Huizen, contant, 6x spitskool. Een kassabon is een vereenvoudigde
+  // factuur; hij draagt geen art. 35-nummer en hoeft dat niet. Vroeger kreeg élke bon daardoor
+  // een amberen "Aandacht nodig" voor iets wat er niet hoort te staan.
+  const bon = classifyImportHealth(inv({
+    invoice_number: null, total_ex_btw: 9.85, btw_amount: 0.89, total_inc_btw: 10.74,
+    field_confidence: { _intake_kind: 'receipt' },
+  }))
+  check('bon zonder nummer → clean', bon.level === 'clean' && bon.flags.invoiceNumber === false)
+  check('bon zonder nummer → geen factuurnummer-reden', !bon.reasons.some((r) => /factuurnummer/i.test(r)))
+
+  // Ook de onzekerheids-as zwijgt: "het factuurnummer is onzeker" over een veld dat niet
+  // bestaat, is ruis waar niemand meer naar kijkt.
+  const onzeker = classifyImportHealth(inv({
+    invoice_number: null, field_confidence: { _intake_kind: 'receipt', invoice_number: 0.1 },
+  }))
+  check('bon met lage nummer-confidence → nog steeds clean', onzeker.level === 'clean')
+
+  // EN DE GRENS: alle andere assen blijven onverkort gelden. Een bon gaat over geld, en geld
+  // is op een bon net zo hard als op een factuur.
+  const rekenfout = classifyImportHealth(inv({
+    invoice_number: null, total_ex_btw: 9.85, btw_amount: 0.89, total_inc_btw: 99.99,
+    field_confidence: { _intake_kind: 'receipt' },
+  }))
+  check('bon met rekenfout → nog steeds needs-review', rekenfout.level === 'needs-review' && rekenfout.flags.arithmetic)
+  const geenDatum = classifyImportHealth(inv({
+    invoice_number: null, invoice_date: null, field_confidence: { _intake_kind: 'receipt' },
+  }))
+  check('bon zonder datum → nog steeds needs-review', geenDatum.level === 'needs-review' && geenDatum.flags.invoiceDate)
+
+  // En een gewone FACTUUR zonder nummer blijft gewoon gevlagd — de uitzondering is smal.
+  const factuur = classifyImportHealth(inv({ invoice_number: null, field_confidence: { _intake_kind: 'invoice' } }))
+  check('factuur zonder nummer → onveranderd needs-review', factuur.level === 'needs-review' && factuur.flags.invoiceNumber)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

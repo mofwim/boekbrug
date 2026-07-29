@@ -27,10 +27,16 @@ function check(name: string, cond: boolean) {
   else { failed++; console.log(`  ✗ ${name}`); }
 }
 
-const NOW = new Date("2033-08-01T00:00:00.000Z");
+// [BEWAARPLICHT] Art. 52 AWR runs to the END of the fiscal year, so an account
+// deactivated in 2026 is protected through 31 Dec 2033 — not to 1 Jul 2033. The
+// clock moved with the corrected rule; see retention.ts.
+const NOW = new Date("2034-08-01T00:00:00.000Z");
 const USER = "11111111-2222-3333-4444-555555555555";
 
-/** A row that SHOULD purge: deactivated in 2026, seven years up. */
+/** A row that SHOULD purge: deactivated in 2026, the 2026 boekjaar now closed out.
+ *  Its STORED eligible date is the old day-exact one a legacy row would carry —
+ *  kept deliberately, so these tests also prove that such a row is governed by the
+ *  stricter recomputation and not by the too-early number on disk. */
 function base(overrides: Partial<DeletionRequestRow> = {}): DeletionRequestRow {
   return {
     id: "req-1",
@@ -103,7 +109,14 @@ console.log("\n[A1] the clock — one day early is still a catastrophe");
 
 check(
   "one day before the eligible date: refused",
-  decidePurge(base(), new Date("2033-06-30T23:59:59.000Z")).purge === false
+  decidePurge(base(), new Date("2033-12-31T23:59:59.000Z")).purge === false
+);
+
+check(
+  "a LEGACY row whose stored date says 1 Jul 2033 is still held to 31 Dec 2033",
+  // The stored number is the old day-exact one. The recomputation overrules it,
+  // which is why correcting retention.ts also protects rows already on disk.
+  decidePurge(base(), new Date("2033-07-01T00:00:00.000Z")).purge === false
 );
 
 check(
@@ -113,7 +126,7 @@ check(
 
 check(
   "exactly at the eligible instant: allowed",
-  decidePurge(base(), new Date("2033-07-01T00:00:00.000Z")).purge === true
+  decidePurge(base(), new Date("2034-01-01T00:00:00.000Z")).purge === true
 );
 
 console.log("\n[A1] a tampered eligible-date can only ever DELAY, never hasten");
@@ -125,8 +138,8 @@ check(
   // answer is no. The two checks must AND, never OR.
   (() => {
     const row = base({
-      deleted_at: "2033-06-01T00:00:00.000Z",           // deactivated 2 months ago
-      data_eligible_for_deletion_at: "2033-07-01T00:00:00.000Z", // claims it is due
+      deleted_at: "2034-06-01T00:00:00.000Z",           // deactivated 2 months ago
+      data_eligible_for_deletion_at: "2034-07-01T00:00:00.000Z", // claims it is due
     });
     return decidePurge(row, NOW).purge === false;
   })()
@@ -189,19 +202,19 @@ console.log("\n[KLUIS] a paid Bewaarkluis outranks an expired retention window")
 // vault check sits at the very bottom of decidePurge: even when every other check says
 // "erase", the vault wins.
 check(
-  "an expired row with a vault running through 2033 is kept, with a reason",
-  JSON.stringify(decidePurge(base({ kluis_keep_through_year: 2033 }), NOW)) ===
+  "an expired row with a vault running through 2034 is kept, with a reason",
+  JSON.stringify(decidePurge(base({ kluis_keep_through_year: 2034 }), NOW)) ===
     JSON.stringify({ purge: false, reason: "bewaarkluis_actief" })
 );
 
 check(
-  "the final year still counts — 'through 2033' means all of 2033",
-  decidePurge(base({ kluis_keep_through_year: 2033 }), NOW).purge === false
+  "the final year still counts — 'through 2034' means all of 2034",
+  decidePurge(base({ kluis_keep_through_year: 2034 }), NOW).purge === false
 );
 
 check(
   "a vault that ended last year holds nothing back",
-  decidePurge(base({ kluis_keep_through_year: 2032 }), NOW).purge === true
+  decidePurge(base({ kluis_keep_through_year: 2033 }), NOW).purge === true
 );
 
 // null/undefined means "we looked and there is no vault" — that may purge. An UNKNOWN

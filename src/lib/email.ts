@@ -24,12 +24,22 @@ function getResend(): Resend {
 //     so the caller surfaces a real failure instead of a false success;
 //   - best-effort notifications are logged AND captured in Sentry (never lost) but never break the
 //     main action they accompany.
+//
+// [TRUST-DELIVERY-RETURN] Het resultaat wordt nu ook TERUGGEGEVEN: true = afgeleverd,
+// false = door Resend geweigerd (alleen bij critical:false — critical gooit nog steeds).
+// Additief: de bestaande aanroepers die de waarde negeren gedragen zich exact als voorheen.
+//
+// Waarom dat nodig was: een logregel plus een Sentry-melding vertellen ONS dat een mail
+// mislukte, maar de aanroeper niet — en die schreef intussen door alsof het gelukt was. Bij de
+// herinneringen-cron betekende dat: de rij werd 'sent', de tier was permanent verbruikt, en de
+// ondernemer kreeg de melding "Herinnering verstuurd" voor een mail die nooit vertrok. Zijn
+// klant werd daarna nooit meer aangemaand, en niemand kon dat weten.
 async function deliverEmail(
   result: { error: unknown } | null | undefined,
   opts: { label: string; critical: boolean },
-): Promise<void> {
+): Promise<boolean> {
   const err = result?.error
-  if (!err) return
+  if (!err) return true
   console.error(`[TRUST-DELIVERY] ${opts.label} e-mail mislukt`, err)
   if (opts.critical) {
     throw new Error(`E-mail versturen mislukt (${opts.label})`)
@@ -38,6 +48,7 @@ async function deliverEmail(
     err instanceof Error ? err : new Error(`${opts.label} e-mail mislukt`),
     { extra: { label: opts.label } },
   )
+  return false
 }
 
 // [M2] Escape any user-controlled string interpolated into an HTML email body. Client
@@ -503,8 +514,14 @@ export async function sendInvoiceReminder({
         }
       : {})
   })
-  // Best-effort: a reminder that fails to send must never break the cron run.
+  // Best-effort: a reminder that fails to send must never break the cron run — but the caller
+  // has to be ABLE to know. [REMINDER-TRUTH] This used to return void, so a Resend rejection was
+  // logged and swallowed: the cron counted the reminder as sent, kept the claimed tier, and told
+  // the owner the letter went out. On the final tier that letter is the statutory WIK aanmaning,
+  // the one that grants the right to charge incassokosten at all — believing it was sent when it
+  // was not is the worst version of this bug.
   await deliverEmail(__sendResult, { label: 'invoice-reminder', critical: false })
+  return { delivered: !__sendResult?.error }
 }
 
 // ── [BILLING] Eén mail over betalen, en bewust maar één ───────────────────────
@@ -650,6 +667,7 @@ export async function sendQuarterReadyToAccountant({
       </div>
     `,
   })
-  // Best effort: een mislukte mail mag de kwartaal-cron nooit laten vallen.
-  await deliverEmail(__sendResult, { label: 'quarter-ready-accountant', critical: false })
+  // Best effort: een mislukte mail mag de kwartaal-cron nooit laten vallen. Maar hij krijgt wél
+  // te horen of het lukte — dit is de mail die het product maakt: "het kwartaal staat klaar".
+  return deliverEmail(__sendResult, { label: 'quarter-ready-accountant', critical: false })
 }

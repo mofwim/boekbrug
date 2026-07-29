@@ -149,7 +149,12 @@ export async function GET(req: NextRequest) {
             .eq("id", link.accountant_id)
             .single();
           if (accProfile?.email) {
-            await sendQuarterReadyToAccountant({
+            // [TRUST-DELIVERY-RETURN] Dit is de mail die het product maakt: "het kwartaal van je
+            // klant staat klaar". Resend gooit niet bij een weigering maar lost op met { error },
+            // dus deze catch ving alleen echte exceptions — een geweigerde mail liep er stil
+            // langs. Dan denkt de ondernemer dat zijn boekhouder bericht heeft, denkt de
+            // boekhouder dat er niets klaarstaat, en wacht iedereen op de ander.
+            const mailDelivered = await sendQuarterReadyToAccountant({
               toEmail: accProfile.email,
               accountantName: accProfile.full_name || "boekhouder",
               clientName,
@@ -160,6 +165,14 @@ export async function GET(req: NextRequest) {
               packageUrl: `${origin}/api/closing-package?clientId=${ownerId}&year=${period.year}&quarter=${period.quarter}`,
               quarterUrl: `${origin}${quarterPath}`,
             });
+            if (!mailDelivered) {
+              console.error("[CRON-QUARTER-CLOSE] kwartaalmail geweigerd door de mailprovider", {
+                ownerId, accountantId: link.accountant_id, quarter: `Q${period.quarter} ${period.year}`,
+              });
+              // De in-app melding aan de boekhouder is hierboven al weggeschreven en blijft staan:
+              // het kwartaal staat écht klaar in zijn portaal, ook als de mail niet aankwam. Dit
+              // maakt alleen vindbaar dat de attendering hem niet bereikte.
+            }
           }
         } catch (mailErr) {
           console.error("[CRON-QUARTER-CLOSE] kwartaalmail naar boekhouder mislukt (niet fataal)", {

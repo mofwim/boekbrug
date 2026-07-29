@@ -216,3 +216,63 @@ test("[TRIANGLE] no card reconciliation → no kaart-reconciliatie.csv", async (
   const zip = await JSZip.loadAsync(zipBytes);
   assert.equal(zip.file("kaart-reconciliatie.csv"), null, "no card file when there is nothing to reconcile");
 });
+
+// ─── [NO-EMPTY-LEDGER] Een onleesbaar grootboek levert géén compleet ogend concept ────────────
+//
+// Het gevaarlijkste wat dit pakket kan doen is er compleet uitzien terwijl er een been ontbreekt.
+// De kas- en banklezingen in buildClosingPackage eindigden op `.catch(() => [])`: een mislukte
+// lezing werd een LEGE la, en de concept-BTW-aangifte rekende daar gewoon mee door — de
+// boekhouder kreeg een aangifte waarin het contante kwartaal simpelweg niet bestond, zonder één
+// teken dat er iets mis was.
+//
+// buildClosingPackage zelf heeft een Supabase-client nodig en valt buiten deze poort. Wat hier
+// wél te bewaken is, is het CONTRACT dat de reparatie oplegt en dat een latere wijziging stil
+// zou kunnen breken: verschijnt er een leesfout-waarschuwing, dan hoort er geen concept in de
+// ZIP te zitten. De bewijsstukken blijven wél gewoon meegaan.
+
+const LEESFOUT_CODES = ["cash_read_failed", "bank_read_failed", "kasboek_unavailable"] as const;
+
+test("[NO-EMPTY-LEDGER] een leesfout-waarschuwing gaat nooit samen met een concept in de ZIP", async () => {
+  for (const code of LEESFOUT_CODES) {
+    const { zipBytes, summary } = await assembleClosingPackageZip({
+      year: 2026,
+      quarter: 1,
+      clientName: "Test Klant",
+      outgoing: [],
+      incoming: [],
+      pdfByInvoice: new Map(),
+      bankFiles: [{ path: "p", name: "afschrift.pdf", bytes: new Uint8Array([1, 2, 3]) }],
+      kilometerFiles: [],
+      sharedFiles: [],
+      paymentDates: noPayDates,
+      hasBankData: true,
+      // Dit is wat buildClosingPackage doet zodra een grootboeklezing faalt: de reden meesturen
+      // en het concept weglaten.
+      conceptAangifte: null,
+      warnings: [{ code, message: "De boekingen konden niet volledig worden gelezen." }],
+    });
+
+    const zip = await JSZip.loadAsync(zipBytes);
+    assert.equal(
+      zip.file("concept-btw-aangifte.csv"),
+      null,
+      `${code}: er mag geen concept-aangifte in het pakket zitten`,
+    );
+    assert.ok(
+      summary.warnings.some((w) => w.code === code),
+      `${code}: de reden moet de boekhouder bereiken, niet stilzwijgend verdwijnen`,
+    );
+    // En het bewijs gaat wél mee — kijken en exporteren blijft altijd werken.
+    assert.ok(zip.file("bankafschrift/afschrift.pdf"), `${code}: het bankafschrift hoort gewoon mee te gaan`);
+    assert.ok(zip.file("overzicht.csv"), `${code}: het overzicht hoort er te zijn`);
+  }
+});
+
+test("[NO-EMPTY-LEDGER] de waarschuwing staat leesbaar in overzicht.csv", async () => {
+  // De boekhouder opent overzicht.csv, niet de JSON. Staat de reden daar niet, dan is hij stil.
+  const csv = buildOverviewCsv("Q1 2026", [], [], [
+    { code: "cash_read_failed", message: "De kasboekingen konden niet volledig worden gelezen." },
+  ], noPayDates);
+  assert.ok(csv.includes("kasboekingen konden niet volledig worden gelezen"),
+    "de reden hoort in het overzicht te staan dat de boekhouder daadwerkelijk opent");
+});

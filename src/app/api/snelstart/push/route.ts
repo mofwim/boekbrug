@@ -48,6 +48,8 @@ import {
   SnelStartMappingError,
   type SnelStartInvoice,
 } from "@/lib/snelstart-mapping";
+// [SNELSTART-CLAIM] De regel die beslist of een mislukking de claim vrijgeeft of laat staan.
+import { claimStatusAfterFailure, unknownOutcomeMessage } from "@/lib/snelstart-claim";
 
 // Elke factuur is minstens één (soms twee) HTTP-ronde naar SnelStart. 100 per aanroep
 // past ruim binnen maxDuration en houdt een kwartaal in één of twee klikken haalbaar.
@@ -165,6 +167,8 @@ export async function POST(req: NextRequest) {
   let stopped: { error: string; code: string } | null = null;
 
   for (const invoice of batch) {
+    // [DEPLOY-SAFE] Buiten de try, zodat de catch weet of er een claim-regel bestaat om af te ronden.
+    let claimSupported = true;
     try {
       const soort = relatieSoortFor(invoice.direction);
       const naam = (invoice.client_name ?? "").trim();
@@ -192,17 +196,54 @@ export async function POST(req: NextRequest) {
         relatieId,
       });
 
-      const created = await client.postBoeking(mapped.type, mapped.payload);
-
-      await recordAttempt(pipeline, {
+      // [SNELSTART-CLAIM] Eerst het slot, dan pas de deur.
+      //
+      // De POST hieronder is ONOMKEERBAAR — hij landt in het wettelijke inkoop-/verkoopboek van
+      // de boekhouder. Het slot stond hier vroeger ERNA, en in dat gat past een tweede verzoek
+      // (tweede tabblad, dubbelklik, herhaling na time-out): beide lezen de wachtrij vóórdat de
+      // ander zijn regel schreef, beide posten dezelfde factuur, en dezelfde inkoopfactuur staat
+      // twee keer in de boekhouding van de klant — zonder dat iemand reden heeft dat te vermoeden.
+      //
+      // We claimen daarom vooraf met status 'unknown'. Krijgt deze insert 23505, dan houdt een
+      // ander verzoek deze factuur al onder handen en posten wij niet.
+      const claimed = await claimExport(pipeline, {
         userId: user.id,
         invoice,
         boekingType: mapped.type,
-        status: "pushed",
-        snelstartId: created.id,
         relatieId,
         amount: mapped.amount,
       });
+      claimSupported = claimed !== "unsupported";
+      if (claimed === "taken") {
+        console.warn("[SNELSTART] factuur al geclaimd door een ander verzoek — niet nogmaals geboekt", {
+          invoiceId: invoice.id,
+        });
+        continue;
+      }
+
+      const created = await client.postBoeking(mapped.type, mapped.payload);
+
+      if (claimed === "claimed") {
+        // Gelukt: dezelfde claim-regel wordt de definitieve boekingsregel. Geen tweede rij, dus
+        // het slot blijft de hele tijd dicht.
+        await settleClaim(pipeline, user.id, invoice.id, {
+          status: "pushed",
+          snelstartId: created.id,
+        });
+      } else {
+        // [DEPLOY-SAFE] Migratie nog niet toegepast → het oude pad: de regel wordt nu pas
+        // geschreven. Zie claimExport voor waarom dit de minst slechte tussenstand is.
+        await pipeline.from("snelstart_exports").insert({
+          user_id: user.id,
+          invoice_id: invoice.id,
+          direction: invoice.direction === "incoming" ? "incoming" : "outgoing",
+          boeking_type: mapped.type,
+          snelstart_id: created.id,
+          snelstart_relatie_id: relatieId ?? null,
+          status: "pushed",
+          amount: mapped.amount ?? null,
+        });
+      }
 
       results.push({
         invoiceId: invoice.id,
@@ -213,20 +254,40 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       const { code, message } = describeFailure(err);
 
-      await recordAttempt(pipeline, {
-        userId: user.id,
-        invoice,
-        boekingType: invoice.direction === "incoming" ? "inkoopboeking" : "verkoopboeking",
-        status: "failed",
-        errorCode: code,
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
+      // [SNELSTART-CLAIM] Weten we ZEKER dat er niets is geboekt, of weten we het niet?
+      // Bij 'failed' gaat de claim vrij en mag de factuur opnieuw mee. Bij 'unknown' blijft hij
+      // staan: de POST kán zijn aangekomen en alleen het antwoord verloren zijn gegaan, en dan
+      // zou opnieuw boeken een tweede regel in andermans grootboek zetten. Welke code welke kant
+      // op gaat, staat in snelstart-claim.ts en is daar getest — met 'unknown' als faalrichting.
+      const outcome = claimStatusAfterFailure(code);
+      // [DEPLOY-SAFE] Zonder de migratie bestaat er geen claim-regel om af te ronden (en zou
+      // 'unknown' de CHECK schenden). Dan blijft het oude gedrag staan: de mislukking wordt
+      // gewoon als 'failed' vastgelegd, precies zoals voorheen.
+      if (claimSupported) {
+        await settleClaim(pipeline, user.id, invoice.id, {
+          status: outcome,
+          errorCode: code,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+      } else {
+        await pipeline.from("snelstart_exports").insert({
+          user_id: user.id,
+          invoice_id: invoice.id,
+          direction: invoice.direction === "incoming" ? "incoming" : "outgoing",
+          boeking_type: invoice.direction === "incoming" ? "inkoopboeking" : "verkoopboeking",
+          status: "failed",
+          error_code: code,
+          error_message: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        });
+      }
 
       results.push({
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoice_number,
         status: "failed",
-        error: message,
+        // Bij een onbekende afloop mag er niet "mislukt" staan — dat is een bewering die we niet
+        // kunnen doen. De gebruiker krijgt de zin die wél waar is: controleer het in SnelStart.
+        error: outcome === "unknown" ? unknownOutcomeMessage(invoice.invoice_number) : message,
         code,
       });
 
@@ -272,24 +333,31 @@ export async function POST(req: NextRequest) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 
-/** Eén poging vastleggen. Het logboek is de enige plek waar staat wat er écht met
- *  SnelStart gebeurd is — daarom schrijven we óók mislukkingen weg. */
-async function recordAttempt(
+/**
+ * [SNELSTART-CLAIM] De factuur claimen VÓÓR de onomkeerbare POST.
+ *
+ * Schrijft één regel met status 'unknown' — "wij hebben deze factuur onder handen, en of hij
+ * geboekt is weten we nog niet". De partiële unique index (pushed | unknown) maakt dat een slot:
+ * een tweede verzoek krijgt 23505 en post dus niet.
+ *
+ * Retourneert false wanneer een ander verzoek de claim al heeft. Bij een échte schrijffout ook
+ * false: kunnen we het slot niet dichtdoen, dan posten we niet — de faalrichting is hier niet
+ * boeken, want een gemiste boeking is te herstellen en een dubbele niet.
+ */
+async function claimExport(
   pipeline: ReturnType<typeof createPipelineClient>,
   params: {
     userId: string;
     invoice: SnelStartInvoice;
     boekingType: "inkoopboeking" | "verkoopboeking";
-    status: "pushed" | "failed";
-    snelstartId?: string | null;
     relatieId?: string | null;
     amount?: number;
-    errorCode?: string;
-    errorMessage?: string;
   },
-): Promise<void> {
-  // Oude mislukte pogingen voor dezelfde factuur opruimen: anders groeit het logboek bij
-  // elke herhaling en wordt "2 mislukt" een verhaal over het verleden in plaats van over nu.
+): Promise<"claimed" | "taken" | "unsupported"> {
+  // Een oude MISLUKTE poging voor dezelfde factuur eerst opruimen — die claimt niets (hij valt
+  // buiten de index), maar zonder dit groeit het logboek bij elke herhaling en wordt "2 mislukt"
+  // een verhaal over het verleden in plaats van over nu. Bewust vóór de claim: een 'unknown' of
+  // 'pushed' regel blijft staan en zorgt hieronder voor de 23505.
   await pipeline
     .from("snelstart_exports")
     .delete()
@@ -302,22 +370,77 @@ async function recordAttempt(
     invoice_id: params.invoice.id,
     direction: params.invoice.direction === "incoming" ? "incoming" : "outgoing",
     boeking_type: params.boekingType,
-    snelstart_id: params.snelstartId ?? null,
     snelstart_relatie_id: params.relatieId ?? null,
-    status: params.status,
-    error_code: params.errorCode ?? null,
-    error_message: params.errorMessage ? params.errorMessage.slice(0, 500) : null,
+    status: "unknown",
     amount: params.amount ?? null,
   });
 
+  if (!error) return "claimed";
+
+  if (error.code === "23505") {
+    // Het slot deed precies zijn werk: een ander verzoek is hier al mee bezig, of de factuur
+    // is al geboekt. Geen fout — wél vermelden.
+    console.warn("[SNELSTART] claim bestaat al", { invoiceId: params.invoice.id });
+    return "taken";
+  }
+  if (error.code === "23514") {
+    // [DEPLOY-SAFE] De CHECK kent 'unknown' nog niet: de code staat live, de migratie
+    // (snelstart_claim_before_push.sql) is nog niet gedraaid. Zonder deze tak zou de hele
+    // SnelStart-koppeling stilvallen tot iemand die SQL uitvoert — een luid kapotte functie in
+    // ruil voor een race die er vandaag óók al is. Dus vallen we terug op precies het oude
+    // gedrag: eerst boeken, daarna vastleggen. Niet beter dan gisteren, maar ook niet slechter,
+    // en de logregel zegt onomwonden wat eraan ontbreekt.
+    console.error(
+      "[SNELSTART] MIGRATIE ONTBREEKT: snelstart_claim_before_push.sql is niet toegepast. " +
+      "De boeking loopt zolang via het oude pad (claim ná de POST), inclusief het risico op een " +
+      "dubbele boeking bij twee gelijktijdige verzoeken.",
+      { invoiceId: params.invoice.id },
+    );
+    return "unsupported";
+  }
+  console.error("[SNELSTART] claim schrijven mislukt — niet geboekt", { error });
+  return "taken";
+}
+
+/**
+ * [SNELSTART-CLAIM] De claim afronden met wat we ná de poging weten.
+ *
+ * 'pushed'  → gelukt; dezelfde regel wordt de definitieve boekingsregel (het slot ging nooit open)
+ * 'failed'  → bewezen niets geboekt; de regel valt uit de index en de factuur mag opnieuw mee
+ * 'unknown' → afloop onbekend; de regel blijft claimen en een mens controleert het in SnelStart
+ */
+async function settleClaim(
+  pipeline: ReturnType<typeof createPipelineClient>,
+  userId: string,
+  invoiceId: string,
+  outcome: {
+    status: "pushed" | "failed" | "unknown";
+    snelstartId?: string | null;
+    errorCode?: string;
+    errorMessage?: string;
+  },
+): Promise<void> {
+  const { error } = await pipeline
+    .from("snelstart_exports")
+    .update({
+      status: outcome.status,
+      snelstart_id: outcome.snelstartId ?? null,
+      error_code: outcome.errorCode ?? null,
+      error_message: outcome.errorMessage ? outcome.errorMessage.slice(0, 500) : null,
+    })
+    .eq("user_id", userId)
+    .eq("invoice_id", invoiceId)
+    .eq("status", "unknown");
+
   if (error) {
-    // 23505 = de partiële unique index sloeg toe: de factuur was al geboekt (race met een
-    // tweede verzoek). Dat is precies wat we wilden — geen fout, wél vermelden.
-    if (error.code === "23505") {
-      console.warn("[SNELSTART] boeking al vastgelegd", { invoiceId: params.invoice.id });
-      return;
-    }
-    console.error("[SNELSTART] duw-logboek schrijven mislukt", { error });
+    // De claim blijft dan op 'unknown' staan. Dat is de veilige kant — er wordt niet vanzelf
+    // opnieuw geboekt — maar het moet wel vindbaar zijn, want bij een geslaagde boeking is dit
+    // het verschil tussen "geboekt" en "mogelijk geboekt" op het scherm van de gebruiker.
+    console.error("[SNELSTART] claim afronden mislukt — blijft op 'unknown'", {
+      invoiceId,
+      bedoeldeStatus: outcome.status,
+      error,
+    });
   }
 }
 

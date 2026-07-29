@@ -366,6 +366,14 @@ export interface VerifyInvoiceResult {
   // auto-books payment — it only pre-fills a suggestion the human confirms.
   paid_method?: "bank" | "kas" | "pin" | null; // 'kas' = contant/cash
   paid_date?: string | null;                    // the written/stamped payment date, "YYYY-MM-DD"
+  // [BON-BETAALWIJZE] The tender block a kassabon PRINTS, copied verbatim ("Bankpas 70,29",
+  // "KONTANT 120,00 Afronding 0,02 Wisselgeld 7,10"). Kept as literal text on purpose: the
+  // classification into bank/kas happens in bon-betaalwijze.ts, which is pure and unit-tested
+  // against real receipts, so the decision does not drift with the model. Null when absent.
+  paid_evidence?: string | null;
+  // Last 4 digits of the card when the receipt masks and prints it. Makes the later bank match
+  // reliable (the same four digits appear on the statement line). Never invented.
+  paid_card_last4?: string | null;
   // [BRIDGE-CREDITNOTA-SIGN] Is this a CREDITNOTA (credit note)? True only on
   // explicit evidence: a "Creditnota"/"Credit note" title, a CR-prefixed
   // number, or amounts printed negative. Routing is unaffected (a creditnota
@@ -1142,6 +1150,8 @@ Return only a JSON object with these exact keys:
   "is_paid": boolean,
   "paid_method": "bank" | "kas" | "pin" | null,
   "paid_date": "YYYY-MM-DD" or null,
+  "paid_evidence": string or null,
+  "paid_card_last4": string or null,
   "is_credit_note": boolean,
   "is_statement": boolean,
   "is_reminder": boolean,
@@ -1283,6 +1293,26 @@ Document kind + paid status (ALWAYS set these):
   payment from an unmarked invoice. A printed "te betalen"/due date is NOT a payment mark.
 - A receipt is still a real financial document: keep is_invoice=true for both
   "invoice" and "receipt" (both enter the pipeline); only "other" is false.
+- [BON-BETAALWIJZE] PRINTED TENDER LINE ON A KASSABON. The rule above is about HANDWRITTEN
+  marks on an invoice. A till receipt does not need one: it PRINTS how it was settled, and that
+  is the accountant's first question about a receipt — the one he cannot derive himself, because
+  a cash purchase leaves no bank line. Read that block and fill:
+    · "paid_evidence": the tender line(s) COPIED VERBATIM, e.g. "Bankpas 70,29",
+      "Kontant 10,75 / Wisselgeld 0,00", "KONTANT 120,00 Afronding 0,02 Wisselgeld 7,10",
+      "PIN leesmethode CTL CHIP / Betaling gelukt". Copy what is printed — do NOT summarise it
+      and do NOT translate it. Null when the receipt prints no tender line at all.
+    · "paid_card_last4": the last 4 digits of the card when a masked card number is printed
+      ("Kaart xxxxxxxxxxxxxxxx6596" → "6596"). Null otherwise. Never invent digits.
+    · "paid_method": "bank" for a card payment (Bankpas, PIN, Maestro, V PAY, contactloos,
+      creditcard), "kas" for contant/kontant/cash, null when the receipt does not say.
+  A card payment is "bank" even when the word "bank" does not appear — a pinpas settles on the
+  bank account. When BOTH a cash tender and a card tender are printed (a split payment), still
+  copy both into paid_evidence and set paid_method=null: a human decides that one.
+- [BON-NUMMER] A kassabon usually DOES carry a printed reference, just not called "factuurnummer"
+  — "BON: 2/667957", "Bon 4/744768", "Transactie 049612", "Volgnr. 0001", a receipt/ticket
+  number. Put that printed reference in "invoice_number". It is the only identifier the document
+  actually has, and it is what makes a re-photographed bon recognisable as the same one. Leave
+  invoice_number null only when the receipt truly prints no reference at all — never invent one.
 
 Creditnota detection (ALWAYS set is_credit_note):
 - "is_credit_note" = true ONLY on explicit evidence this is a CREDIT NOTE:

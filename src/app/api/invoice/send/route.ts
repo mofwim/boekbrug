@@ -132,6 +132,18 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
+    // [TRUST-NUMBER] A conversion keeps the row's own status (see step 9), and the branch above
+    // skips the draft check for convertOnly — so a DRAFT pro forma would come out of here with a
+    // number from the doorlopende reeks while still sitting in the one status the owner may edit
+    // and delete. Deleting it puts a permanent hole in the sequence, which is precisely what the
+    // "POINT OF NO RETURN" further down exists to prevent. Converting is for a document that has
+    // already gone out; a draft is simply sent.
+    if (convertOnly && invoice.status === 'draft') {
+      return NextResponse.json(
+        { error: 'Een concept wordt verstuurd, niet omgezet — verstuur het eerst.' },
+        { status: 409 }
+      )
+    }
 
     // ── 6. Required fields validation ──────────────────────────
     if (!invoice.client_email) {
@@ -279,7 +291,10 @@ export async function POST(request: NextRequest) {
         .eq('id', invoiceId)
         .eq('sender_id', user.id)
       updateQ = convertOnly
-        ? updateQ.in('invoice_type', ['pro_forma', 'offerte'])
+        // [TRUST-NUMBER] The type guard alone let a row that became a draft between the read and
+        // this write still take a number. The status is re-asserted here for the same reason the
+        // send path guards on 'draft': the check in step 5 read a fetched row.
+        ? updateQ.in('invoice_type', ['pro_forma', 'offerte']).neq('status', 'draft')
         : updateQ.eq('status', 'draft')
       const { data: updatedRows, error: updateError } = await updateQ.select('id')
 

@@ -357,5 +357,41 @@ console.log("\n— [KASSTELSEL] undated paid money blocks 'klaar' —");
   check("a quarter with no EU sales at all is untouched", !buildReadiness(perfect()).risks.some((x) => /ICP-opgaaf/.test(x.title)));
 }
 
+{
+  // [DATE-GAP] A verified invoice with no date is in NO quarter's figures, so it must block.
+  const r = buildReadiness(perfect({ datelessVerifiedCount: 2 }));
+  check("a dateless verified invoice is a blocking GAP, not a risk",
+    r.missing.some((x) => /geen factuurdatum/.test(x.title)) && !r.risks.some((x) => /geen factuurdatum/.test(x.title)));
+  check("…so the quarter cannot be 'klaar' while it is missing from the count", r.status !== "ready");
+  check("it says the figures are too LOW, which is the actual harm",
+    r.missing.some((x) => /te laag/.test(x.detail ?? "")));
+  check("it names the one action that fixes it",
+    r.missing.some((x) => /Vul de factuurdatum in/.test(x.detail ?? "")));
+  check("one reads in the singular", buildReadiness(perfect({ datelessVerifiedCount: 1 })).missing.some((x) => /^1 factuur heeft geen factuurdatum$/.test(x.title)));
+  check("none → nothing said", !buildReadiness(perfect({ datelessVerifiedCount: 0 })).missing.some((x) => /factuurdatum/.test(x.title)));
+  check("absent → unchanged for older callers", !buildReadiness(perfect()).missing.some((x) => /factuurdatum/.test(x.title)));
+}
+
+console.log("\n— [DATE-GAP] een factuur zonder datum maakt 'stil 100% klaar' onmogelijk —");
+{
+  // Een geverifieerde factuur zonder invoice_date valt uit ELK bereikfilter (.gte/.lte laat
+  // NULL stil vallen): geen kwartaalpakket, geen concept-aangifte, haar BTW telt nergens. Het
+  // pakket waarschuwde er al over; dit scherm — dat het eindoordeel uitspreekt — wist er niets
+  // van en kon dus 100% klaar melden terwijl er geld buiten beeld lag.
+  const r = buildReadiness(perfect({ datelessInvoiceCount: 1 }));
+  check("een dateloze factuur is een risico", r.risks.some((x) => /geen datum/i.test(x.title)));
+  check("het risico legt uit wat er misgaat", r.risks.some((x) => /geen enkel kwartaal/i.test(x.detail ?? "")));
+  check("de score kan geen 100 meer zijn", r.score < 100);
+
+  // Maar het is bewust GEEN blokkade: de telling is all-time, dus een harde stop zou al
+  // ingediende kwartalen voorgoed rood zetten — ook op het werkbord van de boekhouder.
+  check("het blokkeert 'klaar' niet", !r.missing.some((x) => /geen datum/i.test(x.title)));
+
+  // En zonder dateloze facturen verandert er niets aan het schone kwartaal.
+  const schoon = buildReadiness(perfect({ datelessInvoiceCount: 0 }));
+  check("nul dateloos → geen risico", !schoon.risks.some((x) => /geen datum/i.test(x.title)));
+  check("nul dateloos → gewoon 100", schoon.score === 100);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

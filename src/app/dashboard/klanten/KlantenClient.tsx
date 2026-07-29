@@ -6,12 +6,12 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import type { ProfileRow } from '@/types/rows'
-
-// [SEARCH] Accent-insensitive fold ("Café" ↔ "cafe") for local client filtering.
-const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+// [SMART-FILTER] Accent-insensitieve fold ("Café" ↔ "cafe") — één gedeelde,
+// null-veilige bron voor alle pagina's (src/lib/search.ts).
+import { foldText } from '@/lib/search'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const M3 = {
@@ -78,18 +78,21 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
 
   // [SEARCH] Accent-insensitive filter across the full customer record — not just
   // name/email (KVK, BTW, IBAN, city, address are all findable now).
-  const q = fold(search.trim())
-  const filtered = q
-    ? clients.filter(c =>
-        fold(c.name).includes(q) ||
-        fold(c.email ?? '').includes(q) ||
-        fold(c.kvk_number ?? '').includes(q) ||
-        fold(c.btw_number ?? '').includes(q) ||
-        fold(c.iban ?? '').includes(q) ||
-        fold(c.city ?? '').includes(q) ||
-        fold(c.address ?? '').includes(q)
-      )
-    : clients
+  // [PERF] Gememoïseerd: zonder useMemo werden tot 7 velden per klant bij ELKE
+  // render opnieuw gefold (ook bij het openklappen van een kaart of een toast).
+  const filtered = useMemo(() => {
+    const q = foldText(search.trim())
+    if (!q) return clients
+    return clients.filter(c =>
+      foldText(c.name).includes(q) ||
+      foldText(c.email).includes(q) ||
+      foldText(c.kvk_number).includes(q) ||
+      foldText(c.btw_number).includes(q) ||
+      foldText(c.iban).includes(q) ||
+      foldText(c.city).includes(q) ||
+      foldText(c.address).includes(q)
+    )
+  }, [clients, search])
 
   // [SEARCH] Reveal the ?focus= client once the list has loaded.
   useEffect(() => {
@@ -204,9 +207,19 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
           <span className="material-symbols-outlined" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
           <input
             value={search} onChange={e => setSearch(e.target.value)}
+            aria-label="Klanten zoeken"
             placeholder="Zoek op naam, e-mail, KVK, IBAN..."
-            style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 16px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
+            style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: search ? '10px 40px 10px 40px' : '10px 16px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
           />
+          {/* [SMART-FILTER] Wissen-knop — alleen zichtbaar zodra er iets getypt is. */}
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              aria-label="Zoekopdracht wissen"
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+            </button>
+          )}
         </div>
       </div>
 

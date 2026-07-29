@@ -21,6 +21,8 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit
 // [SEC-STORAGE-PATH] Normalise a stored value AND decide whose bytes it names — one tested place.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
 import { gateFairUse } from "@/lib/fair-use-gate";
+// [REIMPORT-CARRY] De regel over wat een herlezing bewaart en wat zij opnieuw bepaalt.
+import { buildReimportFieldConfidence } from "@/lib/reimport-carry";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -202,37 +204,27 @@ export async function POST(
   const verdict = freshHasTotal
     ? evaluateArithmetic(c, { isCreditNote: c.isCreditNote === true })
     : null;
-  // [DOUBLE-CHECK #3] Preserve non-AI keys already on field_confidence that the fresh AI read
-  // does not carry: the camera-intake hints (_intake_*) always, and — only when we are KEEPING
-  // the stored amounts (no fresh total) — the prior _safecore/_dedup note, so the verdict on
-  // those unchanged amounts stays valid instead of being silently dropped.
+  // [REIMPORT-CARRY] Wat blijft er staan, en wat wordt opnieuw bepaald? Die regel woont in
+  // src/lib/reimport-carry.ts, puur en getest — want hier ging het mis: `_safecore` werd in zijn
+  // geheel vervangen door het verse rekenoordeel, terwijl er DRIE soorten waarheid in dat ene
+  // object wonen. De dubbel-signalen (possible_duplicate*, dedup) gaan over de relatie met een
+  // ándere factuur, en deze route draait geen enkele dedup-query — die konden dus niet opnieuw
+  // worden afgeleid en verdwenen gewoon. Een factuur met "mogelijk dubbel met X" werd door één
+  // druk op deze knop schoon, mocht weer auto-boeken, en dezelfde kostenpost kon een tweede keer
+  // de administratie in. De knop die het vertrouwen moest herstellen, wiste juist de waarschuwing.
   const priorFc = (invoice.field_confidence ?? null) as Record<string, unknown> | null;
-  const carried: Record<string, unknown> = {};
-  if (priorFc) {
-    for (const k of Object.keys(priorFc)) {
-      if (k.startsWith("_intake")) carried[k] = priorFc[k];
-      // [BTW-SUM-FIX] _btw_derived explains the STORED amounts ("this BTW is ours, not the
-      // invoice's"). Keep it alongside _safecore when we keep those amounts — dropping it would
-      // leave a derived BTW sitting in the row with nothing left saying so.
-      else if (!freshHasTotal && (k === "_safecore" || k === "_btw_derived" || k.startsWith("_dedup"))) carried[k] = priorFc[k];
-    }
-  }
   const aiConfidence = (c.fieldConfidence ?? null) as Record<string, unknown> | null;
-  let fieldConfidenceValue: Record<string, unknown> | null =
-    aiConfidence || Object.keys(carried).length ? { ...(aiConfidence ?? {}), ...carried } : null;
-  // A FRESH verdict (amounts were re-read) is the authority on _safecore: set it when the
-  // fresh amounts don't reconcile; a clean fresh read carries no stale hold.
-  if (verdict && !verdict.ok) {
-    fieldConfidenceValue = {
-      ...(fieldConfidenceValue ?? {}),
-      _safecore: {
-        arithmetic_ok: false,
-        reason: verdict.reason,
-        flags: verdict.flags,
-        held_at: new Date().toISOString(),
-      },
-    };
-  }
+  const fieldConfidenceValue = buildReimportFieldConfidence({
+    priorFc,
+    aiConfidence,
+    freshHasTotal,
+    verdict,
+    heldAt: new Date().toISOString(),
+    // De herinneringsvlag komt WÉL van de verse lezing: een ten onrechte gezette vlag moet te
+    // wissen zijn door precies dit middel, anders is hij onherstelbaar.
+    freshIsReminder: c.isReminder === true,
+    freshReminderOf: c.reminderOfInvoiceNumber ?? null,
+  });
 
   // The effective invoice date the patch writes (fresh-or-keep) — also drives due_date.
   const freshDate = (typeof c.invoiceDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.invoiceDate))
