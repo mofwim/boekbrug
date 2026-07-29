@@ -55,7 +55,7 @@ const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 // as one invoice double-counts the invoices it summarises. Narrow on purpose: it excludes
 // "aanmaning"/"herinnering", which can be a single-invoice reminder that IS bookable.
 export function isStatementFilename(filename: string): boolean {
-  return /(rekening|saldo)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
+  return /(rekening|saldo|debiteuren|betalings?)[-_ ]?overzicht|openstaande?[-_ ]?posten|overzicht[-_ ]?openstaande[-_ ]?facturen/i.test(filename || "");
 }
 
 // [REMINDER] A filename that unmistakably marks a payment REMINDER (not a fresh invoice). Used
@@ -63,8 +63,20 @@ export function isStatementFilename(filename: string): boolean {
 // the model booked as a plain invoice is still flagged for the human. Deliberately excludes
 // bare "factuur"/"invoice". A reminder is a real (single) invoice, so we do NOT reject it — we
 // only ensure it is FLAGGED so the human checks it isn't already booked (avoids double-count).
+// [INCASSO-WOORDEN] De volledige Nederlandse escalatieladder, niet alleen de eerste twee treden.
+// Nagelopen tegen deurwaarders-/incassobronnen; de keten is:
+//
+//   betalingsherinnering → aanmaning → sommatie → ingebrekestelling
+//
+// en daarnaast de WIK-brief (Wet Incassokosten), ook bekend als 14-dagenbrief, aanzegging of
+// laatste sommatie: de wettelijk verplichte brief vóórdat incassokosten in rekening mogen worden
+// gebracht. Al deze documenten hebben ÉÉN ding gemeen dat hier telt: ze gaan over een factuur die
+// je al hoort te hebben. Ze zijn dus nooit een NIEUWE kost.
+//
+// Alleen "herinnering" en "aanmaning" stonden hier — dus een "sommatie.pdf" of een
+// "ingebrekestelling.pdf" gleed langs deze backstop en kon als een gewone factuur landen.
 export function isReminderFilename(filename: string): boolean {
-  return /betalings?[-_ ]?herinnering|(^|[^a-z])herinnering|aanmaning|(^|[^a-z])reminder([^a-z]|$)|payment[-_ ]?reminder/i.test(
+  return /betalings?[-_ ]?herinnering|(^|[^a-z])herinnering|herinneringsnota|aanmaning|sommatie|ingebrekestelling|wik[-_ ]?brief|14[-_ ]?dagen[-_ ]?brief|aanzegging|incasso[-_ ]?brief|laatste[-_ ]?(waarschuwing|aanmaning|sommatie)|(^|[^a-z])reminder([^a-z]|$)|payment[-_ ]?reminder|final[-_ ]?notice|dunning/i.test(
     filename || "",
   );
 }
@@ -83,7 +95,10 @@ export function looksLikeStatementText(text: string | null | undefined): boolean
   if (!text) return false;
   const t = text.toLowerCase();
   const overviewTitle =
-    /(rekening|saldo)[-\s]?overzicht/.test(t) ||
+    // [INCASSO-WOORDEN] debiteuren-/betalingsoverzicht meegenomen: zelfde vorm, zelfde gevaar
+    // (één gesommeerd totaal over meerdere facturen). Bewust NIET "maandoverzicht" of
+    // "jaaroverzicht": dat is vaak juist een verzamelfactuur, en die IS boekbaar.
+    /(rekening|saldo|debiteuren|betalings)[-\s]?overzicht/.test(t) ||
     /openstaande\s+(facturen|posten)/.test(t) ||
     /overzicht\s+(van\s+)?openstaande/.test(t) ||
     /overzicht\s+(van\s+)?(je|uw|de)\s+facturen/.test(t);
@@ -109,7 +124,7 @@ export function looksLikeStatementReason(reason: string | null | undefined): boo
   if (!reason) return false;
   const r = reason.toLowerCase();
   return (
-    /(rekening|saldo)[-\s]?overzicht/.test(r) ||
+    /(rekening|saldo|debiteuren|betalings)[-\s]?overzicht/.test(r) ||
     /openstaande\s+(facturen|posten)/.test(r) ||
     /samenvatting\s+van\s+\S*\s*factur/.test(r) ||
     /overzicht\s+van\s+(meerdere|bestaande)\s+factur/.test(r) ||
@@ -1264,6 +1279,17 @@ CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=fa
   invoice's details (one number, one amount). Extract the ORIGINAL invoice's amount, NOT any
   added herinneringskosten line, as the total. (The rule ABOVE — is_invoice=false — is ONLY
   for an overview of TWO OR MORE invoices.)
+- The Dutch escalation ladder counts as a reminder at EVERY rung, not just the first two.
+  Set is_reminder=true for any of: "Betalingsherinnering", "Herinnering", "Herinneringsnota",
+  "Aanmaning", "Laatste aanmaning", "Sommatie", "Ingebrekestelling", "WIK-brief",
+  "14-dagenbrief", "Aanzegging", "Laatste waarschuwing", an incassobrief or a
+  deurwaarder/incassobureau letter, or their English equivalents ("Reminder",
+  "Final notice", "Dunning letter"). They all concern an invoice the recipient should already
+  have, so none of them is ever a NEW cost.
+- reminder_of_invoice_number is IMPORTANT, not decoration: it is how we check whether the
+  original invoice is already booked. Always fill it with the ORIGINAL invoice's number when the
+  document names one — even when that number appears only in a sentence like
+  "betreft factuur 2026-0041" or "onze factuur 2026-0041 d.d. 3 maart".
 - For anything that is NOT a reminder, set is_reminder=false and reminder_of_invoice_number=null.
 
 Document kind + paid status (ALWAYS set these):
