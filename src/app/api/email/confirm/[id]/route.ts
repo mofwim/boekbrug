@@ -449,7 +449,11 @@ export async function PATCH(
   // [BRIDGE-B] Restore: archived → processing (re-enters the verification queue).
   // Must NOT go to 'received' — that would push an unverified invoice straight to
   // the accountant via the restore path (shared=true). The queue is 'processing'.
-  const { error } = await supabase
+  // [UI-HONESTY] .select() so "geen rij geraakt" is distinguishable from "teruggezet".
+  // Without it this returned ok:true when the WHERE matched nothing (already restored,
+  // wrong id, not archived) — and every caller that checks res.ok, including the
+  // "Terugzetten" knop on a geweigerde upload, would claim a success that never happened.
+  const { data: restored, error } = await supabase
     .from("invoices")
     .update({
       status: "processing",
@@ -458,10 +462,17 @@ export async function PATCH(
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .eq("status", "archived");
+    .eq("status", "archived")
+    .select("id");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!restored || restored.length === 0) {
+    return NextResponse.json(
+      { error: "Deze factuur staat niet (meer) in Genegeerd — ververs de pagina." },
+      { status: 409 }
+    );
   }
 
   return NextResponse.json({ ok: true });
