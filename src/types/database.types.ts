@@ -1081,6 +1081,8 @@ export type Database = {
           accountant_note: string | null
           accountant_status: string | null
           amount_paid: number
+          archive_reason: string | null
+          archived_at: string | null
           btw_amount: number | null
           client_address: string | null
           client_btw_number: string | null
@@ -1127,6 +1129,8 @@ export type Database = {
           accountant_note?: string | null
           accountant_status?: string | null
           amount_paid?: number
+          archive_reason?: string | null
+          archived_at?: string | null
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
@@ -1173,6 +1177,8 @@ export type Database = {
           accountant_note?: string | null
           accountant_status?: string | null
           amount_paid?: number
+          archive_reason?: string | null
+          archived_at?: string | null
           btw_amount?: number | null
           client_address?: string | null
           client_btw_number?: string | null
