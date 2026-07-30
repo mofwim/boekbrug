@@ -175,7 +175,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         title: "Factuur verwijderd — let op",
         body: notices.join(" "),
         type: "invoice",
-        link: "/dashboard/btw",
+        // [NOTIF-LINK-REAL] Was "/dashboard/btw", a route that does not exist — the notice is
+        // about a removed invoice's effect on the BTW, and that screen is /dashboard/aangifte.
+        // A link stored in a notifications ROW outlives any code change, so a wrong one here is
+        // a dead tap for as long as the row exists; scripts/nav-audit.mjs only reads href= and
+        // router.push, so it could not see this one.
+        link: "/dashboard/aangifte",
       });
     } catch {
       /* non-blocking */

@@ -174,6 +174,34 @@ export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
+  // [CASH-SETTLE-NO-MANUAL-DELETE] A 'betaling' row is not an entry the owner wrote — it is the
+  // DERIVED drawer movement of an invoice paid in cash, maintained by reconcileCashSettlements.
+  // Deleting it used to succeed, and then the very next GET recreated it (that reconcile runs
+  // before every read, and computeCashSettlementSync books any wanted settlement it cannot find).
+  // So the row vanished and came straight back within one interaction, with nothing said — the
+  // owner's reasonable conclusion being that the page is broken.
+  //
+  // Refusing is the honest answer, because the entry genuinely follows the invoice: the way to
+  // remove it is to undo that invoice's cash payment, and then the reconciler removes this row
+  // itself. RLS already scopes the read to the owner.
+  const { data: existing } = await supabase
+    .from("cash_entries")
+    .select("category")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if ((existing as { category?: string | null } | null)?.category === "betaling") {
+    return NextResponse.json(
+      {
+        error: "settlement_entry",
+        detail:
+          "Deze regel hoort bij een factuur die contant is betaald en volgt die factuur automatisch. " +
+          "Draai de betaling van de factuur terug; dan verdwijnt deze regel vanzelf uit je kasboek.",
+      },
+      { status: 409 },
+    );
+  }
+
   const { error } = await supabase
     .from("cash_entries")
     .delete()

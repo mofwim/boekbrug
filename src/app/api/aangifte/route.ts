@@ -113,10 +113,23 @@ export async function GET(req: NextRequest) {
   const bufD = new Date(Date.UTC(year, startMonth, 1));
   bufD.setUTCDate(bufD.getUTCDate() - 5);
   const startBuffer = `${bufD.getUTCFullYear()}-${pad(bufD.getUTCMonth() + 1)}-${pad(bufD.getUTCDate())}`;
-  const { data: turnoverRows } = await pipeline
+  // [AANGIFTE-TURNOVER-ERROR] Read it the way every other source in this route is read. This was
+  // the one plain `const { data } = await …` here, and it DISCARDED the error: a failed read left
+  // turnoverRows null, allTurnover empty, and the concept aangifte then declared a till shop's
+  // quarter with zero kassa-omzet — a real, understated BTW figure produced by a database hiccup,
+  // with a 200 and no warning anywhere. Every other read uses fetchAllRows, which throws, so the
+  // request fails and the screen says "Kon de concept-aangifte niet laden" instead of quietly
+  // showing a number that is wrong. Missing data must never render as a smaller tax bill.
+  // (The pagination is incidental here — one row per day, so a quarter cannot approach the cap.)
+  const turnoverRows = await fetchAllRows<{
+    turnover_date: string; base_0: number | null; base_9: number | null; base_21: number | null;
+    btw_9: number | null; btw_21: number | null; total_incl: number | null;
+    pin_amount: number | null; cash_amount: number | null; other_amount: number | null;
+  }>((from, to) => pipeline
     .from("daily_turnover")
     .select("turnover_date, base_0, base_9, base_21, btw_9, btw_21, total_incl, pin_amount, cash_amount, other_amount")
-    .eq("user_id", ownerId).gte("turnover_date", startBuffer).lte("turnover_date", end);
+    .eq("user_id", ownerId).gte("turnover_date", startBuffer).lte("turnover_date", end)
+    .order("turnover_date", { ascending: true }).range(from, to));
   const allTurnover: DailyTurnover[] = (turnoverRows ?? []).map((t) => ({
     turnover_date: t.turnover_date,
     base_0: t.base_0 ?? 0, base_9: t.base_9 ?? 0, base_21: t.base_21 ?? 0,

@@ -197,14 +197,37 @@ export default function KasClient() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry_date: date, direction, amount: val, category, description, btw_rate: category === 'omzet' ? btwRate : undefined }),
       })
-      if (res.ok) { setAmount(''); setDescription(''); await load(); if (kbOpen) void loadKasboek(kbPeriod) }
-      else { setError('Kon de boeking niet opslaan. Probeer opnieuw.') }
+      if (res.ok) { setAmount(''); setDescription(''); setError(''); await load(); if (kbOpen) void loadKasboek(kbPeriod) }
+      else {
+        // [CASH-ADD-HONEST] The route answers with the actual reason ("ongeldige categorie",
+        // "beginsaldo moet 0 of hoger zijn", …). Replacing it with "probeer opnieuw" told the
+        // owner to repeat the one thing that cannot work.
+        const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
+        setError(json?.detail || json?.error || 'Kon de boeking niet opslaan. Probeer opnieuw.')
+      }
     } catch { setError('Er ging iets mis.') } finally { setSaving(false) }
   }
 
   async function remove(id: string) {
     setEntries((prev) => prev.filter((e) => e.id !== id)) // optimistic
-    try { await fetch(`/api/cash?id=${id}`, { method: 'DELETE' }); await load(); if (kbOpen) void loadKasboek(kbPeriod) } catch { await load() }
+    // [CASH-DELETE-HONEST] The response was thrown away. A refusal (a 'betaling' row, which
+    // belongs to an invoice and is recreated by the reconciler on the next read) or a server
+    // error looked exactly like a success: the row disappeared, load() brought it back, and
+    // nothing explained why. Read the answer and say it.
+    try {
+      const res = await fetch(`/api/cash?id=${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
+        setError(json?.detail || json?.error || 'Kon de boeking niet verwijderen.')
+      } else {
+        setError('')
+      }
+      await load()
+      if (kbOpen) void loadKasboek(kbPeriod)
+    } catch {
+      setError('Geen verbinding — de boeking is niet verwijderd.')
+      await load()
+    }
   }
 
   // [KAS-UPLOAD] Add a receipt/invoice the owner ALREADY paid in cash. It runs through the normal

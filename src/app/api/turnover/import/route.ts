@@ -56,6 +56,34 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // [DAGOMZET-DUP-DAY] Refuse a payload that names the same day twice, and NAME the day.
+    // Postgres cannot apply ON CONFLICT DO UPDATE to one row twice in a single statement
+    // ("command cannot affect row a second time"), so such a file failed the whole import with
+    // the flat "kon dagomzet niet opslaan" below — nothing pointing at the duplicate date, and
+    // nothing the owner could act on. Nothing was written, which is right; the silence was not.
+    //
+    // Deliberately not resolved automatically: summing two rows for one day would double the
+    // omzet if the file simply repeats a day, and keeping the last would silently drop a second
+    // shift. Both guesses land in the BTW. The owner knows which their file is; the app does not.
+    const seenDays = new Map<string, number>();
+    for (const r of records) seenDays.set(r.turnover_date, (seenDays.get(r.turnover_date) ?? 0) + 1);
+    const dupDays = [...seenDays.entries()].filter(([, n]) => n > 1).map(([d]) => d).sort();
+    if (dupDays.length > 0) {
+      const shown = dupDays.slice(0, 5).join(", ");
+      const more = dupDays.length > 5 ? ` (en ${dupDays.length - 5} andere)` : "";
+      return NextResponse.json(
+        {
+          error: "dubbele_dag",
+          detail:
+            `Dit bestand bevat meerdere regels voor dezelfde dag: ${shown}${more}. ` +
+            `Er is niets opgeslagen. Staat er per dag één totaal in je Z-rapport? Verwijder dan de ` +
+            `dubbele regel. Zijn het losse shifts van dezelfde dag? Tel ze eerst bij elkaar op — ` +
+            `anders zou de omzet van die dag dubbel in je BTW terechtkomen.`,
+        },
+        { status: 400 },
+      );
+    }
+
     // One row per day: a re-import of the same date UPDATES (the unique constraint
     // daily_turnover_unique_day (user_id, turnover_date) drives the upsert).
     const { error } = await supabase
