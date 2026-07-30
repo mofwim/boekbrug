@@ -14,6 +14,7 @@ import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter }
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
 import { isPosPayoutDescription } from '@/lib/bank-identity'
 import { categoryLabel } from '@/lib/bank-categories'
+import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel } from '@/lib/bank-ignore-reason'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
@@ -86,6 +87,8 @@ interface Suggestion {
   // [BANK-COUNTERPART-HISTORY] What the owner decided about this counterpart before. Server-
   // computed over lines that already carry a category; null when there is nothing honest to say.
   history?: { count: number; topCategory: string; topCount: number; matchedBy: 'iban' | 'naam' } | null
+  // [BANK-IGNORE-REDEN] Waarom deze regel op Genegeerd staat. null voor een rij van vóór de kolom.
+  ignoreReason?: string | null
   reference: string | null
   outcome: Outcome
   best: Candidate | null
@@ -789,13 +792,15 @@ export default function BankClient() {
 
   // [BANK-IGNORE] Ignore a transaction: pending → not_found. It leaves the active
   // list (match only reads pending) and appears under Genegeerd.
-  async function ignoreTx(txId: string) {
+  async function ignoreTx(txId: string, reason: string | null = null) {
     setProcessingId(txId)
     try {
       const res = await fetch('/api/bank/ignore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactionId: txId, action: 'ignore' }),
+        // [BANK-IGNORE-REDEN] Optioneel. Slaat de eigenaar de vraag over, dan gaat er niets mee —
+        // de handeling is het negeren, de reden is de aantekening erbij.
+        body: JSON.stringify({ transactionId: txId, action: 'ignore', ...(reason ? { reason } : {}) }),
       })
       if (res.ok) {
         showToast('Transactie genegeerd')
@@ -1441,7 +1446,7 @@ export default function BankClient() {
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
                 onConfirm={(num, invId) => confirmMatch(s.transactionId, num, invId)}
                 onAttach={(files) => attachFile(s.transactionId, files, s.amount >= 0)}
-                onIgnore={() => ignoreTx(s.transactionId)}
+                onIgnore={(reason) => ignoreTx(s.transactionId, reason)}
                 onRestore={() => restoreTx(s.transactionId)}
                 onOpenFile={openInvoiceFile}
                 isDoneTab={bankTab === 'done'}
@@ -1606,7 +1611,7 @@ function TxCard({
   onSelect: (invoiceId: string) => void
   onConfirm: (invoiceNumber: string | null, invoiceId?: string) => void
   onAttach: (files: File[]) => void
-  onIgnore: () => void
+  onIgnore: (reason: string | null) => void
   onRestore: () => void
   onOpenFile: (invoiceId: string) => void
   isDoneTab?: boolean
@@ -1619,6 +1624,11 @@ function TxCard({
   // Pay, etc.) on demand — useful to verify a payment, and it reveals the real
   // counterpart even on older rows whose stored name is still "Onbekende".
   const [showDetails, setShowDetails] = useState(false)
+  // [BANK-IGNORE-REDEN] Eén extra tik, nooit meer. Negeren opent de vraag; een chip negeert MÉT
+  // reden, "Zonder reden" negeert zonder. Bewust geen verplicht veld: een afgedwongen reden levert
+  // een antwoord op dat slechter is dan geen antwoord, en de uitweg staat naast de chips in plaats
+  // van verstopt achter een kruisje.
+  const [askReason, setAskReason] = useState(false)
   const hasDetails = !!(s.description && s.description.trim())
   // [BANK-SLOT-DISMISS] The reference extractor (a regex) can grab numbers that
   // are NOT invoices — a customer number after "Klant:", a postcode like "5049NM".
@@ -2109,7 +2119,7 @@ function TxCard({
               transaction is not an invoice after all). */}
           <button
             disabled={processing}
-            onClick={onIgnore}
+            onClick={() => setAskReason((v) => !v)}
             style={{
               marginTop: 10, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
@@ -2120,6 +2130,46 @@ function TxCard({
             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
             Negeren
           </button>
+          {askReason && (
+            <div style={{
+              marginTop: 8, padding: '10px 12px', borderRadius: R.md,
+              background: '#F8F9FA', border: '1px solid #EEE', fontFamily: FONT,
+            }}>
+              <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 8px', lineHeight: 1.45 }}>
+                Waarom heeft deze regel geen factuur nodig? Dit is alleen een aantekening — je
+                boekhouder ziet hem terug bij het kwartaal.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {BANK_IGNORE_REASONS.map((r) => (
+                  <button
+                    key={r}
+                    disabled={processing}
+                    title={BANK_IGNORE_REASON_LABELS[r].hint}
+                    onClick={() => { setAskReason(false); onIgnore(r) }}
+                    style={{
+                      border: '1px solid #DADCE0', borderRadius: R.full, background: '#fff',
+                      padding: '6px 12px', fontSize: 12.5, fontWeight: 600, color: '#3C4043',
+                      cursor: processing ? 'default' : 'pointer', fontFamily: FONT,
+                    }}
+                  >
+                    {BANK_IGNORE_REASON_LABELS[r].label}
+                  </button>
+                ))}
+                <button
+                  disabled={processing}
+                  onClick={() => { setAskReason(false); onIgnore(null) }}
+                  style={{
+                    border: 'none', background: 'transparent', padding: '6px 10px',
+                    fontSize: 12.5, fontWeight: 600, color: '#70757a',
+                    cursor: processing ? 'default' : 'pointer', fontFamily: FONT,
+                  }}
+                >
+                  Zonder reden
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 
@@ -2133,6 +2183,21 @@ function TxCard({
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
                 Genegeerd — staat niet in de actieve lijst.
               </div>
+              {/* [BANK-IGNORE-REDEN] Waarom deze regel hier staat. Neutraal grijs: dit is een
+                  aantekening, geen waarschuwing. Ontbreekt hij — een rij van vóór deze kolom, of de
+                  vraag overgeslagen — dan staat er niets, want liever geen label dan een verzonnen
+                  label. Dit is het hele punt van de kolom: drie maanden later, bij de
+                  kwartaalafsluiting, stond hier een bedrag zonder één woord waarom. */}
+              {bankIgnoreReasonLabel(s.ignoreReason) && (
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6,
+                  padding: '3px 9px', borderRadius: 8, background: '#f1f3f4', border: '1px solid #e0e3e6',
+                }}>
+                  <span style={{ fontSize: 12, color: '#5f6368', fontWeight: 600 }}>
+                    {bankIgnoreReasonLabel(s.ignoreReason)}
+                  </span>
+                </div>
+              )}
               <button
                 disabled={processing}
                 onClick={onRestore}
@@ -2191,7 +2256,7 @@ function TxCard({
                   loan instalment, a personal transfer). Goes to Genegeerd. */}
               <button
                 disabled={processing}
-                onClick={onIgnore}
+                onClick={() => setAskReason((v) => !v)}
                 style={{
                   marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
@@ -2202,6 +2267,45 @@ function TxCard({
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
                 Negeren
               </button>
+            {askReason && (
+              <div style={{
+                marginTop: 8, padding: '10px 12px', borderRadius: R.md,
+                background: '#F8F9FA', border: '1px solid #EEE', fontFamily: FONT,
+              }}>
+                <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 8px', lineHeight: 1.45 }}>
+                  Waarom heeft deze regel geen factuur nodig? Dit is alleen een aantekening — je
+                  boekhouder ziet hem terug bij het kwartaal.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {BANK_IGNORE_REASONS.map((r) => (
+                    <button
+                      key={r}
+                      disabled={processing}
+                      title={BANK_IGNORE_REASON_LABELS[r].hint}
+                      onClick={() => { setAskReason(false); onIgnore(r) }}
+                      style={{
+                        border: '1px solid #DADCE0', borderRadius: R.full, background: '#fff',
+                        padding: '6px 12px', fontSize: 12.5, fontWeight: 600, color: '#3C4043',
+                        cursor: processing ? 'default' : 'pointer', fontFamily: FONT,
+                      }}
+                    >
+                      {BANK_IGNORE_REASON_LABELS[r].label}
+                    </button>
+                  ))}
+                  <button
+                    disabled={processing}
+                    onClick={() => { setAskReason(false); onIgnore(null) }}
+                    style={{
+                      border: 'none', background: 'transparent', padding: '6px 10px',
+                      fontSize: 12.5, fontWeight: 600, color: '#70757a',
+                      cursor: processing ? 'default' : 'pointer', fontFamily: FONT,
+                    }}
+                  >
+                    Zonder reden
+                  </button>
+                </div>
+              </div>
+            )}
             </>
           )}
         </div>
