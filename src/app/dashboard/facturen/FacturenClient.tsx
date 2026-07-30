@@ -1702,6 +1702,35 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
             : (removeCtx.decision.mode === 'creditnota' ? M3.primary : '#5F6368')}
           onConfirm={() => executeRemoval(removeCtx)}
           onCancel={() => setRemoveCtx(null)}
+          /* [REMOVAL-ALTERNATIVE] decideRemoval names the way forward for every dead end it
+             produces, and this call site discarded all three. The 'creditnota' kind was already
+             reachable because executeRemoval routes a blocked creditnota decision on confirm —
+             but 'ask-accountant' had NO path at all: the sheet offered "Sluiten" and nothing
+             else, so an invoice the accountant had locked was a wall with a door drawn on it.
+             The machinery to open it (requestUnverwerkt → a message to the linked accountant)
+             has existed all along, one state away. */
+          alternative={(() => {
+            const alt = removeCtx.decision.alternative
+            if (!alt) return undefined
+            if (alt.kind === 'ask-accountant') {
+              return {
+                label: alt.label,
+                onClick: () => {
+                  const id = removeCtx.id
+                  const number = invoices.find(i => i.id === id)?.invoice_number ?? ''
+                  setRemoveCtx(null)
+                  setRequestSent(false)
+                  setVerwerktCtx({ id, number })
+                },
+              }
+            }
+            if (alt.kind === 'creditnota') {
+              return { label: alt.label, onClick: () => { const id = removeCtx.id; setRemoveCtx(null); router.push(`/dashboard/invoice/${id}?action=credit`) } }
+            }
+            // 'undo-payment' — the money has to come back off the invoice first, and the one
+            // place that can do that for a bank-settled invoice is the bank page.
+            return { label: alt.label, onClick: () => { setRemoveCtx(null); router.push('/dashboard/bank') } }
+          })()}
         />
       )}
 
@@ -1763,7 +1792,7 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning, paymentChoice, openAmount: openBalance }: {
+function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel, details, warning, paymentChoice, openAmount: openBalance, alternative }: {
   title: string
   body: string
   confirmLabel: string
@@ -1779,6 +1808,12 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
   // [MANUAL-PARTIAL-PAY] What is still open on this invoice. Present → the "Betaald bedrag"
   // field is offered. Absent → no field at all (a bundle stays all-or-nothing).
   openAmount?: number
+  // [REMOVAL-ALTERNATIVE] The way FORWARD when the answer is no. decideRemoval has always
+  // computed this ("Creditnota maken", "Betaling terugdraaien", "Vraag je boekhouder") and this
+  // sheet never accepted it, so every one of them was thrown away at the call site — the dialog
+  // said what the owner could not do and stayed silent about what they could. On a blocked
+  // decision both buttons then just closed the sheet, which is a dead end with two exits.
+  alternative?: { label: string; onClick: () => void }
 }) {
   // [BRIDGE-QUARTER] real payment date — only relevant when paymentChoice is set
   // (marking as paid). Defaults to today; user corrects if they paid earlier.
@@ -1914,6 +1949,11 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
         ) : (
           <>
             <button onClick={onConfirm} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{confirmLabel}</button>
+            {/* [REMOVAL-ALTERNATIVE] The route forward, when there is one. Outlined, not filled:
+                it is an offer, never the recommended tap. */}
+            {alternative && (
+              <button onClick={alternative.onClick} style={{ width: '100%', padding: '13px', borderRadius: R.full, background: '#fff', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: '1px solid #DADCE0', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{alternative.label}</button>
+            )}
             <button onClick={onCancel}  style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
           </>
         )}

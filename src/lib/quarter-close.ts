@@ -73,9 +73,17 @@ export function buildQuarterCloseNotice(
   // "zijn gecontroleerd" mag blijven staan: dat gaat over de verstuurd/ontvangen/betaald-set
   // die AV §7.2 zelf omschrijft als "alles wat je zelf hebt gecontroleerd". Wat wég moest is
   // de bewering dat de KLANT het kwartaal heeft afgesloten.
+  // [GAP-NAMES] The owner's mail has always named the gaps; the accountant's printed only the
+  // COUNT. So a client with four missing PDFs and one unplaced bank line produced a byte-identical
+  // mail to a client with five missing PDFs — the recipient who can actually act on the difference
+  // got the one version that hid it, and "5 aandachtspunten" is a digit, not a signal. Same three
+  // messages, same order (the array is sorted so the most consequential leads), same truncation.
   const accountantBody = clean
     ? `De facturen van je klant voor ${quarterLabel} zijn gecontroleerd (${summary.outgoingCount} verkoop, ${summary.incomingCount} inkoop). Het kwartaalpakket staat klaar om te downloaden.`
-    : `${quarterLabel} van je klant staat klaar, met nog ${gapCount} aandachtspunt(en). Bekijk het kwartaal om te zien wat er mist.`;
+    : `${quarterLabel} van je klant staat klaar, met nog ${gapCount} aandachtspunt(en): ${summary.warnings
+        .map((w) => w.message)
+        .slice(0, 3)
+        .join(" · ")}${gapCount > 3 ? " …" : ""}`;
 
   return { empty, clean, gapCount, ownerTitle, ownerBody, accountantTitle, accountantBody };
 }

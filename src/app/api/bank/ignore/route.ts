@@ -22,6 +22,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { logAuditAction } from "@/lib/audit";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 
 export async function POST(req: NextRequest) {
@@ -53,7 +54,9 @@ export async function POST(req: NextRequest) {
   // 3. Ownership + current state. The user must own the row.
   const { data: tx, error: txErr } = await pipeline
     .from("bank_transactions")
-    .select("id, status, user_id")
+    // [BANK-IGNORE-AUDIT] Also read what the line IS, so the audit row can identify it after
+    // delete-statement has hard-deleted the row it points at.
+    .select("id, status, user_id, date, amount, counterpart_name, description")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -91,6 +94,28 @@ export async function POST(req: NextRequest) {
   if (updErr) {
     return NextResponse.json({ error: "update_failed", detail: updErr.message }, { status: 500 });
   }
+
+  // [BANK-IGNORE-AUDIT] Log AFTER the guarded write, so the row records a change that really
+  // happened. Ignoring pulls the line out of the matcher, auto-confirm, auto-categorize, the
+  // nightly sweep and every categorize read at once, and it deletes that line's
+  // [VOORBELASTING-RISK] warning (undocumentedCount is pending-scoped) — the widest-reaching
+  // one-tap disposition in this folder, and until now the only bank action leaving no trace.
+  // The snapshot travels with it: the line itself can be destroyed later by delete-statement,
+  // and "which line was this" must survive that.
+  await logAuditAction({
+    userId: user.id,
+    action: action === "ignore" ? "bank.ignored" : "bank.restored",
+    entityType: "bank_transaction",
+    entityId: transactionId,
+    oldValue: { status: from },
+    newValue: {
+      status: to,
+      tx_date: tx.date ?? null,
+      tx_amount: tx.amount ?? null,
+      tx_counterpart: tx.counterpart_name ?? null,
+      tx_description: tx.description ?? null,
+    },
+  });
 
   return NextResponse.json({ ok: true, status: to });
 }

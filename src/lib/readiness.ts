@@ -171,6 +171,18 @@ export interface ReadinessItem {
 // remedy are defined together and never drift.
 const FIX = {
   bank: { label: "Naar Bank", href: "/dashboard/bank" },
+  /**
+   * [BANK-QUARTER-LINK] The bank page defaults to the LAST COMPLETED quarter, so a bare
+   * /dashboard/bank sends the owner to the wrong one whenever the gap is not in that quarter.
+   * In August a Q1 income blocker opened Q2: every list read 0, and the only honest reading of
+   * an empty screen is "this was already handled" — the worst answer a blocker can produce.
+   * Pins the quarter the gap is actually about; falls back to the bare route when we don't know
+   * it, because a wrong quarter is worse than none. Mirrors the excluded-review link below.
+   */
+  bankQuarter: (year?: number | null, quarter?: number | null) => ({
+    label: "Naar Bank",
+    href: year && quarter ? `/dashboard/bank?year=${year}&quarter=${quarter}` : "/dashboard/bank",
+  }),
   dagomzet: { label: "Naar Dagomzet", href: "/dashboard/dagomzet" },
   kas: { label: "Naar Kas", href: "/dashboard/kas" },
   nieuweFactuur: { label: "Omzet invoeren", href: "/dashboard/invoice/new" },
@@ -285,7 +297,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         severity: "missing",
         title: "Bankafschrift ontbreekt",
         detail: "Upload het bankafschrift van dit kwartaal — zonder bank kan de boekhouder niets aansluiten.",
-        fix: FIX.bank,
+        fix: FIX.bankQuarter(s.year, s.quarter),
       });
     } else {
       // [NO-CODEER] The per-line "give every bank debit a category" flow is intentionally
@@ -311,7 +323,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 ontvangen betaling zonder factuur"
               : `${s.unmatchedIncomeCount} ontvangen betalingen zonder factuur`,
           detail: "Koppel de betaling aan een factuur of geef aan wat het is (bijv. huur, lening, privé). Onverklaarde omzet kan de boekhouder niet aansluiten.",
-          fix: FIX.bank,
+          fix: FIX.bankQuarter(s.year, s.quarter),
         });
       }
       // [STATEMENT-CONTINUITY] Ontbreekt er een STUK bankgeschiedenis? De controle hierboven kijkt
@@ -325,7 +337,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
           severity: "missing",
           title: "Er ontbreekt een stuk bankgeschiedenis",
           detail: msg,
-          fix: FIX.bank,
+          fix: FIX.bankQuarter(s.year, s.quarter),
         });
       }
       // [VOORBELASTING-RISK] Supplier-like payments (needsDocument) paid by bank with NO purchase
@@ -342,7 +354,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 leverancierbetaling zonder inkoopfactuur"
               : `${s.undocumentedCount} leverancierbetalingen zonder inkoopfactuur`,
           detail: "Je hebt deze kosten per bank betaald, maar er is nog geen inkoopfactuur. Upload de factuur — anders mis je de BTW-aftrek (voorbelasting) op deze kosten en betaal je te veel.",
-          fix: FIX.bank,
+          fix: FIX.bankQuarter(s.year, s.quarter),
         });
       }
       // [RD6] A bank credit booked as 'omzet' whose amount equals an existing invoice is probably a
@@ -356,7 +368,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 ontvangst als omzet geboekt lijkt op een factuurbetaling"
               : `${dubbel} ontvangsten als omzet geboekt lijken op een factuurbetaling`,
           detail: "Het bedrag is gelijk aan een factuur. Als dit de betaling van die factuur is, koppel hem — anders telt de omzet dubbel (de factuur telt al mee).",
-          fix: FIX.bank,
+          fix: FIX.bankQuarter(s.year, s.quarter),
         });
       }
       // [AUTO-EXCLUDE-REVIEW] Lines the app auto-coded as privé/overboeking/belasting and the owner
@@ -452,7 +464,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         ? "1 betaalde factuur zonder betaaldatum"
         : `${undatedPaid} betaalde facturen zonder betaaldatum`,
       detail: "Je administratie staat op kasstelsel: de BTW telt op de betaaldatum. Deze betaalde factu(u)r(en) hebben geen datum, dus de BTW kan niet in het juiste kwartaal — koppel de bankbetaling of vul de betaaldatum in.",
-      fix: FIX.bank,
+      fix: FIX.bankQuarter(s.year, s.quarter),
     });
   }
   const dateless = s.datelessInvoiceCount ?? 0;
@@ -477,7 +489,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         ? "1 betaaldatum is een schatting"
         : `${estimatedPaid} betaaldata zijn een schatting`,
       detail: "De betaaldatum is 'handmatig betaald' i.p.v. uit een bankregel — controleer of het kwartaal klopt (onder kasstelsel bepaalt de betaaldatum het BTW-tijdvak).",
-      fix: FIX.bank,
+      fix: FIX.bankQuarter(s.year, s.quarter),
     });
   }
 

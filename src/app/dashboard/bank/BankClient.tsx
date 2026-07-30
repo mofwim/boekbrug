@@ -193,7 +193,21 @@ export default function BankClient() {
   // [BANK-QUARTER] Which quarter's transactions to show. 'auto' resolves to the newest
   // quarter that has data, so an owner working on Q2 lands on Q2 instead of an all-quarters
   // pile (old Q1 uploads inflated "Geen factuur" to 335). 'all' shows every quarter.
-  const [quarterSel, setQuarterSel] = useState<string>('auto')
+  //
+  // [BANK-QUARTER-LINK] ?year&quarter pins it, because 'auto' resolves to the LAST COMPLETED
+  // quarter and a link that arrives from elsewhere usually means a different one. Readiness
+  // sends the owner here to fix a specific quarter's bank gap; in August a Q1 blocker opened
+  // Q2, every list read 0, and the honest conclusion was "this is already handled" — the worst
+  // possible answer to a blocker. Same pattern the excluded-review link already uses. An
+  // out-of-range or malformed pair falls through to 'auto' rather than showing an empty quarter.
+  const yearParam = Number(searchParams.get('year'))
+  const quarterParam = Number(searchParams.get('quarter'))
+  const linkedQuarter =
+    Number.isInteger(yearParam) && yearParam >= 2000 && yearParam <= 2100 &&
+    Number.isInteger(quarterParam) && quarterParam >= 1 && quarterParam <= 4
+      ? `${yearParam}-Q${quarterParam}`
+      : null
+  const [quarterSel, setQuarterSel] = useState<string>(linkedQuarter ?? 'auto')
   // [BANK-IGNORE] Ignored transactions (status 'not_found'), loaded lazily when
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
