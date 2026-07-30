@@ -74,7 +74,12 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- test op cash_entries die daar staat.
   (21, 'documents_content_hash_unique.sql',
        'Race-veilige ontdubbeling op bytehash — LEES het bestand voordat je hem (opnieuw) draait',
-       'index', 'uq_documents_user_content_hash')
+       'index', 'uq_documents_user_content_hash'),
+
+  -- ── Zicht op de machine ─────────────────────────────────────────────────────────────────
+  (22, 'cron_runs.sql',
+       'Legt vast DAT een cron draaide. Zonder deze tabel is niet te zien of de zes crons leven — en /api/health kan het dan ook niet zeggen',
+       'table', 'cron_runs')
 )
 select
   nr                                                        as "#",

@@ -82,6 +82,28 @@ export async function GET(req: NextRequest) {
   const nu = Date.now();
   const crons: Array<{ job: string; health: string; laatst: string | null; toelichting?: string }> = [];
   let cronsLeesbaar = true;
+
+  // [MEETVENSTER] Sinds wanneer wordt er überhaupt vastgelegd? Zonder dat getal liegt het oordeel
+  // hieronder: elf minuten na het toepassen van cron_runs meldde deze check dat reminders (07:00),
+  // recurring (06:00), retention-purge (maandag) en quarter-close (5 oktober) "NOOIT GEDRAAID"
+  // hadden — met CRON_SECRET als vermoedelijke oorzaak, terwijl email-sync en reconcile op dat
+  // moment mét diezelfde sleutel netjes hadden gedraaid. Hun beurt was gewoon nog niet
+  // langsgekomen. Eén extra query, en het antwoord wordt waar.
+  let watchingSince: number | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (pipeline as any)
+      .from("cron_runs")
+      .select("started_at")
+      .order("started_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    const eerste = (data as { started_at?: string } | null)?.started_at;
+    const ms = eerste ? Date.parse(eerste) : NaN;
+    watchingSince = Number.isFinite(ms) ? ms : null;
+  } catch {
+    watchingSince = null;
+  }
   for (const job of Object.keys(CRON_JOBS) as CronJob[]) {
     let run: CronRunRow | null = null;
     try {
@@ -104,7 +126,7 @@ export async function GET(req: NextRequest) {
       cronsLeesbaar = false;
       break;
     }
-    const health = judgeCron(job, run, nu);
+    const health = judgeCron(job, run, nu, watchingSince);
     crons.push({
       job,
       health,
@@ -113,7 +135,8 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const cronsMetProbleem = crons.filter((c) => c.health !== "ok");
+  // 'nog-niet-langs' is een lege waarneming, geen storing — zie judgeCron.
+  const cronsMetProbleem = crons.filter((c) => c.health !== "ok" && c.health !== "nog-niet-langs");
 
   // ── Het eindoordeel ──────────────────────────────────────────────────
   const kapot = envOordeel === "kapot" || !dbBereikbaar || bucketPrive === false;
@@ -137,7 +160,14 @@ export async function GET(req: NextRequest) {
           : {}),
       },
       crons: cronsLeesbaar
-        ? { leesbaar: true, aandacht: cronsMetProbleem.length, alle: crons }
+        ? {
+            leesbaar: true,
+            aandacht: cronsMetProbleem.length,
+            // Hoe lang er al wordt gemeten. Kort venster = een 'nog-niet-langs' zegt niets, en
+            // het is eerlijker dat op te schrijven dan de lezer het te laten raden.
+            metenSinds: watchingSince ? new Date(watchingSince).toISOString() : null,
+            alle: crons,
+          }
         : {
             leesbaar: false,
             reden:

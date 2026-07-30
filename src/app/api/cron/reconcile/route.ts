@@ -24,7 +24,7 @@ import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
 import { createNotification } from "@/lib/notifications";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
-import { recordCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -32,6 +32,8 @@ export const maxDuration = 300;
 export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
   const cronStartedAt = new Date().toISOString();
+  // De startregel wordt pas geopend NA de auth-poort hieronder — zie daar.
+  let cronRunId: string | null = null;
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret) {
@@ -43,6 +45,9 @@ export async function GET(req: NextRequest) {
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
+  cronRunId = await beginCronRun(createPipelineClient(), "reconcile", cronStartedAt);
 
   const pipeline = createPipelineClient();
 
@@ -147,7 +152,7 @@ export async function GET(req: NextRequest) {
   // so no 500 → no noisy hourly retries for one flaky user), but ok:false makes them visible to
   // any body-reading monitor instead of an always-green flag.
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await recordCronRun(createPipelineClient(), "reconcile", { startedAt: cronStartedAt, ok: true, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated } });
 
   return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated });
 }

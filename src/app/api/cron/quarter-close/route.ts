@@ -24,7 +24,7 @@ import { previousQuarter, buildQuarterCloseNotice } from "@/lib/quarter-close";
 import { sendQuarterReadyToAccountant } from "@/lib/email";
 import { appOrigin } from "@/lib/app-origin";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
-import { recordCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -32,6 +32,8 @@ export const maxDuration = 300;
 export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
   const cronStartedAt = new Date().toISOString();
+  // De startregel wordt pas geopend NA de auth-poort hieronder — zie daar.
+  let cronRunId: string | null = null;
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     console.error("[CRON-QUARTER-CLOSE] CRON_SECRET is not configured — the quarter-end handoff is DISABLED.");
@@ -41,6 +43,9 @@ export async function GET(req: NextRequest) {
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
+  cronRunId = await beginCronRun(createPipelineClient(), "quarter-close", cronStartedAt);
 
   // Allow an explicit ?year&quarter override (manual re-run); otherwise the quarter that just ended.
   const sp = req.nextUrl.searchParams;
@@ -200,8 +205,8 @@ export async function GET(req: NextRequest) {
   }
 
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await recordCronRun(createPipelineClient(), "quarter-close", { startedAt: cronStartedAt, ok: true, result: {
-    ok: true,
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: {
+    ok: failed === 0,
     quarter: `Q${period.quarter} ${period.year}`,
     owners: ownerIds.length,
     notifiedOwners,

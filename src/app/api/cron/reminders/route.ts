@@ -43,7 +43,7 @@ import { sendInvoiceReminder } from "@/lib/email";
 // owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
 import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
-import { recordCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 const DAY_NL = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long" });
@@ -85,6 +85,8 @@ type CandidateInvoice = {
 export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
   const cronStartedAt = new Date().toISOString();
+  // De startregel wordt pas geopend NA de auth-poort hieronder — zie daar.
+  let cronRunId: string | null = null;
   // ── Auth — fail-closed, constant-time (same as reconcile/email-sync) ──
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
@@ -95,6 +97,9 @@ export async function GET(req: NextRequest) {
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
+  cronRunId = await beginCronRun(createPipelineClient(), "reminders", cronStartedAt);
 
   const pipeline = createPipelineClient();
   const today = amsterdamTodayDayNumber();
@@ -424,8 +429,8 @@ export async function GET(req: NextRequest) {
   }
 
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await recordCronRun(createPipelineClient(), "reminders", { startedAt: cronStartedAt, ok: true, result: {
-    ok: true,
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: {
+    ok: failed === 0,
     enabledOwners: owners.length,
     candidates: invoices.length,
     sent,

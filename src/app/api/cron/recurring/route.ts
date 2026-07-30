@@ -28,7 +28,7 @@ import { planOccurrence, termDaysOf, addDays, CADENCE_LABEL, type Cadence } from
 // disagree about the date would put an invoice and its concept in different quarters.
 import { amsterdamToday } from "@/lib/format-nl";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
-import { recordCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -48,6 +48,8 @@ type ScheduleRow = {
 export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
   const cronStartedAt = new Date().toISOString();
+  // De startregel wordt pas geopend NA de auth-poort hieronder — zie daar.
+  let cronRunId: string | null = null;
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret) {
@@ -57,6 +59,9 @@ export async function GET(req: NextRequest) {
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
+  cronRunId = await beginCronRun(createPipelineClient(), "recurring", cronStartedAt);
 
   const pipeline = createPipelineClient();
   const today = amsterdamToday();
@@ -231,7 +236,7 @@ export async function GET(req: NextRequest) {
   }
 
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await recordCronRun(createPipelineClient(), "recurring", { startedAt: cronStartedAt, ok: true, result: { ok: true, available: true, due: schedules.length, generated, skipped, finished, failed } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, available: true, due: schedules.length, generated, skipped, finished, failed } });
 
   return NextResponse.json({ ok: true, available: true, due: schedules.length, generated, skipped, finished, failed });
 }

@@ -15,7 +15,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { syncUserEmails } from "@/lib/email-integration";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
-import { recordCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // allow the batch time (actual ceiling depends on the plan)
@@ -23,6 +23,8 @@ export const maxDuration = 300; // allow the batch time (actual ceiling depends 
 export async function GET(req: NextRequest) {
   // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
   const cronStartedAt = new Date().toISOString();
+  // De startregel wordt pas geopend NA de auth-poort hieronder — zie daar.
+  let cronRunId: string | null = null;
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   // [CRON-OBSERVABILITY] Distinguish a MISCONFIG (secret not set → the whole circle silently
@@ -37,6 +39,9 @@ export async function GET(req: NextRequest) {
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.
+  cronRunId = await beginCronRun(createPipelineClient(), "email-sync", cronStartedAt);
 
   const pipeline = createPipelineClient();
   // Ordered by connected_at so the iteration order is deterministic across runs.
@@ -122,7 +127,7 @@ export async function GET(req: NextRequest) {
   }
 
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await recordCronRun(createPipelineClient(), "email-sync", { startedAt: cronStartedAt, ok: true, result: { ok: true, connections: userIds.length, synced, failed, saved, truncated } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, connections: userIds.length, synced, failed, saved, truncated } });
 
   return NextResponse.json({ ok: true, connections: userIds.length, synced, failed, saved, truncated });
 }
