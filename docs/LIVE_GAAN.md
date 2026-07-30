@@ -9,49 +9,39 @@ onbekend is, staat dat er.*
 
 ---
 
-## 1. Het enige harde blokkade-punt: de crons en je Vercel-plan
+## 1. De crons — op Pro, dus dit klopt gewoon
 
-`vercel.json` declareert zes crons. Twee daarvan draaien **vaker dan één keer per dag**:
+`vercel.json` declareert zes crons:
 
 | cron | schema | per dag |
 |---|---|---|
-| `/api/cron/email-sync` | `0 */2 * * *` | 12× |
 | `/api/cron/reconcile` | `0 * * * *` | 24× |
+| `/api/cron/email-sync` | `0 */2 * * *` | 12× |
 | `/api/cron/reminders` | `0 7 * * *` | 1× |
 | `/api/cron/recurring` | `0 6 * * *` | 1× |
 | `/api/cron/retention-purge` | `0 3 * * 1` | wekelijks |
 | `/api/cron/quarter-close` | `0 8 5 1,4,7,10 *` | 4× per jaar |
 
-**Op Vercel Hobby laat een cron die vaker dan 1× per dag draait de DEPLOY falen.** Niet
-degraderen — falen. Dus:
+**Dit project draait op Vercel Pro.** Daar mogen crons per minuut, dus alle zes draaien zoals
+gedeclareerd, op de minuut die er staat. Er is niets aan te passen.
 
-- **Zit je op Pro** (± € 20/maand): niets te doen, alle zes draaien met minuut-precisie.
-- **Zit je op Hobby**: `email-sync` en `reconcile` moeten naar 1× per dag, anders komt de app er
-  niet op.
+> Ter waarschuwing voor later: op **Hobby** laat een cron die vaker dan 1× per dag draait de
+> DEPLOY falen — niet degraderen, falen. `reconcile` en `email-sync` zouden daar dus naar
+> dagelijks moeten. Relevant als er ooit een staging- of hobbyproject naast komt te staan.
 
-Voor tien begeleide gebruikers is dagelijks eerlijk gezegd genoeg. `reconcile` elk uur voor tien
-mensen is overdaad; `email-sync` één keer per dag betekent dat een gemailde factuur binnen een dag
-verschijnt in plaats van binnen twee uur. Dat verandert het gevoel iets, maar het breekt niets — en
-het kost niets. Ga naar Pro wanneer er omzet is, niet ervoor.
+### `maxDuration = 300` — op Pro geen zorg
 
-Wil je naar dagelijks, dan is dit de wijziging:
+Tien routes vragen vijf minuten (het kwartaalpakket, de mailsync, de crons). **Op Pro is 300s
+sowieso toegestaan**, met of zonder Fluid compute: mét Fluid is het maximum 800s, zonder Fluid is
+het legacy-maximum precies 300s.
 
-```json
-{ "path": "/api/cron/email-sync", "schedule": "0 5 * * *" },
-{ "path": "/api/cron/reconcile",  "schedule": "0 4 * * *" }
-```
+*(Ik zei eerder dat je Fluid compute moest controleren. Op Pro hoeft dat niet — die controle geldt
+alleen op Hobby, waar zónder Fluid op 60s wordt gekapt en het kwartaalpakket van een echte klant
+eruit zou lopen.)*
 
-Let op: op Hobby spreidt Vercel de aanroep over het uur, dus `0 5` betekent érgens tussen 05:00 en
-05:59. Voor alle zes maakt dat niets uit.
-
-### `maxDuration = 300` — dat mag op beide plannen
-
-Tien routes vragen vijf minuten (het kwartaalpakket, de mailsync, de crons). Met **Fluid compute**
-is de limiet 300s op Hobby én Pro. Fluid staat standaard aan voor projecten van na april 2025;
-staat het uit, dan kapt Hobby op **60s** en loopt het kwartaalpakket van een echte klant eruit.
-**Controleer dit één keer** in Project → Settings → Functions.
-
----
+Wat Pro wél extra geeft: als een kwartaalpakket van een grote klant ooit tegen de 300s aan loopt,
+kun je die route naar 800s tillen. Doe dat pas als het gebeurt — een limiet verhogen die je niet
+raakt, verbergt alleen dat er iets traag is.
 
 ## 2. De omgeving
 
@@ -90,7 +80,39 @@ hier staat is wat er misgaat als je iets vergeet, want dát bepaalt de volgorde.
 
 ---
 
-## 3. Hoe je ziet dát het draait
+## 3. Na elke deploy: één URL
+
+```bash
+curl -s -H "Authorization: Bearer $CRON_SECRET" https://<domein>/api/health | jq
+```
+
+Dat antwoordt met één van drie oordelen — `gezond`, `let-op`, `kapot` — en zegt er precies bij
+waaróm:
+
+- **de omgeving**: alleen wat MIST, met per variabele het concrete gevolg. Nooit een waarde, ook
+  niet ingekort — een gezondheidsrapport dat sleutels lekt is zelf het lek.
+- **de database**: bereikbaar of niet.
+- **de bestanden**: staat de `documents`-bucket op privé? Staat hij open, dan is dat het ergste
+  wat deze installatie kan overkomen, en dan is het oordeel meteen `kapot`.
+- **de crons**: per cron wanneer hij voor het laatst draaide en of dat klopt met zijn ritme.
+
+Twee dingen die dit eindpunt bewust anders doet dan een gewone healthcheck:
+
+**Ontbreekt `CRON_SECRET`, dan is dat het antwoord — geen kale 401.** Je kunt je dan niet
+authenticeren, en juist dát is de diagnose: het betekent óók dat alle zes crons 401 antwoorden en
+niets doen. Het eindpunt zegt dat hardop.
+
+**"Ik weet het niet" is geen "het is goed".** Is `cron_runs.sql` nog niet toegepast, dan meldt hij
+niet dat de crons stilliggen maar dat hij het niet kan zien. Dat zijn twee verschillende dingen.
+
+Dit is een rookproef voor jou als beheerder, geen beheerdersdashboard: het raakt geen
+klantgegevens, telt niets per gebruiker, en er komt geen scherm bij. Er is geen admin-rol in dit
+product, en die hoort er ook niet te komen — het hele vertrouwensverhaal is dat alleen de eigenaar
+en zijn gekozen boekhouder bij de gegevens kunnen.
+
+---
+
+## 4. Hoe je ziet dát het draait
 
 Dit was het echte gat: **geen enkele cron legde vast dat hij had gedraaid.** Vercel's cron-log
 toont of het eindpunt is aangeroepen en met welke statuscode — maar niet of hij iets heeft
@@ -126,7 +148,7 @@ kort na de 5e van januari/april/juli/oktober.
 
 ---
 
-## 4. Het domein en de mail
+## 5. Het domein en de mail
 
 - **DNS naar Vercel**, en `NEXT_PUBLIC_APP_URL` op datzelfde domein.
 - **Supabase → Auth → URL Configuration**: het domein in `Site URL` én in `Redirect URLs`, met
@@ -140,7 +162,7 @@ kort na de 5e van januari/april/juli/oktober.
 
 ---
 
-## 5. Wat nog van jou is, en geen code
+## 6. Wat nog van jou is, en geen code
 
 - **KVK-inschrijving en een zakelijke bankrekening.** Zonder deze twee keert Stripe niet uit, en
   `/steun` blijft bewust een 404 zolang er geen echt KVK-nummer is: er wordt nooit om geld gevraagd
@@ -159,7 +181,7 @@ kort na de 5e van januari/april/juli/oktober.
 
 ---
 
-## 6. En dan het enige dat telt
+## 7. En dan het enige dat telt
 
 Tien mensen, persoonlijk begeleid, geen advertenties. De poort:
 

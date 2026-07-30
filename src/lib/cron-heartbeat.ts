@@ -83,7 +83,7 @@ export function cronHealthNote(job: CronJob, health: CronHealth): string {
     case "ok":
       return `${job}: draait zoals bedoeld.`;
     case "nooit-gedraaid":
-      return `${job}: heeft NOOIT gedraaid. Meestal één van twee: CRON_SECRET staat niet in de omgeving (dan antwoordt elke cron 401 en doet niets), of je draait op Vercel Hobby, waar een cron vaker dan 1x per dag de deploy laat falen.`;
+      return `${job}: heeft NOOIT gedraaid. Op dit project (Vercel Pro, waar crons per minuut mogen) is de oorzaak vrijwel altijd dat CRON_SECRET niet in de omgeving staat — dan antwoordt elke cron 401 en doet niets. Kijk anders of vercel.json wel is meegedeployd. (Op Hobby zou een cron vaker dan 1x per dag de deploy laten falen; hier speelt dat niet.)`;
     case "afgebroken":
       return `${job}: begonnen maar nooit afgerond — het proces is halverwege gestopt (time-out of crash). Wat hij tot dat punt had gedaan, staat wél in de database.`;
     case "gefaald":

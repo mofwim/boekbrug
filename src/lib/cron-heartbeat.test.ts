@@ -78,10 +78,12 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
   assert.equal(kapot.find((k) => k.job === "email-sync")?.health, "nooit-gedraaid");
 });
 
-test("de uitleg noemt de twee oorzaken die je een halfuur zoeken schelen", () => {
+test("de uitleg noemt de oorzaken die je een halfuur zoeken schelen", () => {
   const n = cronHealthNote("reconcile", "nooit-gedraaid");
+  // Op Pro is CRON_SECRET vrijwel altijd de oorzaak; die hoort dus vooraan te staan.
   assert.ok(/CRON_SECRET/.test(n));
-  assert.ok(/Hobby/.test(n));
+  assert.ok(n.indexOf("CRON_SECRET") < n.indexOf("Hobby"), "de relevante oorzaak eerst");
+  assert.ok(/vercel\.json/.test(n));
   // En elk oordeel heeft een zin — geen enkele valt door de mand.
   for (const h of ["ok", "nooit-gedraaid", "afgebroken", "gefaald", "te-lang-stil"] as const) {
     assert.ok(cronHealthNote("reconcile", h).length > 10, `${h} heeft uitleg nodig`);
