@@ -85,10 +85,14 @@ function RegisterContent() {
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
     // [KLUIS] Via Google gaat de signUp-metadata niet mee — die weg loopt langs Supabase's
-    // OAuth-callback en niet langs onze signUp(). Het doel reist daarom mee in de
-    // bestemmings-URL, en /dashboard/kluis herstelt het profiel zelf zodra de gebruiker
-    // daar aankomt. Zonder dat zou iemand die zich via Google registreert vanaf
-    // /bewaarplicht alsnog als gewoon boekhoudaccount binnenkomen.
+    // OAuth-callback en niet langs onze signUp(). Het doel reist daarom mee als ?doel= op die
+    // callback, náást de bestemming, en de callback legt het daar vast.
+    //
+    // Dat het doel alleen in de bestemmings-URL zat was niet genoeg, en dat was niet zichtbaar:
+    // de callback stuurde iedere nieuwe gebruiker onvoorwaardelijk naar /onboarding en negeerde
+    // die bestemming. Het zelfherstel op /dashboard/kluis waar dit op leunde, vuurt pas als
+    // iemand DAAR aankomt — en daar kwam hij dus nooit. Wie vanaf /bewaarplicht met Google
+    // binnenkwam, belandde alsnog in de wizard over facturen versturen.
     // [SEC-REDIRECT] Wat de bezoeker meebracht wordt hier al gecontroleerd, niet pas in de
     // callback: een bestemming die wij niet vertrouwen hoort onze eigen URL niet eens in.
     const wens = searchParams.get('redirect')
@@ -111,6 +115,10 @@ function RegisterContent() {
     const callback = new URL('/api/auth/callback', window.location.origin)
     if (redirectUrl) callback.searchParams.set('next', redirectUrl)
     callback.searchParams.set(ROLE_PARAM, role)
+    // [KLUIS] Alleen zetten als het er is: parsePurpose leest alles wat niet exact 'archief' is
+    // als 'boekhouden', dus een lege of afwezige parameter komt op hetzelfde neer. Niets zetten
+    // houdt de URL leesbaar voor het geval dat verreweg het vaakst voorkomt.
+    if (purpose === 'archief') callback.searchParams.set(PURPOSE_PARAM, purpose)
 
     const { error } = await getBrowserClient().auth.signInWithOAuth({
       provider: 'google',
