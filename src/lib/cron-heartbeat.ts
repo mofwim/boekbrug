@@ -25,7 +25,13 @@ export const CRON_JOBS = {
 
 export type CronJob = keyof typeof CRON_JOBS;
 
-export type CronHealth = "ok" | "nooit-gedraaid" | "afgebroken" | "gefaald" | "te-lang-stil";
+export type CronHealth =
+  | "ok"
+  | "nog-niet-langs"
+  | "nooit-gedraaid"
+  | "afgebroken"
+  | "gefaald"
+  | "te-lang-stil";
 
 export interface CronRunRow {
   job: string;
@@ -44,8 +50,38 @@ export interface CronRunRow {
  *   gefaald        → hij kwam tot het einde en gaf zelf aan dat het misging
  *   te-lang-stil   → hij liep ooit goed en is daarna niet meer langs geweest
  */
-export function judgeCron(job: CronJob, run: CronRunRow | null, nowMs: number): CronHealth {
-  if (!run || !run.started_at) return "nooit-gedraaid";
+export function judgeCron(
+  job: CronJob,
+  run: CronRunRow | null,
+  nowMs: number,
+  /**
+   * Sinds wanneer wordt er überhaupt vastgelegd — de vroegste rij in cron_runs.
+   *
+   * ZONDER DIT LIEGT DEZE FUNCTIE, en dat is precies wat er gebeurde. Elf minuten na het
+   * toepassen van de migratie meldde de gezondheidscheck dat reminders, recurring,
+   * retention-purge en quarter-close "NOOIT GEDRAAID" hadden, met CRON_SECRET als vermoedelijke
+   * oorzaak — terwijl email-sync en reconcile op datzelfde moment mét diezelfde sleutel netjes
+   * hadden gedraaid. De waarheid was veel saaier: reminders draait om 07:00 en recurring om
+   * 06:00 (allebei al voorbij toen we begonnen te kijken), retention-purge op maandag, en
+   * quarter-close op 5 oktober.
+   *
+   * Een cron van wie de beurt nog niet is langsgekomen sinds we meten, is niet stuk. Hem
+   * "nooit gedraaid" noemen is een bewering die de data niet draagt — en erger, hij stuurt je
+   * naar een variabele die aantoonbaar klopt. Een alarm dat afgaat zonder oorzaak leert mensen
+   * alarmen te negeren.
+   *
+   * Ontbreekt deze waarde (geen enkele rij), dan valt hij terug op het oude gedrag.
+   */
+  watchingSinceMs?: number | null,
+): CronHealth {
+  if (!run || !run.started_at) {
+    // Korter aan het kijken dan zijn eigen ritme? Dan weten we het simpelweg nog niet.
+    if (typeof watchingSinceMs === "number" && Number.isFinite(watchingSinceMs)) {
+      const gekekenMs = nowMs - watchingSinceMs;
+      if (gekekenMs < CRON_JOBS[job] * 3_600_000) return "nog-niet-langs";
+    }
+    return "nooit-gedraaid";
+  }
   if (run.ok === null) return "afgebroken";
   if (run.ok === false) return "gefaald";
 
@@ -62,11 +98,14 @@ export function judgeCron(job: CronJob, run: CronRunRow | null, nowMs: number): 
 export function cronsNeedingAttention(
   runsByJob: Partial<Record<CronJob, CronRunRow | null>>,
   nowMs: number,
+  watchingSinceMs?: number | null,
 ): Array<{ job: CronJob; health: CronHealth }> {
   const uit: Array<{ job: CronJob; health: CronHealth }> = [];
   for (const job of Object.keys(CRON_JOBS) as CronJob[]) {
-    const health = judgeCron(job, runsByJob[job] ?? null, nowMs);
-    if (health !== "ok") uit.push({ job, health });
+    const health = judgeCron(job, runsByJob[job] ?? null, nowMs, watchingSinceMs);
+    // 'nog-niet-langs' is geen storing maar een lege waarneming — die hoort niet in een lijst
+    // die om aandacht vraagt, anders staat er iets rood dat niemand kan oplossen.
+    if (health !== "ok" && health !== "nog-niet-langs") uit.push({ job, health });
   }
   return uit;
 }
@@ -82,6 +121,8 @@ export function cronHealthNote(job: CronJob, health: CronHealth): string {
   switch (health) {
     case "ok":
       return `${job}: draait zoals bedoeld.`;
+    case "nog-niet-langs":
+      return `${job}: zijn beurt is nog niet langsgekomen sinds we begonnen met meten. Dat is geen storing — kom terug na zijn volgende geplande moment.`;
     case "nooit-gedraaid":
       return `${job}: heeft NOOIT gedraaid. Op dit project (Vercel Pro, waar crons per minuut mogen) is de oorzaak vrijwel altijd dat CRON_SECRET niet in de omgeving staat — dan antwoordt elke cron 401 en doet niets. Kijk anders of vercel.json wel is meegedeployd. (Op Hobby zou een cron vaker dan 1x per dag de deploy laten falen; hier speelt dat niet.)`;
     case "afgebroken":

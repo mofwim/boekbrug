@@ -69,6 +69,7 @@ export const ENV_CHECKS: readonly EnvCheck[] = [
   },
   {
     key: "STRIPE_WEBHOOK_SECRET",
+    // [VOORWAARDELIJK] Alleen 'stil' als afrekenen überhaupt AAN staat — zie checkEnv.
     severity: "stil",
     gevolg:
       "iemand betaalt, de webhook wordt geweigerd en het account springt nooit op plus. Het geld is binnen, de toegang niet",
@@ -96,7 +97,24 @@ export interface EnvResult extends EnvCheck {
  * om na een deploy op te vragen, en een rapport dat sleutels lekt is zelf het lek.
  */
 export function checkEnv(env: Readonly<Record<string, string | undefined>>): EnvResult[] {
-  return ENV_CHECKS.map((c) => ({ ...c, aanwezig: hasValue(env[c.key]) }));
+  // [VOORWAARDELIJK] Zonder STRIPE_SECRET_KEY kan er niemand afrekenen, dus kan er ook geen
+  // betaling zijn waarvan de webhook zoekraakt. Het ontbrekende webhook-geheim is dan geen stille
+  // storing maar een uitstaande stap in een functie die nog niet aan staat.
+  //
+  // Dit is geen kosmetiek. De eerste echte meting meldde "iemand betaalt, de webhook wordt
+  // geweigerd" op een installatie waar afrekenen helemaal uit stond — een alarm dat afgaat zonder
+  // dat het ergens over kan gaan. Dat is precies hoe je mensen leert alarmen te negeren, en dan
+  // missen ze het alarm dat er wél toe doet.
+  const afrekenenAan = hasValue(env["STRIPE_SECRET_KEY"]);
+  return ENV_CHECKS.map((c) => {
+    const severity: Severity =
+      c.key === "STRIPE_WEBHOOK_SECRET" && !afrekenenAan ? "optioneel" : c.severity;
+    const gevolg =
+      c.key === "STRIPE_WEBHOOK_SECRET" && !afrekenenAan
+        ? "nog in te stellen zodra je Stripe aanzet; nu kan er niemand afrekenen, dus er is ook geen betaling die zoekraakt"
+        : c.gevolg;
+    return { ...c, severity, gevolg, aanwezig: hasValue(env[c.key]) };
+  });
 }
 
 /**

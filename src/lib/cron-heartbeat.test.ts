@@ -103,6 +103,42 @@ test("de write-only-bij-succes-vorm komt niet terug", () => {
   assert.equal(mod.recordCronRun, undefined, "één schrijfmoment is niet genoeg — zie de test hierboven");
 });
 
+test("een cron van wie de beurt nog niet is langsgekomen, is niet stuk", () => {
+  // DIT WAS EEN ECHTE LEUGEN OP PRODUCTIE. Elf minuten na het toepassen van cron_runs meldde de
+  // gezondheidscheck dat reminders (07:00), recurring (06:00), retention-purge (maandag) en
+  // quarter-close (5 oktober) "NOOIT GEDRAAID" hadden — met CRON_SECRET als vermoedelijke oorzaak,
+  // terwijl email-sync en reconcile op datzelfde moment mét diezelfde sleutel netjes hadden
+  // gedraaid. De waarheid: hun beurt was gewoon nog niet langsgekomen sinds we begonnen te meten.
+  const elfMinuten = NU - 11 * 60_000;
+  assert.equal(judgeCron("reminders", null, NU, elfMinuten), "nog-niet-langs");
+  assert.equal(judgeCron("quarter-close", null, NU, elfMinuten), "nog-niet-langs");
+  assert.equal(judgeCron("retention-purge", null, NU, elfMinuten), "nog-niet-langs");
+
+  // En het vraagt GEEN aandacht — anders staat er iets rood dat niemand kan oplossen.
+  const aandacht = cronsNeedingAttention({}, NU, elfMinuten);
+  assert.deepEqual(aandacht, [], "elf minuten meten levert geen enkele storing op");
+});
+
+test("maar na zijn ritme is 'niet langsgekomen' wél een storing", () => {
+  // De grens is het ritme van de cron zelf. Kijk je langer dan dat en is hij nooit verschenen,
+  // dan is er echt iets mis met de bedrading.
+  const tweeDagen = NU - 48 * 3_600_000;
+  assert.equal(judgeCron("reminders", null, NU, tweeDagen), "nooit-gedraaid", "dagelijks, twee dagen niets");
+  assert.equal(judgeCron("reconcile", null, NU, tweeDagen), "nooit-gedraaid", "elk uur, twee dagen niets");
+  // quarter-close draait elk kwartaal; twee dagen zegt daar nog steeds niets.
+  assert.equal(judgeCron("quarter-close", null, NU, tweeDagen), "nog-niet-langs");
+
+  const aandacht = cronsNeedingAttention({}, NU, tweeDagen).map((a) => a.job);
+  assert.ok(aandacht.includes("reminders") && aandacht.includes("reconcile"));
+  assert.ok(!aandacht.includes("quarter-close"), "die mag pas na een kwartaal iets zeggen");
+});
+
+test("zonder meetvenster blijft het oude gedrag staan", () => {
+  // Is er nog geen enkele rij, dan is er ook geen venster — dan kan er niets anders worden gezegd.
+  assert.equal(judgeCron("reminders", null, NU), "nooit-gedraaid");
+  assert.equal(judgeCron("reminders", null, NU, null), "nooit-gedraaid");
+});
+
 test("de uitleg noemt de oorzaken die je een halfuur zoeken schelen", () => {
   const n = cronHealthNote("reconcile", "nooit-gedraaid");
   // Op Pro is CRON_SECRET vrijwel altijd de oorzaak; die hoort dus vooraan te staan.
