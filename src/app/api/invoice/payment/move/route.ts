@@ -42,10 +42,39 @@ export async function GET(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const invoiceId = req.nextUrl.searchParams.get("invoiceId");
-  if (!invoiceId) return NextResponse.json({ error: "missing_invoice" }, { status: 400 });
-
   const pipeline = createPipelineClient();
+
+  // Two ways in, because the owner realises the mistake from two directions. From the INVOICE
+  // ("this payment does not belong here") the caller knows the invoice. From the BANK page ("this
+  // line is booked on the wrong invoice") it only knows the transaction, and which invoice that
+  // line paid is precisely what it is asking. Resolving the transaction to its invoice here keeps
+  // that lookup on the server, where the ownership check already lives.
+  let invoiceId = req.nextUrl.searchParams.get("invoiceId");
+  const transactionId = req.nextUrl.searchParams.get("transactionId");
+  if (!invoiceId && transactionId) {
+    const { data: txLinks } = await pipeline
+      .from("bank_tx_invoices")
+      .select("invoice_id")
+      .eq("user_id", user.id)
+      .eq("transaction_id", transactionId)
+      .limit(2);
+    const ids = [...new Set((txLinks ?? []).map((l) => l.invoice_id))];
+    // A BATCH line pays several invoices, and "move the payment" is then ambiguous — which of
+    // them? Say so instead of silently picking one; the owner can act per invoice from
+    // Inkoopfacturen, where each share is visible on its own row.
+    if (ids.length > 1) {
+      return NextResponse.json(
+        {
+          error: "batch_payment",
+          detail:
+            "Deze betaling is over meerdere facturen verdeeld. Verplaats hem per factuur vanuit Inkoopfacturen, dan blijft zichtbaar welk deel waar hoort.",
+        },
+        { status: 409 },
+      );
+    }
+    invoiceId = ids[0] ?? null;
+  }
+  if (!invoiceId) return NextResponse.json({ error: "missing_invoice" }, { status: 400 });
 
   const { data: source } = await pipeline
     .from("invoices")
