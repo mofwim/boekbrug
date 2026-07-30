@@ -96,35 +96,77 @@ export function cronHealthNote(job: CronJob, health: CronHealth): string {
 // ── Het wegschrijven ──────────────────────────────────────────────────────────────────────────
 
 /**
- * Legt vast dat een cron heeft gedraaid, en wat hij deed.
+ * Opent een run: schrijft de startregel met ok = NULL.
  *
- * BEST EFFORT, en dat is hier geen luiheid maar de juiste keuze: het bijhouden van de hartslag
- * mag nooit de cron zelf laten vallen. Een mislukte schrijfactie logt en gaat verder — het werk
- * dat de cron deed is echt gedaan, ook als het opschrijven niet lukte.
+ * WAAROM EEN APARTE STARTREGEL, EN NIET ALLEEN AAN HET EIND SCHRIJVEN
+ * Een cron die halverwege sterft — een time-out van 300s, geheugen op, een harde crash — komt nooit
+ * bij de eindregel. Wordt er alleen aan het eind geschreven, dan laat zo'n run GEEN spoor na en
+ * ziet hij eruit als "nooit gedraaid" of, twee slagen later, als "te lang stil".
  *
- * DEPLOY-SAFE: bestaat de tabel nog niet (cron_runs.sql niet toegepast), dan is dit een no-op.
- * De code staat live vóór de migratie; zonder deze tak zou elke cron-run een foutregel loggen.
+ * Voor reconcile is dat twee uur vertraging. Voor quarter-close, die vier keer per jaar draait, is
+ * de marge een half jaar — dus een vastgelopen kwartaalafsluiting zou pas het volgende seizoen
+ * opvallen. Precies de storing die dit hele mechanisme moest vangen.
+ *
+ * Met een startregel blijft ok = NULL staan als de run sterft, en dat is de toestand 'afgebroken':
+ * begonnen, nooit afgerond. Wat de cron tot dat punt had gedaan staat wél in de database, dus het
+ * vraagt om iets anders dan een run die zelf 'mislukt' meldde.
+ *
+ * Retourneert het id van de startregel, of null als het schrijven niet lukte (dan slaat
+ * finishCronRun over — best effort, de cron zelf mag hier nooit op vallen).
  */
-export async function recordCronRun(
+export async function beginCronRun(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
   job: CronJob,
-  outcome: { startedAt: string; ok: boolean; result?: unknown; error?: string },
-): Promise<void> {
+  startedAt: string,
+): Promise<string | null> {
   try {
-    const { error } = await client.from("cron_runs").insert({
-      job,
-      started_at: outcome.startedAt,
-      finished_at: new Date().toISOString(),
-      ok: outcome.ok,
-      result: outcome.result ?? null,
-      error: outcome.error ? String(outcome.error).slice(0, 500) : null,
-    });
-    // 42P01 = de tabel bestaat nog niet. Dat is de normale toestand vóór de migratie, geen fout.
+    const { data, error } = await client
+      .from("cron_runs")
+      .insert({ job, started_at: startedAt, ok: null })
+      .select("id")
+      .single();
+    // 42P01 = de tabel bestaat nog niet. Normale toestand vóór de migratie, geen fout.
+    if (error) {
+      if (error.code !== "42P01") console.error("[CRON-HARTSLAG] startregel mislukt", { job, error });
+      return null;
+    }
+    return (data?.id as string) ?? null;
+  } catch (e) {
+    console.error("[CRON-HARTSLAG] startregel mislukt", { job, error: String(e) });
+    return null;
+  }
+}
+
+/**
+ * Sluit de run af: zet ok, de uitkomst en het eindtijdstip op de startregel.
+ *
+ * BEST EFFORT, en dat is hier geen luiheid maar de juiste keuze: het bijhouden van de hartslag mag
+ * nooit de cron zelf laten vallen. Het werk dat de cron deed is echt gedaan, ook als het opschrijven
+ * niet lukte — dan blijft de regel op ok = NULL staan en meldt de gezondheidscheck 'afgebroken'.
+ * Dat is een keer te veel kijken, nooit een gemiste storing.
+ */
+export async function finishCronRun(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any,
+  runId: string | null,
+  outcome: { ok: boolean; result?: unknown; error?: string },
+): Promise<void> {
+  if (!runId) return;
+  try {
+    const { error } = await client
+      .from("cron_runs")
+      .update({
+        finished_at: new Date().toISOString(),
+        ok: outcome.ok,
+        result: outcome.result ?? null,
+        error: outcome.error ? String(outcome.error).slice(0, 500) : null,
+      })
+      .eq("id", runId);
     if (error && error.code !== "42P01") {
-      console.error("[CRON-HARTSLAG] kon de run niet vastleggen", { job, error });
+      console.error("[CRON-HARTSLAG] afsluiten mislukt — regel blijft op 'afgebroken' staan", { runId, error });
     }
   } catch (e) {
-    console.error("[CRON-HARTSLAG] kon de run niet vastleggen", { job, error: String(e) });
+    console.error("[CRON-HARTSLAG] afsluiten mislukt", { runId, error: String(e) });
   }
 }

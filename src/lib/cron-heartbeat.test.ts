@@ -78,6 +78,31 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
   assert.equal(kapot.find((k) => k.job === "email-sync")?.health, "nooit-gedraaid");
 });
 
+test("een run die nooit afsluit blijft 'afgebroken' — daarvoor bestaat de startregel", () => {
+  // De crons schreven eerst ALLEEN bij succes. Een cron die halverwege sterft (time-out van 300s,
+  // geheugen op, harde crash) kwam dan nooit bij die regel en liet dus GEEN spoor na: hij zag eruit
+  // als "nooit gedraaid", of twee slagen later als "te lang stil".
+  //
+  // Voor reconcile is dat twee uur vertraging. Voor quarter-close, met een marge van een half jaar,
+  // zou een vastgelopen kwartaalafsluiting pas het volgende seizoen opvallen — precies de storing
+  // die dit mechanisme moest vangen. Nu opent beginCronRun een regel met ok = null, en blijft die
+  // staan als de run sterft.
+  const halverwegeGestorven = { job: "quarter-close", started_at: gelede(1), ok: null };
+  assert.equal(judgeCron("quarter-close", halverwegeGestorven, NU), "afgebroken");
+  // En hij wordt ONMIDDELLIJK gezien, niet pas na de marge.
+  assert.notEqual(judgeCron("quarter-close", halverwegeGestorven, NU), "ok");
+});
+
+test("de write-only-bij-succes-vorm komt niet terug", () => {
+  // Vangnet: zou iemand recordCronRun opnieuw invoeren, dan is de startregel overbodig geworden
+  // en verdwijnt 'afgebroken' stilletjes weer uit de werkelijkheid.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const mod = require("./cron-heartbeat") as Record<string, unknown>;
+  assert.ok(typeof mod.beginCronRun === "function", "de startregel hoort te bestaan");
+  assert.ok(typeof mod.finishCronRun === "function");
+  assert.equal(mod.recordCronRun, undefined, "één schrijfmoment is niet genoeg — zie de test hierboven");
+});
+
 test("de uitleg noemt de oorzaken die je een halfuur zoeken schelen", () => {
   const n = cronHealthNote("reconcile", "nooit-gedraaid");
   // Op Pro is CRON_SECRET vrijwel altijd de oorzaak; die hoort dus vooraan te staan.

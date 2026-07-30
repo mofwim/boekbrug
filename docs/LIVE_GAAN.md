@@ -121,8 +121,11 @@ uitgericht. Een cron kan 200 teruggeven en nul eigenaren verwerkt hebben omdat e
 `cron_runs.sql` legt per run vast: wanneer, geslaagd, en wat hij deed. Eén query vertelt je of de
 machine leeft — hij staat onderaan dat migratiebestand. Wat hij onderscheidt:
 
-- **nooit gedraaid** → de bedrading klopt niet (`CRON_SECRET`, `vercel.json`, plan-limiet)
-- **afgebroken** → begonnen en halverwege gestorven (time-out, crash)
+- **nooit gedraaid** → de bedrading klopt niet (`CRON_SECRET`, of `vercel.json` niet meegedeployd)
+- **afgebroken** → begonnen en halverwege gestorven (time-out, crash). Dit ziet hij dankzij een
+  startregel die bij het begin van de run wordt geschreven: sterft de run, dan blijft die regel op
+  `ok = null` staan. Zonder die startregel zou een vastgelopen `quarter-close` pas een half jaar
+  later opvallen
 - **gefaald** → tot het einde gekomen en zelf gemeld dat het misging
 - **te lang stil** → liep ooit goed, daarna twee slagen niet meer langs geweest
 
