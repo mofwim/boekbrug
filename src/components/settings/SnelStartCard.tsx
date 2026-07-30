@@ -28,7 +28,7 @@ interface Status {
   verkoopGrootboekId?: string | null;
   lastPushAt?: string | null;
   lastError?: string | null;
-  counts: { klaar: number; doorgestuurd: number; mislukt: number };
+  counts: { klaar: number; doorgestuurd: number; onbekend?: number; mislukt: number };
 }
 
 interface PushResult {
@@ -272,6 +272,16 @@ export function SnelStartCard() {
               ✓ Gekoppeld{status.administrationLabel ? ` — ${status.administrationLabel}` : ""}
             </span>
             <span className="text-gray-500">{status.counts.doorgestuurd} doorgestuurd</span>
+            {/* [SNELSTART-EERLIJK] Verstuurd, maar zonder bevestiging van SnelStart. Dit hoort
+                NIET bij "doorgestuurd" (dat zou beweren dat het geboekt is) en niet bij "mislukt"
+                (dat zou beweren dat het niet geboekt is). Het is de enige eerlijke derde categorie,
+                en hij hoort blijvend op het scherm te staan — niet alleen in de melding direct na
+                een push, die bij het herladen verdwijnt. */}
+            {(status.counts.onbekend ?? 0) > 0 && (
+              <span className="text-amber-700">
+                {status.counts.onbekend} zonder bevestiging — controleer in SnelStart
+              </span>
+            )}
             {status.counts.mislukt > 0 && (
               <span className="text-amber-600">{status.counts.mislukt} mislukt</span>
             )}

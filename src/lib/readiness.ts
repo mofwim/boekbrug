@@ -66,6 +66,15 @@ export interface ReadinessSignals {
   // Self-clearing: confirming a line (category_confirmed=true) drops it from this count. Optional
   // (undefined → 0 → no risk) so older callers/tests are unchanged.
   unreviewedExcludedCount?: number;
+  // [STATEMENT-CONTINUITY] Gaten TUSSEN de ingelezen bankafschriften: een ontbrekende periode
+  // (januari en maart geüpload, februari vergeten) of een saldobreuk (het ene afschrift eindigt
+  // op een ander bedrag dan waarmee het volgende begint). Dit is onzichtbaar voor elke andere
+  // controle hier: de twee bestanden die er WEL zijn kloppen allebei perfect, en `bankTxCount`
+  // is niet nul — dus de hele maand betalingen ertussen viel stil weg. Een ontbrekend afschrift
+  // is een echt gat (facturen die betaald lijken, omzet die niet aansluit), dus het BLOKKEERT:
+  // over een periode die je niet hebt, kan niemand zeggen dat het klopt. Elke string is één
+  // afgeronde zin uit bank-statement-continuity.ts. Optioneel (undefined → geen melding).
+  bankGapMessages?: string[];
 
   // ── Till / cash reconciliation (retail triangle: till ⇄ bank ⇄ drawer) ──
   usesTurnover: boolean;                // daily_turnover rows exist → the triangle applies
@@ -240,7 +249,9 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
             ? "1 factuur staat nog in de verwerkingsrij"
             : `${unverified} facturen staan nog in de verwerkingsrij`,
         detail: "Controleer en bevestig deze facturen voordat je afsluit — anders gaan ze niet mee naar de boekhouder.",
-        fix: { label: "Naar Facturen", href: "/dashboard/incoming" },
+        // Label names the screen it opens (Inkomend), not "Facturen" — which is a
+        // different screen in this app (outgoing sales invoices).
+        fix: { label: "Naar Inkomend", href: "/dashboard/incoming" },
       });
     }
     if (!applicable) notes.push("Nog geen facturen geïmporteerd voor dit kwartaal.");
@@ -254,7 +265,9 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         severity: "risk",
         title: autoV === 1 ? "1 factuur is automatisch verwerkt" : `${autoV} facturen zijn automatisch verwerkt`,
         detail: "De app heeft deze duidelijk leesbare facturen automatisch geverifieerd. Loop ze even na (tab 'Automatisch verwerkt') voordat je afsluit.",
-        fix: { label: "Bekijk", href: "/dashboard/incoming/manage" },
+        // The detail names the tab, so the link opens that tab (?filter=auto) instead of
+        // the full ledger the owner would then have to filter by hand.
+        fix: { label: "Bekijk", href: "/dashboard/incoming/manage?filter=auto" },
       });
     }
   }
@@ -298,6 +311,20 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 ontvangen betaling zonder factuur"
               : `${s.unmatchedIncomeCount} ontvangen betalingen zonder factuur`,
           detail: "Koppel de betaling aan een factuur of geef aan wat het is (bijv. huur, lening, privé). Onverklaarde omzet kan de boekhouder niet aansluiten.",
+          fix: FIX.bank,
+        });
+      }
+      // [STATEMENT-CONTINUITY] Ontbreekt er een STUK bankgeschiedenis? De controle hierboven kijkt
+      // naar de transacties die er ZIJN; deze naar het afschrift dat er niet is. Januari en maart
+      // geüpload, februari vergeten: beide bestanden kloppen intern, `bankTxCount` is niet nul, en
+      // toch mist een maand aan betalingen. Dat blokkeert "klaar" — over een periode die je niet
+      // hebt kan niemand zeggen dat het aansluit — en de zin noemt precies welke periode het is,
+      // zodat de eigenaar dat ene bestand bij zijn bank kan ophalen.
+      for (const msg of s.bankGapMessages ?? []) {
+        missing.push({
+          severity: "missing",
+          title: "Er ontbreekt een stuk bankgeschiedenis",
+          detail: msg,
           fix: FIX.bank,
         });
       }

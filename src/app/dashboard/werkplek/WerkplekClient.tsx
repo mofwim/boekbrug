@@ -5,12 +5,12 @@
 // [CONTROL] UI extracted from page.tsx so page.tsx can server-guard the role.
 
 import { useRouter } from 'next/navigation'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3 } from '@/lib/design/tokens'
 
-const M3 = {
-  primary:  '#1A73E8', primaryContainer: '#D3E3FD', onPrimaryContainer: '#041E49',
-  surface:  '#ffffff', onSurface: '#202124',
-  success:  '#34A853', warning: '#E37400', tertiary: '#7B1FA2',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const R    = { md: 12, lg: 16, xl: 24 }
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
@@ -46,8 +46,6 @@ export default function WerkplekClient() {
                 transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
                 WebkitTapHighlightColor: 'transparent',
               }}
-              onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-              onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
             >
               <div style={{
                 width: 50, height: 50, borderRadius: R.md,
@@ -71,7 +69,7 @@ export default function WerkplekClient() {
         onClick={() => router.push('/dashboard/invoice/new')}
         style={{
           position: 'fixed',
-          bottom: 'calc(24px + env(safe-area-inset-bottom))',
+          bottom: 'calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
           right: 20,
           background: '#D3E3FD', color: '#041E49',
           borderRadius: 16, padding: '16px 20px',
@@ -82,8 +80,6 @@ export default function WerkplekClient() {
           fontFamily: "'Roboto', sans-serif", zIndex: 50,
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
-        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
-        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
         Nieuwe factuur

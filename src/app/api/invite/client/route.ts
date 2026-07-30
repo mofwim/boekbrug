@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { sendClientInvite } from '@/lib/email'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { appOrigin } from '@/lib/app-origin'
 
 // المحاسب يدعو عميله
 export async function POST(request: NextRequest) {
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
     // [TRUST-INVITE] Fall back to the request origin when NEXT_PUBLIC_APP_URL is
     // unset — otherwise the client is mailed "undefined/invite/accept?..." (a dead
     // link) while the route still reports success. Mirrors the accountant route.
-    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/+$/, '')
+    const baseUrl = appOrigin(process.env, new URL(request.url).origin) ?? new URL(request.url).origin
     const acceptUrl = `${baseUrl}/invite/accept?token=${invitation.token}`
 
     // [TRUST-INVITE] The email is the WHOLE point of an invite. If the send fails we

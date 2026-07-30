@@ -24,6 +24,8 @@ import { resolveImportTarget } from "./bestanden";
 import { runBankAutoConfirm } from "./bank-auto-confirm";
 import { applyLearnedBankCategories } from "./bank-auto-categorize";
 import { reconcileStatementBalance, balanceWarning, type BalanceReconciliation } from "./bank-statement-balance";
+// [STATEMENT-CONTINUITY] gaten TUSSEN afschriften (ontbrekende periode / saldobreuk).
+import { findStatementGaps } from "./bank-statement-continuity";
 
 export interface BankImportResult {
   format: string | null;
@@ -47,6 +49,11 @@ export interface BankImportResult {
   // A ready owner-facing warning when the statement does NOT reconcile (a line is missing/dropped/
   // duplicated), else null. Surfaced ALONGSIDE parseWarnings by both callers.
   balanceWarning: string | null;
+  // [STATEMENT-CONTINUITY] Eén zin wanneer dit afschrift niet AANSLUIT op wat er al ligt: een
+  // ontbrekende periode ("er ontbreekt een afschrift voor 1-2 t/m 28-2") of een saldobreuk.
+  // Dit is de controle TUSSEN bestanden — balanceWarning kijkt binnen één bestand. Null wanneer
+  // alles aansluit, wanneer dit het eerste afschrift is, of wanneer we het niet konden bepalen.
+  continuityWarning: string | null;
 }
 
 export async function importBankStatement(args: {
@@ -98,6 +105,10 @@ export async function importBankStatement(args: {
     ? reconcileStatementBalance(sb.opening, sb.closing, transactions.map((t) => t.amount))
     : null;
   const balWarning = balanceReconciliation ? balanceWarning(balanceReconciliation) : null;
+  // [STATEMENT-CONTINUITY] Sluit dit afschrift aan op wat er al ligt? Gevuld verderop, zodra
+  // het bestand is opgeslagen en zijn periode bekend is. Null = geen gat gevonden (of niet te
+  // bepalen, bijvoorbeeld bij het allereerste afschrift).
+  let continuityWarning: string | null = null;
 
   // ── dedup + insert transactions (only when the parse yielded some) ──
   let inserted = 0;
@@ -231,6 +242,64 @@ export async function importBankStatement(args: {
     // best-effort — the transactions are stored regardless; only the passthrough is missing
   }
 
+  // [STATEMENT-CONTINUITY] Onthoud WELKE PERIODE dit afschrift beslaat en met welke saldi het
+  // begint en eindigt. De parser las dat al (statementBalance + de transactiedata); het werd
+  // alleen nergens bewaard, en daardoor kon niemand zien dat er een maand ontbrak: twee
+  // afschriften die allebei intern kloppen verbergen samen een gat van vier weken. Met deze rij
+  // vergelijkt bank-statement-continuity.ts de afschriften ONDERLING (datum én saldo-aansluiting).
+  //
+  // Best-effort en zonder await-afhankelijkheid van de rest: mislukt de insert — of bestaat de
+  // tabel nog niet omdat de migratie nog niet gedraaid is — dan verliest de eigenaar alleen deze
+  // extra controle, nooit zijn transacties of zijn bestand.
+  if (statementDocId) {
+    try {
+      const { max: maxDate } = dateRange(transactions);
+      await pipeline.from("bank_statement_periods").upsert(
+        {
+          document_id: statementDocId,
+          user_id: userId,
+          iban: parsed?.accountIban ?? null,
+          period_start: min ?? null,
+          period_end: maxDate ?? null,
+          opening_balance: sb?.opening ?? null,
+          closing_balance: sb?.closing ?? null,
+          currency: sb?.currency ?? null,
+        },
+        { onConflict: "document_id" },
+      );
+      // [STATEMENT-CONTINUITY] Meteen kijken of dit NIEUWE afschrift aansluit op wat er al ligt.
+      // Dit is het moment waarop de eigenaar het bestand in handen heeft: hoort hij nu dat er een
+      // maand tussen zit, dan haalt hij die er in dezelfde beweging bij. Ontdekt hij het pas bij
+      // de kwartaalafsluiting, dan is het een zoektocht van maanden terug. Alleen de gaten die
+      // DIT afschrift raken — de rest hoort thuis op het klaar-scherm, niet in een uploadmelding.
+      const { data: neighbours } = await pipeline
+        .from("bank_statement_periods")
+        .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
+        .eq("user_id", userId)
+        .order("period_start", { ascending: true })
+        .limit(400);
+      const usable = (neighbours ?? []).filter((p) => p.period_start && p.period_end);
+      if (usable.length >= 2) {
+        const { issues } = findStatementGaps(
+          usable.map((p) => ({
+            documentId: p.document_id,
+            iban: p.iban,
+            from: p.period_start as string,
+            to: p.period_end as string,
+            opening: p.opening_balance,
+            closing: p.closing_balance,
+          })),
+        );
+        const mine = issues.find(
+          (i) => i.before.documentId === statementDocId || i.after.documentId === statementDocId,
+        );
+        if (mine) continuityWarning = mine.message;
+      }
+    } catch {
+      /* non-fatal — zonder deze rij vervalt alleen de continuïteitscontrole voor dit bestand */
+    }
+  }
+
   // [BANK-TX-STATEMENT-LINK] Stamp the statement onto the rows THIS import created, so deleting
   // the statement can later reverse exactly its own bookings (and re-import can't double). Only
   // the freshly-inserted rows — never rows a prior import already owns. Best-effort.
@@ -258,6 +327,9 @@ export async function importBankStatement(args: {
     nonBankSpreadsheet,
     autoBooked, // [BANK-AUTO-FEEDBACK] how many payments the import auto-booked (for the upload UI)
     balanceReconciliation,     // [BANK-BALANCE §2.6] statement completeness result (or null)
+    // [STATEMENT-CONTINUITY] Eén zin wanneer dit afschrift NIET aansluit op het vorige — een
+    // ontbrekende periode of een saldobreuk. Null wanneer alles aansluit.
+    continuityWarning,
     balanceWarning: balWarning, // owner-facing "afschrift sluit niet aan" message (or null)
   };
 }

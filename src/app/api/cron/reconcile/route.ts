@@ -23,11 +23,15 @@ import { runBankAutoConfirm } from "@/lib/bank-auto-confirm";
 import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
 import { createNotification } from "@/lib/notifications";
+// [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
+import { recordCronRun } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
+  // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
+  const cronStartedAt = new Date().toISOString();
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret) {
@@ -142,5 +146,8 @@ export async function GET(req: NextRequest) {
   // [CRON-HONEST] ok reflects the truth: per-user failures are isolated (the run itself completed,
   // so no 500 → no noisy hourly retries for one flaky user), but ok:false makes them visible to
   // any body-reading monitor instead of an always-green flag.
+  // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
+  await recordCronRun(createPipelineClient(), "reconcile", { startedAt: cronStartedAt, ok: true, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated } });
+
   return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated });
 }

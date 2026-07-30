@@ -24,7 +24,7 @@
 import Link from 'next/link'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
-import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
@@ -41,6 +41,7 @@ import { crossQuarterPayment } from '@/lib/quarter'
 // [OVER-DATUM] one pure answer to "hoeveel dagen te laat?" — never an assumed payment term
 import { overdueDays, daysUntilDue } from '@/lib/overdue'
 import { rowMatchesQuery } from '@/lib/search'
+import { useToast } from '@/components/ui/Toast'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
@@ -48,25 +49,8 @@ import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/invoice-removal'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
-const M3 = {
-  primary:           '#1A73E8',
-  onPrimary:         '#FFFFFF',
-  primaryContainer:  '#D3E3FD',
-  onPrimaryContainer:'#041E49',
-  surface:           '#ffffff',
-  onSurface:         '#202124',
-  surfaceVariant:    '#f1f3f4',
-  outline:           '#80868b',
-  error:             '#B3261E',
-  errorContainer:    '#F9DEDC',
-  success:           '#34A853',
-  successContainer:  '#CEEAD6',
-  warning:           '#E37400',
-  warningContainer:  '#FEE8C4',
-}
 const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 // Status chip colors — Material You
@@ -199,19 +183,35 @@ export default function IncomingManageClient({
   // cannot move when the owner pays a factuur. Null when the count query failed.
   totalCount?: number | null
 }) {
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
   // [MATCH-BUTTON] applyMap installs the post-run map the matcher returns (no second fetch).
   const { byInvoice: recon, confirmMatch, applyMap } = useInvoiceReconciliation()
+  // [BRIDGE-NOTIF] Deep links land here with ?focus= / ?action= (see the effects
+  // below). Read once, up here, because the filter tab below is INITIALISED from
+  // the URL — setting it from an effect would be a cascading render.
+  const searchParams = useSearchParams()
+  // ── [INTAKE-AUTO-FEEDBACK] Deep-link a FILTER (?filter=auto) ────────────────
+  // The upload results modal on /dashboard/incoming tells the owner that N invoices
+  // were verified and booked automatically, and links here to see them. Landing on
+  // "Alle" would drop them back into the full ledger; opening straight on the tab
+  // that holds exactly those rows is the whole point of the link. Read-only intent:
+  // an unknown value falls back to 'Alle', and the owner can switch freely after.
+  const filterParam = searchParams.get('filter')
   const [invoices, setInvoices]         = useState<IncomingRow[]>(initialInvoices)
-  const [filter, setFilter]             = useState<FilterTab>('all')
+  const [filter, setFilter]             = useState<FilterTab>(
+    FILTERS.some(f => f.id === filterParam) ? (filterParam as FilterTab) : 'all'
+  )
   const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortBy, setSortBy]             = useState<SortKey>('added_desc')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [expandedId, setExpandedId]     = useState<string | null>(null)
-  const [toast, setToast]               = useState<string | null>(null)
   const [payCtx, setPayCtx]             = useState<PayCtx | null>(null)
   // [INVOICE-REMOVE] The confirm dialog for "Verwijderen": the invoice + what removing it means.
   const [removeCtx, setRemoveCtx]       = useState<{ id: string; decision: RemovalDecision } | null>(null)
@@ -318,7 +318,7 @@ export default function IncomingManageClient({
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
   // Lands the user on the exact row: auto-expand, scroll into view, brief highlight.
-  const searchParams = useSearchParams()
+  // (searchParams is read at the top of the component — see the filter note there.)
   const focusId = searchParams.get('focus')
   // [TODAY-AL-BETAALD] patch note (cross-ticket: owned by TODAY-UX, lives here):
   // Vandaag's "Al betaald?" routes here with ?action=pay to open the EXISTING
@@ -421,7 +421,6 @@ export default function IncomingManageClient({
   const tabCount = (id: FilterTab) =>
     id === 'all' ? listedCount : id === 'received' ? receivedCount : id === 'paid' ? paidCount : autoCount
 
-  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
   // Local optimistic patch (no hook — this surface owns its list)
   function patchLocal(id: string, patch: Partial<IncomingRow>) {
@@ -826,12 +825,18 @@ export default function IncomingManageClient({
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
-        {/* [BUNDEL-BETALING] Left: the multi-select toggle — the entry point for
-            paying several facturen van één leverancier with one QR. Given a clear
+        {/* [BUNDEL-BETALING] The multi-select toggle — the entry point for paying
+            several facturen van één leverancier with one QR. Given a clear
             affordance (blue tint + border in rest, solid blue when active) and put
-            on the LEFT so it reads first, not tucked in the corner. Right: the
-            Verificatie shortcut. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+            FIRST so it reads first, not tucked in a corner.
+            [TOOLBAR-ROW] The two actions and the Verificatie shortcut share ONE
+            wrapping row. They used to be two separate blocks stacked on top of
+            each other, which is right on a phone but wasted a whole line of a
+            sticky toolbar on a desktop — and that toolbar sits above the list, so
+            the line it wasted pushed every invoice down.
+            Layout lives in globals.css (.inko-actions), not inline: the media
+            query has to be able to win, and an inline style outranks a class. */}
+        <div className="inko-actions">
           <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
             style={{
               background: selectMode ? M3.primary : M3.primaryContainer,
@@ -847,10 +852,9 @@ export default function IncomingManageClient({
             </span>
             {selectMode ? 'Klaar' : 'Meerdere betalen'}
           </button>
-          <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
+          <Link href="/dashboard/incoming" title="Verificatie" className="inko-inbox tap-44" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
           </Link>
-        </div>
 
         {/* ── [MATCH-BUTTON] Matchen met bank & kas ──────────────────────────────
             The one tap that turns the whole matching circle now instead of waiting
@@ -863,10 +867,11 @@ export default function IncomingManageClient({
         <button
           onClick={runReconciliation}
           disabled={matchBusy}
+          className="inko-match"
           title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            marginBottom: 12, padding: '8px 16px',
+            padding: '8px 16px',
             borderRadius: R.full, border: 'none',
             background: matchBusy ? M3.surfaceVariant : M3.primary,
             color: matchBusy ? '#9AA0A6' : M3.onPrimary,
@@ -880,12 +885,13 @@ export default function IncomingManageClient({
               no shared allowlist change is needed and nothing can render as raw ligature text. */}
           <span
             className="material-symbols-outlined"
-            style={{ fontSize: 18, animation: matchBusy ? 'bbSpin 1s linear infinite' : undefined }}
+            style={{ fontSize: 18, animation: matchBusy ? 'spin 1s linear infinite' : undefined }}
           >
             {matchBusy ? 'refresh' : 'link'}
           </span>
           {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
         </button>
+      </div>
 
         {/* Filter + Sort dropdowns (side by side) */}
         <div style={{ display: 'flex', gap: 8 }}>
@@ -982,7 +988,7 @@ export default function IncomingManageClient({
               style={{ width: '100%', boxSizing: 'border-box', padding: '10px 38px', borderRadius: 12, border: '1px solid #d1d1d6', fontSize: 14, outline: 'none', background: '#fff', color: '#1c1c1e' }}
             />
             {search && (
-              <button onClick={() => setSearch('')} aria-label="Wissen"
+              <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44"
                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: 'none', background: '#e5e5ea', color: '#3a3a3c', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>×</button>
             )}
           </div>
@@ -1394,7 +1400,7 @@ export default function IncomingManageClient({
           Enabled when the pure builder approves (≥2 open rows, same IBAN). ── */}
       {selectMode && (
         <div style={{
-          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + env(safe-area-inset-bottom))`,
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           maxWidth: 648, margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
@@ -1622,16 +1628,7 @@ export default function IncomingManageClient({
         />
       )}
 
-      {/* ── Toast ── */}
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', whiteSpace: 'nowrap', animation: 'fadeInUp 0.2s ease', fontFamily: FONT }}>
-          {toast}
-        </div>
-      )}
-
       <style>{`
-        @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
-        @keyframes bbSpin { to { transform: rotate(360deg); } }
         ::-webkit-scrollbar { display: none }
       `}</style>
     </div>

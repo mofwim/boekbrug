@@ -43,6 +43,8 @@ import {
   type DeletionRequestRow,
 } from "@/lib/retention-purge";
 import { logAuditAction } from "@/lib/audit";
+// [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
+import { recordCronRun } from "@/lib/cron-heartbeat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +66,8 @@ type PurgeReport = {
 };
 
 export async function GET(req: NextRequest) {
+  // [CRON-HARTSLAG] Het startmoment, zodat een afgebroken run herkenbaar blijft.
+  const cronStartedAt = new Date().toISOString();
   // ── Guard 1: never publicly callable ───────────────────────────────
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
@@ -231,6 +235,9 @@ export async function GET(req: NextRequest) {
       report.failures.push(`${row.id}: ${msg}`);
     }
   }
+
+  // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
+  await recordCronRun(createPipelineClient(), "retention-purge", { startedAt: cronStartedAt, ok: true, result: { ok: true, ...report } });
 
   return NextResponse.json({ ok: true, ...report });
 }
