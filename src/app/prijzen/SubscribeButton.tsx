@@ -31,7 +31,11 @@ export default function SubscribeButton() {
       // Not logged in — you cannot subscribe to an account you do not have.
       // Bounce to registration and come straight back here afterwards.
       if (res.status === 401) {
-        router.push('/register?next=/prijzen')
+        // De parameter heet `redirect`, niet `next`. Hij heette hier `next` en /register leest
+        // die naam niet, dus "kom straks meteen hier terug" gebeurde nooit: de bezoeker maakte
+        // een account en stond daarna in de onboarding, met de knop waar hij op klikte drie
+        // stappen achter zich. (`next` bestaat wel, maar dat is de naam op de OAuth-callback.)
+        router.push(`/register?redirect=${encodeURIComponent('/prijzen')}`)
         return
       }
 

@@ -49,8 +49,11 @@ function RegisterContent() {
   const copy = purposeCopy(purpose)
 
   // Keep any ?redirect= when we link over to /login.
+  // [SEC-REDIRECT] Alleen een bestemming die wij ook zouden honoreren reist mee. Dit was al
+  // ongevaarlijk (de link wijst hoe dan ook naar ons eigen /login), maar een waarde doorgeven
+  // die de ontvanger straks weggooit is een belofte die je niet waarmaakt.
   const redirectParam = searchParams.get('redirect')
-  const loginHref = redirectParam
+  const loginHref = isSafeRedirect(redirectParam)
     ? `/login?redirect=${encodeURIComponent(redirectParam)}`
     : '/login'
 
@@ -327,8 +330,12 @@ function RegisterContent() {
             We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
             Klik op de link om je account te activeren.
           </p>
+          {/* Mét de bestemming erbij. Hier stond een kale /login, en dat is precies de plek waar
+              een uitnodiging verdween: wie via /invite/accept?token=… registreerde, kwam op dit
+              scherm en verloor de link naar de uitnodiging waarvoor hij kwam. Hij moest hem
+              opnieuw in zijn mailbox opzoeken. loginHref draagt de ?redirect= al mee. */}
           <a
-            href="/login"
+            href={loginHref}
             style={{
               display: "inline-block", padding: "14px 24px", borderRadius: "12px",
               background: "#1A73E8", color: "#fff", textDecoration: "none",
