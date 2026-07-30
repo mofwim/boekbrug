@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { safeRedirect } from '@/lib/safe-redirect'
+import { ROLE_PARAM, parseRole } from '@/lib/register-intent'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -38,14 +39,19 @@ export async function GET(req: NextRequest) {
   }
 
   // [AUTH-FRONTDOOR] The only metadata we carry is the display name — from the
-  // email signup (register/page.tsx passes data.full_name) or from Google. Role and
-  // company are collected in onboarding, so there is nothing else to enrich here.
+  // email signup (register/page.tsx passes data.full_name) or from Google.
   const metaName = user.user_metadata?.full_name || user.user_metadata?.name || ''
+
+  // [OAUTH-ROL] De rolkeuze uit stap 1 van /register. Via Google loopt de aanmelding langs
+  // Supabase' OAuth-callback en niet langs onze signUp(), dus de metadata met de rol bestaat
+  // hier niet — de keuze reist mee als ?rol= op deze URL. `null` betekent "er is niets gekozen"
+  // (een gewone Google-login bijvoorbeeld) en dan hoort er niets te veranderen.
+  const chosenRole = parseRole(searchParams.get(ROLE_PARAM))
 
   // [Google-OAuth] Check if this user already has a profile
   const { data: existingProfile } = await supabase
     .from('profiles')
-    .select('id, onboarding_done, full_name')
+    .select('id, onboarding_done, onboarding_step, full_name, role')
     .eq('id', user.id)
     .single()
 
@@ -57,7 +63,9 @@ export async function GET(req: NextRequest) {
       id: user.id,
       full_name: metaName,
       email: user.email || '',
-      role: 'zzper', // default — the real role is chosen during onboarding
+      // [OAUTH-ROL] Stond hier hard op 'zzper'. Is er niets gekozen, dan is dat nog steeds de
+      // juiste waarde — de wizard vraagt het dan alsnog.
+      role: chosenRole ?? 'zzper',
       onboarding_done: false,
       onboarding_step: 1,
     }, { onConflict: 'id' })
@@ -75,6 +83,30 @@ export async function GET(req: NextRequest) {
       .update({ full_name: metaName })
       .eq('id', user.id)
       .is('full_name', null)
+  }
+
+  // [OAUTH-ROL] En hetzelfde voor een profiel dat de trigger zojuist zelf heeft aangemaakt.
+  // Dat is bij Google de gewone gang van zaken: on_auth_user_created vuurt tijdens
+  // exchangeCodeForSession, dus tegen de tijd dat wij hierboven kijken bestaat de rij al —
+  // kaal, want een OAuth-aanmelding draagt geen signUp-metadata. De tak hierboven ("nog geen
+  // profiel") wordt daardoor in de praktijk zelden gehaald, en zonder deze regels zou de
+  // rolkeuze alsnog in die kale rij verdwijnen.
+  //
+  // De voorwaarde is expres eng: alleen een profiel dat de rolvraag nog niet gepasseerd is
+  // (stap 1 of lager, onboarding niet afgerond). Wie de wizard heeft doorlopen of al verder
+  // stond, wordt hier nooit aangeraakt. Meer bescherming is niet nodig én niet mogelijk: een
+  // rol is een zelfverklaring (zie ai_spend_guard.sql), en het toegangsbesluit rust op bewijs
+  // — een accountant_clients-koppeling met toestemming — niet op deze kolom.
+  if (
+    chosenRole &&
+    existingProfile.role !== chosenRole &&
+    !existingProfile.onboarding_done &&
+    (existingProfile.onboarding_step ?? 1) <= 1
+  ) {
+    await supabase
+      .from('profiles')
+      .update({ role: chosenRole })
+      .eq('id', user.id)
   }
 
   // [Google-OAuth] Existing user — check onboarding

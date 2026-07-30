@@ -8,6 +8,7 @@ import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
 import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
+import { ROLE_PARAM } from '@/lib/register-intent'
 import {
   PURPOSE_PARAM,
   landingPath,
@@ -67,7 +68,9 @@ function RegisterContent() {
   }, [])
 
   // [Google-OAuth] Google register/login via Supabase OAuth
-  // Role is stored in step 1 — passed as state through OAuth so callback can save it
+  // [OAUTH-ROL] De rolkeuze uit stap 1 reist mee als ?rol= op onze eigen callback-URL, en de
+  // callback slaat hem daar op. Hier stond het comment dat dit al gebeurde; het gebeurde niet.
+  // Zie src/lib/register-intent.ts voor wat er wel en niet aan zo'n meegereisde waarde vastzit.
   async function handleGoogleRegister() {
     if (!role) {
       // Step 1 not done yet — show role picker first
@@ -92,13 +95,22 @@ function RegisterContent() {
     const redirectUrl =
       (isSafeRedirect(wens) ? wens : null) ??
       (purpose === 'archief' ? `${landingPath(purpose)}?${PURPOSE_PARAM}=archief` : null)
-    // De bestemming reist mee als ?next= op de callback. Hier stond eerder een `state`-object
-    // met de rol erin dat NERGENS werd meegegeven aan signInWithOAuth — het werd berekend en
-    // weggegooid, dus de rolkeuze ging bij Google-registratie altijd verloren. De callback
-    // leest `next` al, mét bescherming tegen open redirects (alleen een pad op dezelfde
-    // origin), dus dit is de weg die er al lag.
+    // De bestemming reist mee als ?next= op de callback, en de rolkeuze als ?rol=.
+    //
+    // [OAUTH-ROL] Dat tweede is nieuw en het is de hele reparatie. Hier stond eerder een
+    // `state`-object met de rol erin dat NERGENS aan signInWithOAuth werd meegegeven — het werd
+    // berekend en weggegooid. Het comment eronder concludeerde dat `next` "de weg was die er al
+    // lag", maar `next` draagt alleen de bestemming; de rol stond er nooit in. De callback
+    // schreef intussen onvoorwaardelijk 'zzper', dus elke boekhouder die via Google binnenkwam
+    // werd als ZZP'er aangemaakt.
+    //
+    // Een eigen parameter in plaats van iets in `next` verstoppen: `next` is een bestemming en
+    // wordt als bestemming gecontroleerd, en er zit een geval in waarin er helemaal geen
+    // bestemming is (een gewone registratie zonder ?redirect=). Twee dingen door één opening
+    // persen zou precies dat geval stil laten vallen.
     const callback = new URL('/api/auth/callback', window.location.origin)
     if (redirectUrl) callback.searchParams.set('next', redirectUrl)
+    callback.searchParams.set(ROLE_PARAM, role)
 
     const { error } = await getBrowserClient().auth.signInWithOAuth({
       provider: 'google',
