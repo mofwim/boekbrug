@@ -1401,7 +1401,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
             {filter === 'all' && !searching && archivedInvoices.length > 0 && (
               <>
                 <div style={{ padding: '8px 4px 2px' }}>
-                  <p style={{ fontSize: 11, color: '#9AA0A6', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
+                  <p style={{ fontSize: 11, color: '#70757a', fontWeight: 500, letterSpacing: 0.4 }}>GEARCHIVEERD</p>
                 </div>
                 {archivedInvoices.map(inv => (
                   <div key={inv.id} style={{ borderRadius: R.lg, overflow: 'hidden', boxShadow: EL1, opacity: inv.replaced_by_number ? 0.4 : 0.6 }}>
@@ -1524,7 +1524,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
               </button>
             </div>
 
-            <p style={{ fontSize: 11.5, color: '#9AA0A6', lineHeight: 1.5, margin: '0 0 16px' }}>
+            <p style={{ fontSize: 11.5, color: '#70757a', lineHeight: 1.5, margin: '0 0 16px' }}>
               BoekBrug verwerkt de betaling niet — het geld gaat direct naar je eigen IBAN
               ({bundle.iban.replace(/(.{4})/g, '$1 ').trim()}).
             </p>
@@ -1672,7 +1672,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
               ))}
             </div>
             )}
-            <p style={{ fontSize: 12, color: '#9AA0A6', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
+            <p style={{ fontSize: 12, color: '#70757a', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.5 }}>
               {repeatCtx.scheduleId
                 ? 'Concepten die al klaarstaan blijven staan — stoppen raakt alleen de herhaling zelf.'
                 : 'Stoppen kan altijd — het herhalen staat bij deze factuur en raakt de facturen die al klaarstaan nooit.'}
@@ -1924,7 +1924,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
               <button
                 onClick={() => { if (!entry || entry.valid) paymentChoice('bank', paymentDate, entry?.amount ?? null) }}
                 disabled={!!entry && !entry.valid}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
                 Bank
@@ -1938,7 +1938,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
               <button
                 onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
                 disabled={!canPayCash}
-                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#9AA0A6', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
                 Contant

@@ -441,7 +441,7 @@ export default function UploadClient() {
             worden hiermee alsnog verwerkt — zonder opnieuw te uploaden. Veilig om te herhalen (corrigeert, telt nooit dubbel).
           </p>
           <button onClick={runReprocess} disabled={reproc.busy}
-            style={{ background: reproc.busy ? '#9AA0A6' : '#0B8043', color: '#fff', border: 'none', borderRadius: 999, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: reproc.busy ? 'default' : 'pointer', fontFamily: FONT }}>
+            style={{ background: reproc.busy ? '#70757a' : '#0B8043', color: '#fff', border: 'none', borderRadius: 999, padding: '10px 18px', fontSize: 13.5, fontWeight: 700, cursor: reproc.busy ? 'default' : 'pointer', fontFamily: FONT }}>
             {reproc.busy ? '🔄 Bezig met boeken…' : '🔄 Boek mijn opgeslagen bestanden'}
           </button>
 

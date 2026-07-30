@@ -544,10 +544,10 @@ export default function KasClient() {
                 </div>
                 {e.category === 'betaling' ? (
                   <span title="Automatisch: betaling van een contant betaalde factuur. Maak de betaling op de factuur ongedaan om dit te verwijderen."
-                    style={{ flexShrink: 0, color: '#9aa0a6', fontSize: 16, lineHeight: 1 }}>🔗</span>
+                    style={{ flexShrink: 0, color: '#70757a', fontSize: 16, lineHeight: 1 }}>🔗</span>
                 ) : (
                   <button onClick={() => remove(e.id)} aria-label="Verwijderen"
-                    style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                    style={{ flexShrink: 0, border: 'none', background: 'transparent', color: '#70757a', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
                 )}
               </div>
             ))}
@@ -568,7 +568,7 @@ export default function KasClient() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral }}>KASBOEK — KWARTAAL</div>
                 <button onClick={() => setKbOpen(false)} aria-label="Sluiten"
-                  style={{ border: 'none', background: 'transparent', color: '#9aa0a6', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
+                  style={{ border: 'none', background: 'transparent', color: '#70757a', fontSize: 20, cursor: 'pointer', lineHeight: 1 }}>×</button>
               </div>
 
               {/* Quarter selector */}

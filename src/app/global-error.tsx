@@ -36,7 +36,7 @@ export default function GlobalError({
           <h1 style={{ fontSize: 18, fontWeight: 700, margin: "16px 0 4px" }}>
             Er is iets misgegaan
           </h1>
-          <p style={{ fontSize: 14, color: "#9aa0a6", margin: 0 }}>
+          <p style={{ fontSize: 14, color: "#70757a", margin: 0 }}>
             Er is iets misgegaan. Probeer het opnieuw.
           </p>
           <div

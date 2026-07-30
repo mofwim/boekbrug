@@ -47,7 +47,7 @@ export default function ArticleCard({ post, locale }: { post: Post; locale: Loca
         </div>
       )}
       <div style={{ padding: 22 }}>
-        <div style={{ fontSize: 12, color: '#9aa0a6', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: '#70757a', marginBottom: 8 }}>
           {formatDate(frontmatter.publishedAt, locale)}
         </div>
         <div style={{ fontSize: 19, fontWeight: 700, color: '#202124', marginBottom: 8, lineHeight: 1.3 }}>

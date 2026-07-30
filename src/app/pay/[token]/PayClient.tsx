@@ -115,7 +115,7 @@ export default function PayClient({ token }: { token: string }) {
                 <div style={{ margin: '14px 0 4px', borderTop: '1px solid #f1f3f4' }}>
                   {view.items.map((it, i) => (
                     <div key={`${it.invoiceNumber ?? 'f'}-${i}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 2px', borderBottom: '1px solid #f8f9fa' }}>
-                      <div style={{ fontSize: 13.5, color: it.alreadyPaid ? '#9aa0a6' : '#202124', fontWeight: 600, textDecoration: it.alreadyPaid ? 'line-through' : 'none' }}>
+                      <div style={{ fontSize: 13.5, color: it.alreadyPaid ? '#70757a' : '#202124', fontWeight: 600, textDecoration: it.alreadyPaid ? 'line-through' : 'none' }}>
                         Factuur {it.invoiceNumber ?? '—'}
                       </div>
                       <div style={{ fontSize: 13.5, fontWeight: 600, color: it.alreadyPaid ? '#137333' : '#202124', whiteSpace: 'nowrap' }}>

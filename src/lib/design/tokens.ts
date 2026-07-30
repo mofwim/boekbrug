@@ -31,8 +31,22 @@ export const M3 = {
   onSurface: '#202124',
   onSurfaceVariant: '#5F6368',
   surfaceVariant: '#f1f3f4',
+  // [A11Y-CONTRAST] An OUTLINE, never a word. 3.68:1 on white clears the 3:1 threshold for
+  // a non-text boundary and fails the 4.5:1 one for text — the same split this file already
+  // draws for green and amber. For quiet TEXT use `mutedText` below.
   outline: '#80868b',
   neutral: '#5F6368',
+  // [A11Y-CONTRAST] The QUIETEST readable text — timestamps, breadcrumbs, captions, the
+  // sub-line under a label. The screens used #9AA0A6 for this, which is 2.64:1 on white: it
+  // fails the text floor AND the non-text one, so it was below every threshold WCAG defines
+  // while carrying real content (a date, a section label, a breadcrumb trail).
+  //
+  //   mutedText  #70757a  →  4.65:1 on white   passes AA
+  //
+  // Deliberately NOT folded into `neutral` (#5F6368, 6.05:1): that would erase the third
+  // step of the hierarchy and make every quiet line shout as loudly as the secondary one.
+  // This sits between them — readable, still visibly quieter.
+  mutedText: '#70757a',
   outlineVariant: '#E0E0E0',
   success: '#137333',
   successContainer: '#CEEAD6',

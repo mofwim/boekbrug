@@ -151,7 +151,7 @@ export default function DailyTruth() {
           WAAR JE STAAT
         </span>
         {lastDate && (
-          <span style={{ fontSize: 11.5, color: '#9aa0a6' }}>bank bijgewerkt tot {lastDate}</span>
+          <span style={{ fontSize: 11.5, color: '#70757a' }}>bank bijgewerkt tot {lastDate}</span>
         )}
       </div>
 

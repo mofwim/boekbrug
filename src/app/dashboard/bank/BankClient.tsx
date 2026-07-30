@@ -1119,7 +1119,7 @@ export default function BankClient() {
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                <span style={{ fontSize: 11.5, color: '#9aa0a6', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 11.5, color: '#70757a', whiteSpace: 'nowrap' }}>
                   {fmtUploadDate(st.uploadedAt)}
                 </span>
                 {/* [BANK-STATEMENT-DELETE] Delete this statement (replace a wrong
@@ -1311,7 +1311,7 @@ export default function BankClient() {
             <div style={{ position: 'relative', marginTop: 12 }}>
               <span
                 className="material-symbols-outlined"
-                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#9aa0a6', pointerEvents: 'none' }}
+                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#70757a', pointerEvents: 'none' }}
               >
                 search
               </span>
@@ -1345,7 +1345,7 @@ export default function BankClient() {
           )}
           {/* Empty-filter hint — any tab */}
           {filterText.trim() && activeListRaw.length > 0 && activeList.length === 0 && (
-            <p style={{ fontSize: 13, color: '#9aa0a6', margin: '14px 2px 0' }}>
+            <p style={{ fontSize: 13, color: '#70757a', margin: '14px 2px 0' }}>
               Geen transacties gevonden voor “{filterText.trim()}”.
             </p>
           )}
@@ -1449,7 +1449,7 @@ export default function BankClient() {
               />
             ))}
             {activeList.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '32px 20px', color: '#9aa0a6', fontSize: 13.5 }}>
+              <div style={{ textAlign: 'center', padding: '32px 20px', color: '#70757a', fontSize: 13.5 }}>
                 {bankTab === 'confirm' ? 'Niets te bevestigen.'
                   : bankTab === 'none' ? 'Geen openstaande transacties zonder factuur.'
                   : bankTab === 'pin' ? 'Geen pinontvangsten.'
@@ -1766,7 +1766,7 @@ function TxCard({
           <button
             onClick={onUnlink}
             disabled={processing}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#9aa0a6', padding: '2px 4px' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px' }}
           >
             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
             {processing ? 'Bezig…' : 'Ontkoppelen'}
@@ -1869,7 +1869,7 @@ function TxCard({
           fontSize: 12, color: '#5F6368', lineHeight: 1.5, wordBreak: 'break-word',
           fontFamily: FONT, border: '1px solid #EEE',
         }}>
-          <div style={{ fontSize: 10.5, fontWeight: 700, color: '#9aa0a6', marginBottom: 3, letterSpacing: 0.4 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: '#70757a', marginBottom: 3, letterSpacing: 0.4 }}>
             OMSCHRIJVING
           </div>
           {cleanBankDescription(s.description)}
@@ -2113,7 +2113,7 @@ function TxCard({
             style={{
               marginTop: 10, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
-              cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#9aa0a6',
+              cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#70757a',
               fontFamily: FONT,
             }}
           >
@@ -2129,7 +2129,7 @@ function TxCard({
           {isIgnoredTab ? (
             /* [BANK-IGNORE] Genegeerd tab — show a restore action, nothing else. */
             <>
-              <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
                 Genegeerd — staat niet in de actieve lijst.
               </div>
@@ -2151,7 +2151,7 @@ function TxCard({
             </>
           ) : (
             <>
-              <div style={{ fontSize: 12.5, color: '#9aa0a6', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
                 Geen factuur gevonden voor deze transactie.
               </div>
@@ -2195,7 +2195,7 @@ function TxCard({
                 style={{
                   marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   padding: '8px', borderRadius: R.full, border: 'none', background: 'transparent',
-                  cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#9aa0a6',
+                  cursor: processing ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: '#70757a',
                   fontFamily: FONT,
                 }}
               >
@@ -2299,7 +2299,7 @@ function TxCard({
             marginTop: 12, width: '100%', padding: '11px', borderRadius: R.full, border: 'none',
             cursor: !selectedInvoiceId || processing ? 'default' : 'pointer',
             background: !selectedInvoiceId ? M3.surfaceVariant : M3.primary,
-            color: !selectedInvoiceId ? '#9aa0a6' : '#fff', fontSize: 14, fontWeight: 600, fontFamily: FONT,
+            color: !selectedInvoiceId ? '#70757a' : '#fff', fontSize: 14, fontWeight: 600, fontFamily: FONT,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           }}
         >
