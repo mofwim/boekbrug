@@ -69,9 +69,16 @@ export async function GET(req: NextRequest) {
   // De bucket hoort privé te zijn. Staat hij open, dan zijn alle bonnen van alle klanten met een
   // geraden URL te lezen — dat is het ergste wat deze installatie kan overkomen.
   let bucketPrive: boolean | null = null;
+  // [STORAGE-VERSIONED] Ook de bovengrens per bestand, want die komt gratis mee uit dezelfde
+  // aanroep en storage_bucket_hardening.sql pint hem op 25 MiB. Stond hij op NULL, dan is de
+  // opslag onbegrensd: één upload kan dan willekeurig groot zijn. Dat is geen lek, maar het is
+  // wél een van de drie dingen die die migratie vastlegt — en zonder deze regel las 'gezond'
+  // alsof ze alle drie gecontroleerd waren, terwijl alleen `public` werd gekeken.
+  let bucketLimiet: number | null = null;
   try {
     const { data } = await pipeline.storage.getBucket("documents");
     bucketPrive = data ? data.public === false : null;
+    bucketLimiet = data ? (data.file_size_limit ?? null) : null;
   } catch {
     bucketPrive = null;
   }
@@ -155,9 +162,27 @@ export async function GET(req: NextRequest) {
       database: { bereikbaar: dbBereikbaar, ...(dbFout ? { fout: dbFout } : {}) },
       bestanden: {
         bucketPrive,
+        bucketLimiet,
         ...(bucketPrive === null
           ? { let_op: "kon de bucket-instelling niet lezen — controleer met de hand dat 'documents' op privé staat" }
           : {}),
+        ...(bucketPrive === true && bucketLimiet === null
+          ? { let_op: "de bucket is privé, maar er staat geen maximale bestandsgrootte — draai storage_bucket_hardening.sql" }
+          : {}),
+        // [STORAGE-VERSIONED] Wat hier NIET uit af te lezen is, en dat expliciet, omdat een
+        // groen vinkje anders meer lijkt te bewijzen dan het doet:
+        //
+        //   1. Of storage_bucket_hardening.sql ooit is toegepast. Die migratie CORRIGEERT alleen
+        //      (public → false, en een grens die te ruim staat); op een database die al klopt
+        //      verandert ze nul rijen en laat ze dus geen spoor achter. `bucketPrive: true`
+        //      bewijst de TOESTAND, niet de HERKOMST — en die herkomst was het hele punt: een
+        //      vinkje in een dashboard overleeft geen nieuwe omgeving.
+        //   2. Of RLS aanstaat op storage.objects. Dat is de gevaarlijkste van de drie — zonder
+        //      RLS betekenen de drie policies niets — maar het staat in pg_class, en daar komt
+        //      PostgREST niet bij. Het CONTROLE-blok onderaan die migratie leest het wel.
+        //
+        // Dus: dit veld zegt "de deur staat dicht", niet "de deur is in code vastgelegd".
+        herkomstNietMeetbaar: "of storage_bucket_hardening.sql is toegepast (en of RLS op storage.objects aanstaat) is hiervandaan niet te zien — draai het CONTROLE-blok onderaan dat bestand",
       },
       crons: cronsLeesbaar
         ? {
