@@ -69,31 +69,46 @@ Dit is de enige schakelaar in de app die data vernietigt. Leeg = dry run. Er kan
 2033 aan de beurt zijn; meldt een dry run nu al een kandidaat, dan is er een datum verkeerd
 gezet — uitzoeken, niet aanzetten.
 
-**☐ `boekbrug.nl` kan geen post ONTVANGEN — en dat is het enige punt op deze lijst dat
-iets kapots repareert**
+**☑ `boekbrug.nl` kan post ONTVANGEN — opgelost op 30 juli**
 
-Op 30 juli gemeten, niet aangenomen: `boekbrug.nl` heeft **geen enkel MX-record**
-(`dig MX boekbrug.nl` → leeg; ter controle geeft `google.com` in dezelfde omgeving wél
-antwoord). Het domein staat overeind — de A-records wijzen netjes naar Vercel — maar
-inkomende mail heeft nergens om te landen.
+Dit stond hier een halve dag als het enige punt op deze lijst dat iets kapots repareerde in
+plaats van iets mogelijk te maken, en het is af. De aanleiding: `boekbrug.nl` had **geen
+enkel MX-record**, terwijl de app drie adressen publiceert als het officiële loket —
+`privacy@` (Privacyverklaring §1, §6, §12, §13, mét de beloofde termijnen van 30 en 7 dagen),
+`legal@` (Voorwaarden) en `support@` (Voorwaarden + privacy §13). Alle drie bouncden. Dat is
+iets anders dan een leeg KVK-veld: "(volgt)" is een eerlijke lege plek, een gepubliceerd
+adres dat weigert is een belofte die de app niet waarmaakt — en het is precies het kanaal
+dat de AVG (art. 13) verplicht stelt, dus het telde vanaf de eerste gebruiker, niet vanaf de
+eerste euro.
 
-Ondertussen publiceert de app drie adressen als het officiële loket:
+Opgelost met doorsturen in plaats van mailboxen: drie regels in de TransIP DNS-tabel, en de
+aliassen bij de doorstuurdienst. Nagemeten vanaf een externe resolver, niet aangenomen:
 
-| Adres | Waar het staat | Wat er beloofd wordt |
-|---|---|---|
-| `privacy@boekbrug.nl` | Privacyverklaring §1, §6, §12, §13 | AVG-verzoek: antwoord binnen 30 dagen; klacht: binnen 7 dagen |
-| `legal@boekbrug.nl` | Algemene Voorwaarden | het juridische contactpunt |
-| `support@boekbrug.nl` | Voorwaarden + privacy §13 | algemene hulp |
+| Record | Stand |
+|---|---|
+| `MX boekbrug.nl` | `10 mx1.improvmx.com` · `20 mx2.improvmx.com` |
+| `TXT _dmarc` | `v=DMARC1; p=none; rua=mailto:dmarc@boekbrug.nl; fo=1` |
+| CONTROLE `MX send.boekbrug.nl` | ongewijzigd (Resend-retourpad) |
+| CONTROLE `TXT resend._domainkey` | ongewijzigd (DKIM) |
+| CONTROLE `A boekbrug.nl` | ongewijzigd (Vercel) |
 
-Alle drie bouncen vandaag. Dat is niet hetzelfde als een leeg KVK-veld: "(volgt)" is een
-eerlijke lege plek, maar een gepubliceerd adres dat weigert is een belofte die de app niet
-waarmaakt. Het is bovendien precies het kanaal dat de AVG (art. 13) verplicht stelt, dus het
-telt vanaf je eerste gebruiker — niet pas vanaf je eerste euro.
+Die laatste drie staan er met opzet bij. Een MX op de hoofdnaam en het verzendpad van Resend
+lijken op elkaar te botsen maar doen dat niet — Resend hangt op de subnaam `send.` — en dat
+is nu gemeten in plaats van beredeneerd. DMARC stond al beschreven in
+`docs/AUTH_SETUP_GUIDE.md §C.3` en was nooit aangezet; dat is meteen meegenomen, met `rua` op
+het eigen domein omdat rapportage naar een extern adres een autorisatierecord vereist bij die
+andere partij.
 
-Let op waar dit *niet* aan ligt: Resend is voor **verzenden** (`noreply@boekbrug.nl`) en
-werkt. Ontvangen is een losse zaak; Resend doet het niet. Twee MX-regels bij je
-domeinregistrar die doorsturen naar een mailbox die je al hebt, is genoeg — de doorstuur
-bestemming is niets dat gepubliceerd wordt. Vijf minuten, geen code, geen KVK nodig.
+Wat hier NIET aan lag, voor de volgende lezer: Resend verzorgt het **verzenden**
+(`noreply@boekbrug.nl`) en werkte de hele tijd. Ontvangen is een losse zaak die Resend niet
+doet. De doorstuurbestemming wordt nergens gepubliceerd, dus welk privé-adres daarachter
+hangt maakt voor de buitenwereld niets uit.
+
+**☐ Twee kleine dingen die hierbij horen**
+Een catch-all (`*@boekbrug.nl`) hoort uit: de vier expliciete aliassen dekken alles wat de
+documenten noemen, terwijl `*` elk verzonnen adres accepteert en daarmee vooral spam
+binnenhaalt. En het echte bewijs is niet DNS maar een verstuurde mail — stuur er één naar
+`privacy@boekbrug.nl` en kijk de eerste keer in de ongewenste-map.
 
 ## 2. Voordat je geld kunt aannemen
 

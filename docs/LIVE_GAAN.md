@@ -214,13 +214,14 @@ kort na de 5e van januari/april/juli/oktober.
 - **KVK-inschrijving en een zakelijke bankrekening.** Zonder deze twee keert Stripe niet uit, en
   `/steun` blijft bewust een 404 zolang er geen echt KVK-nummer is: er wordt nooit om geld gevraagd
   zonder identificeerbare rechtspersoon.
-- **MX-records voor `boekbrug.nl`, vóór de eerste gebruiker.** Op 30 juli gemeten: het domein
-  heeft er **geen**, terwijl de app `privacy@`, `legal@` en `support@boekbrug.nl` publiceert als
-  het officiële loket — inclusief de AVG-termijnen van 30 en 7 dagen die de privacyverklaring
-  belooft. Alle drie bouncen. Resend verzorgt het *verzenden* en werkt; ontvangen is een losse
-  zaak die Resend niet doet. Twee doorstuurregels bij je registrar naar een mailbox die je al
-  hebt, is genoeg — en dit is het enige punt in dit hoofdstuk dat niet iets mogelijk maakt maar
-  iets repareert.
+- **~~MX-records voor `boekbrug.nl`~~ — gedaan op 30 juli.** Het domein had er geen, terwijl de
+  app `privacy@`, `legal@` en `support@boekbrug.nl` publiceert als het officiële loket, mét de
+  AVG-termijnen van 30 en 7 dagen. Alle drie bouncden. Opgelost met doorsturen (`mx1/mx2.improvmx.com`)
+  in plaats van mailboxen, en `_dmarc` meteen meegenomen — die stond al in `AUTH_SETUP_GUIDE.md §C.3`
+  beschreven maar was nooit aangezet. Extern nagemeten, inclusief de controle dat het Resend-pad
+  (`send.` MX + DKIM) en het Vercel A-record ongemoeid bleven: een MX op de hoofdnaam botst niet
+  met een verzendpad op een subnaam. Blijft over: de catch-all `*@` uitzetten (spam) en één echte
+  testmail sturen — DNS dat klopt is geen bewijs dat een bericht aankomt.
 - **De bedrijfsidentiteit in Vercel** — `NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` ·
   `_ADDRESS` · `_CITY`. Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit
   als een echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand. De
