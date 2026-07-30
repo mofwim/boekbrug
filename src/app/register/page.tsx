@@ -54,6 +54,26 @@ function RegisterContent() {
     ? `/login?redirect=${encodeURIComponent(redirectParam)}`
     : '/login'
 
+  // De bestemming die de bezoeker zélf meebracht, of null als hij niets vroeg.
+  // [SEC-REDIRECT] Wat hij meebracht wordt hier al gecontroleerd, niet pas in de callback: een
+  // bestemming die wij niet vertrouwen hoort onze eigen URL niet eens in.
+  function gevraagdeBestemming(): string | null {
+    const wens = searchParams.get('redirect')
+    if (isSafeRedirect(wens)) return wens
+    // [KLUIS] Geen ?redirect=, maar wel een archiefaccount: dan is de kluis de bestemming, mét
+    // ?doel=archief zodat het zelfherstel daar kan vuren als de kolom nog niet bestaat.
+    return purpose === 'archief' ? `${landingPath(purpose)}?${PURPOSE_PARAM}=archief` : null
+  }
+
+  // [BEVESTIGINGSLINK] Waar de link in de bevestigingsmail uitkomt: onze eigen callback, die de
+  // code inwisselt voor een sessie. Altijd een concrete bestemming — anders zou de callback voor
+  // een archiefaccount alsnog bij zijn standaardgedrag uitkomen.
+  function bevestigingsBestemming(): string {
+    const callback = new URL('/api/auth/callback', window.location.origin)
+    callback.searchParams.set('next', gevraagdeBestemming() ?? landingPath(purpose))
+    return callback.toString()
+  }
+
   // [Google-OAuth] Reset loading when user returns via browser back button
   useEffect(() => {
     const reset = () => setGoogleLoading(false)
@@ -93,12 +113,7 @@ function RegisterContent() {
     // die bestemming. Het zelfherstel op /dashboard/kluis waar dit op leunde, vuurt pas als
     // iemand DAAR aankomt — en daar kwam hij dus nooit. Wie vanaf /bewaarplicht met Google
     // binnenkwam, belandde alsnog in de wizard over facturen versturen.
-    // [SEC-REDIRECT] Wat de bezoeker meebracht wordt hier al gecontroleerd, niet pas in de
-    // callback: een bestemming die wij niet vertrouwen hoort onze eigen URL niet eens in.
-    const wens = searchParams.get('redirect')
-    const redirectUrl =
-      (isSafeRedirect(wens) ? wens : null) ??
-      (purpose === 'archief' ? `${landingPath(purpose)}?${PURPOSE_PARAM}=archief` : null)
+    const redirectUrl = gevraagdeBestemming()
     // De bestemming reist mee als ?next= op de callback, en de rolkeuze als ?rol=.
     //
     // [OAUTH-ROL] Dat tweede is nieuw en het is de hele reparatie. Hier stond eerder een
@@ -172,6 +187,22 @@ function RegisterContent() {
       email: schoonEmail,
       password,
       options: {
+        // [BEVESTIGINGSLINK] Waar de link in de bevestigingsmail uitkomt.
+        //
+        // Dit stond er niet, en zonder deze regel valt Supabase terug op de Site URL — de
+        // homepage. De bezoeker klikte dus op "Bevestig je e-mailadres", zijn account werd
+        // geactiveerd, en hij belandde op een marketingpagina waar hij nog steeds uitgelogd was.
+        // De `?code=` die Supabase meestuurt werd daar door niemand ingewisseld; app/page.tsx
+        // gaat er in zoveel woorden van uit dat die code daar nooit landt.
+        //
+        // De README bij onze eigen e-mailtemplates beweerde intussen dat de ConfirmationURL
+        // "via emailRedirectTo → onze PKCE-callback" loopt. Dat was niet waar tot deze regel.
+        //
+        // Nu komt hij uit op /api/auth/callback, die de code inwisselt voor een sessie en de
+        // gebruiker doorstuurt — mét de bestemming erbij, zodat wie zijn archief kwam wegzetten
+        // in zijn kluis uitkomt en niet in de wizard. ⚠️ Vereist dat deze URL in Supabase onder
+        // Redirect URLs staat; zie docs/AUTH_SETUP_GUIDE.md §B.1.
+        emailRedirectTo: bevestigingsBestemming(),
         data: {
           full_name: fullName,
           role, // 'zzper' | 'accountant'
