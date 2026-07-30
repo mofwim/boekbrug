@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { pickPaidTwin } from '@/lib/double-pay-check'
 
 // Recent window for "already paid" — a vendor re-sending an invoice happens
 // within weeks, not years. 120 days is generous without flagging unrelated
@@ -46,7 +47,9 @@ export async function POST(req: NextRequest) {
   // Load the invoice the owner is about to pay (ownership-scoped).
   const { data: target } = await supabase
     .from('invoices')
-    .select('id, receiver_id, direction, vendor_iban, client_name, total_inc_btw')
+    // [PAY-SAFE-NUMBER] invoice_number rides along — it is what tells a re-sent invoice
+    // (the case this check exists for) apart from the next bill in a running account.
+    .select('id, receiver_id, direction, vendor_iban, client_name, total_inc_btw, invoice_number')
     .eq('id', body.invoiceId)
     .eq('receiver_id', user.id)
     .eq('direction', 'incoming')
@@ -88,7 +91,10 @@ export async function POST(req: NextRequest) {
     .eq('total_inc_btw', amount)
     .neq('id', target.id)
     .or(`payment_date.gte.${sinceIso},and(payment_date.is.null,marked_paid_at.gte.${sinceIso})`)
-    .limit(1)
+    // [PAY-SAFE-NUMBER] Was limit(1) — an arbitrary row out of everything this vendor was paid at
+    // this amount. Now that the number decides, we need the SET: a same-number twin must win over
+    // a same-amount stranger, and it may not be the row the database happened to hand back first.
+    .limit(20)
 
   if (target.vendor_iban) {
     query = query.eq('vendor_iban', target.vendor_iban)
@@ -101,8 +107,13 @@ export async function POST(req: NextRequest) {
 
   const { data: matches } = await query
 
-  if (matches && matches.length > 0) {
-    const m = matches[0]
+  // [PAY-SAFE-NUMBER] Vendor + amount + recency got us the candidates; the invoice NUMBER decides
+  // which of them is actually a re-send worth stopping the owner for. See double-pay-check.ts —
+  // without this, a supplier billing the same amount on a rhythm (a boekhouder's monthly fee, a
+  // huurcontract, an abonnement) tripped this warning every single period.
+  const m = pickPaidTwin(target.invoice_number, matches ?? [])
+
+  if (m) {
     return NextResponse.json({
       duplicate: true,
       match: {
