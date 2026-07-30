@@ -79,10 +79,28 @@ test("elke check legt uit wat er STUKGAAT, niet dat er iets ontbreekt", () => {
   }
 });
 
-test("de twee duurste vergeten variabelen staan als 'stil' geclassificeerd", () => {
+test("de duurste vergeten variabelen staan als 'stil' geclassificeerd", () => {
   // Niet als 'blokkeert': ze breken niets zichtbaars, en juist dat maakt ze duur.
   const byKey = Object.fromEntries(ENV_CHECKS.map((c) => [c.key, c]));
   assert.equal(byKey["CRON_SECRET"].severity, "stil");
-  assert.equal(byKey["STRIPE_WEBHOOK_SECRET"].severity, "stil");
   assert.equal(byKey["NEXT_PUBLIC_APP_URL"].severity, "stil");
+});
+
+test("het webhook-geheim alarmeert alleen als afrekenen AAN staat", () => {
+  // De eerste echte meting meldde "iemand betaalt, de webhook wordt geweigerd" op een installatie
+  // waar STRIPE_SECRET_KEY óók ontbrak — er kon dus niemand afrekenen, en er was geen betaling die
+  // zoek kon raken. Een alarm dat afgaat zonder dat het ergens over kan gaan, leert mensen alarmen
+  // te negeren; daarna missen ze het alarm dat er wél toe doet.
+  const uit = checkEnv(zonder("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"));
+  const wh = uit.find((r) => r.key === "STRIPE_WEBHOOK_SECRET")!;
+  assert.equal(wh.severity, "optioneel", "afrekenen staat uit → geen stille storing");
+  assert.equal(envVerdict(uit), "gezond");
+  assert.ok(/nog in te stellen/.test(wh.gevolg), "en de tekst zegt wat het wél is");
+
+  // Maar zodra afrekenen AAN staat, is het weer wat het was: geld binnen, toegang niet.
+  const aan = checkEnv(zonder("STRIPE_WEBHOOK_SECRET"));
+  const wh2 = aan.find((r) => r.key === "STRIPE_WEBHOOK_SECRET")!;
+  assert.equal(wh2.severity, "stil");
+  assert.equal(envVerdict(aan), "let-op");
+  assert.ok(/Het geld is binnen/.test(wh2.gevolg));
 });
