@@ -4,7 +4,7 @@
 // Password reset — step 1: ask for e-mail, send a reset link.
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase'
+import { getBrowserClient } from '@/lib/supabase'
 import { ErrorMessage } from '@/components/ui/Feedback'
 
 export default function WachtwoordVergetenPage() {
@@ -12,7 +12,6 @@ export default function WachtwoordVergetenPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [sent, setSent] = useState(false)
-  const supabase = createClient()
 
   async function handleReset() {
     if (!email.trim() || !(email.includes('@') && email.includes('.'))) {
@@ -23,7 +22,7 @@ export default function WachtwoordVergetenPage() {
     setLoading(true)
     setError('')
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+    const { error: resetError } = await getBrowserClient().auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/wachtwoord-herstellen`,
     })
 

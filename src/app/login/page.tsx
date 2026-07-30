@@ -4,7 +4,7 @@
 // [Google-OAuth] Add Google OAuth login — May 2026
 
 import { Suspense, useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase'
+import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
 
@@ -18,7 +18,6 @@ function LoginContent() {
   const [resendMsg, setResendMsg] = useState('')
   const router = useRouter()
   const searchParams = useSearchParams()
-  const supabase = createClient()
 
   // [Google-OAuth] Reset loading state when user returns via browser back button
   // pageshow + focus + visibilitychange covers all browsers
@@ -42,7 +41,7 @@ function LoginContent() {
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
 
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await getBrowserClient().auth.signInWithOAuth({
       provider: 'google',
       options: {
         // Basic sign-in only — we no longer request Gmail inbox access here.
@@ -66,7 +65,7 @@ function LoginContent() {
     setNeedsConfirm(false)
     setResendMsg('')
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { error } = await getBrowserClient().auth.signInWithPassword({ email, password })
 
     if (error) {
       // Distinguish "not confirmed yet" from a real wrong password/e-mail.
@@ -88,7 +87,7 @@ function LoginContent() {
   // Re-send the confirmation e-mail for an unconfirmed account.
   async function handleResend() {
     setResendMsg('')
-    const { error } = await supabase.auth.resend({ type: 'signup', email })
+    const { error } = await getBrowserClient().auth.resend({ type: 'signup', email })
     setResendMsg(error ? 'Versturen mislukt — probeer opnieuw.' : 'We hebben de mail opnieuw gestuurd.')
   }
 
