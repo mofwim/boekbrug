@@ -16,6 +16,14 @@
 -- TOEGEPAST = het object dat de migratie aanmaakt, bestaat. Dat is geen bewijs dat de migratie
 -- FOUTLOOS liep — daarvoor is het CONTROLE-blok onderaan het migratiebestand zelf — maar het is
 -- wel het verschil tussen "ik denk het" en "ik zie het".
+--
+-- DE GRENS VAN DIT BESTAND, EERLIJK GEZEGD
+-- Het ANTWOORD komt uit de database, maar de VRAAG staat hier met de hand in. Een migratie die
+-- via een andere tak in main belandt, staat dus niet vanzelf in de lijst hieronder — en een
+-- migratie die er niet in staat, kan dit bestand ook niet 'OPEN' noemen. Dat is precies wat er
+-- met #23 gebeurde. Voeg daarom een regel toe zodra je een migratie schrijft waar code op leunt,
+-- en zeker als die code fail-soft is: juist dán zwijgt de app als de tabel ontbreekt.
+-- Tegen elkaar leggen: `ls supabase/migrations/` naast de lijst hieronder.
 -- =====================================================================
 
 with verwacht(nr, bestand, waarom, soort, object) as (values
@@ -79,7 +87,18 @@ with verwacht(nr, bestand, waarom, soort, object) as (values
   -- ── Zicht op de machine ─────────────────────────────────────────────────────────────────
   (22, 'cron_runs.sql',
        'Legt vast DAT een cron draaide. Zonder deze tabel is niet te zien of de zes crons leven — en /api/health kan het dan ook niet zeggen',
-       'table', 'cron_runs')
+       'table', 'cron_runs'),
+
+  -- ── Het ontbrekende bankafschrift ───────────────────────────────────────────────────────
+  -- Deze stond hier NIET in, en dat was de blinde vlek waar dit bestand nu juist tegen moest
+  -- beschermen: hij kwam via een andere tak (#201) mee in main nadat de lijst hierboven al was
+  -- geschreven. Beide lezers (bank-ingest.ts en /api/readiness) zijn keurig fail-soft — bestaat
+  -- de tabel niet, dan vervalt de controle ZONDER foutmelding. Precies daarom hoort hij hier:
+  -- anders is "merkt de app dat er een maand bankgeschiedenis ontbreekt?" een vraag die niemand
+  -- kan beantwoorden, ook niet door goed te kijken.
+  (23, 'bank_statement_periods.sql',
+       'Onthoudt welke PERIODE elk bankafschrift beslaat. Zonder deze tabel wordt een ontbrekende maand nooit opgemerkt: januari en maart kloppen allebei intern, en februari mist stil',
+       'table', 'bank_statement_periods')
 )
 select
   nr                                                        as "#",
@@ -131,6 +150,10 @@ order by aanwezig, nr;
 -- het kasboek maakt één regel per factuur in plaats van per termijn, de SnelStart-push valt
 -- terug op het oude pad (claim ná de POST). De eigenaar mist tot die tijd een label of een
 -- verbetering — nooit een functie die stukgaat, en nooit stille schade.
+--
+-- Eén nuance bij 23: daar mist niet een label maar een CONTROLE. De boekhouding blijft kloppen
+-- met wat erin zit, alleen merkt niemand dat er een maand bankafschrift ontbreekt. Geen schade,
+-- wel een blinde vlek — en anders dan bij de rest zie je aan het scherm niet dát je hem hebt.
 --
 -- De enige twee met een échte scherpe kant zijn 11 en 15:
 --   · 11 dicht een schrijfgat in de boekhoudersgrens (een gekoppelde boekhouder kon het IBAN

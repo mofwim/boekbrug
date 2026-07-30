@@ -223,6 +223,29 @@ export default function IntakeButton({
           folderId: data.folder_id ?? null,
           documentId: data.document_id ?? null,
         })
+      } else if (data.destination === 'turnover') {
+        // [INTAKE-DEST-OMZET] Een kassabestand is GEBOEKTE OMZET — /api/intake schrijft de dagen
+        // meteen in daily_turnover en zegt in zijn eigen boodschap "Controleer in Dagomzet".
+        // Dat is de zwaarste uitkomst die deze knop kan hebben: er staat geld in de boeken.
+        // Toch viel hij hier tot nu toe in de restbak — een toast van drie seconden en
+        // router.refresh(), dus de eigenaar bleef staan waar hij stond, zonder weg naar de
+        // pagina die hij net gevraagd werd te controleren. Elke andere bestemming brengt hem
+        // wél naar waar zijn bestand landde; deze hoort dat als eerste te doen.
+        showToast(data.message || 'Dagomzet geboekt ✓')
+        setTimeout(() => router.push('/dashboard/dagomzet'), 600)
+      } else if (data.destination === 'ledger') {
+        // [INTAKE-DEST-CHECK] Een grootboek-/controlebestand is NADRUKKELIJK GEEN geld: het telt
+        // niet mee in de omzet en heeft daarom geen eigen scherm — het werkt door in de
+        // reconciliatie en op het klaar-scherm. De uitkomst is dus een ZIN ("14 dagen als
+        // controle-check"), geen plaats. Precies zoals bij een leveranciersoverzicht mag die zin
+        // niet in een toast verdwijnen: dezelfde blijvende modal, met de link naar het bestand.
+        setDestModal({
+          fileName: file.name,
+          message: data.message || 'Ingelezen als controle-check',
+          folderName: data.folder_name ?? null,
+          folderId: data.folder_id ?? null,
+          documentId: data.document_id ?? null,
+        })
       } else if (data.destination === 'document') {
         // [INTAKE-DEST-MODAL] Not an invoice → the owner can't guess where it
         // went. Show a persistent modal with the destination + a deep-link that
@@ -236,6 +259,9 @@ export default function IntakeButton({
           documentId: data.document_id ?? null,
         })
       } else {
+        // Restbak. Sinds hierboven alle zeven bestemmingen van /api/intake een eigen tak hebben,
+        // komt hier alleen nog een antwoord ZONDER destination — een oudere of onvolledige
+        // response. Dan is de boodschap van de server het enige eerlijke dat we hebben.
         showToast(data.message || 'Toegevoegd ✓')
         router.refresh()
       }
@@ -591,9 +617,13 @@ export default function IntakeButton({
 // Result shape from /api/intake
 export interface IntakeResult {
   ok?: boolean
+  // Alle zeven bestemmingen die /api/intake kan teruggeven. Deze lijst was er vijf, en de twee
+  // die ontbraken waren geen randgevallen: 'turnover' is GEBOEKTE OMZET.
   // [STATEMENT-RECONCILE] 'statement' = een leveranciersoverzicht: niet geboekt, maar vergeleken
   // met wat we van die leverancier hebben (welke factuur mis ik?).
-  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'statement'
+  // 'turnover' = kassa-omzet, meteen geboekt in daily_turnover → te zien in Dagomzet.
+  // 'ledger'   = grootboek/controle-check, nadrukkelijk GEEN geld → werkt door in de reconciliatie.
+  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'statement' | 'turnover' | 'ledger'
   message?: string
   error?: string
   duplicate?: boolean
