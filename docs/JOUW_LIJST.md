@@ -112,11 +112,30 @@ Wat hier NIET aan lag, voor de volgende lezer: Resend verzorgt het **verzenden**
 doet. De doorstuurbestemming wordt nergens gepubliceerd, dus welk privé-adres daarachter
 hangt maakt voor de buitenwereld niets uit.
 
-**☐ Twee kleine dingen die hierbij horen**
-Een catch-all (`*@boekbrug.nl`) hoort uit: de vier expliciete aliassen dekken alles wat de
-documenten noemen, terwijl `*` elk verzonnen adres accepteert en daarmee vooral spam
-binnenhaalt. En het echte bewijs is niet DNS maar een verstuurde mail — stuur er één naar
-`privacy@boekbrug.nl` en kijk de eerste keer in de ongewenste-map.
+**☑ En één echte mail is er doorheen gegaan**
+Kloppende DNS bewijst dat de weg getekend is, niet dat er iets aankomt. Een testbericht is de
+hele keten door gegaan — Google → `mx1.improvmx.com` → de doorstuurbestemming — dus ontvangen
+werkt aantoonbaar, niet theoretisch.
+
+**☐ Maar hij belandde in de ongewenste map, en dát is geen schoonheidsfoutje**
+Dit hoort bij doorsturen en het gaat niet vanzelf over: een doorgestuurd bericht komt binnen
+vanaf de doorstuurdienst en niet vanaf de server van de oorspronkelijke afzender, dus diens
+SPF-controle faalt per definitie. Elke volgende mail heeft hetzelfde.
+
+Waarom dat hier zwaarder weegt dan bij gewone post: de privacyverklaring belooft antwoord
+binnen **30 dagen** op een AVG-verzoek en binnen **7 dagen** op een klacht. Een verzoek dat
+ongelezen in de spambak ligt, is een gepubliceerde termijn die verloopt zonder dat iemand het
+merkt. De inbox is hier onderdeel van de belofte.
+
+Eén keer "geen spam" aanvinken lost het niet op, want de afzender verschilt per bericht —
+filteren op **wie het stuurt** kan dus niet. Wat wel werkt is filteren op **waar het heen
+ging**: een regel op het `To`-adres `@boekbrug.nl` met "nooit als spam markeren", plus een
+eigen label zodat zakelijke post niet tussen privémail verdwijnt. Niet elke mailprovider
+biedt dat op het To-veld; kies de bestemming daarop uit.
+
+**☐ De catch-all hoort uit**
+De vier expliciete aliassen dekken alles wat de documenten noemen, terwijl `*@boekbrug.nl`
+elk verzonnen adres accepteert en daarmee vooral spam binnenhaalt.
 
 ## 2. Voordat je geld kunt aannemen
 

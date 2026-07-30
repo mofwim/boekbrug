@@ -223,8 +223,13 @@ kort na de 5e van januari/april/juli/oktober.
   bleven: een MX op de hoofdnaam botst niet met een verzendpad op een subnaam, want SPF wordt tegen
   het envelop-domein gecontroleerd en dat is bij Resend `send.boekbrug.nl`. Let op bij later
   uitbreiden: één SPF-record per domein, dus mengen in dezelfde regel en nooit een tweede erbij.
-  Blijft over: de catch-all `*@` uitzetten (spam) en één echte testmail sturen — DNS dat klopt is
-  geen bewijs dat een bericht aankomt.
+  Een echte testmail is de hele keten door gegaan, dus ontvangen werkt aantoonbaar. Hij belandde
+  wel in de ongewenste map, en dat gaat niet vanzelf over: doorgestuurde post komt binnen vanaf de
+  doorstuurdienst, dus de SPF-controle van de oorspronkelijke afzender faalt per definitie. Filteren
+  op afzender kan niet (die verschilt per bericht) — het moet een regel op het `To`-adres
+  `@boekbrug.nl` zijn met "nooit als spam". Dat is geen detail: de privacyverklaring belooft 30 dagen
+  op een AVG-verzoek en 7 op een klacht, en een spambak laat die termijnen ongemerkt verlopen.
+  Blijft verder over: de catch-all `*@` uitzetten (spam).
 - **De bedrijfsidentiteit in Vercel** — `NEXT_PUBLIC_COMPANY_LEGAL_NAME` · `_KVK` · `_BTW` ·
   `_ADDRESS` · `_CITY`. Nu tonen de voorwaarden "(volgt)". Dat is opzet — een leeg veld mag nooit
   als een echt-maar-onjuist KVK-nummer kunnen lezen — maar het is geen eindtoestand. De
