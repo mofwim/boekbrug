@@ -268,6 +268,22 @@ export async function POST(req: NextRequest) {
               .order("id", { ascending: false })
               .limit(200);
             return data ?? [];
+          },
+          // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount — the
+          // corrected re-issue the amount-anchored query above can never return. ilike without
+          // wildcards is an exact, case-insensitive match; a spacing variant is not fetched (the
+          // same limit the hard gate's .eq has), and the pure assessor re-checks with full
+          // normalization before it flags anything.
+          async (invoiceNumber) => {
+            const { data } = await supabase
+              .from("invoices")
+              .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+              .eq("receiver_id", user.id)
+              .eq("direction", "incoming")
+              .ilike("invoice_number", invoiceNumber)
+              .order("id", { ascending: false })
+              .limit(50);
+            return data ?? [];
           }
         )
       : null;

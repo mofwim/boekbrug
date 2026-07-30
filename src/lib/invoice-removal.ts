@@ -192,7 +192,11 @@ export function decideRemoval(inv: RemovalInvoice): RemovalDecision {
       allowed: false,
       title: "Er is al betaald",
       body: `${moneyLine} Zolang die betaling geboekt staat, kan ${what} niet weg — het geld zou uit je kas- en bankoverzicht verdwijnen terwijl het echt is verplaatst.`,
-      warning: "Draai eerst de betaling terug (Ontkoppelen op de Bank-pagina of de Betaald-knop), daarna kun je hem verwijderen.",
+      // [REMOVAL-ALTERNATIVE] Names the BUTTON below, not a screen to go hunting on. The old text
+      // sent the owner to "de Bank-pagina of de Betaald-knop" — and a PARTLY paid purchase invoice
+      // has neither: the Betaald-knop shows only on a fully paid row, and a manual deelbetaling
+      // carries no bank line to unlink. Directions to a door that isn't there.
+      warning: "Draai eerst de betaling terug — dat kan hieronder. Daarna kun je hem verwijderen.",
       confirmLabel: "Sluiten",
       alternative: { kind: "undo-payment", label: "Betaling terugdraaien" },
     };

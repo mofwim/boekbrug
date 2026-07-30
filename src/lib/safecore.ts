@@ -565,11 +565,12 @@ function daysApart(aIso: string, bIso: string): number | null {
 
 /**
  * Assess whether this invoice is a POSSIBLE (not confident) duplicate of one already in
- * the system, given the candidates that share its exact total. Returns the best soft match
+ * the system, given the candidates the caller fetched. Returns the best soft match
  * + a short reason, or null. Pure. Signals, strongest first:
  *   • same total + same DATE + same vendor
  *   • same total + same DATE (vendor not provably different)
  *   • same total + same VENDOR within POSSIBLE_DUP_WINDOW_DAYS (a near-date re-import)
+ *   • [DEDUP-CORRECTED] same invoice NUMBER, DIFFERENT total — a corrected re-issue
  * A provably-different reliable vendor is never a duplicate (a coincidental same-amount
  * same-day bill from another supplier), and an exact invoice-number match is a HARD
  * duplicate handled by findSemanticDuplicate, so it is skipped here.
@@ -603,10 +604,47 @@ export function assessPossibleDuplicate(
       )
     : false
 
+  // [DEDUP-CORRECTED] Is our own number a REAL one? A placeholder ("UPLOAD-17") is minted per
+  // import and can never legitimately repeat, so it must not anchor the corrected-re-issue tier.
+  const inNumIsReal = inNum !== '' && !isPlaceholderInvoiceNumber(input.invoiceNumber)
+
   let best: PossibleDuplicate | null = null
   let bestRank = 0
   for (const c of candidates) {
-    if (typeof c.total_inc_btw !== 'number' || Math.round(c.total_inc_btw * 100) !== totalCents) continue
+    if (typeof c.total_inc_btw !== 'number' || Math.round(c.total_inc_btw * 100) !== totalCents) {
+      // [DEDUP-CORRECTED] The one signal that is NOT anchored on the amount — and the only reason
+      // this branch exists at all. A supplier who invoices the wrong amount and then re-sends the
+      // SAME invoice number with the corrected total slips through EVERY other gate in this file:
+      // the hard key (findSemanticDuplicate) matches number + total, and every soft tier above
+      // starts by requiring cent-equal totals. So both copies imported, both counted as cost, both
+      // claimed voorbelasting — and the owner discovered it only when a payment had already landed
+      // on the wrong one. An invoice number is unique per supplier by construction: seeing it twice
+      // with two different amounts is a correction, a credit, or a re-issue — never two bills.
+      //
+      // It is a FLAG, never a block, like every tier here: a supplier who restarts numbering each
+      // year, or one whose number our OCR shortened to something collision-prone, would otherwise
+      // have a legitimate invoice rejected. The human decides in the verify queue.
+      if (!inNumIsReal) continue
+      if (normalizeInvoiceNumber(c.invoice_number) !== inNum) continue
+      // Provably a DIFFERENT supplier that happens to reuse the number → not the same document.
+      // (Numbers are unique per supplier, not across them.)
+      if (
+        inVendorReliable &&
+        isReliableVendor(c.client_name) &&
+        vendorCore(c.client_name) !== '' &&
+        vendorCore(c.client_name) !== inCore
+      ) {
+        continue
+      }
+      if (bestRank < 1) {
+        bestRank = 1
+        best = {
+          match: { id: c.id, invoice_number: c.invoice_number, client_name: c.client_name },
+          reason: 'zelfde factuurnummer, ander bedrag — mogelijk een gecorrigeerde versie',
+        }
+      }
+      continue
+    }
 
     const cVendorReliable = isReliableVendor(c.client_name)
     const cCore = cVendorReliable ? vendorCore(c.client_name) : ''

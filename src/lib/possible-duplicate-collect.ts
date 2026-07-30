@@ -15,6 +15,12 @@ import {
 export async function collectPossibleDuplicate(
   input: SemanticDedupInput,
   fetchByTotal: (total: number) => Promise<PossibleDupCandidate[]>,
+  // [DEDUP-CORRECTED] Optional second lookup: invoices already held under THIS invoice number,
+  // whatever their amount. Without it the corrected-re-issue tier can never fire — the by-total
+  // query returns only rows whose amount already matches, and a correction is by definition the
+  // one case where it does not. Optional so a call site that cannot form the query (no real
+  // number) simply keeps the old behaviour instead of failing.
+  fetchByNumber?: (invoiceNumber: string) => Promise<PossibleDupCandidate[]>,
 ): Promise<PossibleDuplicate | null> {
   if (typeof input.totalIncBtw !== "number" || !Number.isFinite(input.totalIncBtw)) return null;
   let rows: PossibleDupCandidate[];
@@ -23,7 +29,22 @@ export async function collectPossibleDuplicate(
   } catch {
     return null;
   }
-  return assessPossibleDuplicate(input, rows ?? []);
+  let extra: PossibleDupCandidate[] = [];
+  const number = (input.invoiceNumber ?? "").trim();
+  if (fetchByNumber && number.length > 0) {
+    try {
+      extra = (await fetchByNumber(number)) ?? [];
+    } catch {
+      // Best-effort, exactly like the by-total read: a failed second query degrades to the
+      // amount-anchored tiers, never to a failed import.
+      extra = [];
+    }
+  }
+  // De-duplicate by id — a same-number invoice that ALSO has the same total is returned by both
+  // queries, and a doubled candidate would make looksLikeRecurringSeries see a phantom moment.
+  const seen = new Set((rows ?? []).map((r) => r.id));
+  const merged = [...(rows ?? []), ...extra.filter((r) => !seen.has(r.id))];
+  return assessPossibleDuplicate(input, merged);
 }
 
 /**

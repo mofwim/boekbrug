@@ -2939,6 +2939,22 @@ export async function syncUserEmails(
               .order('id', { ascending: false })
               .limit(200)
             return data ?? []
+          },
+          // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount. A supplier
+          // who re-sends the same number with a corrected total is invisible to the by-total query
+          // above — and to the hard key — so without this both copies import as two costs. ilike
+          // without wildcards is an exact case-insensitive match; the pure assessor re-checks with
+          // full normalization before flagging.
+          async (invoiceNumber) => {
+            const { data } = await supabase
+              .from('invoices')
+              .select('id, invoice_number, client_name, invoice_date, total_inc_btw')
+              .eq('receiver_id', userId)
+              .eq('direction', 'incoming')
+              .ilike('invoice_number', invoiceNumber)
+              .order('id', { ascending: false })
+              .limit(50)
+            return data ?? []
           }
         )
       }

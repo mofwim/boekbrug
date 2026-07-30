@@ -308,6 +308,19 @@ export async function POST(req: NextRequest) {
           .limit(200);
         return data ?? [];
       },
+      // [DEDUP-CORRECTED] Same number, ANY amount — a corrected re-issue is precisely the case the
+      // amount-anchored fetch above cannot return, and the hard key cannot see either.
+      async (invoiceNumber) => {
+        const { data } = await pipeline
+          .from("invoices")
+          .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+          .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
+          .eq("direction", direction)
+          .ilike("invoice_number", invoiceNumber)
+          .order("id", { ascending: false })
+          .limit(50);
+        return data ?? [];
+      },
     );
     if (possibleDup) {
       return NextResponse.json(

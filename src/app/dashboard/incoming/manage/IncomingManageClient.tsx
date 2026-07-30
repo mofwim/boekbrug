@@ -576,6 +576,31 @@ export default function IncomingManageClient({
     setRemoveCtx({ id: inv.id, decision: decideRemoval(inv as RemovalInvoice) })
   }
 
+  // ── [REMOVAL-ALTERNATIVE] "Draai eerst de betaling terug, daarna kun je hem verwijderen" ──
+  // decideRemoval has always named that exit; nothing here could walk through it. The advice it
+  // prints ("Ontkoppelen op de Bank-pagina of de Betaald-knop") assumes a bank line or a fully
+  // paid invoice, and a PARTLY paid purchase invoice has neither: the Betaald-knop renders only
+  // for isPaid, and a MANUAL deelbetaling lives in bank_tx_invoices with transaction_id NULL, so
+  // the Bank page never shows it. That is the real-world dead end — the supplier who invoices the
+  // wrong amount, corrects it, and leaves the owner with a duplicate they cannot pay off, cannot
+  // remove, and cannot find the money on.
+  //
+  // So the dialog does the undo itself, on the invoice it is already talking about. Two writes,
+  // one tap: pay-toggle 'undo' clears every recorded instalment (join rows removed, any bank line
+  // detached, amount_paid recomputed to 0 — the same reversal /api/bank/unlink performs), and
+  // then the remove sheet re-opens with the decision that state now produces. Nothing is chained
+  // blind: a failed undo keeps the money booked AND the invoice, and says so.
+  async function undoPaymentThenRemove(inv: IncomingRow) {
+    setRemoveCtx(null)
+    const ok = await executePay({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'received' })
+    if (!ok) return // executePay already surfaced the reason (incl. the verwerkt dialog)
+    // The server just wrote exactly this: no instalments left, back to the open purchase status.
+    // Re-deciding from it (rather than from the stale row) is what re-opens the sheet as a real
+    // "Ja, verwijderen" instead of the same wall.
+    const settled: RemovalInvoice = { ...(inv as RemovalInvoice), amount_paid: 0, status: 'received' }
+    setRemoveCtx({ id: inv.id, decision: decideRemoval(settled) })
+  }
+
   async function executeRemoval(ctx: { id: string; decision: RemovalDecision }) {
     const { id, decision } = ctx
     setRemoveCtx(null)
@@ -652,7 +677,9 @@ export default function IncomingManageClient({
   // ── [PAY-SAFE-CONFIRM] Gate Betalen-action through the existing pay flow ──
 
   // ── Mark paid / undo — session client, PAYMENT FIELDS ONLY ──
-  async function executePay(ctx: PayCtx) {
+  // Returns whether the write actually landed — [REMOVAL-ALTERNATIVE] chains a removal onto a
+  // successful undo, and must never re-open the remove sheet on a payment that is still booked.
+  async function executePay(ctx: PayCtx): Promise<boolean> {
     setPayCtx(null); setProcessingId(ctx.id)
     // [MANUAL-PARTIAL-PAY] A deelbetaling leaves the invoice on 'Te betalen' — only a full
     // settlement flips the status, so don't claim otherwise before the server answers.
@@ -690,7 +717,7 @@ export default function IncomingManageClient({
       if (!isPartialIntent) patchLocal(ctx.id, { status: ctx.newStatus === 'paid' ? 'received' : 'paid' })
       showToast('Geen verbinding — controleer of de betaling is opgeslagen')
       setProcessingId(null)
-      return
+      return false
     }
     const json = await res.json().catch(() => ({} as { error?: string }))
     // [DEPLOY-SAFE] Prefer the server's own sentence when it has one (e.g. a partial cash
@@ -760,6 +787,7 @@ export default function IncomingManageClient({
     // invoice write already succeeded, and the kasboek load reconciles again as a backstop.
     if (!error) fetch('/api/cash/settle', { method: 'POST' }).catch(() => {})
     setProcessingId(null)
+    return !error
   }
 
   // [BOEK-004] Ask the linked accountant to undo "verwerkt" so payment can change.
@@ -1479,6 +1507,35 @@ export default function IncomingManageClient({
           confirmBg={removeCtx.decision.allowed ? M3.error : '#5F6368'}
           onConfirm={() => executeRemoval(removeCtx)}
           onCancel={() => setRemoveCtx(null)}
+          /* [REMOVAL-ALTERNATIVE] decideRemoval names a way forward for every dead end it
+             produces, and this call site discarded all of them — so the sheet in the screenshot
+             offered "Sluiten" and "Annuleren" to an owner who had just been told what to do
+             instead. Both kinds that can reach a PURCHASE invoice are wired: the payment comes
+             off here (undoPaymentThenRemove), and a boekhouder's lock reuses the verwerkt dialog
+             this file already has. */
+          secondaryAction={(() => {
+            const alt = removeCtx.decision.alternative
+            if (!alt) return undefined
+            const inv = invoices.find(i => i.id === removeCtx.id)
+            if (alt.kind === 'undo-payment') {
+              if (!inv) return undefined
+              return { label: alt.label, onClick: () => { void undoPaymentThenRemove(inv) } }
+            }
+            if (alt.kind === 'ask-accountant') {
+              return {
+                label: alt.label,
+                onClick: () => {
+                  const id = removeCtx.id
+                  setRemoveCtx(null)
+                  setRequestSent(false)
+                  setVerwerktCtx({ id, number: inv?.invoice_number ?? '' })
+                },
+              }
+            }
+            // 'creditnota' — decideRemoval only produces it for OUTGOING invoices, which never
+            // reach this purchase-only screen. Nothing honest to offer here, so nothing is shown.
+            return undefined
+          })()}
         />
       )}
 
@@ -1789,6 +1846,20 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
         ) : (
           <>
             <button onClick={onConfirm} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: confirmBg, color: '#fff', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', marginBottom: 10, fontFamily: FONT }}>{confirmLabel}</button>
+            {/* [REMOVAL-ALTERNATIVE] The way FORWARD when the answer is no. This slot existed only
+                in the paymentChoice branch above, so the REMOVE sheet — the one place that
+                routinely says no — rendered "Sluiten" and "Annuleren" and nothing else. An owner
+                told "draai eerst de betaling terug" had no button that does it, on a screen with
+                no other route to a partly-paid invoice's payment. A dead end with the exit
+                written on the wall. */}
+            {secondaryAction && (
+              <button
+                onClick={secondaryAction.onClick}
+                style={{ width: '100%', padding: '13px', borderRadius: R.full, background: '#fff', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: '1px solid #DADCE0', cursor: 'pointer', fontFamily: FONT, marginBottom: 10 }}
+              >
+                {secondaryAction.label}
+              </button>
+            )}
             <button onClick={onCancel} style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>Annuleren</button>
           </>
         )}
