@@ -751,12 +751,18 @@ export default function IncomingManageClient({
         borderBottom: '1px solid rgba(0,0,0,0.06)',
         padding: '12px 16px', position: 'sticky', top: STICKY_BELOW_HEADER, zIndex: 40,
       }}>
-        {/* [BUNDEL-BETALING] Left: the multi-select toggle — the entry point for
-            paying several facturen van één leverancier with one QR. Given a clear
+        {/* [BUNDEL-BETALING] The multi-select toggle — the entry point for paying
+            several facturen van één leverancier with one QR. Given a clear
             affordance (blue tint + border in rest, solid blue when active) and put
-            on the LEFT so it reads first, not tucked in the corner. Right: the
-            Verificatie shortcut. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+            FIRST so it reads first, not tucked in a corner.
+            [TOOLBAR-ROW] The two actions and the Verificatie shortcut share ONE
+            wrapping row. They used to be two separate blocks stacked on top of
+            each other, which is right on a phone but wasted a whole line of a
+            sticky toolbar on a desktop — and that toolbar sits above the list, so
+            the line it wasted pushed every invoice down.
+            Layout lives in globals.css (.inko-actions), not inline: the media
+            query has to be able to win, and an inline style outranks a class. */}
+        <div className="inko-actions">
           <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
             style={{
               background: selectMode ? M3.primary : M3.primaryContainer,
@@ -772,10 +778,9 @@ export default function IncomingManageClient({
             </span>
             {selectMode ? 'Klaar' : 'Meerdere betalen'}
           </button>
-          <Link href="/dashboard/incoming" title="Verificatie" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
+          <Link href="/dashboard/incoming" title="Verificatie" className="inko-inbox tap-44" style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', flexShrink: 0 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>inbox</span>
           </Link>
-        </div>
 
         {/* ── [MATCH-BUTTON] Matchen met bank & kas ──────────────────────────────
             The one tap that turns the whole matching circle now instead of waiting
@@ -788,10 +793,11 @@ export default function IncomingManageClient({
         <button
           onClick={runReconciliation}
           disabled={matchBusy}
+          className="inko-match"
           title="Koppelt je inkoopfacturen aan het bankafschrift en aan de kas, en werkt alles bij wat zeker is"
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            marginBottom: 12, padding: '8px 16px',
+            padding: '8px 16px',
             borderRadius: R.full, border: 'none',
             background: matchBusy ? M3.surfaceVariant : M3.primary,
             color: matchBusy ? '#9AA0A6' : M3.onPrimary,
@@ -811,6 +817,7 @@ export default function IncomingManageClient({
           </span>
           {matchBusy ? 'Bezig met matchen…' : 'Matchen met bank & kas'}
         </button>
+      </div>
 
         {/* Filter + Sort dropdowns (side by side) */}
         <div style={{ display: 'flex', gap: 8 }}>

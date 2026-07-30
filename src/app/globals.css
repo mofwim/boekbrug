@@ -624,6 +624,52 @@ input::placeholder, textarea::placeholder {
   }
 }
 
+/* ── Inkoopfacturen toolbar ──────────────────────────────────────────────────── */
+/* [TOOLBAR-ROW] "Meerdere betalen" and "Matchen met bank & kas" used to be two
+   separate blocks, one under the other. On a phone that is right — together they
+   need ~380px and would not fit on one line. On a desktop it wasted a whole line
+   of a STICKY toolbar, and that toolbar sits above the list, so the wasted line
+   pushed every invoice further down exactly on the screens with room to spare.
+   One wrapping row serves both now: side by side above the breakpoint, stacked
+   below it exactly as before.
+
+   DOM order is [Meerdere] [Verificatie] [Matchen] — chosen so the PHONE layout
+   needs no rules at all and stays what it was. The desktop reordering is done
+   with `order`, which is what flexbox is for. */
+.inko-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* Phone: the Verificatie shortcut sits at the far right of the first line, and
+   the match button takes a line of its own. */
+.inko-actions > .inko-inbox {
+  margin-left: auto;
+}
+
+.inko-actions > .inko-match {
+  flex: 1 1 100%;
+  justify-content: center;
+}
+
+@media (min-width: 641px) {
+  /* Side by side, Verificatie pushed to the far right. 641px, so this flips at
+     the same width as every other layout switch in the app. */
+  .inko-actions > .inko-match {
+    flex: 0 0 auto;
+    order: 2;
+    justify-content: flex-start;
+  }
+
+  .inko-actions > .inko-inbox {
+    order: 3;
+  }
+}
+
+
 /* ── Public header — mobile declutter ────────────────────────────────────────── */
 /* [PUBLIC-NAV] Same treatment for the public top bar (components/public-header).
    Its five links did not wrap and did not collapse, so at 390px the nav ran 99px
