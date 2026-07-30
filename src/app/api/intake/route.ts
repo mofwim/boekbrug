@@ -562,6 +562,21 @@ export async function POST(req: NextRequest) {
             .order("id", { ascending: false })
             .limit(200)
           return data ?? []
+        },
+        // [DEDUP-CORRECTED] Invoices already held under THIS number, at ANY amount — the
+        // corrected re-issue the amount-anchored query above can never return. ilike without
+        // wildcards is an exact, case-insensitive match; the pure assessor re-checks with full
+        // normalization before it flags anything.
+        async (invoiceNumber) => {
+          const { data } = await supabase
+            .from("invoices")
+            .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+            .eq("receiver_id", user.id)
+            .eq("direction", "incoming")
+            .ilike("invoice_number", escapeLikeValue(invoiceNumber))
+            .order("id", { ascending: false })
+            .limit(50)
+          return data ?? []
         }
       )
     }
@@ -1114,6 +1129,16 @@ async function handleUblInvoice(
             .eq("receiver_id", userId).eq("direction", "incoming")
             .gte("total_inc_btw", total - 0.01).lte("total_inc_btw", total + 0.01)
             .order("id", { ascending: false }).limit(200)
+          return data ?? []
+        },
+        // [DEDUP-CORRECTED] Same number, ANY amount — the corrected re-issue the query above misses.
+        async (invoiceNumber) => {
+          const { data } = await supabase
+            .from("invoices")
+            .select("id, invoice_number, client_name, invoice_date, total_inc_btw")
+            .eq("receiver_id", userId).eq("direction", "incoming")
+            .ilike("invoice_number", escapeLikeValue(invoiceNumber))
+            .order("id", { ascending: false }).limit(50)
           return data ?? []
         },
       )

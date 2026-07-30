@@ -17,6 +17,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { pickPaidTwin } from '@/lib/double-pay-check'
+import { escapeLikeValue } from '@/lib/sanitize'
 
 // Recent window for "already paid" — a vendor re-sending an invoice happens
 // within weeks, not years. 120 days is generous without flagging unrelated
@@ -46,7 +48,9 @@ export async function POST(req: NextRequest) {
   // Load the invoice the owner is about to pay (ownership-scoped).
   const { data: target } = await supabase
     .from('invoices')
-    .select('id, receiver_id, direction, vendor_iban, client_name, total_inc_btw')
+    // [PAY-SAFE-NUMBER] invoice_number rides along — it is what tells a re-sent invoice
+    // (the case this check exists for) apart from the next bill in a running account.
+    .select('id, receiver_id, direction, vendor_iban, client_name, total_inc_btw, invoice_number, invoice_date')
     .eq('id', body.invoiceId)
     .eq('receiver_id', user.id)
     .eq('direction', 'incoming')
@@ -81,19 +85,33 @@ export async function POST(req: NextRequest) {
   // row) so recency still bounds the match.
   let query = supabase
     .from('invoices')
-    .select('id, invoice_number, client_name, total_inc_btw, payment_date, marked_paid_at, vendor_iban')
+    .select('id, invoice_number, invoice_date, client_name, total_inc_btw, payment_date, marked_paid_at, vendor_iban')
     .eq('receiver_id', user.id)
     .eq('direction', 'incoming')
     .eq('status', 'paid')
     .eq('total_inc_btw', amount)
     .neq('id', target.id)
     .or(`payment_date.gte.${sinceIso},and(payment_date.is.null,marked_paid_at.gte.${sinceIso})`)
-    .limit(1)
+    // [PAY-SAFE-NUMBER] Was limit(1) — an arbitrary row out of everything this vendor was paid at
+    // this amount. Now that the number decides, we need the SET: a same-number twin must win over
+    // a same-amount stranger, and it may not be the row the database happened to hand back first.
+    // Newest first, and a ceiling far above any real vendor's count inside 120 days — a supplier
+    // billing the same amount 50 times in four months is invoicing daily. Ordering matters even
+    // so: if that ceiling is ever reached, what gets dropped is the OLDEST, never the re-send we
+    // are looking for (a vendor re-sends within days).
+    // nullsFirst:false matters here. Postgres puts NULLs FIRST on a DESC sort, so a handful of
+    // invoices whose date we never read would have filled the window ahead of every dated one —
+    // and the row this check exists to find is a recent, dated re-send.
+    .order('invoice_date', { ascending: false, nullsFirst: false })
+    .limit(50)
 
   if (target.vendor_iban) {
     query = query.eq('vendor_iban', target.vendor_iban)
   } else if (target.client_name && target.client_name.trim()) {
-    query = query.ilike('client_name', target.client_name.trim())
+    // [LIKE-ESCAPE] The value is a PATTERN, not a string. A vendor written "A_B" or "50% Korting"
+    // turns `_`/`%` into wildcards and matches ANOTHER supplier — here that means warning the
+    // owner about a payment to someone they never paid. Same escape the ingestion paths use.
+    query = query.ilike('client_name', escapeLikeValue(target.client_name.trim()))
   } else {
     // No vendor anchor at all → amount alone is too loose; don't warn.
     return NextResponse.json({ duplicate: false })
@@ -101,8 +119,13 @@ export async function POST(req: NextRequest) {
 
   const { data: matches } = await query
 
-  if (matches && matches.length > 0) {
-    const m = matches[0]
+  // [PAY-SAFE-NUMBER] Vendor + amount + recency got us the candidates; the invoice NUMBER decides
+  // which of them is actually a re-send worth stopping the owner for. See double-pay-check.ts —
+  // without this, a supplier billing the same amount on a rhythm (a boekhouder's monthly fee, a
+  // huurcontract, an abonnement) tripped this warning every single period.
+  const m = pickPaidTwin(target, matches ?? [])
+
+  if (m) {
     return NextResponse.json({
       duplicate: true,
       match: {

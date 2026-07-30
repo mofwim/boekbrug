@@ -51,6 +51,10 @@ interface IncomingInvoiceRow {
   // [NEGEER-REDEN] Alleen op de Genegeerd-lijst geselecteerd, en ook daar optioneel: oude rijen
   // hebben hem niet, en zolang de migratie niet gedraaid is bestaat de kolom nog niet.
   archive_reason?: string | null;
+  // [SUPERSEDE] The invoice number that replaced this one. Same conditions as archive_reason:
+  // only on the Genegeerd list, and optional even there (older rows, and the migration may not
+  // have been applied yet).
+  superseded_by_number?: string | null;
 }
 
 // Plain column list — no join. The join broke the query and emptied the page.
@@ -121,7 +125,11 @@ export default async function IncomingPage() {
   // falen → een LEEG Genegeerd-tabblad, precies de plek waar niets verloren mag lijken. Daarom:
   // probeer mét de kolom, val bij een fout terug op de kale kolomlijst. Dan ontbreekt hooguit
   // het label.
-  const ignoredColumns = `${INVOICE_COLUMNS}, archive_reason`;
+  // [SUPERSEDE] superseded_by_number rides along on the SAME fallback: archive_reason says the
+  // CATEGORY ("Dubbel"), this says WHICH invoice replaced it. Both arrive by hand-applied
+  // migration, and both are labels — if either column is missing the query falls back to the bare
+  // list, so the Genegeerd tab is never empty over a missing note.
+  const ignoredColumns = `${INVOICE_COLUMNS}, archive_reason, superseded_by_number`;
   const fetchIgnored = (columns: string) =>
     fetchAllRows((from, to) => supabase
       .from("invoices")
