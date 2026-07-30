@@ -31,7 +31,14 @@ const TAX_RE = /\bbelastingdienst\b|belasting dienst/;
 const PRIVE_RE = /\bpriv[eé]\b|priv[eé][- ]?opname|priv[eé][- ]?storting/;
 const TRANSFER_RE =
   /\bspaar-?rekening\b|oranje spaar|\beigen rekening\b|kruispost|naar (?:mijn )?spaar|van (?:mijn )?spaar/;
-const ATM_RE = /geldautomaat|\bopname\b|\bgea\b|\bcash opname\b|geldopname/;
+// [ATM-NARROW] A bare `\bopname\b` used to sit in this list, and "opname" is not a cash word in
+// Dutch — it is also a recording/session. "Opname studio", "Opname videoclip", any invoice from a
+// production supplier: classified 'transfer', which is EXCLUDED from the P&L. A genuine business
+// cost dropped out of the result AND out of the voorbelasting, silently, and
+// applyLearnedBankCategories then spread that verdict over every future line from the same
+// counterpart. Cash withdrawals always name the machine or the cash itself, so the compounds
+// below still catch them — and a savings "Opname spaarrekening" is TRANSFER_RE's, not this one's.
+const ATM_RE = /geldautomaat|\bgea\b|\bcash\s?opname\b|geldopname|\bopname\s+(?:geld|kas|contant)|contante?\s+opname/;
 const FEE_RE =
   /\bbankkosten\b|kosten (?:betaal|zakelijke)?rekening|maandpakket|\bpakketkosten\b|debetrente|creditrente|\brente\b/;
 // PSP / card-terminal SETTLEMENT credits (money paid out TO you). NOT the same as a
@@ -83,7 +90,16 @@ export function classifyBankTransaction(
   // ("betaalautomaat …") is a purchase, so it must fall through to 'unknown'.
   if (amount >= 0 && POS_PAYOUT_RE.test(h)) return 'pos_income';
 
-  if (FEE_RE.test(h)) return 'fee';
+  // [FEE-DEBIT-ONLY] Bank charges are DEBITS. The fee patterns include the interest words, and
+  // `creditrente` — interest the bank PAYS you — is a credit and taxable income, but 'fee' maps
+  // to PNL_ROLE 'kosten': received interest was booked as an expense, moving the result the wrong
+  // way twice (income missing, cost invented). The bare `\brente\b` matched either direction, so
+  // this was not limited to the word "creditrente".
+  //
+  // A credit that only looks like a fee is left 'unknown' rather than guessed into an income
+  // category this module has no vocabulary for — the file's own rule ("when unsure → unknown"),
+  // and needsDocument() already never asks for a bon on a credit, so nothing nags the owner.
+  if (amount < 0 && FEE_RE.test(h)) return 'fee';
 
   return 'unknown';
 }

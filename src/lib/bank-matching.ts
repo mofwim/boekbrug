@@ -778,16 +778,30 @@ export function parseReferenceNumbers(reference: string | null): string[] {
   if (!reference) return [];
   const seen = new Set<string>();
   for (const part of reference.split(",")) {
-    const norm = normalizeRef(part.trim());
-    // [BANK-REF-DIGITS] An invoice number always contains a digit. Without this test, ANY free
-    // text carrying a comma parsed as a multi-invoice payment: the parser stores free text as
-    // the reference when it cannot extract a number, so "Huur juli, Kerkstraat 12" became
-    // ["huurjuli", "kerkstraat12"] — two "invoices". That silently disabled auto-booking for
-    // the line (autoConfirmTier bails above 1 number) and sent unlink down the batch path,
-    // which zeroes amount_paid and payment_date instead of subtracting the instalment.
-    if (norm.length >= 4 && /\d/.test(norm)) seen.add(norm);
+    if (isReferenceNumberToken(part)) seen.add(normalizeRef(part.trim()));
   }
   return [...seen];
+}
+
+/**
+ * Could this one comma-separated part BE an invoice number? At least four characters after
+ * normalization, and containing a digit. Pure.
+ *
+ * [BANK-REF-DIGITS] The digit test is what stops free text from parsing as a multi-invoice
+ * payment. The parser stores free text as the reference when it cannot extract a number, so
+ * "Huur juli, Kerkstraat 12" split into ["huurjuli", "kerkstraat12"] — two "invoices". That
+ * silently disabled auto-booking for the line (autoConfirmTier bails above one number) and sent
+ * unlink down the batch path, which zeroes amount_paid and payment_date instead of subtracting
+ * the instalment.
+ *
+ * Exported so the UI can ask the SAME question the server asks. The bank page had four hand-rolled
+ * `split(',').filter(Boolean).length` copies that counted every comma-separated fragment, so
+ * "045, 26302050" was two numbers on screen and one on the server — the row was hidden from bulk
+ * confirm for a reason the server did not share.
+ */
+export function isReferenceNumberToken(part: string): boolean {
+  const norm = normalizeRef(part.trim());
+  return norm.length >= 4 && /\d/.test(norm);
 }
 
 /**

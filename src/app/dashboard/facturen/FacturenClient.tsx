@@ -56,6 +56,22 @@ const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 // Status chip colors — Material You
+// [PAY-IDEMPOTENT] A fresh key per dialog OPENING — this is the whole point of the key, and it
+// was not happening. The key used to be minted inside the confirm handler as
+// `payCtx.clientKey ?? crypto.randomUUID()`, but nothing ever set payCtx.clientKey, so every tap
+// produced a new UUID and apply_manual_payment could never recognise a repeat. For a FULL
+// settlement the invoice's own 'paid' status still blocks a second write; for a DEELBETALING
+// there is no such guard, so a double tap recorded the instalment twice. Minting it here, where
+// the dialog is opened, gives one key per attempt.
+//
+// It does not cover a retry after an unknown outcome (a reopened dialog is a new attempt and gets
+// a new key) — that is deliberate: reusing the key there would silently swallow a genuine second
+// instalment of the same amount, which is worse. The network-error toast says "controleer of de
+// betaling is opgeslagen" for exactly that reason.
+function newPayKey(): string | undefined {
+  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined
+}
+
 const CHIP: Record<string, { bg: string; color: string }> = {
   paid:    { bg: '#CEEAD6', color: '#137333' },
   sent:    { bg: '#D3E3FD', color: '#1967D2' },
@@ -68,9 +84,14 @@ const NL_EUR  = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'E
 const NL_DATE = new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short' })
 const fmtEur  = (n: number | null) => NL_EUR.format(n ?? 0)
 const fmtDate = (s: string | null) => s ? NL_DATE.format(new Date(s)) : '—'
-// [BOEK-029] btw_rate does not exist in DB
-const calcBtw = (btw: number | null, ex: number | null) =>
-  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : 21
+// [BOEK-029] btw_rate does not exist in DB — always computed from the two stored amounts.
+// [BTW-NO-GUESS] Returns null when there is no grondslag to compute from. It used to fall back
+// to 21, printing "BTW (21%)" for an invoice whose total_ex_btw was 0, null or negative (a
+// creditnota, or an OCR read that found no net amount) — a tax rate nobody read, shown as fact.
+// A 9%-invoice missing its grondslag was labelled 21%. The caller drops the percentage from the
+// label rather than inventing one; the AMOUNT beside it is stored and stays exact either way.
+const calcBtw = (btw: number | null, ex: number | null): number | null =>
+  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : null
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SortOrder = 'desc' | 'asc'
@@ -1135,7 +1156,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                             // The chip IS the way back in: tapping it reopens the same dialog,
                             // now offering the REMAINING balance. Recording the next instalment
                             // (or finishing the invoice) is one tap from where the owner reads it.
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv) })
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv), clientKey: newPayKey() })
                           }}
                           title={`Deelbetaling: ${fmtEur(inv.amount_paid ?? 0)} van ${fmtEur(Math.abs(inv.total_inc_btw ?? 0))} betaald — tik om de rest te noteren`}
                           style={{
@@ -1204,7 +1225,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                             // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the total on a
                             // fully open invoice, the remainder on a partly paid one) — the field's
                             // hint and its cap.
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv) })
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv), clientKey: newPayKey() })
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
@@ -1241,6 +1262,8 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                               number: inv.invoice_number ?? '',
                               newStatus: isPaid ? 'sent' : 'paid',
                               invoiceType: 'creditnota',
+                              // Only a settlement writes money; an undo needs no idempotency key.
+                              ...(isPaid ? {} : { clientKey: newPayKey() }),
                             })
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: isPaid ? M3.successContainer : '#FEF7E0', color: isPaid ? '#137333' : '#EA8600' }}>
@@ -1324,7 +1347,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
                         <InfoLine label="Aan"       value={inv.client_name} />
                         {(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number && <InfoLine label="BTW" value={(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number ?? null} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
-                        <InfoLine label={`BTW (${calcBtw(btwAmount, totalExBtw)}%)`} value={fmtEur(btwAmount)} mono />
+                        <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
                         {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDate(inv.due_date)} />}
                       </div>
@@ -1562,9 +1585,10 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           paymentChoice={
             payCtx.invoiceType === 'factuur' && payCtx.newStatus === 'paid'
               ? (method, paymentDate, amount) => executePay({
+                  // [PAY-IDEMPOTENT] The key rides along from payCtx, minted when this dialog was
+                  // opened (see newPayKey). It is deliberately NOT generated here: doing so gave
+                  // every tap its own key, which is the one thing an idempotency key must not do.
                   ...payCtx, paymentMethod: method, paymentDate, amount,
-                  // One key per dialog opening — a retry of the same tap is a no-op server-side.
-                  clientKey: payCtx.clientKey ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined),
                 })
               : undefined
           }

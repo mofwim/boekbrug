@@ -90,9 +90,14 @@ const fmtDateSmart = (s: string | null) => {
   if (Number.isNaN(d.getTime())) return '—'
   return d.getFullYear() === new Date().getFullYear() ? NL_DATE.format(d) : NL_DATE_Y.format(d)
 }
-// [BOEK-029] btw_rate does not exist in DB — always compute
-const calcBtw = (btw: number | null, ex: number | null) =>
-  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : 21
+// [BOEK-029] btw_rate does not exist in DB — always computed from the two stored amounts.
+// [BTW-NO-GUESS] Returns null when there is no grondslag to compute from. It used to fall back
+// to 21, printing "BTW (21%)" for an invoice whose total_ex_btw was 0, null or negative (a
+// creditnota, or an OCR read that found no net amount) — a tax rate nobody read, shown as fact.
+// A 9%-invoice missing its grondslag was labelled 21%. The caller drops the percentage from the
+// label rather than inventing one; the AMOUNT beside it is stored and stays exact either way.
+const calcBtw = (btw: number | null, ex: number | null): number | null =>
+  ex && ex > 0 ? Math.round(((btw ?? 0) / ex) * 100) : null
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface IncomingRow {
@@ -349,11 +354,21 @@ export default function IncomingManageClient({
   // Runs once the row is present in the list. Uses the SAME requestPay() as the
   // manual button (no logic duplicated). Separate effect so the focus/scroll
   // behaviour above is untouched.
+  //
+  // [ACTION-PAY-ONCE] It must fire ONCE. `actionParam` lives in the URL and never leaves it, and
+  // `invoices.length` is in the dependency list, so every archive or delete re-ran this effect:
+  // the owner arrived from Vandaag, dismissed the dialog, removed some other invoice — and the
+  // pay dialog reopened on the first one, unasked. A ref is the right guard here rather than
+  // rewriting the URL: it survives the re-render without a navigation, and the intent ("this
+  // link asked to pay ONE invoice") is per visit, not per render.
+  const payActionDone = useRef<string | null>(null)
   useEffect(() => {
     if (actionParam !== 'pay' || !focusId) return
+    if (payActionDone.current === focusId) return
     const target = invoices.find(i => i.id === focusId)
     if (!target) return
     if (target.status !== 'received') return
+    payActionDone.current = focusId
     // Small delay so the row is expanded/scrolled first, then the dialog opens.
     const t = setTimeout(() => { requestPay(target) }, 150)
     return () => clearTimeout(t)
@@ -388,12 +403,14 @@ export default function IncomingManageClient({
   // below the counter names the difference instead of passing 200 off as "everything".
   // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
   // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
-  // clock itself). Local date, not toISOString(): near midnight UTC those are different days, and
-  // "te laat" must follow the owner's calendar, not UTC's.
-  const todayIso = (() => {
-    const n = new Date()
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
-  })()
+  // clock itself). Not toISOString(): near midnight UTC that is a different day, and "te laat"
+  // must follow the owner's calendar, not UTC's.
+  //
+  // [TZ] amsterdamToday(), not the DEVICE's local date. The device clock is whatever the traveller
+  // or a mis-set phone says it is, and this file already uses amsterdamToday() for the betaaldatum
+  // it WRITES — so a hand-rolled local date here made the screen judge "te laat" against one
+  // calendar while recording payments against another. One clock for the whole page.
+  const todayIso = amsterdamToday()
 
   const receivedCount = invoices.filter(i => i.status === 'received').length
   const paidCount     = invoices.filter(i => i.status === 'paid').length
@@ -472,7 +489,21 @@ export default function IncomingManageClient({
   async function requestPay(inv: IncomingRow) {
     // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the full total on an untouched
     // invoice, the remainder once instalments were recorded) — the amount field's hint and cap.
-    const ctx: PayCtx = { id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', openAmount: openAmount(inv) }
+    // [PAY-IDEMPOTENT] One key per dialog OPENING, minted here. It used to be produced inside the
+    // confirm handler as `payCtx.clientKey ?? crypto.randomUUID()`, but nothing ever set
+    // payCtx.clientKey — so every tap got a fresh UUID and apply_manual_payment could never
+    // recognise a repeat. A full settlement is still protected by the invoice's own 'paid' status;
+    // a DEELBETALING had no guard at all, so a double tap booked the instalment twice.
+    //
+    // A reopened dialog is a new attempt and gets a new key, on purpose: reusing it would silently
+    // swallow a genuine second instalment of the same amount, which is the worse failure.
+    const ctx: PayCtx = {
+      id: inv.id,
+      number: inv.invoice_number ?? '',
+      newStatus: 'paid',
+      openAmount: openAmount(inv),
+      clientKey: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined,
+    }
     setCheckingId(inv.id)
     try {
       const res = await fetch('/api/incoming/check-paid', {
@@ -1295,7 +1326,7 @@ export default function IncomingManageClient({
                         <InfoLine label="Factuurdatum" value={fmtDateSmart(inv.invoice_date)} />
                         {inv.due_date && <InfoLine label="Vervaldatum" value={fmtDateSmart(inv.due_date)} />}
                         <InfoLine label="Excl. BTW" value={fmtEur(totalExBtw)} mono />
-                        <InfoLine label={`BTW (${calcBtw(btwAmount, totalExBtw)}%)`} value={fmtEur(btwAmount)} mono />
+                        <InfoLine label={((r) => r == null ? 'BTW' : `BTW (${r}%)`)(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label="Incl. BTW" value={fmtEur(inv.total_inc_btw)} mono />
                         {inv.payment_date && <InfoLine label="Betaaldatum" value={fmtDate(inv.payment_date)} />}
                         {inv.payment_method && <InfoLine label="Methode" value={inv.payment_method === 'kas' ? 'Contant' : 'Bank'} />}
@@ -1461,8 +1492,10 @@ export default function IncomingManageClient({
           paymentChoice={
             payCtx.newStatus === 'paid'
               ? (method, paymentDate, amount) => executePay({
+                  // [PAY-IDEMPOTENT] The key rides along from payCtx, minted when this dialog was
+                  // opened (see requestPay). Generating it here gave every tap its own key, which
+                  // is the one thing an idempotency key must not do.
                   ...payCtx, paymentMethod: method, paymentDate, amount,
-                  clientKey: payCtx.clientKey ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined),
                 })
               : undefined
           }
@@ -1644,6 +1677,14 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
   // [MANUAL-PARTIAL-PAY] Empty means "all of it" — zero keystrokes for the ordinary case.
   const [amountText, setAmountText] = useState('')
   const entry = openBalance != null ? interpretAmountEntry(amountText, openBalance) : null
+  // [PAY-NO-TOTAL] An invoice whose total is 0 or missing (an OCR read that found no amount) has
+  // nothing to settle: interpretAmountEntry returns valid:false with error:null, so BOTH pay
+  // buttons went grey while the hint cheerfully read "Leeg laten = alles betaald (€ 0,00)" and
+  // nothing said why. The database agrees with the refusal — apply_manual_payment raises
+  // 'invoice has no total to settle' — but that English sentence was the owner's only clue, and
+  // only if they found a way past the disabled buttons. Say it here instead, in Dutch, with the
+  // way out: fix the amount on the invoice first.
+  const noOpenBalance = openBalance != null && openBalance <= 0
   // [MANUAL-PARTIAL-PAY] Cash may settle an invoice, never part of one — see the Contant button.
   // [CASH-INSTALMENT] A cash instalment is a real, dated drawer movement now — see cash.ts.
   const canPayCash = !entry || entry.valid
@@ -1673,7 +1714,16 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
             {/* [MANUAL-PARTIAL-PAY] Betaald bedrag — optional. Empty pays the whole open
                 balance (unchanged behaviour); a number records an instalment and leaves the
                 invoice on "Te betalen" for the rest, with the pay-QR asking only that rest. */}
-            {entry && openBalance != null && (
+            {noOpenBalance && (
+              <div style={{ background: '#FCE8E6', borderRadius: 12, padding: '12px 14px', marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+                <p style={{ fontSize: 12.5, color: '#B3261E', lineHeight: 1.5, margin: 0 }}>
+                  Op deze factuur staat geen bedrag, dus er valt niets af te boeken. Vul eerst het
+                  factuurbedrag in — dan kun je hem als betaald markeren.
+                </p>
+              </div>
+            )}
+            {entry && openBalance != null && !noOpenBalance && (
               <>
                 <label htmlFor="ink-betaald-bedrag" style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#202124', marginBottom: 6 }}>
                   Betaald bedrag

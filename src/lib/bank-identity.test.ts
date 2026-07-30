@@ -198,5 +198,51 @@ console.log("\n— suggestIdentity with a similar hit (review-only, never confid
   check("no similar → sign fallback unchanged", s4.category === "kosten" && s4.confident === false && s4.source === "ai");
 }
 
+console.log("\n— [ATM-NARROW] 'opname' is not a cash word on its own —");
+{
+  // A recording session is a real, deductible cost. Classified 'transfer' it left the P&L AND
+  // the voorbelasting, and applyLearnedBankCategories spread that verdict to every later line
+  // from the same supplier.
+  check("'Opname videoclip juni' is not a transfer",
+    classifyBankTransaction("Studio Zuid", "Opname videoclip juni", -1210) !== "transfer");
+  check("...it stays 'unknown' so it is reviewed, not hidden",
+    classifyBankTransaction("Studio Zuid", "Opname videoclip juni", -1210) === "unknown");
+  check("'Opname studio' likewise",
+    classifyBankTransaction(null, "Opname studio Amsterdam", -450) === "unknown");
+  // The real cash withdrawals must still be caught — they always name the machine or the cash.
+  check("CONTROL geldautomaat is still a transfer",
+    classifyBankTransaction(null, "Geldautomaat Kalverstraat", -100) === "transfer");
+  check("CONTROL 'Geldopname' is still a transfer",
+    classifyBankTransaction(null, "Geldopname pas 003", -50) === "transfer");
+  check("CONTROL 'GEA' is still a transfer", classifyBankTransaction(null, "GEA NR:00123", -60) === "transfer");
+  check("CONTROL 'Contante opname' is still a transfer",
+    classifyBankTransaction(null, "Contante opname balie", -200) === "transfer");
+  check("CONTROL savings withdrawal is still a transfer (TRANSFER_RE, not ATM_RE)",
+    classifyBankTransaction(null, "Opname spaarrekening", -1000) === "transfer");
+}
+
+console.log("\n— [FEE-DEBIT-ONLY] interest RECEIVED is not a bank cost —");
+{
+  // 'fee' maps to PNL_ROLE 'kosten'. A credit landing there moves the result twice the wrong
+  // way: the income is missing and an expense is invented.
+  check("creditrente received is not classified as a fee",
+    classifyBankTransaction(null, "Creditrente spaardeel", 45.2) !== "fee");
+  check("...it stays 'unknown' rather than guessed into a category",
+    classifyBankTransaction(null, "Creditrente spaardeel", 45.2) === "unknown");
+  check("a bare 'rente' credit likewise",
+    classifyBankTransaction(null, "Rente 2e kwartaal", 12.5) === "unknown");
+  // Real bank costs are debits and must be untouched — they are deductible.
+  check("CONTROL bankkosten (debit) is still a fee",
+    classifyBankTransaction(null, "Bankkosten Zakelijk", -12.5) === "fee");
+  check("CONTROL debetrente (debit) is still a fee",
+    classifyBankTransaction(null, "Debetrente rood staan", -8.4) === "fee");
+  check("CONTROL maandpakket (debit) is still a fee",
+    classifyBankTransaction(null, "Maandpakket zakelijk", -14.95) === "fee");
+  check("CONTROL a credit that is a POS payout is still income (order unchanged)",
+    classifyBankTransaction("Mollie", "Afrek. 2026-06-30", 812.4) === "pos_income");
+  check("CONTROL a fee-looking credit still needs no document",
+    needsDocument(null, "Creditrente spaardeel", 45.2) === false);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

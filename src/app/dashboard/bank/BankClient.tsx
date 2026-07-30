@@ -11,7 +11,8 @@ import Link from 'next/link'
 import { reconcileBatch, resolveBatchNumbers } from '@/lib/bank-batch-reconcile'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
-import { isPartialPaymentHint } from '@/lib/bank-matching'
+import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
+import { isPosPayoutDescription } from '@/lib/bank-identity'
 import { rowMatchesQuery } from '@/lib/search'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
@@ -279,7 +280,10 @@ export default function BankClient() {
       const amountOnly = sig.includes('amount') && sig.includes('counterpart') && !sig.includes('reference') && !sig.includes('iban')
       if (!certain && !amountOnly) return false
       // single reference only (a multi-invoice batch is the engine's separate path), not an instalment
-      if (s.reference && s.reference.split(',').map((x) => x.trim()).filter(Boolean).length > 1) return false
+      // [BANK-REF-ONE-SOURCE] The server's own count — a raw comma split counted free-text
+      // fragments and any part under four characters as invoice numbers, so this gate fired on
+      // rows the server considers single-invoice.
+      if (parseReferenceNumbers(s.reference).length > 1) return false
       if (isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`)) return false
       return true
     })
@@ -292,7 +296,7 @@ export default function BankClient() {
     // exactly one unpaid invoice, one supplier, sum to the cent). This just decides "is it worth
     // calling now". A non-tie / incomplete batch simply books nothing — the call is idempotent.
     const hasBatch = (data.suggestions ?? []).some((s) => {
-      const refCount = (s.reference ?? '').split(',').map((x) => x.trim()).filter(Boolean).length
+      const refCount = parseReferenceNumbers(s.reference).length // [BANK-REF-ONE-SOURCE]
       if (refCount < 2) return false
       if (s.allCovered === true || confirmed[s.transactionId]?.allCovered === true) return false
       return true
@@ -524,8 +528,9 @@ export default function BankClient() {
     if (s.outcome !== 'auto' || !s.best) return false
     if (isPartiallyLinked(s)) return false
     // Multi-invoice (reference lists >1 number) → per-number action, never bulk.
-    // Count the same way the card does (comma-separated, trimmed, non-empty).
-    const refCount = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean).length
+    // [BANK-REF-ONE-SOURCE] Counted by the shared parser, so the card, this gate and the server
+    // can never disagree about how many invoices a reference names.
+    const refCount = parseReferenceNumbers(s.reference).length
     if (refCount > 1) return false
     if (confirmed[s.transactionId]) return false // already acted on this session
     return true
@@ -846,15 +851,11 @@ export default function BankClient() {
   // bulk every day and never have a supplier invoice. Keeping them in "Geen
   // factuur" buries the real work (actual supplier payments). Detect them and
   // give them their own tab so the owner focuses on invoices that matter.
-  const isPosReceipt = (s: Suggestion) => {
-    const name = (s.counterpart ?? '').toLowerCase()
-    const desc = (s.description ?? '').toLowerCase()
-    return (
-      name.includes('ing dd&c') ||
-      desc.includes('betaalautomaat') ||
-      desc.includes('afrek. betaalautomaat')
-    )
-  }
+  // [BANK-POS-ONE-SOURCE] Ask the classifier, not a private three-phrase list. The server knows
+  // sixteen acquirers (Mollie, Adyen, Stripe, Worldline, Buckaroo, …) and books their payouts as
+  // 'pos_income'; this list knew three. A Mollie settlement was therefore income on the server
+  // and sat in the "Geen factuur" tab here, as work the owner could never finish.
+  const isPosReceipt = (s: Suggestion) => isPosPayoutDescription(s.description, s.counterpart)
 
   // [BANK-TABS] Split the (often long) list into purpose-driven groups so the
   // owner isn't drowned in one endless list. Order: the action tab first.
@@ -898,7 +899,7 @@ export default function BankClient() {
     !!s.best &&
     s.best.signals.includes('reference') &&
     s.best.signals.includes('amount') &&
-    (s.reference ? s.reference.split(',').map((x) => x.trim()).filter(Boolean).length <= 1 : true) &&
+    parseReferenceNumbers(s.reference).length <= 1 && // [BANK-REF-ONE-SOURCE]
     !isPartialPaymentHint(`${s.reference ?? ''} ${s.description ?? ''}`),
   ).length
 
@@ -1567,7 +1568,10 @@ function TxCard({
   // Normalize a reference number the same way the matcher does (lowercase, keep
   // [a-z0-9]) — used for candidate matching AND for the dismiss set.
   const normRef = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const allRefParts = (s.reference ?? '').split(',').map((r) => r.trim()).filter(Boolean)
+  // [BANK-REF-ONE-SOURCE] Show the RAW text the bank wrote (normalizing it on screen would be
+  // unreadable), but only the parts the server would accept as an invoice number — otherwise a
+  // reference like "Huur juli, Kerkstraat 12" advertised "2 facturen" that do not exist.
+  const allRefParts = (s.reference ?? '').split(',').map((r) => r.trim()).filter(isReferenceNumberToken)
   // [BANK-SLOT-DISMISS] Hide any number the owner removed with ✗ (view-only). The
   // raw reference is untouched; this only changes what THIS card shows this session.
   const refParts = allRefParts.filter((r) => !dismissedNumbers.has(normRef(r)))
