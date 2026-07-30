@@ -151,6 +151,13 @@ function RegisterContent() {
       return
     }
 
+    // [REGISTER-FOUT] Vanaf hier hetzelfde adres als het formulier controleerde. De controle
+    // hierboven gebruikt .trim(), maar naar Supabase ging de ruwe waarde — dus " jan@x.nl "
+    // kwam door onze eigen controle en werd door de server geweigerd. Met de oude
+    // foutafhandeling las de gebruiker dan dat hij al een account had.
+    const schoonEmail = email.trim()
+    setEmail(schoonEmail)
+
     setFieldErrors({})
     setEmailTaken(false)
     setLoading(true)
@@ -162,7 +169,7 @@ function RegisterContent() {
     // confirmation ON there is no session yet, so the anon client hit RLS and the flow
     // dead-ended before the "check your e-mail" screen. The trigger has no such problem.
     const { data, error: signUpError } = await getBrowserClient().auth.signUp({
-      email,
+      email: schoonEmail,
       password,
       options: {
         data: {
@@ -183,8 +190,28 @@ function RegisterContent() {
     })
 
     if (signUpError) {
-      if (signUpError.status === 422 || signUpError.message?.toLowerCase().includes('already')) {
+      // [REGISTER-FOUT] Zeg wat er werkelijk mis is. Hier stond `status === 422 || …'already'`
+      // en dat vertaalde ALLES met code 422 naar "dit e-mailadres is al geregistreerd" — terwijl
+      // Supabase diezelfde 422 ook stuurt voor een te zwak wachtwoord en voor registratie die
+      // uitstaat. Zet iemand de minimale wachtwoordlengte in Supabase hoger dan de zes tekens
+      // die dit formulier controleert, dan las een nieuwe gebruiker dus "je hebt al een account"
+      // en werd naar inloggen gestuurd, waar hij niet binnenkomt. Een foutmelding die de
+      // verkeerde kant op wijst kost meer dan geen foutmelding.
+      const code = (signUpError as { code?: string }).code
+      const melding = signUpError.message?.toLowerCase() ?? ''
+
+      if (code === 'user_already_exists' || melding.includes('already')) {
         setEmailTaken(true)
+      } else if (code === 'weak_password' || melding.includes('password')) {
+        // De server stelt strengere eisen dan dit formulier kent. Zeg het bij het veld waar het
+        // over gaat, niet als algemene fout onderaan.
+        setFieldErrors({ password: 'Dit wachtwoord is te zwak — kies een langer wachtwoord' })
+      } else if (code === 'over_email_send_rate_limit' || signUpError.status === 429) {
+        setError('Te veel pogingen achter elkaar — wacht even en probeer opnieuw')
+      } else if (code === 'signup_disabled' || code === 'email_provider_disabled') {
+        setError('Registreren met e-mail staat tijdelijk uit — probeer het met Google')
+      } else if (code === 'email_address_invalid' || melding.includes('email')) {
+        setFieldErrors({ email: 'Dit e-mailadres klopt niet' })
       } else {
         setError('Registratie mislukt — probeer opnieuw')
       }
@@ -237,7 +264,7 @@ function RegisterContent() {
         company_name: companyName,
         kvk_number: kvk,
         btw_number: btw,
-        email,
+        email: schoonEmail,
         onboarding_step: 4,
         // [KLUIS] Zie de toelichting hierboven: dit is het pad zonder e-mailbevestiging,
         // waar wij zelf schrijven in plaats van de trigger.
