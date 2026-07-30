@@ -103,6 +103,20 @@ console.log('\n— the date fence: two numbers on ONE day is one document, read 
   check('different numbers, different dates → no warning', r === null)
 }
 {
+  // [BESLIST] Een leverancier die per ONGELUK twee keer hetzelfde werk factureert, met twee eigen
+  // nummers en een paar dagen ertussen (#100 op 1 mei, #101 op 8 mei, beide € 500). Dit zwijgt
+  // nu — en dat is een genomen besluit, geen vergeten geval. Uit onze gegevens is het niet te
+  // onderscheiden van een gewone tweede rekening: ander nummer, andere datum, zelfde bedrag. Elke
+  // waarschuwing hier is kop of munt, en een waarschuwing die zo vaak loos alarm slaat leert de
+  // eigenaar wegtikken — óók bij de keer dat het wél klopt. Wie dit later als bug ziet: het is er
+  // geen. Terugdraaien betekent de maandelijkse valse melding terugzetten.
+  const r = pickPaidTwin(
+    { invoice_number: '101', invoice_date: '2026-05-08' },
+    [paid({ invoice_number: '100', invoice_date: '2026-05-01', total_inc_btw: 500 })],
+  )
+  check('leverancier factureert per ongeluk dubbel, eigen nummers → bewust stil', r === null)
+}
+{
   // A date we could not read cannot clear anything — absence of evidence is not evidence.
   const r = pickPaidTwin(
     { invoice_number: '20260457', invoice_date: null },
