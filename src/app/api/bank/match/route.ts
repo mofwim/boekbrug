@@ -79,15 +79,30 @@ export async function GET() {
   // 3. Candidate invoices: this user's own (sent or received), not already paid.
   //    isEligible() in the matcher still enforces direction/sign, draft/archived,
   //    and the B.4 'verwerkt' guard — this query is just a fast-path payload reducer.
-  const { data: invRows, error: invErr } = await pipeline
-    .from("invoices")
-    .select(
-      // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
-      // instalment matches on amount.
-      "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban"
-    )
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-    .neq("status", "paid");
+  // [SEARCH-FULL-COVERAGE] Page past PostgREST's silent ~1000-row cap — the five other reads in
+  // this file already do. A truncated CANDIDATE set is the worst kind of truncation: the correct
+  // invoice is simply absent from the matcher's input, so a real payment renders as
+  // "Geen factuur" with no error anywhere. An owner past 1000 open invoices would see matching
+  // quietly stop working for their oldest ones.
+  let invRows: unknown[] = [];
+  let invErr: { message: string } | null = null;
+  try {
+    invRows = await fetchAllRows((from, to) =>
+      pipeline
+        .from("invoices")
+        .select(
+          // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
+          // instalment matches on amount.
+          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban"
+        )
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .neq("status", "paid")
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
+  } catch (e) {
+    invErr = { message: e instanceof Error ? e.message : String(e) };
+  }
   if (invErr) {
     return NextResponse.json(
       { error: "invoices_lookup_failed", detail: invErr.message },
@@ -139,11 +154,17 @@ export async function GET() {
     // isFullyCovered does equality on normalized numbers; direction already fixed
     // the candidate set when each link was confirmed, so a plain paid-number set is
     // sufficient here for the presence check.
-    const { data: paidRows } = await pipeline
-      .from("invoices")
-      .select("invoice_number")
-      .eq("status", "paid")
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+    // [SEARCH-FULL-COVERAGE] Paged: a truncated paid-set makes isFullyCovered answer "no" for a
+    // transaction whose invoices are all settled, so it never leaves "Te bevestigen".
+    const paidRows = await fetchAllRows<{ invoice_number: string | null }>((from, to) =>
+      pipeline
+        .from("invoices")
+        .select("invoice_number")
+        .eq("status", "paid")
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
     const paidSet = new Set(
       (paidRows ?? [])

@@ -86,6 +86,12 @@ export interface MatchCandidate {
   // (the 'amount_only' tier) demands a STRONG match — see autoConfirmTier / HIGH_NAME_SIM.
   // Optional: candidates built outside matchTransactions (e.g. batch reconcile) may omit it.
   nameSim?: number;
+  // [BANK-AMOUNT-ONLY-TOKENS] Whether the two counterpart names identify the same party strongly
+  // (see isStrongNameIdentity). nameSim alone cannot express this: "Jansen B.V." and "Jansen
+  // Holding" both reduce to the single token {jansen}, giving a containment of 1.0 — a perfect
+  // score from one shared surname. The amount_only tier books money with no human, so it needs
+  // this, not just the ratio. Optional: candidates built outside matchTransactions may omit it.
+  nameIdentity?: boolean;
   // [PARTIAL-PAY] What earlier instalments already settled (magnitude, 0 when fully open) and
   // what is therefore still OPEN on this invoice. scorePair already targets the remaining
   // balance (see amountTarget above) — it just never EXPORTED it, so the confirm UI compared
@@ -264,7 +270,13 @@ const LEGAL_SUFFIXES = new Set([
   "ltd",
   "gmbh",
   "maatschap",
-  "holding",
+  // [BANK-AMOUNT-ONLY-TOKENS] "holding" was here and must NOT be: it is not a legal-form
+  // suffix like bv/nv/vof but a distinguishing part of the name. Stripping it made
+  // "Jansen Holding" and "Jansen B.V." — two SEPARATE legal entities that routinely both
+  // exist and both invoice — collapse to the identical token set {jansen}, scoring a perfect
+  // 1.000 similarity. With an equal amount and a nearby date that was enough to auto-book a
+  // payment against the wrong company's invoice with no human in the loop. Keeping the token
+  // makes the two names differ, which is the truth.
   "inzake",
 ]);
 
@@ -295,6 +307,32 @@ function nameTokens(s: string): Set<string> {
  * Jaccard over tokens, boosted by containment (one name's tokens ⊆ the other's),
  * so "JANSEN BV INZAKE FACTUUR" still matches invoice client "Jansen BV".
  */
+/**
+ * Do two counterpart names identify the SAME party strongly enough to book money without a
+ * human? True when they share at least two meaningful tokens, OR when their meaningful token
+ * sets are identical (the same name, spelled the same way). Pure.
+ *
+ * [BANK-AMOUNT-ONLY-TOKENS] Exists because a RATIO cannot tell "the same company" from "a shared
+ * surname". `Jansen B.V.` vs `Jansen Holding` both reduce to the single token {jansen} once
+ * LEGAL_SUFFIXES strips `bv` and `holding`, so containment is 1.0 and nameSimilarity returns a
+ * perfect 1.000 for two unrelated companies — enough to clear HIGH_NAME_SIM and auto-book.
+ *
+ * Set equality is what keeps the honest single-word supplier working: `Jansen BV` vs `Jansen BV`
+ * (or KPN, Vodafone — one meaningful token each) is an exact identity, not a coincidence. The
+ * dangerous shape is precisely the ASYMMETRIC one: one name's only token is a subset of a longer,
+ * different name.
+ */
+export function isStrongNameIdentity(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  const setA = nameTokens(a);
+  const setB = nameTokens(b);
+  if (setA.size === 0 || setB.size === 0) return false;
+  let shared = 0;
+  for (const t of setA) if (setB.has(t)) shared++;
+  if (shared >= 2) return true;
+  return setA.size === setB.size && shared === setA.size;
+}
+
 export function nameSimilarity(a: string | null, b: string | null): number {
   if (!a || !b) return 0;
   const setA = nameTokens(a);
@@ -563,7 +601,20 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
     // real debtor never chased. A payment plausibly settling an invoice arrives near it; one that
     // doesn't is exactly the coincidence this tier must not book. Fail-safe: outside the window the
     // pair stays a pre-selected human one-tap.
-    return (m.best.nameSim ?? 0) >= HIGH_NAME_SIM && sig.includes("date") ? "amount_only" : null;
+    //
+    // [BANK-AMOUNT-ONLY-TOKENS] AND require a real name IDENTITY, not just a high ratio. The
+    // similarity score alone cannot carry this tier: `Jansen B.V.` vs `Jansen Holding` scores a
+    // perfect 1.000, because `bv` and `holding` are both in LEGAL_SUFFIXES so each name collapses
+    // to the single token {jansen}. Two unrelated companies sharing a common Dutch surname, with
+    // an equal amount and a nearby date, were auto-booked with no human ever looking.
+    // isStrongNameIdentity still passes the honest single-word supplier (`Jansen BV` ↔ `Jansen
+    // BV`, KPN, Vodafone) because their token sets are EQUAL; it rejects only the asymmetric case
+    // where one name's lone token is a subset of a different, longer one. Below the bar the pair
+    // still lists and stays pre-selected — one human tap, which is the right cost here.
+    const identityEnough = m.best.nameIdentity !== false;
+    return (m.best.nameSim ?? 0) >= HIGH_NAME_SIM && sig.includes("date") && identityEnough
+      ? "amount_only"
+      : null;
   }
   return null; // amount + date only, no identity → too weak, stays human
 }
@@ -626,6 +677,7 @@ export function matchTransactions(
         signals,
         reason,
         nameSim,
+        nameIdentity: isStrongNameIdentity(tx.counterpartName, inv.client_name),
         amountPaid: alreadyPaid,
         remaining: stillOpen,
       });
@@ -727,7 +779,13 @@ export function parseReferenceNumbers(reference: string | null): string[] {
   const seen = new Set<string>();
   for (const part of reference.split(",")) {
     const norm = normalizeRef(part.trim());
-    if (norm.length >= 4) seen.add(norm);
+    // [BANK-REF-DIGITS] An invoice number always contains a digit. Without this test, ANY free
+    // text carrying a comma parsed as a multi-invoice payment: the parser stores free text as
+    // the reference when it cannot extract a number, so "Huur juli, Kerkstraat 12" became
+    // ["huurjuli", "kerkstraat12"] — two "invoices". That silently disabled auto-booking for
+    // the line (autoConfirmTier bails above 1 number) and sent unlink down the batch path,
+    // which zeroes amount_paid and payment_date instead of subtracting the instalment.
+    if (norm.length >= 4 && /\d/.test(norm)) seen.add(norm);
   }
   return [...seen];
 }

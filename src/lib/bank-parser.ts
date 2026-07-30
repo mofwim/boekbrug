@@ -278,8 +278,25 @@ function parseMT940Transaction(
   const day = dateStr.slice(4, 6);
   const date = `${year}-${month}-${day}`;
 
+  // [M4] The date is assembled by string concatenation, so YYMMDD "999999" yields the
+  // syntactically-shaped but impossible "2099-99-99". Postgres rejects it on a `date`
+  // column, which fails the WHOLE batch INSERT — and bank-ingest swallows that error, so
+  // every transaction in the file disappears while the report still says "verwerkt".
+  // CAMT has guarded this since [M4]; the [H3] comment claimed MT940 did too. It did not.
+  // Drop the single unreadable line with a named error instead of losing the batch.
+  if (!isValidIsoDate(date)) {
+    errors.push(`Ongeldige transactiedatum in MT940-regel: "${dateStr}"`);
+    return null;
+  }
+
   // Parse amount — MT940 uses comma as decimal separator
   const amount = parseFloat(amountStr.replace(",", "."));
+  // [H3] A non-finite amount (Infinity from a 300-digit value, NaN from garbage) poisons every
+  // downstream sum — reconciliation, kwartaaltotalen, BTW. Same guard CAMT already applies.
+  if (!Number.isFinite(amount)) {
+    errors.push(`Ongeldig transactiebedrag in MT940-regel: "${amountStr}"`);
+    return null;
+  }
   // [BANK-BALANCE] SWIFT sign convention, incl. reversals:
   //   C  = credit                → +   |   D  = debit                 → −
   //   RD = Reversal of a Debit   → +   |   RC = Reversal of a Credit  → −
@@ -721,20 +738,22 @@ function parseCAMT053Entry(
   // from `description` with the SAME rules (multi-invoice, POS→null) and fall
   // back to EndToEndId only for a real, non-POS transfer.
   const isPosEntry = /BETAALAUTOMAAT|AFREK\.|Verzamelbetaling/i.test(description);
-  let reference: string | null = null;
-  if (description && !isPosEntry) {
-    const tokens = description.match(/\b[A-Z]{0,3}\d{3,}[A-Z0-9]*\b/g);
-    if (tokens && tokens.length > 0) {
-      const isBareYear = (t: string) => /^20(2[4-9]|3\d)$/.test(t);
-      const meaningful = tokens.filter((t) => !isBareYear(t));
-      if (meaningful.length === 0) {
-        reference = null;
-      } else {
-        const seen = new Set<string>();
-        reference = meaningful.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(", ");
-      }
-    }
-  }
+  // [BANK-REF-ONE-SOURCE] Call extractInvoiceReference instead of re-implementing its general
+  // case here. The inline copy that stood here lacked the SEPA-incasso rule, so a REMI like
+  // "/IncassobatchId/26-06-0001/OpdrachtId/994872215/Betaling fact. 1260405" produced
+  // "0001, 994872215, 1260405" in CAMT where MT940 produced only the invoice number. Three
+  // failures followed from that one divergence:
+  //   1. contentKey() includes the reference, so the SAME transaction imported from MT940 and
+  //      from CAMT got DIFFERENT dedup keys → a double insert → doubled kosten/omzet.
+  //   2. parseReferenceNumbers() counted 3 numbers → autoConfirmTier() returned null → the
+  //      line silently stopped auto-booking.
+  //   3. isFullyCovered() could never be satisfied, so the tx stayed actionable forever.
+  // This is exactly the ONS IT Incasso bug the extractInvoiceReference header warns about:
+  // two copies of one rule, only one of them fixed.
+  let reference = extractInvoiceReference(description || null, {
+    isPos: isPosEntry,
+    isCard: false,
+  });
   if (!reference && !isPosEntry) {
     const e2eMatch = txDtls.match(/<EndToEndId>([^<]+)<\/EndToEndId>/);
     const e2e = e2eMatch ? e2eMatch[1].trim() : "";
