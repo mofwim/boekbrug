@@ -81,6 +81,8 @@ DECLARE
   v_tgt_new_st   text;
   v_tgt_is_paid  boolean;
   v_pay_date     date;
+  v_src_date     date;
+  v_src_method   text;
   v_pay_method   text;
   v_tx_left      integer;
   -- Eén cent speling, gelijk aan apply_bank_payment: OCR-totalen kunnen een afrondingstik
@@ -230,8 +232,26 @@ BEGIN
         payment_method = NULL, marked_paid_at = NULL, payment_date = NULL
     WHERE id = v_src_id;
   ELSE
+    -- Blijven er termijnen achter, dan moet de betaaldatum van de bron OPNIEUW worden afgeleid.
+    -- Hem laten staan is een stille fout met gevolgen: payment_date bepaalt in welk kwartaal een
+    -- betaling meetelt onder het kasstelsel, en na het weghalen van de EERSTE termijn zou de
+    -- factuur blijven beweren dat er in mei betaald is terwijl het overgebleven geld in juni
+    -- binnenkwam. Dat is een verkeerde aangifte die nergens een melding geeft. Dus: de vroegste
+    -- OVERGEBLEVEN betaling bepaalt datum én methode — een banklijn levert zijn eigen datum, een
+    -- handmatige termijn draagt paid_on/method zelf.
+    SELECT coalesce(l.paid_on, bt.date), coalesce(l.method, 'bank')
+      INTO v_src_date, v_src_method
+    FROM public.bank_tx_invoices l
+    LEFT JOIN public.bank_transactions bt ON bt.id = l.transaction_id AND bt.user_id = p_user_id
+    WHERE l.invoice_id = v_src_id AND l.user_id = p_user_id
+    ORDER BY coalesce(l.paid_on, bt.date) NULLS LAST, l.created_at
+    LIMIT 1;
+
     UPDATE public.invoices
-    SET amount_paid = v_src_sum, status = v_src_new_st
+    SET amount_paid    = v_src_sum,
+        status         = v_src_new_st,
+        payment_date   = coalesce(v_src_date, payment_date),
+        payment_method = coalesce(v_src_method, payment_method)
     WHERE id = v_src_id;
   END IF;
 

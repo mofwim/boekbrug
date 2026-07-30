@@ -99,7 +99,10 @@ export async function POST(req: NextRequest) {
     // billing the same amount 50 times in four months is invoicing daily. Ordering matters even
     // so: if that ceiling is ever reached, what gets dropped is the OLDEST, never the re-send we
     // are looking for (a vendor re-sends within days).
-    .order('invoice_date', { ascending: false })
+    // nullsFirst:false matters here. Postgres puts NULLs FIRST on a DESC sort, so a handful of
+    // invoices whose date we never read would have filled the window ahead of every dated one —
+    // and the row this check exists to find is a recent, dated re-send.
+    .order('invoice_date', { ascending: false, nullsFirst: false })
     .limit(50)
 
   if (target.vendor_iban) {
