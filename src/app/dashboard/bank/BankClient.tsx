@@ -116,12 +116,36 @@ interface MatchResponse {
   suggestions: Suggestion[]
 }
 
+// [MOVE-PAYMENT] Shapes returned by GET /api/invoice/payment/move.
+interface MoveTarget {
+  id: string
+  invoice_number?: string | null
+  client_name?: string | null
+  invoice_date?: string | null
+  total_inc_btw?: number | null
+  amount_paid?: number | null
+}
+interface MoveSource { id: string; invoice_number?: string | null; client_name?: string | null }
+interface MovePayment {
+  id: string
+  amount_applied: number
+  transaction_id?: string | null
+  paid_on?: string | null
+  method?: string | null
+  /** false for a pre-[PARTIAL-PAY] link: no recorded amount, so there is nothing to move. */
+  movable: boolean
+  targets: MoveTarget[]
+}
+
 export default function BankClient() {
   const dialog = useDialog()
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
   const showToast = useToast()
+  // [MOVE-PAYMENT] Which payment sits on this bank line, and which invoices it may move to. The
+  // server ranks and filters the targets (same rules as the RPC), so this holds display only.
+  const [moveCtx, setMoveCtx] = useState<{ txId: string; source: MoveSource; payments: MovePayment[] } | null>(null)
   const [busy, setBusy] = useState(false)
   // [BANK-DND] true while a file is being dragged over the upload zone.
   const [dragActive, setDragActive] = useState(false)
@@ -253,6 +277,49 @@ export default function BankClient() {
     } catch { showToast('Ontkoppelen mislukt.') }
     finally { setProcessingId(null) }
   }, [runMatch])
+
+  // [MOVE-PAYMENT] "This line is booked on the wrong invoice." The owner meets that realisation
+  // from two directions and this is the second one: looking at the bank line, not at the invoice.
+  // Ontkoppelen beside it answers a different question ("this booking should not exist") and
+  // leaves the line unmatched, so using it here meant re-finding the same line afterwards and
+  // booking it again — with the money on no invoice in between. Moving is one atomic step; the
+  // server owns every rule (see /api/invoice/payment/move and move_invoice_payment).
+  const openMove = useCallback(async (txId: string) => {
+    setProcessingId(txId)
+    try {
+      const res = await fetch(`/api/invoice/payment/move?transactionId=${encodeURIComponent(txId)}`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // Includes the honest "this payment is split over several invoices" answer — ambiguous
+        // here by nature, and better named than silently resolved to one of them.
+        showToast(json?.detail || 'Betalingen ophalen mislukt.')
+        return
+      }
+      const payments = (json?.payments ?? []) as MovePayment[]
+      if (payments.length === 0) { showToast('Geen geboekte betaling gevonden op deze regel.'); return }
+      setMoveCtx({ txId, source: json.source as MoveSource, payments })
+    } catch { showToast('Geen verbinding — probeer opnieuw.') }
+    finally { setProcessingId(null) }
+  }, [showToast])
+
+  const doMove = useCallback(async (linkId: string, target: MoveTarget) => {
+    setMoveCtx(null)
+    try {
+      const res = await fetch('/api/invoice/payment/move', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkId, targetInvoiceId: target.id }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The move is atomic, so a refusal means nothing changed — and the server's sentence says
+        // which reason it was. Never our guess.
+        showToast(json?.detail || 'Verplaatsen mislukt — er is niets gewijzigd.')
+        return
+      }
+      await runMatch()
+      showToast(`Betaling verplaatst naar ${target.invoice_number ? `factuur ${target.invoice_number}` : 'de gekozen factuur'}.`)
+    } catch { showToast('Geen verbinding — er is niets gewijzigd.') }
+  }, [runMatch, showToast])
 
   // [BANK-AUTO-CONFIRM] Let the app handle the near-certain payments (reference number +
   // exact amount, single invoice) so the owner only deals with what's genuinely ambiguous.
@@ -999,6 +1066,77 @@ export default function BankClient() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px 14px 96px', fontFamily: FONT, color: M3.onSurface }}>
+      {/* [MOVE-PAYMENT] Which invoice does this payment belong to?
+          No free search field: the server returns only invoices that can actually receive the
+          money (same direction, payable status, enough still open, not locked by the accountant),
+          in the order they are likely meant — same supplier first, then an exactly fitting amount,
+          then the nearest date. Each row shows what is still open, so choosing is informed rather
+          than a guess with a confirmation after it. */}
+      {moveCtx && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 340, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+          onClick={() => setMoveCtx(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: `${R.lg}px ${R.lg}px 0 0`, padding: 24, width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', fontFamily: FONT }}
+          >
+            <h3 style={{ fontSize: 17, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
+              Betaling verplaatsen
+            </h3>
+            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 18px' }}>
+              Deze betaling staat nu op {moveCtx.source.invoice_number ? `factuur ${moveCtx.source.invoice_number}` : 'een factuur'}
+              {moveCtx.source.client_name ? ` van ${moveCtx.source.client_name}` : ''}. Kies de factuur waar hij bij hoort —
+              het bedrag, de betaaldatum en de methode gaan ongewijzigd mee.
+            </p>
+
+            {moveCtx.payments.map(pm => (
+              <div key={pm.id} style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>
+                  {eur.format(pm.amount_applied)}
+                  {pm.method === 'kas' ? ' · Contant' : pm.transaction_id ? ' · Bank' : ''}
+                </div>
+                {!pm.movable ? (
+                  <p style={{ fontSize: 13, color: '#9a5b00', background: '#fff4e5', border: '1px solid #ffd9a8', borderRadius: R.sm, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
+                    Van deze betaling is geen bedrag vastgelegd, dus verplaatsen kan niet. Ontkoppel hem
+                    en boek hem opnieuw op de juiste factuur.
+                  </p>
+                ) : pm.targets.length === 0 ? (
+                  <p style={{ fontSize: 13, color: '#5F6368', background: '#F8F9FA', borderRadius: R.sm, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
+                    Geen factuur gevonden waar dit bedrag op past. Een factuur kan alleen een betaling
+                    ontvangen als hij gecontroleerd is, van dezelfde soort is, en er minstens {eur.format(pm.amount_applied)} op open staat.
+                  </p>
+                ) : (
+                  pm.targets.map(t => {
+                    const open = Math.max(0, Math.abs(Number(t.total_inc_btw ?? 0)) - Math.max(0, Number(t.amount_paid ?? 0)))
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => doMove(pm.id, t)}
+                        style={{ width: '100%', textAlign: 'left', marginBottom: 8, padding: '12px 14px', borderRadius: R.sm, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', cursor: 'pointer', fontFamily: FONT, display: 'block' }}
+                      >
+                        <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>
+                          {t.invoice_number || '(geen nummer)'} · {t.client_name || '—'}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: '#5F6368', marginTop: 2 }}>
+                          {eur.format(Math.abs(Number(t.total_inc_btw ?? 0)))} · nog {eur.format(open)} open
+                        </div>
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            ))}
+
+            <button
+              onClick={() => setMoveCtx(null)}
+              style={{ width: '100%', padding: '14px', borderRadius: R.full, background: 'transparent', color: '#1A73E8', fontSize: 15, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}
+            >
+              Annuleren
+            </button>
+          </div>
+        </div>
+      )}
       {/* [HEADER-SYSTEM] Title "Bank" + back live in the shared sub-page bar
           (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
           removed. The descriptive intro line stays. */}
@@ -1451,6 +1589,7 @@ export default function BankClient() {
                 onOpenFile={openInvoiceFile}
                 isDoneTab={bankTab === 'done'}
                 onUnlink={() => unlink(s.transactionId)}
+                onMove={() => openMove(s.transactionId)}
               />
             ))}
             {activeList.length === 0 && (
@@ -1598,7 +1737,7 @@ function Empty({ done }: { done: boolean }) {
 }
 
 function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onAttach, onIgnore, onRestore, onOpenFile, isDoneTab, onUnlink, onMove,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
@@ -1616,6 +1755,8 @@ function TxCard({
   onOpenFile: (invoiceId: string) => void
   isDoneTab?: boolean
   onUnlink?: () => void
+  /** [MOVE-PAYMENT] Move this line's booked payment to another invoice. */
+  onMove?: () => void
 }) {
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
@@ -1781,6 +1922,20 @@ function TxCard({
             <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
             {processing ? 'Bezig…' : 'Ontkoppelen'}
           </button>
+          {/* [MOVE-PAYMENT] The other answer, and a different question from Ontkoppelen. That one
+              says "this booking should not exist" and leaves the line unmatched; this one says
+              "it belongs to another invoice" and puts it there in one atomic step, instead of
+              unlink -> find the line again -> re-book with the money on nothing in between. */}
+          {onMove && (
+            <button
+              onClick={onMove}
+              disabled={processing}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px', marginLeft: 6 }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>swap_horiz</span>
+              Andere factuur
+            </button>
+          )}
         </div>
       )}
       {/* [BANK-AMOUNT-ONLY] This line was auto-linked on the exact amount + a matching supplier

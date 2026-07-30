@@ -4,7 +4,7 @@
 // all. The pure assessor is tested in possible-duplicate.test.ts; what is at stake here is
 // whether its candidates arrive — and whether they arrive exactly once.
 
-import { collectPossibleDuplicate, mergePossibleDuplicate } from './possible-duplicate-collect'
+import { collectPossibleDuplicate, mergePossibleDuplicate, clearPossibleDuplicate } from './possible-duplicate-collect'
 import type { PossibleDupCandidate, SemanticDedupInput } from './safecore'
 
 let passed = 0, failed = 0
@@ -114,6 +114,52 @@ async function run() {
   }
   {
     check('no match → nothing invented', mergePossibleDuplicate(null, null) === null)
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  // [SUPERSEDE] clearPossibleDuplicate is the inverse, and the destructive direction: it edits a
+  // jsonb blob that also holds the arithmetic verdict, an IBAN change and a reminder marker. None
+  // of those is answered by an answer about duplication, so dropping one would silently take a
+  // real warning off an invoice nobody looks at again.
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  console.log('\n— clearing the flag removes the signal and NOTHING else —')
+  {
+    const flagged = mergePossibleDuplicate(
+      { _safecore: { arithmetic_ok: false, reason: 'excl + btw != incl', held_at: 'x', iban_changed: true, reminder: true }, vendor: 0.9 },
+      { match: { id: 'inv-42', invoice_number: 'F-1', client_name: 'V' }, reason: 'r' },
+    )
+    const cleared = clearPossibleDuplicate(flagged) as { _safecore?: Record<string, unknown>; vendor?: number }
+    const sc = cleared?._safecore ?? {}
+    check('possible_duplicate is gone', !('possible_duplicate' in sc))
+    check('the actionable id is gone', !('possible_duplicate_id' in sc))
+    check('the label is gone', !('possible_duplicate_of' in sc))
+    check('the reason is gone', !('possible_duplicate_reason' in sc))
+    check('the arithmetic verdict SURVIVES', sc.arithmetic_ok === false && sc.reason === 'excl + btw != incl')
+    check('held_at survives', sc.held_at === 'x')
+    check('an IBAN change survives', sc.iban_changed === true)
+    check('a reminder marker survives', sc.reminder === true)
+    check('flat AI confidences survive', cleared?.vendor === 0.9)
+  }
+  {
+    // Round trip: writing then clearing must land back on the untouched original.
+    const before = { _safecore: { arithmetic_ok: true }, vendor: 0.5 }
+    const flagged = mergePossibleDuplicate(before, { match: { id: 'i', invoice_number: 'n', client_name: 'c' }, reason: 'r' })
+    check('write-then-clear is a round trip', JSON.stringify(clearPossibleDuplicate(flagged)) === JSON.stringify(before))
+  }
+  {
+    check('nothing to clear -> null, not a fake success', clearPossibleDuplicate(null) === null)
+    check('a non-object is not treated as a blob', clearPossibleDuplicate('nope') === null)
+    check('an array is not treated as a blob', clearPossibleDuplicate([1, 2]) === null)
+  }
+  {
+    // A row with no _safecore at all must not gain junk, and must not throw.
+    const cleared = clearPossibleDuplicate({ vendor: 0.7 }) as { _safecore?: Record<string, unknown>; vendor?: number }
+    check('a blob without _safecore survives intact', cleared?.vendor === 0.7 && Object.keys(cleared?._safecore ?? {}).length === 0)
+  }
+  {
+    // Clearing twice is a no-op, so a retried request cannot do extra damage.
+    const once = clearPossibleDuplicate({ _safecore: { possible_duplicate: true, arithmetic_ok: true } })
+    check('clearing is idempotent', JSON.stringify(clearPossibleDuplicate(once)) === JSON.stringify(once))
   }
 
   console.log(`\n${passed} passed, ${failed} failed\n`)

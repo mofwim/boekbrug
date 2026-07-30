@@ -1327,7 +1327,11 @@ function InvoiceCard({
   // side, from this same stored flag. Absent on rows imported before the id was written: the
   // warning still shows, only the shortcut is missing, and that is the honest state of affairs.
   const supersedeTarget = (() => {
-    if (mode !== "pending" || !invoice.health.flags.possibleDuplicate) return null;
+    // [SUPERSEDE] pending AND confirmed. A corrected re-issue the owner already verified is
+    // still 'received', which refuseSupersede permits, so the shortcut must not vanish just
+    // because the row moved one tab over — that was the difference between one tap and a trip
+    // to another screen. Only the Genegeerd tab is excluded: an archived row answers nothing.
+    if (mode === "ignored" || !invoice.health.flags.possibleDuplicate) return null;
     const fc = invoice.field_confidence as { _safecore?: Record<string, unknown> } | null;
     const s = fc?._safecore;
     if (!s || typeof s.possible_duplicate_id !== "string" || s.possible_duplicate_id.length === 0) {
@@ -1376,6 +1380,35 @@ function InvoiceCard({
       await dialog.alert({
         title: "Geen verbinding",
         message: "Vervangen is niet gelukt. Controleer je verbinding en probeer het opnieuw.",
+      });
+    } finally {
+      setSuperseding(false);
+    }
+  };
+
+  // [SUPERSEDE] The OTHER answer: "no, these really are two invoices." Confirming the invoice is
+  // deliberately NOT read as this answer — that tap says the amounts are right, not that two
+  // documents were compared — so the question needs its own way to be closed, or it would follow
+  // the invoice around forever and reappear if it were ever restored to the queue.
+  const handleDismissDuplicate = async () => {
+    if (superseding || !supersedeTarget) return;
+    setSuperseding(true);
+    try {
+      const res = await fetch(`/api/invoice/${invoice.id}/supersede`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        await dialog.alert({
+          title: "Niet gelukt",
+          message: data?.detail || "De melding kon niet worden weggehaald — probeer het opnieuw.",
+        });
+        return;
+      }
+      toast("Genoteerd — dit zijn twee verschillende facturen");
+      router.refresh();
+    } catch {
+      await dialog.alert({
+        title: "Geen verbinding",
+        message: "De melding kon niet worden weggehaald. Probeer het opnieuw.",
       });
     } finally {
       setSuperseding(false);
@@ -1722,9 +1755,68 @@ function InvoiceCard({
                         : `Deze vervangt ${supersedeTarget.label}`}
                     </button>
                   )}
+                  {/* [SUPERSEDE] The second answer, so the question can be closed BOTH ways. Without
+                      it the only way out was to replace something — and an owner whose two invoices
+                      are genuinely different had nothing to tap, so the warning followed the invoice
+                      for good. Confirming is not read as this answer: that tap means the amounts are
+                      right, not that two documents were compared. */}
+                  {supersedeTarget && (
+                    <button
+                      onClick={handleDismissDuplicate}
+                      disabled={superseding}
+                      style={{
+                        marginTop: 10, marginLeft: 8, padding: "7px 12px", borderRadius: 9,
+                        background: "transparent", cursor: superseding ? "default" : "pointer",
+                        border: "1px solid transparent", color: "#9a5b00", fontWeight: 600, fontSize: 12.5,
+                        display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "underline",
+                      }}
+                    >
+                      Nee, andere factuur
+                    </button>
+                  )}
                 </div>
               </div>
             )}
+
+          {/* [SUPERSEDE] On the Bevestigd tab the "Even controleren" box above does not render — it
+              is a queue concept — so a confirmed invoice that still carries a duplicate warning had
+              nowhere to answer it. That is the common shape of this exact problem: the corrected
+              re-issue gets verified first (its amounts are right, so it looks clean), and only then
+              does the owner notice the old one is still in the books. Both answers belong here too,
+              compact and without the queue's "check this" framing. */}
+          {mode === "confirmed" && supersedeTarget && (
+            <div style={{
+              display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap",
+              padding: "10px 12px", marginBottom: 14,
+              background: "#fff4e5", borderRadius: 10, border: "1px solid #ffd9a8",
+            }}>
+              <div style={{ flex: 1, minWidth: 180, fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
+                Mogelijk dubbel met {supersedeTarget.label}.
+              </div>
+              <button
+                onClick={handleSupersede}
+                disabled={superseding}
+                style={{
+                  padding: "6px 11px", borderRadius: 9, background: superseding ? "#f0d9b8" : "#fff",
+                  cursor: superseding ? "default" : "pointer", border: "1px solid #e0a94f",
+                  color: "#9a5b00", fontWeight: 600, fontSize: 12.5,
+                }}
+              >
+                {superseding ? "Bezig…" : `Deze vervangt ${supersedeTarget.label}`}
+              </button>
+              <button
+                onClick={handleDismissDuplicate}
+                disabled={superseding}
+                style={{
+                  padding: "6px 11px", borderRadius: 9, background: "transparent",
+                  cursor: superseding ? "default" : "pointer", border: "1px solid transparent",
+                  color: "#9a5b00", fontWeight: 600, fontSize: 12.5, textDecoration: "underline",
+                }}
+              >
+                Nee, andere factuur
+              </button>
+            </div>
+          )}
 
           {/* Detail rows */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
