@@ -5,7 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, R, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
@@ -32,27 +32,11 @@ import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial
 // [INVOICE-REMOVE] One rule decides what "Verwijderen" does to THIS invoice — the same rule the
 // API route re-checks before it writes. The dialog below is that decision, rendered.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/invoice-removal"
+import { useToast } from "@/components/ui/Toast"
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
-const M3 = {
-  primary:           '#1A73E8',
-  onPrimary:         '#FFFFFF',
-  primaryContainer:  '#D3E3FD',
-  onPrimaryContainer:'#041E49',
-  surface:           '#ffffff',
-  onSurface:         '#202124',
-  surfaceVariant:    '#f1f3f4',
-  outline:           '#80868b',
-  error:             '#B3261E',
-  errorContainer:    '#F9DEDC',
-  success:           '#34A853',
-  successContainer:  '#CEEAD6',
-  warning:           '#E37400',
-  warningContainer:  '#FEE8C4',
-}
 const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 // Status chip colors — Material You
@@ -135,6 +119,10 @@ const FILTERS: { id: FilterTab; label: string }[] = [
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function FacturenClient({ profile }: { profile: { id: string } }) {
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -144,7 +132,6 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
   const [sort, setSort]                 = useState<SortOrder>('desc')
   const [showFilterMenu, setShowFilterMenu] = useState(false)  // [BOEK-029] dropdown
   const [expandedId, setExpandedId]     = useState<string | null>(null)
-  const [toast, setToast]               = useState<string | null>(null)
   const [removeCtx, setRemoveCtx]       = useState<RemoveCtx | null>(null)
   // [HERHAAL] The invoice the owner is about to start (or stop) repeating.
   const [repeatCtx, setRepeatCtx]       = useState<{ id: string; number: string; client: string; scheduleId?: string; cadence?: string; nextRun?: string; active?: boolean } | null>(null)
@@ -451,7 +438,6 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
     loadMore()
   }, [typeFiltered, searching, loading, hasMore, displayed.length, loadMore])
 
-  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2500) }
 
   async function executePay(ctx: ConfirmPayCtx) {
     setPayCtx(null); setProcessingId(ctx.id)
@@ -1357,7 +1343,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           selecting. Enabled at ≥2 facturen of the same klant. ── */}
       {selectMode && (
         <div style={{
-          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + env(safe-area-inset-bottom))`,
+          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           maxWidth: 648, margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
@@ -1397,7 +1383,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         onClick={() => router.push('/dashboard/invoice/new')}
         style={{
           position: 'fixed',
-          bottom: `calc(24px + env(safe-area-inset-bottom))`,
+          bottom: `calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           right: 20,
           background: M3.primaryContainer,
           color: M3.onPrimaryContainer,
@@ -1410,8 +1396,6 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
           fontFamily: FONT, zIndex: 50,
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
-        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
-        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
         Nieuwe factuur
@@ -1670,24 +1654,7 @@ export default function FacturenClient({ profile }: { profile: { id: string } })
         </div>
       )}
 
-      {/* ── Toast ── */}
-      {toast && (
-        <div style={{
-          // [TOAST-WRAP] Long sentences (e.g. "… maar de PDF kon niet worden gemaakt —
-          // verstuur opnieuw") were nowrap + centered, so on a phone they ran past both
-          // screen edges and were cut off. Cap the width and let them wrap instead.
-          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
-          background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500,
-          padding: '12px 20px', borderRadius: R.sm, zIndex: 300,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: 'calc(100vw - 32px)', textAlign: 'center',
-          animation: 'fadeInUp 0.2s ease', fontFamily: FONT,
-        }}>
-          {toast}
-        </div>
-      )}
-
       <style>{`
-        @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
         @keyframes shimmer  { 0% { background-position:200% 0 } 100% { background-position:-200% 0 } }
         ::-webkit-scrollbar { display: none }
       `}</style>

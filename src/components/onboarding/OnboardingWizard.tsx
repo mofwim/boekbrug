@@ -29,6 +29,7 @@ import { previewInvoiceStart, reasonToDutch } from "@/lib/invoice-template";
 import { BTW_REGEX } from "@/lib/validation";
 import { isValidIban, normalizeIban } from "@/lib/epc-qr";
 import Link from 'next/link'
+import { M3 } from '@/lib/design/tokens'
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -615,7 +616,7 @@ function Input({ label, placeholder, value, onChange, inputMode, maxLength, erro
           boxSizing: "border-box",
         }}
       />
-      {error && <p style={{ fontSize: "13px", color: "#ea4335", marginTop: "6px" }}>{error}</p>}
+      {error && <p style={{ fontSize: "13px", color: M3.error, marginTop: "6px" }}>{error}</p>}
     </div>
   );
 }
@@ -669,7 +670,7 @@ function StepWelcome({ firstName }: { firstName: string }) {
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         {["Alle facturen op één plek", "AI leest je documenten automatisch", "Nooit meer een factuur kwijt"].map((t) => (
           <div key={t} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ color: "#34a853", fontSize: "16px" }}>✓</span>
+            <span style={{ color: M3.success, fontSize: "16px" }}>✓</span>
             <span style={{ fontSize: "15px", color: "#5f6368" }}>{t}</span>
           </div>
         ))}

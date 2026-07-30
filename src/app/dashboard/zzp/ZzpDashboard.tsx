@@ -51,23 +51,12 @@ import DailyTruth from './DailyTruth'
 // niet alleen in een notificatie die je één keer ziet.
 import { VRAAG_STATUS, vragenBannerTekst } from '@/lib/vragen'
 import type { ProfileRow, NotificationRow } from '@/types/rows'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
-const M3 = {
-  primary:           '#1A73E8',
-  onPrimary:         '#FFFFFF',
-  primaryContainer:  '#D3E3FD',
-  onPrimaryContainer:'#041E49',
-  tertiary:          '#7B1FA2',
-  tertiaryContainer: '#E1BEE7',
-  surface:           '#ffffff',
-  onSurface:         '#202124',
-  success:           '#34A853',
-  successContainer:  '#CEEAD6',
-  warning:           '#E37400',
-  warningContainer:  '#FEE8C4',
-  outline:           '#80868b',
-  error:             '#B3261E',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 const EL2  = '0 2px 6px rgba(0,0,0,0.12)'
@@ -356,8 +345,6 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
                   color: aiLoading || !aiPrompt.trim() ? '#80868b' : '#fff',
                   fontSize: 15, fontWeight: 600, transition: 'all 0.15s',
                 }}
-                onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-                onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
               >
                 {aiLoading ? 'AI denkt na...' : 'Factuur aanmaken →'}
               </button>
@@ -375,7 +362,6 @@ export function ZzpDashboard({ profile }: { profile: ProfileRow }) {
 }
 
 // ─── Design system constants ──────────────────────────────────────────────────
-const R = { sm: 8, md: 12, lg: 16, xl: 24, full: 9999 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -396,8 +382,6 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         width: 48, height: 48, borderRadius: R.md,
@@ -449,8 +433,6 @@ function AdminTile({ icon, tint, label, badge, onClick }: {
         border: 'none', boxShadow: EL1, cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.96)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         position: 'relative', width: 46, height: 46, borderRadius: R.md,
@@ -488,8 +470,6 @@ function MiniCard({ icon, tint, label, sub, onClick }: {
         border: 'none', boxShadow: EL1, cursor: 'pointer', textAlign: 'left', width: '100%',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         width: 38, height: 38, borderRadius: R.sm, background: tint,
@@ -512,7 +492,7 @@ function Fab({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       style={{
         position: 'fixed',
-        bottom: 'calc(24px + env(safe-area-inset-bottom))',
+        bottom: 'calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))',
         right: 20,
         background: '#D3E3FD',
         color: '#041E49',
@@ -526,8 +506,6 @@ function Fab({ onClick }: { onClick: () => void }) {
         zIndex: 50,
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.95)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
       Nieuwe factuur

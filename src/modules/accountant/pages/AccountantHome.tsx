@@ -26,6 +26,11 @@ import { composeDraftEmail } from '@/lib/ai'
 // import DraftQueue from '@/components/draft-queue/DraftQueue'
 import type { AccountantOverview, ClientSummary, TodoItem } from '../accountant.types'
 import type { NotificationRow } from '@/types/rows'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { EL1, M3, R } from '@/lib/design/tokens'
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -45,8 +50,6 @@ const TODO_ICON: Record<string, string> = {
 
 // [ROLE-PARITY] Shape/elevation tokens mirrored from the ZZP home (ZzpDashboard)
 // so the two role dashboards share one visual system.
-const R = { sm: 8, md: 12, lg: 16 }
-const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -257,7 +260,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                 { n: overview.clients_with_open_questions, label: 'Open vraag', color: overview.clients_with_open_questions > 0 ? '#C5221F' : '#5F6368' },
                 { n: overview.clients_missing_bank, label: 'Zonder bank', color: overview.clients_missing_bank > 0 ? '#EA8600' : '#5F6368' },
               ].map(s => (
-                <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: '12px 8px', textAlign: 'center' }}>
+                <div key={s.label} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '12px 8px', textAlign: 'center' }}>
                   <p style={{ fontSize: 22, fontWeight: 700, color: s.color, margin: 0 }}>{s.n}</p>
                   <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{s.label}</p>
                 </div>
@@ -270,7 +273,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             unprocessed invoices, missing bank data). Every item is a real gap the
             accountant can act on; clicking opens the client. */}
         {todos.length > 0 && (
-          <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
               <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Te doen</h2>
             </div>
@@ -294,7 +297,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
         )}
 
         {/* ── 4. Mijn klanten ── */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Mijn klanten</h2>
             <button
@@ -321,7 +324,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 32px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124' }}
               />
               {clientSearch && (
-                <button onClick={() => setClientSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setClientSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}
@@ -417,7 +420,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
             style={{
               width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '14px 16px', cursor: 'pointer', textAlign: 'left',
-              backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8,
+              backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1,
               background: 'none',
             }}
           >
@@ -450,7 +453,7 @@ export default function AccountantHome({ profile, overview, clients, todos, noti
         </button>
 
         {showAiPanel && (
-          <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>
               Schrijf wat je wilt doen — de AI stelt het voor je op.
             </p>
@@ -529,8 +532,6 @@ function ToolTile({ icon, tint, label, onClick }: {
         border: 'none', boxShadow: EL1, cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)', WebkitTapHighlightColor: 'transparent',
       }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.96)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
     >
       <div style={{
         width: 46, height: 46, borderRadius: R.md,

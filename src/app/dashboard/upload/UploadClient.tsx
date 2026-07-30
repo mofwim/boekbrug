@@ -22,12 +22,12 @@ import { normalizeImageForUpload, MAX_INTAKE_UPLOAD_BYTES } from '@/lib/image-no
 // single PDF in the browser, then send it as ONE file (same /api/intake → one invoice), instead of
 // N separate invoices. Same combiner the ZZP intake button uses.
 import { combineImagesToPdf } from '@/lib/combine-images-pdf'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3 } from '@/lib/design/tokens'
 
-const M3 = {
-  primary: '#1A73E8', onPrimary: '#fff', onSurface: '#202124', neutral: '#5F6368',
-  surface: '#FFFFFF', outlineVariant: '#E0E0E0', success: '#137333', error: '#B3261E',
-  warn: '#B26A00', primaryContainer: '#D3E3FD', bg: '#F8F9FA',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
 // spreadsheet exports a shop uploads monthly (kassa Z-report, PIN/kas grootboek).

@@ -92,8 +92,12 @@ export default async function FactureringPage({
   const status = evaluateFairUse(usage, limitsPlan)
 
   return (
-    <main style={{ maxWidth: 680, margin: '0 auto', padding: '24px 16px 64px', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, color: '#202124', margin: '0 0 6px' }}>Facturering</h1>
+    /* [HEADER-SYSTEM] The title "Facturering" and the back chevron now come from
+       the shared sub-page bar, so the in-body <h1> that repeated it was removed;
+       the descriptive line below it stays. The font stack lost its `system-ui`
+       fallback — docs/HEADER_SYSTEM.md forbids it, and it was the reason this one
+       page rendered in a different typeface on some devices. */
+    <main style={{ maxWidth: 680, margin: '0 auto', padding: '24px 16px 64px', fontFamily: 'var(--font-sans), sans-serif' }}>
       <p style={{ fontSize: 15, color: '#5f6368', margin: '0 0 24px' }}>
         Welk plan er voor je geldt, en waar je je btw-facturen vindt.
       </p>

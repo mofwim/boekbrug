@@ -44,6 +44,9 @@ const STATIC_TITLES = new Map<string, string>([
   ["/dashboard/bank", "Bank"],
   ["/dashboard/bank/categoriseren", "Wat is dit?"],
   ["/dashboard/settings", "Instellingen"],
+  // [NAV] Without this entry the bar rendered nothing here — see the parent rule
+  // for facturering in src/lib/navigation.ts.
+  ["/dashboard/settings/facturering", "Facturering"],
   ["/dashboard/messages", "Berichten"],
   ["/dashboard/werkplek", "Mijn werkplek"],
   ["/dashboard/clients/invite", "Klant toevoegen"],

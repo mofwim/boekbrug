@@ -14,6 +14,9 @@ import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { rowMatchesQuery } from '@/lib/search'
 import type { InvoiceRow, ProfileRow } from '@/types/rows'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
+import { EL1, M3, R } from '@/lib/design/tokens'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -102,6 +105,8 @@ function ActionBadge({ value }: { value: string | null }) {
 // ─────────────────────────────────────────────────────────
 
 export default function KwartaalPage() {
+  const dialog = useDialog()
+  const toast = useToast()
   const router       = useRouter()
   const params       = useParams()
   const searchParams = useSearchParams()
@@ -290,6 +295,11 @@ export default function KwartaalPage() {
       setInvoices(prev => prev.map(i =>
         i.id === invoiceId ? { ...i, accountant_status: invoices.find(x => x.id === invoiceId)?.accountant_status ?? null } : i
       ))
+      // [HONESTY] The revert used to happen in silence: the chip you had just
+      // set slid back to its old value and nothing said why. On a screen whose
+      // whole job is asserting what has been checked, a status that undoes
+      // itself without a word is the one thing that must never happen.
+      toast('Status niet opgeslagen — probeer het opnieuw.', { tone: 'error' })
     } else if (action === 'verwerkt' || action === 'vraag') {
       // [READINESS-P3] Close the trust loop with the client — for BOTH 'verwerkt'
       // AND 'vraag'. Previously only 'verwerkt' notified, so a 'vraag' silently
@@ -317,9 +327,19 @@ export default function KwartaalPage() {
         body = `Je boekhouder heeft ${nrLabel}${party}${amount} verwerkt.`
       } else {
         // 'vraag' — capture an optional free-text question to send to the client.
-        const q = typeof window !== 'undefined'
-          ? window.prompt('Vraag aan de klant (optioneel):')?.trim()
-          : ''
+        // This text lands on the client's own screen as a notification, so it is
+        // written in the app's dialog: a textarea with the 200-character limit
+        // shown as you type, rather than a one-line browser prompt that silently
+        // truncated whatever did not fit.
+        const q = (await dialog.prompt({
+          title: 'Vraag aan de klant',
+          message: `Je klant krijgt dit te zien bij ${nrLabel}${party}. Laat je het leeg, dan melden we alleen dát je een vraag hebt.`,
+          placeholder: 'Waar gaat deze factuur over?',
+          multiline: true,
+          maxLength: 200,
+          confirmLabel: 'Vraag versturen',
+          required: false,
+        }))?.trim()
         title = 'Vraag van je boekhouder'
         body = q
           ? q.slice(0, 200)
@@ -369,7 +389,7 @@ export default function KwartaalPage() {
             pre-pivot idea, never wired). Documenten now opens the Brug — the hub. */}
         <button
           onClick={() => router.push('/dashboard/brug')}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, cursor: 'pointer', transition: 'background 0.1s ease', width: '100%' }}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, cursor: 'pointer', transition: 'background 0.1s ease', width: '100%' }}
         >
           <span className="text-xl">📂</span>
           <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>Documenten — bekijk in Brug</span>
@@ -417,11 +437,11 @@ export default function KwartaalPage() {
           {[
             // [TRUST-ACCOUNTANT] Reconciled, turnover-aware figures (same as the ZIP +
             // owner). While they load, show "…" rather than a wrong invoices-only sum.
-            { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: '#34A853' },
-            { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: '#EA4335' },
+            { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: M3.success },
+            { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: M3.error },
             { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#7b1fa2' },
           ].map(s => (
-            <div key={s.label} style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+            <div key={s.label} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 12, textAlign: 'center' }}>
               <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>
               <p style={{ fontSize: 14, fontWeight: 600, color: s.color, margin: 0 }}>{s.value}</p>
             </div>
@@ -429,7 +449,7 @@ export default function KwartaalPage() {
         </div>
 
         {/* [BOEK-028] Invoice table — outgoing + incoming merged */}
-        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E0E0E0', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
 
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>
@@ -451,7 +471,7 @@ export default function KwartaalPage() {
                 style={{ width: '100%', boxSizing: 'border-box', padding: '9px 34px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 14, outline: 'none', color: '#202124', fontFamily: "'Roboto', sans-serif" }}
               />
               {search && (
-                <button onClick={() => setSearch('')} aria-label="Wissen" style={{ position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}
@@ -618,7 +638,7 @@ export default function KwartaalPage() {
                             {invoice.invoice_type === 'creditnota' && invoice.replaced_by_number && (
                               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                                 <span style={{ color: '#5F6368' }}>Vervangt</span>
-                                <span className="font-medium" style={{ color: '#EA4335' }}>
+                                <span className="font-medium" style={{ color: M3.error }}>
                                   {invoice.replaced_by_number}
                                 </span>
                               </div>

@@ -6,7 +6,7 @@
 // [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
 import { useState, useEffect, useRef } from 'react'
-import { STICKY_BELOW_HEADER } from '@/lib/design/tokens'
+import { M3, STICKY_BELOW_HEADER } from '@/lib/design/tokens'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
@@ -502,7 +502,7 @@ export default function InvoiceDetailPage() {
           {deliveryWarning && (
             <div style={{ backgroundColor: '#FEF7E0', borderLeft: '4px solid #F9AB00', borderRadius: '0 16px 16px 0', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1 }}>
-                <span style={{ color: '#E37400', flexShrink: 0, fontSize: 16 }}>⚠</span>
+                <span style={{ color: M3.warning, flexShrink: 0, fontSize: 16 }}>⚠</span>
                 <div>
                   <p style={{ fontSize: 13, fontWeight: 600, color: '#7C4D00', margin: 0 }}>
                     De factuur is uitgegeven, maar de bezorging is mislukt

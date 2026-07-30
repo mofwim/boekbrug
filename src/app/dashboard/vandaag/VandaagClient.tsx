@@ -33,18 +33,14 @@ import { rowMatchesQuery } from "@/lib/search";
 // implementation, no drifting copies. Vandaag offers the subset of keys whose
 // columns it actually selects (no created_at / payment_date here).
 import { sortRows, SORTS, type SortKey } from "@/lib/invoice-sort";
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3 } from '@/lib/design/tokens'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
-const M3 = {
-  primary: "#1A73E8",
-  onSurface: "#202124",
-  onSurfaceVariant: "#5F6368",
-  warning: "#E37400", // soon-due (calm amber)
-  error: "#B3261E", // recently overdue (real attention)
-  hairline: "#E0E0E0",
-  hover: "#F1F3F4",
-};
 
 // [OWNER-DECISION] The old 30-day "Al langer open" tier (separate calm-amber
 // group rendered BELOW the active items) is gone: with real day counts on the
@@ -306,7 +302,7 @@ export default function VandaagClient({ payable, remind, loadFailed, toVerifyCou
             style={{ width: "100%", boxSizing: "border-box", padding: "11px 38px", borderRadius: 12, border: "1px solid #d1d1d6", fontSize: 15, outline: "none", background: "#fff", color: "#1c1c1e" }}
           />
           {search && (
-            <button onClick={() => setSearch("")} aria-label="Wissen"
+            <button onClick={() => setSearch("")} aria-label="Wissen" className="tap-44"
               style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: "#e5e5ea", color: "#3a3a3c", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
           )}
         </div>

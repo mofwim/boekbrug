@@ -13,26 +13,17 @@ import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint } from '@/lib/bank-matching'
 import { rowMatchesQuery } from '@/lib/search'
+import { useDialog } from '@/components/ui/Dialog'
+import { useToast } from '@/components/ui/Toast'
+// [DESIGN] Palette and radius come from the shared source now
+// (src/lib/design/tokens.ts). This file used to declare its own copy; see the
+// header of tokens.ts for why the copies had to go — two of the values in them
+// were below the contrast floor for text.
+import { M3, R } from '@/lib/design/tokens'
 
 // ─── Design tokens — mirrors BoekBrug Design System v1.0 (FacturenClient) ────
-const M3 = {
-  primary: '#1A73E8',
-  onPrimary: '#FFFFFF',
-  primaryContainer: '#D3E3FD',
-  onPrimaryContainer: '#041E49',
-  surface: '#ffffff',
-  onSurface: '#202124',
-  surfaceVariant: '#f1f3f4',
-  outline: '#80868b',
-  error: '#B3261E',
-  errorContainer: '#F9DEDC',
-  success: '#137333',
-  successContainer: '#CEEAD6',
-  warning: '#E37400',
-}
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
-const R = { sm: 8, md: 12, lg: 16, full: 9999 }
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -118,6 +109,11 @@ interface MatchResponse {
 }
 
 export default function BankClient() {
+  const dialog = useDialog()
+  // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
+  // call sites already used. The local one it replaces could not stack, was
+  // never announced to a screen reader, and vanished with the page.
+  const showToast = useToast()
   const [busy, setBusy] = useState(false)
   // [BANK-DND] true while a file is being dragged over the upload zone.
   const [dragActive, setDragActive] = useState(false)
@@ -174,7 +170,6 @@ export default function BankClient() {
     const t = setTimeout(() => setFilterText(findParam), 0)
     return () => clearTimeout(t)
   }, [findParam])
-  const [toast, setToast] = useState<string | null>(null)
   const [verwerktCtx, setVerwerktCtx] = useState<{ number: string } | null>(null)
   // [BANK-PERSIST] On mount, load any already-stored pending transactions so a
   // page refresh doesn't show an empty page. The transactions live in the DB
@@ -192,10 +187,6 @@ export default function BankClient() {
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
 
-  function showToast(msg: string) {
-    setToast(msg)
-    setTimeout(() => setToast(null), 2800)
-  }
 
   // Shared matcher call — used by both the initial load and after an upload.
   const runMatch = useCallback(async () => {
@@ -442,7 +433,10 @@ export default function BankClient() {
   // `explicitInvoiceId` lets the multi-invoice rows pass the invoice id directly,
   // avoiding the setSelected→confirm race (state updates are async; reading
   // selected[txId] right after onSelect would see the stale value).
-  async function confirm(txId: string, invoiceNumber: string | null, explicitInvoiceId?: string) {
+  // [SHADOW] Named confirmMatch, not confirm: a local function called `confirm`
+  // shadows window.confirm for the whole module, so anyone later reaching for
+  // the browser dialog here would silently have called this instead.
+  async function confirmMatch(txId: string, invoiceNumber: string | null, explicitInvoiceId?: string) {
     const invoiceId = explicitInvoiceId ?? selected[txId]
     if (!invoiceId) return
     setProcessingId(txId)
@@ -534,7 +528,7 @@ export default function BankClient() {
   // [BANK-BATCH-CONFIRM] Confirm every ticked transaction, sequentially, reusing the
   // SAME /api/bank/confirm endpoint (no batch endpoint, no backend change). Sequential
   // (not Promise.all) keeps each payment's session-client auth + B.4 guard intact and
-  // makes partial failure easy to report. We do NOT call confirm() in the loop (it would
+  // makes partial failure easy to report. We do NOT call confirmMatch() in the loop (it would
   // run runMatch after each one and mutate the list mid-iteration); instead we POST
   // directly, collect results, then refresh ONCE at the end.
   async function confirmBatch() {
@@ -705,7 +699,18 @@ export default function BankClient() {
         // [DEDUP-SOFT] A possible-duplicate is UNCERTAIN — surface it as a decision, never a silent
         // block or a silent double-book. The owner confirms it is a different bill → re-send with force.
         if (res.status === 409 && json?.duplicate && json?.canForce) {
-          const proceed = window.confirm(`${json?.detail || json?.error || 'Mogelijk dubbel.'}\n\nToch koppelen?`)
+          // [DEDUP-SOFT] This is a decision about money: the server thinks this
+          // bill may already be booked. The browser's box put the server's
+          // explanation and the question in one undifferentiated blob of text.
+          // Here the detail is the body and the question is the title, so the
+          // owner reads WHY before deciding.
+          const proceed = await dialog.confirm({
+            title: 'Toch koppelen?',
+            message: json?.detail || json?.error || 'Deze factuur lijkt al eerder gekoppeld te zijn.',
+            confirmLabel: 'Ja, toch koppelen',
+            cancelLabel: 'Overslaan',
+            danger: true,
+          })
           if (!proceed) { lastMsg = 'Overgeslagen (mogelijk dubbel).'; continue }
           ;({ r: res, j: json } = await postAttach(true))
         }
@@ -1364,7 +1369,7 @@ export default function BankClient() {
                   })
                 }
                 onSelect={(invId) => setSelected((sel) => ({ ...sel, [s.transactionId]: invId }))}
-                onConfirm={(num, invId) => confirm(s.transactionId, num, invId)}
+                onConfirm={(num, invId) => confirmMatch(s.transactionId, num, invId)}
                 onAttach={(files) => attachFile(s.transactionId, files, s.amount >= 0)}
                 onIgnore={() => ignoreTx(s.transactionId)}
                 onRestore={() => restoreTx(s.transactionId)}
@@ -1502,12 +1507,6 @@ export default function BankClient() {
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: '#202124', color: '#fff', fontSize: 13, fontWeight: 500, padding: '12px 20px', borderRadius: R.sm, zIndex: 300, boxShadow: '0 4px 12px rgba(0,0,0,0.2)', maxWidth: '90vw', textAlign: 'center', fontFamily: FONT }}>
-          {toast}
-        </div>
-      )}
     </div>
   )
 }

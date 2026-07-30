@@ -27,6 +27,7 @@ import { parseAmountNL as parseNum } from '@/lib/parse-nl'
 import ToolsCrossLinks from '@/app/tools/ToolsCrossLinks'
 import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
+import { M3 } from '@/lib/design/tokens'
 
 // react-pdf touches browser APIs — load the link client-side only (same
 // pattern as dashboard/invoice/[id]).
@@ -579,7 +580,7 @@ export default function GratisFactuur() {
                 placeholder="NL123456789B01"
               />
               {btwWarn && (
-                <span style={{ fontSize: 11, color: '#e37400' }}>
+                <span style={{ fontSize: 11, color: M3.warning }}>
                   Ziet er niet uit als een geldig NL BTW-id (NL + 9 cijfers + B + 2).
                 </span>
               )}
@@ -707,7 +708,7 @@ export default function GratisFactuur() {
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: '#ea4335',
+                      color: M3.error,
                       fontSize: 20,
                       cursor: 'pointer',
                       opacity: lines.length === 1 ? 0.3 : 1,
