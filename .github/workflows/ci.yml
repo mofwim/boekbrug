@@ -30,7 +30,10 @@ concurrency:
 
 jobs:
   verify:
-    name: Type-check & tests
+    # De naam noemt alle drie de poorten. Hij zei "Type-check & tests" terwijl de build er sinds
+    # kort bij hoort, en een groene check die zijn eigen dekking verkeerd opgeeft is precies het
+    # soort halve waarheid dat de rest van deze commits opruimt.
+    name: Type-check, tests & build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
