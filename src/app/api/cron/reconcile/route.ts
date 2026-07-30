@@ -152,7 +152,7 @@ export async function GET(req: NextRequest) {
   // so no 500 → no noisy hourly retries for one flaky user), but ok:false makes them visible to
   // any body-reading monitor instead of an always-green flag.
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await finishCronRun(createPipelineClient(), cronRunId, { ok: true, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated } });
 
   return NextResponse.json({ ok: failed === 0, users: userIds.size, usersProcessed, bookedTotal, failed, truncated });
 }

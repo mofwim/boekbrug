@@ -242,7 +242,7 @@ export async function GET(req: NextRequest) {
   }
 
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await finishCronRun(createPipelineClient(), cronRunId, { ok: true, result: { ok: true, ...report } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: report.failures.length === 0, result: { ok: report.failures.length === 0, ...report } });
 
   return NextResponse.json({ ok: true, ...report });
 }

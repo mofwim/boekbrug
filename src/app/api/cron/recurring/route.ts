@@ -236,7 +236,7 @@ export async function GET(req: NextRequest) {
   }
 
   // [CRON-HARTSLAG] De uitkomst vastleggen. Best effort: dit mag de cron nooit laten vallen.
-  await finishCronRun(createPipelineClient(), cronRunId, { ok: true, result: { ok: true, available: true, due: schedules.length, generated, skipped, finished, failed } });
+  await finishCronRun(createPipelineClient(), cronRunId, { ok: failed === 0, result: { ok: failed === 0, available: true, due: schedules.length, generated, skipped, finished, failed } });
 
   return NextResponse.json({ ok: true, available: true, due: schedules.length, generated, skipped, finished, failed });
 }
