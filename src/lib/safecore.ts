@@ -476,6 +476,12 @@ export interface PossibleDuplicate {
 // venster blijft 14 dagen (dat hek is goed), maar een aantoonbaar ritme mag eronder uit.
 export const POSSIBLE_DUP_WINDOW_DAYS = 14
 
+// [DEDUP-CORRECTED] How far apart two invoices sharing ONE number may sit before we stop reading
+// them as a correction. Generous — a supplier can correct a bill the owner never noticed for
+// weeks — but far below a year, because a yearly numbering restart ("001" in 2025 and in 2026) is
+// the one legitimate way two different bills share a number, and that pair is ~365 days apart.
+export const CORRECTED_REISSUE_WINDOW_DAYS = 180
+
 // [ABONNEMENT] Hoeveel EERDERE facturen van dezelfde leverancier met hetzelfde bedrag er moeten
 // zijn voordat we van een ritme spreken. Drie, dus met de nieuwe erbij vier momenten en drie
 // tussenpozen. Een eerste per ongeluk dubbel verstuurde factuur wordt hierdoor NOOIT onderdrukt:
@@ -621,9 +627,9 @@ export function assessPossibleDuplicate(
       // on the wrong one. An invoice number is unique per supplier by construction: seeing it twice
       // with two different amounts is a correction, a credit, or a re-issue — never two bills.
       //
-      // It is a FLAG, never a block, like every tier here: a supplier who restarts numbering each
-      // year, or one whose number our OCR shortened to something collision-prone, would otherwise
-      // have a legitimate invoice rejected. The human decides in the verify queue.
+      // It is a FLAG, never a block, like every tier here: a supplier whose number our OCR
+      // shortened to something collision-prone would otherwise have a legitimate invoice
+      // rejected. The human decides in the verify queue.
       if (!inNumIsReal) continue
       if (normalizeInvoiceNumber(c.invoice_number) !== inNum) continue
       // Provably a DIFFERENT supplier that happens to reuse the number → not the same document.
@@ -635,6 +641,20 @@ export function assessPossibleDuplicate(
         vendorCore(c.client_name) !== inCore
       ) {
         continue
+      }
+      // [DEDUP-CORRECTED] A supplier who RESTARTS numbering each year is the one honest way for
+      // two different bills to share a number: "001" in 2025 and "001" in 2026. Those sit ~a year
+      // apart, and a correction never does — it follows the invoice it corrects within days or
+      // weeks. So the tier is bounded in time, well below a year. Without this fence, a yearly
+      // restart would put a legitimate invoice in the verify queue every single January, and a
+      // warning that cries wolf is one the owner learns to tap past.
+      // A MISSING date on either side cannot be fenced, and there we keep the flag: a same-number
+      // pair from one supplier is worth a glance, and an invoice we could not read a date off
+      // needs a human anyway.
+      {
+        const cDateForGap = isoDay(c.invoice_date)
+        const gapDays = inDate && cDateForGap ? daysApart(inDate, cDateForGap) : null
+        if (gapDays != null && gapDays > CORRECTED_REISSUE_WINDOW_DAYS) continue
       }
       if (bestRank < 1) {
         bestRank = 1

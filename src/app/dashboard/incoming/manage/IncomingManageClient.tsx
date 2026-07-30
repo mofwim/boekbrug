@@ -136,6 +136,10 @@ interface PayCtx {
   clientKey?: string
   // What was still open when the dialog opened — the field's hint and cap.
   openAmount?: number
+  // [REMOVAL-ALTERNATIVE] This undo was opened FROM the remove dialog ("Betaling terugdraaien").
+  // On success the remove sheet re-opens, so taking the money off and taking the invoice out is
+  // one flow instead of two errands the owner has to remember to finish.
+  thenRemove?: boolean
 }
 
 // [MATCH-BUTTON] The report POST /api/reconcile/run hands back — what the engine actually did,
@@ -585,20 +589,27 @@ export default function IncomingManageClient({
   // wrong amount, corrects it, and leaves the owner with a duplicate they cannot pay off, cannot
   // remove, and cannot find the money on.
   //
-  // So the dialog does the undo itself, on the invoice it is already talking about. Two writes,
-  // one tap: pay-toggle 'undo' clears every recorded instalment (join rows removed, any bank line
-  // detached, amount_paid recomputed to 0 — the same reversal /api/bank/unlink performs), and
-  // then the remove sheet re-opens with the decision that state now produces. Nothing is chained
-  // blind: a failed undo keeps the money booked AND the invoice, and says so.
-  async function undoPaymentThenRemove(inv: IncomingRow) {
+  // So the dialog offers the undo on the invoice it is already talking about — but it does NOT
+  // perform it on that tap. Undoing is destructive in a way the wording must not gloss over: a
+  // BANK instalment returns to "Te bevestigen" (nothing lost, it is re-linkable), while a MANUAL
+  // deelbetaling is a row the owner typed by hand — amount, date, method — and clearing it erases
+  // that record. So this hands over to the pay sheet's existing "Betaling ongedaan maken?"
+  // confirmation, the same one a fully-paid invoice already goes through, rather than inventing a
+  // second, quieter path to the same write. `thenRemove` is what makes it a flow instead of two
+  // errands: once the undo lands, executePay re-opens the remove sheet.
+  function undoPaymentThenRemove(inv: IncomingRow) {
     setRemoveCtx(null)
-    const ok = await executePay({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'received' })
-    if (!ok) return // executePay already surfaced the reason (incl. the verwerkt dialog)
-    // The server just wrote exactly this: no instalments left, back to the open purchase status.
-    // Re-deciding from it (rather than from the stale row) is what re-opens the sheet as a real
-    // "Ja, verwijderen" instead of the same wall.
+    setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'received', thenRemove: true })
+  }
+
+  // Re-open the removal sheet after a confirmed undo. The server just wrote exactly this state —
+  // no instalments left, back to the open purchase status — so re-deciding from it (rather than
+  // from the stale row) is what turns the wall into a real "Ja, verwijderen".
+  function reopenRemovalAfterUndo(id: string) {
+    const inv = invoices.find(i => i.id === id)
+    if (!inv) return
     const settled: RemovalInvoice = { ...(inv as RemovalInvoice), amount_paid: 0, status: 'received' }
-    setRemoveCtx({ id: inv.id, decision: decideRemoval(settled) })
+    setRemoveCtx({ id, decision: decideRemoval(settled) })
   }
 
   async function executeRemoval(ctx: { id: string; decision: RemovalDecision }) {
@@ -780,6 +791,11 @@ export default function IncomingManageClient({
       // owner at that invented remainder instead of the full total.
       patchLocal(ctx.id, { payment_method: null, payment_date: null, payment_prepared_at: null, amount_paid: 0 })
       showToast(`Betaling ongedaan gemaakt`)
+      // [REMOVAL-ALTERNATIVE] Opened from the remove dialog → hand back to it, now that the money
+      // is off and decideRemoval will actually allow the removal. Only on a SUCCEEDED undo: this
+      // sits inside the `!error` branch, so a refusal leaves both the payment and the invoice
+      // exactly where they were, with the server's reason on screen.
+      if (ctx.thenRemove) reopenRemovalAfterUndo(ctx.id)
     }
     // [CASH-SETTLE] Keep the kasboek in sync with this cash pay/undo — create/heal the linked
     // 'betaling' entry, or remove it on an undo. This UI updates the invoice directly (not via
@@ -1519,7 +1535,7 @@ export default function IncomingManageClient({
             const inv = invoices.find(i => i.id === removeCtx.id)
             if (alt.kind === 'undo-payment') {
               if (!inv) return undefined
-              return { label: alt.label, onClick: () => { void undoPaymentThenRemove(inv) } }
+              return { label: alt.label, onClick: () => undoPaymentThenRemove(inv) }
             }
             if (alt.kind === 'ask-accountant') {
               return {
@@ -1546,7 +1562,26 @@ export default function IncomingManageClient({
           body={
             payCtx.newStatus === 'paid'
               ? `Inkoopfactuur ${payCtx.number} wordt als betaald gemarkeerd.`
-              : `Inkoopfactuur ${payCtx.number} wordt teruggeplaatst naar 'Te betalen'.`
+              // [UNDO-HONEST] An undo is all-or-nothing and it ERASES what was recorded, so the
+              // sheet has to say which of the two it is about to do. On a fully paid invoice the
+              // old sentence was right. On a PARTLY paid one it was wrong twice over: the invoice
+              // is already 'Te betalen' (nothing is "put back"), and what actually disappears —
+              // the noted instalments — went unmentioned. That matters most for a MANUAL
+              // deelbetaling: amount, date and method are what the owner typed, and nothing else
+              // holds them. A bank instalment is different and says so: the line returns to "Te
+              // bevestigen" on the Bank-pagina, still there, still re-linkable.
+              : (() => {
+                  const inv = invoices.find(i => i.id === payCtx.id)
+                  const paid = Math.max(0, inv?.amount_paid ?? 0)
+                  const partly = inv?.status !== 'paid' && paid > 0.005
+                  const whereItGoes =
+                    inv?.payment_method === 'kas'
+                      ? ' De kasboekregel voor deze betaling vervalt daarmee ook.'
+                      : ' Stond er een bankregel tegenover, dan komt die terug bij "Te bevestigen" op de Bank-pagina.'
+                  return partly
+                    ? `De genoteerde deelbetaling van ${fmtEur(paid)} op inkoopfactuur ${payCtx.number} wordt gewist. De factuur blijft openstaan, voor het volle bedrag.${whereItGoes}`
+                    : `Inkoopfactuur ${payCtx.number} wordt teruggeplaatst naar 'Te betalen' en elke genoteerde betaling erop wordt gewist.${whereItGoes}`
+                })()
           }
           confirmLabel={payCtx.newStatus === 'paid' ? 'Ja, markeer als betaald' : 'Ongedaan maken'}
           confirmBg={payCtx.newStatus === 'paid' ? M3.success : M3.warning}

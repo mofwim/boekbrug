@@ -287,6 +287,33 @@ console.log("\n— [DEDUP-CORRECTED] the hekken: what must NOT be flagged —");
   check("a genuinely different invoice → not flagged", r === null);
 }
 {
+  // A supplier who RESTARTS numbering each year: "001" in 2025 and "001" in 2026 are two real
+  // bills that happen to share a number. A correction never sits a year behind the invoice it
+  // corrects, so the window separates them — without it this fired every January.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "001", totalIncBtw: 5900, invoiceDate: "2026-01-15" }),
+    [cand({ invoice_number: "001", total_inc_btw: 6662.8, invoice_date: "2025-01-14" })],
+  );
+  check("yearly numbering restart → not flagged", r === null);
+}
+{
+  // …but a correction inside the window still is, right up to the fence.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "001", totalIncBtw: 5900, invoiceDate: "2026-06-01" }),
+    [cand({ invoice_number: "001", total_inc_btw: 6662.8, invoice_date: "2026-01-15" })],
+  );
+  check("a months-late correction is still inside the window", !!r);
+}
+{
+  // No date to fence with → keep the flag. A same-number pair from one supplier is worth a
+  // glance, and an invoice we could not read a date off needs a human regardless.
+  const r = assessPossibleDuplicate(
+    input({ invoiceNumber: "001", totalIncBtw: 5900, invoiceDate: null }),
+    [cand({ invoice_number: "001", total_inc_btw: 6662.8, invoice_date: "2020-01-01" })],
+  );
+  check("unreadable date → still flagged, never silently dropped", !!r);
+}
+{
   // The weakest tier must never outrank a real same-amount signal: when both are present the
   // stronger reason is the one the owner reads.
   const r = assessPossibleDuplicate(

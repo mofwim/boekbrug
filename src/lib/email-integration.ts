@@ -2951,7 +2951,7 @@ export async function syncUserEmails(
               .select('id, invoice_number, client_name, invoice_date, total_inc_btw')
               .eq('receiver_id', userId)
               .eq('direction', 'incoming')
-              .ilike('invoice_number', invoiceNumber)
+              .ilike('invoice_number', escapeLikeValue(invoiceNumber))
               .order('id', { ascending: false })
               .limit(50)
             return data ?? []
